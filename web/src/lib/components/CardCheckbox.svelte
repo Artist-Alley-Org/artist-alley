@@ -107,7 +107,26 @@
     class="pointer-events-auto inline-flex h-11 w-11 items-center justify-center
            transition-opacity duration-150 focus-visible:outline-none
            {placement === 'inline'
-      ? 'opacity-100'
+      ? // #1171 — the HIT PADDING is compressed on fine pointers, and
+        // nothing else is. A 24px box centred in a 44px target carries
+        // 10px of dead space on each side, and the ⋯ beside it carries
+        // 4px of its own, so two controls whose targets already butt
+        // together (#1158) still showed 14px of daylight between their
+        // glyphs and read as two unrelated widgets.
+        //
+        // 28px = the 24px box plus 2px a side, so the pair's glyphs land
+        // 4px apart. WCAG 2.5.8 AA asks for 24px in each dimension for
+        // pointer input and this stays 28x44, so the compact desktop
+        // form is compliant on its own without leaning on the spacing
+        // exception. Height is untouched: it sets the band's height, and
+        // shrinking it would move a row that is not the complaint.
+        //
+        // COARSE POINTERS KEEP THE FULL 44px — the phone's tap comfort is
+        // the reason the 44px box exists, and `pointer: fine` is the
+        // modality that actually has a cursor to aim with. Anything that
+        // reports neither (no pointer at all) falls to the default,
+        // which is the roomy one.
+        'opacity-100 [@media(pointer:fine)]:w-7'
       : `absolute ${corner === 'right' ? 'right-2' : 'left-2'} top-2 z-10 ` +
         (pinned
           ? 'opacity-100'

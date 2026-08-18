@@ -1,11 +1,32 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // Debounced search input. Two-way bound via $bindable so the parent
-  // owns the canonical query string. Emits an `onsearch` callback when
-  // the debounce settles so the parent can fire the actual fetch.
+  // The search input. Two-way bound via $bindable so the parent owns the
+  // canonical query string. Emits an `onsearch` callback when the caller
+  // COMMITS so the parent can fire the actual fetch.
   //
-  // Phase 1.16.B-1 adds a history dropdown backed by localStorage:
+  // # Typing does not search (#1156)
+  //
+  // This used to commit on a 250ms keystroke debounce: every pause while
+  // typing re-queried the feed underneath the dropdown. Owner direction is
+  // that suggestions may appear while typing but the feed re-queries only
+  // on an EXPLICIT commit. So there are exactly four commits, and no timer
+  // among them:
+  //
+  //   - Enter (with no dropdown row highlighted)
+  //   - picking a suggestion or a history row (click or Enter on a
+  //     highlighted row)
+  //   - the clear (X) button
+  //   - Escape with the dropdown already closed, which clears the filter
+  //
+  // Escape with the dropdown OPEN closes it and commits nothing — closing
+  // an overlay is not a search.
+  //
+  // The suggest fetch keeps its own 150ms debounce. It is a read of a
+  // typeahead endpoint, not a feed query, and #1156's measured bar is
+  // specifically ZERO feed queries while typing.
+  //
+  // Phase 1.16.B-1 added the history dropdown backed by localStorage:
   //   - opens on focus with an empty input; shows the recent 10
   //     unique queries (most recent first)
   //   - keyboard-navigable (Arrow Up/Down + Enter to commit; Escape
@@ -21,14 +42,19 @@
     value: string;
     onsearch?: (q: string) => void;
     placeholder?: string;
-    debounceMs?: number;
+    /** Which corpus the COMMIT will be executed against (#1155). The
+     *  suggest endpoint completes only terms that would return a result
+     *  under that surface's match rule, so a suggestion the caller picks
+     *  can never land on an empty feed. The parent derives this from the
+     *  same predicate that decides where a commit navigates. */
+    scope?: 'browse' | 'search';
   }
 
   let {
     value = $bindable(''),
     onsearch,
     placeholder = t('nav.search_placeholder'),
-    debounceMs = 250,
+    scope = 'browse',
   }: Props = $props();
 
   const HISTORY_KEY = 'search_history';
@@ -37,7 +63,6 @@
 
   type Suggestion = { value: string; kind: string; similarity: number };
 
-  let timer: ReturnType<typeof setTimeout> | null = null;
   let suggestTimer: ReturnType<typeof setTimeout> | null = null;
   let lastCommitted = value;
   let history = $state<string[]>(loadHistory());
@@ -87,19 +112,7 @@
     highlight = -1;
   }
 
-  function scheduleCommit() {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      if (value !== lastCommitted) {
-        lastCommitted = value;
-        onsearch?.(value);
-        pushHistory(value);
-      }
-    }, debounceMs);
-  }
-
   function commitNow() {
-    if (timer) clearTimeout(timer);
     if (value !== lastCommitted) {
       lastCommitted = value;
       onsearch?.(value);
@@ -109,9 +122,12 @@
     highlight = -1;
   }
 
+  // #1156 — typing schedules SUGGESTIONS and nothing else. There is no
+  // commit timer here any more; the feed is re-queried only by the four
+  // explicit commits listed at the top of this file.
   function onInput() {
     dropdownOpen = (value === '' && history.length > 0) || value !== '';
-    scheduleCommit();
+    highlight = -1;
     scheduleSuggest();
   }
 
@@ -124,9 +140,10 @@
     suggestTimer = setTimeout(async () => {
       suggestLoading = true;
       try {
-        const resp = await fetch(`/api/v1/search/suggest?prefix=${encodeURIComponent(value)}&limit=6`, {
-          credentials: 'include',
-        });
+        const resp = await fetch(
+          `/api/v1/search/suggest?prefix=${encodeURIComponent(value)}&limit=6&scope=${scope}`,
+          { credentials: 'include' },
+        );
         if (!resp.ok) {
           suggestions = [];
           return;
@@ -144,18 +161,18 @@
   function onKey(e: KeyboardEvent) {
     if (dropdownOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault();
-      if (history.length === 0) return;
+      if (rows.length === 0) return;
       if (e.key === 'ArrowDown') {
-        highlight = (highlight + 1) % history.length;
+        highlight = (highlight + 1) % rows.length;
       } else {
-        highlight = highlight <= 0 ? history.length - 1 : highlight - 1;
+        highlight = highlight <= 0 ? rows.length - 1 : highlight - 1;
       }
       return;
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (dropdownOpen && highlight >= 0 && highlight < history.length) {
-        pickHistory(history[highlight]);
+      if (dropdownOpen && highlight >= 0 && highlight < rows.length) {
+        pick(rows[highlight]);
       } else {
         commitNow();
       }
@@ -182,7 +199,21 @@
     setTimeout(() => { dropdownOpen = false; highlight = -1; }, 120);
   }
 
-  function pickHistory(q: string) {
+  // The dropdown's rows IN RENDER ORDER: suggestions first (only while
+  // the box is non-empty, matching the markup's own guard), then history.
+  //
+  // `highlight` indexes THIS array, not `history` (#1156). It used to
+  // index `history` while the markup rendered suggestions above it, so
+  // Arrow Down onto the first visible row selected a history entry that
+  // was several rows lower — harmless while typing also searched, and a
+  // real defect now that the dropdown is the only way to refine.
+  const rows = $derived([
+    ...(value !== '' ? suggestions.map((s) => s.value) : []),
+    ...history,
+  ]);
+
+  /** Commit a dropdown row. This is one of the four commits. */
+  function pick(q: string) {
     value = q;
     lastCommitted = q;
     onsearch?.(q);
@@ -268,13 +299,14 @@
         <div class="border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-wide text-fg-muted">
           {t('search.suggestions_heading')}
         </div>
-        {#each suggestions as sug (sug.kind + ':' + sug.value)}
+        {#each suggestions as sug, i (sug.kind + ':' + sug.value)}
           <button
             type="button"
             role="option"
-            aria-selected="false"
-            onmousedown={() => pickHistory(sug.value)}
+            aria-selected={i === highlight}
+            onmousedown={() => pick(sug.value)}
             class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+            class:bg-surface-elevated={i === highlight}
             data-testid="search-suggestion"
           >
             <span class="rounded bg-info/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-info">{sug.kind}</span>
@@ -291,14 +323,17 @@
           class="rounded px-1 text-fg-muted hover:text-fg hover:bg-surface-elevated"
         >{t('search.clear_history')}</button>
       </div>
+      <!-- The history rows sit BELOW the suggestions, so their index into
+           `rows` is offset by however many suggestions are showing. -->
       {#each history as h, i (h)}
+        {@const idx = i + (value !== '' ? suggestions.length : 0)}
         <button
           type="button"
           role="option"
-          aria-selected={i === highlight}
-          onmousedown={() => pickHistory(h)}
+          aria-selected={idx === highlight}
+          onmousedown={() => pick(h)}
           class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
-          class:bg-surface-elevated={i === highlight}
+          class:bg-surface-elevated={idx === highlight}
           data-testid="search-history-item"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-fg-muted">

@@ -15,9 +15,13 @@
   // entry here is renderable and there is nothing to probe or branch on.
 
   import { t } from '$stores/lang.svelte';
+  import { coverPlacement } from '$lib/util/featuredCrop';
 
   interface CoverEntry {
     asset_id: string;
+    /** A CONTAIN rung exists for this asset (#1207). Decides which
+     *  source a focal-pointed cover is painted from — see coverSrc. */
+    preview_available?: boolean;
   }
 
   interface Collection {
@@ -30,6 +34,14 @@
     // Absent on a surface that did not compose covers; an empty array
     // is the honest "this collection has nothing to show".
     covers?: CoverEntry[];
+    // #1207 — where the curator put the crop, as fractions of the
+    // original picture. Null means centre, which is what every card did
+    // before this existed.
+    cover_focal_x?: number | null;
+    cover_focal_y?: number | null;
+    // #1212 — how far the curator tightened that crop. Null is the fit,
+    // which is what every card rendered before this existed.
+    cover_zoom?: number | null;
   }
 
   interface Props {
@@ -43,6 +55,60 @@
   function colUrl(a: CoverEntry): string {
     return `/api/v1/assets/${a.asset_id}/variants/col`;
   }
+
+  // ── The single chosen cover, and its focal point (#1207) ───────────
+  //
+  // ⚠️ THE SOURCE HAS TO CHANGE WITH THE FOCAL POINT. `col` is
+  // `fit: cover` at 320px — a 320x320 CENTRE-CROP — so by the time the
+  // browser sees it the picture's edges are already gone. Applying
+  // `object-position` to it does not move the crop the curator chose;
+  // it takes a second crop of the server's crop and lands somewhere
+  // nobody picked. The fractions are stored against the ORIGINAL, so the
+  // source has to still BE the original shape: the `preview` contain
+  // rung.
+  //
+  // Both conditions are required, and each falls back cleanly:
+  //   - no focal point  → `col`, centred. What every card always did.
+  //   - no contain rung → `col`, centred, because there is nothing else
+  //                       to paint and a 404 would be worse than a
+  //                       centred crop.
+  //
+  // MOSAIC TILES ARE UNTOUCHED. A focal point is a statement about ONE
+  // picture filling the tile; there is no meaningful place to apply it
+  // across two or four, and #1026's mosaic is a summary rather than a
+  // composition anyone framed.
+  //
+  // ZOOM (#1212) NEEDS THE CONTAIN RUNG FOR THE SAME REASON THE FOCAL
+  // POINT DOES, and it needs it on its own: a collection zoomed but
+  // never moved off centre has no focal point at all, and painting that
+  // zoom onto `col` would tighten a crop that was already taken at the
+  // centre of a square the curator never saw. So the test is "has the
+  // curator framed this in any way", not "has the curator moved it".
+  const hasFocal = $derived(
+    collection.cover_focal_x != null && collection.cover_focal_y != null,
+  );
+  const hasZoom = $derived(collection.cover_zoom != null);
+  const singleCover = $derived(covers.length === 1 ? covers[0] : null);
+  const singleUsesContainRung = $derived(
+    singleCover !== null && (hasFocal || hasZoom) && singleCover.preview_available === true,
+  );
+  const singleSrc = $derived(
+    singleCover === null
+      ? ''
+      : singleUsesContainRung
+        ? `/api/v1/assets/${singleCover.asset_id}/variants/preview`
+        : colUrl(singleCover),
+  );
+  // Centred and at the fit unless BOTH the framing and the rung that
+  // makes it meaningful are present — the same helper the cover
+  // editor's preview and the featured rail use, so "null means centre,
+  // at the fit" is decided once and every surface renders the identical
+  // rectangle.
+  const singlePlacement = $derived(
+    singleUsesContainRung
+      ? coverPlacement(collection.cover_focal_x, collection.cover_focal_y, collection.cover_zoom)
+      : coverPlacement(null, null, null),
+  );
 
   const visibilityLabel = $derived(
     collection.visibility === 'public'
@@ -63,7 +129,10 @@
   href="/collections/{collection.id}"
   class="group block overflow-hidden rounded-xl border border-border bg-surface-elevated transition-colors hover:border-fg-muted/60"
 >
-  <div class="relative aspect-[4/3] bg-surface">
+  <!-- `overflow-hidden` is what makes a zoomed cover safe (#1212): the
+       image is laid out LARGER than this box and clipped by it. At the
+       fit it changes nothing, because the image is exactly the box. -->
+  <div class="relative aspect-[4/3] overflow-hidden bg-surface">
     {#if covers.length === 0}
       <div class="absolute inset-0 flex items-center justify-center text-fg-muted/40">
         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -71,7 +140,21 @@
         </svg>
       </div>
     {:else if covers.length === 1}
-      {@render cover(covers[0], 'absolute inset-0 h-full w-full object-cover')}
+      <!-- Not `{@render cover(...)}`: this is the one tile that carries
+           a curator-chosen crop, so it needs its own source and its own
+           object-position. The mosaic snippet stays exactly as it was. -->
+      <img
+        src={singleSrc}
+        alt=""
+        loading="lazy"
+        data-testid="collection-card-cover"
+        data-focal={singleUsesContainRung ? 'on' : 'off'}
+        data-zoom={singleUsesContainRung && collection.cover_zoom != null
+          ? String(collection.cover_zoom)
+          : ''}
+        class="object-cover"
+        style={singlePlacement}
+      />
     {:else if covers.length === 2}
       <div class="absolute inset-0 grid grid-cols-2 gap-0.5">
         {#each covers as a (a.asset_id)}

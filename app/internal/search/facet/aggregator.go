@@ -45,6 +45,48 @@ const (
 	// then produces no bucket, which is [Dispatcher.Run]'s existing
 	// behaviour for any unregistered type.
 	FacetCollection FacetType = "collection"
+
+	// FacetField constrains a search by ONE METADATA FIELD's value
+	// (#1157). Its wire value carries two things — the field
+	// definition's federation-stable `code` and the value — joined by
+	// `=`: `filter=field:material=steel`.
+	//
+	// # Why one dimension and not one per field
+	//
+	// Because field definitions are DATA. An operator adds one at
+	// runtime, so "one FacetType per field" is not expressible — the
+	// enum would have to be built from a query, and [ParseFacetType]
+	// would stop being a parse-time whitelist. One dimension whose
+	// value names the field keeps the whitelist closed and puts the
+	// open set where it belongs, in the value grammar. See
+	// [FacetType.canonicalValue].
+	//
+	// This is the #1157 advanced page's whole mechanism, and it is
+	// deliberately the SAME mechanism the rail already uses — the
+	// issue's "do NOT invent a second query language" is satisfied by
+	// there being nothing new on the wire beyond one more dimension.
+	//
+	// # Filter-only, like FacetCollection
+	//
+	// No [Aggregator] and absent from [AllFacets]: a bucket list would
+	// mean a COUNT per field per value on every search, and the
+	// advanced page renders its pickers from the field DEFINITIONS
+	// (`GET /fields`, which carries each field's vocabulary) rather
+	// than from counts. #907's invariant is about a bucket's number
+	// equalling what ticking it returns, and a dimension that shows no
+	// bucket makes no such promise to break.
+	//
+	// # It is the first dimension that needs AUTHORIZING BY DIMENSION
+	//
+	// `collection:` needed [Selection.Authorize] because its VALUE
+	// names another entity. This one needs it because the FIELD does:
+	// `field_definition.read_capability` decides who may read a field
+	// at all, and #907 settled that a filter must not answer a question
+	// about a column the caller may not read — "with a narrow enough
+	// selection, the filter IS the item". So Authorize refuses a term
+	// naming a field this caller cannot read, and the search returns
+	// empty rather than an error, for the same no-oracle reason.
+	FacetField FacetType = "field"
 )
 
 // AllFacets returns the set of aggregators the dispatcher runs when
@@ -71,6 +113,8 @@ func ParseFacetType(s string) (FacetType, bool) {
 		return FacetExtension, true
 	case "collection":
 		return FacetCollection, true
+	case "field":
+		return FacetField, true
 	}
 	return "", false
 }

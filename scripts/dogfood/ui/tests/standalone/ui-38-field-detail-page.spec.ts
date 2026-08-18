@@ -296,10 +296,43 @@ test.describe('UI-38 the per-field page', () => {
     // footer, which AssetCard renders in `thumbnail` mode — a stored
     // browse preference, set here the same way the view control sets
     // it, so this drives the real card and not a hand-built one.
+    //
+    // ⚠️ THE SURFACE MOVED AGAIN (#1185), for the same kind of reason as
+    // last time: a product ruling took the grid away, not a regression in
+    // the decoration. A collection now shows POSTS only — the member grid
+    // this block used to assert against is gone from the route entirely —
+    // so the browser assertion goes back to the profile UPLOADS grid it
+    // started on. #1106's constraint still holds (that grid is `isSelf`
+    // only), which is why the target is the signed-in ADMIN'S OWN
+    // profile and an asset ADMIN owns, rather than the collection
+    // member above.
+    //
+    // The target is read out of the SAME request the profile makes
+    // (`/assets?owner_ref=&limit=24`), so "is it on the first page" is
+    // not a guess. The server splices above still cover the collection
+    // handler's projection, which is untouched by #1185.
+    const self = await page.request.get('/api/v1/users/by-username/admin');
+    expect(self.ok(), await self.text()).toBe(true);
+    const selfRef = ((await self.json()) as { ref: number }).ref;
+
+    const ownAssets = await page.request.get(`/api/v1/assets?owner_ref=${selfRef}&limit=24`);
+    expect(ownAssets.ok(), await ownAssets.text()).toBe(true);
+    const ownItems = ((await ownAssets.json()) as { items?: Array<{ id: string }> }).items ?? [];
+    expect(
+      ownItems.length,
+      'the signed-in admin owns no assets, so the profile uploads grid has no card to decorate',
+    ).toBeGreaterThan(0);
+    const cardAssetId = ownItems[0].id;
+
+    const putOwn = await page.request.put(`/api/v1/assets/${cardAssetId}/fields/${f.id}`, {
+      data: { value_text: 'on the card' },
+    });
+    expect(putOwn.ok(), await putOwn.text()).toBe(true);
+
     await page.addInitScript(() => {
       window.localStorage.setItem('aa_browse_mode', 'thumbnail');
     });
-    await page.goto(`/collections/${collectionId}`);
+    await page.goto('/users/by-username/admin');
     const cardValue = page.getByTestId(`card-field-${f.code}`).first();
     await expect(cardValue).toHaveText('on the card', { timeout: 15_000 });
     await page.screenshot({ path: testInfo.outputPath('card-field.png'), fullPage: true });

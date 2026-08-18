@@ -54,6 +54,9 @@ test.describe('UI-33 post-by-asset', () => {
     await page.goto(`/posts/by-asset/${multi}`);
     // Same shared control bar as browse + profile.
     await expect(page.getByTestId('view-controls')).toBeVisible();
+    // And, as on the profile, WITHOUT browse's asset-type filter
+    // (#1166) — see ui-32 for why that absence is asserted.
+    await expect(page.getByTestId('kind-filter-toggle')).toHaveCount(0);
   });
 
   test('the SimilarAssetsPanel link target renders (KNOWN_GAPS cleared)', async ({ page }) => {

@@ -5,6 +5,130 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
+## [v0.10.1] — 2026-08-17 — The listening release: every finding from two days of owner testing, landed
+
+### Changed
+
+- **Typing in the search box no longer re-queries the feed.** Suggestions still appear as you
+  type; the results change only when you press Enter. Measured: zero feed requests during
+  typing, exactly one on commit (#1156, PR #1162).
+- **The search button is now Advanced search.** It opens a dedicated page combining the typed
+  conditional builder with per-field metadata filters drawn from the instance's own field
+  catalogue; every choice composes into one query and lands on the normal results page with the
+  query in the address. Capability-gated fields refuse to filter for callers without the
+  capability (#1157, PR #1162).
+- **The thumbnail card's chrome settled into its final arrangement.** Type icon and count sit
+  top-left — with the file extension when a post holds exactly one asset (a set stays count +
+  icon; a hidden cover hides its extension too); the checkbox sits top-right; the ⋯ menu moved
+  to the bottom row beside the date, with a tighter rectangular hover shape. Personal asset
+  cards always show extension and date — the working surface earns the file detail
+  (PR #1175, refining #1158/#1171).
+
+### Fixed
+
+- **Every menu works from the keyboard.** The shared menu component's default styling made its
+  buttons invisible to keyboard focus — on the browse page not one menu could be reached by Tab,
+  including sign-out. All menus now have real focusable buttons, three had invalid nested-button
+  markup repaired, and a regression test walks the page by keyboard so this can't quietly return
+  (#1109, PR #1188).
+- **A stale dependency guard was re-armed.** The pin protecting a YAML library sat inside the
+  window of two newer advisories; it now floors at the patched version — kept rather than
+  removed, since removing it would let the tree resolve to a genuinely vulnerable version
+  (#1005, PR #1188).
+- **Collections show posts only.** The separate "assets" section on collection pages is gone,
+  along with every way to attach a bare asset to a collection — non-post assets belong to their
+  uploader until they're made into a post. The sample library's reference collections were
+  reworked so every formerly-bare asset lives in a real post, authored by its owner and public
+  only when everything in it is public (#1185, PR #1186; the deeper model change is #1161).
+- **Your feed shows everything you're allowed to see.** A signed-in member's wall used to
+  show only organization-internal posts — work published to the world was invisible to the
+  community it came from. The default is now every shared tier you can read (drafts stay out
+  of everyone's default wall, deliberately), which also makes filter counts finally agree
+  between signed-in and signed-out (#1193, PR #1199).
+- **Cover crops zoom, and the editor is one dialog with pages.** The crop box can be tightened,
+  so a subject sitting off to one side can actually be framed instead of only nudged up and
+  down; editing a cover is now a page inside the collection dialog with a Back button rather
+  than a second window on top of the first. On phones the picker and upload still work — only
+  the drag-a-crop stage steps aside, with a line saying so, because that part genuinely needs a
+  wider screen (#1212, PR #1213).
+- **A real cover editor for collections.** A roomy dialog with two independent covers — one for
+  the collection card, one for the featured strip — each with a drag-to-position crop box locked
+  to the shape that surface actually shows, so you choose what the crop keeps instead of hoping.
+  Covers can be any of the collection's works, anything else you own, or a picture you upload
+  right there (uploaded at the visibility that keeps it showing to whoever can see the
+  collection). The featured strip finally honours the cover you picked — it had been deriving
+  its own (#1207, PR #1208, also closing #1200, #1201, #1074).
+- **Collections can be made public from the edit dialog** — the option existed everywhere but
+  the dialog (it appears when the instance allows anonymous browsing); the dialog also gained a
+  crop preview showing exactly what the featured strip will display of your cover, and more
+  breathing room (#1195, PR #1199).
+- **A pack of one kind wears that kind's icon.** A multi-asset post whose visible contents are
+  all 3D models (or all videos, all images…) shows that type's icon with its count — the
+  generic "mixed" Shapes icon is reserved for genuinely mixed posts — across every view that
+  draws the badge, with matching hover text (#1203, PR #1205).
+- **Advanced search speaks plainly and scales.** Developer wording is gone from the page, and
+  any metadata field with a large vocabulary becomes a type-to-filter box instead of an endless
+  chip wall. The type filter also learned a power move: double-click an option to select only
+  it. Multi-asset thumbnails' hover text now reads naturally — "7 mixed assets in this post"
+  (#1191, PR #1196).
+- **The type filter sees inside posts.** Filtering by a type now matches any asset in a post
+  you're allowed to see, not just its cover — a post led by an image but containing an ebook
+  answers the ebook filter. Hidden assets still can't be probed. Multi-asset thumbnails also
+  name their shared file extension when everything inside agrees, or say "mixed" (#1190,
+  PR #1192).
+- **An empty filtered feed says why.** Filtering within the Following tab (or any narrow scope)
+  used to claim "no posts yet" as if the instance were empty; the message now names the active
+  filter and scope (#1190, PR #1192).
+- **The feed's sort button now filters too.** Beside Newest/Oldest sits a type filter — check
+  the asset types you want, all-checked means no filter, the button lights up when a subset is
+  active, and the feed refilters in place with the choice kept in the address. Filtering matches
+  what each card's badge shows, and a work whose cover is withheld from you matches no filter —
+  it cannot be found by elimination (#1166 first cut, PR #1184).
+- **Anonymous visitors can browse public work.** On an instance with public mode enabled, the
+  browse feed now serves signed-out viewers exactly the posts marked Public — with every
+  privacy rule (hidden names, restricted members, mature content, withheld covers) verified on
+  the anonymous path, writes still refused in both modes, and an honest empty-state when
+  nothing public matches (#1181 completing #1176, PR #1182).
+- **The "Public" visibility option actually works now.** Choosing Public when posting had
+  always been refused by the server (a leftover reservation from before public mode existed),
+  so nobody could ever offer a post to anonymous viewers. The gate now accepts it, the seeded
+  library carries a real share of public work, and choosing Public is covered by a test that
+  reads the post back as an anonymous viewer (#1176 in part, PR #1180 — the anonymous feed
+  route itself opens in a follow-up).
+- **Seeded dates stay in the past.** The sample library had three dozen posts dated up to four
+  months into the future, permanently pinned atop Newest; generated dates now reflect into the
+  past (#1174, PR #1180).
+- **Drag-select works on asset cards.** The marquee could not see personal asset tiles at all —
+  and the profile page had no marquee wiring to begin with; sweeps now select posts and assets
+  alike (#1177, PR #1180).
+- **Mature-content settings moved to Community & moderation** in the admin, where policy
+  belongs (#1179, PR #1180).
+- **Grid tiles are sharp everywhere.** Grid view had been loading the smallest saved copy of
+  every image (320px) and stretching it; tiles now request the right-sized copy for their
+  actual size and screen density, on every page that shows cards — measured upscale at high
+  density went from up to 5.8× down to the source's own limit (#1169, PR #1172).
+- **Thumbnail band controls sit together.** The checkbox and menu glyphs are 4px apart on
+  mouse screens; phones keep full-size touch targets (#1171, PR #1172).
+- **Search-by-image hides when the instance can't do it.** The advanced page checks whether
+  visual search is actually up — configured AND answering — before offering the drop zone
+  (#1163, PR #1172).
+- **Admin search results match admin suggestions.** Both use the same collection-readability
+  rule, so a completion is never offered that the results refuse (#1164, PR #1172).
+- **Endless scrolling stays ahead of the reader.** The next-page trigger had been watching the
+  wrong scroll container since the facet rail shipped, so its lookahead never applied and fast
+  wheel scrolling hit blank waits. It now watches the real one, 2.5 screens ahead: measured
+  blank-frame rate went from 9.7–15.5% to zero at wheel speed, at one request per page
+  (#1159, PR #1168).
+- **Thumbnail tiles lost the extension label.** The top band is now the asset-type icon (with
+  count on multi-asset posts) on the left and the checkbox + menu as a tight cluster on the
+  right; the icon's tooltip names the type (#1158, PR #1168).
+- **Search suggestions no longer offer terms that find nothing.** Suggestions are now backed by
+  the same match rule the search itself executes, per viewer and per surface — on the seeded
+  library the zero-result suggestion rate went from 9 in 25 to 0 (#1155, PR #1162).
+- **A filter-only search now runs.** Selecting a filter with no search text used to land on a
+  silent empty page — including plain extension filters, broken since the facet rail shipped.
+  One authority now decides what counts as a runnable search (#1157, PR #1162).
+
 ## [v0.10.0] — 2026-08-16 — The browse experience release: search sealed, the wall rebuilt, every view given its own feel
 
 ### Added

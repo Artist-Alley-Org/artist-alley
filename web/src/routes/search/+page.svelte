@@ -124,6 +124,25 @@
   let saving = $state(false);
   let saveResult = $state('');
 
+  /** IS THERE A SEARCH TO RUN? (#1157)
+   *
+   *  One predicate, because there used to be seven copies of `!q` and
+   *  they all said the same wrong thing: that a search is text or it is
+   *  nothing. A facet selection is a complete question on its own —
+   *  "everything at pipeline stage Final" is the primary thing the
+   *  advanced page exists to ask — and the dead arm was never specific
+   *  to its `field:` dimension: `/search?filter=extension:png` with no
+   *  `q` sat on the "Search the library" prompt too, and had since #907.
+   *
+   *  `kinds` is deliberately NOT part of this. A kind chip narrows a
+   *  result set; on its own "assets" is not a question, it is every
+   *  asset on the instance, which is browse rather than search.
+   *
+   *  Anything asking "may I query now" reads THIS, never `q` — including
+   *  the markup, so the idle prompt and the no-matches line agree with
+   *  what actually ran. */
+  const hasRunnableQuery = $derived(q.trim() !== '' || filters.length > 0);
+
   const activeCount = $derived.by(() => {
     if (totalCountCapped) return '10,000+';
     return totalCount.toLocaleString();
@@ -281,7 +300,9 @@
 
   async function runSearch(query: string, opts: { append?: boolean } = {}) {
     const gen = ++searchGen;
-    if (!query) {
+    // #1157 — a filter selection is a runnable query with no text. The
+    // clear-and-return below is for a genuinely EMPTY address only.
+    if (!query && filters.length === 0) {
       hits = [];
       totalCount = 0;
       totalCountCapped = false;
@@ -299,7 +320,8 @@
     error = '';
     try {
       const params = new URLSearchParams({ limit: '25' });
-      if (dslMode) params.set('dsl', query); else params.set('q', query);
+      if (dslMode) params.set('dsl', query);
+      else if (query !== '') params.set('q', query);
       if (kinds.length > 0) params.set('types', kinds.join(','));
       if (opts.append && cursor) params.set('cursor', cursor);
       // #907 — repeated, one per tick. Appended to BOTH requests: the
@@ -307,7 +329,8 @@
       // results, or the rail goes back to describing a page nobody is
       // looking at.
       for (const f of filters) params.append('filter', f);
-      const facetParams = new URLSearchParams({ q: query });
+      const facetParams = new URLSearchParams();
+      if (query !== '') facetParams.set('q', query);
       for (const f of filters) facetParams.append('filter', f);
       const [searchResp, facetsResp] = await Promise.all([
         fetch(`/api/v1/search?${params.toString()}`, { credentials: 'include' }),
@@ -373,7 +396,10 @@
     const url = new URL(page.url);
     url.searchParams.delete('q');
     url.searchParams.delete('dsl');
-    url.searchParams.set(dsl ? 'dsl' : 'q', query);
+    // An empty text term is ABSENT from the address rather than present
+    // and blank: `?q=&filter=...` and `?filter=...` must be the same
+    // page, and querySignature compares the rendered URL.
+    if (query !== '') url.searchParams.set(dsl ? 'dsl' : 'q', query);
     if (kinds.length > 0) url.searchParams.set('types', kinds.join(','));
     else url.searchParams.delete('types');
     // The facet selection is part of "what am I looking at" too, so a
@@ -392,14 +418,14 @@
 
   function toggleKind(kind: HitType) {
     kinds = kinds.includes(kind) ? kinds.filter((k) => k !== kind) : [...kinds, kind];
-    if (!q) return;
+    if (!hasRunnableQuery) return;
     pushQueryToURL(q, dslMode);
   }
 
   function clearKinds() {
     if (kinds.length === 0) return;
     kinds = [];
-    if (!q) return;
+    if (!hasRunnableQuery) return;
     pushQueryToURL(q, dslMode);
   }
 
@@ -413,14 +439,16 @@
     filters = filters.includes(token)
       ? filters.filter((f) => f !== token)
       : [...filters, token];
-    if (!q) return;
+    // Always pushed, never gated on `q`. The selection IS the query when
+    // there is no text, so a tick with an empty box has to navigate —
+    // and an untick that empties the selection has to navigate too, or
+    // the URL keeps a filter the page no longer applies.
     pushQueryToURL(q, dslMode);
   }
 
   function clearFilters() {
     if (filters.length === 0) return;
     filters = [];
-    if (!q) return;
     pushQueryToURL(q, dslMode);
   }
 
@@ -878,9 +906,9 @@
     </div>
   {/if}
 
-  {#if !loading && hits.length === 0 && q}
+  {#if !loading && hits.length === 0 && hasRunnableQuery}
     <p class="text-sm text-fg-muted">{t('search.no_matches')}</p>
-  {:else if !loading && !q}
+  {:else if !loading && !hasRunnableQuery}
     <!-- Landing on /search with no query. Not an "advanced search"
          headline page — an invitation to type, and nothing else on
          screen competing with the input above. -->

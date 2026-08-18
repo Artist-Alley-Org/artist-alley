@@ -85,6 +85,20 @@ type Handler struct {
 	// value (false) — a normal install never advertises demo mode.
 	DemoMode bool
 
+	// VisualSearchEnabled is the RESOLVED reverse-image capability
+	// (#1163), surfaced on the public /appearance boot payload so the
+	// frontend can omit the dropzone on an install that has no CLIP
+	// channel instead of discovering it from a failed upload.
+	//
+	// Resolved, not configured, and that distinction is the reason it
+	// is a field here rather than a read of `search.visual.enabled`:
+	// the by-image endpoint answers 501 whenever its Provider is nil,
+	// which happens when the operator disabled the feature OR when the
+	// sidecar was unreachable at boot. Only the boot path knows which,
+	// so it sets this after the provider bootstrap decides. Defaults to
+	// false, which is a default install.
+	VisualSearchEnabled bool
+
 	// BrowseViews is the cached read of the operator's enabled browse
 	// layouts (#709), used by the public boot-path endpoint. nil-safe:
 	// unwired, GetPublicBrowseViews reads the store directly, which is
@@ -701,6 +715,32 @@ func (h *Handler) GetPublicAppearance(
 	// true when AA_DEMO_MODE=1 was set at boot.
 	demo := h.DemoMode
 	out.DemoMode = &demo
+	// Same boot path, same reason (#1163): the reverse-image arm is a
+	// whole section of /search/advanced, and without this the only way
+	// the frontend could learn the instance has no CLIP channel was to
+	// upload an image and read the 501 back.
+	visual := h.VisualSearchEnabled
+	out.VisualSearchEnabled = &visual
+	// Same boot path, same reason again (#1195): a "Public" tier option
+	// on a collection promises anonymous readers, and an install with
+	// public mode off has none. The switch itself is read through
+	// GetPublicMode below, which requires system.config.read — a
+	// capability the curator choosing a tier does not have and should
+	// not need for this. So the flag rides the payload every client
+	// already fetches.
+	//
+	// A read failure resolves to FALSE rather than propagating. The flag
+	// decides whether one option is OFFERED; the read rule decides what
+	// anonymous callers actually get, and it consults the config
+	// directly. So the failure mode here is "the option is missing for a
+	// moment", not an exposure — and refusing to serve the whole boot
+	// payload (fonts, site name, logo) because one sysconfig row could
+	// not be read would take the app down for a control this pays for.
+	publicMode := false
+	if pm, pmErr := h.Store.GetPublicMode(ctx); pmErr == nil {
+		publicMode = pm.Enabled
+	}
+	out.PublicModeEnabled = &publicMode
 	return openapi.GetPublicAppearance200JSONResponse(out), nil
 }
 

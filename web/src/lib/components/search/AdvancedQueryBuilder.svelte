@@ -26,8 +26,20 @@
      *  submitted. The host owns what happens next — on /search that is
      *  re-running the query in place rather than navigating away. */
     onsubmit: (dsl: string) => void;
+    /** Seeds the free-text row (#1157). The advanced PAGE is reached
+     *  from the nav box carrying `?q=`, and dropping what the caller had
+     *  already typed is the same trap the nav control's own doc warns
+     *  about. Default empty keeps the slide-over host unchanged. */
+    initialFreeText?: string;
+    /** Whether to render the reverse-image dropzone inside this panel
+     *  (#1157). True for the slide-over, where this component IS the
+     *  whole advanced surface. False for the advanced PAGE, which gives
+     *  search-by-image a section of its own so it can be hidden when the
+     *  instance has no CLIP channel — rendering it in both places put
+     *  two dropzones on that page. */
+    showImageSearch?: boolean;
   }
-  let { onsubmit }: Props = $props();
+  let { onsubmit, initialFreeText = '', showImageSearch = true }: Props = $props();
 
   const FIELDS = [
     { value: 'title',       labelKey: 'search.advanced.field.title' },
@@ -44,7 +56,7 @@
 
   type Row = { field: string; value: string; not: boolean };
   let rows = $state<Row[]>([{ field: 'title', value: '', not: false }]);
-  let freeText = $state('');
+  let freeText = $state(initialFreeText);
 
   const compiled = $derived.by(() => {
     const parts: string[] = [];
@@ -81,8 +93,11 @@
 <p class="mb-4 text-sm text-fg-muted">{t('search.advanced.body')}</p>
 
 <!-- Reverse-image search sits above the DSL builder — a parallel search
-     mode in the same panel (Phase 1.55.W). -->
-<ReverseImageDropzone />
+     mode in the same panel (Phase 1.55.W). Suppressed when the host
+     renders its own arm (#1157). -->
+{#if showImageSearch}
+  <ReverseImageDropzone />
+{/if}
 
 <form onsubmit={submit} class="space-y-3">
   <label class="block">
@@ -141,9 +156,13 @@
     class="min-h-11 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
   >{t('search.advanced.add_row')}</button>
 
+  <!-- The preview of what will run. It stays (it is how someone learns
+       what the rows above add up to, and it is copy-pasteable), but
+       #1191 took the developer words off its label: an artist reading
+       "Compiled DSL" learns nothing they can act on. -->
   <div class="mt-6 overflow-x-auto rounded-md border border-border bg-surface p-3">
-    <div class="mb-1 text-xs font-medium text-fg-muted">{t('search.advanced.compiled_dsl')}</div>
-    <code class="block font-mono text-sm text-fg" data-testid="advanced-compiled">{compiled || t('search.advanced.compiled_empty')}</code>
+    <div class="mb-1 text-xs font-medium text-fg-muted">{t('search.advanced.preview_label')}</div>
+    <code class="block font-mono text-sm text-fg" data-testid="advanced-compiled">{compiled || t('search.advanced.preview_empty')}</code>
   </div>
 
   <div class="flex justify-end">

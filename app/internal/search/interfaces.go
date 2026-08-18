@@ -125,6 +125,36 @@ type Query struct {
 	// callers and a warm cache to exist at all. See
 	// visibility.MatureViewer.CacheKey and keyForQuery.
 	Mature visibility.MatureViewer
+	// CapChecker is the caller's RAW capability lookup (#1157).
+	//
+	// Its three neighbours above are resolved VALUE types, and that is
+	// the right shape for them: each answers a fixed, small set of
+	// questions the engine knows at compile time, so resolving at the
+	// edge makes them cache-key-able and keeps the engine from holding a
+	// live identity. `field_definition.read_capability` is not that
+	// shape. A capability code is DATA an operator types into a field
+	// definition at runtime, so the set of questions is open and there
+	// is nothing to resolve into.
+	//
+	// [visibility.ContentCaps.Checker] cannot stand in: it answers
+	// `system.admin` and `content.read.all` and returns false for every
+	// other code, so using it for the field gate would refuse a
+	// capability-gated field to the very holder of its capability —
+	// fail-closed, and a broken feature.
+	//
+	// Same reasoning and same shape as suggest.Request.CollectionCaps
+	// (#1078), which is a raw checker for the same reason: the rule it
+	// feeds takes one. Nil = no capabilities, correct for anonymous.
+	//
+	// ⚠️ IT CANNOT BE A CACHE-KEY COMPONENT, and that has a consequence
+	// recorded on [Service.Execute]: an open set of capability codes has
+	// no finite key, and `keyForQuery` is a pure function that cannot
+	// query the database to learn which of them this caller holds. The
+	// cache is consulted BEFORE Engine.Run, so [facet.Selection.Authorize]
+	// — which is inside Run — cannot protect a cache hit. A search whose
+	// selection names a `field:` term therefore bypasses the cache
+	// entirely. See [facet.Selection.NamesFieldDimension].
+	CapChecker visibility.CapabilityChecker
 
 	// Filters is the caller's facet selection — the tag, asset type,
 	// owner, sensitivity or extension they narrowed to (#907).

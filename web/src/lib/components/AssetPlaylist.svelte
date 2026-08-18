@@ -86,7 +86,6 @@
         When omitted the corresponding menu item stays disabled with
         a "coming soon" tooltip — keeps the menu shape stable across
         hosts that don't yet implement a given action. */
-    onAddToCollection?: (assetId: string) => void;
     onRecreatePreviews?: (assetId: string) => void;
     onEditTags?: (assetId: string) => void;
     onEditMetadata?: (assetId: string) => void;
@@ -121,7 +120,6 @@
     onClose,
     standalone = false,
     onNavigateSibling,
-    onAddToCollection,
     onRecreatePreviews,
     onEditTags,
     onEditMetadata,
@@ -762,9 +760,6 @@
               {maximized}
               onToggleMaximize={toggleMaximize}
               onClose={handleClose}
-              onAddToCollection={onAddToCollection
-                ? () => onAddToCollection(currentItem.asset.id)
-                : undefined}
               onRecreatePreviews={onRecreatePreviews
                 ? () => onRecreatePreviews(currentItem.asset.id)
                 : undefined}

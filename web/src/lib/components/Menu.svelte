@@ -4,15 +4,25 @@
   // Accessible dropdown menu primitive.
   //
   // Usage:
-  //   <Menu>
-  //     <svelte:fragment slot="trigger" let:open>
-  //       <button ...>{open ? '▾' : '▸'}</button>
-  //     </svelte:fragment>
+  //   <Menu triggerClass="inline-flex rounded-md ...">
+  //     {#snippet trigger({ open })}
+  //       <span class="...chip styling...">{open ? '▾' : '▸'}</span>
+  //     {/snippet}
   //     <a href="..." role="menuitem">Item</a>
   //   </Menu>
   //
+  // THE TRIGGER SNIPPET IS NOT A BUTTON. This component renders the
+  // `<button aria-haspopup="menu">` itself and the snippet fills it, so
+  // the snippet's outermost element is a `<span>` carrying the chip's
+  // padding, background and hover treatment. Putting a real `<button>`
+  // in there nests a control inside a control: invalid markup, two tab
+  // stops on one affordance, and a second thing in the accessibility
+  // tree claiming to be the trigger. The example above used to show a
+  // nested button and three call sites copied it (#1109).
+  //
   // Behaviour:
-  //   * Trigger child renders inline; on click it opens/closes.
+  //   * The trigger button is inline-level and shrink-wraps the
+  //     snippet; on click it opens/closes.
   //   * Default-slot content renders inside the popup div with
   //     role="menu". Caller is responsible for marking each item
   //     with role="menuitem".
@@ -40,28 +50,32 @@
     triggerTestId?: string;
     /** `data-testid` for the dropdown panel (rendered when open). */
     panelTestId?: string;
-    /** Class for the wrapping trigger BUTTON.
+    /** Class for the wrapping trigger BUTTON. It MUST generate a box.
      *
-     *  ⚠️ The default `contents` makes this menu unreachable by
-     *  keyboard, and that is a real defect, not a style choice.
-     *  Measured in Chromium on the browse page (#1097): every
-     *  `button[aria-haspopup="menu"]` carrying `class="contents"` —
-     *  six of them on `/` alone — reports `getClientRects().length ===
-     *  0`, refuses `.focus()`, and is skipped by Tab. An element with
-     *  `display: contents` generates no box, and browsers stopped
-     *  making an exception for form controls, so the button is styling
-     *  scaffolding that no longer exists at layout time. The visible
-     *  chip inside it is a `<span>`, which is not focusable either, so
-     *  there is nothing left to land on.
+     *  The default used to be `contents`, and that was the #1109
+     *  defect: an element with `display: contents` generates no box,
+     *  browsers stopped making an exception for form controls, and the
+     *  button became styling scaffolding that no longer existed at
+     *  layout time. Measured in Chromium on `/` (#1097): every
+     *  `button[aria-haspopup="menu"]` carrying `class="contents"`
+     *  reported `getClientRects().length === 0`, refused `.focus()`,
+     *  and was skipped by Tab. The visible chip inside it is a
+     *  `<span>`, which is not focusable either, so there was nothing
+     *  left to land on — a keyboard user could not open the user menu,
+     *  which meant they could not sign out.
      *
-     *  Pass a value that GENERATES A BOX — `inline-flex` is the usual
-     *  one — and the trigger becomes focusable and tabbable again with
-     *  no other change. The default is left alone here deliberately:
-     *  flipping it would re-layout every existing menu in the app in
-     *  one unrelated commit. Repairing the rest of them is its own
-     *  change, and this prop is what it will use.
+     *  The default is now `inline-flex`, and every call site in the
+     *  tree passes an explicit value that shrink-wraps its own chip.
+     *  The rule for a new one: the CHIP keeps its padding, background
+     *  and hover treatment; this class carries only the box (usually
+     *  `inline-flex`), the matching corner radius so the focus ring
+     *  traces the chip's shape, and the ring itself. Never `contents`,
+     *  and never anything with `display: none` behind a breakpoint —
+     *  the trigger is the only focusable thing in this component until
+     *  the panel opens.
      *
-     *  New callers should pass one. */
+     *  Focusability is pinned by
+     *  `scripts/dogfood/ui/tests/standalone/menu-trigger-focus-1109.spec.ts`. */
     triggerClass?: string;
   }
 
@@ -72,7 +86,7 @@
     panelClass = '',
     triggerTestId,
     panelTestId,
-    triggerClass = 'contents',
+    triggerClass = 'inline-flex',
   }: Props = $props();
 
   let open = $state(false);

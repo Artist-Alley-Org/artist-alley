@@ -19,6 +19,9 @@
 //	applyAssets      bytes -> content store, then asset row + tags +
 //	                 collection membership + typed field values
 //	applyPosts       post row + members + tags + collection linkage
+//	applyCollectionPostBackfill
+//	                 compose a post for every collection member the
+//	                 dataset left bare, so the wall shows them (#1185)
 //	applyComments    forge reviewer comments from asset review_notes
 //	verify           count rows
 //
@@ -142,6 +145,13 @@ type Runner struct {
 
 	adminRef int64
 
+	// genTime is the instant this run started, and the ceiling every
+	// row timestamp is clamped to (#1174). Captured ONCE so a run is
+	// internally consistent: a post, its assets and its derived
+	// likes/comments all measure against the same "now" no matter how
+	// long the run takes.
+	genTime time.Time
+
 	// resolved lookups
 	assetStates map[string]pgtype.UUID // asset:1 code -> state id
 	postStates  map[string]pgtype.UUID // post code -> state id
@@ -186,6 +196,7 @@ func NewRunner(pool *pgxpool.Pool, storageSvc *storage.Service, opts Options) *R
 		jobs:        jobs.NewService(pool, opts.Logger, nil),
 		log:         opts.Logger,
 		opts:        opts,
+		genTime:     time.Now().UTC(),
 		assetStates: map[string]pgtype.UUID{},
 		postStates:  map[string]pgtype.UUID{},
 		assetTypes:  map[string]int64{},
@@ -261,6 +272,7 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 		{"applyFeatured", r.applyFeatured},
 		{"applyAssets", r.applyAssets},
 		{"applyPosts", r.applyPosts},
+		{"applyCollectionPostBackfill", r.applyCollectionPostBackfill},
 		{"applyLikes", r.applyLikes},
 		{"applyComments", r.applyComments},
 		{"applyPostComments", r.applyPostComments},
@@ -676,11 +688,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			typeRef = 1 // fall back to Image
 		}
-		created := parseTime(a.CreatedAt)
-		updated := parseTime(a.UpdatedAt)
-		if !updated.Valid {
-			updated = created
-		}
+		created, updated := r.rowTimes(a.CreatedAt, a.UpdatedAt)
 		var ownerRef *int64
 		if ref, ok := r.users[a.OwnerUsername]; ok {
 			ownerRef = &ref
@@ -1138,12 +1146,20 @@ func (r *Runner) applyAssetFields(ctx context.Context, assetID pgtype.UUID, vals
 // --- phase: posts -----------------------------------------------------
 
 func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
-	inserted, skipped := 0, 0
+	assetTiers := make(map[string]string, len(cat.Assets))
+	for _, a := range cat.Assets {
+		assetTiers[a.ID] = sensitivity(a.SensitivityTier)
+	}
+	inserted, skipped, madePublic := 0, 0, 0
 	for _, p := range cat.Posts {
 		// Resolve members from inserted assets (apply.py "any member" rule).
 		var members []pgtype.UUID
+		var coverManifestID string
 		for _, aid := range p.AssetIDs {
 			if sid, ok := r.assets[aid]; ok {
+				if len(members) == 0 {
+					coverManifestID = aid
+				}
 				members = append(members, sid)
 			}
 		}
@@ -1155,18 +1171,18 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			authorRef = r.adminRef
 		}
-		created := parseTime(p.CreatedAt)
-		updated := parseTime(p.UpdatedAt)
-		if !updated.Valid {
-			updated = created
-		}
+		created, updated := r.rowTimes(p.CreatedAt, p.UpdatedAt)
 		cover := members[0]
+		vis := postVisibility(p, assetTiers[coverManifestID])
+		if vis == "public" {
+			madePublic++
+		}
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
 			ID:            parseUUID(p.ID),
 			AuthorUserRef: authorRef,
 			Title:         orDefault(p.Title, "Untitled"),
 			Description:   p.Description,
-			Visibility:    "org-only",
+			Visibility:    vis,
 			CoverAssetID:  cover,
 			StateID:       r.postStates["published"],
 			TeamID:        r.teamIDForName(p.TeamName),
@@ -1205,8 +1221,245 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		}
 		inserted++
 	}
-	r.log.Info("seed.posts", "inserted", inserted, "skipped_no_members", skipped)
+	r.log.Info("seed.posts", "inserted", inserted, "skipped_no_members", skipped, "public", madePublic)
 	return nil
+}
+
+// postVisibility decides a seeded post's visibility tier (#1176).
+//
+// Every seeded post used to be written 'org-only', so an instance with
+// public mode ON served anonymous visitors a 200 with zero items: the
+// public tier existed in the CHECK constraint, was enforced and tested
+// in the ACL, and was offered by the compose form, but nothing in the
+// corpus ever used it. The anonymous wall — the whole point of public
+// mode — could not be looked at.
+//
+// The rule is the DATASET'S OWN declaration, not an arbitrary hash
+// slice: a post goes public when it declares sensitivity_tier 'public'
+// AND its cover asset does too. Both halves are load-bearing.
+//
+//   - The post tier is what says this content is publishable at all.
+//     ~24% of the corpus declares it; the other ~76% (team + restricted)
+//     stays org-only, so team-scoped content remains the majority, which
+//     is the ruling: uploaders get the OPTION of anonymous viewing, it
+//     does not become the default.
+//   - The COVER tier is what decides whether the card can be LOOKED at.
+//     A member asset the viewer may not read is redacted per caller
+//     (#883), which is correct — but when the redacted member is the
+//     cover, the card renders as a placeholder with no image. Admitting
+//     those would put a visibly broken tile on ~18% of the anonymous
+//     wall. Requiring a public cover drops that to zero.
+//
+// Non-cover members are deliberately NOT constrained: ~47 of the posts
+// this admits carry a team-tier member behind a public cover, so the
+// anonymous redaction path finally has seed coverage instead of being a
+// branch no fixture reaches.
+//
+// Measured against site_a: 164 of 847 posts (19.4%) go public.
+func postVisibility(p manifestPost, coverTier string) string {
+	if p.SensitivityTier == "public" && coverTier == "public" {
+		return "public"
+	}
+	return "org-only"
+}
+
+// --- phase: collection post backfill ----------------------------------
+
+// applyCollectionPostBackfill authors a post for every collection member
+// asset the dataset left bare (#1185).
+//
+// A collection renders POSTS and nothing else now. `collection_resources`
+// is still written by applyAssets and still feeds the cover mosaic, but
+// nothing draws it as content — so an asset pinned to a collection that no
+// post in that collection frames simply vanishes from the page. Measured
+// against site_a that is 37 of Internet Reference's 118 members: the
+// dataset's own generator groups loose assets into bundles keyed on
+// (collection, team, asset_type) and leaves a tail behind, and 36 of those
+// 37 ARE in a post — one filed under Project Echo. Membership of a
+// collection and authorship of a post are different relations in this
+// corpus, which is exactly why the gap exists and why the fix belongs
+// here rather than in the dataset: a subset profile (`--profile ci`,
+// `--limit-per-extension`) can widen it arbitrarily by dropping the
+// members a post needed, and applyPosts then skips that post entirely.
+//
+// Composition:
+//
+//   - Members are grouped by `metadata.group_id`, the dataset's own
+//     grouping key and the same one seed/scripts/sanitize_and_assemble.py
+//     composes its `asset_group` posts from. Assets without one become
+//     single-asset posts. In site_a every one of the 37 is groupless, so
+//     the group arm is here for the subset profiles and for future
+//     datasets, not for decoration.
+//   - The author is the first member's OWNER, not the bootstrap admin. A
+//     post is someone's work; attributing a backfilled one to `admin`
+//     would put a wall of admin-authored posts on collections owned by
+//     artists and make every "posts by this user" surface lie.
+//   - VISIBILITY RULE: `public` iff EVERY member asset is sensitivity
+//     `public`; otherwise `org-only`. This is stricter than
+//     postVisibility's dataset rule, which constrains only the cover so
+//     that ~47 posts carry a withheld member behind a public cover and
+//     the anonymous redaction path (#883) gets seed coverage. That
+//     coverage already exists and is deliberate; a backfilled post has no
+//     authored `sensitivity_tier` to honour, so widening one to public on
+//     the strength of its cover alone would be inventing a publication
+//     decision nobody made.
+//
+// Post ids are stableUUID-derived, so a re-run re-composes the same posts
+// and lands on SeedInsertPost's ON CONFLICT path rather than duplicating
+// the wall.
+func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogues) error {
+	// covered[collection name] = manifest asset ids already framed by a
+	// post PINNED IN THAT COLLECTION. Keyed on the collection because the
+	// same asset can be framed by a post filed elsewhere, and that post
+	// does not put it on this collection's wall.
+	covered := make(map[string]map[string]struct{}, len(r.collections))
+	for _, p := range cat.Posts {
+		if p.CollectionName == "" {
+			continue
+		}
+		// Only posts that were actually INSERTED count. applyPosts skips a
+		// post whose members all fell out, and a skipped post frames
+		// nothing.
+		if _, ok := r.posts[p.ID]; !ok {
+			continue
+		}
+		if _, ok := r.collections[p.CollectionName]; !ok {
+			continue
+		}
+		set := covered[p.CollectionName]
+		if set == nil {
+			set = make(map[string]struct{})
+			covered[p.CollectionName] = set
+		}
+		for _, aid := range p.AssetIDs {
+			set[aid] = struct{}{}
+		}
+	}
+
+	type bundle struct {
+		collection string
+		members    []manifestAsset
+	}
+	// Insertion order is the catalogue's, so the composed wall is stable
+	// across runs — a map range would shuffle titles and sort_order.
+	var order []string
+	index := make(map[string]*bundle)
+	for _, a := range cat.Assets {
+		if a.CollectionName == "" {
+			continue
+		}
+		if _, ok := r.collections[a.CollectionName]; !ok {
+			continue
+		}
+		if _, ok := r.assets[a.ID]; !ok {
+			continue // never inserted: missing bytes, or deduped on hash
+		}
+		if _, ok := covered[a.CollectionName][a.ID]; ok {
+			continue
+		}
+		key := a.CollectionName + "\x00"
+		if gid := assetGroupID(a); gid != "" {
+			key += "g:" + gid
+		} else {
+			key += "a:" + a.ID
+		}
+		b := index[key]
+		if b == nil {
+			b = &bundle{collection: a.CollectionName}
+			index[key] = b
+			order = append(order, key)
+		}
+		b.members = append(b.members, a)
+	}
+
+	inserted, madePublic, bare := 0, 0, 0
+	for _, key := range order {
+		b := index[key]
+		bare += len(b.members)
+		first := b.members[0]
+
+		authorRef, ok := r.users[first.OwnerUsername]
+		if !ok {
+			authorRef = r.adminRef
+		}
+		vis := "public"
+		var tags []string
+		for _, m := range b.members {
+			if sensitivity(m.SensitivityTier) != "public" {
+				vis = "org-only"
+			}
+			tags = append(tags, m.Tags...)
+		}
+		if vis == "public" {
+			madePublic++
+		}
+		created, updated := r.rowTimes(first.CreatedAt, first.UpdatedAt)
+		title := orDefault(first.Title, "Untitled")
+		description := first.Description
+		if len(b.members) > 1 {
+			title = fmt.Sprintf("%s — %d assets", title, len(b.members))
+			description = fmt.Sprintf("%s working set for %s. %d assets pulled together for review.",
+				orDefault(first.TeamName, "Reference"), b.collection, len(b.members))
+		}
+		postID := stableUUID("collection-post-backfill", key)
+		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
+			ID:            parseUUID(postID.String()),
+			AuthorUserRef: authorRef,
+			Title:         title,
+			Description:   description,
+			Visibility:    vis,
+			CoverAssetID:  r.assets[first.ID],
+			StateID:       r.postStates["published"],
+			TeamID:        r.teamIDForName(first.TeamName),
+			CreatedAt:     created,
+			UpdatedAt:     updated,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Already composed by a prior run.
+				continue
+			}
+			return fmt.Errorf("insert backfill post %s: %w", key, err)
+		}
+		for i, m := range b.members {
+			if err := r.q.SeedInsertPostAsset(ctx, SeedInsertPostAssetParams{
+				PostID: id, AssetID: r.assets[m.ID], SortOrder: int32(i),
+			}); err != nil {
+				return fmt.Errorf("backfill post asset %s: %w", key, err)
+			}
+		}
+		for _, tag := range dedupStrings(tags) {
+			if err := r.q.SeedInsertPostTag(ctx, SeedInsertPostTagParams{PostID: id, Tag: tag}); err != nil {
+				return fmt.Errorf("backfill post tag %s: %w", key, err)
+			}
+		}
+		if err := r.q.SeedInsertCollectionPost(ctx, SeedInsertCollectionPostParams{
+			CollectionID: r.collections[b.collection], PostID: id,
+		}); err != nil {
+			return fmt.Errorf("backfill collection post %s: %w", key, err)
+		}
+		inserted++
+	}
+	r.log.Info("seed.collection_post_backfill",
+		"bare_members", bare, "posts", inserted, "public", madePublic)
+	return nil
+}
+
+// assetGroupID reads the dataset's grouping key out of an asset's opaque
+// metadata blob. It is NOT a manifestAsset field: `metadata` is carried
+// through to `assets.metadata` as raw jsonb, and `group_id` is one key
+// inside it (1802 of site_a's 1947 assets carry one).
+func assetGroupID(a manifestAsset) string {
+	if len(a.Metadata) == 0 {
+		return ""
+	}
+	var md struct {
+		GroupID string `json:"group_id"`
+	}
+	if err := json.Unmarshal(a.Metadata, &md); err != nil {
+		return ""
+	}
+	return md.GroupID
 }
 
 // --- phase: comments --------------------------------------------------
@@ -1246,7 +1499,7 @@ func (r *Runner) applyComments(ctx context.Context, cat *catalogues) error {
 			continue
 		}
 		cid := stableUUID("comment", a.ID, uuidString(postID))
-		created := parseTime(a.UpdatedAt)
+		created := r.rowTime(a.UpdatedAt)
 		in := CommentInput{
 			ID:            &cid,
 			TargetKind:    CommentTargetPost,
@@ -1409,6 +1662,66 @@ func parseTime(s string) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
+// clampToPast maps a dataset timestamp onto the closed past (#1174).
+//
+// The site datasets scatter created_at/updated_at around the date they
+// were generated in BOTH directions, so a fresh seed lands rows dated
+// months ahead of the machine seeding them: 36 posts and 155 assets out
+// to 2026-12-14 when the bug was found. Future-dated rows sit pinned at
+// the top of every Newest sort until their date arrives (a permanently
+// static feed head), display dates that have not happened, and quietly
+// widen any date-window logic tested against the seed.
+//
+// Timestamps already in the past are returned UNCHANGED — that is the
+// overwhelming majority of the corpus, so the seed keeps its dataset
+// dates and stays byte-reproducible run to run. Only the overshoot is
+// rewritten, and it is REFLECTED rather than pinned to `now`: a row
+// four months ahead becomes four months old. Pinning would collapse
+// every future row onto one instant, which trades the future-dates bug
+// for a clump of 155 identically-dated rows sitting at the head of the
+// feed — the same static-head symptom the fix exists to remove.
+// Reflection spreads them back across the corpus's own date range.
+//
+// Reflection reverses ORDER within the reflected set, so a row's
+// created_at can come out later than its updated_at; callers pair this
+// with an updated >= created normalisation (see rowTimes).
+func clampToPast(t, now time.Time) time.Time {
+	if !t.After(now) {
+		return t
+	}
+	return now.Add(-t.Sub(now))
+}
+
+// rowTime parses a dataset timestamp destined for a ROW's created_at /
+// updated_at / liked_at and clamps it to the generation instant.
+//
+// It is deliberately NOT folded into parseTime: parseTime also reads
+// metadata FIELD values (a `datetime` field's contents, parseDateValue),
+// which are user data and legitimately hold future dates — a shoot date,
+// a licence expiry. Clamping those would corrupt the value.
+func (r *Runner) rowTime(s string) pgtype.Timestamptz {
+	ts := parseTime(s)
+	if !ts.Valid {
+		return ts
+	}
+	return pgtype.Timestamptz{Time: clampToPast(ts.Time, r.genTime), Valid: true}
+}
+
+// rowTimes clamps a row's created/updated pair and restores the
+// invariant that a row is not updated before it exists — which both an
+// absent updated_at and clampToPast's order reversal can break.
+func (r *Runner) rowTimes(createdAt, updatedAt string) (created, updated pgtype.Timestamptz) {
+	created = r.rowTime(createdAt)
+	updated = r.rowTime(updatedAt)
+	if !updated.Valid {
+		updated = created
+	}
+	if created.Valid && updated.Valid && updated.Time.Before(created.Time) {
+		updated = created
+	}
+	return created, updated
+}
+
 // dateOnlyLayout is the calendar date a `date`-typed field accepts in
 // addition to RFC3339. Midnight UTC, matching what the API's own date
 // writer stores.
@@ -1484,10 +1797,17 @@ func (r *Runner) sortedUsernames() []string {
 // contentSpan is the [earliest, latest] post created_at window. Follow /
 // like / comment timestamps are distributed inside it (dataset-derived,
 // so reproducible — no now()).
+//
+// It reads the CLAMPED post dates (#1174), which is what makes the whole
+// derived social graph inherit the clamp: hi is the newest post the
+// seeder actually wrote, so every follow, like and comment placed inside
+// the span lands at or before the generation instant. Reading the raw
+// dataset dates here would leave the derived rows in the future even
+// after the posts themselves were pulled back.
 func (r *Runner) contentSpan(cat *catalogues) (time.Time, time.Time) {
 	var lo, hi time.Time
 	for _, p := range cat.Posts {
-		t := parseTime(p.CreatedAt)
+		t := r.rowTime(p.CreatedAt)
 		if !t.Valid {
 			continue
 		}
@@ -1640,10 +1960,11 @@ func followEdges(names []string) [][2]string {
 
 // --- phase: likes -----------------------------------------------------
 //
-// Like ROWS per post, only from users who can see it. Seed posts are all
-// org-only (applyPosts) → visible to every fictional user (the walled
-// garden), so the eligible pool is all users minus the author; a private
-// post (none in the dataset today) would collapse to the author. The
+// Like ROWS per post, only from users who can see it. Seed posts are
+// org-only or public (applyPosts, #1176) → both are visible to every
+// fictional user (the walled garden, plus everyone outside it), so the
+// eligible pool is all users minus the author; a private post (none in
+// the dataset today) would collapse to the author. The
 // likes_after_insert trigger keeps posts.like_count == the row count.
 func (r *Runner) applyLikes(ctx context.Context, cat *catalogues) error {
 	names := r.sortedUsernames()
@@ -1658,11 +1979,12 @@ func (r *Runner) applyLikes(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			continue
 		}
-		// Eligible viewers = who can see the post. Seed posts are all
-		// org-only (applyPosts) ⇒ every fictional user can see every post;
-		// the author is excluded from their own likes below. If the seed
-		// ever grows private/followers-gated posts, the eligible pool
-		// would narrow here (ADR 0010) — today it's the whole membership.
+		// Eligible viewers = who can see the post. Seed posts are
+		// org-only or public (applyPosts) ⇒ every fictional user can see
+		// every post; the author is excluded from their own likes below.
+		// If the seed ever grows private/followers-gated posts, the
+		// eligible pool would narrow here (ADR 0010) — today it's the
+		// whole membership.
 		eligible := names
 		// Skewed like count: a baseline for every post, plus a big bump
 		// for ~1-in-5 "popular" posts.
@@ -1670,7 +1992,7 @@ func (r *Runner) applyLikes(ctx context.Context, cat *catalogues) error {
 		if stableIntn(5, "likepop", p.ID) == 0 {
 			count += 8 + stableIntn(12, "likebonus", p.ID)
 		}
-		postCreated := parseTime(p.CreatedAt).Time
+		postCreated := r.rowTime(p.CreatedAt).Time
 		for _, liker := range pickDistinct(eligible, count, p.AuthorUsername, "like", p.ID) {
 			ref := r.users[liker]
 			ts := stableTimeBetween(postCreated, hi, "likeat", p.ID, liker)
@@ -1711,7 +2033,7 @@ func (r *Runner) applyPostComments(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			continue
 		}
-		postCreated := parseTime(p.CreatedAt).Time
+		postCreated := r.rowTime(p.CreatedAt).Time
 		nTop := stableIntn(4, "cmtcnt", p.ID) // 0..3
 		for ci, author := range pickDistinct(names, nTop, p.AuthorUsername, "cmt", p.ID) {
 			cis := strconv.Itoa(ci)

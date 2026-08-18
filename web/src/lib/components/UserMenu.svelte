@@ -38,7 +38,12 @@
 </script>
 
 {#if u}
-  <Menu align="right" triggerTestId="nav-user-menu-trigger" panelTestId="user-menu-panel">
+  <Menu
+    align="right"
+    triggerTestId="nav-user-menu-trigger"
+    panelTestId="user-menu-panel"
+    triggerClass="inline-flex rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  >
     {#snippet trigger({ open })}
       <span
         class="inline-flex items-center gap-2 rounded-full p-1 pr-3 hover:bg-surface-elevated"

@@ -648,6 +648,17 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			s.visualEmbedDispatcher.MaxAttempts = s.visualEmbedCfg.MaxAttempts
 		}
 	}
+	// #1163 — publish the RESOLVED reverse-image capability on the
+	// public /appearance boot payload. It is read off the provider and
+	// not off `searchCfg.Visual.Enabled` deliberately: the branch above
+	// leaves the provider nil when the sidecar failed to bootstrap even
+	// though the config flag is on, and in that state POST
+	// /search/by-image answers 501. `s.visualProvider != nil` is
+	// exactly the condition ByImageHandler dispatches on, so the client
+	// is told what the endpoint will actually do.
+	if s.sysconfigH != nil {
+		s.sysconfigH.VisualSearchEnabled = s.visualProvider != nil
+	}
 
 	// sub-package Counter interfaces + healthhandler shim. Manifest
 	// cache is registered with cacheReg so peer instances receive

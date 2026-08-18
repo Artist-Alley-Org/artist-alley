@@ -74,10 +74,23 @@ func (e *Engine) ladder(ctx context.Context) []string {
 // normalises scores, merges, orders, cuts to the page, computes
 // the next cursor, and stamps total counts.
 func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
-	// Empty text is allowed when the caller supplied a
-	// SimilarityHint — the hybrid path can rank purely on vector
-	// similarity. Pure-BM25 empty queries stay rejected.
-	if q.Text == "" && q.SimilarityHint == "" {
+	// WHAT COUNTS AS A SEARCH TO RUN.
+	//
+	// Empty text is allowed when the caller supplied a SimilarityHint —
+	// the hybrid path can rank purely on vector similarity — and, since
+	// #1157, when the caller supplied a FACET SELECTION.
+	//
+	// The selection arm is the fix for a dead arm that predates the
+	// advanced page and is not specific to its `field:` dimension:
+	// `/search?filter=extension:png` with no `q` returned 400
+	// `query_required`, and so did every other dimension. "Everything at
+	// pipeline stage Final" is the primary thing an advanced search page
+	// exists to ask, and a filter is a complete question on its own — the
+	// mature incumbent's browse IS a search with the query unspecified
+	// (#1067), which is exactly this shape.
+	//
+	// Only a request carrying NONE of the three is empty.
+	if q.Text == "" && q.SimilarityHint == "" && q.Filters.Empty() {
 		return QueryResult{}, ErrEmptyQuery
 	}
 	limit := q.Limit
@@ -103,8 +116,14 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 	// stops a direct read. See [facet.Selection.Authorize] for why the
 	// answer is an empty page rather than a 403, and why an unscoped
 	// search pays nothing for this.
+	// #1157 — the checker passed here is the RAW one when the handler
+	// supplied it, falling back to the resolved content caps.
+	// ContentCaps.Checker answers only `system.admin` and
+	// `content.read.all`, which is everything the collection arm needs
+	// (CanReadCollection checks system.admin alone) and nowhere near
+	// enough for the field arm, whose capability code is data.
 	allowed, err := q.Filters.Authorize(ctx, e.Pool,
-		visibility.NewCaller(q.CallerUserRef), q.Caps.Checker())
+		visibility.NewCaller(q.CallerUserRef), authorizeChecker(q))
 	if err != nil {
 		return QueryResult{}, fmt.Errorf("search: authorize filters: %w", err)
 	}
@@ -230,6 +249,25 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 }
 
 // containsHitType is a tiny lookup helper used by the hybrid gate.
+// authorizeChecker returns the capability lookup [facet.Selection.Authorize]
+// should use for this query.
+//
+// The raw checker is a SUPERSET of the resolved one — it is the same
+// identity the resolved values were computed from — so ORing them costs
+// nothing and cannot narrow. The fallback matters for the internal
+// callers that build a Query without going through the HTTP edge (the
+// saved-search notifier, save-as-collection, tests): they keep exactly
+// the collection-arm behaviour they had before #1157, rather than
+// silently losing the admin disjunct to a nil checker.
+func authorizeChecker(q Query) visibility.CapabilityChecker {
+	resolved := q.Caps.Checker()
+	if q.CapChecker == nil {
+		return resolved
+	}
+	raw := q.CapChecker
+	return func(code string) bool { return raw(code) || resolved(code) }
+}
+
 func containsHitType(types []HitType, want HitType) bool {
 	for _, t := range types {
 		if t == want {
@@ -636,6 +674,58 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 		"assets", `plainto_tsquery('english', $1)`, "$3",
 		caller, q.Caps, mut)
 
+	// #1157 — A FILTER-ONLY SEARCH DROPS THE `@@` HALF AND KEEPS THE
+	// SECURITY HALF.
+	//
+	// `plainto_tsquery('english', '')` is the EMPTY tsquery and
+	// `search_text @@ ''` is false for every row, so a text-less search
+	// that kept this conjunct would return nothing no matter what the
+	// caller filtered on. What has to go is the text predicate; what must
+	// NOT go with it is `FieldsReadableSQL`, which is the other half of
+	// AssetSearchMatchSQL and the whole of #902's gate.
+	//
+	// So this rebuilds the conjunct as the field plane ALONE rather than
+	// skipping matchFrag. The #907 filter conjunct above already appends
+	// the identical expression whenever a selection is active — and a
+	// filter-only search always has one — so this is belt and braces.
+	// That is deliberate: making the gate depend on the other branch
+	// staying non-empty would be a security property held up by an `if`
+	// somewhere else, which is how #1065's convention-only rule got
+	// filed. Two identical conjuncts AND together to themselves.
+	//
+	// ⚠️ The condition is `Text == "" AND a selection exists`, never
+	// `Text == ""` alone. A similarity-only query (empty text, a
+	// SimilarityHint, no filters) reaches here too, and today its text
+	// leg deliberately matches NOTHING — applyHybrid contributes the
+	// vector hits separately. Widening on empty text alone would turn
+	// that leg into "every asset", unranked and unfiltered.
+	//
+	// The `TRUE` seed is load-bearing, not filler: this fragment is
+	// spliced straight after `WHERE`, so it has to be a standalone
+	// boolean, and FieldsReadableSQL returns the EMPTY string for a
+	// system.admin / content.read.all / global assets.admin caller. A
+	// bare `(` + fragment + `)` would render `()` for exactly those
+	// callers — a syntax error on the admin path, which is the path most
+	// likely to be used to test this.
+	//
+	// `$1` is REFERENCED as a typed tautology rather than dropped. It is
+	// still bound (the hits query ranks on it), but the COUNT statement's
+	// only mention of it was the predicate now being removed, and pgx
+	// rejects a statement bound with an argument it never names —
+	// `could not determine data type of parameter $1`. Same tautology
+	// trick, and same reason, as the `$3`/`$4` references below.
+	//
+	// ⚠️ THE INNER PARENTHESES AROUND THE TAUTOLOGY ARE LOAD-BEARING.
+	// `AND` binds tighter than `OR`, so writing it unparenthesised would
+	// parse as `($1 IS NOT NULL) OR (TRUE AND <field plane>)` — a
+	// disjunction that is TRUE for every row and SHEDS THE SECURITY
+	// CONJUNCT entirely. Grouped, it is `(<tautology>) AND (<field
+	// plane>)`, which is what it has to be.
+	if q.Text == "" && !q.Filters.Empty() {
+		matchFrag = `(($1::TEXT IS NOT NULL OR TRUE)` +
+			visibility.FieldsReadableSQL("assets", "$3", caller, q.Caps, mut) + `)`
+	}
+
 	// #1117 — THE MATURE CONJUNCT, and it is DELIBERATELY NOT INSIDE
 	// matchFrag.
 	//
@@ -790,8 +880,10 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	return hits, total, nil
 }
 
-// runCollections queries collections. Visibility gate composed via
-// visibility.Predicate — see the shared package (Phase 1.16.B-2).
+// runCollections queries collections. The visibility gate is
+// [visibility.CollectionReadableSQL] — the whole collection read rule,
+// the same authority the autocomplete source composes (#1078/#1164),
+// which is the row-plane predicate for everyone plus an admin arm.
 // Anonymous callers get the public floor (`deleted_at IS NULL AND
 // visibility = 'public'`), not the always-false predicate this comment
 // used to claim — that stopped being true when #445/#448 opened the
@@ -814,7 +906,35 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 // ListCollectionsPage already uses for its ?featured= filter — added
 // then, against a real consumer.
 func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityCollection, visibility.NewCaller(q.CallerUserRef))
+	// #1164 — the WHOLE collection read rule, not the row plane alone.
+	//
+	// This used to compose `Filter(EntityCollection)`, which has no
+	// admin disjunct by design: the row plane describes who a collection
+	// is SHARED WITH, and an instance admin is on nobody's share list.
+	// The autocomplete source beside it composes
+	// [visibility.CollectionReadableSQL] (#1078), whose admin arm is the
+	// empty fragment. Two rules for one question, so a system.admin was
+	// COMPLETED the name of a private collection and then handed a
+	// result page that did not contain it — #1155's class, on the gate
+	// rather than the corpus.
+	//
+	// The direction is widen-the-run, ratified rather than inferred, and
+	// the argument is that search grants no reach here: an admin can
+	// already open any collection directly (#1078 / CanReadCollection),
+	// so returning one they searched for adds no row they could not
+	// already read. One readability authority for collections, not two.
+	//
+	// `q.Caps.Checker()` rather than `q.CapChecker`, and that choice is
+	// load-bearing twice over. It answers `system.admin` — the only code
+	// this rule asks for — and unlike the raw checker it is a RESOLVED
+	// value that `keyForQuery` folds into the cache key
+	// (ContentCaps.CacheKey). A widening keyed on something outside the
+	// cache key would serve an admin's page to the next caller who asked
+	// the same question, which is the leak this fix must not introduce.
+	visFrag, visArgs, err := visibility.CollectionReadableSQL(
+		ctx, "c", visibility.NewCaller(q.CallerUserRef), q.Caps.Checker(),
+		2, // $1=query text, $2=limit
+	)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -834,21 +954,31 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	if _, _, ok := q.Filters.SQL(visibility.EntityCollection, "c", 0); !ok {
 		return nil, 0, nil
 	}
-	visFrag, visArgs := pred.ToSQL("c", 2) // $1=query, $2=limit index reserved for hits query
+	// ⚠️ THE SOFT-DELETE CONJUNCT IS LOAD-BEARING AND IS NOT A DUPLICATE
+	// OF THE PREDICATE (#1164). CollectionReadableSQL's admin arm is the
+	// EMPTY fragment — deliberately, because GetCollection's Restore
+	// branch depends on an admin passing the read check on a deleted row
+	// — so without this line the widening would start returning
+	// TOMBSTONED collections to an admin's search. On the row-plane arm
+	// the predicate states the same rule and the two agree; on the admin
+	// arm this is its only expression. It is a CORPUS constraint ("what
+	// may be searched"), which is exactly how the autocomplete source
+	// beside it handles the same hole.
+	const notDeleted = ` AND c.deleted_at IS NULL`
 
 	sqlHits := `
 		SELECT c.id, c.name, c.description, c.owner_user_ref, c.origin_server_id,
 		       c.created_at, c.updated_at, c.visibility,
 		       ts_rank_cd(c.search_text, plainto_tsquery('english', $1)) AS score
 		  FROM collections c
-		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM collections c
-			 WHERE c.search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+			 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + `
 			 LIMIT $2
 		) x
 	`
@@ -975,6 +1105,46 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		"posts", visibility.MatureOwnerColPost, "$3",
 		q.Mature, q.Caps.SystemAdmin)
 
+	// #1157 — the post half of the filter-only search. Same reasoning as
+	// runAssets: `plainto_tsquery('english', '')` is the empty tsquery
+	// and matches no row, so a text-less search has to drop the text
+	// predicate rather than run it against nothing.
+	//
+	// Unlike assets there is no security half to preserve here. A post
+	// has no field-withholding tier — the post READ rule the predicate
+	// above composes is the whole access story (see the #907 note), so
+	// what is left when the text goes is `TRUE`, and visFrag, matureFrag
+	// and selFrag continue to carry the gate.
+	// It is spelled as an OR-arm BESIDE the text predicate rather than as
+	// a replacement for it, and the `@@` literal stays INLINE in both
+	// statements below, for two reasons that turned out to be the same
+	// reason.
+	//
+	// First, #1065's guard walks the tree for every `search_text @@` and
+	// resolves which table each one matches by walking back to a
+	// FROM/JOIN binding. Hoisting the predicate into a variable put the
+	// literal out of reach of its own FROM, and the guard failed CLOSED —
+	// "cannot resolve which table" — which is exactly the behaviour that
+	// issue asked for. Keeping the literal where its FROM is visible
+	// keeps the guard able to classify it (as `posts`, therefore out of
+	// scope) instead of forcing an allow-list entry for a site that needs
+	// no exemption.
+	//
+	// Second, `$1` keeps its reference in the COUNT statement for free.
+	// Removing the predicate outright left `$1` bound but never named
+	// there, and pgx rejects that — `could not determine data type of
+	// parameter $1`.
+	//
+	// `(text OR FALSE)` is the text predicate unchanged; `(text OR TRUE)`
+	// is every row the other conjuncts allow. visFrag, matureFrag and
+	// selFrag are ANDed after it either way, and a post has no
+	// field-withholding tier — the post read rule IS its whole access
+	// story — so nothing security-bearing rides on this clause.
+	postTextless := `FALSE`
+	if q.Text == "" && !q.Filters.Empty() {
+		postTextless = `TRUE`
+	}
+
 	// #850 — the card fields. `cover_asset_id` alone was never enough to
 	// render a tile: a post with no explicit cover shows its FIRST member,
 	// which is the same resolution order PostCard applies client-side and
@@ -1000,7 +1170,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		         WHERE pa.post_id = posts.id) AS member_count,
 		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score
 		  FROM posts
-		 WHERE search_text @@ plainto_tsquery('english', $1)
+		 WHERE (search_text @@ plainto_tsquery('english', $1) OR ` + postTextless + `)
 		   -- $3 is the caller ref, read ONLY by the mature conjunct, and
 		   -- that conjunct renders NOTHING for a qualified viewer or a
 		   -- system.admin. Referenced as a tautology so the statement
@@ -1015,7 +1185,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM posts
-			 WHERE search_text @@ plainto_tsquery('english', $1)
+			 WHERE (search_text @@ plainto_tsquery('english', $1) OR ` + postTextless + `)
 			   AND ($3::BIGINT IS NULL OR TRUE)` + visFrag + matureFrag + selFrag + `
 			 LIMIT $2
 		) x

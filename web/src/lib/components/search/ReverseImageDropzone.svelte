@@ -15,15 +15,43 @@
   // asset_type for the thumbnail). No new frontend cache — the server
   // caches by SimilarityHintID.
   //
-  // Visual search may be disabled server-side (search.visual.enabled=
-  // false → the endpoint returns 501 sidecar_not_installed). There's no
-  // client-readable flag, so we attempt-and-handle: a 501 flips the UI
-  // to an explanatory "not configured" state.
+  // Visual search may be disabled server-side, and there are now TWO
+  // ways to know (#1163):
+  //
+  //   1. `site.visualSearchEnabled`, off the public /appearance boot
+  //      payload the app already fetches. It is the RESOLVED capability
+  //      — `search.visual.enabled` AND a sidecar that answered at boot —
+  //      so it is what "will the endpoint work" actually depends on.
+  //      False renders NOTHING: an arm that cannot work is not an arm
+  //      with an explanation attached, it is a section that should not
+  //      be on the page. This is what #1157's residual asked for.
+  //   2. The 501 the endpoint still answers, kept as the second channel
+  //      rather than replaced. The boot flag is resolved once per
+  //      process, so a sidecar that stops between boot and this click is
+  //      only visible in the response — and this component is the one
+  //      thing that reads it.
 
   import { t } from '$stores/lang.svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import AssetCard from '$components/AssetCard.svelte';
   import type { CardAsset } from '$components/cardAsset';
+
+  interface Props {
+    /** Reports what this component LEARNED about the instance's visual
+     *  search channel (#1157): `false` once a request came back 501,
+     *  `true` once one did not.
+     *
+     *  Since #1163 this is the SECOND source, not the only one — the
+     *  boot flag hides the arm before anyone drops a file. What it still
+     *  covers is the window the boot flag cannot: the capability is
+     *  resolved once at process start, so a sidecar that goes away
+     *  afterwards is visible only in a response. A host that renders a
+     *  heading of its own binds to it so the whole section goes, not
+     *  just the dropzone inside it. */
+    oncapability?: (enabled: boolean) => void;
+  }
+  let { oncapability }: Props = $props();
 
   // Cap the hydrate fan-out — reverse-image is a deliberate action, so
   // a top-30 grid is plenty and bounds the per-hit GET /assets/{id}.
@@ -49,7 +77,10 @@
   let notConfigured = $state(false);
   let searched = $state(false);
   let results = $state<HydratedHit[]>([]);
-  let fileInput: HTMLInputElement;
+  // `$state` because the input now lives inside the #1163 gate: a
+  // `bind:this` that can mount and unmount is a reactive write, and
+  // svelte-check says so.
+  let fileInput = $state<HTMLInputElement | null>(null);
 
   function pickFile(f: File | null) {
     error = '';
@@ -127,6 +158,7 @@
 
       if (resp.status === 501) {
         notConfigured = true;
+        oncapability?.(false);
         searched = true;
         return;
       }
@@ -161,6 +193,12 @@
   }
 </script>
 
+<!-- The whole arm is absent on an install with no visual channel
+     (#1163). Gated here rather than in each host so a surface that
+     mounts the dropzone cannot forget the check: AdvancedQueryBuilder's
+     panel gets the same treatment as /search/advanced's section for
+     free. -->
+{#if site.visualSearchEnabled}
 <section class="mb-6 rounded-lg border border-border bg-surface p-4" data-testid="reverse-image-dropzone">
   <header class="mb-3">
     <h2 class="text-base font-semibold text-fg">{t('search.by_image.heading')}</h2>
@@ -177,8 +215,8 @@
     ondrop={onDrop}
     ondragover={onDragOver}
     ondragleave={onDragLeave}
-    onclick={() => fileInput.click()}
-    onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && fileInput.click()}
+    onclick={() => fileInput?.click()}
+    onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && fileInput?.click()}
     data-testid="reverse-image-drop"
   >
     {#if previewUrl}
@@ -248,3 +286,4 @@
     </div>
   {/if}
 </section>
+{/if}

@@ -15,7 +15,7 @@
     "collections": "Collections",
     "review": "Review",
     "upload_button_title": "Upload (or drop files anywhere)",
-    "search_page": "Search"
+    "search_page": "Advanced search"
   },
   "search": {
     "facets_heading": "Facets",
@@ -56,24 +56,24 @@
     },
     "advanced": {
       "heading": "Advanced search",
-      "body": "Build a query with typed fields. Each row is combined with AND; the preview below shows exactly what will be submitted to the server-side DSL parser.",
-      "freetext_label": "Free-text query (optional)",
-      "freetext_placeholder": "cat OR dog",
-      "not": "NOT",
-      "value_placeholder": "value",
-      "remove_row": "Remove row",
-      "add_row": "+ Add row",
-      "compiled_dsl": "Compiled DSL",
-      "compiled_empty": "(empty)",
+      "body": "Add a line for each thing you want to match. Everything you add has to match. The box at the bottom shows the search you have built.",
+      "freetext_label": "Words to look for (optional)",
+      "freetext_placeholder": "sunset beach",
+      "not": "Exclude",
+      "value_placeholder": "what to match",
+      "remove_row": "Remove this line",
+      "add_row": "+ Add another line",
+      "preview_label": "Your search",
+      "preview_empty": "(nothing yet)",
       "field": {
         "title": "Title",
-        "description": "Description / body",
+        "description": "Description",
         "tag": "Tag",
-        "owner": "Owner (username or ref)",
+        "owner": "Owner (username)",
         "type": "Asset type",
         "sensitivity": "Sensitivity",
         "extension": "File extension",
-        "similar_to": "Similar to asset (UUID)"
+        "similar_to": "Similar to asset (paste its ID)"
       }
     },
     "by_image": {
@@ -113,6 +113,20 @@
       "owner": "Owner",
       "extension": "File type",
       "collection": "In collection"
+    },
+    "advanced_page": {
+      "title": "Advanced search",
+      "intro": "Put a search together from words, from things that have to match, and from the fields filled in on your work. It all becomes one search — the results open on the normal search page, and your choices stay in the web address so you can share or bookmark them.",
+      "conditions_heading": "What to match",
+      "fields_heading": "Filter by field",
+      "fields_loading": "Loading fields…",
+      "fields_empty": "There are no fields with a set list of values you can search on.",
+      "fields_error": "Could not load your fields.",
+      "by_image_heading": "Search by image",
+      "submit": "Search",
+      "reset": "Start over",
+      "active_filters": "{count} values chosen",
+      "field_filter_placeholder": "Type to narrow this list…"
     }
   },
   "blogs": {
@@ -142,7 +156,13 @@
     "filter": {
       "label": "Feed filter",
       "latest": "Latest",
-      "following": "Following"
+      "following": "Following",
+      "type": {
+        "label": "Filter by type",
+        "all": "All types",
+        "apply": "Apply",
+        "solo_hint": "Double-click to pick only this one"
+      }
     },
     "sort": {
       "toggle": "Toggle sort direction",
@@ -179,7 +199,16 @@
       "no_matches": "No matches",
       "no_posts_yet": "No posts yet",
       "try_different": "Try a different search term.",
-      "uploaded_appear_here": "Once posts are uploaded they'll appear here, newest first."
+      "uploaded_appear_here": "Once posts are uploaded they'll appear here, newest first.",
+      "guest_title": "Nothing public to show",
+      "guest_hint": "You're signed out, so you only see posts marked public. Sign in to see what members have shared.",
+      "guest_no_matches_hint": "Nothing public matches this. Sign in to search member content too.",
+      "kind_title": "No {types} posts here",
+      "kind_hint": "This wall is filtered by type. Tick more types to widen it.",
+      "kind_following_title": "No {types} posts from people you follow",
+      "kind_following_hint": "You're on the Following feed and filtered by type. Switch to Latest, or tick more types.",
+      "following_title": "Nothing from people you follow yet",
+      "following_hint": "Follow more people and teams, or switch to Latest to see everything."
     },
     "end_of_feed": "— end of feed —"
   },
@@ -240,7 +269,28 @@
     "origin_from": "from {peer}",
     "origin_label": "This item is hosted by another server",
     "multi": {
-      "badge_label": "{count} assets in this post"
+      "badge_label": "{count} assets in this post",
+      "badge_label_format": "{count} {format} assets in this post",
+      "badge_label_kind": "{count} {kind} assets in this post",
+      "kind": {
+        "image": "image",
+        "video": "video",
+        "pdf": "PDF",
+        "audio": "audio",
+        "sequence": "image sequence",
+        "font": "typeface",
+        "sprite": "sprite sheet",
+        "3d": "3D",
+        "ebook": "e-book",
+        "doc": "document",
+        "audiobook": "audiobook",
+        "archive": "archive",
+        "placeholder": "file"
+      }
+    },
+    "band": {
+      "mixed": "mixed",
+      "mixed_label": "Mixed file types"
     },
     "footer": {
       "likes": "{count} likes",
@@ -1506,6 +1556,10 @@
             "title": "Anonymous browse",
             "blurb": "Whether non-signed-in visitors can browse."
           },
+          "mature_content": {
+            "title": "Mature content",
+            "blurb": "Allow artists to label work as mature, and readers to opt in."
+          },
           "rate_limits": {
             "title": "Rate limiting",
             "blurb": "Per-user and per-IP rate-limit policy."
@@ -1619,10 +1673,6 @@
           "browse_views": {
             "title": "Browse layouts",
             "blurb": "Choose which browse layouts your users can pick from."
-          },
-          "mature_content": {
-            "title": "Mature content",
-            "blurb": "Allow artists to label work as mature, and readers to opt in."
           },
           "maintenance": {
             "title": "Maintenance mode",
@@ -2812,7 +2862,7 @@
   },
   "collections": {
     "title": "Collections",
-    "tagline": "Group posts and assets together — share, organise, or stage for review.",
+    "tagline": "Group posts together — share, organise, or stage for review.",
     "new": "New collection",
     "new_first": "Create your first collection",
     "new_title": "New collection",
@@ -2852,7 +2902,7 @@
     "empty_all": "No collections match your filter.",
     "detail_empty": "Nothing in this collection yet.",
     "upload_here": "Upload here",
-    "upload_first": "Upload first asset",
+    "upload_first": "Upload your first post",
     "share": "Share",
     "more": "More actions",
     "edit": "Edit details",
@@ -2876,9 +2926,7 @@
     "deleted_reason": "— {reason}",
     "restoring": "Restoring…",
     "restore": "Restore",
-    "detail_empty_hint": "Open a post or an asset and choose \"Save to collection\" to add it here.",
-    "posts_heading": "Posts",
-    "assets_heading": "Assets",
+    "detail_empty_hint": "Open a post and choose \"Save to collection\" to add it here.",
     "posts_loading": "Loading posts…",
     "cover": "Cover picture",
     "cover_hint": "Pick a member to use as this collection's cover. Without one, the card shows a mosaic built from the newest members.",
@@ -2886,7 +2934,55 @@
     "cover_derived_hint": "No chosen cover",
     "cover_none": "Add some members first — there is nothing to choose from yet.",
     "cover_current_external": "Current cover (not a member of this collection)",
-    "cover_loading": "Loading members…"
+    "cover_loading": "Loading members…",
+    "vis_public_off_note": "Anonymous browsing is off on this instance, so visitors can't see public collections right now. An admin can turn it on in System settings.",
+    "crop_heading": "How the featured card will crop it",
+    "crop_hint": "Featured cards are wide. Only what's inside the box shows up there — the rest is cropped off.",
+    "crop_full_label": "Whole picture",
+    "crop_card_label": "Featured card",
+    "crop_full_alt": "The chosen cover with the featured card's crop marked on it",
+    "crop_card_alt": "The chosen cover cropped the way the featured card crops it",
+    "crop_mosaic_note": "The mosaic cover is drawn to fit each card, so there is nothing to crop.",
+    "crop_no_dimensions": "Loading the picture…",
+    "cover_editor_featured_heading": "Featured strip cover",
+    "cover_editor_featured_hint": "This picture shows on the featured strip on the home page. Drag the box to choose which part of it shows.",
+    "cover_editor_featured_inherited": "Using the collection cover. Pick a different picture below if you want the strip to show something else.",
+    "cover_editor_featured_none": "Choose a collection cover, or pick a picture here, and you'll be able to position the crop.",
+    "cover_editor_same_as_cover": "Same as cover",
+    "cover_editor_use_collection_cover": "Go back to the collection cover",
+    "cover_editor_stage_label": "Whole picture",
+    "cover_editor_stage_alt": "The featured cover with a box marking the part the strip will show",
+    "cover_editor_card_label": "Featured card",
+    "cover_editor_card_alt": "The featured cover cropped the way the strip will crop it",
+    "cover_editor_marquee_label": "Crop position — drag, or use the arrow keys. Press + and − to zoom",
+    "cover_editor_drag_hint": "Drag the box, or use the arrow keys",
+    "cover_editor_position_value": "across {x}%, down {y}%",
+    "cover_editor_no_travel": "This picture is already the right shape, so there is nothing to move. Zoom in to choose a smaller part of it.",
+    "cover_editor_crop_needs_width": "Choosing which part of the picture shows needs a wider screen — the box is dragged across the picture, which doesn't fit here. You can still pick or upload a cover; it will be shown centred. Anything you've already positioned stays as it is.",
+    "cover_editor_zoom_label": "Zoom",
+    "cover_editor_zoom_value": "{z}×",
+    "cover_editor_reset": "Back to centre",
+    "cover_editor_cover_heading": "Collection cover",
+    "cover_editor_cover_crop_hint": "Collection cards are slightly wide. Drag the box to choose which part of the picture the card shows.",
+    "cover_editor_cover_preview_label": "Collection card",
+    "cover_editor_cover_preview_alt": "The collection cover cropped the way a collection card crops it",
+    "cover_editor_cover_stage_alt": "The collection cover with a box marking the part a collection card will show",
+    "cover_summary_featured": "Featured strip",
+    "cover_summary_cover": "Collection card",
+    "cover_summary_none": "Mosaic",
+    "cover_editor_source_label": "Where to pick the picture from",
+    "cover_editor_source_members": "In this collection",
+    "cover_editor_source_mine": "My files",
+    "cover_editor_source_upload": "Upload",
+    "cover_editor_search_placeholder": "Search your files…",
+    "cover_editor_searching": "Searching…",
+    "cover_editor_mine_empty": "Nothing here. Try another word, or upload a picture.",
+    "cover_editor_upload_note_public": "The picture is added to your files as a normal picture, so anyone who can see this collection can see the cover. It isn't posted anywhere.",
+    "cover_editor_upload_note_private": "The picture is added to your files as a draft, so only people who are signed in and can already see this collection will see it. It isn't posted anywhere.",
+    "cover_editor_uploading": "Uploading…",
+    "cover_editor_upload_failed": "Couldn't upload that picture.",
+    "cover_editor_stage_pending": "This picture is still being prepared. It'll show here — and on the strip — in a moment.",
+    "cover_editor_narrow_warning": "This picture is still a draft, so visitors who aren't signed in will see the fallback cover instead. Publish it, or pick another picture."
   },
   "errors": {
     "save_failed": "Couldn't save changes."
@@ -2929,7 +3025,6 @@
     "close": "Close",
     "edit_tags": "Edit tags…",
     "edit_metadata": "Edit metadata…",
-    "add_to_collection": "Add to collection…",
     "coming_soon": "Coming soon",
     "about_type": "Type",
     "about_dimensions": "Dimensions",
@@ -2981,7 +3076,6 @@
     "add_failed_partial": "Added {added} of {total}; some failed."
   },
   "playlist_actions": {
-    "add_all_to_collection": "Add all to collection",
     "download_all_zip": "Download all as ZIP",
     "bulk_tag": "Tag all",
     "share_playlist": "Share playlist"

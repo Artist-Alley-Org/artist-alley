@@ -54,10 +54,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query().Get("q")
 	dslInput := r.URL.Query().Get("dsl")
-	if q == "" && dslInput == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query_required"})
-		return
-	}
+	// #1157 — "IS THIS REQUEST EMPTY" IS DECIDED IN ONE PLACE, AND IT IS
+	// NOT HERE.
+	//
+	// This used to reject `q == "" && dslInput == ""` outright, before
+	// `filter=` had even been parsed — so a filter-only search never
+	// reached the Engine, for EVERY dimension, not just #1157's `field:`.
+	// `/search?filter=extension:png` has answered 400 `query_required`
+	// since #907 shipped the rail.
+	//
+	// The rule now lives only on [Engine.Run], which is the single door
+	// every execution goes through (the same argument #910 makes for
+	// putting the parent gate there) and the only place that can see all
+	// three of text, similarity hint and selection. A genuinely empty
+	// request still gets 400 `query_required` — Run returns ErrEmptyQuery
+	// and the mapping below turns it into exactly the response this
+	// branch used to write — so the wire contract is unchanged for
+	// callers who were getting a correct answer before.
+	//
+	// Deleting it rather than widening it is the point: two copies of
+	// "what counts as a search" is the shape ADR 0070 / #1023 records as
+	// a rule that will disagree with itself, and this pair already had.
 	types, err := ParseTypes(r.URL.Query().Get("types"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_types"})
@@ -121,6 +138,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// the `private` tier in the post read rule, which search now
 		// composes in full instead of a narrower copy of it.
 		query.PostCaps = visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
+		// #1157 — the raw checker, for `field_definition.read_capability`.
+		// Unlike its three neighbours there is nothing to resolve it into:
+		// the capability code is data an operator typed into a field
+		// definition. Same shape and same reason as
+		// suggest.Request.CollectionCaps (#1078).
+		query.CapChecker = func(code string) bool { return id.Can(code) }
 	}
 
 	// Phase 1.16.B-3 — if the caller supplied a `dsl=` param

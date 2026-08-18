@@ -126,11 +126,15 @@ type manifestPost struct {
 	CreatedAt      string   `json:"created_at"`
 	UpdatedAt      string   `json:"updated_at"`
 
-	// Coverage-selection inputs (#768). The seeder itself does not write
-	// these — applyPosts hardcodes visibility 'org-only' and state
-	// 'published' for every post — but the catalogue carries them, and
-	// the CI coverage profile selects on them so a future seeder that
-	// DOES honour them still lands a varied fixture.
+	// Coverage-selection inputs (#768), and — for SensitivityTier —
+	// the seeder's visibility input as well (#1176).
+	//
+	// applyPosts still hardcodes state 'published', but visibility is no
+	// longer hardcoded 'org-only': postVisibility reads SensitivityTier
+	// (with the cover asset's tier) to decide which posts go public, so
+	// an instance in public mode has something for an anonymous visitor
+	// to look at. The CI coverage profile selects on these too, so the
+	// shrunk fixture keeps the same tier mix.
 	PostKind        string `json:"post_kind"`
 	SensitivityTier string `json:"sensitivity_tier"`
 	IsMixedType     bool   `json:"is_mixed_type"`

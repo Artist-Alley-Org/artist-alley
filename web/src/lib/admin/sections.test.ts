@@ -27,6 +27,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ADMIN_ENTRY_CAPS, ADMIN_SECTIONS, sectionBySlug } from './sections';
+import enDict from '$lib/i18n/en.json';
 import { auth } from '$stores/auth.svelte';
 
 // The seeded `Base` role's ten capabilities, resolved (it has no
@@ -235,5 +236,49 @@ describe('admin entry vs tile visibility (#962)', () => {
     auth.caps = ['system.admin'];
     auth.capsStatus = 'resolved';
     expect(auth.canSeeAdmin).toBe(true);
+  });
+});
+
+// Tile PLACEMENT, and the i18n key that has to move with it (#1179).
+//
+// A tile's label is looked up at `admin.sections.<slug>.tiles.<key>`
+// (AdminSectionLanding), so the copy is keyed by the section the tile
+// sits in. Moving a tile between sections without moving its key
+// renders the raw key string on the landing page — a silent break that
+// no type and no existing test could see, because both halves are
+// individually valid.
+describe('tile placement and its section-keyed copy', () => {
+  it('every live tile has a title + blurb under its OWN section', () => {
+    const sections = (enDict as Record<string, any>).admin?.sections ?? {};
+    let checked = 0;
+    for (const s of ADMIN_SECTIONS) {
+      for (const tile of s.tiles) {
+        if (tile.status !== 'live') continue;
+        const copy = sections[s.slug]?.tiles?.[tile.key];
+        expect(copy, `admin.sections.${s.slug}.tiles.${tile.key} is missing from en.json`)
+          .toBeTruthy();
+        expect(typeof copy.title, `${s.slug}/${tile.key}.title`).toBe('string');
+        expect(typeof copy.blurb, `${s.slug}/${tile.key}.blurb`).toBe('string');
+        checked++;
+      }
+    }
+    // Guard against the loop passing vacuously if `live` ever stops
+    // being the status string.
+    expect(checked).toBeGreaterThan(20);
+  });
+
+  it('mature content is a moderation tile, not a system one (#1179)', () => {
+    const inSection = (slug: string) =>
+      (sectionBySlug(slug)?.tiles ?? []).some((t) => t.key === 'mature_content');
+
+    expect(inSection('moderation'), 'mature_content must live under Community & moderation').toBe(true);
+    expect(inSection('system'), 'mature_content must be gone from System').toBe(false);
+
+    // The page did NOT move — the tile is a front door, the same way
+    // `anonymous` points at /admin/system/site. A deep link that used to
+    // work still has to.
+    const tile = sectionBySlug('moderation')!.tiles.find((t) => t.key === 'mature_content')!;
+    expect(tile.href).toBe('/admin/system/mature-content');
+    expect(tile.cap).toBe('system.config.read');
   });
 });

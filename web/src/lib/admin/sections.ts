@@ -197,6 +197,15 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // own), so it points there and carries the same read cap the site
       // page enforces.
       { key: 'anonymous',       status: 'live',   href: '/admin/system/site', cap: 'system.config.read' },
+      // #1179 — moved here from SYSTEM on the owner's ruling: "mature
+      // content settings should live under Community and moderation".
+      // Same front-door pattern as `anonymous` directly above — the
+      // PAGE stays where it is (/admin/system/mature-content) and the
+      // tile is just the door to it, so no route moves and no deep link
+      // breaks. Cap gating is unchanged: the page renders from the admin
+      // GET, so `system.config.read` is what it needs, and the write cap
+      // is what disables the save button (#1116, ADR 0090).
+      { key: 'mature_content',  status: 'live',   href: '/admin/system/mature-content', cap: 'system.config.read' },
       { key: 'rate_limits',     status: 'future' },
     ],
   },
@@ -256,11 +265,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // GET, so `system.config.read` is what it actually needs to
       // render. The save button is disabled without the write cap.
       { key: 'browse_views', status: 'live',   href: '/admin/system/browse-views', cap: 'system.config.read' },
-      // #1116, ADR 0090 — the install-wide mature-content switch. Same
-      // read-cap gate and the same reasoning as browse_views above: the
-      // page renders from the admin GET, and the save button is what the
-      // write cap disables.
-      { key: 'mature_content', status: 'live', href: '/admin/system/mature-content', cap: 'system.config.read' },
+      // `mature_content` used to sit here. It moved to the MODERATION
+      // section in #1179 — it is a community-standards setting, not a
+      // system one — while its page stayed at
+      // /admin/system/mature-content. See the tile there.
       { key: 'maintenance',  status: 'future' },
       { key: 'feature_flags', status: 'future' },
       { key: 'backup',       status: 'future' },

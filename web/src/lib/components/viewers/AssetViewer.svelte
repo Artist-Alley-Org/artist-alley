@@ -115,9 +115,11 @@
     /** Optional per-asset action hooks. Each enables the
         corresponding ViewerMenuBar item; without a hook the item
         stays disabled / hidden depending on the menu. Host typically
-        opens its own modal (CollectionPicker / TagsEditor / etc.)
-        for the assetId the cursor is on. */
-    onAddToCollection?: () => void;
+        opens its own modal (TagsEditor / MetadataEditor / etc.) for
+        the assetId the cursor is on.
+
+        `onAddToCollection` was one of these until #1185 — see
+        ViewerMenuBar, which no longer has an item for it to enable. */
     onRecreatePreviews?: () => void;
     onEditTags?: () => void;
     onEditMetadata?: () => void;
@@ -140,7 +142,6 @@
     paneCollapsed = $bindable(false),
     paneCompact = $bindable(false),
     onClose,
-    onAddToCollection,
     onRecreatePreviews,
     onEditTags,
     onEditMetadata,
@@ -906,7 +907,6 @@
     onToggleFullscreen={toggleFullscreen}
     onTogglePane={togglePane}
     {onClose}
-    {onAddToCollection}
     {onRecreatePreviews}
     {onEditTags}
     {onEditMetadata}

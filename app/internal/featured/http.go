@@ -352,6 +352,15 @@ func railRowToAPI(r RailRow) openapi.FeaturedItem {
 		id := uuid.UUID(r.CoverAssetID.Bytes)
 		out.CoverAssetId = &id
 	}
+	// #1207 — nil stays nil, and nil means centre. The query only emits
+	// a focal point on the rungs the curator was actually shown, so
+	// there is nothing to re-decide here; a client that ignores these
+	// renders exactly what it rendered before they existed.
+	out.CoverFocalX = r.CoverFocalX
+	out.CoverFocalY = r.CoverFocalY
+	// #1212 — the same rule, one field wider: nil is the fit, and the
+	// query only emits a value on the rungs the curator actually framed.
+	out.CoverZoom = r.CoverZoom
 	out.AssetFileHash = r.AssetFileHash
 	out.PreviewAvailable = r.AssetPreviewAvailable
 	out.LadderAvailable = r.AssetLadderAvailable

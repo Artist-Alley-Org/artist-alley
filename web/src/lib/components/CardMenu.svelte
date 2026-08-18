@@ -24,11 +24,18 @@
   //           people's work is the point of #882, and what may be
   //           collected is decided server-side by whether the caller can
   //           READ the item, which the card cannot know.
-  //           On a POST card it collects the POST (`postId`), not the
-  //           post's cover asset. Before #882 it collected the cover,
-  //           which quietly turned "save this post" into "save one image
-  //           out of it" and lost the author's title, description and
-  //           the rest of the carousel.
+  //           POST CARDS ONLY (#1185). It collects the POST (`postId`),
+  //           never the post's cover asset — before #882 it collected the
+  //           cover, which quietly turned "save this post" into "save one
+  //           image out of it" and lost the author's title, description
+  //           and the rest of the carousel. An ASSET card no longer offers
+  //           it at all: a collection shows posts only, so pinning a bare
+  //           asset wrote a `collection_resources` row that nothing on
+  //           this instance renders — a click that reported success and
+  //           changed nothing the user could see. The endpoint still
+  //           exists and still works; retiring it is #1161's, and the
+  //           post-creating replacement ("turn these assets into a post
+  //           in this collection") is #1161's too.
   //   edit  — links to the entity's edit route (#549). WRITE action, and
   //           like manage-access it appears only when the CARD hands one
   //           over: the card knows whose work it is, this menu does not.
@@ -68,18 +75,17 @@
   import ShareEntityModal from './ShareEntityModal.svelte';
 
   interface Props {
-    /** The asset this card stands for. Null on a post card, and on any
-     *  asset card with no id to offer. */
-    assetId: string | null;
     /** The post this card stands for, when it IS a post card (#882).
-     *  Set, the add-to-collection action collects the POST; unset, it
-     *  falls back to `assetId`. A card that supplies neither hides the
-     *  action.
+     *  Set, the add-to-collection action collects the POST; unset, the
+     *  action does not render at all.
      *
-     *  Two props rather than one `{kind, id}` because the cover asset id
-     *  is still what a post card wants for its OTHER concerns, and
-     *  collapsing them would make PostCard choose between them at a
-     *  distance from where each is used. */
+     *  This sat beside an `assetId` prop until #1185. That prop existed
+     *  so an ASSET card could offer the same action against
+     *  `collection_resources`; with collections showing posts only there
+     *  is nothing for an asset card to collect INTO, and no other action
+     *  in this menu read it — every one of them works off `detailPath`,
+     *  `editPath` or `manageAccess`. So it is gone rather than kept as an
+     *  ignored parameter. */
     postId?: string | null;
     /** Canonical detail path, e.g. `/assets/{id}` or `/posts/{id}`. Info
      *  navigates here; share copies `origin + detailPath`. */
@@ -119,16 +125,19 @@
      *  the artwork's top-right on a dark translucent disc, hidden at
      *  rest. Designed to survive an unknown photograph underneath it.
      *
-     *  `inline` — an ordinary flow element in a chrome band OUTSIDE the
-     *  preview, for thumbnail's frame layout. Always visible (it is not
-     *  covering anything, and `revealed` is about artwork), and it wears
-     *  the theme's own colours: the black disc is camouflage for a
-     *  photograph, and on a solid panel it reads as a sticker. */
+     *  `inline` — an ordinary flow element OUTSIDE the preview, for
+     *  thumbnail's frame layout. Always visible (it is not covering
+     *  anything, and `revealed` is about artwork), and it wears the
+     *  theme's own colours: the black disc is camouflage for a
+     *  photograph, and on a solid panel it reads as a sticker.
+     *
+     *  It sits at the END OF THE METADATA STACK'S LAST ROW, not in the
+     *  top band — the owner's ruling, and the reason this variant is
+     *  sized the way it is. See the trigger's comment below. */
     placement?: 'overlay' | 'inline';
   }
 
   let {
-    assetId,
     postId = null,
     detailPath,
     manageAccess = null,
@@ -137,13 +146,16 @@
     placement = 'overlay',
   }: Props = $props();
 
-  // What this card would put in a collection, and which endpoint that
-  // is (#882). Resolved once here so the menu ITEM's visibility and the
-  // modal's payload can never disagree — the bug shape where the action
-  // renders and then opens a picker with nothing to add.
+  // What this card would put in a collection (#882). Resolved once here
+  // so the menu ITEM's visibility and the modal's payload can never
+  // disagree — the bug shape where the action renders and then opens a
+  // picker with nothing to add.
+  //
+  // #1185 — a POST id or nothing. This used to fall back to an `assetId`
+  // prop, which is what made every asset card offer a write whose result
+  // no surface displays.
   const collectPostId = $derived(postId ?? null);
-  const collectAssetId = $derived(collectPostId ? null : assetId);
-  const canCollect = $derived(!!collectPostId || !!collectAssetId);
+  const canCollect = $derived(!!collectPostId);
 
   // Write actions show only for a logged-in user on a non-demo install.
   // (No dedicated content-write capability exists — collections gate on
@@ -292,11 +304,40 @@
   shown on touch, where hover is unreachable. 44px hit target, 36px
   visible chip — same sizing the row used. z-20 sits above the card's
   stretched nav link + the title overlay.
+
+  INLINE placement now lives at the END OF THE METADATA STACK'S LAST
+  ROW — the date · likes · comments line — and not in the top band. The
+  owner's ruling: "I like the menu bottom right. Asset type icon and
+  count top left and checkbox top right. The padding around the menu
+  button should be smaller and rectangle instead of circle."
+
+  THE ROW IT JOINS IS 16px TALL and must stay that way, which is what
+  sizes this variant. That row is `text-xs` — a 16px line box — so a
+  44px control dropped into it would nearly triple the row's height and
+  push the preview up on every card. The plate is therefore 24px and
+  carries `-my-1`, so its MARGIN box is exactly the 16px the line box
+  already occupied and the row does not move. The wrapper is `flex` in
+  this variant precisely so that arithmetic is a flex item's margin box
+  rather than an atomic inline's baseline alignment, which would have
+  re-introduced the leading this is trying to avoid.
+
+  24px is also the floor, not a shortcut: WCAG 2.5.8 AA asks for 24x24
+  for pointer input and this is exactly that, on the modality that has
+  a cursor to aim with. COARSE POINTERS KEEP THE FULL 44px and the row
+  grows to fit them — the same trade #1171 made for the checkbox, and
+  the honest one: a phone has no cursor, and 20px of card height is
+  worth less than a tap target that can be hit.
+
+  RECTANGULAR, NOT A DISC. The plate is `rounded-md` at the same 24px
+  the checkbox's box uses, so the card's two controls are one family
+  seen at two corners instead of a square and a circle. The disc is
+  kept for `overlay`, where it is camouflage over an unknown
+  photograph and has a different job.
 -->
 <div
   class="pointer-events-none transition-opacity duration-150
          {placement === 'inline'
-    ? 'opacity-100'
+    ? 'flex items-center opacity-100'
     : 'absolute right-2 top-2 z-20 ' +
       (revealed
         ? 'opacity-100'
@@ -313,7 +354,10 @@
     title={t('card.tools.menu_label')}
     data-testid="card-menu-trigger"
     class="pointer-events-auto group/tool inline-flex h-11 w-11 cursor-pointer items-center
-           justify-center focus-visible:outline-none"
+           justify-center focus-visible:outline-none
+           {placement === 'inline'
+      ? '[@media(pointer:fine)]:-my-1 [@media(pointer:fine)]:h-6 [@media(pointer:fine)]:w-6'
+      : ''}"
   >
     <!-- #1126: the hover state, made visible.
          `cursor-pointer` first, because there was none — a `<button>`
@@ -330,18 +374,23 @@
          the alternative and is wrong here: the ⋯ sits 8px from the tile
          corner, and a control that grows on hover would cross the edge. -->
     <span
-      class="flex h-9 w-9 items-center justify-center rounded-full ring-1 ring-transparent
+      class="flex shrink-0 items-center justify-center ring-1 ring-transparent
              transition-colors
              {placement === 'inline'
-        ? 'text-fg-muted hover:bg-state-hover group-hover/tool:bg-state-hover group-hover/tool:text-fg ' +
+        ? 'h-6 w-6 rounded-md ' +
+          'text-fg-muted hover:bg-state-hover group-hover/tool:bg-state-hover group-hover/tool:text-fg ' +
           'group-focus-visible/tool:ring-2 group-focus-visible/tool:ring-ring ' +
           (open ? 'bg-state-hover text-fg' : '')
-        : 'bg-black/60 text-white backdrop-blur-sm ' +
+        : 'h-9 w-9 rounded-full bg-black/60 text-white backdrop-blur-sm ' +
           'group-hover/tool:bg-black/85 group-hover/tool:ring-white/40 ' +
           'group-focus-visible/tool:ring-2 group-focus-visible/tool:ring-white/80 ' +
           (open ? 'bg-black/85 ring-white/40' : '')}"
     >
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <!-- 16px in the 24px inline plate, 18px on the 36px disc: the
+           glyph keeps the same proportion in both, rather than a
+           full-size ⋯ crowding the smaller box. The class wins over the
+           width/height attributes, which stay as the overlay's size. -->
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class={placement === 'inline' ? 'h-4 w-4' : ''}>
         <circle cx="12" cy="5" r="1.75" />
         <circle cx="12" cy="12" r="1.75" />
         <circle cx="12" cy="19" r="1.75" />
@@ -413,11 +462,7 @@
 {/if}
 
 {#if pickerOpen && canCollect}
-  <CollectionPicker
-    assetIds={collectAssetId ? [collectAssetId] : []}
-    postIds={collectPostId ? [collectPostId] : []}
-    onClose={closePicker}
-  />
+  <CollectionPicker postIds={collectPostId ? [collectPostId] : []} onClose={closePicker} />
 {/if}
 
 {#if manageAccess}

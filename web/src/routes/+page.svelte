@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  import { untrack, onMount } from 'svelte';
+  import { untrack, onMount, tick } from 'svelte';
   import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -24,6 +24,7 @@
   import { t } from '$stores/lang.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import { createMarquee } from '$lib/util/marquee.svelte';
+  import { scrollportOf } from '$lib/util/scrollport';
   import type { components } from '$api/schema';
 
   onMount(() => { browseView.init(); });
@@ -132,6 +133,33 @@
     await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
   }
 
+  /** The footer's asset-type filter (#1166), read straight off the URL
+   *  like `?team=` and `?tag=` above it — one owner for every narrowing
+   *  control on this page, so a filtered wall is shareable and the back
+   *  button walks the filters.
+   *
+   *  The wire form is what the server parses (comma-joined) and what the
+   *  URL shows, so there is no second representation to keep in step.
+   *  An empty string means no filter, which is what "all types" is.
+   *
+   *  Unlike `?team=` this one is INDEPENDENT of the rail: a reader can
+   *  be looking at one studio's videos. The rail's two chips clear each
+   *  other because the rail is single-select; the type filter is a
+   *  different axis and clears nothing. */
+  const activeKinds = $derived(page.url.searchParams.get('kind') ?? '');
+  const activeKindList = $derived(activeKinds === '' ? [] : activeKinds.split(','));
+
+  /** Commit a type selection. In place, like the rail's chips — this is
+   *  a filter, not a navigation. An empty list drops the parameter
+   *  rather than writing `kind=`, so "all types" leaves no trace in a
+   *  URL somebody is about to share. */
+  async function selectKinds(next: string[]) {
+    const target = new URL(page.url);
+    if (next.length > 0) target.searchParams.set('kind', next.join(','));
+    else target.searchParams.delete('kind');
+    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+  }
+
   // #891 shipped a one-line note here — "items you don't have access to
   // are hidden by your preferences", with a link to change it — because
   // hiding was an opt-in and an opted-in reader's grid was shorter than
@@ -162,6 +190,7 @@
     q: string,
     team: string | null,
     tag: string | null,
+    kinds: string,
     cursor: string | null,
     reset: boolean,
   ) {
@@ -169,6 +198,7 @@
     error = null;
     guestFeed = false;
     const gen = ++generation;
+    let appended = 0;
     try {
       const params: Record<string, string | number> = { limit: PAGE };
       if (q.trim() !== '') params.q = q.trim();
@@ -182,6 +212,12 @@
       // with `q` and the feed pill server-side for the same reason
       // `team_id` does: they are all parameters of one query.
       if (tag) params.tag = tag;
+      // #1166 — the footer's type filter. Comma-joined, straight from
+      // the URL, and a plain parameter of the same query for the same
+      // reason `team_id` and `tag` are: composition is the server's
+      // job, so a studio's videos is one request and not an
+      // intersection this page computes.
+      if (kinds) params.kind = kinds;
       if (!reset && cursor) params.cursor = cursor;
       // Feed filter + direction from the BrowseFooter store.
       //
@@ -204,14 +240,17 @@
       if (gen !== generation) return;
 
       if (apiErr || !data) {
-        // A signed-out visitor gets 401 here and that is EXPECTED
-        // (#416). `/` is a public route so a guest can reach the site
-        // root, but its only data source is the posts feed, and posts
-        // stay members-only — the followers visibility tier is not
-        // modelled in the predicate yet. Rendering "authentication
-        // required" in a red alert told a guest something had broken.
-        // Nothing had; they are simply looking at a members-only
-        // surface, so it gets an empty state, not an error.
+        // A signed-out visitor can still get 401 here, and it is
+        // EXPECTED (#416) — but since #1181 it means exactly ONE thing:
+        // this install has public mode OFF. The feed is a public-mode
+        // surface now, so with the toggle ON a guest gets a 200 and the
+        // public tier, and only a members-only install refuses them.
+        //
+        // Rendering "authentication required" in a red alert told a
+        // guest something had broken. Nothing had; they are looking at
+        // a members-only install, so it gets an empty state, not an
+        // error. The OTHER anonymous empty state — 200 with nothing
+        // public to show — is `guestEmpty` further down.
         if (!auth.user) {
           guestFeed = true;
           return;
@@ -224,6 +263,7 @@
       const pageItems = (data.items ?? []) as Post[];
       items = reset ? pageItems : [...items, ...pageItems];
       nextCursor = (data.next_cursor as string | null) ?? null;
+      appended = pageItems.length;
     } catch (e) {
       error = e instanceof Error ? e.message : t('common.failed_to_load');
     } finally {
@@ -232,6 +272,19 @@
         initialLoaded = true;
       }
     }
+    // #1159 — top the buffer back up. See `pumpFeed` for why the
+    // IntersectionObserver alone cannot do this once the lookahead is
+    // deeper than one page is tall.
+    //
+    // `appended > 0` is the anti-runaway guard and it is load-bearing:
+    // a feed that answers with an empty page and a non-null cursor
+    // (a filter that thins a page to nothing server-side) would
+    // otherwise leave the buffer permanently short and pump forever.
+    // One empty page stops the chase; the observer still re-arms it
+    // when the reader scrolls.
+    if (gen !== generation || appended === 0) return;
+    await tick();
+    requestAnimationFrame(pumpFeed);
   }
 
   // Identity of the result set currently on screen. Reading all three
@@ -247,7 +300,7 @@
   // control byte back in here.
   const feedKey = () =>
     `${query}\u001f${browseView.filter}\u001f${browseView.feedDir}\u001f${activeTeamId ?? ''}` +
-    `\u001f${activeTag ?? ''}`;
+    `\u001f${activeTag ?? ''}\u001f${activeKinds}`;
 
   /** The feedKey whose first page we've already loaded (or restored).
    *  Guards the effect against re-fetching a set we already hold —
@@ -265,7 +318,7 @@
       items = [];
       nextCursor = null;
       initialLoaded = false;
-      void fetchPage(query, activeTeamId, activeTag, null, true);
+      void fetchPage(query, activeTeamId, activeTag, activeKinds, null, true);
     });
   });
 
@@ -273,8 +326,9 @@
   //
   // The feed is the one surface where restoring the offset alone would
   // be actively worse than not restoring it: come back holding only
-  // page 1 and a 1500px offset sits inside the sentinel's 600px
-  // rootMargin, so the loader fires, the content grows, and the user is
+  // page 1 and a 1500px offset sits inside the sentinel's lookahead
+  // (#1159 made that deeper still, so the argument only got stronger),
+  // so the loader fires, the content grows, and the user is
   // parked somewhere they never were. Handing back the accumulated
   // pages puts the offset back over the same posts and leaves the
   // sentinel where it belongs — off screen.
@@ -303,27 +357,133 @@
     },
   });
 
-  // Infinite scroll: rootMargin head-start so the next batch is in
-  // flight before the user reaches the end.
+  // ── Infinite scroll: stay ahead of the reader (#1159) ─────────────
+  //
+  // # The bug was not that 600px is too small. The 600px never applied.
+  //
+  // This observer was built with the DEFAULT root — `null`, meaning the
+  // document viewport — and `rootMargin: '600px 0px'`. But this app
+  // never scrolls the window: the shell is `overflow-hidden` with
+  // `<main class="flex-1 overflow-y-auto">` as the real scrollport
+  // (+layout.svelte, #1122). `rootMargin` inflates the ROOT's rect and
+  // nothing else, while the intersection is still clipped by every
+  // scrolling ancestor in between — so `<main>`'s own unexpanded clip
+  // rect cut the 600px straight back off. The sentinel was reported as
+  // intersecting only once it genuinely entered `<main>`'s visible box:
+  // a lookahead of approximately ZERO, which is exactly what "the feed
+  // loads too late" feels like.
+  //
+  // MEASURED, not deduced. With the margin raised to 2700px and the
+  // trigger left on the implicit root, an in-page rAF sampler recorded
+  // the unread-feed buffer sawtoothing 3893px → 52px → 3893px: the
+  // refills were firing at a buffer of ~50-300px, not at 2700px. Raising
+  // the number could never have worked; the root had to change. The
+  // marquee already knew this about the same wall (its autoscroll walks
+  // up for the scrollport) — this observer just never asked.
+  //
+  // # What replaces it
+  //
+  // `root` is the sentinel's actual scrollport, so `rootMargin` inflates
+  // the box that is really doing the clipping, and the margin is
+  // `LOOKAHEAD_VIEWPORTS × the scrollport's own height` — a head-start
+  // measured in screenfuls of reading, which scales across a 390px phone
+  // and a 4k display without either being written down. Both are
+  // recomputed on resize (rAF-coalesced, and only when the height
+  // actually moved), rebuilding rather than mutating because `root` and
+  // `rootMargin` are fixed at construction.
+  //
+  // The depth has to cover RENDER, not the wire: the wire is 21ms p50 on
+  // this stack, while painting 36 fresh cards on a main thread already
+  // busy scrolling is what costs the hundreds of milliseconds the reader
+  // was waiting on. 2.5 screenfuls buys ~1.6s at a 1.6k px/s wheel and
+  // ~1s at 2.7k px/s, which measurement says is enough and 1.5 is not.
+  //
+  // # Why the observer alone is not the whole trigger
+  //
+  // An IntersectionObserver notifies on threshold CROSSINGS. A lookahead
+  // deeper than one page is tall (a page is ~1.3 screenfuls of tiles at
+  // 1920px) means the sentinel is STILL inside the margin after an
+  // append: the intersection state never changes, no callback is queued,
+  // and the feed stalls one page in — a strictly worse bug than the one
+  // being fixed. So the trigger is a predicate over the sentinel's own
+  // geometry and both edges call it: the observer when the reader moves,
+  // and the tail of a successful fetch when the buffer moves.
+  //
+  // That makes filling a deep buffer a bounded SEQUENTIAL chase. At most
+  // one request is ever in flight (`loading` is still the gate, as it
+  // was), and the chase stops the moment the buffer is covered, so the
+  // steady-state cost is a fixed depth of prefetched pages rather than
+  // anything that scales with how far the reader goes.
+  const LOOKAHEAD_VIEWPORTS = 2.5;
+
+  /** The box that actually clips the sentinel. `null` before mount, and
+   *  on any surface where nothing above the wall scrolls — in which case
+   *  the viewport IS the scrollport and the observer's default root is
+   *  already correct. */
+  const scrollport = () => scrollportOf(sentinel);
+  const portHeight = () => scrollport()?.clientHeight ?? window.innerHeight;
+  const lookaheadPx = () => Math.round(portHeight() * LOOKAHEAD_VIEWPORTS);
+
+  /** Is there less than a lookahead's worth of unread feed below the
+   *  fold? Read off the sentinel, which sits at the wall's tail, so it
+   *  answers for whatever the wall's real height turned out to be —
+   *  masonry's variable tiles included. Measured against the scrollport's
+   *  bottom edge for the same reason the observer is rooted there. */
+  function wantsMore(): boolean {
+    const node = sentinel;
+    if (!node) return false;
+    const port = scrollport();
+    const bottom = port ? port.getBoundingClientRect().bottom : window.innerHeight;
+    return node.getBoundingClientRect().top <= bottom + lookaheadPx();
+  }
+
+  function pumpFeed() {
+    untrack(() => {
+      if (!nextCursor || loading) return;
+      if (!wantsMore()) return;
+      void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, false);
+    });
+  }
+
   $effect(() => {
     const node = sentinel;
     if (!node) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            untrack(() => {
-              if (nextCursor && !loading) {
-                void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
-              }
-            });
-          }
-        }
-      },
-      { rootMargin: '600px 0px' },
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
+    let observer: IntersectionObserver | undefined;
+    let raf = 0;
+    let armedFor = -1;
+
+    const arm = () => {
+      armedFor = portHeight();
+      observer?.disconnect();
+      observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) pumpFeed();
+        },
+        { root: scrollport(), rootMargin: `${lookaheadPx()}px 0px` },
+      );
+      observer.observe(node);
+    };
+
+    // rAF-coalesced, and only when the HEIGHT moved: a drag-resize fires
+    // a resize event per frame, and rebuilding an observer per frame
+    // would be the same churn MasonryColumns' width guard exists to
+    // avoid. A width-only change (the column count moving) cannot alter
+    // a vertical lookahead.
+    const onResize = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (portHeight() !== armedFor) arm();
+      });
+    };
+
+    arm();
+    window.addEventListener('resize', onResize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', onResize);
+      if (raf) cancelAnimationFrame(raf);
+    };
   });
 
   // ── Marquee drag-select (#1127) ───────────────────────────────────
@@ -347,6 +507,91 @@
   // "nothing here yet" block would render underneath it.
   const showEmpty = $derived(initialLoaded && items.length === 0 && !error && !guestFeed);
 
+  // #1176 — the OTHER anonymous empty state, and the one nothing
+  // handled. `guestFeed` above covers the 401: public mode off, the
+  // feed refuses a signed-out caller, and the honest answer is "the
+  // feed is for members". With public mode ON the same visitor gets a
+  // 200 and a page of whatever is `public` — which, until this sprint,
+  // was nothing at all, because no seeded post and no compose-form post
+  // could reach that tier. The wall then fell through to the generic
+  // "No posts yet — once posts are uploaded they'll appear here",
+  // which tells a signed-out visitor the instance is empty when what is
+  // actually true is that they are only being shown a slice of it, and
+  // offers them no way in.
+  //
+  // A 200 with zero items can only reach a signed-out caller when
+  // public mode is on — with it off, GET /posts answers 401 and the
+  // guestFeed branch takes it — so this needs no separate flag for the
+  // mode. It reads `auth.user` rather than the loader's `publicMode`
+  // for that reason: the condition that matters is who is looking.
+  const guestEmpty = $derived(showEmpty && !auth.user);
+
+  // ── #1190: an empty wall must say WHAT emptied it ─────────────────
+  //
+  // The bug this closes is not the filter. It is that a reader who
+  // narrowed the feed and landed on nothing was told "No posts yet —
+  // once posts are uploaded they'll appear here", which is a statement
+  // about the INSTANCE. The owner picked E-book, got that sentence, and
+  // read it as the type filter being broken. It was not: the feed pill
+  // was on Following, `?kind=ebook` intersected with the follow graph,
+  // and the intersection was legitimately empty
+  // (`?kind=ebook&feed=following` → 0 while `?kind=ebook` → 4 on the
+  // same session and the same stack). An honestly empty page that
+  // describes itself as an empty instance is indistinguishable from a
+  // broken one.
+  //
+  // WHICH narrowings get named here, and why not all of them: the type
+  // filter and the feed scope are the two that leave no trace on the
+  // page. `?team=` and `?tag=` already print themselves in the feed
+  // HEADING directly above this block — a reader looking at an empty
+  // wall under "Props" or "#fantasy" can see what they asked for — and
+  // `?q=` has had its own "No matches / try a different search term"
+  // since long before this. Repeating those here would be a second
+  // label for a fact already on screen; the two that are invisible are
+  // the ones that get a sentence.
+  //
+  // The names come from the SAME i18n keys the controls draw with —
+  // `card.fallback.kind.*` is what the checkbox list and the card badge
+  // are both labelled from — so the sentence cannot name a type the
+  // dropdown spells differently.
+  //
+  // A name with no label is DROPPED rather than printed. `t()` falls
+  // back to the key, so `?kind=nonsense` — which the server answers with
+  // an empty page on purpose — would otherwise put the literal string
+  // `card.fallback.kind.nonsense` in front of a reader. An unnameable
+  // filter degrades to the plain empty state, which is the honest
+  // answer: the page cannot say what it was narrowed to.
+  const activeKindLabels = $derived(
+    activeKindList
+      .map((k) => ({ k, label: t(`card.fallback.kind.${k}`) }))
+      .filter(({ k, label }) => label !== `card.fallback.kind.${k}`)
+      .map(({ label }) => label)
+      .join(', '),
+  );
+  const followingScope = $derived(browseView.filter === 'following');
+  const emptyTitle = $derived(
+    query
+      ? t('browse.empty.no_matches')
+      : activeKindLabels && followingScope
+        ? t('browse.empty.kind_following_title', { types: activeKindLabels })
+        : activeKindLabels
+          ? t('browse.empty.kind_title', { types: activeKindLabels })
+          : followingScope
+            ? t('browse.empty.following_title')
+            : t('browse.empty.no_posts_yet'),
+  );
+  const emptyHint = $derived(
+    query
+      ? t('browse.empty.try_different')
+      : activeKindLabels && followingScope
+        ? t('browse.empty.kind_following_hint')
+        : activeKindLabels
+          ? t('browse.empty.kind_hint')
+          : followingScope
+            ? t('browse.empty.following_hint')
+            : t('browse.empty.uploaded_appear_here'),
+  );
+
   // ?post={uuid} → overlay the post on top of the feed. The feed stays
   // mounted (no scroll loss, no re-fetch). The watcher, the close
   // policy and the ← / → walk all live in PostParamHost since #1130 —
@@ -364,7 +609,7 @@
   // resolves; the user sees it on the next press.
   function loadMoreForSiblingWalk() {
     if (nextCursor && !loading) {
-      void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
+      void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, false);
     }
   }
 
@@ -603,14 +848,48 @@
     </div>
   {/if}
 
-  {#if showEmpty}
-    <div class="rounded-xl border border-dashed border-border p-12 text-center text-fg-muted">
-      <p class="font-medium text-fg">{query ? t('browse.empty.no_matches') : t('browse.empty.no_posts_yet')}</p>
-      <p class="mt-1 text-sm">
-        {query
-          ? t('browse.empty.try_different')
-          : t('browse.empty.uploaded_appear_here')}
+  {#if guestEmpty}
+    <!-- #1176 — signed out, public mode on, nothing public to show.
+         Same calm shape as the guestFeed block above, and the same two
+         affordances: collections (still browsable) and a way in. -->
+    <div
+      class="rounded-xl border border-dashed border-border p-12 text-center"
+      data-testid="guest-public-empty"
+    >
+      <p class="text-base font-medium text-fg">
+        {query ? t('browse.empty.no_matches') : t('browse.empty.guest_title')}
       </p>
+      <p class="mx-auto mt-1 max-w-md text-sm text-fg-muted">
+        {query
+          ? t('browse.empty.guest_no_matches_hint')
+          : t('browse.empty.guest_hint')}
+      </p>
+      <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+        <a
+          href="/collections"
+          class="inline-flex min-h-11 items-center rounded-md border border-border px-4 py-2 text-sm font-medium text-fg hover:border-border-strong"
+        >
+          {t('user_menu.guest_browse_collections')}
+        </a>
+        <a
+          href="/login"
+          class="inline-flex min-h-11 items-center rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent"
+          data-testid="guest-public-empty-signin"
+        >
+          {t('user_menu.sign_in')}
+        </a>
+      </div>
+    </div>
+  {:else if showEmpty}
+    <!-- #1190 — the sentence names the narrowing that is not otherwise
+         visible on the page. See `emptyTitle` for which ones those are
+         and why the team/tag chips are deliberately not among them. -->
+    <div
+      class="rounded-xl border border-dashed border-border p-12 text-center text-fg-muted"
+      data-testid="browse-empty"
+    >
+      <p class="font-medium text-fg" data-testid="browse-empty-title">{emptyTitle}</p>
+      <p class="mt-1 text-sm" data-testid="browse-empty-hint">{emptyHint}</p>
     </div>
   {:else}
     <!--
@@ -740,7 +1019,7 @@
 <!-- Floating browse controls: view switcher + back-to-top. Stays
      mounted alongside the feed so the user can change layouts without
      losing scroll position. -->
-<BrowseFooter />
+<BrowseFooter kinds={activeKindList} onkinds={(next) => void selectKinds(next)} />
 
 <!-- The grid / masonry / feed / list layouts moved to the shared
      ContentGrid component (#511) so the profile + post-by-asset pages

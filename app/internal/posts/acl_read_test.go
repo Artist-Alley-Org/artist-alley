@@ -148,10 +148,17 @@ func aclCallers() []aclCaller {
 }
 
 // aclListedByAuthor runs the shared list path for one caller, narrowed
-// to aclAuthor's posts, and returns the set of ids handed out. Using
-// ListPostsPageGated directly rather than the HTTP handler is what lets
-// the anonymous branch into the matrix: ListPosts requires a session,
-// but the fragment it splices does not, and /posts/by-asset reaches it.
+// to aclAuthor's posts, and returns the set of ids handed out.
+//
+// ListPostsPageGated directly rather than the HTTP handler, so the
+// matrix asserts the RULE and only the rule — no display-filter
+// default, no enrichment, no restricted-member tail. (Before #1181 this
+// was also the only way to get the anonymous branch into the matrix at
+// all, since ListPosts 401'd a nil caller. It no longer does: the feed
+// is a public-mode surface, and the handler's own anonymous path is
+// covered end-to-end in anon_feed_test.go. Keeping this at the rule
+// layer is now a choice about what the matrix is FOR rather than a
+// workaround.)
 func aclListedByAuthor(t *testing.T, h *Handler, id *auth.Identity) map[uuid.UUID]bool {
 	t.Helper()
 	author := aclAuthor

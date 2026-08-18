@@ -252,15 +252,23 @@ docker run --rm \
 # i18n keys, ./scripts/test.sh went green with a stale catalogue, and
 # the Codegen drift check caught it on the PR instead.
 #
-# ONLY the i18n directory, not all of web/: the mount should expose
-# what a test legitimately reads and nothing more. It is also the whole
-# blast radius — that const is the only path literal anywhere in app/
-# that resolves into web/, so no other test can notice this.
+# ONLY the paths a test actually reads, not all of web/: the mount
+# should expose what a test legitimately reads and nothing more.
+#
+# The second such path is the viewer controller (#1166).
+# app/internal/viewkind mirrors its kind resolver — the derivation
+# behind the browse card's type badge, which `GET /posts?kind=` filters
+# on — and TestKindSetsMatchFrontend reads that file to prove the mirror
+# has not drifted. Without the mount it takes the same t.Skipf branch
+# #956 caught the catalogue guard taking, and a drifted extension table
+# would ship green: the badge would say one thing and the filter select
+# another, silently, for whichever extensions moved.
 if ! docker run --rm \
     --network "$NET" \
     -v "${ROOT}/app:/src/app" \
     -v "${ROOT}/seed:/src/seed:ro" \
     -v "${ROOT}/web/src/lib/i18n:/src/web/src/lib/i18n:ro" \
+    -v "${ROOT}/web/src/lib/components/viewers/controller.ts:/src/web/src/lib/components/viewers/controller.ts:ro" \
     -w /src/app \
     -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
     -e GOFLAGS -e GOMAXPROCS \

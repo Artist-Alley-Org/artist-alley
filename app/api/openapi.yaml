@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: artist-alley API
-  version: 0.10.0
+  version: 0.10.1
   description: |
     The Artist Alley REST API. Every endpoint lives under the `/api/v1`
     base path and speaks JSON.
@@ -5667,14 +5667,22 @@ paths:
       operationId: listPosts
       summary: List posts (paginated feed)
       description: |
-        The browse-page feed. Public posts visible to authenticated
-        callers; the author's own posts of any visibility are also
-        returned. Anonymous access to this feed is not yet
-        implemented.
+        The browse-page feed. Authenticated callers see the
+        walled-garden tier, their own posts at any visibility, followed
+        authors' followers-tier posts and anything shared with them.
+
+        Anonymous-visible under public mode (#1181, ADR 0063): with
+        public mode ON an anonymous caller sees the public tier and
+        nothing else, and the default `visibility` filter is `public`
+        rather than the signed-in `org-only`. With public mode OFF the
+        request is refused with 401 before it reaches the handler. The
+        same read rule decides rows in both cases — no separate
+        enforcement plane.
+
+        Writes on this path (`POST /posts`) are unaffected by public
+        mode and require authentication in both states.
       tags: [posts]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      security: []
       parameters:
         - name: author_ref
           in: query
@@ -5706,7 +5714,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [private, org-only, followers, explicit-share]
+            enum: [public, private, org-only, followers, explicit-share]
         - name: q
           in: query
           required: false
@@ -5735,6 +5743,66 @@ paths:
             team and a team with no readable posts are one answer, an
             empty page.
           schema: { type: string, format: uuid }
+        - name: kind
+          in: query
+          required: false
+          description: |
+            Restrict the feed to posts CONTAINING an asset of the given
+            kind — the browse footer's type filter (#1166, widened by
+            #1190).
+
+            Comma-joined, spelled the way `/search?types=` already
+            spells a multi-value narrowing filter on this wire:
+            `?kind=image,video`. The vocabulary is the frontend's
+            `ViewKind` union — `image`, `video`, `pdf`, `audio`,
+            `sequence`, `font`, `sprite`, `3d`, `ebook`, `doc`,
+            `audiobook`, `archive`, `placeholder` — because the value
+            this filters ON is the one the card's kind badge RENDERS,
+            and a filter that used a different vocabulary from the badge
+            could not be checked against it by looking at the page.
+
+            ANY MEMBER, not the cover. A post matches when ANY of its
+            member assets resolves to a selected kind — "a post
+            containing an ebook matches the ebook filter, cover or not"
+            (#1190). #1166 shipped the cover-only reading and it
+            answered the wrong question: a multi-file art drop was
+            unreachable by every kind it actually contained except
+            whichever one its cover happened to be.
+
+            THE KINDS THEREFORE DO NOT PARTITION. One post can be
+            returned by several kinds — a bundle holding a .glb and an
+            .mp4 is in `?kind=3d` and in `?kind=video` — and a card in
+            `?kind=ebook` can be drawing a video badge, because the
+            badge names the COVER while the filter names the
+            MEMBERSHIP. `?kind=A,B` is still exactly the union of
+            `?kind=A` and `?kind=B`.
+
+            ⚠️ A MEMBER THIS CALLER MAY NOT READ CONTRIBUTES NO KIND.
+            The card withholds everything about a restricted member —
+            it ships with no `asset` object at all — because the kind of
+            something you may not see is not yours to know; a filter
+            that selected a post through such a member would hand the
+            fact back by elimination (ask for each kind in turn and the
+            one that returns the post has named it). So the field-plane
+            readability rule sits INSIDE the per-member test: a post
+            whose only epub is restricted is absent from `?kind=ebook`
+            for a stranger and present for its owner, and a post whose
+            members are all unreadable is reachable unfiltered and by no
+            kind.
+
+            NARROWING, like every other filter on this operation. It is
+            a plain conjunct beside the post read rule, never a disjunct
+            with it, so it can only remove posts from the page the
+            caller would otherwise have received — including for an
+            anonymous caller under public mode, who sees public posts
+            containing a visible asset of that kind and nothing else.
+
+            An unrecognised name selects NOTHING rather than being
+            ignored: `?kind=nonsense` answers an empty page, because
+            ignoring it would serve the entire feed under a label
+            promising one kind. An empty value is no filter at all,
+            which is what the control sends when every box is ticked.
+          schema: { type: string, maxLength: 200 }
         - name: feed
           in: query
           required: false
@@ -6601,9 +6669,19 @@ paths:
         - name: visibility
           in: query
           required: false
+          description: |
+            Narrow to one tier WITHIN what this caller may read — the
+            same display-filter semantics `GET /posts?visibility=` has.
+            It never widens the read rule.
+
+            `public` joined the list with #1195. The tab-driven Public
+            view has filtered on that tier server-side since #1104
+            (`hubPublicTier`), so a client could reach the tier by tab
+            and not by name; the enum was the only thing saying it did
+            not exist.
           schema:
             type: string
-            enum: [private, org-only, followers, explicit-share]
+            enum: [public, private, org-only, followers, explicit-share]
         - name: featured
           in: query
           required: false
@@ -12842,6 +12920,53 @@ components:
             read-only banner can render once signed in. Absent/false in
             a normal install — zero footprint when off.
           example: false
+        visual_search_enabled:
+          type: boolean
+          readOnly: true
+          description: |
+            True when this install can answer a reverse-image search —
+            i.e. `search.visual.enabled` is on AND the CLIP visual
+            encoder sidecar was reachable when the process booted.
+
+            It is the RESOLVED capability, not the config flag, and the
+            difference is the whole point (#1163): an install whose
+            sidecar was unreachable at boot has `enabled: true` in
+            sysconfig and still serves **501 sidecar_not_installed** on
+            `POST /search/by-image`, so publishing the config value
+            would advertise an arm that cannot work. Read it as "the
+            by-image endpoint will do something".
+
+            Surfaced here, on the boot path the frontend already reads,
+            so the reverse-image dropzone can be absent on an install
+            without the channel instead of being discovered by dropping
+            an image and getting an error. Absent/false on a default
+            install — the feature is off unless an operator turns it on.
+          example: false
+        public_mode_enabled:
+          type: boolean
+          readOnly: true
+          description: |
+            True when this install lets anonymous visitors browse
+            (`public_mode`, #445/#709). Read-only here — the switch is
+            owned by `GET`/`PUT /system/public-mode`, which are gated on
+            `system.config.read`/`write`; this is the same fact
+            published on the boot path every client already fetches, so
+            an ordinary member can ask "does 'public' mean anything on
+            this instance?" without an admin capability.
+
+            It exists for the tier pickers (#1195). A `public`
+            visibility option on a collection or a post promises
+            something an install with public mode OFF cannot deliver —
+            there are no anonymous readers to see it — so the option is
+            offered only where it is meaningful, the same
+            resolved-capability discipline `visual_search_enabled`
+            follows (#1163).
+
+            It discloses nothing: with public mode on, an anonymous
+            visitor can simply browse; with it off, every anonymous
+            request is already refused by the public-mode middleware.
+            Either way the answer is one unauthenticated request away.
+          example: false
         logo_url:
           type: string
           readOnly: true
@@ -13966,7 +14091,18 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
+          enum: [public, private, org-only, followers, explicit-share]
+          description: |
+            The collection's read tier.
+
+            `public` means anonymous visitors may read it when the
+            instance has public mode on. It has been in the column's
+            CHECK constraint since migration 00008 and in the read rule
+            (`visibility.Predicate` over `EntityCollection` admits
+            `visibility = 'public'`) ever since; only this schema, and
+            therefore every client, kept saying otherwise — the same
+            defect #1176 fixed for posts. A collection could be made
+            public by no route the API offered (#1195).
         membership:
           type: string
           enum: [manual, query, hybrid]
@@ -14030,6 +14166,135 @@ components:
             exists only on this server, which is ADR 0083's exclusion
             criterion; a peer composes its own mosaic from the members
             it holds.
+        featured_cover_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The curator's cover for the FEATURED RAIL specifically
+            (#1207), or null for "no separate choice".
+
+            The rail's card is locked to 890:500 while a collection card
+            is roughly square, so the picture that reads well on one is
+            often not the one that reads well on the other. This is the
+            second pointer that lets them differ.
+
+            NULL IS A FALLBACK, NOT A BLANK. The rail's preference order
+            is this cover, then `cover_asset_id`, then the derived
+            hero-card cover of ADR 0027 — and each rung is re-checked
+            against the reader's own picture plane, so a chosen cover
+            the reader may not picture falls through to the next rung
+            rather than leaving a blank tile or leaking the withheld
+            picture.
+
+            Like `cover_asset_id`: any asset the curator may picture,
+            not necessarily a member; the curator's SETTING rather than
+            the render answer; and not federated.
+        featured_cover_focal_x:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Where the featured rail's 890:500 crop is centred
+            horizontally, as a FRACTION of the picture's width — 0 is
+            the left edge, 1 the right (#1207).
+
+            A fraction rather than a pixel offset because the rail
+            renders whichever preview rung the ladder serves at whatever
+            width the viewport gives it. A fraction is correct at every
+            rung and every width; a pixel offset measured against the
+            original is correct at none of them. It maps straight onto
+            CSS `object-position`.
+
+            Null means centre — the CSS default and what every
+            collection had before this existed. Null and an explicit 0.5
+            are stored differently on purpose: the editor's reset is a
+            clear, so "never positioned" stays distinguishable from
+            "positioned dead centre".
+
+            Always null or set TOGETHER with `featured_cover_focal_y`; a
+            focal point is a point, and the database constrains the pair.
+        featured_cover_focal_y:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            The vertical half of the featured crop's focal point — 0 is
+            the top edge, 1 the bottom (#1207). See
+            `featured_cover_focal_x` for why it is a fraction, why null
+            means centre, and why the two travel together.
+        cover_focal_x:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Where the COLLECTION cover's square crop is centred
+            horizontally, as a fraction of the picture's width (#1207).
+
+            THE DESTINATION SHAPE IS A SQUARE, and that is not a
+            preference — the `col` rendition is `fit: cover` at 320px, a
+            320x320 centre-crop, and it is what every small collection
+            thumbnail is made of. A separate pair from
+            `featured_cover_focal_x` because the featured card is
+            890:500: the point that centres a face in a wide band is not
+            the point that centres it in a square, so one fraction
+            cannot be right for both destinations.
+
+            ⚠️ IT IS CHOSEN AGAINST THE ORIGINAL PICTURE. A consumer
+            honours it by rendering a `contain` rung with
+            `object-position`; applying it to `col` crops a crop, since
+            `col`'s square was already taken at the centre before this
+            value could act.
+
+            Null means centre.
+        cover_focal_y:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            The vertical half of the collection cover's focal point
+            (#1207). See `cover_focal_x`.
+        featured_cover_zoom:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            How far the featured rail's 890:500 crop is tightened, as a
+            multiplier on the fitting rectangle (#1212).
+
+            The crop window is the FIT window divided by this, so 1 is
+            the fit itself and 2 shows a quarter of the area. It exists
+            because the fit window always has one axis equal to the
+            whole picture — `object-fit: cover` keeps one axis whole —
+            so at the fit exactly one axis can travel, and a subject
+            sitting in the left half of a portrait cover can never be
+            brought to the middle. Below the fit BOTH axes gain travel,
+            which is what makes `featured_cover_focal_x` mean anything
+            for such a picture.
+
+            Null means fit: what every collection rendered before this
+            existed, so a client that ignores it renders exactly what it
+            rendered before. Null and an explicit 1 paint the same
+            picture and are stored differently on purpose — the editor's
+            reset is a clear, so "never zoomed" stays distinguishable
+            from "zoomed and came back".
+
+            Bounded 1..4. Below 1 the window would be larger than the
+            picture. The upper bound comes from the preview ladder's
+            real rungs: a cover carrying a crop is painted from a
+            CONTAIN rung, the rung it is guaranteed to have is `preview`
+            (1024) and the tallest one is `hires` (4096), so 4x is the
+            last step the ladder can still answer with real pixels.
+        cover_zoom:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            How far the collection card's 4:3 crop is tightened (#1212).
+            Separate from `featured_cover_zoom` for the reason the focal
+            pairs are separate: the tightening that frames a subject in
+            a wide band is not the one that frames it in a 4:3 tile. See
+            `featured_cover_zoom` for the semantics and the 1..4 bound.
         covers:
           type: array
           items: { $ref: "#/components/schemas/CollectionCover" }
@@ -14084,7 +14349,7 @@ components:
         entry exists only if this caller may render the asset, so
         clients paint every entry unconditionally — there is no
         `preview_available` to branch on and no placeholder rung.
-      required: [asset_id]
+      required: [asset_id, preview_available]
       properties:
         asset_id:
           type: string
@@ -14093,6 +14358,32 @@ components:
             Fetch the picture from
             `/assets/{asset_id}/variants/col`. Guaranteed to have that
             rendition — an asset without one is not a cover candidate.
+        preview_available:
+          type: boolean
+          description: |
+            A CONTAIN rung (`preview`) exists for this asset (#1207) — a
+            different question from the `col` guarantee above, and the
+            one a focal point depends on.
+
+            ⚠️ A COVER WITH A FOCAL POINT MUST BE PAINTED FROM A CONTAIN
+            RUNG. `col` is `fit: cover` at 320px, a 320x320 CENTRE-CROP,
+            so the picture's edges are gone before `object-position`
+            could act on them: applying `collections.cover_focal_*` to
+            `col` crops a crop and lands somewhere the curator did not
+            choose. The focal fractions are stored against the ORIGINAL,
+            so the source has to be one that still is the original
+            shape.
+
+            When this is false there is no such rung and the client
+            falls back to `col` with a centred crop — which is exactly
+            what every collection card did before focal points existed,
+            so the fallback is the old behaviour rather than a
+            degradation.
+
+            Populated for every entry, mosaic tiles included, even
+            though only the single-cover case consumes it: a field that
+            is present on some rows and absent on others is a field
+            every reader has to branch on twice.
     CollectionCreate:
       type: object
       required: [name]
@@ -14101,7 +14392,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
+          enum: [public, private, org-only, followers, explicit-share]
           default: private
         membership:
           type: string
@@ -14142,13 +14433,16 @@ components:
       description: |
         Partial update; only present fields are touched. A null is
         "leave alone", not "clear" — removing a value that is already
-        set is an explicit flag (`clear_expires_at`, `clear_cover`).
+        set is an explicit flag (`clear_expires_at`, `clear_cover`,
+        `clear_featured_cover`, `clear_featured_cover_focal`,
+        `clear_cover_focal`, `clear_featured_cover_zoom`,
+        `clear_cover_zoom`).
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
+          enum: [public, private, org-only, followers, explicit-share]
         membership:
           type: string
           enum: [manual, query, hybrid]
@@ -14202,6 +14496,137 @@ components:
             derived mosaic composed from its members. Mutually exclusive
             with `cover_asset_id` — sending both is a 400, rather than
             the server picking one and silently discarding the other.
+        featured_cover_asset_id:
+          type: string
+          format: uuid
+          description: |
+            Choose this collection's FEATURED-RAIL cover (#1207). Any
+            asset you may PICTURE, on exactly the terms `cover_asset_id`
+            states — including the same deliberately-indistinct 400 for
+            "no such asset" and "not yours to look at".
+
+            Send `clear_featured_cover: true` to go back to "no separate
+            choice", which puts the rail back on `cover_asset_id` and
+            then on the derived cover. Null here is "leave alone", as it
+            is for every other property on this schema.
+        clear_featured_cover:
+          type: boolean
+          description: |
+            Remove the separate featured-rail cover, so the rail falls
+            back to `cover_asset_id` and then to the derived cover
+            (#1207). Mutually exclusive with `featured_cover_asset_id` —
+            sending both is a 400.
+
+            It does NOT touch the focal point. The two are independent
+            settings: the focal point positions whichever picture the
+            rail ends up showing, so clearing the separate cover leaves
+            the positioning applying to the regular one. Clear the
+            positioning with `clear_featured_cover_focal`.
+        featured_cover_focal_x:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            Centre the featured rail's 890:500 crop horizontally, as a
+            fraction of the picture's width (#1207). 0 is the left edge,
+            1 the right, and out-of-range is a 400 rather than a
+            silently-clamped value.
+
+            MUST BE SENT WITH `featured_cover_focal_y`. A focal point is
+            a point; half of one is not a weaker positioning but an
+            unanswerable one, so sending one without the other is a 400
+            rather than the server inventing the missing axis.
+        featured_cover_focal_y:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            The vertical half of the focal point — 0 is the top edge, 1
+            the bottom (#1207). Must be sent with
+            `featured_cover_focal_x`; see there.
+        clear_featured_cover_focal:
+          type: boolean
+          description: |
+            Put the featured crop back to centred (#1207) — one flag for
+            the PAIR, because "remove the positioning" is a single
+            intention over two columns and a per-axis flag would let a
+            caller express half a clear.
+
+            Mutually exclusive with either focal coordinate: sending
+            both is a 400. Independent of `clear_featured_cover`, which
+            removes the picture rather than its positioning.
+        cover_focal_x:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            Centre the COLLECTION cover's square crop horizontally, as a
+            fraction of the picture's width (#1207). Same rules as the
+            featured pair: must be sent with `cover_focal_y`, must be in
+            0..1, and out-of-range is a 400 rather than a silently
+            clamped value.
+        cover_focal_y:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            The vertical half of the collection cover's focal point.
+            Must be sent with `cover_focal_x`; see there.
+        clear_cover_focal:
+          type: boolean
+          description: |
+            Put the collection cover's square crop back to centred
+            (#1207) — one flag for the PAIR, for the reason
+            `clear_featured_cover_focal` is one flag for its pair.
+
+            Mutually exclusive with either coordinate. Independent of
+            `clear_cover`, which removes the picture rather than its
+            positioning.
+        featured_cover_zoom:
+          type: number
+          format: double
+          minimum: 1
+          maximum: 4
+          description: |
+            Tighten the featured rail's crop to this multiple of the
+            fitting rectangle (#1212). 1 is the fit itself; 2 shows a
+            quarter of the area.
+
+            INDEPENDENT OF THE FOCAL PAIR, and sent on its own. "Zoomed
+            in, still centred" and "at the fit, positioned left" are
+            both ordinary framings, so zoom is not validated with
+            `featured_cover_focal_x`/`_y` and does not share their clear
+            flag.
+
+            Refused outside 1..4 with a 400 rather than reaching the
+            column CHECK as a constraint error. Send
+            `clear_featured_cover_zoom` to go back to the fit; omitting
+            this field leaves whatever is stored alone, which is why the
+            clear flag exists at all.
+        clear_featured_cover_zoom:
+          type: boolean
+          description: |
+            Remove the featured cover's zoom, returning it to the fit
+            (#1212). Mutually exclusive with `featured_cover_zoom` — 400
+            if both are sent, the exclusivity rule every clear flag on
+            this endpoint carries.
+        cover_zoom:
+          type: number
+          format: double
+          minimum: 1
+          maximum: 4
+          description: |
+            Tighten the COLLECTION card's crop (#1212). Same rules as
+            `featured_cover_zoom`, over the 4:3 tile.
+        clear_cover_zoom:
+          type: boolean
+          description: |
+            Remove the collection cover's zoom, returning it to the fit
+            (#1212). Mutually exclusive with `cover_zoom`.
         if_unchanged_since:
           type: string
           format: date-time
@@ -14882,6 +15307,57 @@ components:
             the tile is title-only. Subject to the same gating as
             `asset_file_hash`, so it never names an asset the caller
             cannot see.
+
+            SINCE #1207 A COLLECTION'S IS THE CURATOR'S CHOICE WHEN
+            THERE IS ONE. The rail resolves it in preference order —
+            `featured_cover_asset_id`, then `cover_asset_id`, then ADR
+            0027's derived cover — with every rung carrying the caller's
+            own asset predicate, so a chosen cover this caller may not
+            picture falls through to the next rung instead of leaking.
+            Before that the rail read neither chosen column and always
+            derived, which is #1200: the strip showed one picture and
+            every other collection surface showed another.
+        cover_focal_x:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Where to centre this tile's crop horizontally, as a fraction
+            of the cover picture's width (#1207) — the curator's
+            `featured_cover_focal_x`, ready to be written straight into
+            CSS `object-position`.
+
+            Null means centre, which is the CSS default and what every
+            tile did before this existed, so a client that ignores it
+            renders exactly what it rendered before.
+
+            ONLY EVER SET WHEN THE TILE IS SHOWING A CHOSEN COVER. A
+            derived cover is a picture the curator never saw in the
+            editor, so positioning chosen for a different picture is not
+            carried onto it; that arm returns null and the tile centres.
+            Null for every non-collection subject.
+        cover_focal_y:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            The vertical half of the tile's focal point (#1207). See
+            `cover_focal_x`.
+        cover_zoom:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            How far this tile's crop is tightened, as a multiplier on
+            the fitting rectangle (#1212) — the curator's
+            `featured_cover_zoom`, ready to be applied alongside
+            `cover_focal_x`/`_y`.
+
+            Null means fit, which is what every tile did before this
+            existed. ONLY EVER SET WHEN THE TILE IS SHOWING A CHOSEN
+            COVER, for the reason the focal point is: a derived cover is
+            a picture the curator never framed, so a framing chosen for
+            a different picture is not carried onto it.
         asset_file_hash:
           type: string
           nullable: true
@@ -15611,7 +16087,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
+          enum: [public, private, org-only, followers, explicit-share]
         cover_asset_id:
           type: string
           format: uuid
@@ -15912,8 +16388,16 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
-          default: public
+          enum: [public, private, org-only, followers, explicit-share]
+          default: org-only
+          description: |
+            `public` is readable by anonymous visitors on an instance
+            with public mode on. It is writable as of #1176 — the write
+            gate used to refuse the value the compose form offered — but
+            it is NOT the default: an omitted field means `org-only`,
+            the walled-garden tier, which is what the handler has always
+            applied. The schema previously declared `default: public`,
+            a value its own enum did not even list.
         cover_asset_id:
           type: string
           format: uuid
@@ -15966,7 +16450,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
+          enum: [public, private, org-only, followers, explicit-share]
         cover_asset_id:
           type: string
           format: uuid

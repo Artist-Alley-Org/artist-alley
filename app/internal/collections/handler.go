@@ -566,6 +566,87 @@ func (h *Handler) UpdateCollection(
 		coverPtr = &want
 	}
 
+	// #1207 — the featured rail's own cover. Same three moves as
+	// cover_asset_id directly above, for the same three reasons, over a
+	// second column: the exclusivity 400, the PICTURE-plane check, and
+	// the one 400 that does not distinguish "no such asset" from "not
+	// yours to look at".
+	//
+	// It is a separate block rather than a loop over the two because the
+	// only shared part is the shape; a loop would have to carry two
+	// different error strings and two different openapi fields through
+	// it, and the reader would have to unroll it to check either.
+	clearFeaturedCover := in.ClearFeaturedCover != nil && *in.ClearFeaturedCover
+	if clearFeaturedCover && in.FeaturedCoverAssetId != nil {
+		return openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "send either featured_cover_asset_id or clear_featured_cover, not both",
+			},
+		}, nil
+	}
+	var featuredCoverPtr *uuid.UUID
+	if in.FeaturedCoverAssetId != nil {
+		want := uuid.UUID(*in.FeaturedCoverAssetId)
+		cCaller, cCaps, _, cMature := CoverCallerFromContext(ctx)
+		mayPicture, err := CallerMayPictureAsset(ctx, h.Pool, cCaller, cCaps, cMature, want)
+		if err != nil {
+			return nil, err
+		}
+		if !mayPicture {
+			return openapi.UpdateCollection400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "featured_cover_asset_id is not an asset you can use as a cover",
+				},
+			}, nil
+		}
+		featuredCoverPtr = &want
+	}
+
+	// #1207 — the focal point, which is a PAIR and is validated as one.
+	// See [validateFocalPair] for the three states it refuses and why
+	// each of them would otherwise reach the column CHECK as a
+	// constraint error instead of a 400.
+	clearFocal := in.ClearFeaturedCoverFocal != nil && *in.ClearFeaturedCoverFocal
+	if resp := validateFocalPair(
+		"featured_cover_focal_x", "featured_cover_focal_y", "clear_featured_cover_focal",
+		in.FeaturedCoverFocalX, in.FeaturedCoverFocalY, clearFocal,
+	); resp != nil {
+		return *resp, nil
+	}
+
+	// #1207 — the COLLECTION cover's own focal pair, on the square
+	// destination. Validated by the same three refusals as the featured
+	// pair; a shared helper rather than a third copy of them, because
+	// three copies of a range check is how one of them ends up admitting
+	// 1.5.
+	clearCoverFocal := in.ClearCoverFocal != nil && *in.ClearCoverFocal
+	if resp := validateFocalPair(
+		"cover_focal_x", "cover_focal_y", "clear_cover_focal",
+		in.CoverFocalX, in.CoverFocalY, clearCoverFocal,
+	); resp != nil {
+		return *resp, nil
+	}
+
+	// #1212 — the zoom for each slot. Its own value and its own clear
+	// flag per slot, NOT folded into the focal pair's, because zoom and
+	// position are independent settings: "back to the fit, still
+	// positioned left" is an ordinary thing to want and a shared flag
+	// could not say it.
+	clearFeaturedCoverZoom := in.ClearFeaturedCoverZoom != nil && *in.ClearFeaturedCoverZoom
+	if resp := validateZoom(
+		"featured_cover_zoom", "clear_featured_cover_zoom",
+		in.FeaturedCoverZoom, clearFeaturedCoverZoom,
+	); resp != nil {
+		return *resp, nil
+	}
+	clearCoverZoom := in.ClearCoverZoom != nil && *in.ClearCoverZoom
+	if resp := validateZoom(
+		"cover_zoom", "clear_cover_zoom",
+		in.CoverZoom, clearCoverZoom,
+	); resp != nil {
+		return *resp, nil
+	}
+
 	// #1073 — expires_at is a tri-state, and the third state needs a
 	// flag. `CollectionUpdate.ExpiresAt` is a *time.Time with
 	// `omitempty`, so by the time a body reaches here "absent" and
@@ -603,6 +684,22 @@ func (h *Handler) UpdateCollection(
 			ClearExpiresAt: clearExpiresAt,
 			ClearCover:     clearCover,
 			CoverAssetID:   pgUUIDFromPtr(coverPtr),
+			// #1207. Two clear flags, and the focal pair rides the
+			// second one for both axes — see the query's CASE arms.
+			ClearFeaturedCover:      clearFeaturedCover,
+			FeaturedCoverAssetID:    pgUUIDFromPtr(featuredCoverPtr),
+			ClearFeaturedCoverFocal: clearFocal,
+			FeaturedCoverFocalX:     in.FeaturedCoverFocalX,
+			FeaturedCoverFocalY:     in.FeaturedCoverFocalY,
+			ClearCoverFocal:         clearCoverFocal,
+			CoverFocalX:             in.CoverFocalX,
+			CoverFocalY:             in.CoverFocalY,
+			// #1212. Each zoom rides its own clear flag; see the
+			// query's CASE arms and [validateZoom].
+			ClearFeaturedCoverZoom: clearFeaturedCoverZoom,
+			FeaturedCoverZoom:      in.FeaturedCoverZoom,
+			ClearCoverZoom:         clearCoverZoom,
+			CoverZoom:              in.CoverZoom,
 		})
 		if err != nil {
 			return activities.EmissionInput{}, fmt.Errorf("collections: update: %w", err)
@@ -1638,7 +1735,138 @@ func rowToAPI(r Collection) openapi.Collection {
 		v := openapi_types.UUID(r.CoverAssetID.Bytes)
 		c.CoverAssetId = &v
 	}
+	// #1207 — the featured rail's own cover and its focal point, on the
+	// same terms as cover_asset_id above: the curator's SETTING, so the
+	// edit form can show what is currently chosen. What the rail PAINTS
+	// is decided by featured.ListPlacements, which re-runs the reader's
+	// picture plane over each rung of the preference order; these three
+	// carry no picture and make no claim about renderability.
+	//
+	// The focal pair is copied as-is rather than defaulted to 0.5: null
+	// is "never positioned", and the editor needs that distinct from a
+	// deliberate centring so its reset control knows whether there is
+	// anything to reset.
+	if r.FeaturedCoverAssetID.Valid {
+		v := openapi_types.UUID(r.FeaturedCoverAssetID.Bytes)
+		c.FeaturedCoverAssetId = &v
+	}
+	c.FeaturedCoverFocalX = r.FeaturedCoverFocalX
+	c.FeaturedCoverFocalY = r.FeaturedCoverFocalY
+	c.CoverFocalX = r.CoverFocalX
+	c.CoverFocalY = r.CoverFocalY
+	// #1212 — the zoom for each slot, copied as-is for the same reason
+	// the focal pair is: nil is "never zoomed" and an explicit 1 is "at
+	// the fit, deliberately". They render identically and the editor's
+	// reset needs to tell them apart, so nothing here defaults one to
+	// the other.
+	c.FeaturedCoverZoom = r.FeaturedCoverZoom
+	c.CoverZoom = r.CoverZoom
 	return c
+}
+
+// validateFocalPair refuses the three shapes a focal pair must never
+// reach the database in, and it is ONE function because #1207 has two
+// pairs — the featured card's 890:500 crop and the collection cover's
+// square one — with identical rules.
+//
+// Each refusal is a state the column CHECK would otherwise reject as a
+// constraint error, which surfaces as a 500 rather than as the 400 the
+// caller can act on:
+//
+//   - one coordinate without the other. Half a point is not a weaker
+//     positioning, it is an unanswerable one, and the only way to
+//     complete it is to invent an axis the curator did not choose.
+//   - either coordinate alongside the clear flag — the exclusivity rule
+//     every clear flag on this endpoint carries, refused rather than
+//     resolved because the server has no basis for preferring one.
+//   - out of 0..1. A fraction outside the picture is a bug in the
+//     client, and rejecting it here is what stops it becoming an
+//     object-position of -240% on a surface nobody is looking at.
+//
+// Returns nil when the pair is acceptable, including when it is absent
+// entirely — "leave alone" is always valid.
+func validateFocalPair(
+	xName, yName, clearName string,
+	x, y *float64,
+	clear bool,
+) *openapi.UpdateCollection400JSONResponse {
+	bad := func(msg string) *openapi.UpdateCollection400JSONResponse {
+		r := openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+		}
+		return &r
+	}
+	if (x == nil) != (y == nil) {
+		return bad(xName + " and " + yName + " must be sent together")
+	}
+	if clear && x != nil {
+		return bad("send either the " + xName + "/" + yName + " pair or " + clearName + ", not both")
+	}
+	if x != nil && (*x < 0 || *x > 1 || *y < 0 || *y > 1) {
+		return bad(xName + " and " + yName + " must be fractions between 0 and 1")
+	}
+	return nil
+}
+
+// MinCoverZoom / MaxCoverZoom bound a cover crop's zoom (#1212), and
+// both ends come from something other than taste.
+//
+// The floor is geometry: the crop window is the FIT window divided by
+// the zoom, so anything below 1 asks for a window larger than the
+// picture. There are no pixels out there.
+//
+// The ceiling comes from the preview ladder's real rungs. A cover
+// carrying a crop must be painted from a CONTAIN rung — `col` is
+// `fit: cover` at 320px, a square already cropped at the centre, so
+// positioning applied to it crops a crop (migration 00055's warning).
+// The contain rungs are `preview` 1024, `screen` 1920 and `hires` 4096
+// (sysconfig/previews.go), and `preview` is the one a cover is
+// GUARANTEED to have — it is what CollectionCover.preview_available
+// reports. Zooming to z feeds the card 1/z of the picture's fitted
+// width, so it demands z times the source pixels per CSS pixel; the
+// browser answers by climbing the srcset, and 4096 is exactly four
+// times 1024. At 4 the ladder still has a rung to climb to. Past 4 it
+// has none, and every further step is upscaling bytes the server never
+// made.
+//
+// The same two numbers are the column CHECK in migration 00056 and the
+// slider's clamp in the editor. Three copies of one rule, which is
+// deliberate: the constraint is where a broken client stops, this is
+// where the caller gets a 400 it can act on instead of a constraint
+// error, and the clamp is where a curator is stopped before either.
+const (
+	MinCoverZoom = 1.0
+	MaxCoverZoom = 4.0
+)
+
+// validateZoom refuses the two shapes a cover zoom must never reach the
+// database in, and it is ONE function because #1212 has two of them.
+//
+// Unlike the focal pair there is no "both or neither" rule to enforce —
+// a zoom is one number, and it is independent of the positioning it
+// travels with. What is left is the exclusivity every clear flag on
+// this endpoint carries, and the range, which would otherwise arrive at
+// the column CHECK as a constraint error and surface as a 500.
+//
+// Absent entirely is valid: "leave alone" always is.
+func validateZoom(
+	name, clearName string,
+	z *float64,
+	clear bool,
+) *openapi.UpdateCollection400JSONResponse {
+	bad := func(msg string) *openapi.UpdateCollection400JSONResponse {
+		r := openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+		}
+		return &r
+	}
+	if clear && z != nil {
+		return bad("send either " + name + " or " + clearName + ", not both")
+	}
+	if z != nil && (*z < MinCoverZoom || *z > MaxCoverZoom) {
+		return bad(name + " must be between 1 and 4")
+	}
+	return nil
 }
 
 // decorateMemberCardFields attaches `card_fields` to a page of

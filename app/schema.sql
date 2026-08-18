@@ -1342,6 +1342,17 @@ CREATE TABLE public.collections (
     deleted_reason text,
     deleted_by_user_ref bigint,
     cover_asset_id uuid,
+    featured_cover_asset_id uuid,
+    featured_cover_focal_x double precision,
+    featured_cover_focal_y double precision,
+    cover_focal_x double precision,
+    cover_focal_y double precision,
+    featured_cover_zoom double precision,
+    cover_zoom double precision,
+    CONSTRAINT collections_cover_focal_check CHECK ((((cover_focal_x IS NULL) AND (cover_focal_y IS NULL)) OR (((cover_focal_x >= (0)::double precision) AND (cover_focal_x <= (1)::double precision)) AND ((cover_focal_y >= (0)::double precision) AND (cover_focal_y <= (1)::double precision))))),
+    CONSTRAINT collections_cover_zoom_check CHECK (((cover_zoom IS NULL) OR ((cover_zoom >= (1)::double precision) AND (cover_zoom <= (4)::double precision)))),
+    CONSTRAINT collections_featured_cover_focal_check CHECK ((((featured_cover_focal_x IS NULL) AND (featured_cover_focal_y IS NULL)) OR (((featured_cover_focal_x >= (0)::double precision) AND (featured_cover_focal_x <= (1)::double precision)) AND ((featured_cover_focal_y >= (0)::double precision) AND (featured_cover_focal_y <= (1)::double precision))))),
+    CONSTRAINT collections_featured_cover_zoom_check CHECK (((featured_cover_zoom IS NULL) OR ((featured_cover_zoom >= (1)::double precision) AND (featured_cover_zoom <= (4)::double precision)))),
     CONSTRAINT collections_membership_check CHECK ((membership = ANY (ARRAY['manual'::text, 'query'::text, 'hybrid'::text]))),
     CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
@@ -1359,6 +1370,55 @@ COMMENT ON COLUMN public.collections.smart_query IS 'DSL query string that was e
 --
 
 COMMENT ON COLUMN public.collections.cover_asset_id IS 'Curator-chosen cover picture (#1027): any asset the curator may PICTURE, not necessarily a member. NULL means compose the derived mosaic from members instead. Read path (collections.ComposeCovers) re-checks the viewer''s picture plane and falls back to the mosaic when the override is unrenderable for them — a withheld cover must never render blank. ON DELETE SET NULL so a hard-deleted asset reverts the collection to its mosaic rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083''s exclusion criterion, applied by analogy).';
+
+
+--
+-- Name: COLUMN collections.featured_cover_asset_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.featured_cover_asset_id IS 'Curator-chosen cover for the FEATURED RAIL specifically (#1207). The rail card is locked to 890:500 while a collection card is roughly square, so one picture is not the best answer for both. NULL means no separate choice: the rail falls back to cover_asset_id, then to the derived hero-card cover, each rung re-checked against the viewer''s picture plane so a withheld cover falls back rather than rendering blank. ON DELETE SET NULL, and does NOT federate — same reasoning as cover_asset_id (see migration 00046).';
+
+
+--
+-- Name: COLUMN collections.featured_cover_focal_x; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.featured_cover_focal_x IS 'Horizontal focal point for the featured rail''s 890:500 crop, as a FRACTION of the picture''s width (0 = left edge, 1 = right edge). Maps directly to CSS object-position, and is a fraction rather than a pixel offset so it stays correct across preview rungs and viewport sizes. NULL means centre (the CSS default), which is distinct from an explicit 0.5 so the editor''s reset is a clear rather than a re-set. Paired with featured_cover_focal_y by collections_featured_cover_focal_check: both NULL or both in 0..1.';
+
+
+--
+-- Name: COLUMN collections.featured_cover_focal_y; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.featured_cover_focal_y IS 'Vertical focal point for the featured rail''s 890:500 crop, as a FRACTION of the picture''s height (0 = top edge, 1 = bottom edge). See featured_cover_focal_x for why it is a fraction, why NULL means centre, and why the two are constrained together.';
+
+
+--
+-- Name: COLUMN collections.cover_focal_x; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.cover_focal_x IS 'Horizontal focal point for the collection cover''s SQUARE crop, as a FRACTION of the picture''s width (#1207). The square is the destination shape because `col` is fit=cover at 320px — a 320x320 centre-crop — and that rendition is what every small collection thumbnail is made of. Separate from featured_cover_focal_x because the two destinations are different shapes and one fraction cannot be right for both. NULL means centre. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and is wrong.';
+
+
+--
+-- Name: COLUMN collections.cover_focal_y; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.cover_focal_y IS 'Vertical focal point for the collection cover''s square crop (#1207). See cover_focal_x.';
+
+
+--
+-- Name: COLUMN collections.featured_cover_zoom; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.featured_cover_zoom IS 'How far the featured rail''s 890:500 crop is tightened, as a multiplier on the fitting rectangle (#1212). The crop window is the fit window divided by this, so 1 is the fit itself and 2 shows a quarter of the area. NULL means fit — what every collection rendered before this column existed, and what a client that has never heard of zoom keeps rendering. NULL and an explicit 1 paint the same picture and are stored differently on purpose, so the editor''s reset stays a clear. Bounded 1..4 by collections_featured_cover_zoom_check: below 1 the window would exceed the picture, and above 4 the preview ladder has no further contain rung to climb to (`hires` 4096 is 4x `preview` 1024, the rung a cover is guaranteed).';
+
+
+--
+-- Name: COLUMN collections.cover_zoom; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.cover_zoom IS 'How far the collection card''s 4:3 crop is tightened (#1212). Separate from featured_cover_zoom because the two destinations are different shapes and the tightening that frames a subject in a wide band is not the one that frames it in a 4:3 tile. See featured_cover_zoom for why NULL means fit, why NULL differs from 1, and where the 1..4 bound comes from. ⚠️ Chosen against the ORIGINAL picture, like the focal pair it travels with, so a consumer honours it by painting a `contain` rung.';
 
 
 --
@@ -4171,6 +4231,13 @@ CREATE INDEX collections_expires_idx ON public.collections USING btree (expires_
 
 
 --
+-- Name: collections_featured_cover_asset_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX collections_featured_cover_asset_id_idx ON public.collections USING btree (featured_cover_asset_id) WHERE (featured_cover_asset_id IS NOT NULL);
+
+
+--
 -- Name: collections_name_trgm; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5864,6 +5931,14 @@ ALTER TABLE ONLY public.collection_resources
 
 ALTER TABLE ONLY public.collections
     ADD CONSTRAINT collections_cover_asset_id_fkey FOREIGN KEY (cover_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL;
+
+
+--
+-- Name: collections collections_featured_cover_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collections
+    ADD CONSTRAINT collections_featured_cover_asset_id_fkey FOREIGN KEY (featured_cover_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL;
 
 
 --
