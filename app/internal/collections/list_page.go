@@ -90,7 +90,8 @@ const listCollectionsPageColumns = `c.id, c.owner_user_ref, c.name, c.descriptio
        c.created_at, c.updated_at, c.search_text, c.smart_query,
        c.deleted_at, c.deleted_reason, c.deleted_by_user_ref, c.cover_asset_id,
        c.featured_cover_asset_id, c.featured_cover_focal_x, c.featured_cover_focal_y,
-       c.cover_focal_x, c.cover_focal_y`
+       c.cover_focal_x, c.cover_focal_y,
+       c.featured_cover_zoom, c.cover_zoom`
 
 // ListCollectionsPageGated runs the browse query for one caller.
 func ListCollectionsPageGated(
@@ -168,6 +169,7 @@ LIMIT $9::INTEGER`)
 			&i.DeletedAt, &i.DeletedReason, &i.DeletedByUserRef, &i.CoverAssetID,
 			&i.FeaturedCoverAssetID, &i.FeaturedCoverFocalX, &i.FeaturedCoverFocalY,
 			&i.CoverFocalX, &i.CoverFocalY,
+			&i.FeaturedCoverZoom, &i.CoverZoom,
 		); err != nil {
 			return nil, fmt.Errorf("collections: list page scan: %w", err)
 		}

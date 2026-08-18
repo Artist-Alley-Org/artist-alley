@@ -298,6 +298,10 @@ type Collection struct {
 	CoverFocalX *float64
 	// Vertical focal point for the collection cover's square crop (#1207). See cover_focal_x.
 	CoverFocalY *float64
+	// How far the featured rail's 890:500 crop is tightened, as a multiplier on the fitting rectangle (#1212). The crop window is the fit window divided by this, so 1 is the fit itself and 2 shows a quarter of the area. NULL means fit — what every collection rendered before this column existed, and what a client that has never heard of zoom keeps rendering. NULL and an explicit 1 paint the same picture and are stored differently on purpose, so the editor's reset stays a clear. Bounded 1..4 by collections_featured_cover_zoom_check: below 1 the window would exceed the picture, and above 4 the preview ladder has no further contain rung to climb to (`hires` 4096 is 4x `preview` 1024, the rung a cover is guaranteed).
+	FeaturedCoverZoom *float64
+	// How far the collection card's 4:3 crop is tightened (#1212). Separate from featured_cover_zoom because the two destinations are different shapes and the tightening that frames a subject in a wide band is not the one that frames it in a 4:3 tile. See featured_cover_zoom for why NULL means fit, why NULL differs from 1, and where the 1..4 bound comes from. ⚠️ Chosen against the ORIGINAL picture, like the focal pair it travels with, so a consumer honours it by painting a `contain` rung.
+	CoverZoom *float64
 }
 
 type CollectionAcl struct {

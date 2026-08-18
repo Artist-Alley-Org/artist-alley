@@ -46,8 +46,14 @@ type RailRow struct {
 	// SET ONLY WHEN A CHOSEN COVER WON. The derived cover is a picture
 	// the curator never saw in the editor, so positioning they chose for
 	// a different picture is not carried onto it; see the cover lateral.
-	CoverFocalX           *float64
-	CoverFocalY           *float64
+	CoverFocalX *float64
+	CoverFocalY *float64
+	// CoverZoom tightens the tile's crop, as a multiplier on the fitting
+	// rectangle (#1212). nil means fit — what every tile did before the
+	// column existed. Rides the same rungs as the focal point, and for
+	// the same reason: it is a framing chosen against a specific
+	// picture.
+	CoverZoom             *float64
 	AssetFileHash         *string
 	AssetPreviewAvailable bool
 	// AssetLadderAvailable: every CONFIGURED preview rung exists for the
@@ -399,6 +405,9 @@ func ListPlacements(
        -- resolves the lateral at all.
        cover.focal_x AS cover_focal_x,
        cover.focal_y AS cover_focal_y,
+       -- The crop's tightness (#1212), NULL for the fit. Rides the same
+       -- rungs as the focal point for the same reason.
+       cover.zoom AS cover_zoom,
        CASE f.subject_kind
             WHEN 'asset'      THEN CASE WHEN a.sensitivity = 'public' THEN a.file_hash END
             WHEN 'collection' THEN cover.file_hash
@@ -480,11 +489,12 @@ LEFT JOIN collections c
 -- picture is not transplanted onto it, and rung 2 emits NULL, which the
 -- client reads as centre.
 LEFT JOIN LATERAL (
-       SELECT cand.id, cand.file_hash, cand.focal_x, cand.focal_y
+       SELECT cand.id, cand.file_hash, cand.focal_x, cand.focal_y, cand.zoom
          FROM (
               SELECT fa.id, fa.file_hash, 0 AS pref,
                      c.featured_cover_focal_x AS focal_x,
-                     c.featured_cover_focal_y AS focal_y
+                     c.featured_cover_focal_y AS focal_y,
+                     c.featured_cover_zoom AS zoom
                 FROM assets fa
                WHERE fa.id = c.featured_cover_asset_id` + featuredCoverFrag + matureFeaturedCover + `
                  AND fa.sensitivity = 'public'
@@ -492,7 +502,8 @@ LEFT JOIN LATERAL (
                               WHERE sv.object_hash = fa.file_hash AND sv.variant_key = 'col')
               UNION ALL
               SELECT ra.id, ra.file_hash, 1 AS pref,
-                     c.featured_cover_focal_x, c.featured_cover_focal_y
+                     c.featured_cover_focal_x, c.featured_cover_focal_y,
+                     c.featured_cover_zoom
                 FROM assets ra
                WHERE ra.id = c.cover_asset_id` + regularCoverFrag + matureRegularCover + `
                  AND ra.sensitivity = 'public'
@@ -500,7 +511,8 @@ LEFT JOIN LATERAL (
                               WHERE sv.object_hash = ra.file_hash AND sv.variant_key = 'col')
               UNION ALL
               (SELECT ca.id, ca.file_hash, 2 AS pref,
-                      NULL::DOUBLE PRECISION, NULL::DOUBLE PRECISION
+                      NULL::DOUBLE PRECISION, NULL::DOUBLE PRECISION,
+                      NULL::DOUBLE PRECISION
                  FROM collection_posts cp
                  JOIN posts p   ON p.id = cp.post_id
                  JOIN assets ca ON ca.id = p.cover_asset_id` + coverFrag + matureCover + `
@@ -545,7 +557,7 @@ LIMIT $1::INTEGER`
 		if err := rows.Scan(
 			&r.ID, &r.SubjectKind, &r.SubjectID, &r.Position,
 			&r.Title, &r.OwnerUserRef, &r.Subtitle, &r.ItemCount, &r.CoverAssetID,
-			&r.CoverFocalX, &r.CoverFocalY,
+			&r.CoverFocalX, &r.CoverFocalY, &r.CoverZoom,
 			&r.AssetFileHash, &r.AssetPreviewAvailable,
 			&r.AssetLadderAvailable,
 		); err != nil {

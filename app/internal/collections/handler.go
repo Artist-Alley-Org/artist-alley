@@ -627,6 +627,26 @@ func (h *Handler) UpdateCollection(
 		return *resp, nil
 	}
 
+	// #1212 — the zoom for each slot. Its own value and its own clear
+	// flag per slot, NOT folded into the focal pair's, because zoom and
+	// position are independent settings: "back to the fit, still
+	// positioned left" is an ordinary thing to want and a shared flag
+	// could not say it.
+	clearFeaturedCoverZoom := in.ClearFeaturedCoverZoom != nil && *in.ClearFeaturedCoverZoom
+	if resp := validateZoom(
+		"featured_cover_zoom", "clear_featured_cover_zoom",
+		in.FeaturedCoverZoom, clearFeaturedCoverZoom,
+	); resp != nil {
+		return *resp, nil
+	}
+	clearCoverZoom := in.ClearCoverZoom != nil && *in.ClearCoverZoom
+	if resp := validateZoom(
+		"cover_zoom", "clear_cover_zoom",
+		in.CoverZoom, clearCoverZoom,
+	); resp != nil {
+		return *resp, nil
+	}
+
 	// #1073 — expires_at is a tri-state, and the third state needs a
 	// flag. `CollectionUpdate.ExpiresAt` is a *time.Time with
 	// `omitempty`, so by the time a body reaches here "absent" and
@@ -674,6 +694,12 @@ func (h *Handler) UpdateCollection(
 			ClearCoverFocal:         clearCoverFocal,
 			CoverFocalX:             in.CoverFocalX,
 			CoverFocalY:             in.CoverFocalY,
+			// #1212. Each zoom rides its own clear flag; see the
+			// query's CASE arms and [validateZoom].
+			ClearFeaturedCoverZoom: clearFeaturedCoverZoom,
+			FeaturedCoverZoom:      in.FeaturedCoverZoom,
+			ClearCoverZoom:         clearCoverZoom,
+			CoverZoom:              in.CoverZoom,
 		})
 		if err != nil {
 			return activities.EmissionInput{}, fmt.Errorf("collections: update: %w", err)
@@ -1728,6 +1754,13 @@ func rowToAPI(r Collection) openapi.Collection {
 	c.FeaturedCoverFocalY = r.FeaturedCoverFocalY
 	c.CoverFocalX = r.CoverFocalX
 	c.CoverFocalY = r.CoverFocalY
+	// #1212 — the zoom for each slot, copied as-is for the same reason
+	// the focal pair is: nil is "never zoomed" and an explicit 1 is "at
+	// the fit, deliberately". They render identically and the editor's
+	// reset needs to tell them apart, so nothing here defaults one to
+	// the other.
+	c.FeaturedCoverZoom = r.FeaturedCoverZoom
+	c.CoverZoom = r.CoverZoom
 	return c
 }
 
@@ -1771,6 +1804,67 @@ func validateFocalPair(
 	}
 	if x != nil && (*x < 0 || *x > 1 || *y < 0 || *y > 1) {
 		return bad(xName + " and " + yName + " must be fractions between 0 and 1")
+	}
+	return nil
+}
+
+// MinCoverZoom / MaxCoverZoom bound a cover crop's zoom (#1212), and
+// both ends come from something other than taste.
+//
+// The floor is geometry: the crop window is the FIT window divided by
+// the zoom, so anything below 1 asks for a window larger than the
+// picture. There are no pixels out there.
+//
+// The ceiling comes from the preview ladder's real rungs. A cover
+// carrying a crop must be painted from a CONTAIN rung — `col` is
+// `fit: cover` at 320px, a square already cropped at the centre, so
+// positioning applied to it crops a crop (migration 00055's warning).
+// The contain rungs are `preview` 1024, `screen` 1920 and `hires` 4096
+// (sysconfig/previews.go), and `preview` is the one a cover is
+// GUARANTEED to have — it is what CollectionCover.preview_available
+// reports. Zooming to z feeds the card 1/z of the picture's fitted
+// width, so it demands z times the source pixels per CSS pixel; the
+// browser answers by climbing the srcset, and 4096 is exactly four
+// times 1024. At 4 the ladder still has a rung to climb to. Past 4 it
+// has none, and every further step is upscaling bytes the server never
+// made.
+//
+// The same two numbers are the column CHECK in migration 00056 and the
+// slider's clamp in the editor. Three copies of one rule, which is
+// deliberate: the constraint is where a broken client stops, this is
+// where the caller gets a 400 it can act on instead of a constraint
+// error, and the clamp is where a curator is stopped before either.
+const (
+	MinCoverZoom = 1.0
+	MaxCoverZoom = 4.0
+)
+
+// validateZoom refuses the two shapes a cover zoom must never reach the
+// database in, and it is ONE function because #1212 has two of them.
+//
+// Unlike the focal pair there is no "both or neither" rule to enforce —
+// a zoom is one number, and it is independent of the positioning it
+// travels with. What is left is the exclusivity every clear flag on
+// this endpoint carries, and the range, which would otherwise arrive at
+// the column CHECK as a constraint error and surface as a 500.
+//
+// Absent entirely is valid: "leave alone" always is.
+func validateZoom(
+	name, clearName string,
+	z *float64,
+	clear bool,
+) *openapi.UpdateCollection400JSONResponse {
+	bad := func(msg string) *openapi.UpdateCollection400JSONResponse {
+		r := openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+		}
+		return &r
+	}
+	if clear && z != nil {
+		return bad("send either " + name + " or " + clearName + ", not both")
+	}
+	if z != nil && (*z < MinCoverZoom || *z > MaxCoverZoom) {
+		return bad(name + " must be between 1 and 4")
 	}
 	return nil
 }

@@ -21,7 +21,8 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
           featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
-          cover_focal_x, cover_focal_y;
+          cover_focal_x, cover_focal_y,
+          featured_cover_zoom, cover_zoom;
 
 -- name: GetCollection :one
 -- Filters soft-deleted rows by default. Admin surfaces reading
@@ -31,7 +32,8 @@ SELECT id, owner_user_ref, name, description, visibility, membership,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
        featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
-       cover_focal_x, cover_focal_y
+       cover_focal_x, cover_focal_y,
+       featured_cover_zoom, cover_zoom
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -44,7 +46,8 @@ SELECT id, owner_user_ref, name, description, visibility, membership,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
        featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
-       cover_focal_x, cover_focal_y
+       cover_focal_x, cover_focal_y,
+       featured_cover_zoom, cover_zoom
 FROM collections
 WHERE id = $1;
 
@@ -99,6 +102,19 @@ UPDATE collections SET
                           ELSE COALESCE(sqlc.narg('cover_focal_x'), cover_focal_x) END,
     cover_focal_y = CASE WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
                           ELSE COALESCE(sqlc.narg('cover_focal_y'), cover_focal_y) END,
+    -- #1212 — how far each crop is tightened. One column per slot and
+    -- one clear flag per column, and the flag is NOT optional dressing
+    -- on a numeric field: NULL means "leave alone" here exactly as it
+    -- does above, so without the CASE a curator who zoomed and then
+    -- reset would get a 200 and an unchanged column — #1073's silent
+    -- non-clear, on a new pair of columns. It is a SEPARATE flag from
+    -- the focal pair's because zoom and position are independent
+    -- settings: "back to fit, still positioned left" is an ordinary
+    -- thing to want, and one shared flag could not say it.
+    featured_cover_zoom = CASE WHEN sqlc.arg('clear_featured_cover_zoom')::BOOLEAN THEN NULL
+                          ELSE COALESCE(sqlc.narg('featured_cover_zoom'), featured_cover_zoom) END,
+    cover_zoom = CASE WHEN sqlc.arg('clear_cover_zoom')::BOOLEAN THEN NULL
+                          ELSE COALESCE(sqlc.narg('cover_zoom'), cover_zoom) END,
     updated_at  = NOW()
 WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,
@@ -106,7 +122,8 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
           featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
-          cover_focal_x, cover_focal_y;
+          cover_focal_x, cover_focal_y,
+          featured_cover_zoom, cover_zoom;
 
 -- name: DeleteCollection :exec
 -- Phase 1.55.C-1b: soft-delete. Sets deleted_at + deleted_reason on
@@ -155,7 +172,8 @@ SELECT id, owner_user_ref, name, description, visibility, membership,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
        featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
-       cover_focal_x, cover_focal_y
+       cover_focal_x, cover_focal_y,
+       featured_cover_zoom, cover_zoom
 FROM collections c
 WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
