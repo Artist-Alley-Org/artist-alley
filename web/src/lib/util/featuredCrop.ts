@@ -252,6 +252,16 @@ export function coverPlacement(
   const size = pct(z);
   return [
     `position: absolute`,
+    // Tailwind's preflight caps every image at `max-width: 100%`, which
+    // is exactly the constraint this mechanism has to break: a zoomed
+    // cover IS wider than its box on purpose. Found by driving it —
+    // `data-zoom` said 3, the DOM said `width: 300%`, and the laid-out
+    // box measured 1x, because the cap silently won. Emitted at every
+    // zoom rather than only above 1, so there is no branch whose absence
+    // is the bug; at the fit it constrains nothing, because the image is
+    // already exactly the box.
+    `max-width: none`,
+    `max-height: none`,
     `width: ${size}`,
     `height: ${size}`,
     `left: ${pct(-px * (z - 1))}`,

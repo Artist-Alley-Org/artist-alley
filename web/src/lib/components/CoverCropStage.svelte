@@ -118,6 +118,37 @@
     if (src) failedSrc = src;
   }
 
+  /** THE STAGE PICTURE'S WIDTH, and it is computed rather than capped.
+   *
+   *  #1207 wrote `width: clamp(...); height: auto; max-height: Nvh` and
+   *  recorded that this combination "cannot distort: the auto axis
+   *  always follows the aspect". That premise is false in Chrome for a
+   *  replaced element whose width is a specified length: the max-height
+   *  binds, the height is clipped to it, and the width is NOT reduced to
+   *  match — so a 1:2 portrait was laid out at 608x562, an aspect of
+   *  1.08. Measured, not reasoned about; a portrait is exactly the
+   *  picture #1212 exists for, and framing a subject by eye against a
+   *  picture that is the wrong shape is not framing it.
+   *
+   *  Capping the WIDTH by the height budget and the aspect removes the
+   *  constraint that was doing the damage instead of adding a second one
+   *  to fight it. `height: auto` then cannot exceed the budget, because
+   *  the width it follows from was chosen so it would not. Both of
+   *  #1207's original requirements survive: the picture still UPSCALES
+   *  into a large dialog (the clamp is a width, not a max-width, which
+   *  is what stopped a 320px `col` rendering at 320px), and the wrapper
+   *  still shrink-wraps it so the marquee can be positioned in pure
+   *  percentages with nothing measured from the DOM.
+   *
+   *  Before the picture has loaded there is no aspect to cap by, and the
+   *  old clamp is used unchanged — no marquee is drawn at that point, so
+   *  there is nothing yet to distort. */
+  const stageWidthCSS = $derived(
+    naturalNow
+      ? `min(clamp(17rem, 40vw, 38rem), calc(${maxHeightVh}vh * ${naturalNow.w / naturalNow.h}))`
+      : 'clamp(17rem, 40vw, 38rem)',
+  );
+
   /** The zoom as a usable multiplier — 1 whenever nothing is stored. */
   const z = $derived(clampZoom(zoom));
 
@@ -397,9 +428,17 @@
            when the max binds the browser honours both and SQUASHES the
            picture, and the marquee is computed from
            naturalWidth/naturalHeight, so it then marks a region of a
-           shape that is not on screen. A definite width with
-           `height: auto` and a `max-height` cannot distort: the auto
-           axis always follows the aspect.
+           shape that is not on screen.
+
+           ⚠️ #1207 CONCLUDED that a definite width with `height: auto`
+           and a `max-height` cannot distort, "because the auto axis
+           always follows the aspect". IT DOES NOT. Chrome clips the
+           height to the max and leaves the specified width alone, so a
+           1:2 portrait came out 608x562 — the same squash, one
+           combination further along. #1212 measured it and removed the
+           max-height entirely; see `stageWidthCSS`, which caps the WIDTH
+           by the height budget and the aspect instead, so the auto axis
+           genuinely has nothing to fight.
 
            The wrapper stays SHRINK-WRAPPED around the image, which is
            what lets the marquee be positioned in percentages with
@@ -424,7 +463,7 @@
             data-testid="{testidPrefix}-stage-image"
             class="block select-none rounded"
             draggable="false"
-            style="width: clamp(17rem, 40vw, 38rem); height: auto; max-height: {maxHeightVh}vh;"
+            style="width: {stageWidthCSS}; height: auto;"
           />
           {#if marquee}
             <!-- What gets cropped OFF is dimmed and what survives is

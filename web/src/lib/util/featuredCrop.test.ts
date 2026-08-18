@@ -174,27 +174,27 @@ describe('#1207 featured-crop geometry', () => {
       // transform-origin 50% 50% is the CSS default.
       const at = coverPlacement(null, null, null);
       expect(at).toBe(
-        'position: absolute; width: 100%; height: 100%; left: 0%; top: 0%; ' +
+        'position: absolute; max-width: none; max-height: none; width: 100%; height: 100%; left: 0%; top: 0%; ' +
           'object-position: 50% 50%; transform-origin: 50% 50%',
       );
       expect(coverPlacement(null, null, 1)).toBe(at);
       // A positioned-but-unzoomed cover keeps its old object-position
       // and gains nothing else.
       expect(coverPlacement(0.25, 0.75, null)).toBe(
-        'position: absolute; width: 100%; height: 100%; left: 0%; top: 0%; ' +
+        'position: absolute; max-width: none; max-height: none; width: 100%; height: 100%; left: 0%; top: 0%; ' +
           'object-position: 25% 75%; transform-origin: 50% 50%',
       );
     });
 
     it('lays the picture out z times the box and offsets it by the focal share', () => {
       expect(coverPlacement(0.5, 0.5, 2)).toBe(
-        'position: absolute; width: 200%; height: 200%; left: -50%; top: -50%; ' +
+        'position: absolute; max-width: none; max-height: none; width: 200%; height: 200%; left: -50%; top: -50%; ' +
           'object-position: 50% 50%; transform-origin: 50% 50%',
       );
       // Pinned hard left: no offset at all, so the left edge of the
       // enlarged picture lines up with the left edge of the box.
       expect(coverPlacement(0, 0, 4)).toBe(
-        'position: absolute; width: 400%; height: 400%; left: 0%; top: 0%; ' +
+        'position: absolute; max-width: none; max-height: none; width: 400%; height: 400%; left: 0%; top: 0%; ' +
           'object-position: 0% 0%; transform-origin: 12.5% 12.5%',
       );
     });
@@ -236,7 +236,7 @@ describe('#1207 featured-crop geometry', () => {
 
     it('clamps a stored value that is out of range instead of painting off-picture', () => {
       expect(coverPlacement(-3, 9, 400)).toBe(
-        'position: absolute; width: 400%; height: 400%; left: 0%; top: -300%; ' +
+        'position: absolute; max-width: none; max-height: none; width: 400%; height: 400%; left: 0%; top: -300%; ' +
           'object-position: 0% 100%; transform-origin: 12.5% 87.5%',
       );
     });
