@@ -5,6 +5,22 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
+## [v0.10.2] — 2026-08-18 — Seed coverage for mature content, and a cover editor that uses its room
+
+### Added
+
+- **The sample library can express mature content.** Twelve public-domain classical works —
+  the kind of fine art a museum genuinely flags — are labelled in the seed catalogue, so the
+  mature-content controls that shipped in v0.10.0 can actually be seen working on a fresh
+  install and on the demo. Before this, nothing anywhere was marked, so the feature was
+  invisible (#1217).
+
+### Changed
+
+- **The cover editor uses the room it has.** Choosing a picture now fills the dialog instead of
+  peering through a single clipped row, and the crop stage is materially larger once a picture
+  is chosen (#1218).
+
 ## [v0.10.1] — 2026-08-17 — The listening release: every finding from two days of owner testing, landed
 
 ### Changed
