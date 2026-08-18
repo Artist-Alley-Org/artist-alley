@@ -38,7 +38,16 @@ type RailRow struct {
 	// collection. Invalid (NULL) when nothing is servable to the caller.
 	// Needed separately because SubjectID is the collection, while the
 	// variant endpoint is keyed by asset (#559).
-	CoverAssetID          pgtype.UUID
+	CoverAssetID pgtype.UUID
+	// CoverFocalX/Y position the tile's 890:500 crop, as fractions of
+	// the cover picture (#1207). nil means centre — the CSS default, and
+	// what every tile did before the columns existed.
+	//
+	// SET ONLY WHEN A CHOSEN COVER WON. The derived cover is a picture
+	// the curator never saw in the editor, so positioning they chose for
+	// a different picture is not carried onto it; see the cover lateral.
+	CoverFocalX           *float64
+	CoverFocalY           *float64
 	AssetFileHash         *string
 	AssetPreviewAvailable bool
 	// AssetLadderAvailable: every CONFIGURED preview rung exists for the
@@ -139,15 +148,18 @@ type PlacementQuery struct {
 // Predicate.ToSQL returns a runtime fragment and sqlc queries are
 // static strings with fixed placeholders. This is the fourth splice
 // site of this shape after #429, #438 and #449 — and note it splices
-// THREE fragments: one per subject kind (the subject is polymorphic),
-// plus the asset predicate a second time for the collection cover
-// lateral, which renders an asset and so must clear the asset bar.
+// SEVEN fragments: one per subject kind (the subject is polymorphic),
+// plus the asset predicate five more times — once per cover rung in
+// the preference lateral (#1207) and once per half of the member count
+// — because each of those renders or counts an asset and so must clear
+// the asset bar.
 //
 // Collection covers (#559, ADR 0027): a collection subject used to
 // contribute only its name, because every image hint came from the
 // asset join, which cannot match a collection row. The result was a
-// row of blank tiles at the top of the landing page. The hero-card
-// fallback below fills them from the collection's own content.
+// row of blank tiles at the top of the landing page. The cover lateral
+// below fills them — since #1207 from the curator's choice when there
+// is one, and from the collection's own content when there is not.
 //
 // Per-asset sensitivity still applies (ADR 0020 via #40): the
 // thumbnail hint is suppressed for any asset that is not public-tier,
@@ -211,17 +223,21 @@ type PlacementQuery struct {
 // curation rendered as a wall of frosted glass; a curated strip that is
 // simply shorter is the same strip.
 //
-// FOUR SPLICES, one per table this query renders or counts from:
+// SIX SPLICES, one per table this query renders or counts from:
 //
 //	a   the asset subject          — the tile itself
-//	ca  the collection cover       — a mature cover is a mature picture,
-//	                                 and `collections` carries no mature
-//	                                 column of its own, so the cover is
-//	                                 where the rule can act
+//	fa  the featured cover  (#1207)┐ a mature cover is a mature picture,
+//	ra  the regular cover   (#1207)│ and `collections` carries no mature
+//	ca  the derived cover          ┘ column of its own, so the cover is
+//	                                 where the rule can act — on EVERY
+//	                                 rung of the preference order, since
+//	                                 choosing a picture is not a licence
+//	                                 to publish it to a reader who never
+//	                                 opted in
 //	ia  the counted resources      — so the number matches the set
 //	ip  the counted posts          — likewise, with the POST owner column
 //
-// All four take the same viewer, so they are all empty or all present
+// All six take the same viewer, so they are all empty or all present
 // together, which is why one bound argument serves them and why it is
 // bound conditionally (see the note at the binding site).
 func ListPlacements(
@@ -256,6 +272,14 @@ func ListPlacements(
 		"a", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
 	matureCover := visibility.MatureFilterSQL(
 		"ca", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
+	// #1207's two extra cover rungs. A curator-CHOSEN cover is not
+	// exempt from ADR 0090 — choosing a picture is not a licence to
+	// publish it to a reader who never opted in — so each rung carries
+	// the same conjunct the derived one has carried since #1118.
+	matureFeaturedCover := visibility.MatureFilterSQL(
+		"fa", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
+	matureRegularCover := visibility.MatureFilterSQL(
+		"ra", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
 	matureCountAsset := visibility.MatureFilterSQL(
 		"ia", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
 	matureCountPost := visibility.MatureFilterSQL(
@@ -294,6 +318,20 @@ func ListPlacements(
 	// reason featuring can't widen access.
 	coverFrag, coverArgs := assetPred.ToSQL("ca", len(args))
 	args = append(args, coverArgs...)
+
+	// Sixth and seventh splices of the SAME asset predicate, one per
+	// CHOSEN cover rung (#1207). This is what makes "the curator's
+	// choice reaches the rail" incapable of widening access: a chosen
+	// cover is an asset being painted, so it clears the identical bar
+	// the derived one does, and a cover this caller may not see simply
+	// fails to produce a row — the next rung answers instead. There is
+	// no "chosen covers are trusted" arm anywhere, because the person
+	// who chose it and the person reading the rail are not the same
+	// person and never were.
+	featuredCoverFrag, featuredCoverArgs := assetPred.ToSQL("fa", len(args))
+	args = append(args, featuredCoverArgs...)
+	regularCoverFrag, regularCoverArgs := assetPred.ToSQL("ra", len(args))
+	args = append(args, regularCoverArgs...)
 
 	// Fourth and fifth splices, for the two halves of the member count
 	// (#1110). The resource half is the SAME asset predicate a third
@@ -355,6 +393,12 @@ func ListPlacements(
             WHEN 'asset'      THEN CASE WHEN a.sensitivity = 'public' THEN a.id END
             WHEN 'collection' THEN cover.id
        END AS cover_asset_id,
+       -- The chosen crop position (#1207), NULL for centre. The lateral
+       -- emits it only on the rungs the curator actually looked at, so
+       -- there is no CASE on subject_kind here: an asset subject never
+       -- resolves the lateral at all.
+       cover.focal_x AS cover_focal_x,
+       cover.focal_y AS cover_focal_y,
        CASE f.subject_kind
             WHEN 'asset'      THEN CASE WHEN a.sensitivity = 'public' THEN a.file_hash END
             WHEN 'collection' THEN cover.file_hash
@@ -385,36 +429,89 @@ LEFT JOIN assets a
        ON f.subject_kind = 'asset' AND a.id = f.subject_id` + assetFrag + matureAsset + `
 LEFT JOIN collections c
        ON f.subject_kind = 'collection' AND c.id = f.subject_id` + collFrag + `
--- Hero-card fallback (ADR 0027): "falls back to the most-recent post in
--- the collection". hero_asset_id — the explicit curator override — is
--- not in the schema yet, so the fallback is the whole rule for now.
+-- The collection tile's picture, in PREFERENCE ORDER (#1207, which
+-- absorbed #1200):
 --
--- "Most-recent ELIGIBLE post cover" rather than "most-recent post, then
--- check": picking the newest post first and rejecting it would blank the
--- whole tile whenever the latest post happens to be team-tier, which is
--- the common case in a studio dataset. Restricting the ordering to what
--- the caller may already see keeps the ADR's intent (newest wins) without
--- letting one gated post hide an otherwise-showable collection.
+--   0  featured_cover_asset_id  — chosen FOR this strip
+--   1  cover_asset_id           — the collection's ordinary cover
+--   2  the derived hero-card cover of ADR 0027
 --
--- Three gates, all mandatory:
---   * the caller's own asset predicate (spliced above) — visibility
+-- Until #1207 this lateral was rung 2 alone, under a comment saying the
+-- explicit curator override "is not in the schema yet" — untrue since
+-- migration 00046 added cover_asset_id, and the reason the strip showed
+-- a derived picture while every other collection surface showed the
+-- chosen one. That comment is gone with the defect it described.
+--
+-- ⚠️ EACH RUNG IS INDEPENDENTLY GATED, AND THAT IS WHAT MAKES THE
+-- FALLBACK SAFE RATHER THAN MERELY TIDY. The three gates the derived
+-- rung has always carried apply to all three:
+--
+--   * the caller's own asset predicate (spliced per alias) — visibility
 --   * sensitivity = 'public' — per-asset tier (ADR 0020/0064), same bar
 --     as the asset-subject hint, so an embargo cover yields no pixels
 --   * a servable col variant — so the tile never fires a 404
--- The removed third gate was has_image, a column with no writer that
+--
+-- plus the ADR 0090 mature conjunct. A rung the caller may not see
+-- produces NO ROW, so the next rung answers — the tile falls back
+-- rather than blanking, and it never names the withheld asset. That is
+-- the same direction ComposeCovers takes for the collection card, and
+-- it is why "the curator chose it" appears nowhere as a reason to
+-- widen: the chooser and the reader are different people.
+--
+-- The derived rung keeps its own ORDER BY inside parentheses. "Most-
+-- recent ELIGIBLE post cover" rather than "most-recent post, then
+-- check": picking the newest post first and rejecting it would blank
+-- the whole tile whenever the latest post happens to be team-tier,
+-- which is the common case in a studio dataset. Restricting the
+-- ordering to what the caller may already see keeps the ADR's intent
+-- (newest wins) without letting one gated post hide an otherwise-
+-- showable collection.
+--
+-- (The removed fourth gate was has_image, a column with no writer that
 -- would have made every cover blank had it been required. It is gone
 -- from the schema entirely as of #579; this note stays as the record of
--- why the gate list is three and not four.
+-- why the gate list is three and not four.)
+--
+-- THE FOCAL POINT RIDES ONLY THE CHOSEN RUNGS. The curator positioned
+-- the marquee over a picture they were shown in the editor, which is
+-- the featured cover or, when they have not set one, the regular cover.
+-- The derived cover is neither — it is whatever the newest eligible
+-- post happens to carry today — so a crop chosen for a different
+-- picture is not transplanted onto it, and rung 2 emits NULL, which the
+-- client reads as centre.
 LEFT JOIN LATERAL (
-       SELECT ca.id, ca.file_hash
-         FROM collection_posts cp
-         JOIN posts p   ON p.id = cp.post_id
-         JOIN assets ca ON ca.id = p.cover_asset_id` + coverFrag + matureCover + `
-        WHERE cp.collection_id = c.id
-          AND ca.sensitivity = 'public'
-          AND EXISTS (SELECT 1 FROM storage_variants sv
-                       WHERE sv.object_hash = ca.file_hash AND sv.variant_key = 'col')
-        ORDER BY p.created_at DESC, p.id DESC
+       SELECT cand.id, cand.file_hash, cand.focal_x, cand.focal_y
+         FROM (
+              SELECT fa.id, fa.file_hash, 0 AS pref,
+                     c.featured_cover_focal_x AS focal_x,
+                     c.featured_cover_focal_y AS focal_y
+                FROM assets fa
+               WHERE fa.id = c.featured_cover_asset_id` + featuredCoverFrag + matureFeaturedCover + `
+                 AND fa.sensitivity = 'public'
+                 AND EXISTS (SELECT 1 FROM storage_variants sv
+                              WHERE sv.object_hash = fa.file_hash AND sv.variant_key = 'col')
+              UNION ALL
+              SELECT ra.id, ra.file_hash, 1 AS pref,
+                     c.featured_cover_focal_x, c.featured_cover_focal_y
+                FROM assets ra
+               WHERE ra.id = c.cover_asset_id` + regularCoverFrag + matureRegularCover + `
+                 AND ra.sensitivity = 'public'
+                 AND EXISTS (SELECT 1 FROM storage_variants sv
+                              WHERE sv.object_hash = ra.file_hash AND sv.variant_key = 'col')
+              UNION ALL
+              (SELECT ca.id, ca.file_hash, 2 AS pref,
+                      NULL::DOUBLE PRECISION, NULL::DOUBLE PRECISION
+                 FROM collection_posts cp
+                 JOIN posts p   ON p.id = cp.post_id
+                 JOIN assets ca ON ca.id = p.cover_asset_id` + coverFrag + matureCover + `
+                WHERE cp.collection_id = c.id
+                  AND ca.sensitivity = 'public'
+                  AND EXISTS (SELECT 1 FROM storage_variants sv
+                               WHERE sv.object_hash = ca.file_hash AND sv.variant_key = 'col')
+                ORDER BY p.created_at DESC, p.id DESC
+                LIMIT 1)
+         ) cand
+        ORDER BY cand.pref
         LIMIT 1
 ) cover ON true
 -- The SURFACE, and for the rail arm its audience too (#1118). See
@@ -448,6 +545,7 @@ LIMIT $1::INTEGER`
 		if err := rows.Scan(
 			&r.ID, &r.SubjectKind, &r.SubjectID, &r.Position,
 			&r.Title, &r.OwnerUserRef, &r.Subtitle, &r.ItemCount, &r.CoverAssetID,
+			&r.CoverFocalX, &r.CoverFocalY,
 			&r.AssetFileHash, &r.AssetPreviewAvailable,
 			&r.AssetLadderAvailable,
 		); err != nil {
