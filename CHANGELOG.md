@@ -45,6 +45,12 @@ where applicable, otherwise note "no-spec-impact."
   community it came from. The default is now every shared tier you can read (drafts stay out
   of everyone's default wall, deliberately), which also makes filter counts finally agree
   between signed-in and signed-out (#1193, PR #1199).
+- **Cover crops zoom, and the editor is one dialog with pages.** The crop box can be tightened,
+  so a subject sitting off to one side can actually be framed instead of only nudged up and
+  down; editing a cover is now a page inside the collection dialog with a Back button rather
+  than a second window on top of the first. On phones the picker and upload still work — only
+  the drag-a-crop stage steps aside, with a line saying so, because that part genuinely needs a
+  wider screen (#1212, PR #1213).
 - **A real cover editor for collections.** A roomy dialog with two independent covers — one for
   the collection card, one for the featured strip — each with a drag-to-position crop box locked
   to the shape that surface actually shows, so you choose what the crop keeps instead of hoping.
