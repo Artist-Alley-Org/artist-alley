@@ -45,6 +45,13 @@ where applicable, otherwise note "no-spec-impact."
   community it came from. The default is now every shared tier you can read (drafts stay out
   of everyone's default wall, deliberately), which also makes filter counts finally agree
   between signed-in and signed-out (#1193, PR #1199).
+- **A real cover editor for collections.** A roomy dialog with two independent covers — one for
+  the collection card, one for the featured strip — each with a drag-to-position crop box locked
+  to the shape that surface actually shows, so you choose what the crop keeps instead of hoping.
+  Covers can be any of the collection's works, anything else you own, or a picture you upload
+  right there (uploaded at the visibility that keeps it showing to whoever can see the
+  collection). The featured strip finally honours the cover you picked — it had been deriving
+  its own (#1207, PR #1208, also closing #1200, #1201, #1074).
 - **Collections can be made public from the edit dialog** — the option existed everywhere but
   the dialog (it appears when the instance allows anonymous browsing); the dialog also gained a
   crop preview showing exactly what the featured strip will display of your cover, and more
