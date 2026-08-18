@@ -28,49 +28,79 @@ import { expect, test, type Page } from '../../helpers/test';
 const STAMP = Date.now();
 const COLLECTION_NAME = `#1207 cover editor ${STAMP}`;
 
-interface AssetListItem {
-  id: string;
-  processing_status?: string;
-  file_extension?: string;
-}
-
 interface CollectionPayload {
   id: string;
   cover_asset_id?: string | null;
   featured_cover_asset_id?: string | null;
   featured_cover_focal_x?: number | null;
   featured_cover_focal_y?: number | null;
+  cover_focal_x?: number | null;
+  cover_focal_y?: number | null;
 }
 
 let collectionId: string | undefined;
 let memberIds: string[] = [];
+/** Deliberately NOT a member — the #1074 proof needs a picture the
+ *  collection does not contain. */
+let outsiderId = '';
 
-/** A real 2:1 PNG, BUILT rather than pasted.
+/** A real PNG, BUILT rather than pasted, and UNIQUE PER RUN.
  *
- *  Wide on purpose: the featured card is 890:500, so a 2:1 source has
- *  real horizontal travel and the marquee is draggable rather than
- *  pinned to a picture that is already the right shape.
+ *  Built rather than inlined as base64 or read from a fixture file for a
+ *  reason the first version of this spec found the hard way — a
+ *  hand-written base64 blob had a bad CRC, the upload succeeded, and the
+ *  raster worker failed with `png: invalid format: invalid checksum`.
+ *  The asset then sat at `processing_status = 'failed'` and the
+ *  anonymous read 404'd, which looks exactly like the tier bug this
+ *  spec is for. A generated PNG has correct chunks by construction.
  *
- *  Built here rather than inlined as base64 or read from a fixture file
- *  for a reason the first version of this spec found the hard way — a
- *  hand-written base64 blob had a bad CRC, the upload succeeded, and
- *  the raster worker failed with `png: invalid format: invalid
- *  checksum`. The asset then sat at `processing_status = 'failed'` and
- *  the anonymous read 404'd, which looks exactly like the tier bug this
- *  test is for. A generated PNG has correct chunks by construction, and
- *  a two-tone image deflates to a couple of hundred bytes.
+ *  ⚠️ THE `seed` IS THE CONTENT-ADDRESS DEDUPE GUARD, and it is not
+ *  decoration. Storage is content-addressed: two runs uploading
+ *  identical bytes resolve to the SAME object, `deduped: true`, and on a
+ *  persistent stack that object already carries whatever renditions and
+ *  history a previous run left it. The status rule under test would then
+ *  be riding a pre-existing object rather than the one this run made,
+ *  and a green result would say nothing about the rule. So every run's
+ *  bytes are distinct.
+ *
+ *  The noise is in the LOW THREE BITS of each channel, driven by a
+ *  seeded xorshift. That makes the bytes unique and the deflate stream
+ *  different, while leaving the four quadrants visually intact — they
+ *  are what makes a screenshot show unambiguously WHICH part of the
+ *  picture the crop kept. Noise in the high bits would have bought the
+ *  same uniqueness and thrown the readable fixture away.
+ *
+ *  Default 2:1: the featured card is 890:500, so a wide source has real
+ *  horizontal travel and the marquee is draggable rather than pinned to
+ *  a picture that is already the right shape.
  */
-function makeWidePng(width = 400, height = 200): Buffer {
+function makePng(seed: string, width = 400, height = 200): Buffer {
+  // FNV-1a over the seed, then xorshift32. A stdlib-free PRNG because
+  // the requirement is "different every run", not cryptographic.
+  let s = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    s ^= seed.charCodeAt(i);
+    s = Math.imul(s, 16777619) >>> 0;
+  }
+  if (s === 0) s = 0x9e3779b9;
+  const next = () => {
+    s ^= s << 13;
+    s >>>= 0;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    s >>>= 0;
+    return s;
+  };
+
   const raw = Buffer.alloc(height * (1 + width * 3));
   let at = 0;
   for (let y = 0; y < height; y++) {
     raw[at++] = 0; // filter: none
     for (let x = 0; x < width; x++) {
-      // Four quadrants, so a screenshot shows unambiguously WHICH part
-      // of the picture the crop kept.
-      raw[at++] = x < width / 2 ? 220 : 40;
-      raw[at++] = y < height / 2 ? 200 : 60;
-      raw[at++] = 120;
+      const n = next();
+      raw[at++] = (x < width / 2 ? 220 : 40) ^ (n & 7);
+      raw[at++] = (y < height / 2 ? 200 : 60) ^ ((n >>> 3) & 7);
+      raw[at++] = 120 ^ ((n >>> 6) & 7);
     }
   }
   const chunk = (type: string, data: Buffer): Buffer => {
@@ -94,57 +124,136 @@ function makeWidePng(width = 400, height = 200): Buffer {
   ]);
 }
 
-function isRasterImage(ext?: string): boolean {
-  return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'].includes((ext ?? '').toLowerCase());
-}
+/** Every fixture asset this run creates, newest last. Soft-deleted in
+ *  afterAll — including the one the upload test makes, which the test
+ *  registers itself. */
+const provisioned: string[] = [];
+
+/** The token every fixture title carries, so a search can find exactly
+ *  this run's assets and a cleanup can never touch another run's. */
+const TOKEN = `cvrfix${STAMP}`;
 
 test.describe('#1207 the collection cover editor', () => {
   test.describe.configure({ mode: 'serial' });
 
-  test.beforeAll(async ({ request, browser }) => {
-    // Sorted by id so the SAME assets are chosen on every run whatever
-    // order Postgres hands them back — the #488 flake, avoided the way
-    // ui-30 avoids it.
-    const res = await request.get('/api/v1/assets?limit=200');
-    expect(res.ok(), 'GET /assets must succeed').toBeTruthy();
-    const { items } = (await res.json()) as { items: AssetListItem[] };
-    const candidates = (items ?? [])
-      .filter((a) => a.processing_status === 'ready' && isRasterImage(a.file_extension))
-      .sort((a, b) => a.id.localeCompare(b.id));
+  /** Upload bytes and create the asset row, the way the app does it:
+   *  POST /storage/objects with a raw octet-stream and an X-Content-Type,
+   *  then POST /assets pointing at the returned hash.
+   *
+   *  `status: 'active'` is not a convenience — it is THE RULE THIS SPEC
+   *  IS ABOUT, applied to its own fixtures. The anonymous asset
+   *  predicate wants `status = 'active'` AND `sensitivity = 'public'`
+   *  (the column default, and no API writes it) AND
+   *  `processing_status = 'ready'`. A fixture created as `draft`, which
+   *  is what the upload queue does for an ordinary file, is invisible to
+   *  the visitor whose view half these tests assert.
+   *
+   *  `asset_type: 1` is Photo, the value every real upload sends
+   *  (upload.svelte.ts's DEFAULT_ASSET_TYPE). There is no asset-types
+   *  route to look it up from; if it were wrong here it would be wrong
+   *  for every upload on the instance, and the expect below would say so
+   *  rather than the test skipping.
+   */
+  async function provisionAsset(
+    request: import('@playwright/test').APIRequestContext,
+    label: string,
+    width: number,
+    height: number,
+  ): Promise<string> {
+    const bytes = makePng(`${TOKEN}-${label}`, width, height);
+    const up = await request.post('/api/v1/storage/objects', {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Content-Type': 'image/png',
+      },
+      data: bytes,
+    });
+    expect(
+      up.ok(),
+      `could not upload fixture bytes for ${label}: ${up.status()} ${await up.text().catch(() => '')}`,
+    ).toBeTruthy();
+    const { hash } = (await up.json()) as { hash: string; deduped?: boolean };
 
-    // ⚠️ ANONYMOUSLY READABLE, VERIFIED — not assumed from the admin's
-    // listing.
+    const created = await request.post('/api/v1/assets', {
+      data: {
+        title: `${TOKEN} ${label}`,
+        asset_type: 1,
+        status: 'active',
+        file_hash: hash,
+        file_extension: 'png',
+        mature: false,
+      },
+    });
+    expect(
+      created.ok(),
+      `could not create fixture asset ${label}: ${created.status()} ${await created.text().catch(() => '')}`,
+    ).toBeTruthy();
+    const id = ((await created.json()) as { id: string }).id;
+    provisioned.push(id);
+    return id;
+  }
+
+  test.beforeAll(async ({ request, browser }) => {
+    // ⚠️ THE SPEC BUILDS ITS OWN FIXTURES. It used to pick two assets
+    // out of the seeded library and check they were anonymously
+    // picturable; that passed on the dev stack and failed on CI with
+    // "Expected: 2, Received: 0", because the CI seed profile contains
+    // no anonymously-picturable raster asset at all. A test whose
+    // precondition is a property of somebody else's seed data is a test
+    // that reports the seed rather than the code.
     //
-    // The rail test below asserts what a VISITOR sees, and the seeded
-    // library is mostly `team` and `restricted` tier: `sensitivity` is
-    // deliberately absent from the Asset schema, so an admin-side
-    // listing cannot tell which rows a visitor can picture. Picking two
-    // by id order and hoping produced a test that passed until the
-    // upload test above added an asset, shifted the 200-row window, and
-    // handed the fixture a team-tier picture — at which point the rail
-    // correctly fell back and the failure read as "the rail ignores the
-    // curator's choice", which is the one thing it does not do.
+    // THREE assets, and each one is load-bearing:
+    //   member 0  — the collection cover
+    //   member 1  — the featured cover, a DIFFERENT picture, because one
+    //               picture cannot tell "the featured slot took my
+    //               choice" from "the featured slot inherited the
+    //               collection cover"
+    //   outsider  — never added to the collection, so the #1074 test can
+    //               prove a cover need not be a member. Picking an
+    //               arbitrary search result for that would silently
+    //               choose a MEMBER on a stack with few assets, and the
+    //               "it did not join the collection" assertion would
+    //               fail for a reason that has nothing to do with the
+    //               feature.
+    const memberA = await provisionAsset(request, 'member-a', 400, 200);
+    const memberB = await provisionAsset(request, 'member-b', 440, 220);
+    outsiderId = await provisionAsset(request, 'outsider', 360, 240);
+    memberIds = [memberA, memberB];
+
+    // ANONYMOUSLY PICTURABLE, VERIFIED — not assumed from the fact that
+    // we asked for `status: 'active'`.
     //
-    // So each candidate is checked with a session-less context, and the
-    // first two that answer 200 are the fixture.
+    // Two of the three gates are decided at create time above; the third
+    // (`processing_status = 'ready'`, and a servable `col`) is decided by
+    // the raster worker a moment later. So this polls the one surface
+    // that answers the whole question at once, from a context with no
+    // session: the `col` variant a visitor's tile would request.
     const anon = await browser.newContext({ storageState: { cookies: [], origins: [] } });
     try {
-      for (const a of candidates) {
-        if (memberIds.length === 2) break;
-        const r = await anon.request.get(`/api/v1/assets/${a.id}/variants/col`);
-        if (r.ok()) memberIds.push(a.id);
+      for (const id of [...memberIds, outsiderId]) {
+        await expect
+          .poll(async () => (await anon.request.get(`/api/v1/assets/${id}/variants/col`)).status(), {
+            timeout: 120000,
+            message:
+              `fixture asset ${id} never became anonymously picturable. It was created ` +
+              `status=active with the default public sensitivity, so this is either the raster ` +
+              `worker failing on the generated PNG or the tier rule not holding — NOT a reason ` +
+              `to skip: every visitor-facing assertion below depends on it.`,
+          })
+          .toBe(200);
       }
     } finally {
       await anon.close();
     }
 
-    // TWO members, not one, and the whole spec depends on it: a single
-    // picture cannot tell "the featured slot took my choice" from "the
-    // featured slot inherited the collection cover".
+    // The anti-vacuity backstop stays, now guarding provisioning rather
+    // than seed shape. If anything above silently produced nothing, this
+    // fails by name instead of letting the suite run on an empty fixture.
     expect(
       memberIds.length,
-      'the seeded stack needs two anonymously-picturable raster assets to tell the cover slots apart',
+      'fixture provisioning did not produce two members — the cover slots cannot be told apart',
     ).toBe(2);
+    expect(outsiderId, 'fixture provisioning did not produce a non-member asset').toBeTruthy();
 
     const created = await request.post('/api/v1/collections', {
       data: { name: COLLECTION_NAME, description: 'fixture for #1207' },
@@ -161,7 +270,17 @@ test.describe('#1207 the collection cover editor', () => {
   });
 
   test.afterAll(async ({ request }) => {
-    if (collectionId) await request.delete(`/api/v1/collections/${collectionId}`).catch(() => undefined);
+    // Collection first, then the pictures it pointed at — the reverse
+    // order would leave the collection briefly pointing at soft-deleted
+    // assets. Both are soft-deletes, so neither is destructive, and
+    // every id here was created by THIS run (they carry its stamp), so
+    // a concurrent run's fixtures are untouchable from here.
+    if (collectionId) {
+      await request.delete(`/api/v1/collections/${collectionId}`).catch(() => undefined);
+    }
+    for (const id of provisioned) {
+      await request.delete(`/api/v1/assets/${id}`).catch(() => undefined);
+    }
   });
 
   async function openCoverEditor(page: Page) {
@@ -186,8 +305,11 @@ test.describe('#1207 the collection cover editor', () => {
   /** The editor's live readout of the stored pair. Empty string is
    *  null — "never positioned" — which is a different answer from
    *  "positioned at 0.5" and the reason the attribute is not defaulted. */
-  async function readFocal(page: Page): Promise<{ x: string; y: string }> {
-    const el = page.getByTestId('cover-editor-position');
+  async function readFocal(
+    page: Page,
+    prefix: 'cover-editor' | 'collection-crop' = 'cover-editor',
+  ): Promise<{ x: string; y: string }> {
+    const el = page.getByTestId(`${prefix}-position`);
     return {
       x: (await el.getAttribute('data-focal-x')) ?? '',
       y: (await el.getAttribute('data-focal-y')) ?? '',
@@ -233,7 +355,7 @@ test.describe('#1207 the collection cover editor', () => {
       .filter({ has: page.locator(`[src*="${memberIds[0]}"]`) })
       .first()
       .click();
-    await expect(page.getByTestId('cover-editor-collection-preview')).toHaveAttribute(
+    await expect(page.getByTestId('collection-crop-card-preview')).toHaveAttribute(
       'src',
       new RegExp(memberIds[0]),
     );
@@ -361,35 +483,54 @@ test.describe('#1207 the collection cover editor', () => {
       };
     });
 
-    // ⚠️ STATED IN PIXELS ON THE STAGE, not in fractions, and the
-    // reason is worth recording rather than rediscovering.
+    // ⚠️ STATED AS A FRACTION OF THE PICTURE, and the unit is the whole
+    // point of this block.
     //
-    // The marquee is drawn from the 890:500 CONSTANT; the card preview
-    // is laid out by CSS `aspect-ratio: 890 / 500`, which lands on a
-    // sub-pixel fraction of that. So the two windows differ by exactly
-    // the box's layout rounding — a few thousandths of the picture — and
-    // a fraction-space tolerance would either be too loose to catch a
-    // real misalignment or would fail on a browser rounding a box half
-    // a pixel differently.
+    // The claim being tested is "the marquee marks the region the card
+    // shows" — a claim about WHICH PART OF THE PICTURE, so its natural
+    // unit is a fraction of the picture. An absolute pixel bar was the
+    // first attempt and it is not scale-invariant: the stage is ~512px
+    // wide here and would be ~900px on a larger display, so the same
+    // fractional disagreement reads as 1.6px or 2.8px depending on
+    // nothing that matters.
     //
-    // A pixel on the stage is the bar that means something: it is the
-    // unit the curator judges the crop in. Under it, the marquee and
-    // the card are the same rectangle as far as anyone can see; over
-    // it, they are visibly different rectangles and the preview lies.
+    // AND THE DISAGREEMENT IS NOT ZERO, for a reason worth writing down
+    // rather than tuning around. The marquee is computed from the
+    // 890:500 CONSTANT. The card preview mirrors FeaturedRail's own
+    // structure — `aspect-ratio` on a border-box frame with a 1px
+    // border, the picture inside it — so the picture's box is
+    // (W-2)/(H-2), which is not 890:500. At this frame size that is
+    // ~0.3% of the picture. The real rail card has the identical
+    // structure and therefore the identical offset, so "fix" it by
+    // moving the aspect onto the image and the preview stops matching
+    // the thing it is previewing. A sub-percent bar is the honest one:
+    // a genuine misalignment is off by the size of the crop — tens of
+    // percent — not by a border.
     const deltas = {
-      left: Math.abs(alignment.marquee.left - alignment.card.left) * alignment.stage.width,
-      top: Math.abs(alignment.marquee.top - alignment.card.top) * alignment.stage.height,
-      width: Math.abs(alignment.marquee.width - alignment.card.width) * alignment.stage.width,
-      height: Math.abs(alignment.marquee.height - alignment.card.height) * alignment.stage.height,
+      left: Math.abs(alignment.marquee.left - alignment.card.left),
+      top: Math.abs(alignment.marquee.top - alignment.card.top),
+      width: Math.abs(alignment.marquee.width - alignment.card.width),
+      height: Math.abs(alignment.marquee.height - alignment.card.height),
     };
     // eslint-disable-next-line no-console
-    console.log('#1207 marquee-vs-card alignment (px on the stage):', JSON.stringify(deltas));
+    console.log(
+      '#1207 marquee-vs-card alignment — fraction of the picture:',
+      JSON.stringify(deltas),
+      '| px on this stage:',
+      JSON.stringify({
+        left: deltas.left * alignment.stage.width,
+        top: deltas.top * alignment.stage.height,
+        width: deltas.width * alignment.stage.width,
+        height: deltas.height * alignment.stage.height,
+      }),
+    );
     for (const axis of ['left', 'top', 'width', 'height'] as const) {
       expect(
         deltas[axis],
-        `the marquee's ${axis} is more than a pixel from the card's actual crop — ` +
-          `marquee ${JSON.stringify(alignment.marquee)} vs card ${JSON.stringify(alignment.card)}`,
-      ).toBeLessThan(1);
+        `the marquee's ${axis} disagrees with the card's actual crop by more than the 1px ` +
+          `border can account for — marquee ${JSON.stringify(alignment.marquee)} vs card ` +
+          JSON.stringify(alignment.card),
+      ).toBeLessThan(0.005);
     }
     // And the frame really is the strip's shape, to within a pixel of
     // width — the half of the claim the tolerance above absorbs.
@@ -397,6 +538,56 @@ test.describe('#1207 the collection cover editor', () => {
       Math.abs(alignment.cardBox.width - (alignment.cardBox.height * 890) / 500),
       'the preview frame is not 890:500; the marquee is marking the wrong shape',
     ).toBeLessThan(1);
+
+    // ── The REGULAR slot's square marquee (#1207 addition) ──────────
+    //
+    // A SECOND pair on a SECOND destination shape, and the test asserts
+    // they are independent. A single stored pair shared by both slots
+    // would pass every "did it persist" check and still be wrong: the
+    // point that centres a subject in a 890:500 band is not the point
+    // that centres it in a square, so the two have to be able to hold
+    // different values at the same time.
+    const squareMarquee = page.getByTestId('collection-crop-marquee');
+    await expect(
+      squareMarquee,
+      'the collection-cover slot has no crop marquee — the square lock did not render',
+    ).toBeVisible();
+    expect(await readFocal(page, 'collection-crop'), 'the square crop must start unpositioned')
+      .toEqual({ x: '', y: '' });
+
+    const squareCanMove = await squareMarquee.isEnabled();
+    if (squareCanMove) {
+      // SCROLL IT INTO VIEW FIRST. The dialog body scrolls and this slot
+      // sits below the featured one, so its bounding box is real but
+      // off-screen — and `page.mouse` works in VIEWPORT coordinates, so
+      // the drag would be dispatched at a point the marquee is not
+      // currently occupying. It moved nothing and read as "the square
+      // marquee is not draggable".
+      await squareMarquee.scrollIntoViewIfNeeded();
+      const sBox = (await squareMarquee.boundingBox())!;
+      const sStage = (await page.getByTestId('collection-crop-stage-image').boundingBox())!;
+      await page.mouse.move(sBox.x + sBox.width / 2, sBox.y + sBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        sBox.x + sBox.width / 2 + sStage.width * 0.3,
+        sBox.y + sBox.height / 2 + sStage.height * 0.3,
+        { steps: 8 },
+      );
+      await page.mouse.up();
+      const sq = await readFocal(page, 'collection-crop');
+      expect(sq.x === '' && sq.y === '', 'the square marquee did not move').toBe(false);
+    }
+
+    // The square preview is 1:1 — the shape `col` actually is. If this
+    // ever reads 890:500 the two slots have been wired to one stage.
+    const squareRatio = await page.evaluate(() => {
+      const img = document.querySelector<HTMLImageElement>(
+        '[data-testid="collection-crop-card-preview"]',
+      )!;
+      const box = img.parentElement!.getBoundingClientRect();
+      return box.width / box.height;
+    });
+    expect(squareRatio, 'the collection-cover preview is not square').toBeCloseTo(1, 2);
 
     await page.getByTestId('cover-editor-done').click();
     await expect(page.getByTestId('collection-cover-editor')).toBeHidden();
@@ -414,6 +605,21 @@ test.describe('#1207 the collection cover editor', () => {
       expect(saved.featured_cover_focal_y, 'focal y did not persist').not.toBeNull();
       expect(saved.featured_cover_focal_x).toBeGreaterThanOrEqual(0);
       expect(saved.featured_cover_focal_x).toBeLessThanOrEqual(1);
+    }
+    if (squareCanMove) {
+      expect(saved.cover_focal_x, 'the collection cover focal x did not persist').not.toBeNull();
+      expect(saved.cover_focal_y, 'the collection cover focal y did not persist').not.toBeNull();
+      // INDEPENDENT, not a mirror. The two marquees were dragged in
+      // opposite directions on purpose, so a build that stored one pair
+      // for both slots fails here rather than passing every other check.
+      if (canMove) {
+        expect(
+          saved.cover_focal_x === saved.featured_cover_focal_x &&
+            saved.cover_focal_y === saved.featured_cover_focal_y,
+          'both slots stored the same pair — the square crop and the 890:500 crop are ' +
+            'sharing one focal point, which cannot be right for both shapes',
+        ).toBe(false);
+      }
     }
   });
 
@@ -457,6 +663,15 @@ test.describe('#1207 the collection cover editor', () => {
       y: '',
     });
 
+    // The square crop has its own Reset, and its own clear flag behind
+    // it — same tri-state, second pair.
+    const squareReset = editor.getByTestId('collection-crop-reset-focal');
+    if (await squareReset.isEnabled()) await squareReset.click();
+    expect(
+      await readFocal(page, 'collection-crop'),
+      'the square reset must clear to null too',
+    ).toEqual({ x: '', y: '' });
+
     // And the collection cover back to the mosaic ("Use mosaic" is the
     // first control in that grid), so the clear is exercised on the
     // column #1027 introduced too.
@@ -487,6 +702,8 @@ test.describe('#1207 the collection cover editor', () => {
       'clear_featured_cover_focal did not clear y',
     ).toBeNull();
     expect(after.cover_asset_id ?? null, 'clear_cover did not clear').toBeNull();
+    expect(after.cover_focal_x ?? null, 'clear_cover_focal did not clear x').toBeNull();
+    expect(after.cover_focal_y ?? null, 'clear_cover_focal did not clear y').toBeNull();
   });
 
 
@@ -522,21 +739,37 @@ test.describe('#1207 the collection cover editor', () => {
   }) => {
     const editor = await openCoverEditor(page);
     await editor.getByTestId('collection-source-mine').click();
-    const results = editor.getByTestId('collection-mine-choice');
-    await expect(
-      results.first(),
-      'the my-files search returned nothing for the admin who owns the seeded library',
-    ).toBeVisible({ timeout: 15000 });
 
-    const outsider = await results.first().getAttribute('data-asset-id');
-    expect(outsider, 'a result carries no asset id').toBeTruthy();
-    await results.first().click();
+    // SEARCH FOR THIS RUN'S OWN OUTSIDER, and select it by id.
+    //
+    // Taking `results.first()` was wrong in a way that only shows on a
+    // sparse library: the unfiltered listing is the curator's whole
+    // collection of assets, MEMBERS INCLUDED, so on a stack whose only
+    // assets are this spec's three the arbitrary first result is a
+    // member — and the "it did not join the collection" assertion below
+    // then fails for a reason that has nothing to do with the feature.
+    //
+    // Searching also exercises the arm this test is named after, rather
+    // than only the listing behind it.
+    await editor.getByTestId('collection-search-input').fill(TOKEN);
+    await editor.getByTestId('collection-search-input').press('Enter');
+
+    const outsider = editor.locator(
+      `[data-testid="collection-mine-choice"][data-asset-id="${outsiderId}"]`,
+    );
+    await expect(
+      outsider,
+      `the my-files search did not return this run's non-member fixture (${outsiderId}). ` +
+        'Either the search arm is broken or the fixture never became searchable — both are ' +
+        'failures, and neither is a reason to skip.',
+    ).toBeVisible({ timeout: 20000 });
+    await outsider.click();
 
     await page.getByTestId('cover-editor-done').click();
     await saveAndAwaitPatch(page);
 
     const saved = await fetchCollection(page);
-    expect(saved.cover_asset_id, 'a non-member cover did not persist').toBe(outsider);
+    expect(saved.cover_asset_id, 'a non-member cover did not persist').toBe(outsiderId);
 
     // AND IT IS NOT A MEMBER. The whole point of the free pointer is
     // that choosing a picture does not add it to the collection — a
@@ -544,7 +777,7 @@ test.describe('#1207 the collection cover editor', () => {
     const members = await request.get(`/api/v1/collections/${collectionId}/resources?limit=200`);
     const { items } = (await members.json()) as { items: Array<{ asset_id: string }> };
     expect(
-      items.some((m) => m.asset_id === outsider),
+      items.some((m) => m.asset_id === outsiderId),
       'choosing a cover added it to the collection — the pointer is supposed to be free',
     ).toBe(false);
   });
@@ -573,7 +806,7 @@ test.describe('#1207 the collection cover editor', () => {
     await editor.getByTestId('featured-upload-input').setInputFiles({
       name: `cover-1207-${STAMP}.png`,
       mimeType: 'image/png',
-      buffer: makeWidePng(),
+      buffer: makePng(`${TOKEN}-upload`, 1200, 500),
     });
     await expect(editor.getByTestId('featured-uploading')).toBeHidden({ timeout: 30000 });
 
@@ -583,6 +816,8 @@ test.describe('#1207 the collection cover editor', () => {
     const saved = await fetchCollection(page);
     const uploaded = saved.featured_cover_asset_id;
     expect(uploaded, 'the uploaded picture did not become the featured cover').toBeTruthy();
+    // Registered so afterAll cleans it up like every other fixture.
+    if (uploaded) provisioned.push(uploaded);
     expect(uploaded, 'the uploaded picture is one of the members — it should be new').not.toBe(
       memberIds[0],
     );
