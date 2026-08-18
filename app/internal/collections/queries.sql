@@ -19,7 +19,8 @@ INSERT INTO collections (
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id;
+          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
+          featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y;
 
 -- name: GetCollection :one
 -- Filters soft-deleted rows by default. Admin surfaces reading
@@ -27,7 +28,8 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
+       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -38,7 +40,8 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
+       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y
 FROM collections
 WHERE id = $1;
 
@@ -68,12 +71,31 @@ UPDATE collections SET
                        ELSE COALESCE(sqlc.narg('expires_at'), expires_at) END,
     cover_asset_id = CASE WHEN sqlc.arg('clear_cover')::BOOLEAN THEN NULL
                           ELSE COALESCE(sqlc.narg('cover_asset_id'), cover_asset_id) END,
+    -- #1207 — the featured rail's own cover, and the focal point for its
+    -- 890:500 crop. Three more columns, TWO more clear flags, and the
+    -- second one covers a PAIR: a focal point is a point, so "remove the
+    -- positioning" is one intention over two columns and giving each
+    -- half its own flag would let a caller express half a clear, which
+    -- the column CHECK then rejects with a constraint error instead of
+    -- the 400 the API should have given.
+    --
+    -- Note the focal columns COALESCE against themselves as usual, which
+    -- is why an explicit 0.5/0.5 has to reach here as a value rather
+    -- than as "centre, so send nothing": the handler is what keeps that
+    -- distinction, and the CHECK is what stops it being lost silently.
+    featured_cover_asset_id = CASE WHEN sqlc.arg('clear_featured_cover')::BOOLEAN THEN NULL
+                          ELSE COALESCE(sqlc.narg('featured_cover_asset_id'), featured_cover_asset_id) END,
+    featured_cover_focal_x = CASE WHEN sqlc.arg('clear_featured_cover_focal')::BOOLEAN THEN NULL
+                          ELSE COALESCE(sqlc.narg('featured_cover_focal_x'), featured_cover_focal_x) END,
+    featured_cover_focal_y = CASE WHEN sqlc.arg('clear_featured_cover_focal')::BOOLEAN THEN NULL
+                          ELSE COALESCE(sqlc.narg('featured_cover_focal_y'), featured_cover_focal_y) END,
     updated_at  = NOW()
 WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id;
+          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
+          featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y;
 
 -- name: DeleteCollection :exec
 -- Phase 1.55.C-1b: soft-delete. Sets deleted_at + deleted_reason on
@@ -120,7 +142,8 @@ SELECT deleted_by_user_ref
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
+       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y
 FROM collections c
 WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)

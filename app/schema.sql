@@ -1342,6 +1342,10 @@ CREATE TABLE public.collections (
     deleted_reason text,
     deleted_by_user_ref bigint,
     cover_asset_id uuid,
+    featured_cover_asset_id uuid,
+    featured_cover_focal_x double precision,
+    featured_cover_focal_y double precision,
+    CONSTRAINT collections_featured_cover_focal_check CHECK ((((featured_cover_focal_x IS NULL) AND (featured_cover_focal_y IS NULL)) OR (((featured_cover_focal_x >= (0)::double precision) AND (featured_cover_focal_x <= (1)::double precision)) AND ((featured_cover_focal_y >= (0)::double precision) AND (featured_cover_focal_y <= (1)::double precision))))),
     CONSTRAINT collections_membership_check CHECK ((membership = ANY (ARRAY['manual'::text, 'query'::text, 'hybrid'::text]))),
     CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
@@ -1359,6 +1363,27 @@ COMMENT ON COLUMN public.collections.smart_query IS 'DSL query string that was e
 --
 
 COMMENT ON COLUMN public.collections.cover_asset_id IS 'Curator-chosen cover picture (#1027): any asset the curator may PICTURE, not necessarily a member. NULL means compose the derived mosaic from members instead. Read path (collections.ComposeCovers) re-checks the viewer''s picture plane and falls back to the mosaic when the override is unrenderable for them — a withheld cover must never render blank. ON DELETE SET NULL so a hard-deleted asset reverts the collection to its mosaic rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083''s exclusion criterion, applied by analogy).';
+
+
+--
+-- Name: COLUMN collections.featured_cover_asset_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.featured_cover_asset_id IS 'Curator-chosen cover for the FEATURED RAIL specifically (#1207). The rail card is locked to 890:500 while a collection card is roughly square, so one picture is not the best answer for both. NULL means no separate choice: the rail falls back to cover_asset_id, then to the derived hero-card cover, each rung re-checked against the viewer''s picture plane so a withheld cover falls back rather than rendering blank. ON DELETE SET NULL, and does NOT federate — same reasoning as cover_asset_id (see migration 00046).';
+
+
+--
+-- Name: COLUMN collections.featured_cover_focal_x; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.featured_cover_focal_x IS 'Horizontal focal point for the featured rail''s 890:500 crop, as a FRACTION of the picture''s width (0 = left edge, 1 = right edge). Maps directly to CSS object-position, and is a fraction rather than a pixel offset so it stays correct across preview rungs and viewport sizes. NULL means centre (the CSS default), which is distinct from an explicit 0.5 so the editor''s reset is a clear rather than a re-set. Paired with featured_cover_focal_y by collections_featured_cover_focal_check: both NULL or both in 0..1.';
+
+
+--
+-- Name: COLUMN collections.featured_cover_focal_y; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.featured_cover_focal_y IS 'Vertical focal point for the featured rail''s 890:500 crop, as a FRACTION of the picture''s height (0 = top edge, 1 = bottom edge). See featured_cover_focal_x for why it is a fraction, why NULL means centre, and why the two are constrained together.';
 
 
 --
@@ -4171,6 +4196,13 @@ CREATE INDEX collections_expires_idx ON public.collections USING btree (expires_
 
 
 --
+-- Name: collections_featured_cover_asset_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX collections_featured_cover_asset_id_idx ON public.collections USING btree (featured_cover_asset_id) WHERE (featured_cover_asset_id IS NOT NULL);
+
+
+--
 -- Name: collections_name_trgm; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5864,6 +5896,14 @@ ALTER TABLE ONLY public.collection_resources
 
 ALTER TABLE ONLY public.collections
     ADD CONSTRAINT collections_cover_asset_id_fkey FOREIGN KEY (cover_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL;
+
+
+--
+-- Name: collections collections_featured_cover_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collections
+    ADD CONSTRAINT collections_featured_cover_asset_id_fkey FOREIGN KEY (featured_cover_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL;
 
 
 --

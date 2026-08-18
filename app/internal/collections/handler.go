@@ -566,6 +566,81 @@ func (h *Handler) UpdateCollection(
 		coverPtr = &want
 	}
 
+	// #1207 — the featured rail's own cover. Same three moves as
+	// cover_asset_id directly above, for the same three reasons, over a
+	// second column: the exclusivity 400, the PICTURE-plane check, and
+	// the one 400 that does not distinguish "no such asset" from "not
+	// yours to look at".
+	//
+	// It is a separate block rather than a loop over the two because the
+	// only shared part is the shape; a loop would have to carry two
+	// different error strings and two different openapi fields through
+	// it, and the reader would have to unroll it to check either.
+	clearFeaturedCover := in.ClearFeaturedCover != nil && *in.ClearFeaturedCover
+	if clearFeaturedCover && in.FeaturedCoverAssetId != nil {
+		return openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "send either featured_cover_asset_id or clear_featured_cover, not both",
+			},
+		}, nil
+	}
+	var featuredCoverPtr *uuid.UUID
+	if in.FeaturedCoverAssetId != nil {
+		want := uuid.UUID(*in.FeaturedCoverAssetId)
+		cCaller, cCaps, _, cMature := CoverCallerFromContext(ctx)
+		mayPicture, err := CallerMayPictureAsset(ctx, h.Pool, cCaller, cCaps, cMature, want)
+		if err != nil {
+			return nil, err
+		}
+		if !mayPicture {
+			return openapi.UpdateCollection400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "featured_cover_asset_id is not an asset you can use as a cover",
+				},
+			}, nil
+		}
+		featuredCoverPtr = &want
+	}
+
+	// #1207 — the focal point, which is a PAIR and is validated as one.
+	//
+	// Three refusals, and each is a state the column CHECK would
+	// otherwise reject with a 500-shaped constraint error at write time:
+	//
+	//   * one coordinate without the other — half a point is not a
+	//     weaker positioning, it is an unanswerable one, and the only
+	//     way to complete it is to invent an axis the curator did not
+	//     choose;
+	//   * either coordinate alongside the clear flag — the exclusivity
+	//     rule every clear flag on this endpoint carries;
+	//   * out of 0..1 — a fraction outside the picture is a bug in the
+	//     client, and rejecting it here is what stops it becoming an
+	//     object-position of -240% on a rail nobody is looking at.
+	clearFocal := in.ClearFeaturedCoverFocal != nil && *in.ClearFeaturedCoverFocal
+	if (in.FeaturedCoverFocalX == nil) != (in.FeaturedCoverFocalY == nil) {
+		return openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "featured_cover_focal_x and featured_cover_focal_y must be sent together",
+			},
+		}, nil
+	}
+	if clearFocal && in.FeaturedCoverFocalX != nil {
+		return openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "send either the featured_cover_focal_* pair or clear_featured_cover_focal, not both",
+			},
+		}, nil
+	}
+	if in.FeaturedCoverFocalX != nil &&
+		(*in.FeaturedCoverFocalX < 0 || *in.FeaturedCoverFocalX > 1 ||
+			*in.FeaturedCoverFocalY < 0 || *in.FeaturedCoverFocalY > 1) {
+		return openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "featured_cover_focal_x and featured_cover_focal_y must be fractions between 0 and 1",
+			},
+		}, nil
+	}
+
 	// #1073 — expires_at is a tri-state, and the third state needs a
 	// flag. `CollectionUpdate.ExpiresAt` is a *time.Time with
 	// `omitempty`, so by the time a body reaches here "absent" and
@@ -603,6 +678,13 @@ func (h *Handler) UpdateCollection(
 			ClearExpiresAt: clearExpiresAt,
 			ClearCover:     clearCover,
 			CoverAssetID:   pgUUIDFromPtr(coverPtr),
+			// #1207. Two clear flags, and the focal pair rides the
+			// second one for both axes — see the query's CASE arms.
+			ClearFeaturedCover:      clearFeaturedCover,
+			FeaturedCoverAssetID:    pgUUIDFromPtr(featuredCoverPtr),
+			ClearFeaturedCoverFocal: clearFocal,
+			FeaturedCoverFocalX:     in.FeaturedCoverFocalX,
+			FeaturedCoverFocalY:     in.FeaturedCoverFocalY,
 		})
 		if err != nil {
 			return activities.EmissionInput{}, fmt.Errorf("collections: update: %w", err)
@@ -1638,6 +1720,23 @@ func rowToAPI(r Collection) openapi.Collection {
 		v := openapi_types.UUID(r.CoverAssetID.Bytes)
 		c.CoverAssetId = &v
 	}
+	// #1207 — the featured rail's own cover and its focal point, on the
+	// same terms as cover_asset_id above: the curator's SETTING, so the
+	// edit form can show what is currently chosen. What the rail PAINTS
+	// is decided by featured.ListPlacements, which re-runs the reader's
+	// picture plane over each rung of the preference order; these three
+	// carry no picture and make no claim about renderability.
+	//
+	// The focal pair is copied as-is rather than defaulted to 0.5: null
+	// is "never positioned", and the editor needs that distinct from a
+	// deliberate centring so its reset control knows whether there is
+	// anything to reset.
+	if r.FeaturedCoverAssetID.Valid {
+		v := openapi_types.UUID(r.FeaturedCoverAssetID.Bytes)
+		c.FeaturedCoverAssetId = &v
+	}
+	c.FeaturedCoverFocalX = r.FeaturedCoverFocalX
+	c.FeaturedCoverFocalY = r.FeaturedCoverFocalY
 	return c
 }
 

@@ -14166,6 +14166,63 @@ components:
             exists only on this server, which is ADR 0083's exclusion
             criterion; a peer composes its own mosaic from the members
             it holds.
+        featured_cover_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The curator's cover for the FEATURED RAIL specifically
+            (#1207), or null for "no separate choice".
+
+            The rail's card is locked to 890:500 while a collection card
+            is roughly square, so the picture that reads well on one is
+            often not the one that reads well on the other. This is the
+            second pointer that lets them differ.
+
+            NULL IS A FALLBACK, NOT A BLANK. The rail's preference order
+            is this cover, then `cover_asset_id`, then the derived
+            hero-card cover of ADR 0027 — and each rung is re-checked
+            against the reader's own picture plane, so a chosen cover
+            the reader may not picture falls through to the next rung
+            rather than leaving a blank tile or leaking the withheld
+            picture.
+
+            Like `cover_asset_id`: any asset the curator may picture,
+            not necessarily a member; the curator's SETTING rather than
+            the render answer; and not federated.
+        featured_cover_focal_x:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Where the featured rail's 890:500 crop is centred
+            horizontally, as a FRACTION of the picture's width — 0 is
+            the left edge, 1 the right (#1207).
+
+            A fraction rather than a pixel offset because the rail
+            renders whichever preview rung the ladder serves at whatever
+            width the viewport gives it. A fraction is correct at every
+            rung and every width; a pixel offset measured against the
+            original is correct at none of them. It maps straight onto
+            CSS `object-position`.
+
+            Null means centre — the CSS default and what every
+            collection had before this existed. Null and an explicit 0.5
+            are stored differently on purpose: the editor's reset is a
+            clear, so "never positioned" stays distinguishable from
+            "positioned dead centre".
+
+            Always null or set TOGETHER with `featured_cover_focal_y`; a
+            focal point is a point, and the database constrains the pair.
+        featured_cover_focal_y:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            The vertical half of the featured crop's focal point — 0 is
+            the top edge, 1 the bottom (#1207). See
+            `featured_cover_focal_x` for why it is a fraction, why null
+            means centre, and why the two travel together.
         covers:
           type: array
           items: { $ref: "#/components/schemas/CollectionCover" }
@@ -14278,7 +14335,8 @@ components:
       description: |
         Partial update; only present fields are touched. A null is
         "leave alone", not "clear" — removing a value that is already
-        set is an explicit flag (`clear_expires_at`, `clear_cover`).
+        set is an explicit flag (`clear_expires_at`, `clear_cover`,
+        `clear_featured_cover`, `clear_featured_cover_focal`).
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         description: { type: string }
@@ -14338,6 +14396,67 @@ components:
             derived mosaic composed from its members. Mutually exclusive
             with `cover_asset_id` — sending both is a 400, rather than
             the server picking one and silently discarding the other.
+        featured_cover_asset_id:
+          type: string
+          format: uuid
+          description: |
+            Choose this collection's FEATURED-RAIL cover (#1207). Any
+            asset you may PICTURE, on exactly the terms `cover_asset_id`
+            states — including the same deliberately-indistinct 400 for
+            "no such asset" and "not yours to look at".
+
+            Send `clear_featured_cover: true` to go back to "no separate
+            choice", which puts the rail back on `cover_asset_id` and
+            then on the derived cover. Null here is "leave alone", as it
+            is for every other property on this schema.
+        clear_featured_cover:
+          type: boolean
+          description: |
+            Remove the separate featured-rail cover, so the rail falls
+            back to `cover_asset_id` and then to the derived cover
+            (#1207). Mutually exclusive with `featured_cover_asset_id` —
+            sending both is a 400.
+
+            It does NOT touch the focal point. The two are independent
+            settings: the focal point positions whichever picture the
+            rail ends up showing, so clearing the separate cover leaves
+            the positioning applying to the regular one. Clear the
+            positioning with `clear_featured_cover_focal`.
+        featured_cover_focal_x:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            Centre the featured rail's 890:500 crop horizontally, as a
+            fraction of the picture's width (#1207). 0 is the left edge,
+            1 the right, and out-of-range is a 400 rather than a
+            silently-clamped value.
+
+            MUST BE SENT WITH `featured_cover_focal_y`. A focal point is
+            a point; half of one is not a weaker positioning but an
+            unanswerable one, so sending one without the other is a 400
+            rather than the server inventing the missing axis.
+        featured_cover_focal_y:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            The vertical half of the focal point — 0 is the top edge, 1
+            the bottom (#1207). Must be sent with
+            `featured_cover_focal_x`; see there.
+        clear_featured_cover_focal:
+          type: boolean
+          description: |
+            Put the featured crop back to centred (#1207) — one flag for
+            the PAIR, because "remove the positioning" is a single
+            intention over two columns and a per-axis flag would let a
+            caller express half a clear.
+
+            Mutually exclusive with either focal coordinate: sending
+            both is a 400. Independent of `clear_featured_cover`, which
+            removes the picture rather than its positioning.
         if_unchanged_since:
           type: string
           format: date-time
@@ -15018,6 +15137,42 @@ components:
             the tile is title-only. Subject to the same gating as
             `asset_file_hash`, so it never names an asset the caller
             cannot see.
+
+            SINCE #1207 A COLLECTION'S IS THE CURATOR'S CHOICE WHEN
+            THERE IS ONE. The rail resolves it in preference order —
+            `featured_cover_asset_id`, then `cover_asset_id`, then ADR
+            0027's derived cover — with every rung carrying the caller's
+            own asset predicate, so a chosen cover this caller may not
+            picture falls through to the next rung instead of leaking.
+            Before that the rail read neither chosen column and always
+            derived, which is #1200: the strip showed one picture and
+            every other collection surface showed another.
+        cover_focal_x:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Where to centre this tile's crop horizontally, as a fraction
+            of the cover picture's width (#1207) — the curator's
+            `featured_cover_focal_x`, ready to be written straight into
+            CSS `object-position`.
+
+            Null means centre, which is the CSS default and what every
+            tile did before this existed, so a client that ignores it
+            renders exactly what it rendered before.
+
+            ONLY EVER SET WHEN THE TILE IS SHOWING A CHOSEN COVER. A
+            derived cover is a picture the curator never saw in the
+            editor, so positioning chosen for a different picture is not
+            carried onto it; that arm returns null and the tile centres.
+            Null for every non-collection subject.
+        cover_focal_y:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            The vertical half of the tile's focal point (#1207). See
+            `cover_focal_x`.
         asset_file_hash:
           type: string
           nullable: true
