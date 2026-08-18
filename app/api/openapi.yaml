@@ -14223,6 +14223,37 @@ components:
             the top edge, 1 the bottom (#1207). See
             `featured_cover_focal_x` for why it is a fraction, why null
             means centre, and why the two travel together.
+        cover_focal_x:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Where the COLLECTION cover's square crop is centred
+            horizontally, as a fraction of the picture's width (#1207).
+
+            THE DESTINATION SHAPE IS A SQUARE, and that is not a
+            preference — the `col` rendition is `fit: cover` at 320px, a
+            320x320 centre-crop, and it is what every small collection
+            thumbnail is made of. A separate pair from
+            `featured_cover_focal_x` because the featured card is
+            890:500: the point that centres a face in a wide band is not
+            the point that centres it in a square, so one fraction
+            cannot be right for both destinations.
+
+            ⚠️ IT IS CHOSEN AGAINST THE ORIGINAL PICTURE. A consumer
+            honours it by rendering a `contain` rung with
+            `object-position`; applying it to `col` crops a crop, since
+            `col`'s square was already taken at the centre before this
+            value could act.
+
+            Null means centre.
+        cover_focal_y:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            The vertical half of the collection cover's focal point
+            (#1207). See `cover_focal_x`.
         covers:
           type: array
           items: { $ref: "#/components/schemas/CollectionCover" }
@@ -14336,7 +14367,8 @@ components:
         Partial update; only present fields are touched. A null is
         "leave alone", not "clear" — removing a value that is already
         set is an explicit flag (`clear_expires_at`, `clear_cover`,
-        `clear_featured_cover`, `clear_featured_cover_focal`).
+        `clear_featured_cover`, `clear_featured_cover_focal`,
+        `clear_cover_focal`).
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         description: { type: string }
@@ -14457,6 +14489,35 @@ components:
             Mutually exclusive with either focal coordinate: sending
             both is a 400. Independent of `clear_featured_cover`, which
             removes the picture rather than its positioning.
+        cover_focal_x:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            Centre the COLLECTION cover's square crop horizontally, as a
+            fraction of the picture's width (#1207). Same rules as the
+            featured pair: must be sent with `cover_focal_y`, must be in
+            0..1, and out-of-range is a 400 rather than a silently
+            clamped value.
+        cover_focal_y:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            The vertical half of the collection cover's focal point.
+            Must be sent with `cover_focal_x`; see there.
+        clear_cover_focal:
+          type: boolean
+          description: |
+            Put the collection cover's square crop back to centred
+            (#1207) — one flag for the PAIR, for the reason
+            `clear_featured_cover_focal` is one flag for its pair.
+
+            Mutually exclusive with either coordinate. Independent of
+            `clear_cover`, which removes the picture rather than its
+            positioning.
         if_unchanged_since:
           type: string
           format: date-time

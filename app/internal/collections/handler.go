@@ -603,42 +603,28 @@ func (h *Handler) UpdateCollection(
 	}
 
 	// #1207 — the focal point, which is a PAIR and is validated as one.
-	//
-	// Three refusals, and each is a state the column CHECK would
-	// otherwise reject with a 500-shaped constraint error at write time:
-	//
-	//   * one coordinate without the other — half a point is not a
-	//     weaker positioning, it is an unanswerable one, and the only
-	//     way to complete it is to invent an axis the curator did not
-	//     choose;
-	//   * either coordinate alongside the clear flag — the exclusivity
-	//     rule every clear flag on this endpoint carries;
-	//   * out of 0..1 — a fraction outside the picture is a bug in the
-	//     client, and rejecting it here is what stops it becoming an
-	//     object-position of -240% on a rail nobody is looking at.
+	// See [validateFocalPair] for the three states it refuses and why
+	// each of them would otherwise reach the column CHECK as a
+	// constraint error instead of a 400.
 	clearFocal := in.ClearFeaturedCoverFocal != nil && *in.ClearFeaturedCoverFocal
-	if (in.FeaturedCoverFocalX == nil) != (in.FeaturedCoverFocalY == nil) {
-		return openapi.UpdateCollection400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
-				Error: "featured_cover_focal_x and featured_cover_focal_y must be sent together",
-			},
-		}, nil
+	if resp := validateFocalPair(
+		"featured_cover_focal_x", "featured_cover_focal_y", "clear_featured_cover_focal",
+		in.FeaturedCoverFocalX, in.FeaturedCoverFocalY, clearFocal,
+	); resp != nil {
+		return *resp, nil
 	}
-	if clearFocal && in.FeaturedCoverFocalX != nil {
-		return openapi.UpdateCollection400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
-				Error: "send either the featured_cover_focal_* pair or clear_featured_cover_focal, not both",
-			},
-		}, nil
-	}
-	if in.FeaturedCoverFocalX != nil &&
-		(*in.FeaturedCoverFocalX < 0 || *in.FeaturedCoverFocalX > 1 ||
-			*in.FeaturedCoverFocalY < 0 || *in.FeaturedCoverFocalY > 1) {
-		return openapi.UpdateCollection400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
-				Error: "featured_cover_focal_x and featured_cover_focal_y must be fractions between 0 and 1",
-			},
-		}, nil
+
+	// #1207 — the COLLECTION cover's own focal pair, on the square
+	// destination. Validated by the same three refusals as the featured
+	// pair; a shared helper rather than a third copy of them, because
+	// three copies of a range check is how one of them ends up admitting
+	// 1.5.
+	clearCoverFocal := in.ClearCoverFocal != nil && *in.ClearCoverFocal
+	if resp := validateFocalPair(
+		"cover_focal_x", "cover_focal_y", "clear_cover_focal",
+		in.CoverFocalX, in.CoverFocalY, clearCoverFocal,
+	); resp != nil {
+		return *resp, nil
 	}
 
 	// #1073 — expires_at is a tri-state, and the third state needs a
@@ -685,6 +671,9 @@ func (h *Handler) UpdateCollection(
 			ClearFeaturedCoverFocal: clearFocal,
 			FeaturedCoverFocalX:     in.FeaturedCoverFocalX,
 			FeaturedCoverFocalY:     in.FeaturedCoverFocalY,
+			ClearCoverFocal:         clearCoverFocal,
+			CoverFocalX:             in.CoverFocalX,
+			CoverFocalY:             in.CoverFocalY,
 		})
 		if err != nil {
 			return activities.EmissionInput{}, fmt.Errorf("collections: update: %w", err)
@@ -1737,7 +1726,53 @@ func rowToAPI(r Collection) openapi.Collection {
 	}
 	c.FeaturedCoverFocalX = r.FeaturedCoverFocalX
 	c.FeaturedCoverFocalY = r.FeaturedCoverFocalY
+	c.CoverFocalX = r.CoverFocalX
+	c.CoverFocalY = r.CoverFocalY
 	return c
+}
+
+// validateFocalPair refuses the three shapes a focal pair must never
+// reach the database in, and it is ONE function because #1207 has two
+// pairs — the featured card's 890:500 crop and the collection cover's
+// square one — with identical rules.
+//
+// Each refusal is a state the column CHECK would otherwise reject as a
+// constraint error, which surfaces as a 500 rather than as the 400 the
+// caller can act on:
+//
+//   - one coordinate without the other. Half a point is not a weaker
+//     positioning, it is an unanswerable one, and the only way to
+//     complete it is to invent an axis the curator did not choose.
+//   - either coordinate alongside the clear flag — the exclusivity rule
+//     every clear flag on this endpoint carries, refused rather than
+//     resolved because the server has no basis for preferring one.
+//   - out of 0..1. A fraction outside the picture is a bug in the
+//     client, and rejecting it here is what stops it becoming an
+//     object-position of -240% on a surface nobody is looking at.
+//
+// Returns nil when the pair is acceptable, including when it is absent
+// entirely — "leave alone" is always valid.
+func validateFocalPair(
+	xName, yName, clearName string,
+	x, y *float64,
+	clear bool,
+) *openapi.UpdateCollection400JSONResponse {
+	bad := func(msg string) *openapi.UpdateCollection400JSONResponse {
+		r := openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+		}
+		return &r
+	}
+	if (x == nil) != (y == nil) {
+		return bad(xName + " and " + yName + " must be sent together")
+	}
+	if clear && x != nil {
+		return bad("send either the " + xName + "/" + yName + " pair or " + clearName + ", not both")
+	}
+	if x != nil && (*x < 0 || *x > 1 || *y < 0 || *y > 1) {
+		return bad(xName + " and " + yName + " must be fractions between 0 and 1")
+	}
+	return nil
 }
 
 // decorateMemberCardFields attaches `card_fields` to a page of

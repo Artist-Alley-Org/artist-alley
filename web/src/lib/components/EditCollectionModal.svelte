@@ -52,6 +52,8 @@
     featured_cover_asset_id?: string | null;
     featured_cover_focal_x?: number | null;
     featured_cover_focal_y?: number | null;
+    cover_focal_x?: number | null;
+    cover_focal_y?: number | null;
   }
 
   // One choosable picture in the cover picker.
@@ -117,6 +119,9 @@
   let featuredCoverAssetId = $state<string | null>(null);
   let focalX = $state<number | null>(null);
   let focalY = $state<number | null>(null);
+  // The COLLECTION cover's own pair, on the square destination (#1207).
+  let coverFocalX = $state<number | null>(null);
+  let coverFocalY = $state<number | null>(null);
   let coverEditorOpen = $state(false);
 
   $effect(() => {
@@ -129,6 +134,8 @@
       featuredCoverAssetId = collection.featured_cover_asset_id ?? null;
       focalX = collection.featured_cover_focal_x ?? null;
       focalY = collection.featured_cover_focal_y ?? null;
+      coverFocalX = collection.cover_focal_x ?? null;
+      coverFocalY = collection.cover_focal_y ?? null;
       error = null;
       conflict = null;
       focusCoverHandled = false;
@@ -281,6 +288,11 @@
               ? { clear_featured_cover_focal: true }
               : {}
             : { featured_cover_focal_x: focalX, featured_cover_focal_y: focalY }),
+          ...(coverFocalX === null || coverFocalY === null
+            ? collection.cover_focal_x != null
+              ? { clear_cover_focal: true }
+              : {}
+            : { cover_focal_x: coverFocalX, cover_focal_y: coverFocalY }),
         },
       });
       if (response.status === 409) {
@@ -506,4 +518,6 @@
   bind:featuredCoverAssetId
   bind:focalX
   bind:focalY
+  bind:coverFocalX
+  bind:coverFocalY
 />

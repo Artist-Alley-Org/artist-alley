@@ -294,6 +294,10 @@ type Collection struct {
 	FeaturedCoverFocalX *float64
 	// Vertical focal point for the featured rail's 890:500 crop, as a FRACTION of the picture's height (0 = top edge, 1 = bottom edge). See featured_cover_focal_x for why it is a fraction, why NULL means centre, and why the two are constrained together.
 	FeaturedCoverFocalY *float64
+	// Horizontal focal point for the collection cover's SQUARE crop, as a FRACTION of the picture's width (#1207). The square is the destination shape because `col` is fit=cover at 320px — a 320x320 centre-crop — and that rendition is what every small collection thumbnail is made of. Separate from featured_cover_focal_x because the two destinations are different shapes and one fraction cannot be right for both. NULL means centre. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and is wrong.
+	CoverFocalX *float64
+	// Vertical focal point for the collection cover's square crop (#1207). See cover_focal_x.
+	CoverFocalY *float64
 }
 
 type CollectionAcl struct {

@@ -3,8 +3,8 @@
 
 -- 00055_collection_featured_cover.sql
 --
--- The featured rail gets its OWN cover, and a focal point for the crop
--- (#1207, absorbing #1200 and #1201).
+-- The featured rail gets its OWN cover, and BOTH covers get a focal
+-- point for their crop (#1207, absorbing #1200 and #1201).
 --
 -- # Why a second pointer rather than reusing cover_asset_id
 --
@@ -32,6 +32,31 @@
 -- recorded it). Read 00046's header for the full argument; it is not
 -- restated here, because two copies of a rationale is how one of them
 -- goes stale.
+--
+-- # TWO focal pairs, because there are two destination shapes
+--
+-- A cover is cropped to whatever shape the surface showing it wants,
+-- and the two surfaces want different shapes:
+--
+--   featured_cover_focal_*  the rail's card, locked to 890:500 (#1110)
+--   cover_focal_*           the SQUARE crop — `col` is `fit: cover,
+--                           max_dim: 320`, a 320x320 centre-crop
+--                           (sysconfig/previews.go), and it is what
+--                           every small collection thumbnail is made of
+--
+-- One pair could not serve both. The fraction is meaningful only
+-- against a known destination shape: the point that centres a face in a
+-- 890:500 band is not the point that centres it in a square, and
+-- storing one number for both would make each surface right only by
+-- accident. Two pairs, two marquees, one migration.
+--
+-- ⚠️ WHAT `cover_focal_*` MEANS, PRECISELY: which SQUARE of the original
+-- picture the collection's cover is. It is chosen against the original,
+-- so a consumer honours it by rendering a `contain` rung with
+-- object-position — NOT by applying it to `col`, whose square was
+-- already taken at the centre by the preview worker and whose edges are
+-- therefore gone before object-position could act. A consumer that
+-- applies this to `col` is cropping a crop and will be wrong.
 --
 -- # Why the focal point is a FRACTION, and why it is a pair of columns
 --
@@ -77,13 +102,21 @@ ALTER TABLE public.collections
     ADD COLUMN featured_cover_asset_id UUID NULL
         REFERENCES public.assets(id) ON DELETE SET NULL,
     ADD COLUMN featured_cover_focal_x DOUBLE PRECISION NULL,
-    ADD COLUMN featured_cover_focal_y DOUBLE PRECISION NULL;
+    ADD COLUMN featured_cover_focal_y DOUBLE PRECISION NULL,
+    ADD COLUMN cover_focal_x DOUBLE PRECISION NULL,
+    ADD COLUMN cover_focal_y DOUBLE PRECISION NULL;
 
 ALTER TABLE public.collections
     ADD CONSTRAINT collections_featured_cover_focal_check CHECK (
         (featured_cover_focal_x IS NULL AND featured_cover_focal_y IS NULL)
         OR (featured_cover_focal_x BETWEEN 0 AND 1
             AND featured_cover_focal_y BETWEEN 0 AND 1)
+    );
+
+ALTER TABLE public.collections
+    ADD CONSTRAINT collections_cover_focal_check CHECK (
+        (cover_focal_x IS NULL AND cover_focal_y IS NULL)
+        OR (cover_focal_x BETWEEN 0 AND 1 AND cover_focal_y BETWEEN 0 AND 1)
     );
 
 COMMENT ON COLUMN public.collections.featured_cover_asset_id IS
@@ -94,6 +127,12 @@ COMMENT ON COLUMN public.collections.featured_cover_focal_x IS
 
 COMMENT ON COLUMN public.collections.featured_cover_focal_y IS
     'Vertical focal point for the featured rail''s 890:500 crop, as a FRACTION of the picture''s height (0 = top edge, 1 = bottom edge). See featured_cover_focal_x for why it is a fraction, why NULL means centre, and why the two are constrained together.';
+
+COMMENT ON COLUMN public.collections.cover_focal_x IS
+    'Horizontal focal point for the collection cover''s SQUARE crop, as a FRACTION of the picture''s width (#1207). The square is the destination shape because `col` is fit=cover at 320px — a 320x320 centre-crop — and that rendition is what every small collection thumbnail is made of. Separate from featured_cover_focal_x because the two destinations are different shapes and one fraction cannot be right for both. NULL means centre. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and is wrong.';
+
+COMMENT ON COLUMN public.collections.cover_focal_y IS
+    'Vertical focal point for the collection cover''s square crop (#1207). See cover_focal_x.';
 
 -- The same partial-index argument 00046 made for cover_asset_id, for
 -- the same access pattern: the rail joins FROM the collection TO the
@@ -109,6 +148,10 @@ DROP INDEX IF EXISTS public.collections_featured_cover_asset_id_idx;
 ALTER TABLE public.collections
     DROP CONSTRAINT IF EXISTS collections_featured_cover_focal_check;
 ALTER TABLE public.collections
+    DROP CONSTRAINT IF EXISTS collections_cover_focal_check;
+ALTER TABLE public.collections
     DROP COLUMN featured_cover_asset_id,
     DROP COLUMN featured_cover_focal_x,
-    DROP COLUMN featured_cover_focal_y;
+    DROP COLUMN featured_cover_focal_y,
+    DROP COLUMN cover_focal_x,
+    DROP COLUMN cover_focal_y;

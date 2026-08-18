@@ -102,7 +102,8 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
-          featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y
+          featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
+          cover_focal_x, cover_focal_y
 `
 
 type CreateCollectionParams struct {
@@ -160,6 +161,8 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.FeaturedCoverAssetID,
 		&i.FeaturedCoverFocalX,
 		&i.FeaturedCoverFocalY,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 	)
 	return i, err
 }
@@ -194,7 +197,8 @@ SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
-       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y
+       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
+       cover_focal_x, cover_focal_y
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -225,6 +229,8 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 		&i.FeaturedCoverAssetID,
 		&i.FeaturedCoverFocalX,
 		&i.FeaturedCoverFocalY,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 	)
 	return i, err
 }
@@ -249,7 +255,8 @@ SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
-       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y
+       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
+       cover_focal_x, cover_focal_y
 FROM collections
 WHERE id = $1
 `
@@ -281,6 +288,8 @@ func (q *Queries) GetCollectionIncludingDeleted(ctx context.Context, id pgtype.U
 		&i.FeaturedCoverAssetID,
 		&i.FeaturedCoverFocalX,
 		&i.FeaturedCoverFocalY,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 	)
 	return i, err
 }
@@ -430,7 +439,8 @@ SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
-       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y
+       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
+       cover_focal_x, cover_focal_y
 FROM collections c
 WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT  IS NULL OR owner_user_ref = $2::BIGINT)
@@ -540,6 +550,8 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 			&i.FeaturedCoverAssetID,
 			&i.FeaturedCoverFocalX,
 			&i.FeaturedCoverFocalY,
+			&i.CoverFocalX,
+			&i.CoverFocalY,
 		); err != nil {
 			return nil, err
 		}
@@ -622,13 +634,21 @@ UPDATE collections SET
                           ELSE COALESCE($13, featured_cover_focal_x) END,
     featured_cover_focal_y = CASE WHEN $12::BOOLEAN THEN NULL
                           ELSE COALESCE($14, featured_cover_focal_y) END,
+    -- The regular cover's own focal pair, on the SQUARE destination. Its
+    -- own clear flag, for the reason the featured pair has one: two
+    -- columns, one intention.
+    cover_focal_x = CASE WHEN $15::BOOLEAN THEN NULL
+                          ELSE COALESCE($16, cover_focal_x) END,
+    cover_focal_y = CASE WHEN $15::BOOLEAN THEN NULL
+                          ELSE COALESCE($17, cover_focal_y) END,
     updated_at  = NOW()
-WHERE id = $15
+WHERE id = $18
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
-          featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y
+          featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
+          cover_focal_x, cover_focal_y
 `
 
 type UpdateCollectionParams struct {
@@ -646,6 +666,9 @@ type UpdateCollectionParams struct {
 	ClearFeaturedCoverFocal bool
 	FeaturedCoverFocalX     *float64
 	FeaturedCoverFocalY     *float64
+	ClearCoverFocal         bool
+	CoverFocalX             *float64
+	CoverFocalY             *float64
 	ID                      pgtype.UUID
 }
 
@@ -680,6 +703,9 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		arg.ClearFeaturedCoverFocal,
 		arg.FeaturedCoverFocalX,
 		arg.FeaturedCoverFocalY,
+		arg.ClearCoverFocal,
+		arg.CoverFocalX,
+		arg.CoverFocalY,
 		arg.ID,
 	)
 	var i Collection
@@ -704,6 +730,8 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.FeaturedCoverAssetID,
 		&i.FeaturedCoverFocalX,
 		&i.FeaturedCoverFocalY,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 	)
 	return i, err
 }

@@ -1345,6 +1345,9 @@ CREATE TABLE public.collections (
     featured_cover_asset_id uuid,
     featured_cover_focal_x double precision,
     featured_cover_focal_y double precision,
+    cover_focal_x double precision,
+    cover_focal_y double precision,
+    CONSTRAINT collections_cover_focal_check CHECK ((((cover_focal_x IS NULL) AND (cover_focal_y IS NULL)) OR (((cover_focal_x >= (0)::double precision) AND (cover_focal_x <= (1)::double precision)) AND ((cover_focal_y >= (0)::double precision) AND (cover_focal_y <= (1)::double precision))))),
     CONSTRAINT collections_featured_cover_focal_check CHECK ((((featured_cover_focal_x IS NULL) AND (featured_cover_focal_y IS NULL)) OR (((featured_cover_focal_x >= (0)::double precision) AND (featured_cover_focal_x <= (1)::double precision)) AND ((featured_cover_focal_y >= (0)::double precision) AND (featured_cover_focal_y <= (1)::double precision))))),
     CONSTRAINT collections_membership_check CHECK ((membership = ANY (ARRAY['manual'::text, 'query'::text, 'hybrid'::text]))),
     CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
@@ -1384,6 +1387,20 @@ COMMENT ON COLUMN public.collections.featured_cover_focal_x IS 'Horizontal focal
 --
 
 COMMENT ON COLUMN public.collections.featured_cover_focal_y IS 'Vertical focal point for the featured rail''s 890:500 crop, as a FRACTION of the picture''s height (0 = top edge, 1 = bottom edge). See featured_cover_focal_x for why it is a fraction, why NULL means centre, and why the two are constrained together.';
+
+
+--
+-- Name: COLUMN collections.cover_focal_x; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.cover_focal_x IS 'Horizontal focal point for the collection cover''s SQUARE crop, as a FRACTION of the picture''s width (#1207). The square is the destination shape because `col` is fit=cover at 320px — a 320x320 centre-crop — and that rendition is what every small collection thumbnail is made of. Separate from featured_cover_focal_x because the two destinations are different shapes and one fraction cannot be right for both. NULL means centre. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and is wrong.';
+
+
+--
+-- Name: COLUMN collections.cover_focal_y; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.cover_focal_y IS 'Vertical focal point for the collection cover''s square crop (#1207). See cover_focal_x.';
 
 
 --
