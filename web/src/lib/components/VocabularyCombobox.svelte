@@ -34,6 +34,22 @@
   to be worth having, and a typo is exactly what silent minting
   immortalises.
 
+  # Who may create (ADR 0092 §2)
+
+  Two conditions, not one: the FIELD is open, and THIS CALLER holds
+  `fields.vocabulary.extend`. The capability is read here rather than
+  passed in by each caller, because three surfaces mount this control
+  and a gate that has to be remembered at every call site is a gate
+  that will be missed at one of them — and the failure mode of missing
+  it is a create row that produces a 422 the person cannot act on.
+
+  A caller without the capability gets THE SAME CONTROL with the create
+  arm absent: same chips, same filtering, same keyboard, no create row.
+  Not a disabled row, not an error after the fact. That is the ADR's
+  requirement in as many words, and it is why `blocked` falls through
+  to the closed-field wording — for someone who may not create, an
+  unmatched term genuinely is a term that is not on offer.
+
   # Matching mirrors the server
 
   resolveTerm ($lib/fieldOptions) is the browser's copy of
@@ -52,6 +68,7 @@
 -->
 <script lang="ts">
   import { t } from '$stores/lang.svelte';
+  import { auth } from '$stores/auth.svelte';
   import {
     findOption,
     resolveTerm,
@@ -68,7 +85,11 @@
      * this control is about to create (see the header note).
      */
     value: string[];
-    /** The field's `open_vocabulary` flag. False = no create row, ever. */
+    /**
+     * The field's `open_vocabulary` flag. False = no create row, ever.
+     * True is NECESSARY but not sufficient — see `canCreate` below,
+     * which also requires the caller's capability.
+     */
     open?: boolean;
     disabled?: boolean;
     /** Accessible name. One of these is required for the input. */
@@ -97,6 +118,14 @@
   // paint.
   const MAX_ROWS = 50;
 
+  /**
+   * The capability that lets a value create a term (migration 00057).
+   * Seeded onto `Base`, so by default everyone signed in holds it and
+   * this changes nothing an artist sees; an operator running the
+   * librarian model revokes it and the create row disappears.
+   */
+  const VOCABULARY_EXTEND = 'fields.vocabulary.extend';
+
   let draft = $state('');
   let listOpen = $state(false);
   let highlight = $state(-1);
@@ -113,6 +142,15 @@
   const offerable = $derived(selectableOptions(options, value));
 
   const chosen = $derived(new Set(value));
+
+  /**
+   * May this person create a term here. The server answers the same
+   * question on `GET /fields/{id}/values` as `can_extend`, and refuses
+   * a write it did not authorise with
+   * `reason: vocabulary_extension_forbidden` — so this is a rendering
+   * decision that MIRRORS the rule, never one that enforces it.
+   */
+  const canCreate = $derived(open && auth.can(VOCABULARY_EXTEND));
 
   /** How a chosen entry reads. Falls back to the entry itself, which
       is exactly right for a term being created — there, the text IS
@@ -144,13 +182,22 @@
   const ranked = $derived.by(() => {
     const pool = offerable.filter((o) => !chosen.has(o.value));
     if (!query) return pool;
+    // Slug, label AND aliases — the same three keys the write path
+    // resolves through, and the same three the server's
+    // GET /fields/{id}/values ranks on. Leaving aliases out of the
+    // BROWSE list while resolveTerm matches them produces the worst
+    // possible pair of answers: typing an alias shows "no matches" and
+    // withholds the create row, so the term the operator is addressing
+    // is invisible in both directions.
     const rank = (o: FieldOption): number => {
-      const v = o.value.toLowerCase();
-      const l = o.label.toLowerCase();
-      if (v === query || l === query) return 0;
-      if (v.startsWith(query) || l.startsWith(query)) return 1;
-      if (v.includes(query) || l.includes(query)) return 2;
-      return 3;
+      let best = 3;
+      for (const key of [o.value, o.label, ...(o.aliases ?? [])]) {
+        const k = key.toLowerCase();
+        if (!k) continue;
+        const r = k === query ? 0 : k.startsWith(query) ? 1 : k.includes(query) ? 2 : 3;
+        if (r < best) best = r;
+      }
+      return best;
     };
     return pool
       .map((o, i) => ({ o, r: rank(o), i }))
@@ -172,7 +219,7 @@
 
   /** The create row, or null. Absent on a closed field, always. */
   const creatable = $derived.by(() => {
-    if (!open || !resolution) return null;
+    if (!canCreate || !resolution) return null;
     if (resolution.matched) return null;
     if (!resolution.slug) return null; // no addressable form ("!!!")
     if (chosen.has(draft.trim())) return null;
@@ -193,7 +240,15 @@
       if (chosen.has(opt.value)) return null;
       return t('vocabulary.term_retired', { label: opt.label });
     }
-    if (open) return resolution.slug ? null : t('vocabulary.term_unslugifiable');
+    if (canCreate) return resolution.slug ? null : t('vocabulary.term_unslugifiable');
+    // Two different refusals, said differently on purpose. A CLOSED
+    // field genuinely does not take new terms, and the operator's fix
+    // is to pick another word or ask for the vocabulary to be edited.
+    // An open field the caller may not extend is not the same
+    // sentence: the term could exist here, and the fix is a
+    // capability. Reusing one string for both would tell one of the
+    // two a specific untruth about their own instance.
+    if (open) return t('vocabulary.term_cannot_create', { term: draft.trim() });
     return t('vocabulary.term_unknown', { term: draft.trim() });
   });
 
@@ -373,7 +428,12 @@
       aria-controls={listId}
       aria-autocomplete="list"
       aria-activedescendant={listOpen && highlight >= 0 ? rowId(highlight) : undefined}
-      placeholder={placeholder ?? (value.length === 0 ? t('vocabulary.placeholder') : '+')}
+      placeholder={placeholder ??
+        (value.length === 0
+          ? canCreate
+            ? t('vocabulary.placeholder')
+            : t('vocabulary.placeholder_pick')
+          : '+')}
       data-testid="vocab-input-{testid}"
       class="min-h-9 min-w-[7rem] flex-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-sm text-fg placeholder:text-fg-muted/60 focus:outline-none disabled:cursor-not-allowed"
     />
