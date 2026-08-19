@@ -681,6 +681,12 @@ type FieldDefinition struct {
 	MirrorsColumn *string
 	// Display hint (#552): render this field at a glance on an asset card. Same class as display_order / display_group — UI may use it, nothing may gate access, filtering or correctness on it, and a client that ignores it must still be correct, merely plainer. FEDERATES with the definition: it names the field, not the server (ADR 0012 amendment 2026-08-10, against ADR 0083's exclusion criterion). Refused on a field carrying a read_capability, because the card renders on browse where no per-field capability has been evaluated.
 	ShowOnCard bool
+	// Participation flag (ADR 0092 §3, #1173): offer this field as a filter control on the advanced search page. TRUE by default, because every field appeared there before this column existed and an install that never sets it must render unchanged. It governs the CONTROL only — it does not touch `searchable` (which decides whether the field's text feeds the search index), does not change any query result, and does not stop a caller composing `filter=field:<code>=<value>` by hand. The read capability still gates on top: a flag can never offer a field the caller may not read. FEDERATES with the definition: it names the field, not the server (ADR 0083 exclusion criterion).
+	ShowInAdvancedSearch bool
+	// Participation flag (ADR 0092 §3, #1173): offer this field on the upload / create surface. TRUE by default for the same reason as show_in_advanced_search — the upload composer rendered every active field for the asset type before this column existed. Consumed by the create/edit work (#1119); this column is the declaration, the surfaces obey it there. Not constrained against `required`, because required-ness is enforced on the value-write path and not at asset creation. FEDERATES with the definition.
+	ShowOnUpload bool
+	// Participation flag (ADR 0092 §3, #1173): which tab of the edit surface this field sits in. NULL (the default) = unassigned, which is today's behaviour — no surface has tabs yet, and fields group by display_group. Distinct from an empty string, which the CHECK constraint refuses so that "no tab" has exactly one representation. A coarser grouping than display_group, not a replacement for it: a tab holds groups. FEDERATES with the definition.
+	EditTab *string
 }
 
 type GooseDbVersion struct {

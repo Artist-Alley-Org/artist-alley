@@ -20,7 +20,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab
 FROM field_definition
 WHERE (
         CASE WHEN sqlc.narg('status')::TEXT IS NULL
@@ -40,7 +41,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -54,7 +56,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab
 FROM field_definition WHERE id = $1;
 
 -- name: GetFieldDefinitionByCode :one
@@ -64,7 +67,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab
 FROM field_definition WHERE code = $1;
 
 -- name: CreateFieldDefinition :one
@@ -81,7 +85,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card;
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab;
 
 -- name: UpdateFieldDefinition :one
 -- COALESCE pattern: NULL args keep current value. `applies_to` is a
@@ -101,6 +106,17 @@ UPDATE field_definition SET
     display_group             = COALESCE(sqlc.narg('display_group'),             display_group),
     open_vocabulary           = COALESCE(sqlc.narg('open_vocabulary'),           open_vocabulary),
     show_on_card              = COALESCE(sqlc.narg('show_on_card'),              show_on_card),
+    show_in_advanced_search   = COALESCE(sqlc.narg('show_in_advanced_search'),   show_in_advanced_search),
+    show_on_upload            = COALESCE(sqlc.narg('show_on_upload'),            show_on_upload),
+    -- `edit_tab` needs a CLEAR path for the same reason `default_value`
+    -- does, and it is the only participation flag that does: the other
+    -- two are booleans, where "off" is a value COALESCE can carry, while
+    -- "this field belongs to no tab" is NULL — indistinguishable from
+    -- "leave it alone" everywhere else in this statement. The explicit
+    -- boolean makes un-assigning a tab a deliberate act rather than an
+    -- ambiguity in the absence of a value.
+    edit_tab                  = CASE WHEN sqlc.arg('clear_edit_tab')::BOOLEAN THEN NULL
+                                     ELSE COALESCE(sqlc.narg('edit_tab'), edit_tab) END,
     status                    = COALESCE(sqlc.narg('status'),                    status),
     deprecated_replacement_id = COALESCE(sqlc.narg('deprecated_replacement_id'), deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
@@ -119,7 +135,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card;
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab;
 
 -- name: ArchiveFieldDefinition :exec
 -- Soft-archive — keeps the row and any historic values so audit
@@ -145,7 +162,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card;
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab;
 
 -- name: LockFieldDefinitionVocabulary :one
 -- Reads the live options document under a ROW LOCK, for the

@@ -85,6 +85,7 @@
     type: string;
     options?: unknown;
     searchable?: boolean;
+    show_in_advanced_search?: boolean;
     status?: string;
     subject_kind?: string;
     read_capability?: string | null;
@@ -106,13 +107,58 @@
   // bottom of this file.
   const VOCAB_TYPES = ['select', 'multi_select', 'tree'];
 
-  /** Fields this caller may both read and filter on. */
+  /**
+   * Fields this caller may both read and filter on.
+   *
+   * # THE OPERATOR'S ANSWER, NOT THIS PAGE'S GUESS (#1173, ADR 0092 §3)
+   *
+   * This list used to be inferred, and `searchable !== false` was the
+   * inference that mattered: `searchable` has meant "this field's text
+   * feeds the search index" since the 00001 baseline —
+   * `rebuild_asset_search_text()` reads it — and answering "should
+   * there be a control for it here" with it conflated two independent
+   * settings. An operator who wanted `production_notes` off this form
+   * had to make it unfindable to get it, and an operator who unticked
+   * `searchable` for indexing reasons silently lost the filter.
+   *
+   * `show_in_advanced_search` is the field's own declaration and is
+   * what this page reads now. ADR 0092 §3: "surfaces read the flags;
+   * they do not infer participation from a field's type or from
+   * whether it happens to have values."
+   *
+   * `!== false` and not `=== true`, which is the whole safety property
+   * of the change: the column defaults TRUE, so every field that
+   * appeared here before the flag existed still appears, and an install
+   * that never opens the admin page renders identically.
+   *
+   * # What is NOT participation, and stays
+   *
+   * `VOCAB_TYPES` is still here and is not the inference that was
+   * removed. It says what this page can DRAW — a picker over a
+   * vocabulary — and a `number` or `date` field has no control on this
+   * form to render into yet. That is this page's own limit, not a
+   * statement about the field, and it lifts when the operator grammar
+   * (#1165, folded into #1173) gives ranges and text operators their
+   * controls. Until then, ticking the flag on a `text` field stores the
+   * operator's intent and this page renders nothing for it — which is
+   * why the admin form says which surfaces read the flag so far rather
+   * than hiding the toggle.
+   *
+   * `status !== 'archived'` also stays, and it is not an inference
+   * either: `status` IS the retire-without-delete flag ADR 0092 §3
+   * asks for, already built (00001 + ArchiveFieldDefinition). It is
+   * belt-and-braces here because the fetch below already asks for
+   * `status: active`.
+   *
+   * The read gate is unchanged and composes ON TOP: a field the caller
+   * may not read is dropped whatever its participation flag says. The
+   * load-bearing half of that is server-side in
+   * `facet.Selection.Authorize`; this is the display half.
+   */
   const filterable = $derived(
     fields
-      .filter((f) => f.searchable !== false && f.status !== 'archived')
+      .filter((f) => f.show_in_advanced_search !== false && f.status !== 'archived')
       .filter((f) => VOCAB_TYPES.includes(f.type))
-      // The display half of the read gate. A field whose read_capability
-      // this caller lacks is not offered; the server refuses it anyway.
       .filter((f) => !f.read_capability || auth.can(f.read_capability))
       .sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0) || a.label.localeCompare(b.label)),
   );
