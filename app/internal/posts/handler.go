@@ -2334,7 +2334,11 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 	// #939 — the caller's `assets.admin` scope. Widens the FIELD plane
 	// of a restricted member (ADR 0064) and nothing else.
 	var mut visibility.AssetMutationCaps
-	if id := auth.IdentityFromContext(ctx); id != nil {
+	if id := auth.IdentityFromContext(ctx); id != nil && !id.IsAnonymous() {
+		// `!IsAnonymous` as well as non-nil (#1183): a synthetic
+		// anonymous identity carries UserRef 0, and building a caller
+		// around it would present ref 0 to the visibility rules as
+		// though it were a member.
 		caller = visibility.NewCaller(&id.UserRef)
 		caps = func(code string) bool { return id.Can(code) }
 		mut = visibility.ResolveAssetMutationCaps(

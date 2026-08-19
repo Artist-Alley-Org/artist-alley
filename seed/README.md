@@ -526,7 +526,7 @@ These are tracked as follow-ups:
 - **Internet-fetched gap-fillers.** `seed/scripts/fetch_gaps.py` will pull
   Sintel + BBB clips, Project Gutenberg EPUBs, Polyhaven HDRs, NASA
   imagery, Khronos glTF samples, LibriVox audiobook chapter samples.
-  Targets Layer A. Tracked in [Phase 1.22.I-a](https://github.com/mscrnt/artist-alley/issues/98).
+  Targets Layer A. Tracked in [Phase 1.22.I-a](https://github.com/Artist-Alley-Org/artist-alley/issues/98).
 - **`apply.sh` script.** Reads a profile JSON + asset bytes + drives AA's
   API to materialize the seeded instance. Tracked in same phase.
 - **R2 mirror of large assets.** Eventually move the source asset bytes

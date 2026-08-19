@@ -267,5 +267,5 @@ If you use this dataset, please:
   Khronos CC-BY for the canonical reference)
 
 If you spot a missing or incorrect attribution, please file an issue
-at https://github.com/mscrnt/artist-alley/issues — we'll fix it
+at https://github.com/Artist-Alley-Org/artist-alley/issues — we'll fix it
 immediately. Attribution accuracy matters.

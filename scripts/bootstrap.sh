@@ -24,33 +24,44 @@ if [ ! -f .env ]; then
     sed -i.bak "s/^UID=.*/UID=$(id -u)/" .env && rm .env.bak
     sed -i.bak "s/^GID=.*/GID=$(id -g)/" .env && rm .env.bak
 
-    # Replace the placeholder passwords with something locally unique.
-    # Caller is expected to edit .env if they want their own values.
-    if command -v openssl >/dev/null; then
-        ROOT_PW=$(openssl rand -hex 16)
-        RS_PW=$(openssl rand -hex 16)
-        PG_PW=$(openssl rand -hex 16)
-        sed -i.bak "s|^MYSQL_ROOT_PASSWORD=.*|MYSQL_ROOT_PASSWORD=${ROOT_PW}|" .env && rm .env.bak
-        sed -i.bak "s|^MYSQL_PASSWORD=.*|MYSQL_PASSWORD=${RS_PW}|"           .env && rm .env.bak
-        sed -i.bak "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${PG_PW}|"     .env && rm .env.bak
-        printf '   Generated random passwords for mysql + postgres.\n'
-    fi
+    # Secrets. openssl is REQUIRED rather than optional (#996): two of
+    # the values below are hard requirements of docker-compose.yml
+    # (`${AA_MASTER_KEY:?...}`), and that error message points here. A
+    # bootstrap that silently skipped them left a .env the stack cannot
+    # start from and a compose error naming a script that had not
+    # generated the key.
+    command -v openssl >/dev/null \
+        || fail "openssl is required to generate the install's secrets"
+
+    PG_PW=$(openssl rand -hex 16)
+    # Per-install pepper mixed into bcrypt hashes. hex 32, matching
+    # docs/install/README.md.
+    SCRAMBLE=$(openssl rand -hex 32)
+    # At-rest encryption master key. base64-encoded 32 bytes, matching
+    # docs/install/README.md — the app rejects any other shape.
+    MASTER=$(openssl rand -base64 32)
+
+    sed -i.bak "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${PG_PW}|"   .env && rm .env.bak
+    sed -i.bak "s|^AA_SCRAMBLE_KEY=.*|AA_SCRAMBLE_KEY=${SCRAMBLE}|"    .env && rm .env.bak
+    # `|` is in neither base64 alphabet, so it is a safe sed delimiter
+    # for a value that can legitimately contain `/`, `+` and `=`.
+    sed -i.bak "s|^AA_MASTER_KEY=.*|AA_MASTER_KEY=${MASTER}|"          .env && rm .env.bak
+    printf '   Generated the Postgres password, AA_SCRAMBLE_KEY and AA_MASTER_KEY.\n'
     printf '   Edit .env if you want to override defaults.\n'
+
+    # Fail here rather than in `docker compose up` if .env.example ever
+    # loses one of the placeholder lines the seds above rewrite — a sed
+    # that matches nothing succeeds silently.
+    for required in POSTGRES_PASSWORD AA_SCRAMBLE_KEY AA_MASTER_KEY; do
+        grep -q "^${required}=." .env \
+            || fail "${required} is missing from the generated .env — check .env.example"
+    done
 else
     step ".env already exists \u2014 leaving it alone"
 fi
 
 step "Building and starting containers"
 docker compose up --build -d
-
-if [ ! -f vendor/autoload.php ]; then
-    step "Installing PHP dependencies (vendor/ missing)"
-    # COMPOSER_PROCESS_TIMEOUT bumped because google/apiclient-services is huge
-    # and routinely exceeds the default 300s unzip window.
-    docker compose exec -T \
-        -e COMPOSER_PROCESS_TIMEOUT=1800 \
-        php composer install --no-interaction --prefer-dist
-fi
 
 step "Waiting for services to report healthy"
 attempts=0

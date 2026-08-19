@@ -44,6 +44,29 @@ func (h *Handler) enrichForCaller(ctx context.Context, posts ...*openapi.Post) e
 	return h.enrichPreview(ctx, posts...)
 }
 
+// isAnonymousCaller reports whether the request has no authenticated
+// principal behind it.
+//
+// Two shapes mean that, and only one of them used to be tested here
+// (#1183). The usual one is a nil Identity, which is what the resolver
+// leaves in the context for an unauthenticated request today. The other
+// is a non-nil Identity with `AuthMethod == "anonymous"` — the shape
+// `IsAnonymous()` exists for, which the read rule and ~20 handlers
+// already check, and which a synthetic anonymous principal would carry.
+//
+// These three enrichment passes tested `== nil` alone. That is correct
+// for today's resolver and silently wrong for any future that injects an
+// anonymous identity: the passes would treat it as a MEMBER and hand out
+// the display names that ADR 0024's hide-from-anonymous opt-out exists
+// to withhold — a read rule that stayed right while the enrichment
+// beside it leaked. The dead `auth.LoadAnonymousIdentity` that would
+// have caused exactly that is deleted in the same change; this predicate
+// is what makes reintroducing one safe rather than a regression.
+func isAnonymousCaller(ctx context.Context) bool {
+	id := auth.IdentityFromContext(ctx)
+	return id == nil || id.IsAnonymous()
+}
+
 // TopCommentsPerPost is how many comments ride a post payload for the
 // feed card's preview (#1047).
 //
@@ -192,7 +215,7 @@ func (h *Handler) enrichTopComments(ctx context.Context, posts ...*openapi.Post)
 		for ref := range refSet {
 			refs = append(refs, ref)
 		}
-		anonymous := auth.IdentityFromContext(ctx) == nil
+		anonymous := isAnonymousCaller(ctx)
 		authors, err = users.LookupAuthors(ctx, h.Pool, refs, anonymous)
 		if err != nil {
 			return err
@@ -283,7 +306,7 @@ func (h *Handler) enrichTopComments(ctx context.Context, posts ...*openapi.Post)
 // clearing it costs nothing and makes "the map decides" true rather than
 // merely expected.
 func (h *Handler) enrichAuthors(ctx context.Context, posts ...*openapi.Post) error {
-	anonymous := auth.IdentityFromContext(ctx) == nil
+	anonymous := isAnonymousCaller(ctx)
 
 	refSet := make(map[int64]struct{}, len(posts))
 	for _, p := range posts {
@@ -419,6 +442,13 @@ func (h *Handler) enrichOrigins(ctx context.Context, posts ...*openapi.Post) err
 // answer must never become the next reader's.
 func (h *Handler) enrichLiked(ctx context.Context, posts ...*openapi.Post) error {
 	caller := auth.IdentityFromContext(ctx)
+	if caller.IsAnonymous() {
+		// Anonymous holds no likes, and reading `caller.UserRef` for one
+		// would query ref 0. Nil is the usual shape of an
+		// unauthenticated caller here; a non-nil anonymous identity is
+		// the other one, and both mean the same thing.
+		caller = nil
+	}
 
 	ids := make([]uuid.UUID, 0, len(posts))
 	for _, p := range posts {
