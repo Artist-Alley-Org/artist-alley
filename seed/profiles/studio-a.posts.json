@@ -26835,5 +26835,71 @@
   "title": "Pexels 7915029 RDNE Stock project",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "e7f9eaa1-3b96-576a-b44c-34d5f2bea8f5",
+   "12be2604-f37c-517c-95ac-ee435c1b8d59",
+   "8d9e506b-49a9-51b2-b164-1369ed5c2da3",
+   "62b80acb-8a1f-5951-8033-f8af7f1ae614",
+   "06c4e114-f622-504a-bbe3-7d1e2891e012",
+   "cb0bc83b-f6e3-5e56-a5e0-1ec604f4e40c"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "seed.bot",
+  "brand_workspace": null,
+  "collection_name": "Internet Reference",
+  "created_at": "2026-02-20T11:00:00Z",
+  "description": "Figure-study reference from the Met's open-access collection. Flagged mature: classical fine art with nudity, which is what the label is for.",
+  "id": "c67792cc-77d4-532c-991b-f39e9b6df188",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "multi_asset",
+  "sensitivity_tier": "public",
+  "studio": "shared",
+  "tags": [
+   "reference",
+   "figure-study",
+   "mature"
+  ],
+  "team_name": "Reference",
+  "title": "Life drawing reference — classical nudes",
+  "updated_at": "2026-02-20T11:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "7e9d0b75-82a6-52bb-8fe5-be222c1c019e",
+   "53c6b8d1-694b-5c56-90ef-949be91623ea",
+   "4810f564-2498-5b27-b9f1-5082dc9197d9",
+   "f0a2b2c2-eb17-5aba-8062-84dc7e78021b",
+   "3d6444e6-7f15-509a-9901-767dac46a8ae",
+   "17ed7485-d377-5c53-a8a4-7b8b7287b2d2"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "seed.bot",
+  "brand_workspace": null,
+  "collection_name": "Internet Reference",
+  "created_at": "2026-02-21T11:01:00Z",
+  "description": "Academic life studies and classical sculpture, public-domain. Flagged mature.",
+  "id": "285f2cf4-9273-5f61-87e1-b6190717a444",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "multi_asset",
+  "sensitivity_tier": "public",
+  "studio": "shared",
+  "tags": [
+   "reference",
+   "figure-study",
+   "mature"
+  ],
+  "team_name": "Reference",
+  "title": "Anatomy reference — academic life studies",
+  "updated_at": "2026-02-21T11:01:00Z",
+  "workflow_state": "approved"
  }
 ]

@@ -257,7 +257,13 @@ VALUES (
 ON CONFLICT (subject_kind, subject_id, scope, team_id, band_id) DO NOTHING;
 
 -- name: SeedInsertAsset :one
--- Stable id from the MANIFEST. A bare ON CONFLICT DO NOTHING catches
+-- Stable id from the MANIFEST. `mature` is carried from the manifest
+-- entry (#1217): it is a LABEL the catalogue authors, orthogonal to
+-- `sensitivity` (ADR 0090), so the seeder writes it here rather than
+-- deriving it from the tier. Posts get theirs from the 00052/00054
+-- trigger when their membership lands — never written directly.
+--
+-- A bare ON CONFLICT DO NOTHING catches
 -- both the id pkey (resumed run) AND the (owner_user_ref, file_hash)
 -- partial unique index (byte-identical duplicate owned by the same
 -- user) — the latter legitimately collapses one asset, matching the
@@ -265,9 +271,9 @@ ON CONFLICT (subject_kind, subject_id, scope, team_id, band_id) DO NOTHING;
 INSERT INTO assets (
     id, title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata,
-    state_id, team_id, sensitivity, created_at, updated_at
+    state_id, team_id, sensitivity, mature, created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 ON CONFLICT DO NOTHING
 RETURNING id;
 

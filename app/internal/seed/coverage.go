@@ -106,17 +106,25 @@ const (
 	dimAssetState = "asset.state"   // workflow state
 	dimAssetColl  = "asset.collection"
 	dimAssetTeam  = "asset.team"
-	dimField      = "field"      // typed field code carrying a value
-	dimCompanion  = "companions" // extension whose model declares external files
-	dimRel        = "rel"        // relation-bearing classes (tags, review notes)
-	dimPostState  = "post.state"
-	dimPostSens   = "post.sens"
-	dimPostKind   = "post.kind"
-	dimPostColl   = "post.collection"
-	dimPostTeam   = "post.team"
-	dimPostMulti  = "post.multi" // post holds more than one asset
-	dimPostMixed  = "post.mixed" // post mixes asset types
-	dimPostVis    = "post.vis"   // visibility tier the seeder will WRITE
+	// dimAssetMature is the ADR 0090 rating axis, and it is emitted
+	// ONLY for a mature asset — like dimCompanion, it names a property
+	// a catalogue either supplies or does not. A "false" value would
+	// be carried by every asset in the set and so would be covered by
+	// the first post the greedy stage picked, which is precisely the
+	// shape of coverage that proves nothing.
+	dimAssetMature = "asset.mature"
+
+	dimField     = "field"      // typed field code carrying a value
+	dimCompanion = "companions" // extension whose model declares external files
+	dimRel       = "rel"        // relation-bearing classes (tags, review notes)
+	dimPostState = "post.state"
+	dimPostSens  = "post.sens"
+	dimPostKind  = "post.kind"
+	dimPostColl  = "post.collection"
+	dimPostTeam  = "post.team"
+	dimPostMulti = "post.multi" // post holds more than one asset
+	dimPostMixed = "post.mixed" // post mixes asset types
+	dimPostVis   = "post.vis"   // visibility tier the seeder will WRITE
 )
 
 // requiredDims is the declared floor: coverage classes the UI suite
@@ -153,6 +161,16 @@ var requiredDims = []dim{
 	{dimRel, "field_values"}, // typed metadata on the asset
 	{dimPostMulti, "true"},   // multi-asset post => ordering, playlist
 	{dimPostMixed, "true"},   // mixed-type post => cross-renderer playlist
+
+	// At least one MATURE asset (#1217, ADR 0090). The mature axis has
+	// its own predicate, its own blur on the picture plane and its own
+	// subtraction from the feed, and every one of those specs is
+	// vacuous against a catalogue where `mature` is false everywhere —
+	// which is what shipped: the seeder could not even carry the field.
+	// Declared here rather than left to the fixture-derived universe
+	// because a universe built from the catalogue cannot demand a
+	// dimension the catalogue lacks; only this list can.
+	{dimAssetMature, "true"},
 
 	// At least one post the seeder actually writes as PUBLIC (#1176) —
 	// the only rows an anonymous visitor can see. post.sens alone is not
@@ -320,6 +338,9 @@ func assetDims(a manifestAsset, companion bool) []dim {
 	}
 	if companion {
 		out = append(out, dim{dimCompanion, a.FileExtension})
+	}
+	if a.Mature {
+		out = append(out, dim{dimAssetMature, "true"})
 	}
 	return out
 }

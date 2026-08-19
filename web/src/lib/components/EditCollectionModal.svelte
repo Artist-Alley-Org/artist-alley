@@ -491,8 +491,34 @@
        the viewport pushes its own footer out of reach, and this one can
        grow: `CollectionFieldsSection` renders however many custom fields
        the instance defines. 70vh leaves the header and footer visible at
-       every height the app targets — 80vh on the cover page, where the
-       tall element is the point.
+       every height the app targets.
+
+       ⚠️ THE COVER PAGE TAKES A DEFINITE HEIGHT, NOT A MAXIMUM (#1218).
+       A `max-height` is permission to be tall and page 2 was not taking
+       it: its content is two regions that could each have grown, but
+       neither could be told to, because a percentage of an
+       indefinite height is indefinite. The owner's reading of the
+       result — "we are still not using the space properly", a 720px
+       dialog in a 1130px viewport — is exactly what a max-height
+       produces when nothing inside pushes against it.
+
+       So on the cover page the height is stated, the page inside fills
+       it, and the SCROLL MOVES INWARD: this box stops scrolling and the
+       picker grid scrolls instead, which is what keeps the source tabs
+       and the stage in view while the curator hunts for a picture.
+
+       THE HEIGHT IS THE VIEWPORT MINUS THE CHROME, not a fraction of
+       the viewport. `80vh` was the old ceiling and it is the wrong
+       shape of rule: the chrome this dialog has to leave room for is a
+       header, a footer and the backdrop's padding — 12rem, MEASURED
+       rather than estimated (the first attempt guessed 9rem and put a
+       1084px panel in a 1080px viewport) —
+       so subtracting it fills a tall screen and still fits a short one,
+       where 80vh would push Save off the bottom of a 600px window.
+
+       The 68rem cap is the one taste judgement: past it the crop stage
+       is bigger than any decision it supports, and a 4k screen would
+       otherwise get a two-metre-tall dialog.
 
        ⚠️ BOTH PAGES ARE HIDDEN, NOT UNMOUNTED, and that is the mechanism
        that makes Back lossless. A pending cover choice, a dragged focal
@@ -515,8 +541,14 @@
        the dialog opens rather than when page 2 is first shown, which is
        one request for a picture the summary chip is already showing,
        and it makes the first visit instant. -->
-  <div class="space-y-4 overflow-y-auto pr-1"
-       style="max-height: {page === 'cover' ? 80 : 70}vh">
+  <div
+    class="space-y-4 pr-1"
+    class:overflow-y-auto={page !== 'cover'}
+    class:overflow-hidden={page === 'cover'}
+    style={page === 'cover'
+      ? 'height: min(calc(100vh - 12rem), 68rem)'
+      : 'max-height: 70vh'}
+  >
     <div class:hidden={page !== 'details'} data-testid="collection-edit-details-page">
     {#if error}
       <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
@@ -673,7 +705,8 @@
       </div>
     </div>
 
-    <div class:hidden={page !== 'cover'} data-testid="collection-edit-cover-page">
+    <div class:hidden={page !== 'cover'} class="h-full min-h-0"
+         data-testid="collection-edit-cover-page">
       <CollectionCoverEditor
         {coverSlot}
         onback={() => (page = 'details')}

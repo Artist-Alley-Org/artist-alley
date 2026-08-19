@@ -411,6 +411,21 @@ class AssetRecord:
     attribution: str
     layer: str  # 'A' (public-safe) or 'B' (local-only)
     studio: str  # 'a', 'b', or 'shared'
+    # The ADR 0090 content RATING, and a SECOND AXIS beside
+    # `sensitivity_tier` above rather than a value inside it (#1217): a
+    # public work can be mature and a restricted one need not be.
+    #
+    # Always False here, and defaulted rather than derived, because
+    # nothing the source CSV carries decides it — the studio simulation
+    # has no notion of the rating. The twelve labelled works arrive
+    # through the `mature` upgrade doc, exactly as the added videos do.
+    #
+    # It is EMITTED rather than left absent because the manifest shape is
+    # what documents the axis to whoever reads the published dataset: a
+    # key that appeared only on the twelve would read as "these rows are
+    # special", when the truth is that every asset carries a label and
+    # almost all of them are false.
+    mature: bool = False
 
 
 def parse_int(s: str) -> int | None:

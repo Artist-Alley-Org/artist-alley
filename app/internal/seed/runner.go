@@ -714,8 +714,15 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 			StateID:       r.resolveAssetState(a.WorkflowState),
 			TeamID:        r.teamIDForName(a.TeamName),
 			Sensitivity:   sensitivity(a.SensitivityTier),
-			CreatedAt:     created,
-			UpdatedAt:     updated,
+			// The catalogue's own label, written verbatim (ADR 0090):
+			// mature is a rating, sensitivity is a clearance, and the
+			// two are never merged. Posts are NOT written from here —
+			// their flag is derived by the 00052/00054 triggers off
+			// membership (and off the cover), which is why applyPosts
+			// has nothing to say about it.
+			Mature:    a.Mature,
+			CreatedAt: created,
+			UpdatedAt: updated,
 		}
 		id, err := r.q.SeedInsertAsset(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
