@@ -7,8 +7,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Added
+
+- **Metadata vocabularies scale and stay tidy.** A field's values can now be searched on the
+  server instead of every list being sent to the browser whole — on a 2,500-term field a search
+  returns fifty matches in about six milliseconds and roughly a twenty-sixth of the data. Who may
+  invent a new term is now a permission, so an instance can let everyone extend a vocabulary or
+  keep that to librarians. And vocabularies can be tidied: one term can redirect to another, and
+  merging two leaves a permanent marker so the old name keeps resolving instead of vanishing
+  (#789, PR #1228).
+
 ### Fixed
 
+- **Turning off a field's searchability now takes effect.** The setting was honoured when values
+  were written but never re-applied when the setting itself changed, so unticking the box left
+  everything already indexed still answering searches (#1016, PR #1228).
 - **Contributor-facing links and setup script corrected.** The repository move left old GitHub
   URLs in the contributing guide and issue templates, and the bootstrap script still provisioned
   a database and language stack this project no longer uses (#1093, #996, PR #1226).
