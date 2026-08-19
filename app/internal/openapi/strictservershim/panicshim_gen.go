@@ -1275,6 +1275,16 @@ func (*PanicShim) SetFieldExtraction(context.Context, openapi.SetFieldExtraction
 	panic("PanicShim: SetFieldExtraction called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// SearchFieldValues panics by default; test shims override.
+func (*PanicShim) SearchFieldValues(context.Context, openapi.SearchFieldValuesRequestObject) (openapi.SearchFieldValuesResponseObject, error) {
+	panic("PanicShim: SearchFieldValues called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// MergeFieldValues panics by default; test shims override.
+func (*PanicShim) MergeFieldValues(context.Context, openapi.MergeFieldValuesRequestObject) (openapi.MergeFieldValuesResponseObject, error) {
+	panic("PanicShim: MergeFieldValues called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ClaimJobs panics by default; test shims override.
 func (*PanicShim) ClaimJobs(context.Context, openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
 	panic("PanicShim: ClaimJobs called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

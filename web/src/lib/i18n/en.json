@@ -3491,6 +3491,7 @@
   "vocabulary": {
     "input_aria": "Terms",
     "placeholder": "Search or add…",
+    "placeholder_pick": "Search…",
     "no_matches": "No matching terms.",
     "no_terms": "This field has no terms yet.",
     "create_term": "Create “{term}”",
@@ -3498,6 +3499,7 @@
     "remove_term": "Remove {label}",
     "term_retired": "“{label}” has been retired and can't be chosen for a new value.",
     "term_unknown": "“{term}” isn't one of this field's terms, and this field doesn't accept new ones.",
+    "term_cannot_create": "“{term}” isn't one of this field's terms, and you can't add new ones here.",
     "term_unslugifiable": "A term needs at least one letter or number.",
     "truncated": "Showing the first {count} — keep typing to narrow it down."
   },

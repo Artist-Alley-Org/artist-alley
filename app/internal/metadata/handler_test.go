@@ -437,7 +437,28 @@ func TestAssetFieldValueLifecycle(t *testing.T) {
 // makeRouter builds a router that injects a synthetic admin (or
 // non-admin) identity. Returns the router and the user ref it
 // claims so we can clean up DB rows that reference it.
+// makeRouter mounts the metadata handler behind an identity carrying
+// the capabilities an operator has.
+//
+// admin=true means the built-in Admin ROLE, not just fields.admin: the
+// Admin role holds fields.vocabulary.extend and fields.vocabulary.merge
+// too (migration 00057), and a fixture that granted a narrower set than
+// any real admin has would make every open-vocabulary test assert
+// against a principal that does not exist in a shipped install.
+// makeRouterWithCaps is how a test builds a narrower one deliberately.
 func makeRouter(t *testing.T, pool *pgxpool.Pool, admin bool) (chi.Router, int64) {
+	t.Helper()
+	if !admin {
+		return makeRouterWithCaps(t, pool)
+	}
+	return makeRouterWithCaps(t, pool,
+		metadata.CapFieldsAdmin,
+		metadata.CapVocabularyExtend,
+		metadata.CapVocabularyMerge,
+	)
+}
+
+func makeRouterWithCaps(t *testing.T, pool *pgxpool.Pool, caps ...string) (chi.Router, int64) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// nil registry is intentional — these tests exercise the handler
@@ -446,9 +467,8 @@ func makeRouter(t *testing.T, pool *pgxpool.Pool, admin bool) (chi.Router, int64
 	h := metadata.NewHandler(pool, logger, nil)
 
 	userRef := int64(420000)
-	caps := []string{}
-	if admin {
-		caps = []string{metadata.CapFieldsAdmin}
+	if caps == nil {
+		caps = []string{}
 	}
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
@@ -576,6 +596,12 @@ func (s metaShim) ListFields(ctx context.Context, req openapi.ListFieldsRequestO
 }
 func (s metaShim) CreateField(ctx context.Context, req openapi.CreateFieldRequestObject) (openapi.CreateFieldResponseObject, error) {
 	return s.h.CreateField(ctx, req)
+}
+func (s metaShim) SearchFieldValues(ctx context.Context, req openapi.SearchFieldValuesRequestObject) (openapi.SearchFieldValuesResponseObject, error) {
+	return s.h.SearchFieldValues(ctx, req)
+}
+func (s metaShim) MergeFieldValues(ctx context.Context, req openapi.MergeFieldValuesRequestObject) (openapi.MergeFieldValuesResponseObject, error) {
+	return s.h.MergeFieldValues(ctx, req)
 }
 func (s metaShim) GetField(ctx context.Context, req openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error) {
 	return s.h.GetField(ctx, req)
