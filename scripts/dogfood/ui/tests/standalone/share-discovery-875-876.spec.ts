@@ -31,6 +31,7 @@
 
 import { test, expect, type APIRequestContext, type Browser } from '@playwright/test';
 import { LOGGED_OUT } from '../../helpers/auth';
+import { ensureFixtureUser, restoreSelfRegistration } from '../../helpers/fixture-user';
 import { tid } from '../../helpers/testids';
 
 const PNG_1PX = Buffer.from(
@@ -39,7 +40,11 @@ const PNG_1PX = Buffer.from(
 );
 
 const STAMP = Date.now();
-const GRANTEE_USER = `share875_${STAMP}`;
+// The ACCOUNT is a constant; only the things this run asserts on carry
+// the stamp (#1198). A per-run account was never deleted — there is no
+// user-delete endpoint — so the suite grew the instance by two users a
+// run until the bootstrap admin fell off page 1 of /admin/users.
+const GRANTEE_USER = 'share875_grantee';
 const GRANTEE_PASS = 'Sharing1sCaring!875';
 const SHARED_TITLE = `share875 shared ${STAMP}`;
 const CONTROL_TITLE = `share875 control ${STAMP}`;
@@ -62,34 +67,11 @@ test.describe('#875/#876 a share is announced, findable, and not a guest list', 
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async ({ browser, request }: { browser: Browser; request: APIRequestContext }) => {
-    const authCfg = await request.get('/api/v1/admin/system/auth');
-    expect(authCfg.status(), 'admin auth config must be readable').toBe(200);
-    const priorSelfRegistration = (await json(authCfg)).self_registration;
-
-    const enable = await request.patch('/api/v1/admin/system/auth', {
-      data: {
-        self_registration: {
-          enabled: true,
-          require_email_verification: false,
-          default_role: 'Base',
-        },
-      },
-    });
-    expect(enable.status(), 'enabling self-registration').toBeLessThan(400);
-
-    const anon = await browser.newContext({ storageState: LOGGED_OUT });
-    const reg = await anon.request.post('/api/v1/auth/register', {
-      data: {
-        username: GRANTEE_USER,
-        email: `${GRANTEE_USER}@example.test`,
-        password: GRANTEE_PASS,
-        full_name: 'share875 grantee',
-      },
-    });
-    expect(reg.status(), 'registering the grantee').toBeLessThan(400);
-    const granteeRef = Number((await json(reg)).ref);
-    expect(Number.isFinite(granteeRef) && granteeRef > 0).toBe(true);
-    await anon.close();
+    const { ref: granteeRef, priorSelfRegistration } = await ensureFixtureUser(
+      browser,
+      request,
+      { username: GRANTEE_USER, password: GRANTEE_PASS, fullName: 'share875 grantee' },
+    );
 
     const up = await request.post('/api/v1/storage/objects', {
       data: PNG_1PX,
@@ -147,13 +129,9 @@ test.describe('#875/#876 a share is announced, findable, and not a guest list', 
     await request.delete(`/api/v1/posts/${fx.sharedPostId}`).catch(() => undefined);
     await request.delete(`/api/v1/posts/${fx.unsharedPostId}`).catch(() => undefined);
     await request.delete(`/api/v1/assets/${fx.assetId}`).catch(() => undefined);
-    if (fx.priorSelfRegistration !== undefined) {
-      await request
-        .patch('/api/v1/admin/system/auth', {
-          data: { self_registration: fx.priorSelfRegistration },
-        })
-        .catch(() => undefined);
-    }
+    // The grantee ACCOUNT deliberately survives — it is reused by the
+    // next run (#1198). Only the per-run rows above are removed.
+    await restoreSelfRegistration(request, fx.priorSelfRegistration);
   });
 
   async function granteeContext(browser: Browser) {
@@ -181,7 +159,19 @@ test.describe('#875/#876 a share is announced, findable, and not a guest list', 
       await expect(page.locator('body')).toContainText(SHARED_TITLE);
 
       // Following it must land on the post, not on a dead end.
-      await page.getByText('A post was shared with you').first().click();
+      //
+      // Scoped to the card that names THIS run's post, not `.first()`
+      // (#1198): the grantee account is reused across runs, so its
+      // notification list also carries the shares from every earlier
+      // run. "The newest one is mine" is an ordering assumption, and an
+      // ordering assumption is what put three specs on page 1 of
+      // /admin/users in the first place.
+      await page
+        .getByRole('button')
+        .filter({ hasText: 'A post was shared with you' })
+        .filter({ hasText: SHARED_TITLE })
+        .first()
+        .click();
       await page.waitForURL((u) => u.pathname.startsWith('/posts/'), { timeout: 20_000 });
       expect(page.url()).toContain(fx!.sharedPostId);
       await expect(page.locator('body')).toContainText(SHARED_TITLE, { timeout: 20_000 });

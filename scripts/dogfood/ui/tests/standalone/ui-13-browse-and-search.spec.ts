@@ -448,6 +448,34 @@ test.describe('UI-13 browse + search', () => {
    *  this seed the two terms below return three each), and every result
    *  set fills the same grid, so both weaker checks pass while the wrong
    *  results are displayed — which is the bug. */
+  /** The number of tiles on screen, read only once it has stopped
+   *  changing (#1170).
+   *
+   *  Any count taken while an append is in flight is a torn reading, and
+   *  a torn baseline turns a correct restore into a red test. Two
+   *  consecutive equal samples a poll apart is the settle condition; the
+   *  count must also be non-zero, so "nothing rendered at all" cannot
+   *  masquerade as stability. */
+  async function settledCount(tiles: import('@playwright/test').Locator): Promise<number> {
+    let previous = -1;
+    let current = -1;
+    await expect
+      .poll(
+        async () => {
+          previous = current;
+          current = await tiles.count();
+          return current > 0 && current === previous;
+        },
+        {
+          timeout: 15_000,
+          intervals: [250, 250, 250, 250, 500],
+          message: 'the result grid never stopped growing, so no baseline is measurable',
+        },
+      )
+      .toBe(true);
+    return current;
+  }
+
   async function resultFingerprint(page: import('@playwright/test').Page) {
     return page.evaluate(() =>
       [
@@ -571,20 +599,49 @@ test.describe('UI-13 browse + search', () => {
       await more.click();
       await expect(more).toBeHidden({ timeout: 15_000 }).catch(() => {});
     }
-    const loaded = await tiles.count();
+    // #1170 — read the count only once it has stopped moving.
+    //
+    // This used to be a bare `tiles.count()` taken straight after the
+    // "load more" button went away, on the assumption that the button
+    // disappearing means the page it fetched has rendered. It does not:
+    // the button is bound to `hasMore`, which the store clears when the
+    // RESPONSE lands, while the tiles append on a later render. Measured
+    // on the dev stack: the button hid 56ms after the click with 25
+    // tiles on screen, and the grid settled at 28 about 50ms later.
+    //
+    // So `loaded` was 25 for a grid that ended up holding 28, and the
+    // restore assertion below then compared the snapshot's honest 28
+    // against a torn reading — failing on every single local run while
+    // CI, whose prod-shape build renders inside the polling window,
+    // stayed green. The subject of this test is what SURVIVES the round
+    // trip, so the baseline it measures against has to be settled first.
+    const loaded = await settledCount(tiles);
     const before = searches.length;
 
     // Leave on a tile that is ALREADY fully on screen. Playwright scrolls
     // a click target into view first, which would move the very offset
     // being asserted — so the offset is whatever holds a whole tile.
+    //
+    // "On screen" means inside the SCROLL CONTAINER, not inside the
+    // viewport (#1170). This used to compare the tile's rect against
+    // `0` and `window.innerHeight`; `main` starts below the navbar and
+    // is 333px tall against a 400px viewport, so a tile clipped by
+    // main's own top edge still satisfied that test. Playwright then
+    // scrolled the grid UP by the navbar's height to click it, and the
+    // page was left at 202 rather than the 240 recorded here — so the
+    // app snapshotted 202, restored 202, and the assertion below failed
+    // against a number that had stopped being true before the
+    // navigation even happened. The restore was right; the reference
+    // point was wrong.
     const target = await page.locator('main').evaluate((el) => {
       const links = [...document.querySelectorAll('main a[href^="/assets/"]')];
       for (const y of [240, 160, 100, 40]) {
         el.scrollTo(0, y);
         if (el.scrollTop === 0) continue;
+        const box = el.getBoundingClientRect();
         const seen = links.find((a) => {
           const r = a.getBoundingClientRect();
-          return r.top >= 0 && r.bottom <= window.innerHeight;
+          return r.top >= box.top && r.bottom <= box.bottom;
         });
         if (seen) return { y: el.scrollTop, href: seen.getAttribute('href') };
       }
@@ -592,7 +649,27 @@ test.describe('UI-13 browse + search', () => {
     });
     expect(target, 'no scrolled position showed a whole tile, so nothing here is measured')
       .not.toBeNull();
-    await page.locator(`main a[href="${target!.href}"]`).first().click();
+
+    // Then STOP predicting the departure offset and read it (#1170).
+    //
+    // Choosing an unclipped tile above removes the common case, but not
+    // the race: the navbar auto-hides past 96px of scroll and animates
+    // back, so `main`'s box is still moving while the tile is picked.
+    // Under a full-suite load the box settled a navbar's height (38px)
+    // away from where it was measured, Playwright scrolled to correct
+    // for it, and the page departed from 202 while this test went on
+    // asserting 240 — the same "the app is right, the reference point
+    // is stale" failure as above, one layer down. So the scroll that
+    // the click would have performed is performed HERE, and the offset
+    // the assertion uses is the one the page actually left on.
+    const link = page.locator(`main a[href="${target!.href}"]`).first();
+    await link.scrollIntoViewIfNeeded();
+    const departure = await page.locator('main').evaluate((el) => el.scrollTop);
+    expect(
+      departure,
+      'the grid ended up at the top, so the offset half of this test measures nothing',
+    ).toBeGreaterThan(0);
+    await link.click();
     await expect(page).toHaveURL(/\/assets\//);
 
     await page.goBack();
@@ -600,7 +677,7 @@ test.describe('UI-13 browse + search', () => {
     await expect(tiles).toHaveCount(loaded);
     await expect
       .poll(async () => page.locator('main').evaluate((el) => el.scrollTop), { timeout: 10_000 })
-      .toBe(target!.y);
+      .toBe(departure);
     expect(searches.length, 'the restored page re-queried what the snapshot already held').toBe(
       before,
     );

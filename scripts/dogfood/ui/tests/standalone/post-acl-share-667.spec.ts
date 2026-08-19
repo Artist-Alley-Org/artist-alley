@@ -31,6 +31,7 @@
 
 import { test, expect, type APIRequestContext, type Browser } from '@playwright/test';
 import { LOGGED_OUT } from '../../helpers/auth';
+import { ensureFixtureUser, restoreSelfRegistration } from '../../helpers/fixture-user';
 import { tid } from '../../helpers/testids';
 
 // A 1x1 PNG. The post needs at least one member asset; what the pixels
@@ -41,7 +42,10 @@ const PNG_1PX = Buffer.from(
 );
 
 const STAMP = Date.now();
-const GRANTEE_USER = `acl667_${STAMP}`;
+// Constant account, stamped CONTENT (#1198) — see helpers/fixture-user.ts
+// for why a per-run account was the thing that reddened three unrelated
+// specs on every local run.
+const GRANTEE_USER = 'acl667_grantee';
 const GRANTEE_PASS = 'Sharing1sCaring!667';
 
 interface Fixture {
@@ -65,41 +69,15 @@ test.describe('#667 an explicit share grants read to the grantee', () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async ({ browser, request }) => {
-    // The grantee has to exist, and this stack may or may not have
-    // self-registration on. Turn it on, make one throwaway account,
-    // and put the setting back in afterAll — leaving an instance with
-    // open registration behind would be a real change to the box.
-    const authCfg = await request.get('/api/v1/admin/system/auth');
-    expect(authCfg.status(), 'admin auth config must be readable').toBe(200);
-    const priorSelfRegistration = (await json(authCfg)).self_registration;
-
-    const enable = await request.patch('/api/v1/admin/system/auth', {
-      data: {
-        self_registration: {
-          enabled: true,
-          require_email_verification: false,
-          default_role: 'Base',
-        },
-      },
-    });
-    expect(enable.status(), 'enabling self-registration').toBeLessThan(400);
-
-    // A SEPARATE request context: registering signs the caller in, and
-    // doing that on the admin's context would swap the admin session
-    // out from under the rest of this setup.
-    const anon = await browser.newContext({ storageState: LOGGED_OUT });
-    const reg = await anon.request.post('/api/v1/auth/register', {
-      data: {
-        username: GRANTEE_USER,
-        email: `${GRANTEE_USER}@example.test`,
-        password: GRANTEE_PASS,
-        full_name: 'ACL 667 grantee',
-      },
-    });
-    expect(reg.status(), 'registering the grantee').toBeLessThan(400);
-    const granteeRef = Number((await json(reg)).ref);
-    expect(Number.isFinite(granteeRef) && granteeRef > 0).toBe(true);
-    await anon.close();
+    // The grantee has to exist. It is resolved, not created: the helper
+    // signs in as the constant fixture account and only registers it —
+    // toggling self-registration and putting it straight back — on an
+    // instance that has never run this suite.
+    const { ref: granteeRef, priorSelfRegistration } = await ensureFixtureUser(
+      browser,
+      request,
+      { username: GRANTEE_USER, password: GRANTEE_PASS, fullName: 'ACL 667 grantee' },
+    );
 
     // Author side: one asset, two explicit-share posts on it.
     const up = await request.post('/api/v1/storage/objects', {
@@ -154,13 +132,9 @@ test.describe('#667 an explicit share grants read to the grantee', () => {
     await request.delete(`/api/v1/posts/${fx.sharedPostId}`).catch(() => undefined);
     await request.delete(`/api/v1/posts/${fx.unsharedPostId}`).catch(() => undefined);
     await request.delete(`/api/v1/assets/${fx.assetId}`).catch(() => undefined);
-    if (fx.priorSelfRegistration !== undefined) {
-      await request
-        .patch('/api/v1/admin/system/auth', {
-          data: { self_registration: fx.priorSelfRegistration },
-        })
-        .catch(() => undefined);
-    }
+    // The grantee ACCOUNT survives on purpose — the next run reuses it
+    // rather than adding another (#1198).
+    await restoreSelfRegistration(request, fx.priorSelfRegistration);
   });
 
   // Sign the grantee in through the form, in their own context.

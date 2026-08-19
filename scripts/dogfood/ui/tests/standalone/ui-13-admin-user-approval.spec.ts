@@ -12,7 +12,7 @@
 // unconditionally + return 400 on the move) MUST NOT.
 
 import { test, expect } from '../../helpers/test';
-import { loginAsAdminViaUI } from '../../helpers/auth';
+import { loginAsAdminViaUI, openAdminUsersFilteredToAdmin } from '../../helpers/auth';
 import { expectPageRendersCleanly } from '../../helpers/assertions';
 
 test.describe('UI-13 admin user approval surface', () => {
@@ -21,12 +21,13 @@ test.describe('UI-13 admin user approval surface', () => {
   });
 
   test('active user shows only Disable + Archive transitions (matrix-derived)', async ({ page }) => {
-    await page.goto('/admin/users');
+    // Open the bootstrap admin's detail page — found by its ref, not by
+    // being the first /admin/i link on page 1 of an unfiltered list, which
+    // is a position the account loses on any long-lived instance (#1198).
+    const { ref, row } = await openAdminUsersFilteredToAdmin(page);
     await expectPageRendersCleanly(page);
-    // Open the bootstrap admin's detail page.
-    const adminLink = page.getByRole('link', { name: /admin/i }).first();
-    await adminLink.click();
-    await expect(page).toHaveURL(/\/admin\/users\/\d+/);
+    await row.click();
+    await expect(page).toHaveURL(new RegExp(`/admin/users/${ref}$`));
 
     const transitions = page.locator('[data-testid="admin-user-transitions"]');
     await expect(transitions).toBeVisible();
