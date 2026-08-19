@@ -28,6 +28,8 @@
     subject_kind: 'asset' | 'collection';
     required: boolean;
     show_on_card?: boolean;
+    show_in_advanced_search?: boolean;
+    show_on_upload?: boolean;
     mirrors_column?: string | null;
     updated_at: string;
   }
@@ -279,6 +281,26 @@
                   data-testid="admin-fields-card-badge-{f.code}"
                   class="rounded border border-border bg-surface px-1.5 py-0.5 text-fg-muted"
                 >{t('admin.fields.flag_on_card')}</span>
+              {/if}
+              <!--
+                Participation badges mark the EXCEPTION, never the rule
+                (#1173). Both flags default on, so a badge per enabled
+                field would put two badges on every row of a 200-row
+                table and say nothing. What an operator scans this list
+                for is "which ones did I turn off", so only `false`
+                renders.
+              -->
+              {#if f.show_in_advanced_search === false}
+                <span
+                  data-testid="admin-fields-no-advanced-badge-{f.code}"
+                  class="rounded border border-border bg-surface px-1.5 py-0.5 text-fg-muted"
+                >{t('admin.fields.flag_not_in_advanced_search')}</span>
+              {/if}
+              {#if f.show_on_upload === false}
+                <span
+                  data-testid="admin-fields-no-upload-badge-{f.code}"
+                  class="rounded border border-border bg-surface px-1.5 py-0.5 text-fg-muted"
+                >{t('admin.fields.flag_not_on_upload')}</span>
               {/if}
               {#if f.mirrors_column}
                 <span

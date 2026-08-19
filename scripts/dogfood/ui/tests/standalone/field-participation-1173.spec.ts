@@ -110,8 +110,6 @@ test.afterAll(async ({ request }) => {
   await request.delete(`/api/v1/fields/${probeId}`);
 });
 
-const probeRow = `[data-testid="field-filter-${PROBE_CODE}"]`;
-
 /** The codes the advanced page currently offers, in order. */
 async function advancedFieldCodes(page: Page): Promise<string[]> {
   await page.goto('/search/advanced');
@@ -146,7 +144,7 @@ test.describe('field participation flags (#1173)', () => {
     ).toBe(true);
     expect(def.show_on_upload).toBe(true);
 
-    await expect(page.locator(probeRow)).toBeVisible();
+    expect(await advancedFieldCodes(page)).toContain(PROBE_CODE);
   });
 
   test('the admin form shows the participation controls, ticked', async ({ page }) => {
