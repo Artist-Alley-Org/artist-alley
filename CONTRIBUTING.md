@@ -1,13 +1,13 @@
 # Contributing to artist-alley
 
-artist-alley is early — the architecture is settling and the feature set is still landing. Contributions are welcome, but please **open an issue or [Discussion](https://github.com/mscrnt/artist-alley/discussions) before starting non-trivial work** so we can align on scope and approach.
+artist-alley is early — the architecture is settling and the feature set is still landing. Contributions are welcome, but please **open an issue or [Discussion](https://github.com/Artist-Alley-Org/artist-alley/discussions) before starting non-trivial work** so we can align on scope and approach.
 
 ## Development setup
 
 Requirements: Docker with Compose v2.
 
 ```bash
-git clone git@github.com:mscrnt/artist-alley.git
+git clone git@github.com:Artist-Alley-Org/artist-alley.git
 cd artist-alley
 ./scripts/bootstrap.sh
 ```

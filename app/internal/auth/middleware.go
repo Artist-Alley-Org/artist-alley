@@ -485,49 +485,6 @@ func (r *Resolver) loadCapabilities(ctx context.Context, q *Queries, id *Identit
 	}
 }
 
-// AnonymousRoleName is the seeded role used to represent unauthenticated
-// requests when anonymous browse is enabled. Defined in migration 00001.
-// The role has no capabilities by default — granting it
-// `posts.read.public` (etc.) is what enables anonymous access.
-const AnonymousRoleName = "Anonymous"
-
-// LoadAnonymousIdentity builds the synthetic Identity that represents
-// an unauthenticated request when anonymous browse is enabled. The
-// returned Identity has UserRef=0, AuthMethod="anonymous", and a
-// flat Capabilities slice taken from the seeded Anonymous role (no
-// team scope — Anonymous shouldn't be team-scoped).
-//
-// This is a building block for Phase 1.13.G. The middleware doesn't
-// inject this Identity yet; the existing nil-on-anonymous behaviour
-// is preserved until 1.13.G ships the system.anonymous_browse_enabled
-// gate.
-//
-// On DB error: returns an Identity with empty caps. Anonymous can do
-// nothing, which is the safe default — a transient DB blip shouldn't
-// suddenly grant access just because the cap query failed.
-func LoadAnonymousIdentity(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) *Identity {
-	id := &Identity{
-		UserRef:    0,
-		Username:   "anonymous",
-		AuthMethod: "anonymous",
-	}
-	if pool == nil {
-		return id
-	}
-	caps, err := New(pool).EffectiveCapabilitiesForRoleName(ctx, AnonymousRoleName)
-	if err != nil {
-		if logger != nil {
-			logger.LogAttrs(ctx, slog.LevelWarn, "auth.anonymous.load.error",
-				slog.String("err", err.Error()),
-			)
-		}
-		return id
-	}
-	sort.Strings(caps)
-	id.Capabilities = caps
-	return id
-}
-
 // IsAnonymous reports whether the identity represents an unauthenticated
 // request (sentinel UserRef=0, AuthMethod="anonymous"). Handlers that
 // want to require authenticated users should check this AND nil.
