@@ -71,6 +71,9 @@
     initialOptions,
     initialOpenVocabulary = false,
     initialShowOnCard = false,
+    initialShowInAdvancedSearch = true,
+    initialShowOnUpload = true,
+    initialEditTab = null,
     initialReadCapability = null,
     initialWriteCapability = null,
     initialDisplayGroup = '',
@@ -89,6 +92,13 @@
     initialOptions: Record<string, unknown> | undefined;
     initialOpenVocabulary?: boolean;
     initialShowOnCard?: boolean;
+    /** The participation flags (#1173, ADR 0092 §3). They default TRUE
+     *  and null here for the same reason the columns do: a field that
+     *  has never been configured must render exactly where it renders
+     *  today, so "absent" has to mean "everywhere", not "nowhere". */
+    initialShowInAdvancedSearch?: boolean;
+    initialShowOnUpload?: boolean;
+    initialEditTab?: string | null;
     /** Present only so the editor can explain WHY the card toggle is
      *  unavailable. The server refuses the combination either way. */
     initialReadCapability?: string | null;
@@ -139,6 +149,9 @@
   let required = $state(initialRequired);
   let openVocab = $state(initialOpenVocabulary);
   let showOnCard = $state(initialShowOnCard);
+  let showInAdvancedSearch = $state(initialShowInAdvancedSearch);
+  let showOnUpload = $state(initialShowOnUpload);
+  let editTab = $state(initialEditTab ?? '');
 
   // The long tail (#854). Collapsed by default: an operator opening a
   // field to relabel it or curate its vocabulary should not have to
@@ -187,6 +200,9 @@
   let requiredSnapshot = $state(initialRequired);
   let openVocabSnapshot = $state(initialOpenVocabulary);
   let showOnCardSnapshot = $state(initialShowOnCard);
+  let showInAdvancedSearchSnapshot = $state(initialShowInAdvancedSearch);
+  let showOnUploadSnapshot = $state(initialShowOnUpload);
+  let editTabSnapshot = $state(initialEditTab ?? '');
   let displayGroupSnapshot = $state(initialDisplayGroup);
   let displayOrderSnapshot = $state(initialDisplayOrder);
   let appliesToSnapshot = $state(JSON.stringify([...initialAppliesTo]));
@@ -197,6 +213,9 @@
       required !== requiredSnapshot ||
       openVocab !== openVocabSnapshot ||
       showOnCard !== showOnCardSnapshot ||
+      showInAdvancedSearch !== showInAdvancedSearchSnapshot ||
+      showOnUpload !== showOnUploadSnapshot ||
+      editTab.trim() !== (editTabSnapshot ?? '').trim() ||
       displayGroup !== displayGroupSnapshot ||
       displayOrder !== displayOrderSnapshot ||
       JSON.stringify(appliesTo) !== appliesToSnapshot,
@@ -350,6 +369,9 @@
     required: boolean;
     open_vocabulary?: boolean;
     show_on_card?: boolean;
+    show_in_advanced_search?: boolean;
+    show_on_upload?: boolean;
+    edit_tab?: string | null;
     display_group?: string;
     display_order?: number;
     applies_to?: number[];
@@ -373,6 +395,13 @@
     required = cur.required;
     openVocab = cur.open_vocabulary === true;
     showOnCard = cur.show_on_card === true;
+    // `!== false` and not `=== true`: absent means TODAY'S behaviour,
+    // which for a participation flag is "it appears". Reading these the
+    // way `show_on_card` is read would turn a server that omitted the
+    // key into a form that unticks every surface.
+    showInAdvancedSearch = cur.show_in_advanced_search !== false;
+    showOnUpload = cur.show_on_upload !== false;
+    editTab = cur.edit_tab ?? '';
     displayGroup = cur.display_group ?? '';
     displayOrder = cur.display_order ?? 0;
     appliesTo = [...(cur.applies_to ?? [])];
@@ -383,6 +412,9 @@
     requiredSnapshot = required;
     openVocabSnapshot = openVocab;
     showOnCardSnapshot = showOnCard;
+    showInAdvancedSearchSnapshot = showInAdvancedSearch;
+    showOnUploadSnapshot = showOnUpload;
+    editTabSnapshot = editTab;
     displayGroupSnapshot = displayGroup;
     displayOrderSnapshot = displayOrder;
     appliesToSnapshot = JSON.stringify(appliesTo);
@@ -435,6 +467,16 @@
       // this editor asserting a setting nobody chose — and the server
       // would answer 400 for a change the operator never made.
       if (!cardGated) body.show_on_card = showOnCard;
+      // Participation is always sent — unlike the two above, these
+      // controls are rendered for every field, so their value is always
+      // one the operator could have changed.
+      body.show_in_advanced_search = showInAdvancedSearch;
+      body.show_on_upload = showOnUpload;
+      // "No tab" is NULL server-side and a partial update cannot say
+      // NULL, so an emptied box is the explicit clear rather than a
+      // blank string the server would refuse.
+      if (editTab.trim()) body.edit_tab = editTab.trim();
+      else body.clear_edit_tab = true;
       const { data, error: apiErr, response } = await api.PATCH('/fields/{id}', {
         params: { path: { id: fieldId } },
         body: body as never,
@@ -773,6 +815,67 @@
       </span>
     </label>
   {/if}
+  </section>
+
+  <!--
+    WHERE THIS FIELD APPEARS (#1173, ADR 0092 §3).
+
+    Its own section rather than a line in the collapsed "Advanced"
+    block, and that is a deliberate reversal of where `display_group`
+    and `display_order` sit. Those are layout: an operator can ignore
+    them and get a plainer page. Participation is the answer to "why is
+    this field not on the search form" — the question an operator with
+    200 fields opens this page to settle — so burying it behind a
+    disclosure would hide the control that the flags exist to give them.
+
+    Both toggles render for EVERY field, including types the advanced
+    page has no control for yet. A field of type `text` marked for
+    advanced search does not appear there today, because that page can
+    only draw a picker for a vocabulary — the help text below says which
+    surfaces read the flag so far, rather than the form quietly
+    withholding the toggle and leaving the operator to guess.
+  -->
+  <section class="min-w-0 space-y-3 rounded border border-border bg-bg-soft p-3" data-testid="field-edit-participation">
+    <h3 class="text-sm font-semibold">{t('admin.fields.section_participation')}</h3>
+    <p class="text-xs text-fg-muted">{t('admin.fields.participation_help')}</p>
+
+    <label class="flex min-h-11 items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        bind:checked={showInAdvancedSearch}
+        data-testid="field-edit-show-in-advanced-search"
+        class="mt-0.5 h-4 w-4 rounded border-border-strong"
+      />
+      <span class="min-w-0">
+        <span class="block">{t('admin.fields.show_in_advanced_search')}</span>
+        <span class="block text-xs text-fg-muted">{t('admin.fields.show_in_advanced_search_help')}</span>
+      </span>
+    </label>
+
+    <label class="flex min-h-11 items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        bind:checked={showOnUpload}
+        data-testid="field-edit-show-on-upload"
+        class="mt-0.5 h-4 w-4 rounded border-border-strong"
+      />
+      <span class="min-w-0">
+        <span class="block">{t('admin.fields.show_on_upload')}</span>
+        <span class="block text-xs text-fg-muted">{t('admin.fields.show_on_upload_help')}</span>
+      </span>
+    </label>
+
+    <label class="block">
+      <span class="block text-xs text-fg-muted">{t('admin.fields.edit_tab')}</span>
+      <input
+        type="text"
+        bind:value={editTab}
+        placeholder={t('admin.fields.edit_tab_placeholder')}
+        data-testid="field-edit-edit-tab"
+        class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none sm:w-64"
+      />
+      <span class="mt-0.5 block text-xs text-fg-muted">{t('admin.fields.edit_tab_help')}</span>
+    </label>
   </section>
 
   <section class="min-w-0 space-y-3 rounded border border-border bg-bg-soft p-3">

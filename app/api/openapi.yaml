@@ -13716,6 +13716,72 @@ components:
             is a 400 rather than a setting that silently does nothing.
             The refusal holds in both directions: a field already on
             the card cannot acquire a read capability either.
+        show_in_advanced_search:
+          type: boolean
+          description: |
+            Offer this field as a filter control on the advanced search
+            page (ADR 0092 §3, #1173).
+
+            A PARTICIPATION flag: it answers "does the operator want
+            this field on that page", which is a different question
+            from `searchable` ("does this field's text feed the search
+            index") and from `type` ("what does a value look like").
+            Before this flag existed every surface guessed from those
+            two, which is why an install with 200 fields got 200
+            filters and nobody could say otherwise.
+
+            `true` by default, so a field that has never been
+            configured appears exactly where it appears today. Turning
+            it off removes the CONTROL and nothing else: the field's
+            values still feed the index, still match a text search, and
+            still filter when a caller composes
+            `filter=field:<code>=<value>` directly. Making the field
+            unfindable is `searchable: false`, which is a separate
+            setting because it is a separate promise.
+
+            The read-capability gate composes on top and wins: a field
+            marked for the page is still withheld from a caller who may
+            not read it, on the page and in
+            `facet.Selection.Authorize`.
+
+            It FEDERATES with the definition — it names the field, not
+            the server (ADR 0083's exclusion criterion).
+        show_on_upload:
+          type: boolean
+          description: |
+            Offer this field on the upload / create surface (ADR 0092
+            §3, #1173). `true` by default, because the upload composer
+            rendered every active field for the asset type before this
+            flag existed.
+
+            Declared here and obeyed by the create/edit work (#1119):
+            this release stores and returns it, and the upload form
+            still renders every field. A client must therefore treat a
+            `false` as a statement of operator intent it should honour
+            once it learns to, not as a guarantee the server enforces —
+            nothing about field VALUES changes either way. A hidden
+            field can still be written through
+            `PUT /assets/{id}/fields/{field_id}`, which is deliberate:
+            this is a form-composition hint, never an access control.
+
+            Not mutually exclusive with `required`, because required-ness
+            is enforced on the value-write path and not at asset
+            creation. FEDERATES with the definition.
+        edit_tab:
+          type: string
+          nullable: true
+          description: |
+            Which tab of the edit surface this field sits in (ADR 0092
+            §3, #1173). `null` (the default) = unassigned, which is
+            today's behaviour: no surface has tabs yet and fields group
+            by `display_group`.
+
+            A COARSER grouping than `display_group`, not a replacement
+            for it — a tab holds groups. The empty string is refused on
+            write, so "no tab" has exactly one representation and a
+            form posting a blank input cannot invent a third state.
+
+            Consumed by #1119. FEDERATES with the definition.
         mirrors_column:
           type: string
           nullable: true
@@ -13926,6 +13992,30 @@ components:
             FieldDefinition.show_on_card. Refused with 400 on a field
             carrying a `read_capability`, and refused in the same way
             when this request would give a carded field one.
+        show_in_advanced_search:
+          type: boolean
+          description: |
+            Offer this field as a filter control on the advanced search
+            page. See FieldDefinition.show_in_advanced_search. Governs
+            the control only — it does not touch `searchable` and
+            changes no query result.
+        show_on_upload:
+          type: boolean
+          description: |
+            Offer this field on the upload / create surface. See
+            FieldDefinition.show_on_upload.
+        edit_tab:
+          type: string
+          nullable: true
+          description: |
+            Assign this field to a tab of the edit surface. Omit to
+            leave it alone. Use `clear_edit_tab: true` to unassign it —
+            a partial update cannot express "unassign" by sending null,
+            because null is already "leave alone" for every other
+            property here. Blank or whitespace-only is refused with 400.
+        clear_edit_tab:
+          type: boolean
+          description: "Unassign this field's edit tab. Mutually exclusive with `edit_tab`."
         required: { type: boolean }
         searchable: { type: boolean }
         applies_to:

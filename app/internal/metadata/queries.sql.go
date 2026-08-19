@@ -108,7 +108,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab
 `
 
 type CreateFieldDefinitionParams struct {
@@ -180,6 +181,9 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
 		&i.ShowOnCard,
+		&i.ShowInAdvancedSearch,
+		&i.ShowOnUpload,
+		&i.EditTab,
 	)
 	return i, err
 }
@@ -389,7 +393,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab
 FROM field_definition WHERE code = $1
 `
 
@@ -424,6 +429,9 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
 		&i.ShowOnCard,
+		&i.ShowInAdvancedSearch,
+		&i.ShowOnUpload,
+		&i.EditTab,
 	)
 	return i, err
 }
@@ -435,7 +443,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab
 FROM field_definition WHERE id = $1
 `
 
@@ -470,6 +479,9 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
 		&i.ShowOnCard,
+		&i.ShowInAdvancedSearch,
+		&i.ShowOnUpload,
+		&i.EditTab,
 	)
 	return i, err
 }
@@ -1286,7 +1298,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab
 FROM field_definition
 WHERE (
         CASE WHEN $1::TEXT IS NULL
@@ -1354,6 +1367,9 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.OpenVocabulary,
 			&i.MirrorsColumn,
 			&i.ShowOnCard,
+			&i.ShowInAdvancedSearch,
+			&i.ShowOnUpload,
+			&i.EditTab,
 		); err != nil {
 			return nil, err
 		}
@@ -1372,7 +1388,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -1419,6 +1436,9 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.OpenVocabulary,
 			&i.MirrorsColumn,
 			&i.ShowOnCard,
+			&i.ShowInAdvancedSearch,
+			&i.ShowOnUpload,
+			&i.EditTab,
 		); err != nil {
 			return nil, err
 		}
@@ -1756,7 +1776,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab
 `
 
 type SetFieldExtractionConfigParams struct {
@@ -1805,6 +1826,9 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
 		&i.ShowOnCard,
+		&i.ShowInAdvancedSearch,
+		&i.ShowOnUpload,
+		&i.EditTab,
 	)
 	return i, err
 }
@@ -1823,25 +1847,37 @@ UPDATE field_definition SET
     display_group             = COALESCE($10,             display_group),
     open_vocabulary           = COALESCE($11,           open_vocabulary),
     show_on_card              = COALESCE($12,              show_on_card),
-    status                    = COALESCE($13,                    status),
-    deprecated_replacement_id = COALESCE($14, deprecated_replacement_id),
+    show_in_advanced_search   = COALESCE($13,   show_in_advanced_search),
+    show_on_upload            = COALESCE($14,            show_on_upload),
+    -- ` + "`" + `edit_tab` + "`" + ` needs a CLEAR path for the same reason ` + "`" + `default_value` + "`" + `
+    -- does, and it is the only participation flag that does: the other
+    -- two are booleans, where "off" is a value COALESCE can carry, while
+    -- "this field belongs to no tab" is NULL — indistinguishable from
+    -- "leave it alone" everywhere else in this statement. The explicit
+    -- boolean makes un-assigning a tab a deliberate act rather than an
+    -- ambiguity in the absence of a value.
+    edit_tab                  = CASE WHEN $15::BOOLEAN THEN NULL
+                                     ELSE COALESCE($16, edit_tab) END,
+    status                    = COALESCE($17,                    status),
+    deprecated_replacement_id = COALESCE($18, deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
     -- passing NULL means "leave it alone" everywhere else in this
     -- statement, so "remove the default" would be unsayable. The
     -- explicit boolean makes removal a deliberate act rather than an
     -- ambiguity in the absence of a value.
-    default_value             = CASE WHEN $15::BOOLEAN THEN NULL
-                                     ELSE COALESCE($16, default_value) END,
+    default_value             = CASE WHEN $19::BOOLEAN THEN NULL
+                                     ELSE COALESCE($20, default_value) END,
     updated_at                = NOW(),
-    updated_by_user_ref       = $17
-WHERE id = $18
+    updated_by_user_ref       = $21
+WHERE id = $22
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
           display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab
 `
 
 type UpdateFieldDefinitionParams struct {
@@ -1857,6 +1893,10 @@ type UpdateFieldDefinitionParams struct {
 	DisplayGroup            *string
 	OpenVocabulary          *bool
 	ShowOnCard              *bool
+	ShowInAdvancedSearch    *bool
+	ShowOnUpload            *bool
+	ClearEditTab            bool
+	EditTab                 *string
 	Status                  *string
 	DeprecatedReplacementID pgtype.UUID
 	ClearDefault            bool
@@ -1883,6 +1923,10 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		arg.DisplayGroup,
 		arg.OpenVocabulary,
 		arg.ShowOnCard,
+		arg.ShowInAdvancedSearch,
+		arg.ShowOnUpload,
+		arg.ClearEditTab,
+		arg.EditTab,
 		arg.Status,
 		arg.DeprecatedReplacementID,
 		arg.ClearDefault,
@@ -1919,6 +1963,9 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
 		&i.ShowOnCard,
+		&i.ShowInAdvancedSearch,
+		&i.ShowOnUpload,
+		&i.EditTab,
 	)
 	return i, err
 }

@@ -485,6 +485,8 @@ func (h *Handler) UpdateField(
 		DeprecatedReplacementID: uuidFromOpenAPIPtr(in.DeprecatedReplacementId),
 		OpenVocabulary:          in.OpenVocabulary,
 		ShowOnCard:              in.ShowOnCard,
+		ShowInAdvancedSearch:    in.ShowInAdvancedSearch,
+		ShowOnUpload:            in.ShowOnUpload,
 		UpdatedByUserRef:        &id.UserRef,
 	}
 	// A carded field may not be a GATED field (#552). The card renders on
@@ -541,6 +543,34 @@ func (h *Handler) UpdateField(
 	// retiring the term the default still names must fail. Reading
 	// params.Options first (falling back to the stored document when the
 	// request does not touch options) is what makes both true.
+	// The edit tab is the one participation flag whose "unset" is not a
+	// value COALESCE can carry, so it gets the same explicit clear the
+	// upload default has (#1173, ADR 0092 §3). The blank check is here
+	// rather than only in the CHECK constraint so an operator who
+	// submits a form with the tab box emptied gets a sentence instead
+	// of a 500 — and because "" is precisely the state that would make
+	// "no tab" ambiguous if it were stored.
+	if in.ClearEditTab != nil && *in.ClearEditTab {
+		if in.EditTab != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "send either edit_tab or clear_edit_tab, not both",
+				},
+			}, nil
+		}
+		params.ClearEditTab = true
+	} else if in.EditTab != nil {
+		tab := strings.TrimSpace(*in.EditTab)
+		if tab == "" {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "edit_tab cannot be blank; send clear_edit_tab to unassign it",
+				},
+			}, nil
+		}
+		params.EditTab = &tab
+	}
+
 	if in.ClearDefault != nil && *in.ClearDefault {
 		if in.DefaultValue != nil {
 			return openapi.UpdateField400JSONResponse{
@@ -1490,6 +1520,13 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 		ExtractionMode:   apiExtractionMode(r.ExtractionMode),
 		OpenVocabulary:   &r.OpenVocabulary,
 		ShowOnCard:       &r.ShowOnCard,
+		// The participation flags (#1173, ADR 0092 §3). Always sent, so
+		// a surface can read the operator's answer rather than infer one
+		// from `type` or from `searchable` — which is the whole point of
+		// the columns existing.
+		ShowInAdvancedSearch: &r.ShowInAdvancedSearch,
+		ShowOnUpload:         &r.ShowOnUpload,
+		EditTab:              r.EditTab,
 		// Read-only on the wire (#822). A client needs it to know that
 		// writing this field writes the ASSET — different gate, and a
 		// surface that already renders the column natively should skip the
