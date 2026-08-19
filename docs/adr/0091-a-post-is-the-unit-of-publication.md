@@ -108,3 +108,39 @@ them is one bug away from showing them.
 recreates the quiet-publication path with an extra step, and the artist who
 dropped files into a shared collection plainly *intends* to share them. Asking
 for a title at that moment is the smallest honest amount of friction.
+
+## Amendment — 2026-08-19, after the prior-art pass
+
+The decisions above were written from the owner's ruling and our own code. A prior-art pass
+(recorded in the planning notes) confirmed two of them, found a genuine gap in a third, and
+flagged one part as having no precedent at all.
+
+**Confirmed — publication is never a side effect.** Every art platform examined makes publishing
+an explicit act with its own control; none turns stored files into publications on its own.
+
+**Confirmed — drop, do not convert.** A file left in personal storage on those platforms stays
+there indefinitely; nothing manufactures a publication from it. Decision 4 stands.
+
+**⭐ GAP — publication must be REVERSIBLE, and this ADR did not say so.** One mature platform
+unpublishes a project straight back to draft: the work leaves public view, keeps its title and
+framing, and can be republished. Our model as first written offered only deletion, which makes
+"I want this off the site for now" a destructive act. Added as **decision 6**:
+
+> **6. Unpublishing returns a post to its author, intact.** A post may leave every shared
+> surface without being deleted — it keeps its title, description, members and framing, and can
+> be published again. Its member assets are unaffected either way, because storage and
+> publication are separate lifecycles: deleting a post never deletes the files it showed, and
+> removing a file from your storage is a different act with different consequences.
+
+**⚠️ NO PRECEDENT — the cross-ownership view (decision 5).** On art platforms a post's files
+are always the author's own, so "my asset appears in someone else's post" never arises; that
+shape comes from our DAM half, where a shared team library is normal. Decision 5 is therefore
+*ours*, not borrowed, and it is the one to design conservatively: existence and count only,
+never title or author, unless the ordinary read rule already grants them.
+
+**One distinction to keep sharp.** A classic DAM answers "not ready yet" with a **state** on the
+one object; the art tradition answers it with a **separate place**. We now have both — assets
+carry workflow states *and* the post/asset split — and they answer different questions:
+*workflow state* is "where is this in its production process", *published* is "has its author
+put it in front of people". Conflating them would repeat the mature-versus-sensitivity mistake
+ADR 0090 exists to prevent.
