@@ -144,3 +144,42 @@ carry workflow states *and* the post/asset split — and they answer different q
 *workflow state* is "where is this in its production process", *published* is "has its author
 put it in front of people". Conflating them would repeat the mature-versus-sensitivity mistake
 ADR 0090 exists to prevent.
+
+## Second amendment — 2026-08-19, after checking the closest-neighbour platform
+
+The owner asked whether the pass had covered the platform nearest to our own audience — a
+portfolio site for game-studio artists. It had not, and looking properly found a **contradiction
+inside this ADR**.
+
+**What that platform does:** a project is saved as a draft or published, publishing is an
+explicit act, and a draft can be scheduled to go live later. Critically, it has **no separate
+personal storage at all** — files live inside the project, and a draft project *is* the place
+work waits. That is the opposite of the stash model in the first amendment, and both are
+coherent: the stash keeps files, the draft keeps a work-in-progress publication.
+
+**The contradiction.** Decision 6 says unpublishing "returns a post to its author, intact" — but
+this system has nowhere for it to return to. Verified in the database: the `post` workflow
+domain has exactly two states, `wip` and `published`; `published` is the initial state, **every
+one of the 847 seeded posts is in it, `wip` holds zero, and no product code references `wip` at
+all**. A post is therefore born published, and the draft state exists as a row nobody can reach.
+Decision 6 as written could not be implemented.
+
+**7. A post has a real draft state, and it is where an unpublished post goes.** The existing
+`wip` state becomes reachable: a post can be created as a draft, edited over time, published as
+an explicit act, and unpublished back to draft. A draft is visible to its author (and to those
+the ordinary read rule already admits, e.g. team members with the relevant capability), and to
+nobody else — it appears on no shared surface. This is what makes decision 6 mean something, and
+it is what the create/edit page (#1119) needs to let someone save and come back.
+
+**Two ideas examined and deliberately not adopted now.** *Scheduled publishing* (choose a future
+moment) is a real feature on that platform and a natural extension of decision 7, but it needs a
+scheduler and a story for what a peer sees before the moment arrives — filed as a later
+consideration, not part of this model. *Per-surface publication* (visible on one surface but not
+another) is expressed here by visibility tiers and collection membership rather than by a
+separate axis; adding a second one would repeat the mistake ADR 0090 warns about.
+
+**The shape of our answer, stated plainly.** We keep both mechanisms because we are both things:
+the **asset library** (personal storage, a file with its own life, reusable across posts — the
+DAM half) and the **draft** (a publication in progress — the portfolio half). Neither platform
+tradition has both; the combination is ours, and the two must not be conflated. A file sitting in
+storage is not a draft post, and a draft post is not a private file.
