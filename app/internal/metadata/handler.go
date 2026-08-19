@@ -33,6 +33,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -54,7 +55,29 @@ var codePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 const (
 	CapFieldsAdmin = "fields.admin"
 	CapSystemAdmin = "system.admin"
+
+	// CapVocabularyExtend lets a value CREATE a term an open field does
+	// not have yet (ADR 0092 §2, migration 00057). Deliberately not
+	// CapFieldsAdmin: adding a keyword while cataloguing is an artist's
+	// gesture, and requiring schema authority for it is the operator
+	// round-trip #789 exists to remove. Seeded onto Base — every
+	// signed-in user — so the dial's default matches the behaviour that
+	// shipped in #830; an operator restricting extension revokes it.
+	CapVocabularyExtend = "fields.vocabulary.extend"
+
+	// CapVocabularyMerge lets one term be folded into another,
+	// rewriting stored values across assets and collections and leaving
+	// a tombstone. Admin-only: it is the single vocabulary operation
+	// that edits records their owners did not touch.
+	CapVocabularyMerge = "fields.vocabulary.merge"
 )
+
+// canExtendVocabulary reports whether this caller may create terms.
+// system.admin wildcards, as everywhere; fields.admin does NOT imply
+// it, and does not need to — the Admin role holds both.
+func canExtendVocabulary(id *auth.Identity) bool {
+	return id != nil && id.Can(CapVocabularyExtend)
+}
 
 // Handler implements the metadata slice of openapi.StrictServerInterface.
 type Handler struct {
@@ -75,6 +98,13 @@ type Handler struct {
 	// domain after a successful write so the asset/metadata cache
 	// picks up the new wiring on the next extract job. Nil-safe.
 	registry *cache.Registry
+
+	// Audit records the one metadata operation that edits records
+	// their owners did not touch: a vocabulary merge (#789). Wired in
+	// production (internal/http/api.go); nil-tolerant because tests
+	// construct the handler without it, and a missing audit recorder
+	// must not fail a merge that otherwise succeeded.
+	Audit *audit.Recorder
 
 	// collectionValues caches the full collection_field_value list
 	// per collection (Phase 1.9.B). Per-collection eviction on
@@ -551,7 +581,52 @@ func (h *Handler) UpdateField(
 		return nil, fmt.Errorf("metadata: update: %w", err)
 	}
 	h.invalidateField(ctx, row.ID)
+
+	// #1016 — `searchable` decides whether a field's values are folded
+	// into `assets.search_text`, and `status` is the other half of the
+	// same condition inside rebuild_asset_search_text(). Both are read
+	// only when that function RUNS, and it runs from a trigger on
+	// asset_field_value — never from a write to field_definition.
+	//
+	// So before this, unticking `searchable` changed the rule and left
+	// every already-indexed value answering text queries until something
+	// happened to touch each asset. The flag was implemented and the
+	// operator's action still did not do what it says. Re-deriving the
+	// affected documents here is what closes the gap between the two.
+	//
+	// Synchronous and after the commit. On a field with a great many
+	// values this is the slowest thing an admin edit can do — but a
+	// background job would return 200 to an operator whose search still
+	// includes the field, which is the same lie in a new place. If it
+	// ever needs to move, it moves with a progress surface, not
+	// silently.
+	if searchParticipationChanged(cur, row) {
+		if err := q.RebuildAssetSearchTextForField(ctx, row.ID); err != nil {
+			// Logged, not fatal: the definition change is committed and
+			// correct, and failing the request would tell the operator
+			// their edit did not land when it did. The stale documents
+			// self-heal on the next write to each value.
+			if h.Logger != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelError, "metadata.search_text.rebuild.error",
+					slog.String("field", row.Code),
+					slog.String("err", err.Error()),
+				)
+			}
+		}
+	}
 	return openapi.UpdateField200JSONResponse(fieldDefToAPI(row)), nil
+}
+
+// searchParticipationChanged reports whether this update changed
+// something rebuild_asset_search_text() consults.
+//
+// The two conjuncts of its WHERE clause, and nothing else. Deliberately
+// not "did anything change" — a relabel or a display_order bump would
+// then rewrite a tsvector for every asset holding the field, which is
+// an expensive no-op.
+func searchParticipationChanged(before, after FieldDefinition) bool {
+	return before.Searchable != after.Searchable ||
+		(before.Status == "active") != (after.Status == "active")
 }
 
 // ---------------------------------------------------------------------------
@@ -677,7 +752,8 @@ func (h *Handler) ArchiveField(
 	}
 	q := New(h.Pool)
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if _, err := q.GetFieldDefinitionByID(ctx, pgID); err != nil {
+	prev, err := q.GetFieldDefinitionByID(ctx, pgID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.ArchiveField404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
@@ -692,6 +768,18 @@ func (h *Handler) ArchiveField(
 		return nil, fmt.Errorf("metadata: archive: %w", err)
 	}
 	h.invalidateField(ctx, pgID)
+	// Archiving takes the field out of rebuild_asset_search_text()'s
+	// `status = 'active'` conjunct, so its values must stop answering
+	// text queries — the same gap PATCH closes for `searchable`, on the
+	// other half of the same WHERE. See searchParticipationChanged.
+	if prev.Status == "active" {
+		if err := q.RebuildAssetSearchTextForField(ctx, pgID); err != nil && h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelError, "metadata.search_text.rebuild.error",
+				slog.String("field", prev.Code),
+				slog.String("err", err.Error()),
+			)
+		}
+	}
 	return openapi.ArchiveField204Response{}, nil
 }
 
@@ -833,7 +921,8 @@ func (h *Handler) SetAssetFieldValue(
 		held = vocabularySlugs(fieldRow.Type, prev.ValueText, prev.ValueOptions)
 	}
 	vocab, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
-		vocabularySlugs(fieldRow.Type, upsert.ValueText, upsert.ValueOptions), held)
+		vocabularySlugs(fieldRow.Type, upsert.ValueText, upsert.ValueOptions), held,
+		canExtendVocabulary(id))
 	if err != nil {
 		return nil, err
 	}
@@ -847,8 +936,20 @@ func (h *Handler) SetAssetFieldValue(
 	// what it built — so the normalised slugs go back into it here.
 	// Skipping this is how "Sunset" ends up in value_options next to
 	// the `sunset` term it was supposed to become.
-	if fieldRow.Type == "multi_select" {
+	switch fieldRow.Type {
+	case "multi_select":
 		upsert.ValueOptions = vocab.Slugs
+	case "select", "tree":
+		// The single-slug types store in value_text, and they can move
+		// too now that an alias or a merge tombstone redirects on a
+		// CLOSED vocabulary. Writing only the multi_select column was
+		// correct while minting was the only thing that changed a slug
+		// — minting is multi_select-only — and became a silent hole the
+		// moment curation applied to `select` and `tree`: the gate
+		// would approve `gb` and the row would still store `uk`.
+		if len(vocab.Slugs) == 1 {
+			upsert.ValueText = &vocab.Slugs[0]
+		}
 	}
 
 	// Reference-existence gate (#842). A `reference` value is a bare

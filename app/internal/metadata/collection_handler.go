@@ -217,7 +217,8 @@ func (h *Handler) SetCollectionFieldValue(
 		incomingOptions = *req.Body.ValueOptions
 	}
 	vocab, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
-		vocabularySlugs(fieldRow.Type, req.Body.ValueText, incomingOptions), held)
+		vocabularySlugs(fieldRow.Type, req.Body.ValueText, incomingOptions), held,
+		canExtendVocabulary(id))
 	if err != nil {
 		return nil, err
 	}
@@ -229,8 +230,17 @@ func (h *Handler) SetCollectionFieldValue(
 	// Canonical slugs, not the text a client sent — same reason the
 	// asset path rewrites its upsert params. Here the params are built
 	// from req.Body a line below, so the normalisation lands on the body.
-	if fieldRow.Type == "multi_select" {
+	switch fieldRow.Type {
+	case "multi_select":
 		req.Body.ValueOptions = &vocab.Slugs
+	case "select", "tree":
+		// See SetAssetFieldValue for why the single-slug types are
+		// written back too: alias and tombstone redirects move a value
+		// on a closed vocabulary, and value_text is where a closed
+		// vocabulary keeps it.
+		if len(vocab.Slugs) == 1 {
+			req.Body.ValueText = &vocab.Slugs[0]
+		}
 	}
 
 	// Reference-existence gate (#842) — the collection sibling of the

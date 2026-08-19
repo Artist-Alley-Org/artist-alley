@@ -667,3 +667,143 @@ SELECT a.id AS asset_id,
    AND f.status <> 'archived'
    AND (cardinality(f.applies_to) = 0 OR a.asset_type = ANY(f.applies_to))
  ORDER BY a.id, f.display_group, f.display_order, f.code;
+
+-- ---------------------------------------------------------------------------
+-- Vocabulary curation — merge (ADR 0092 §4, #789)
+-- ---------------------------------------------------------------------------
+
+-- name: RewriteAssetValuesForMergedOption :execrows
+-- Points every asset value naming @source at @target, and writes the
+-- change into the per-value history in the same statement.
+--
+-- ## Why one statement rather than a loop in Go
+--
+-- A merge on a real vocabulary touches thousands of rows. Reading them
+-- into Go, rewriting each and issuing an UPDATE apiece is thousands of
+-- round trips inside one transaction, holding locks for the duration —
+-- and the loop would still have to reimplement the array rewrite the
+-- expression below does once.
+--
+-- ## Why the history row is not optional
+--
+-- A merge is the ONE vocabulary operation that edits records whose
+-- owners did not touch them. Skipping the history entry would leave
+-- `asset_field_value_history` describing a value the asset no longer
+-- holds, and the audit event for the merge itself cannot fill that gap:
+-- it says a merge happened, not what any particular asset now says. So
+-- the same INSERT the ordinary write path performs runs here, sourced
+-- from the CTE's before-and-after — which is also what makes :execrows
+-- a truthful count, since one history row is inserted per value
+-- rewritten.
+--
+-- set_by is 'computed': no human typed this value, and the VALUE row's
+-- own set_by is deliberately left alone — a keyword that arrived from
+-- IPTC is still an IPTC keyword after the term it names is renamed.
+--
+-- ## The array rewrite
+--
+-- array_replace alone is wrong when a row already holds BOTH terms:
+-- {uk, gb} would become {gb, gb}. The unnest/DISTINCT ON/array_agg
+-- sandwich keeps first-occurrence order and drops the duplicate, which
+-- is the same shape the write path's slug dedupe produces.
+--
+-- The `search_text` TSVECTOR needs no help here: the AFTER UPDATE
+-- trigger on asset_field_value rebuilds it per row.
+WITH affected AS (
+    SELECT p.asset_id, p.field_id, p.value_text AS old_text, p.value_options AS old_options
+      FROM asset_field_value p
+     WHERE p.field_id = @field_id
+       AND (p.value_text = @source::text OR @source::text = ANY(p.value_options))
+     ORDER BY p.asset_id
+       FOR UPDATE
+), updated AS (
+    UPDATE asset_field_value v
+       SET value_text = CASE WHEN v.value_text = @source::text THEN @target::text ELSE v.value_text END,
+           value_options = CASE
+               WHEN v.value_options IS NULL THEN NULL
+               ELSE (
+                   SELECT array_agg(d.slug ORDER BY d.ord)
+                     FROM (
+                         SELECT DISTINCT ON (u.slug) u.slug, u.ord
+                           FROM unnest(array_replace(v.value_options, @source::text, @target::text))
+                                WITH ORDINALITY AS u(slug, ord)
+                          ORDER BY u.slug, u.ord
+                     ) d
+               )
+           END
+      FROM affected a
+     WHERE v.asset_id = a.asset_id AND v.field_id = a.field_id
+    RETURNING v.asset_id, v.field_id, v.value_text AS new_text, v.value_options AS new_options,
+              a.old_text, a.old_options
+)
+INSERT INTO asset_field_value_history
+    (asset_id, field_id, old_value, new_value, set_by, changed_by_user_ref)
+SELECT u.asset_id, u.field_id,
+       jsonb_build_object('type', @field_type::text, 'value',
+           CASE WHEN u.old_text IS NOT NULL THEN to_jsonb(u.old_text) ELSE to_jsonb(u.old_options) END),
+       jsonb_build_object('type', @field_type::text, 'value',
+           CASE WHEN u.new_text IS NOT NULL THEN to_jsonb(u.new_text) ELSE to_jsonb(u.new_options) END),
+       'computed', sqlc.narg(actor_user_ref)::bigint
+  FROM updated u;
+
+-- name: RewriteCollectionValuesForMergedOption :execrows
+-- The collection twin of RewriteAssetValuesForMergedOption. Same
+-- rewrite, same history guarantee, on the collection tables — a merge
+-- that fixed assets and left collections naming a tombstoned term
+-- would have moved the drift rather than removed it.
+WITH affected AS (
+    SELECT p.collection_id, p.field_id, p.value_text AS old_text, p.value_options AS old_options
+      FROM collection_field_value p
+     WHERE p.field_id = @field_id
+       AND (p.value_text = @source::text OR @source::text = ANY(p.value_options))
+     ORDER BY p.collection_id
+       FOR UPDATE
+), updated AS (
+    UPDATE collection_field_value v
+       SET value_text = CASE WHEN v.value_text = @source::text THEN @target::text ELSE v.value_text END,
+           value_options = CASE
+               WHEN v.value_options IS NULL THEN NULL
+               ELSE (
+                   SELECT array_agg(d.slug ORDER BY d.ord)
+                     FROM (
+                         SELECT DISTINCT ON (u.slug) u.slug, u.ord
+                           FROM unnest(array_replace(v.value_options, @source::text, @target::text))
+                                WITH ORDINALITY AS u(slug, ord)
+                          ORDER BY u.slug, u.ord
+                     ) d
+               )
+           END
+      FROM affected a
+     WHERE v.collection_id = a.collection_id AND v.field_id = a.field_id
+    RETURNING v.collection_id, v.field_id, v.value_text AS new_text, v.value_options AS new_options,
+              a.old_text, a.old_options
+)
+INSERT INTO collection_field_value_history
+    (collection_id, field_id, old_value, new_value, set_by, changed_by_user_ref)
+SELECT u.collection_id, u.field_id,
+       jsonb_build_object('type', @field_type::text, 'value',
+           CASE WHEN u.old_text IS NOT NULL THEN to_jsonb(u.old_text) ELSE to_jsonb(u.old_options) END),
+       jsonb_build_object('type', @field_type::text, 'value',
+           CASE WHEN u.new_text IS NOT NULL THEN to_jsonb(u.new_text) ELSE to_jsonb(u.new_options) END),
+       'computed', sqlc.narg(actor_user_ref)::bigint
+  FROM updated u;
+
+-- name: RebuildAssetSearchTextForField :exec
+-- Re-derives `assets.search_text` for every asset holding a value of
+-- this field (#1016).
+--
+-- `rebuild_asset_search_text` folds a field's values into the document
+-- only while `f.searchable = TRUE AND f.status = 'active'`, and the
+-- trigger that calls it fires on writes to asset_field_value — not on
+-- writes to field_definition. So flipping `searchable` off changed what
+-- the rule SAID and nothing about what was already indexed: the field's
+-- values kept answering text queries until something happened to touch
+-- each asset. An operator who unticks the box has every reason to
+-- believe they excluded the field, which is precisely the lie #1016
+-- refused to let a UI toggle ship on top of.
+--
+-- Runs for a status change too, since `status = 'active'` is the other
+-- conjunct of the same WHERE.
+SELECT rebuild_asset_search_text(p.asset_id)
+  FROM asset_field_value p
+ WHERE p.field_id = $1;

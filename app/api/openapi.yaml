@@ -5425,6 +5425,187 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+
+  /fields/{id}/values:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: searchFieldValues
+      summary: Search one field's controlled vocabulary
+      description: |
+        THE contract for offering vocabulary values (ADR 0092 §1). A
+        surface that lets someone pick a term asks this endpoint with a
+        query and a limit; it does not fetch the field definition and
+        filter `options.values` in the browser.
+
+        The distinction matters at production size. A field with two
+        thousand terms is unremarkable in a real catalogue, and a page
+        carrying twenty such fields would ship forty thousand values
+        before the reader touched a control. Shipping a whole
+        vocabulary stays legal as an OPTIMISATION for demonstrably
+        small ones — `GET /fields` still returns `options` — but it is
+        never the only path, and any client that filters in memory is
+        searching a prefix of the truth the moment the vocabulary
+        outgrows what it was given.
+
+        ## Matching
+
+        `q` is matched against a term's slug, its label, and any
+        operator-configured aliases, case-insensitively and
+        whitespace-trimmed — the same three keys the WRITE path
+        resolves against, so a term this endpoint offers is a term a
+        value write will accept.
+
+        ## Ordering
+
+        Stable and rank-first: exact hits, then prefix hits, then
+        substring hits, each group ordered by label and broken by slug.
+        Equal inputs give equal output, so a caller may page by raising
+        `limit` without the earlier rows reshuffling.
+
+        ## The bound is real
+
+        `limit` caps what comes back. `matched` reports how many terms
+        the query actually admitted, so a caller can say "1 of 340"
+        rather than pretending the capped list is the answer.
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: |
+            The text to match. Omit or leave empty to browse the
+            vocabulary from the top, ordered by label.
+          schema: { type: string, maxLength: 200 }
+        - name: match
+          in: query
+          required: false
+          description: |
+            `prefix` (the default) admits terms that START with `q`.
+            `substring` also admits terms that merely contain it —
+            looser, useful for browsing, and still ranked so the
+            prefix hits come first.
+          schema:
+            type: string
+            enum: [prefix, substring]
+            default: prefix
+        - name: limit
+          in: query
+          required: false
+          description: Maximum terms to return. The response says how many matched.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: status
+          in: query
+          required: false
+          description: |
+            Which lifecycle states to include. Defaults to `active` —
+            the set a picker may OFFER. `any` includes deprecated and
+            archived terms and is what a curation surface needs, since
+            a tombstone is only useful to someone who can see it.
+          schema:
+            type: string
+            enum: [active, deprecated, archived, any]
+            default: active
+      responses:
+        "200":
+          description: The matching terms, capped at `limit`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VocabularyValuePage" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /fields/{id}/values/merge:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: mergeFieldValues
+      summary: Fold one vocabulary term into another (curation)
+      description: |
+        The second half of ADR 0092 §4's alias-then-merge. An alias is
+        the cheap, non-retroactive, reversible fix — it redirects
+        FUTURE writes and touches no stored row. This is the expensive
+        one: it rewrites every stored value naming `source` to name
+        `target` instead, on assets and collections alike.
+
+        ## What survives
+
+        `source` is not deleted. It becomes a TOMBSTONE: `archived`
+        with `replaced_by` pointing at `target`, permanently. That is
+        the difference between a term that was merged away and a term
+        that never existed — and it is the difference a federated peer
+        needs, because a peer that saw `uk` before the merge has no
+        other way to learn where the value went. A merge that deletes
+        the row makes the two indistinguishable forever, which is why
+        ADR 0092 rejects it.
+
+        A tombstoned slug keeps RESOLVING: a later write naming
+        `source` lands on `target` rather than being refused, so a
+        value arriving late from a peer or a queued client is not lost.
+
+        ## Friction, on purpose
+
+        Every production system surveyed for #789 puts obstacles in
+        front of this operation, because rewriting rows before the
+        redirect has proven correct is the failure mode they all
+        record. Ours are: a capability of its own
+        (`fields.vocabulary.merge`, which `fields.admin` does NOT
+        imply), a required human-written `reason` that lands in the
+        audit trail, and `dry_run`, which reports exactly what would
+        change and changes nothing.
+      tags: [metadata, admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["fields.vocabulary.merge"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VocabularyMergeRequest" }
+      responses:
+        "200":
+          description: |
+            The merge as performed, or — with `dry_run` — as it would
+            have been performed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VocabularyMergeResult" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: |
+            The merge names a term the field does not have, or asks for
+            something the vocabulary cannot express.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldValueUnprocessable" }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /assets/{id}/fields:
     parameters:
       - name: id
@@ -13439,11 +13620,33 @@ components:
             Type-dependent constraints / values. Shape per ADR 0012.
             For `select` / `multi_select` / `tree`: `{"values": [...]}`
             where each entry is a bare slug string, or an object
-            `{value, label?, status?, replaced_by?, children?}`.
+            `{value, label?, status?, replaced_by?, aliases?, children?}`.
             An entry with no `status` is `active`. Entries that are
             `deprecated` or `archived` must not be offered for new
             values; `deprecated` ones still resolve and display on
             assets that already carry them.
+
+            `aliases` are extra match keys (ADR 0092 §4): a value
+            naming an alias stores the term's own slug instead. The
+            redirect applies to FUTURE writes only and is undone by
+            removing the alias — nothing stored is rewritten. Aliases
+            are normalised to lowercase and must not collide with any
+            slug, label or other alias in the same field, since an
+            ambiguous key has no correct resolution. A real slug or
+            label always wins over an alias.
+
+            An `archived` entry carrying `replaced_by` is a MERGE
+            TOMBSTONE rather than a plain retire, and behaves
+            differently on write: naming it resolves to the successor
+            instead of being refused, so a value that predates the
+            merge still lands somewhere real.
+
+            NOTE: a client must not treat this document as the way to
+            OFFER values at production size — see
+            `GET /fields/{id}/values`, which is the contract. This stays
+            here because a read surface resolving a handful of stored
+            slugs needs the labels, and because a small vocabulary may
+            legitimately be shipped whole.
 
             `children` nests the vocabulary and is what makes a field
             of type `tree` hierarchical. Slugs must be unique across
@@ -13701,10 +13904,11 @@ components:
             Type-dependent constraints. For `select` / `multi_select` /
             `tree` this is `{"values": [...]}` where each entry is
             either a bare slug string or an object
-            `{value, label?, status?, replaced_by?, children?}`.
+            `{value, label?, status?, replaced_by?, aliases?, children?}`.
             `status` is one of active | deprecated | archived and
             defaults to `active` when absent; `replaced_by` must name
-            another slug in the same field. Entries carrying nothing
+            another slug in the same field. `aliases` are extra
+            write-time match keys — see FieldDefinition.options. Entries carrying nothing
             beyond their slug serialise back as bare strings, so
             documents written before options had a lifecycle
             round-trip unchanged. Options are never hard-deleted —
@@ -13747,6 +13951,150 @@ components:
         clear_default:
           type: boolean
           description: "Remove this field's upload default. Mutually exclusive with `default_value`."
+    VocabularyValue:
+      type: object
+      description: |
+        One term of a field's controlled vocabulary, as a picker or a
+        curation surface needs to see it.
+      required: [value, label, status, path]
+      properties:
+        value:
+          type: string
+          description: |
+            The slug `asset_field_value` stores. Unique across the
+            field's WHOLE option tree, which is what lets a stored
+            value be one leaf slug rather than a path.
+        label:
+          type: string
+          description: Display text. Equals `value` for a bare-slug entry.
+        path:
+          type: array
+          items: { type: string }
+          description: |
+            Ancestor labels from the root of the vocabulary down to and
+            including this term. One element for a flat vocabulary, N
+            for a node N levels into a `tree` field.
+        status:
+          type: string
+          enum: [active, deprecated, archived]
+          description: |
+            `active` may be chosen. `deprecated` still resolves and
+            displays but is not offered for new values. `archived` is a
+            hard retire — or, with `replaced_by` set, a merge tombstone.
+        replaced_by:
+          type: string
+          nullable: true
+          description: |
+            The slug that supersedes this one. Set by a merge, in which
+            case this term is a TOMBSTONE: a later write naming it
+            resolves to the successor instead of being refused, which
+            is how a value arriving from a peer that predates the merge
+            still lands somewhere real.
+        aliases:
+          type: array
+          items: { type: string }
+          description: |
+            Extra match keys an operator attached to this term. An
+            alias is a WRITE-TIME REDIRECT (ADR 0092 §4): typing one
+            stores this term's slug. It is non-retroactive — rows
+            written before the alias existed are untouched — and
+            reversible, since removing it simply stops the redirect.
+            A real slug or label always beats an alias, so an alias can
+            never shadow a term that exists.
+    VocabularyValuePage:
+      type: object
+      description: |
+        One bounded answer to a vocabulary query. `matched` is the
+        honest total, so a client can say how much it is NOT showing
+        instead of implying the capped list is the whole set.
+      required: [values, matched, returned, limit, truncated, vocabulary_size, open_vocabulary, can_extend]
+      properties:
+        values:
+          type: array
+          items: { $ref: "#/components/schemas/VocabularyValue" }
+        matched:
+          type: integer
+          description: How many terms the query admitted, before `limit` was applied.
+        returned:
+          type: integer
+          description: How many are in `values`. Never greater than `limit`.
+        limit:
+          type: integer
+          description: The cap that was applied — the effective one, after clamping.
+        truncated:
+          type: boolean
+          description: True when `matched` exceeded `limit`.
+        vocabulary_size:
+          type: integer
+          description: |
+            Terms in the whole vocabulary at every depth, in every
+            lifecycle state. Lets a client decide whether fetching the
+            list whole is defensible for this particular field.
+        open_vocabulary:
+          type: boolean
+          description: The field's `open_vocabulary` flag, as honoured for this field's type.
+        can_extend:
+          type: boolean
+          description: |
+            Whether THIS caller may create a term here — the field is
+            open AND the caller holds `fields.vocabulary.extend`. A
+            client renders its create affordance from this and nothing
+            else, so the control it shows matches the answer the write
+            path will give (ADR 0092 §2: the same control with the
+            create arm absent, never a silent failure).
+    VocabularyMergeRequest:
+      type: object
+      required: [source, target, reason]
+      properties:
+        source:
+          type: string
+          description: |
+            The slug being folded away. Must be a term of this field.
+            Becomes a tombstone; it is never deleted.
+        target:
+          type: string
+          description: |
+            The slug it becomes. Must be a term of this field, must not
+            equal `source`, and must not itself be archived — merging
+            into a retired term would move every value onto something
+            no picker offers.
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: |
+            Why this merge is correct, in a human's words. Required and
+            recorded: a merge is the one vocabulary operation that
+            edits records their owners did not touch, and an audit
+            trail that cannot say why is not one.
+        dry_run:
+          type: boolean
+          default: false
+          description: |
+            Report what would change and change nothing. The counts are
+            computed by the same queries the real run uses, inside a
+            transaction that is rolled back.
+    VocabularyMergeResult:
+      type: object
+      required: [source, target, dry_run, asset_values_rewritten, collection_values_rewritten, tombstoned]
+      properties:
+        source: { type: string }
+        target: { type: string }
+        dry_run: { type: boolean }
+        asset_values_rewritten:
+          type: integer
+          description: |
+            `asset_field_value` rows that named `source` and now name
+            `target`. Counts rows, not assets — a multi_select row is
+            one row however many terms it holds.
+        collection_values_rewritten:
+          type: integer
+          description: The same count for `collection_field_value`.
+        tombstoned:
+          type: boolean
+          description: |
+            Whether `source` is now `archived` with `replaced_by` set
+            to `target`. False only on a dry run.
     AssetFieldValue:
       type: object
       required: [field_id, field_code, type, set_by, set_at]
@@ -14011,12 +14359,23 @@ components:
               *later* still reads fine, degrading to the bare id
               (`resolved_reference` simply absent) — the write gate does
               not retroactively invalidate it.
+            - `vocabulary_extension_forbidden` — the field IS open, and
+              the term would have been created, but this caller does not
+              hold `fields.vocabulary.extend`. Distinct from
+              `unknown_option` on purpose: the term is absent in both
+              cases, but here the fix is a grant rather than a
+              correction, and a client that cannot tell them apart
+              cannot say which. Reported per TERM rather than as a bare
+              403 because a write may carry five terms of which four
+              already exist — naming the one that was refused is
+              strictly more useful than refusing the principal.
           enum:
             - field_not_for_collection
             - value_type_mismatch
             - unknown_option
             - option_not_offerable
             - dangling_reference
+            - vocabulary_extension_forbidden
         field:
           type: string
           nullable: true
@@ -20848,6 +21207,9 @@ components:
         - `dangling_reference` — `reference` only: `value_ref` names an
           asset that does not resolve. Refused on write; a value whose
           target is deleted after a valid write still reads (bare id).
+        - `vocabulary_extension_forbidden` — the field is open and the
+          term would have been created, but the caller does not hold
+          `fields.vocabulary.extend`.
       content:
         application/json:
           schema:

@@ -308,7 +308,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		storage:          storage.NewHandler(storageSvc, logger),
 		assets:           assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg, sysCfg),
 		subtitles:        subtitles.NewHandler(pool, cacheReg, logger),
-		metadata:         metadata.NewHandler(pool, logger, cacheReg),
+		metadata:         metadataHandlerWithAudit(pool, logger, cacheReg, auditRec),
 		collections:      collections.NewHandler(pool, logger, cacheReg),
 		posts:            posts.NewHandler(pool, logger, cacheReg),
 		teams:            teams.NewHandler(pool, logger, cacheReg),
@@ -3077,6 +3077,12 @@ func (s *apiServer) ArchiveField(ctx context.Context, req openapi.ArchiveFieldRe
 func (s *apiServer) SetFieldExtraction(ctx context.Context, req openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
 	return s.metadata.SetFieldExtraction(ctx, req)
 }
+func (s *apiServer) SearchFieldValues(ctx context.Context, req openapi.SearchFieldValuesRequestObject) (openapi.SearchFieldValuesResponseObject, error) {
+	return s.metadata.SearchFieldValues(ctx, req)
+}
+func (s *apiServer) MergeFieldValues(ctx context.Context, req openapi.MergeFieldValuesRequestObject) (openapi.MergeFieldValuesResponseObject, error) {
+	return s.metadata.MergeFieldValues(ctx, req)
+}
 func (s *apiServer) ListFieldDefaultOverrides(ctx context.Context, req openapi.ListFieldDefaultOverridesRequestObject) (openapi.ListFieldDefaultOverridesResponseObject, error) {
 	return s.metadata.ListFieldDefaultOverrides(ctx, req)
 }
@@ -5419,7 +5425,30 @@ func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p asse
 			// row lock, against the LIVE options document, so two
 			// concurrent extract jobs adding different keywords to the
 			// same field both keep theirs.
-			res, ensureErr := metadata.EnsureOpenVocabularyTerms(ctx, q, pgField, p.Value.Options)
+			//
+			// canExtend is TRUE here, and that is not the capability
+			// being skipped — it is the capability not applying. This
+			// adapter has no identity at all: it is a background job,
+			// several layers below any request, and it already bypasses
+			// read_capability, write_capability and the mirrored-field
+			// gate for the same reason (see the doc comment above).
+			// Passing anything else would mean inventing a principal.
+			//
+			// Extraction's gate is the OPERATOR'S, not the uploader's,
+			// and it is two flags rather than a capability: a field
+			// grows from files only while `open_vocabulary` is on AND
+			// an `extraction_source` is wired to it. An operator who
+			// does not want uploaded files minting terms turns off
+			// either one.
+			//
+			// The asymmetry is real and worth stating: after ADR 0092
+			// a person without fields.vocabulary.extend cannot type a
+			// new keyword, while a file they upload can still carry
+			// one in its IPTC block. Closing that means giving the
+			// extraction pipeline an uploader identity, which is a
+			// change to every capability it bypasses and not just this
+			// one.
+			res, ensureErr := metadata.EnsureOpenVocabularyTerms(ctx, q, pgField, p.Value.Options, true)
 			if ensureErr != nil {
 				return fmt.Errorf("metadata extraction: vocabulary: %w", ensureErr)
 			}
@@ -5518,4 +5547,16 @@ func (a metaFailureAdapter) RecordExtractionFailure(ctx context.Context, p asset
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, p.AssetID, p.Format, p.ErrorKind, p.Message, string(p.FieldKey), raw)
 	return err
+}
+
+// metadataHandlerWithAudit builds the metadata handler and attaches the
+// audit recorder. A tiny wrapper rather than a widened NewHandler
+// signature, matching usersHandlerWithAudit and sysconfigHandlerWithAudit
+// beside it: only ONE metadata operation is auditable (a vocabulary
+// merge), and every test that constructs the handler would otherwise
+// have to pass a recorder it does not use.
+func metadataHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *cache.Registry, rec *audit.Recorder) *metadata.Handler {
+	h := metadata.NewHandler(pool, logger, cacheReg)
+	h.Audit = rec
+	return h
 }
