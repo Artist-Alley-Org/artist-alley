@@ -9,6 +9,12 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A field can say where it appears.** Operators can now keep a field off the advanced search
+  page or the upload form, and give it an edit tab, instead of every field showing everywhere —
+  which matters the moment a catalogue has more than a handful. Nothing changes for existing
+  installs: a field that has never been configured appears exactly where it did before, and
+  hiding a field from a form does not stop its values being indexed or searched (#1173 in part,
+  PR #1230).
 - **Metadata vocabularies scale and stay tidy.** A field's values can now be searched on the
   server instead of every list being sent to the browser whole — on a 2,500-term field a search
   returns fifty matches in about six milliseconds and roughly a twenty-sixth of the data. Who may
