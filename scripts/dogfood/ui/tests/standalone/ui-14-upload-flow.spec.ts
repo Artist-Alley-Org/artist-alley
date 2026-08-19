@@ -79,9 +79,24 @@ test.describe('UI-14 upload flow', () => {
     expect(post.status()).toBe(201);
     const postJson = await post.json();
 
-    // Now look up the post by id via the API (the feed page is
-    // cached; we don't want to wait on revalidation).
-    const verify = await page.request.get(`/api/v1/posts/${postJson.id}`);
-    expect(verify.status()).toBe(200);
+    try {
+      // Now look up the post by id via the API (the feed page is
+      // cached; we don't want to wait on revalidation).
+      const verify = await page.request.get(`/api/v1/posts/${postJson.id}`);
+      expect(verify.status()).toBe(200);
+    } finally {
+      // #1198 — remove them again.
+      //
+      // This case used to leave its post and its asset behind, one pair
+      // per run. Thirty had collected on the coding stack, and because
+      // the browse feed is newest-first they sat at the TOP of page one,
+      // where they pushed the seeded corpus out of the window that
+      // post-band-format-1190 reads — which is how two consecutive
+      // full-suite runs on an unchanged tree came back with different
+      // results. A spec that changes what the next spec sees is not
+      // isolated, however harmless its own leftovers look.
+      await page.request.delete(`/api/v1/posts/${postJson.id}`).catch(() => undefined);
+      await page.request.delete(`/api/v1/assets/${assetJson.id}`).catch(() => undefined);
+    }
   });
 });

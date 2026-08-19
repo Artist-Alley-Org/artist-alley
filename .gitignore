@@ -152,3 +152,16 @@ kaggle.json
 
 # local design references — never committed
 reference_pages/*
+
+# --- Playwright dogfood screenshots (#1211) ---
+# The suite writes every screenshot through `testInfo.outputPath()`, which
+# lands under scripts/dogfood/ui/.pw-results/ (already ignored there). These
+# two patterns are the safety net for the failure that produced #1211: a
+# spec passing a repo-relative `path:` overwrote TRACKED PNGs in
+# scripts/dogfood/ui/ on every local run, and the diff was swept into
+# unrelated commits twice. Nothing in that directory is a real artifact —
+# fixtures/ (the IIIF source image) is a subdirectory and is not matched.
+/scripts/dogfood/ui/*.png
+# Agents' per-sprint screenshot folders in the coding worktree (.shots-1207/,
+# .shots-sprint1/, …). Handed to the operator by absolute path, never committed.
+.shots-*/

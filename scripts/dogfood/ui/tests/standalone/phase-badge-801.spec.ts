@@ -15,9 +15,7 @@
 // caps loaded and canSeeAdmin flipped true) before scanning.
 
 import { test, expect, type Page } from '@playwright/test';
-import path from 'node:path';
 
-const SHOT_DIR = process.env.SHOT_DIR ?? '/tmp';
 const NO_PERMISSION = "You don't have permission to view this page.";
 
 // Internal roadmap identifiers that must never reach a rendered surface:
@@ -41,7 +39,7 @@ async function openSection(page: Page, slug: string, title: string): Promise<str
   return text;
 }
 
-test('admin future tiles render with no phase badge', async ({ page }) => {
+test('admin future tiles render with no phase badge', async ({ page }, testInfo) => {
   const text = await openSection(page, 'automation', 'Workflow & automation');
   // Positive proof future tiles rendered: their titles are on screen.
   await expect(page.getByRole('heading', { name: 'Triggers' })).toBeVisible();
@@ -49,7 +47,7 @@ test('admin future tiles render with no phase badge', async ({ page }) => {
   const m = text.match(INTERNAL_ID);
   expect(m, `/admin/automation rendered an internal identifier: ${m?.[0]}`).toBeNull();
   await page.screenshot({
-    path: path.join(SHOT_DIR, '801-admin-future-tiles-no-phase-badge.png'),
+    path: testInfo.outputPath('801-admin-future-tiles-no-phase-badge.png'),
     fullPage: true,
   });
 });
@@ -70,7 +68,7 @@ test('future-bearing sections carry no internal identifiers', async ({ page }) =
   }
 });
 
-test('federation copy reads in plain language, no aa:Share / phase ids', async ({ page }) => {
+test('federation copy reads in plain language, no aa:Share / phase ids', async ({ page }, testInfo) => {
   await page.goto('/admin/federation/peers');
   const text = await contentText(page);
   expect(text, 'federation peers showed the permission panel').not.toContain(NO_PERMISSION);
@@ -79,7 +77,7 @@ test('federation copy reads in plain language, no aa:Share / phase ids', async (
   const m = text.match(INTERNAL_ID);
   expect(m, `federation page rendered an internal identifier: ${m?.[0]}`).toBeNull();
   await page.screenshot({
-    path: path.join(SHOT_DIR, '801-federation-plain-language.png'),
+    path: testInfo.outputPath('801-federation-plain-language.png'),
     fullPage: true,
   });
 });
