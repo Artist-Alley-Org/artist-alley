@@ -5,6 +5,25 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
+## [Unreleased]
+
+### Fixed
+
+- **Contributor-facing links and setup script corrected.** The repository move left old GitHub
+  URLs in the contributing guide and issue templates, and the bootstrap script still provisioned
+  a database and language stack this project no longer uses (#1093, #996, PR #1226).
+
+### Internal
+
+- **The test suite stopped lying.** Several browser specs had been failing locally while passing
+  in CI — and one of them was passing *vacuously*, sampling only frames taken after the moment it
+  meant to measure, so neither result meant anything. Fixture accounts and posts left behind by
+  earlier runs are cleaned up, screenshots no longer overwrite files in the repository, and the
+  suite now produces the same result twice in a row on a used machine (#1198, #1054, #1170,
+  #1211, PR #1225).
+- **A malformed architecture record now blocks the docs-site rebuild** instead of merely
+  reporting, proven by pushing a deliberately broken one (#1014, PR #1226).
+
 ## [v0.10.2] — 2026-08-18 — Seed coverage for mature content, and a cover editor that uses its room
 
 ### Added
