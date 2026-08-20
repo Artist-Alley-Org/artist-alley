@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -236,27 +237,150 @@ func (t FacetType) canonicalValue(v string) (string, bool) {
 		}
 		return id.String(), true
 	case FacetField:
-		// #1157 — `<code>=<value>`. The SECOND dimension with a value
-		// grammar, and the first whose value is compound.
+		// #1157/#1165 — `<code><op><value>`. The SECOND dimension with a
+		// value grammar, the first whose value is compound, and now the
+		// first that carries an OPERATOR.
 		//
-		// `=` rather than `:` because [ParseSelection] cuts the wire
-		// token at the FIRST colon, so a nested colon would be
-		// ambiguous with the dimension separator the moment a field
-		// value contained one. `=` appears in no field CODE (codes are
-		// slugs), and a `=` inside the VALUE is harmless because only
-		// the first one separates.
-		code, value, found := strings.Cut(v, "=")
-		if !found {
+		// The separator characters are drawn from OUTSIDE the field-code
+		// slug alphabet ([validFieldCode]) on purpose, which is what lets
+		// the code and the operator be found by scanning rather than by a
+		// second delimiter: no code can contain `=`, `~`, `>` or `<`, so
+		// the first occurrence of one of them is always the operator and
+		// never part of the code. A value that contains one is harmless
+		// for the same reason the original `=` split was — only the FIRST
+		// occurrence separates.
+		//
+		// `:` remains unusable as an operator character because
+		// [ParseSelection] cuts the wire token at the first colon, so a
+		// nested colon would be ambiguous with the dimension separator.
+		// That is why a date value keeps its colons intact (they fall in
+		// the value half, after the operator) but no operator may use one.
+		code, op, value, ok := SplitFieldTerm(v)
+		if !ok {
 			return "", false
 		}
-		code = strings.ToLower(strings.TrimSpace(code))
-		value = strings.TrimSpace(value)
-		if code == "" || value == "" || !validFieldCode(code) {
-			return "", false
+		// The bound operators name a value whose TYPE is a timestamp, and
+		// an unvalidated one reaches a `::TIMESTAMPTZ` cast mid-query —
+		// the same 22P02-shaped 500 [FacetCollection]'s UUID validation
+		// exists to prevent, and the reason this switch is where a
+		// dimension's value grammar lives at all.
+		if op == FieldOpAtLeast || op == FieldOpAtMost {
+			bound, ok := canonicalBound(value, op)
+			if !ok {
+				return "", false
+			}
+			value = bound
 		}
-		return code + "=" + value, true
+		return code + string(op) + value, true
 	}
 	return v, true
+}
+
+// FieldOp is the comparison a [FacetField] term applies between a field
+// and its value (#1165).
+//
+// # Why an operator lives in the SHARED grammar rather than on the page
+//
+// The advanced page needs "title contains foo" and "licence expires
+// between two dates", and neither is expressible by equality. The
+// alternative to putting them here was a page-side widget that compiles
+// down to something else — which is the second query language ADR 0093
+// and #1067 forbid, because the rail, the DSL, a saved search and a
+// federated peer would then each have to learn the translation
+// separately and could disagree about what the user asked for.
+//
+// So an operator is one more piece of the VALUE grammar, exactly as the
+// field code is. Nothing new appears on the wire: `filter=field:…` still
+// takes one repeated parameter carrying one dimension and one value, it
+// still round-trips through [Selection.Params], it still folds into
+// [Selection.CacheKey] as opaque text, and a peer that echoes the token
+// back gets the same predicate we would have run.
+//
+// # The set is CLOSED, and unknown operators fail closed
+//
+// [SplitFieldTerm] matches against this list and rejects anything else,
+// which makes [ParseSelection] answer 400 rather than guessing. That
+// direction is deliberate and is the property #1165 asks for by name: a
+// filter that silently degraded to equality — or worse, dropped its
+// predicate and matched everything — renders a result set that LOOKS
+// narrowed and is not, which is the whole defect the `filter=` parameter
+// was introduced to fix.
+type FieldOp string
+
+const (
+	// FieldOpEq is equality, the original and still the only operator a
+	// vocabulary field uses. Matches value_text OR a member of
+	// value_options — see [dimensionSQL].
+	FieldOpEq FieldOp = "="
+	// FieldOpContains is a case-insensitive substring match, for `text`,
+	// `longtext` and `rich_text` fields.
+	FieldOpContains FieldOp = "~"
+	// FieldOpAtLeast and FieldOpAtMost are the inclusive bounds of a
+	// date range, against value_date. Two terms rather than one
+	// two-ended token, so an open-ended range ("expiring after March",
+	// with no upper bound) needs no separate spelling — see
+	// [Selection.SQL] for why two bounds on one field AND together
+	// where two values of one vocabulary field OR.
+	FieldOpAtLeast FieldOp = ">="
+	FieldOpAtMost  FieldOp = "<="
+)
+
+// fieldOps is the match order for [SplitFieldTerm]: LONGEST FIRST, so
+// `>=` is never mistaken for a bare `>` followed by a value beginning
+// `=`. A bare `>` or `<` matches nothing here and is therefore rejected,
+// which is the intended reading — we define inclusive bounds only, and
+// silently treating `>` as `>=` would be an off-by-one the caller cannot
+// see.
+var fieldOps = []FieldOp{FieldOpAtLeast, FieldOpAtMost, FieldOpContains, FieldOpEq}
+
+// fieldOpChars is every character that may START an operator. None of
+// them is legal in a field code ([validFieldCode]), which is the
+// invariant that makes scanning for the first one a correct split.
+const fieldOpChars = "=~<>"
+
+// canonicalBound validates and normalises a [FieldOpAtLeast] /
+// [FieldOpAtMost] value to RFC3339 UTC.
+//
+// # Why it canonicalises rather than merely accepting
+//
+// Two reasons, and the second is the load-bearing one.
+//
+//  1. A [CacheKey] is text, so `2026-01-31` and `2026-01-31T00:00:00Z`
+//     would pay for the same query twice.
+//  2. FEDERATION. `value_date` is TIMESTAMPTZ, so a bare `2026-01-31`
+//     has no meaning until something supplies a zone — and the thing
+//     that would supply it is whichever server happens to evaluate the
+//     token. A filter that returns different rows on a peer than on its
+//     origin is not one grammar. Normalising to an explicit `Z` here
+//     means the instant is decided once, by the parser, and travels with
+//     the token.
+//
+// # The upper bound of a date-only value is the END of that day
+//
+// A caller who writes `<=2026-01-31` means "through the 31st", not
+// "through the first instant of the 31st". Reading it literally would
+// silently drop 23 hours and 59 minutes of matches — an off-by-one that
+// looks like missing data rather than like a bug. So a date-only upper
+// bound canonicalises to the last microsecond of that day, and the
+// canonical form is what the URL then carries, so what will run is
+// visible rather than implied.
+//
+// Microseconds, not nanoseconds: TIMESTAMPTZ resolves to microseconds,
+// and a `.999999999` bound would round UP to the next second on the way
+// into Postgres — re-introducing on the storage side exactly the
+// off-by-one this is here to remove.
+func canonicalBound(v string, op FieldOp) (string, bool) {
+	v = strings.TrimSpace(v)
+	if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+		return t.UTC().Format(time.RFC3339Nano), true
+	}
+	if d, err := time.Parse("2006-01-02", v); err == nil {
+		if op == FieldOpAtMost {
+			d = d.Add(24*time.Hour - time.Microsecond)
+		}
+		return d.UTC().Format(time.RFC3339Nano), true
+	}
+	return "", false
 }
 
 // validFieldCode reports whether s is a well-formed field-definition
@@ -307,12 +431,56 @@ func (s Selection) NamesFieldDimension() bool {
 	return false
 }
 
-// SplitFieldTerm splits a canonical [FacetField] value into its code
-// and value halves. Exported because [Selection.Authorize] needs the
-// code to look the field up, and the frontend's chip labels need both.
-func SplitFieldTerm(v string) (code, value string, ok bool) {
-	code, value, ok = strings.Cut(v, "=")
-	return code, value, ok
+// SplitFieldTerm splits a [FacetField] value into its code, its
+// operator and its value (#1157, operator added #1165).
+//
+// # The split is a SCAN, not a cut on a fixed delimiter
+//
+// It was `strings.Cut(v, "=")` while equality was the only operator.
+// With four, the delimiter is no longer known in advance, so this finds
+// the first character from [fieldOpChars] — none of which
+// [validFieldCode] admits into a code — and matches the operator at that
+// position, longest first. Everything before is the code; everything
+// after the operator is the value, including any further operator
+// characters it happens to contain.
+//
+// # It rejects rather than falling back, and that is the point
+//
+// #1165 asks for an unknown or malformed operator to fail CLOSED at
+// parse time. Every failure path here returns ok=false, which
+// [FacetType.canonicalValue] turns into a 400 out of [ParseSelection]
+// and, for the programmatic callers that bypass it, into
+// "this entity matches nothing" out of [Selection.SQL]. Neither path can
+// reach a query. Degrading to equality — the tempting alternative, since
+// equality is what every existing term uses — would answer a DIFFERENT
+// question than the caller asked and look like it had answered theirs.
+//
+// Exported because [Selection.Authorize] needs the code to look the
+// field up and [Selection.SQL] needs the operator to pick a predicate.
+//
+// ⚠️ Its doc used to claim the frontend's chip labels were a caller too.
+// They are not and never were — the web client builds these tokens but
+// has never parsed one back (#1165 verified: this function's only caller
+// in the tree is Authorize). Kept exported for Authorize alone.
+func SplitFieldTerm(v string) (code string, op FieldOp, value string, ok bool) {
+	i := strings.IndexAny(v, fieldOpChars)
+	if i < 0 {
+		return "", "", "", false
+	}
+	code = strings.ToLower(strings.TrimSpace(v[:i]))
+	rest := v[i:]
+	for _, candidate := range fieldOps {
+		if !strings.HasPrefix(rest, string(candidate)) {
+			continue
+		}
+		op = candidate
+		value = strings.TrimSpace(rest[len(candidate):])
+		break
+	}
+	if op == "" || value == "" || !validFieldCode(code) {
+		return "", "", "", false
+	}
+	return code, op, value, true
 }
 
 // ForFacet returns the subset of the selection that should be applied
@@ -439,7 +607,14 @@ func (s Selection) Authorize(
 			// the collection arm: refusing yields an EMPTY result set, not
 			// a 403, so "this field is gated" and "no such field" are
 			// indistinguishable on a code the caller supplied.
-			code, _, ok := SplitFieldTerm(t.Value)
+			// The OPERATOR is deliberately discarded here. What
+			// `read_capability` gates is the FIELD — whether this caller
+			// may learn anything about that column at all — and a
+			// substring probe or a date bound is exactly as capable of
+			// partitioning the corpus one bit at a time as an equality
+			// is. Authorizing per operator would be a gate scoped to the
+			// principal rather than to the payload.
+			code, _, _, ok := SplitFieldTerm(t.Value)
 			if !ok {
 				return false, nil
 			}
@@ -527,7 +702,11 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int) (fr
 		if dim.conjunctive() {
 			joiner = " AND "
 		}
-		parts := make([]string, 0, len(values))
+		// Sub-groups WITHIN a dimension, in first-seen order. Every
+		// dimension but `field:` has exactly one, which is the shape this
+		// loop had before #1165 — see subGroupKey.
+		subOrder := make([]string, 0, 1)
+		bySub := make(map[string][]string, 1)
 		for _, v := range values {
 			// Second gate on the value grammar. ParseSelection already
 			// rejected a malformed one with a 400, but [Selection.With]
@@ -539,17 +718,88 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int) (fr
 			if _, ok := dim.canonicalValue(v); !ok {
 				return "", nil, false
 			}
-			idx++
-			expr, ok := dimensionSQL(e, dim, a, idx)
+			key, ok := subGroupKey(dim, v)
 			if !ok {
 				return "", nil, false
 			}
-			parts = append(parts, expr)
-			args = append(args, v)
+			if _, seen := bySub[key]; !seen {
+				subOrder = append(subOrder, key)
+			}
+			bySub[key] = append(bySub[key], v)
 		}
-		b.WriteString(" AND (" + strings.Join(parts, joiner) + ")")
+
+		groups := make([]string, 0, len(subOrder))
+		for _, key := range subOrder {
+			parts := make([]string, 0, len(bySub[key]))
+			for _, v := range bySub[key] {
+				var op FieldOp
+				if dim == FacetField {
+					// Re-split rather than threading it out of the
+					// grouping pass: canonicalValue has already proven it
+					// parses, so this cannot fail, and one parse function
+					// with one set of rules is what keeps the grouping
+					// and the rendering from disagreeing about where the
+					// operator ends.
+					_, op, _, _ = SplitFieldTerm(v)
+				}
+				idx++
+				expr, ok := dimensionSQL(e, dim, a, idx, op)
+				if !ok {
+					return "", nil, false
+				}
+				parts = append(parts, expr)
+				args = append(args, v)
+			}
+			groups = append(groups, "("+strings.Join(parts, joiner)+")")
+		}
+		b.WriteString(" AND (" + strings.Join(groups, " AND ") + ")")
 	}
 	return b.String(), args, true
+}
+
+// subGroupKey returns the key that decides which terms of one dimension
+// combine with OR and which with AND (#1165).
+//
+// # Why `field:` needs this and the other dimensions do not
+//
+// Every other FacetType is ONE dimension: `extension` names one column,
+// so two values of it are two answers to one question and OR is the only
+// reading that makes sense. `field:` is not one dimension — it is a
+// FAMILY of them, one per field definition, collapsed into a single
+// FacetType because field definitions are data and cannot be enum
+// members ([FacetField]'s doc explains why). Grouping it by FacetType
+// alone therefore ORed terms that name DIFFERENT fields, so ticking
+// `pipeline_stage=lookdev` on top of `color_space=srgb` WIDENED the
+// result set instead of narrowing it.
+//
+// That was already wrong before #1165 — it is #1157's bug, found while
+// adding the operator — but the operator is what makes it unshippable
+// rather than merely surprising: the two bounds of a date range are two
+// terms on ONE field, and ORed they read "on or after March OR on or
+// before June", which is every row that has a date at all. A range would
+// have looked like it worked and quietly matched everything, which is
+// the exact failure mode #1165 asks the parser to make impossible.
+//
+// So the key is (code, operator):
+//
+//   - Same field, same operator → OR. Two values of one vocabulary field
+//     is "material is steel or brass", which is what a multi-select row
+//     on the advanced page means and what #1157 documented.
+//   - Same field, different operator → AND. `>=March` and `<=June` is a
+//     range; `~draft` beside `>=March` is "contains draft AND is recent".
+//   - Different field → AND. Two rows of a form narrow each other.
+//
+// Non-field dimensions all return the same constant key, which
+// reproduces their previous single-group rendering exactly.
+func subGroupKey(dim FacetType, v string) (string, bool) {
+	if dim != FacetField {
+		return "", true
+	}
+	code, op, _, ok := SplitFieldTerm(v)
+	if !ok {
+		return "", false
+	}
+	return code + "\x1f" + string(op), true
 }
 
 // dimensionSQL renders ONE (dimension, entity) pair as a boolean
@@ -566,7 +816,19 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int) (fr
 // the ref it was given; a human writing `type:Image` or `owner:alice`
 // in the DSL sends the name. One expression serves both so the two
 // entry points cannot disagree about what `type:3` means.
-func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (string, bool) {
+// op is the [FieldOp] of a [FacetField] term and is EMPTY for every
+// other dimension. It is a parameter rather than something re-derived
+// here because [Selection.SQL] has already parsed the value to group by
+// it, and parsing the same string twice in two places is how the
+// grouping and the predicate would come to disagree.
+//
+// ⚠️ It does NOT widen the one-placeholder contract this function's
+// callers rely on. Each operator renders a DIFFERENT EXPRESSION over the
+// SAME single placeholder, still carrying `<code><op><value>`; the split
+// still happens in SQL. That is what kept #1165 from having to change
+// the arity for every dimension — the objection [Selection.Authorize]'s
+// doc records against threading the caller through applies here too.
+func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op FieldOp) (string, bool) {
 	p := placeholder(idx)
 	switch dim {
 	case FacetTag:
@@ -602,25 +864,25 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (st
 		}
 	case FacetField:
 		// #1157 — one metadata field's value, as an ordinary predicate.
+		// #1165 — under one of four operators.
 		//
-		// ONE PLACEHOLDER, carrying `<code>=<value>`, and the split
+		// ONE PLACEHOLDER, carrying `<code><op><value>`, and the split
 		// happens in SQL. That is deliberate rather than lazy: this
 		// function's contract is that every term renders exactly one
 		// placeholder, and [Selection.SQL] appends exactly one arg per
 		// term. Taking two here would change the arity for every
 		// dimension — the same objection [Selection.Authorize]'s doc
 		// records against threading the caller through. `split_part`
-		// takes the code, and `substr(… position('=' …))` takes
-		// everything after the FIRST `=`, so a value containing `=`
-		// survives intact.
+		// takes the code, and `substr(… position(<op> …))` takes
+		// everything after the FIRST operator occurrence, so a value
+		// containing the operator's own characters survives intact.
 		//
-		// The value is matched against BOTH storage columns because a
-		// vocabulary field's storage depends on its type
-		// (web/src/lib/fieldOptions.ts VALUE_COLUMN): `select` and
-		// `tree` write one slug into `value_text`, `multi_select`
-		// writes an array into `value_options`. A caller ticking
-		// "steel" does not know or care which, and asking both is one
-		// expression rather than a type lookup per term.
+		// The operator's spelling is spliced from a CLOSED Go constant
+		// ([fieldOps]), never from caller text: `op` reaches here only
+		// after [SplitFieldTerm] matched it against that list, so the
+		// literal below is one of four strings this file wrote. The
+		// caller's bytes stay in the placeholder, where they have always
+		// been.
 		//
 		// `searchable` and `status='active'` are conjuncts, not
 		// conveniences: `searchable` is the operator's statement that a
@@ -633,15 +895,17 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (st
 		// [Selection.Authorize], which refuses the whole search when a
 		// term names a field this caller may not read.
 		if e == visibility.EntityAsset {
+			match, ok := fieldValueSQL(op, p)
+			if !ok {
+				return "", false
+			}
 			return `EXISTS (SELECT 1 FROM asset_field_value ffv
 			                 JOIN field_definition ffd ON ffd.id = ffv.field_id
 			                WHERE ffv.asset_id = ` + a + `id
-			                  AND ffd.code = split_part(` + p + `::TEXT, '=', 1)
+			                  AND ffd.code = split_part(` + p + `::TEXT, '` + string(op) + `', 1)
 			                  AND ffd.searchable = TRUE
 			                  AND ffd.status = 'active'
-			                  AND (ffv.value_text = substr(` + p + `::TEXT, position('=' IN ` + p + `::TEXT) + 1)
-			                       OR substr(` + p + `::TEXT, position('=' IN ` + p + `::TEXT) + 1)
-			                          = ANY(ffv.value_options)))`, true
+			                  AND ` + match + `)`, true
 		}
 		// Posts and collections carry no asset_field_value rows, so a
 		// field filter makes them unsatisfiable — zero hits AND zero
@@ -690,6 +954,65 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (st
 			                   AND fcp.pinned = TRUE
 			                   AND (fcp.expires_at IS NULL OR fcp.expires_at > NOW()))`, true
 		}
+	}
+	return "", false
+}
+
+// fieldValueSQL renders the VALUE half of a [FacetField] predicate for
+// operator op, reading the term from placeholder p (#1165).
+//
+// The value is extracted in SQL as everything after the first occurrence
+// of the operator, so `v` below is the caller's text and nothing else.
+// An unrecognised operator returns ok=false, which [dimensionSQL] turns
+// into "this entity matches nothing" — the same fail-closed direction
+// [SplitFieldTerm] takes at parse time, repeated here because
+// [Selection.With] is exported and can seed a term the parser never saw.
+//
+// # Which storage column each operator reads, and why it is not all of
+// them
+//
+// A field's storage depends on its type (web/src/lib/fieldOptions.ts
+// VALUE_COLUMN): `select` and `tree` write one slug into `value_text`,
+// `multi_select` writes an array into `value_options`, and the date
+// types write `value_date`.
+//
+//   - Equality and contains ask BOTH text columns, because a caller
+//     ticking "steel" does not know or care which one holds it, and
+//     asking both is one expression rather than a type lookup per term.
+//   - The bounds ask value_date ALONE. A range against a text field is
+//     not a narrower question, it is a meaningless one, and `value_date`
+//     is NULL on those rows so it matches nothing — which is the right
+//     answer and the fail-closed one. It also keeps the partial index
+//     `asset_field_value_date_idx (field_id, value_date)` usable, which
+//     an OR across columns would have given up.
+//
+// # `strpos`, not ILIKE
+//
+// A substring match spelled `ILIKE '%' || v || '%'` requires escaping
+// `%` and `_` out of the caller's text, and an escape that is forgotten
+// (or that a later edit drops) turns a search for "50_percent" into a
+// wildcard the caller did not ask for. `strpos` has no metacharacters,
+// so there is nothing to escape and nothing to forget. Both sides are
+// lowered for the case-insensitivity the operator promises.
+//
+// `value_options` is unnested rather than joined into one string:
+// flattening the array would let a match straddle two elements and
+// report a hit for text no single value contains.
+func fieldValueSQL(op FieldOp, p string) (string, bool) {
+	// Everything after the FIRST occurrence of the operator.
+	v := `substr(` + p + `::TEXT, position('` + string(op) + `' IN ` + p +
+		`::TEXT) + ` + strconv.Itoa(len(op)) + `)`
+	switch op {
+	case FieldOpEq:
+		return `(ffv.value_text = ` + v + ` OR ` + v + ` = ANY(ffv.value_options))`, true
+	case FieldOpContains:
+		return `(strpos(LOWER(ffv.value_text), LOWER(` + v + `)) > 0
+		         OR EXISTS (SELECT 1 FROM unnest(COALESCE(ffv.value_options, '{}'::TEXT[])) fo
+		                     WHERE strpos(LOWER(fo), LOWER(` + v + `)) > 0))`, true
+	case FieldOpAtLeast:
+		return `ffv.value_date >= ` + v + `::TIMESTAMPTZ`, true
+	case FieldOpAtMost:
+		return `ffv.value_date <= ` + v + `::TIMESTAMPTZ`, true
 	}
 	return "", false
 }

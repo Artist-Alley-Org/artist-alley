@@ -38,8 +38,35 @@
      *  instance has no CLIP channel — rendering it in both places put
      *  two dropzones on that page. */
     showImageSearch?: boolean;
+    /**
+     * Called with the compiled query EVERY TIME it changes, not only on
+     * submit (#1197).
+     *
+     * # Why this exists
+     *
+     * The advanced page's own sticky Search enabled off the last
+     * SUBMITTED query, because that was the only thing this component
+     * ever told it. So a caller who typed a condition and reached for
+     * the page's primary action found it disabled, and the only way to
+     * enable it was to press a second, smaller button first — the page
+     * read as broken, which is #1197.
+     *
+     * #1197 offered two fixes: have the outer button compile-and-run
+     * whatever is typed, or have the compiled state track the inputs
+     * live. This is the second, and it is the one that matches the
+     * one-representation flow: `compiled` is already a $derived that
+     * updates on every keystroke, so the query the page holds is now the
+     * same value the preview below renders and the same value submit
+     * passes. The alternative would have needed a second path from the
+     * rows to a query — two ways to compile one form, which is the
+     * duplication ADR 0093 exists to prevent.
+     *
+     * It also gives the page a live query to COUNT against (#1173), for
+     * free and without a second compile.
+     */
+    onchange?: (dsl: string) => void;
   }
-  let { onsubmit, initialFreeText = '', showImageSearch = true }: Props = $props();
+  let { onsubmit, initialFreeText = '', showImageSearch = true, onchange }: Props = $props();
 
   const FIELDS = [
     { value: 'title',       labelKey: 'search.advanced.field.title' },
@@ -72,6 +99,18 @@
       parts.push(`${r.not ? 'NOT ' : ''}${r.field}:${qv}`);
     }
     return parts.join(' AND ');
+  });
+
+  // Publish the compiled query on every change (#1197).
+  //
+  // `compiled` is read DIRECTLY here rather than through a helper,
+  // because Svelte 5 collects dependencies through the call frame and
+  // routing the read via a function would make the dependency set
+  // harder to see, not smaller. Nothing this effect writes is read by
+  // it — the host stores the string and never feeds it back — so there
+  // is no cycle.
+  $effect(() => {
+    onchange?.(compiled);
   });
 
   function addRow() {

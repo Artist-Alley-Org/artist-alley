@@ -158,13 +158,43 @@ test.describe('advanced search — vocabulary scale + plain language (#1191)', (
     const chipButtons = page.locator('[data-testid^="field-option-"]');
     expect(await chipButtons.count()).toBeGreaterThan(0);
 
-    // Whatever else is on the page, no single field row is both.
+    // Whatever else is on the page, every field row carries EXACTLY ONE
+    // control.
+    //
+    // ⚠️ WIDENED BY #1165, and deliberately not weakened. This used to
+    // read "chips XOR combobox", which was a complete description of the
+    // page while vocabulary fields were the only kind it could draw. The
+    // operator grammar gave `text` fields a contains box and `date`
+    // fields a range, so those rows now legitimately have NEITHER — and
+    // the old assertion failed on them, which is the correct behaviour
+    // for a spec that pinned a page that no longer exists.
+    //
+    // Widening it to "at most one" would have been the lazy repair and
+    // would have stopped catching anything: a row with no control at all
+    // is a field the caller can see and cannot use, which is exactly
+    // what #1157 shipped for text and date. So the rule is ONE, counted
+    // across every control family the page knows how to render.
     const rows = page.locator('[data-testid^="field-filter-"]');
     for (let i = 0; i < (await rows.count()); i++) {
       const row = rows.nth(i);
-      const chips = await row.locator('[data-testid^="field-option-"]').count();
-      const combos = await row.locator('[data-testid^="vocab-combobox-"]').count();
-      expect(chips > 0 !== combos > 0, `row ${i}: ${chips} chips + ${combos} comboboxes`).toBe(true);
+      const code = (await row.getAttribute('data-testid'))!.replace('field-filter-', '');
+      const controls = {
+        chips: await row.locator('[data-testid^="field-option-"]').count(),
+        combobox: await row.locator('[data-testid^="vocab-combobox-"]').count(),
+        contains: await row.locator('[data-testid^="field-contains-"]').count(),
+        // A range is one control with two ends, so its bounds count once.
+        range: Math.min(
+          await row.locator('[data-testid^="field-from-"]').count(),
+          await row.locator('[data-testid^="field-to-"]').count(),
+        ),
+      };
+      const kinds = Object.entries(controls).filter(([, n]) => n > 0);
+      expect(
+        kinds.length,
+        `field row "${code}" rendered ${kinds.length} control kinds ` +
+          `(${JSON.stringify(controls)}). Zero means a field is offered with no way to ` +
+          'filter on it; more than one means two controls disagree about the same value.',
+      ).toBe(1);
     }
   });
 

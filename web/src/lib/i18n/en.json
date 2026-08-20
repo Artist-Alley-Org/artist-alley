@@ -120,13 +120,22 @@
       "conditions_heading": "What to match",
       "fields_heading": "Filter by field",
       "fields_loading": "Loading fields…",
-      "fields_empty": "There are no fields with a set list of values you can search on.",
+      "fields_empty": "There are no fields you can search on.",
       "fields_error": "Could not load your fields.",
       "by_image_heading": "Search by image",
       "submit": "Search",
       "reset": "Start over",
-      "active_filters": "{count} values chosen",
-      "field_filter_placeholder": "Type to narrow this list…"
+      "active_filters": "{count} filters set",
+      "field_filter_placeholder": "Type to narrow this list…",
+      "types_heading": "Kinds of work",
+      "types_hint": "Pick one or more to narrow the search. Fields that only apply to those kinds appear below.",
+      "contains_placeholder": "Contains these words…",
+      "range_from": "From",
+      "range_to": "To",
+      "section_global": "Applies to everything",
+      "count": "{count} results",
+      "count_capped": "More than {count} results",
+      "count_loading": "Counting…"
     }
   },
   "blogs": {
