@@ -3094,6 +3094,10 @@
   "post_menu": {
     "manage_access": "Manage access…",
     "edit_post": "Edit post…",
+    "publish_post": "Publish",
+    "unpublish_post": "Unpublish — back to draft",
+    "publish_failed": "Could not change this post's publication.",
+    "draft_badge": "Draft",
     "delete_post": "Delete post…",
     "actions_button": "Post actions",
     "add_to_collection": "Save to collection…"
@@ -3400,8 +3404,8 @@
       "mode_one_post": "One post with all files",
       "mode_one_per_file": "One post per file",
       "post_required": "Files added to a collection become a post \u2014 collections hold posts, not loose files.",
-      "workflow_state_label": "Workflow state",
-      "workflow_state_default": "Default",
+      "draft_label": "Save as a draft",
+      "draft_hint": "Only you can see it. Publish when you're ready.",
       "tags_label": "Tags",
       "remove_tag_aria": "Remove tag {tag}",
       "tag_placeholder": "press Enter to add",
@@ -3475,7 +3479,8 @@
       "collections": "Collections",
       "assets": "Assets",
       "uploads": "Your uploads",
-      "liked_posts": "Liked posts",
+      "drafts": "Drafts",
+    "liked_posts": "Liked posts",
       "liked_assets": "Liked assets"
     },
     "tabs": {
@@ -3484,7 +3489,12 @@
     "tab": {
       "portfolio": "Portfolio",
       "about": "About",
-      "likes": "Likes"
+      "likes": "Likes",
+      "drafts": "Drafts"
+    },
+    "drafts": {
+      "hint": "Only you can see these. Publish one from its post menu when it's ready.",
+      "empty": "No drafts. Tick \u201cSave as a draft\u201d when you upload to start one."
     },
     "about": {
       "location": "Location",
