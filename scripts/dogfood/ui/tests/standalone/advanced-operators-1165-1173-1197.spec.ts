@@ -128,15 +128,50 @@ test.describe.configure({ mode: 'serial' });
 
 let probeId = '';
 let typeRef = 0;
+let priorPublicMode: boolean | undefined;
+
+/**
+ * Read / set / restore the instance's anonymous-browsing switch.
+ *
+ * ⚠️ INSTANCE CONFIG IS A FIXTURE, and this file learned it the hard
+ * way: the anonymous arm below passed locally and 401'd in CI, because
+ * the coding stack happens to have public mode ON and CI's dogfood stack
+ * has it OFF. A spec that asserts anonymous behaviour cannot inherit
+ * that setting from whichever stack it lands on — it has to own it, the
+ * same way it owns the field definition it filters against.
+ *
+ * The prior value is captured before anything is changed and restored in
+ * `afterAll` EVEN ON FAILURE, because the dogfood stack is persistent:
+ * a spec that left the toggle flipped would silently change the instance
+ * every later spec runs against. Same read/set/restore contract as
+ * collection-public-tier-1195.
+ */
+async function setPublicMode(request: APIRequestContext, on: boolean) {
+  const r = await request.patch('/api/v1/admin/system/public-mode', { data: { enabled: on } });
+  expect(r.status(), `public mode must be settable to ${on}`).toBe(200);
+  expect(((await r.json()) as { enabled: boolean }).enabled).toBe(on);
+}
 
 test.beforeAll(async ({ request }) => {
   typeRef = await imageTypeRef(request);
   probeId = await ensureProbeField(request, typeRef);
+
+  const mode = await request.get('/api/v1/admin/system/public-mode');
+  expect(mode.status(), 'public-mode state must be readable as admin').toBe(200);
+  priorPublicMode = ((await mode.json()) as { enabled: boolean }).enabled;
 });
 
 test.afterAll(async ({ request }) => {
-  if (!probeId) return;
   await loginAsAdminViaAPI(request);
+  // Restored FIRST and unconditionally: the early return below is about
+  // the probe field, and letting it skip the switch would leave the
+  // instance altered for every spec that runs after this one.
+  if (priorPublicMode !== undefined) {
+    await request
+      .patch('/api/v1/admin/system/public-mode', { data: { enabled: priorPublicMode } })
+      .catch(() => undefined);
+  }
+  if (!probeId) return;
   await request.delete(`/api/v1/fields/${probeId}`);
 });
 
@@ -369,12 +404,46 @@ test.describe('advanced search — operators, sections, live count', () => {
     // The same filter, two viewers. The count must differ — a preview
     // that showed everyone the privileged number would be reporting how
     // many rows the caller is NOT allowed to see.
-    const filter = encodeURIComponent(`field:${TEXT_FIELD}~aurora`);
+    //
+    // # Why the filter is `sensitivity:` and not a `field:` term
+    //
+    // The comparison needs content the admin can see and a stranger
+    // cannot, and it has to be there on EVERY stack this runs on. A
+    // hardcoded field value cannot promise that: CI seeds a
+    // coverage-selected subset (~148 of 1,947 assets), so whether any
+    // non-public asset in it happens to carry a particular word in its
+    // copyright is luck. A test whose premise is luck reports a thin
+    // seed as a security regression.
+    //
+    // `sensitivity` is a REQUIRED coverage dimension (seed/coverage.go's
+    // dimAssetSens), and the seed step fails outright if a required
+    // class is missing — so a restricted asset is guaranteed to exist.
+    // It is the same Selection, the same engine and the same
+    // `total_count` the advanced page previews, so what is under test is
+    // unchanged; only the fixture's guarantee got stronger.
+    const filter = encodeURIComponent('sensitivity:restricted');
 
     await loginAsAdminViaAPI(request);
+
+    // Anonymous browsing ON, so the anonymous leg is refused (or not) by
+    // the SEARCH's own read rule rather than by the instance switch. A
+    // 401 here would not be evidence about the count at all — it would
+    // mean the request never reached the query, which is exactly how
+    // this test failed in CI while passing locally.
+    await setPublicMode(request, true);
+
     const asAdmin = await request.get(`/api/v1/search?filter=${filter}&limit=1`);
-    expect(asAdmin.ok()).toBeTruthy();
+    expect(asAdmin.ok(), `admin search → ${asAdmin.status()}`).toBeTruthy();
     const adminTotal = ((await asAdmin.json()) as { total_count: number }).total_count;
+
+    // A precondition, stated separately so a thin seed says so in those
+    // words instead of arriving as a confusing `0 < 0`.
+    expect(
+      adminTotal,
+      'the seeded stack must hold at least one restricted asset for this comparison — ' +
+        'sensitivity is a required coverage class, so zero here is a SEED failure ' +
+        'rather than a count failure',
+    ).toBeGreaterThan(0);
 
     const anon = await browser.newContext({ storageState: LOGGED_OUT });
     try {
