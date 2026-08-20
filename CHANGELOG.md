@@ -9,6 +9,22 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A page for making a post.** Uploading used to be a modal that asked for a fixed handful of
+  fields and published the moment you submitted. There is now a full page for it, where the only
+  thing required is the files — a title, a description, categories, tags, a cover and an album are
+  all offered and none are asked for. Fields an operator has hidden from the upload form no longer
+  appear on it, which is the first time that setting has had any effect. The quick modal is still
+  there for a fast drop (#1119 in part, PR #1239).
+- **Say whether AI was involved, in your own words.** A work can now carry one of three
+  statements — no AI, AI-assisted, or AI-generated — chosen once at upload. Nothing is
+  pre-selected, and leaving it alone is deliberately *not* the same as declaring no AI was used:
+  work uploaded before this existed carries no statement at all, and the system will never write a
+  disclaimer on an artist's behalf. It is a statement about the work, not a restriction on it —
+  nothing is hidden from anyone (#1167, PR #1239).
+- **A model that needs its textures now says so.** Uploading a 3D model that references external
+  texture files used to render grey with no explanation, which read as a broken viewer rather than
+  a missing file. The upload surface now names the files the model is asking for (#754, PR #1239).
+
 - **Posts have drafts, and publishing is something you do.** A post now starts as a draft that
   only its author can see, and becomes visible when they publish it — an explicit act rather than
   a side effect of uploading. Publishing can be undone: an unpublished post returns to draft
@@ -45,6 +61,10 @@ where applicable, otherwise note "no-spec-impact."
   title nobody wrote (#1161, PR #1232).
 
 ### Fixed
+
+- **Marking an upload as mature could be silently dropped.** Two separate paths lost the setting:
+  the create response never carried it back, and ticking the box *after* the file had been added
+  came too late, because the upload starts as soon as a file is dropped (PR #1239).
 
 - **A wrong API address now says so instead of returning the web page.** In released builds, any
   mistyped, removed or not-yet-shipped API address answered "200 OK" with the site's HTML in the

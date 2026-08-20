@@ -134,8 +134,10 @@ has none and inventing an IPTC-looking value for it would be a lie in a standard
 
 - The column is an enum (or a small lookup), nullable, on `assets`, with post derivation following
   the mature axis's shape — `recompute_post_*` plus a trigger on `post_assets`, a column and a
-  trigger rather than a subquery. **Derivation takes the strongest member value**: a post
-  containing one `generated` member is `generated`.
+  trigger rather than a subquery. ~~**Derivation takes the strongest member value**: a post
+  containing one `generated` member is `generated`.~~ **Superseded 2026-08-20 by PR #1239 — see
+  the amendment below. "Strongest" is underspecified over `{none, undeclared}` and the literal
+  reading produces exactly the fabricated disclaimer decision 2 exists to prevent.**
 - Because it is a filter and not a gate, **no derived copy has to be withheld**, which is what
   keeps this cheap. That property is a consequence of decision 4 and disappears the moment
   decision 4 is revisited.
@@ -166,3 +168,39 @@ a false disclaimer is most damaging. Absence of a signal is not a signal.
 **Let operators gate on it now.** Rejected as premature and expensive: it converts a statement into
 a permission and drags every derived copy into the withholding discipline. Moderation already has
 machinery for removing work.
+
+## Amendment — 2026-08-20, after implementation (PR #1239)
+
+**The derivation rule above was wrong, and the implementation caught it.** It said "strongest
+member value", which reads as a total order over `NULL < none < assisted < generated`. Under that
+order a post whose members are `{none, undeclared}` derives **`none`** — the post disclaims AI on
+behalf of a maker nobody asked. That is precisely the fabricated disclaimer decision 2 refuses to
+write into the column, arriving through the derivation instead of the default.
+
+**The rule is asymmetric, because the claims are:**
+
+> **A positive claim propagates on ANY. The negative claim requires ALL.**
+
+- any contributor `generated` → the post is `generated`
+- else any contributor `assisted` → the post is `assisted`
+- else **every** contributor (over a non-empty set) `none` → the post is `none`
+- otherwise **NULL** — no contributors, or at least one nobody asked
+
+This is the same asymmetry as decision 3, one level up. There, absence of an extracted signal
+cannot establish `none`; here, an undeclared *member* cannot be absorbed into a post-level `none`.
+Both say the system never manufactures a disclaimer, whatever route it would arrive by.
+
+`post_ai_provenance()` (migration `00060_ai_provenance.sql`) implements exactly this, and the
+implementation demonstrated the guard is load-bearing rather than theoretical: installing the naive
+total-order function in its place fails four assertions.
+
+**Two further corrections from the same pass, both recorded so they are not re-argued:**
+
+- **Cover pictures count as contributors from the first migration.** The brief said to follow
+  `00052`'s shape; `00052` had to be *completed* by `00054` (#1147), because a post can carry a
+  cover that is not a member and the derivation missed it. Following the shape while ignoring the
+  correction would have shipped a known hole. The `contributors` CTE unions `post_assets` with
+  `cover_asset_id` / `cover_thumbnail_asset_id`.
+- **No backfill, deliberately.** Unlike `00054`, the column is brand new: every asset is NULL, so
+  every post derives to NULL, which is already the column's value. A backfill would be a no-op
+  UPDATE over every post.
