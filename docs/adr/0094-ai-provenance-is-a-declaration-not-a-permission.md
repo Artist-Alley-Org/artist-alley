@@ -204,3 +204,48 @@ total-order function in its place fails four assertions.
 - **No backfill, deliberately.** Unlike `00054`, the column is brand new: every asset is NULL, so
   every post derives to NULL, which is already the column's value. A backfill would be a no-op
   UPDATE over every post.
+
+## Fourth amendment — 2026-08-20, owner ruling on what the filter actually excludes
+
+The owner ruled on the consuming half, and it refines the model rather than contradicting it.
+Verbatim intent:
+
+> The declaration is for a single asset, applied like metadata. If someone filters out AI content
+> it should still show a post that has mixed AI/non-AI content — only exclude posts with **pure**
+> AI. AI could be used as part of an ideation phase and the final project might be pure human made.
+> It should still show AI content in the post if the search returns it, just make sure it is
+> labelled.
+
+**Why this is a real refinement and not a preference.** "Contains AI" and "is AI work" are
+different claims, and only the second is what a viewer hiding AI work is asking about. An artist who
+used a generative tool to explore compositions and then painted the final piece by hand has made
+human work; excluding their post because one member carries a declaration would punish the honest
+declaration — and the entire design rests on making honest declaration cheap.
+
+**1. Two derived facts, not one.** `posts.ai_provenance` (the strongest-member value from the third
+amendment) answers **"does this post contain AI?"** and drives **labelling**. It cannot answer
+"is this purely AI" — verified: `{generated, generated}`, `{generated, none}`,
+`{generated, undeclared}` and `{generated, assisted}` **all derive `generated`**. A filter keyed on
+it would exclude precisely the mixed posts this ruling protects.
+
+So a second derived fact is required: **pure** — every contributor, over a non-empty set, declares
+`generated`. A post is not pure if any member is `none`, `assisted`, or **undeclared**.
+
+**2. The filter excludes only pure-AI posts, and it fails toward showing.** An undeclared member
+means we do not know, and not-knowing must not hide an artist's work — wrongly hiding human work is
+a worse error than showing one more AI post to someone who asked not to see them. This is the same
+direction as decision 3 and the third amendment: **the system never resolves an unknown into a
+claim against the maker's interest.**
+
+Note that `assisted` never contributes to purity. An all-`assisted` post is human work made with
+AI help, which is exactly what the ruling protects.
+
+**3. A surviving post shows all of its members. Labelling replaces hiding.** Nothing inside a post
+is withheld on provenance grounds — decision 4 already forbids it, and this makes the consequence
+explicit: an AI member inside a mixed post renders normally and carries its **own** label, because
+the declaration is per-asset and so is the label. The asset viewer marks AI content distinctly
+(the owner's suggestion: a different outline around the viewport). Post-level chrome states the
+post-level fact; asset-level chrome states the asset's.
+
+**4. This stays a filter.** Nothing here gates. Decision 4 is untouched, and with it the freedom
+from any derived-copies obligation.
