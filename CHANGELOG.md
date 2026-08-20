@@ -9,6 +9,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Posts have drafts, and publishing is something you do.** A post now starts as a draft that
+  only its author can see, and becomes visible when they publish it — an explicit act rather than
+  a side effect of uploading. Publishing can be undone: an unpublished post returns to draft
+  rather than being deleted. Existing posts were all published on upgrade, so nothing already
+  visible disappears (#1161, PR #1231).
+- **An asset can tell you where it ended up.** The owner of a file can ask which posts it appears
+  in, including posts written by other people — the ordinary case in a shared team library. Posts
+  they may read arrive whole; the rest are summarised as a count with no other detail, so the
+  answer never becomes a way to learn about posts they cannot see. Only the file's owner and
+  administrators may ask. This is currently available through the API only; the asset menu entry
+  is still to come (#1161, PR #1232, UI tracked in #1237).
+
 - **A field can say where it appears.** Operators can now keep a field off the advanced search
   page or the upload form, and give it an edit tab, instead of every field showing everywhere —
   which matters the moment a catalogue has more than a handful. Nothing changes for existing
@@ -23,7 +35,22 @@ where applicable, otherwise note "no-spec-impact."
   merging two leaves a permanent marker so the old name keeps resolving instead of vanishing
   (#789, PR #1228).
 
+### Changed
+
+- **Collections hold posts, not loose files.** Dropping a file into a collection used to publish
+  it there with no title and no framing, and no moment where the artist decided it was ready.
+  Uploading into a collection now composes a post, and the two endpoints that could pin a bare
+  file into a collection are gone. Files already pinned this way are left alone rather than being
+  turned into posts — an automatically generated post is a publication nobody authored, with a
+  title nobody wrote (#1161, PR #1232).
+
 ### Fixed
+
+- **A wrong API address now says so instead of returning the web page.** In released builds, any
+  mistyped, removed or not-yet-shipped API address answered "200 OK" with the site's HTML in the
+  body, so a program calling it could not tell a missing endpoint from a working one. It now
+  answers a proper 404. This only ever affected released builds, which is why it survived so long
+  — development builds already answered correctly, so the two disagreed (#1161, PR #1232).
 
 - **Turning off a field's searchability now takes effect.** The setting was honoured when values
   were written but never re-applied when the setting itself changed, so unticking the box left
@@ -360,7 +387,6 @@ where applicable, otherwise note "no-spec-impact."
   an account that follows studios and no individuals saw an empty feed — with the studios it
   follows listed directly above it. It now means both (#1048).
 
-
 - **Search filters actually filter.** Every facet beside a search — tag, file type, owner,
   sensitivity, extension — showed a real count and did nothing when you clicked it. They are
   controls now: tick one and the results narrow, and the number on the bucket is exactly how many
@@ -561,7 +587,6 @@ where applicable, otherwise note "no-spec-impact."
   built for refining a search was the one screen you couldn't refine one on. It now updates in
   place, keeping focus and scroll position. Searching from anywhere else still takes you to the
   results, as before (#1053).
-
 
 - **The check that proves 3D previews actually work now runs when it matters.** Generating a
   preview for a 3D model is a chain — a headless browser renders the model and saves the picture —
@@ -3309,7 +3334,6 @@ pre-existing access holes in the foundation it was built on.
   carrying the exact commit that changed so a rapid second push cannot
   cause the wrong content to be built, and a rejected credential fails
   loudly rather than skipping silently.
-
 
 - `app/schema.sql` refreshed from a cleanly migrated database. The
   committed copy had drifted in **column order** — Postgres physical
