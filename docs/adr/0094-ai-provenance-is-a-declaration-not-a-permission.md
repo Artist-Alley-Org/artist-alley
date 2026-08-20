@@ -181,6 +181,13 @@ write into the column, arriving through the derivation instead of the default.
 
 > **A positive claim propagates on ANY. The negative claim requires ALL.**
 
+⚠️ **Scope: this rule governs `posts.ai_provenance` — the LABELLING fact, "does this post contain
+AI?".** It is not the rule for filtering. The fourth amendment adds a **second** derived fact for
+that, because exclusion asks a different question ("is this post purely AI?") and keying a filter
+on this value would exclude every mixed post. The two rules look opposed and are not: each applies
+the same principle — *never resolve an unknown into a claim against the maker* — to a different
+question.
+
 - any contributor `generated` → the post is `generated`
 - else any contributor `assisted` → the post is `assisted`
 - else **every** contributor (over a non-empty set) `none` → the post is `none`
