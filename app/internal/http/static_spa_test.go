@@ -181,3 +181,76 @@ func TestServeSPA_CacheControlOnShell(t *testing.T) {
 		t.Fatalf("Content-Type: got %q want text/html prefix", got)
 	}
 }
+
+// TestServeSPA_UnroutedAPIPathIs404JSON is #1161's regression.
+//
+// # The bug this pins
+//
+// serveSPA is chi's NotFound handler in the embed_web (production)
+// build, so every unrouted path reaches it — including `/api/...`. It
+// answered them with `200 text/html` and the SvelteKit shell in the
+// body, which means a REMOVED endpoint was indistinguishable from a
+// working one to any client, and a misspelled URL "succeeded".
+//
+// It was invisible for as long as it existed because the two builds
+// disagreed: the dev image's mountStaticFrontend is a no-op, so chi's
+// own NotFound answered a clean 404 there. #1161 retired
+// `DELETE /api/v1/collections/{id}/resources/{asset_id}`, asserted the
+// route was gone, and got 404 locally and 200 in CI — the same code,
+// two build tags.
+//
+// The table is written as (path, wantAPI) rather than as two lists so
+// the NEAR MISSES sit next to the hits: `/apidocs` and `/api-keys` are
+// SPA routes that start with the same four letters, and a
+// `strings.HasPrefix(path, "/api")` guard — the obvious first spelling
+// — swallows both.
+func TestServeSPA_UnroutedAPIPathIs404JSON(t *testing.T) {
+	fsys := newTestFS(t)
+	for _, tc := range []struct {
+		path    string
+		wantAPI bool
+		why     string
+	}{
+		{"/api/v1/collections/x/resources/y", true, "the retired endpoint that found this"},
+		{"/api/v1/nonesuch", true, "any unrouted API path"},
+		{"/api", true, "the bare prefix is not an SPA route either"},
+		{"/api/", true, "trailing slash"},
+		{"/api/v1/../v1/nonesuch", true, "cleaned before comparing, so this is still API"},
+		{"/apidocs", false, "an SPA route that merely starts with the same letters"},
+		{"/api-keys", false, "ditto, with a hyphen"},
+		{"/", false, "the shell itself"},
+		{"/admin/users", false, "an ordinary client route"},
+		{"/api/../admin/users", false, "cleans to an SPA path and must be served as one"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			resp, body := doRequest(t, fsys, tc.path)
+			if !tc.wantAPI {
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("%s (%s): status %d, want 200 — the SPA shell", tc.path, tc.why, resp.StatusCode)
+				}
+				if !strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+					t.Errorf("%s (%s): content-type %q, want text/html",
+						tc.path, tc.why, resp.Header.Get("Content-Type"))
+				}
+				return
+			}
+			if resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("%s (%s): status %d, want 404 — an unrouted API path must not be answered by the SPA",
+					tc.path, tc.why, resp.StatusCode)
+			}
+			if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+				t.Errorf("%s: content-type %q, want application/json", tc.path, ct)
+			}
+			// The body is the API's own error envelope, not the shell.
+			// Asserting the ABSENCE of the shell as well as the presence
+			// of the envelope: a handler that wrote both would pass a
+			// presence-only check.
+			if !strings.Contains(body, `"error"`) {
+				t.Errorf("%s: body %q carries no error envelope", tc.path, body)
+			}
+			if strings.Contains(body, "<html") {
+				t.Errorf("%s: the SPA shell is still in the body: %q", tc.path, body)
+			}
+		})
+	}
+}
