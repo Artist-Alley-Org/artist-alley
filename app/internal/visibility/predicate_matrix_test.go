@@ -529,6 +529,72 @@ func TestMatrix_Posts(t *testing.T) {
 				"the trash view waived an authorization disjunct along with soft-delete")
 		}
 	})
+
+	// PUBLICATION is the other orthogonal axis (#1161, ADR 0091
+	// decision 7), and it has the same trap wearing different clothes:
+	// IncludeDrafts must waive the publication conjunct and NOTHING
+	// ELSE. The failure to guard against is the one that looks
+	// harmless — "the author can see their own drafts, so let the
+	// option open the post to whoever the tier admits" — which hands a
+	// stranger somebody's unfinished `public` post.
+	t.Run("drafts", func(t *testing.T) {
+		draftID := uuid.New()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO posts (id, title, author_user_ref, visibility, state_id)
+			VALUES ($1, 'vis-matrix-draft', $2, 'public',
+			        (SELECT id FROM workflow_states WHERE domain='post' AND code='wip'))`,
+			draftID, author); err != nil {
+			t.Fatalf("seed draft: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), `DELETE FROM posts WHERE id=$1`, draftID)
+		})
+		probe := []uuid.UUID{draftID, ids[0]} // the draft + the public published post
+
+		// Default predicate: no shared surface returns the draft, for
+		// ANYBODY — its author and a moderator included. That last pair
+		// is the assertion a rule written as "unless it is mine" fails.
+		for _, c := range []struct {
+			name   string
+			caller Caller
+			caps   PostCaps
+		}{
+			{"anonymous", anonCaller(), PostCaps{}},
+			{"its author", userCaller(author), PostCaps{}},
+			{"a stranger", userCaller(other), PostCaps{}},
+			{"posts.admin", userCaller(moderator), PostCaps{SeesAllPrivate: true}},
+		} {
+			got := visibleIDsOpts(t, pool, EntityPost, c.caller, "posts", probe, WithPostCaps(c.caps))
+			if got[draftID] {
+				t.Errorf("%s: a DRAFT appeared on a shared-surface predicate", c.name)
+			}
+			if c.name != "anonymous" && !got[ids[0]] {
+				t.Errorf("%s: the published post vanished too — the conjunct is too wide", c.name)
+			}
+		}
+
+		// IncludeDrafts: the AUTHOR and a moderator get it; a stranger
+		// still does not, because the read rule's own draft conjunct is
+		// not waivable.
+		for _, c := range []struct {
+			name   string
+			caller Caller
+			caps   PostCaps
+			want   bool
+		}{
+			{"its author", userCaller(author), PostCaps{}, true},
+			{"posts.admin", userCaller(moderator), PostCaps{SeesAllPrivate: true}, true},
+			{"a stranger", userCaller(other), PostCaps{}, false},
+			{"anonymous", anonCaller(), PostCaps{}, false},
+		} {
+			got := visibleIDsOpts(t, pool, EntityPost, c.caller, "posts", probe,
+				IncludeDrafts(), WithPostCaps(c.caps))
+			if got[draftID] != c.want {
+				t.Errorf("%s + IncludeDrafts: draft visible=%v, want %v",
+					c.name, got[draftID], c.want)
+			}
+		}
+	})
 }
 
 // TestAnonymousBranchesBindNoArgs pins the composition property every

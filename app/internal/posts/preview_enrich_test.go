@@ -143,8 +143,21 @@ func peHandler(pool *pgxpool.Pool) *Handler {
 	return NewHandler(pool, logger, cache.NewRegistry(pool, logger))
 }
 
+// ctxAs builds a request context for an ordinary signed-in user.
+//
+// `posts.publish` is part of "ordinary" (#1161). Every account created
+// through registration lands on the Base role, and migration 00059
+// grants Base that capability, because publishing your own work is what
+// an artist account is for. A fixture identity with NO capabilities is
+// not a realistic caller — it is an account in a state registration
+// cannot produce — and building one here would have made every
+// CreatePost test assert against a user who may not publish.
 func ctxAs(ref int64) context.Context {
-	return auth.WithIdentity(context.Background(), &auth.Identity{UserRef: ref, AuthMethod: "session"})
+	return auth.WithIdentity(context.Background(), &auth.Identity{
+		UserRef:      ref,
+		AuthMethod:   "session",
+		Capabilities: []string{CapPostsPublish},
+	})
 }
 
 // memberFlag reads preview_available for one member.

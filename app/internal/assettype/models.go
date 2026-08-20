@@ -785,23 +785,24 @@ type Notification struct {
 }
 
 type Post struct {
-	ID                    pgtype.UUID        `json:"id"`
-	AuthorUserRef         int64              `json:"author_user_ref"`
-	Title                 string             `json:"title"`
-	Description           string             `json:"description"`
-	Visibility            string             `json:"visibility"`
-	CoverAssetID          pgtype.UUID        `json:"cover_asset_id"`
-	PostedAt              pgtype.Timestamptz `json:"posted_at"`
-	LikeCount             int64              `json:"like_count"`
-	CommentCount          int64              `json:"comment_count"`
-	SearchText            interface{}        `json:"search_text"`
-	OriginServerID        pgtype.UUID        `json:"origin_server_id"`
-	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	StateID               pgtype.UUID        `json:"state_id"`
-	TeamID                pgtype.UUID        `json:"team_id"`
-	CoverThumbnailAssetID pgtype.UUID        `json:"cover_thumbnail_asset_id"`
+	ID             pgtype.UUID        `json:"id"`
+	AuthorUserRef  int64              `json:"author_user_ref"`
+	Title          string             `json:"title"`
+	Description    string             `json:"description"`
+	Visibility     string             `json:"visibility"`
+	CoverAssetID   pgtype.UUID        `json:"cover_asset_id"`
+	PostedAt       pgtype.Timestamptz `json:"posted_at"`
+	LikeCount      int64              `json:"like_count"`
+	CommentCount   int64              `json:"comment_count"`
+	SearchText     interface{}        `json:"search_text"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	// The post's workflow state, domain = 'post' (ADR 0091 decision 7). Two states are reachable: `published` — the post is on shared surfaces — and `wip`, the DRAFT state, which is visible to its author and to a posts.admin holder and appears on no shared surface at all. Set by POST /posts from the request's `draft` flag and moved only by workflow.Service.Transition (POST /posts/{id}/publish and /unpublish), which validates the edge and writes workflow_audit; no request body accepts this column. READ FAIL-CLOSED: visibility.postPublishedExpr asks `state_id = <published>`, so a NULL or unrecognised state withholds the post rather than showing it — the FK is ON DELETE SET NULL, and the other spelling would publish every draft the moment a state row was deleted. This is the ONE place a workflow state decides publication, and it is deliberate: the `post` domain has exactly these two states and ADR 0091 identifies them with draft/published. An ASSET's workflow state means something else entirely — where the file is in its production process — and must never be read this way.
+	StateID               pgtype.UUID `json:"state_id"`
+	TeamID                pgtype.UUID `json:"team_id"`
+	CoverThumbnailAssetID pgtype.UUID `json:"cover_thumbnail_asset_id"`
 	// Per-post override for the parent asset's subtitle tracks. NULL means use the asset's intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.
 	SubtitleTrackOverride []byte  `json:"subtitle_track_override"`
 	DeletedReason         *string `json:"deleted_reason"`
