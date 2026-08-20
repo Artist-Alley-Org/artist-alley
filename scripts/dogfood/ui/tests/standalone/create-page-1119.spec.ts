@@ -36,6 +36,15 @@ import { tid } from '../../helpers/testids';
 const PROBE_CODE = 'probe_1119_create_page';
 const PROBE_LABEL = 'Finish (1119 probe)';
 
+/**
+ * Everything this file made, torn down after each case.
+ *
+ * Deleting the post is not enough: a post delete does not remove its
+ * member assets, and the assets are what the browse/uploads grids show.
+ */
+const createdAssets: string[] = [];
+const createdPosts: string[] = [];
+
 test.describe.configure({ mode: 'serial' });
 
 let probeId = '';
@@ -99,6 +108,17 @@ test.afterAll(async ({ request }) => {
   await request.delete(`/api/v1/fields/${probeId}`);
 });
 
+test.afterEach(async ({ request }) => {
+  // Posts first, then assets: an asset that is still a member is one the
+  // delete has to reason about, and there is no reason to make it.
+  for (const id of createdPosts.splice(0)) {
+    await request.delete(`/api/v1/posts/${id}`).catch(() => undefined);
+  }
+  for (const id of createdAssets.splice(0)) {
+    await request.delete(`/api/v1/assets/${id}`).catch(() => undefined);
+  }
+});
+
 /**
  * Open the field disclosure. Clicking the <details> itself is not the
  * same thing — the toggle lives on <summary>, and a click that lands
@@ -113,8 +133,31 @@ async function openFields(page: Page) {
   await expect(details).toHaveJSProperty('open', true);
 }
 
-/** Put one novel file into the page's queue and wait for it to be ready. */
-async function dropOneFile(page: Page, name = 'create-probe.txt') {
+/**
+ * Put one novel file into the page's queue, wait for it to be ready, and
+ * return the ASSET ID the server created for it.
+ *
+ * ⛔ RETURNING THE ID IS NOT A CONVENIENCE — IT IS THE CLEANUP CONTRACT.
+ *
+ * Adding a file creates an asset row IMMEDIATELY; the upload does not
+ * wait for submit. So every call here leaves a real asset behind, and a
+ * spec that only deletes the POST it published leaks one per case, per
+ * run, forever. #1198 is the same lesson: leftovers accumulated, the
+ * browse feed is newest-first, and they sat at the TOP of page one where
+ * they pushed the seeded corpus out of the window OTHER specs read.
+ * `marquee-select-1177` sweeps the uploads grid and `ui-13` searches for
+ * a seeded term; both go red from leftovers that are nothing to do with
+ * them, which is how a spec that changes what the next spec sees looks
+ * from the outside.
+ *
+ * The id is read off the create RESPONSE rather than guessed from the
+ * page, so it is exact and available even when the test never publishes.
+ */
+async function dropOneFile(page: Page, name = 'create-probe.txt'): Promise<string> {
+  const created = page.waitForResponse(
+    (r) => r.url().includes('/api/v1/assets') && r.request().method() === 'POST' && r.ok(),
+    { timeout: 30_000 },
+  );
   await page.locator(tid('create-file-input')).setInputFiles({
     name,
     mimeType: 'text/plain',
@@ -124,7 +167,11 @@ async function dropOneFile(page: Page, name = 'create-probe.txt') {
   });
   await expect(page.locator(tid('create-file-row'))).toHaveCount(1);
   await expect(page.locator(tid('create-publish'))).toBeEnabled({ timeout: 30_000 });
+  const assetId = ((await (await created).json()) as { id: string }).id;
+  createdAssets.push(assetId);
+  return assetId;
 }
+
 
 test.describe('the create page (#1119)', () => {
   test('drop a file, press publish — TWO actions, nothing required', async ({ page }) => {
@@ -158,7 +205,7 @@ test.describe('the create page (#1119)', () => {
     expect(post.draft, 'Publish means published').toBeFalsy();
     expect(post.members?.length).toBe(1);
 
-    await page.request.delete(`/api/v1/posts/${postId}`).catch(() => undefined);
+    createdPosts.push(postId);
   });
 
   test('show_on_upload governs the create page, in BOTH directions', async ({ page, request }) => {
@@ -254,7 +301,7 @@ test.describe('the create page (#1119)', () => {
         await anon.close();
       }
     } finally {
-      await page.request.delete(`/api/v1/posts/${postId}`).catch(() => undefined);
+      createdPosts.push(postId);
     }
   });
 

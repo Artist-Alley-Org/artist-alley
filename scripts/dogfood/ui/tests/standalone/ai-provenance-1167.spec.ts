@@ -66,6 +66,24 @@ async function readAsset(request: APIRequestContext, id: string) {
   return (await r.json()) as { ai_provenance?: string | null };
 }
 
+/**
+ * Remove a post AND the assets it was built from.
+ *
+ * ⛔ Deleting only the post is what #1198 is about. A post delete leaves
+ * its member assets standing, the browse and uploads grids are
+ * newest-first, and leftovers pile up at the TOP of page one where they
+ * push the seeded corpus out of the window OTHER specs read —
+ * `marquee-select-1177` and `ui-13` go red for reasons that have nothing
+ * to do with them. A spec that changes what the next spec sees is not
+ * isolated, however harmless its own leftovers look.
+ */
+async function cleanUp(request: APIRequestContext, postId: string, assetIds: string[]) {
+  await request.delete(`/api/v1/posts/${postId}`).catch(() => undefined);
+  for (const id of assetIds) {
+    await request.delete(`/api/v1/assets/${id}`).catch(() => undefined);
+  }
+}
+
 async function makePost(request: APIRequestContext, assetIds: string[]) {
   const r = await request.post('/api/v1/posts', {
     data: {
@@ -260,6 +278,7 @@ test.describe('AI provenance (#1167)', () => {
   //     a label applied a second later was never sent. `mature` has
   //     behaved this way since #1115 and is asserted here alongside.
   test('a label set AFTER the file was added still reaches the asset', async ({ page }) => {
+    const assetIds: string[] = [];
     await page.goto('/create');
     await page.locator(tid('create-file-input')).setInputFiles({
       name: 'late-label.txt',
@@ -293,8 +312,9 @@ test.describe('AI provenance (#1167)', () => {
         'the mature box has the same failure mode and the same fix — a ticked box ' +
           'that stores nothing is worse than no box',
       ).toBe(true);
+      assetIds.push(...(post.members ?? []).map((m) => m.asset_id));
     } finally {
-      await page.request.delete(`/api/v1/posts/${postId}`).catch(() => undefined);
+      await cleanUp(page.request, postId, assetIds);
     }
   });
 
@@ -331,6 +351,10 @@ test.describe('AI provenance (#1167)', () => {
     await page.locator(tid('create-publish')).click();
     await page.waitForURL(/\/posts\/[0-9a-f-]{36}/, { timeout: 30_000 });
     const postId = page.url().split('/posts/')[1];
+    // Declared OUTSIDE the try, so the finally can still tear it down
+    // when an assertion inside fails — a cleanup that only runs on the
+    // happy path is the leak it was written to prevent.
+    const assetIds: string[] = [];
 
     try {
       const r = await page.request.get(`/api/v1/posts/${postId}`);
@@ -339,6 +363,7 @@ test.describe('AI provenance (#1167)', () => {
         ai_provenance?: string;
         members?: { asset_id: string }[];
       };
+      assetIds.push(...(post.members ?? []).map((m) => m.asset_id));
       expect(
         post.ai_provenance,
         'the declaration made on the page must reach the asset and derive onto the post',
@@ -351,7 +376,7 @@ test.describe('AI provenance (#1167)', () => {
         'generated',
       );
     } finally {
-      await page.request.delete(`/api/v1/posts/${postId}`).catch(() => undefined);
+      await cleanUp(page.request, postId, assetIds);
     }
   });
 });
