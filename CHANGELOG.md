@@ -9,6 +9,12 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Advanced search can ask for more than exact matches.** Fields can now be searched for words
+  they contain and for dates between two points, instead of only exact equality — so "title
+  contains sunset" and "captured between March and June" are expressible at last. The page also
+  groups fields by the kind of work you pick, and shows a running count of how many results your
+  search will return before you run it (#1165, #1197, #1173 in part, PR #1244).
+
 - **A page for making a post.** Uploading used to be a modal that asked for a fixed handful of
   fields and published the moment you submitted. There is now a full page for it, where the only
   thing required is the files — a title, a description, categories, tags, a cover and an album are
@@ -61,6 +67,12 @@ where applicable, otherwise note "no-spec-impact."
   title nobody wrote (#1161, PR #1232).
 
 ### Fixed
+
+- **Adding a second filter to an advanced search no longer widens the results.** Two filters on
+  different fields were being combined as "either" instead of "both", so narrowing a search made it
+  return *more* — 907 matches for one filter and 596 for another gave 1,191 together, when the
+  honest answer was 312. Date ranges were hit hardest, since a range is two conditions on one
+  field: a June range returned 74 results instead of 6 (#1165, PR #1244).
 
 - **Marking an upload as mature could be silently dropped.** Two separate paths lost the setting:
   the create response never carried it back, and ticking the box *after* the file had been added
