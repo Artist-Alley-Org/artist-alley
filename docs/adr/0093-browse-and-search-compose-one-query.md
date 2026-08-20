@@ -98,3 +98,49 @@ distinction in decision 1 can go away.
 it.** Rejected: the feed's parameters are positional and scope-shaped; the
 search grammar already expresses conditions, negation and composition, and is
 the one federation and smart collections (ADR 0009, #1194) both need.
+
+## Amendment — 2026-08-20, after #1165 (PR #1244)
+
+Two things this ADR did not say, one of which was quietly false for as long as it has existed.
+
+**1. The grammar now carries OPERATORS, not only equality.** Decision 3 says adding a filterable
+dimension means adding it to the query grammar; #1165 extends that to the *value* grammar. A field
+term is now `code<op>value` — contains and date-range join equality — with the separator characters
+drawn from outside the field-code alphabet so the operator is found by scanning rather than by a
+second delimiter. It lives in the shared grammar, so the rail, the DSL, a saved query and the URL
+all mean the same thing by it. An unknown or malformed operator fails **closed** at parse time; it
+never degrades to equality, because a filter that quietly matches everything is worse than one that
+errors.
+
+**2. ⛔ HOW MULTIPLE TERMS COMBINE — the rule this ADR never wrote down, and the code got wrong.**
+
+Decision 4 calls every filter a **conjunct**. For the `field:` dimension that was **false**.
+`Selection.SQL` grouped terms by `FacetType`, and `field:` is a *single* `FacetType` holding a whole
+family of dimensions — so two terms naming **different fields ORed**, and adding a filter made the
+result set **larger**. Measured on the real corpus before and after the fix:
+
+| | `color_space=sRGB` | `version=v2` | both |
+|---|---|---|---|
+| before | 907 | 596 | **1191** — exactly the union |
+| after | 907 | 596 | **312** — the intersection |
+
+`907 + 596 − 312 = 1191`, so the pre-fix query was returning precisely the union.
+
+It stayed invisible because every single-filter test and every manual check passes either way. It
+became load-bearing the moment #1165 shipped: **a date range is two terms on one field**, so under
+the old grouping a June range returned 74 rows instead of 6.
+
+**The rule, stated so it cannot drift again:**
+
+> - Terms on the **same field with the same operator** combine with **OR** — they are a value list.
+> - Terms on **different fields** combine with **AND**.
+> - Terms in **different dimensions** combine with **AND**.
+>
+> Implemented as a sub-group key of **(code, operator)** within a dimension. Every dimension other
+> than `field:` has exactly one sub-group, which is the shape this loop had before #1165.
+
+**The lesson worth carrying past this ADR:** a composition rule that is never written down is not
+a decision, it is whatever the code happened to do — and *singular right, plural wrong* is invisible
+to any test that uses one of the thing. When a dimension can appear more than once, state its
+combination rule here and assert the N≥2 case with the arithmetic written out (`both < min(a, b)`),
+never `both > 0`, because a count assertion that passes on a union passes on the bug.
