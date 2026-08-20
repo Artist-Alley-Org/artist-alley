@@ -84,6 +84,10 @@ beyond what any placeholder discloses (ADR 0064's field plane).
 - `collection_resources` becomes internal or disappears. Its write endpoints
   are retired; the cover picker's read of it is replaced by the ordinary asset
   search (an asset need not be a member to be a cover — ADR 0088).
+  *(⚠️ Partly superseded 2026-08-20 by PR #1232 — see the third amendment: the
+  writes did retire, the picker's read was replaced by a different and better
+  mechanism, and the "internal or disappears" half is not done. Tracked as
+  #1236.)*
 - Point 5 needs a query that crosses ownership boundaries safely. It is the one
   place where an asset owner learns something about a post they may not read,
   and the disclosure is deliberately minimal: existence and count, never title,
@@ -183,3 +187,55 @@ the **asset library** (personal storage, a file with its own life, reusable acro
 DAM half) and the **draft** (a publication in progress — the portfolio half). Neither platform
 tradition has both; the combination is ours, and the two must not be conflated. A file sitting in
 storage is not a draft post, and a draft post is not a private file.
+
+## Third amendment — 2026-08-20, after implementation (PRs #1231, #1232)
+
+The model above shipped. Two things the code revealed belong here, because both are places a
+later reader would otherwise "correct" the implementation back towards a line in this document.
+
+**1. The cover picker was replaced by POSTS, not by an asset search — and the rest of the
+`collection_resources` retirement is unfinished.**
+
+The Consequences bullet above prescribed that the picker's read "is replaced by the ordinary
+asset search". That is not what shipped, and the divergence is deliberate. The picker now reads
+`GET /collections/{id}/posts` and flattens their members — the same sentence the old code meant,
+*"the pictures already in this collection"*, said in the model that now holds: a collection
+contains posts, a post contains assets. It needs no new endpoint and no server change, whereas an
+asset search would have meant building an asset browser inside a modal. The API still accepts any
+asset the curator may picture, so a cover can still outlive the thing it was chosen from.
+
+⚠️ **The other half of that bullet is NOT done.** `collection_resources` neither became internal
+nor disappeared:
+
+- the **mosaic** that composes a collection's fallback cover still `UNION ALL`s pinned
+  `collection_resources` rows beside `collection_posts`, so a collection's tile can be painted
+  from pictures that appear nowhere inside it;
+- `GET /collections/{id}/resources` survived on the stated grounds that *"the cover picker uses
+  it"* — **a justification the same PR falsified**, since it migrated the picker off that read.
+  It is now a live, supported, caller-less read endpoint, which is the shape #1232's own
+  commentary called worse than either alternative;
+- ~1,947 pinned rows remain, unreachable from any surface.
+
+This is **not** a visibility defect and should not be filed as one: the mosaic's asset half
+carries `PreviewReadableSQL`, whose core admits only the owner, `sensitivity = 'public'`, or an
+actual `team_memberships` row — `restricted` has no branch at all. The problem is model
+consistency, not disclosure. Tracked as **#1236**, which should finish the bullet rather than
+half of it. Whatever does the finishing, decision 4 still binds: **the surviving rows are not
+converted into posts on the way out.**
+
+**2. Creating a post still publishes by default, and that is not a contradiction.**
+
+`PostCreate` takes a `draft` boolean that defaults to **false**, so an omitted flag publishes
+immediately — which is what every caller before the field existed did. Read quickly against the
+first amendment's *"publication is never a side effect"*, that looks wrong. It is not: submitting
+the compose form **is** the explicit act. Decision 7 requires that a post *can* be created as a
+draft and that publishing is a real transition with its own control, not that every post begin
+life unpublished. Defaulting to draft would add a second required step to the two-action path the
+friction line protects.
+
+What decision 7 *did* remove is the caller's ability to name the state directly: `state_id` is
+gone from `PostCreate`. It used to be written verbatim from client input with no domain
+validation, which was inert only while nothing read post state — and post state is now the
+difference between published and not. **The server owns the state; the only thing a caller may
+say is `draft`.** The matching gap on `PATCH /posts/{id}`, which still accepts and ignores
+`state_id`, is deliberately unwired and tracked as #949.
