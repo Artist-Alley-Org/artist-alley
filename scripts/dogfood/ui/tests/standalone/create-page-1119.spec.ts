@@ -128,7 +128,7 @@ async function dropOneFile(page: Page, name = 'create-probe.txt') {
 
 test.describe('the create page (#1119)', () => {
   test('drop a file, press publish — TWO actions, nothing required', async ({ page }) => {
-    await page.goto('/posts/new');
+    await page.goto('/create');
     await expect(page.locator(tid('create-page'))).toBeVisible();
 
     // Nothing typed, nothing ticked, nothing opened.
@@ -163,7 +163,7 @@ test.describe('the create page (#1119)', () => {
 
   test('show_on_upload governs the create page, in BOTH directions', async ({ page, request }) => {
     // ── on (the default, unset) ───────────────────────────────────
-    await page.goto('/posts/new');
+    await page.goto('/create');
     await dropOneFile(page);
     await openFields(page);
     await expect(
@@ -184,7 +184,7 @@ test.describe('the create page (#1119)', () => {
     const off = await request.get(`/api/v1/fields/${probeId}`);
     expect(((await off.json()) as { show_on_upload?: boolean }).show_on_upload).toBe(false);
 
-    await page.goto('/posts/new');
+    await page.goto('/create');
     await dropOneFile(page);
     await openFields(page);
     // Wait for SOMETHING to settle before reading an absence, so an
@@ -198,7 +198,7 @@ test.describe('the create page (#1119)', () => {
     await page.locator(tid('field-options-save')).click();
     await expect(page.locator(tid('field-options-saved'))).toBeVisible();
 
-    await page.goto('/posts/new');
+    await page.goto('/create');
     await dropOneFile(page);
     await openFields(page);
     await expect(page.locator(tid(`create-field-${PROBE_CODE}`))).toBeVisible({
@@ -207,7 +207,7 @@ test.describe('the create page (#1119)', () => {
   });
 
   test('a draft made here is invisible to everyone but its author', async ({ page, browser }) => {
-    await page.goto('/posts/new');
+    await page.goto('/create');
     await dropOneFile(page);
 
     // PUBLIC visibility, deliberately. `draft` and `visibility` answer
@@ -258,11 +258,41 @@ test.describe('the create page (#1119)', () => {
     }
   });
 
+  // ⛔ THE REGRESSION THIS FILE SHIPPED ONCE AND MUST NOT SHIP AGAIN.
+  //
+  // The upload modal links to the create page, and the modal is mounted
+  // in the ROOT LAYOUT — so that anchor is in the DOM on every page,
+  // visible or not. When the page lived at `/posts/new` the link became
+  // the FIRST match for `a[href^="/posts/"]`, which is how ten dogfood
+  // cases locate a post card. Invisible and first: three specs spent 30s
+  // each clicking a link they could not see, and it passed locally
+  // because the feed happened to render before the assertion ran.
+  //
+  // So the rule is a property of the app, not of those ten locators: no
+  // link OUTSIDE the feed may claim the post-permalink prefix. Asserted
+  // on browse, with the modal open, which is the exact state that broke.
+  test('no offscreen link claims the post-permalink prefix', async ({ page }) => {
+    await page.goto('/');
+    await page.locator(tid('nav-upload-button')).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    const strays = await page.$$eval('a[href^="/posts/"]', (els) =>
+      els
+        .filter((el) => !el.closest('main'))
+        .map((el) => `${el.getAttribute('href')} (${el.getAttribute('data-testid') ?? 'no testid'})`),
+    );
+    expect(
+      strays,
+      'a link outside <main> matching a[href^="/posts/"] will be picked up by every ' +
+        'post-card locator in this suite, and if it is invisible they hang on it',
+    ).toEqual([]);
+  });
+
   test('the page works at 390px — the controls are reachable, not merely present', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/posts/new');
+    await page.goto('/create');
     await expect(page.locator(tid('create-page'))).toBeVisible();
     await dropOneFile(page);
 

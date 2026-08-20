@@ -260,7 +260,7 @@ test.describe('AI provenance (#1167)', () => {
   //     a label applied a second later was never sent. `mature` has
   //     behaved this way since #1115 and is asserted here alongside.
   test('a label set AFTER the file was added still reaches the asset', async ({ page }) => {
-    await page.goto('/posts/new');
+    await page.goto('/create');
     await page.locator(tid('create-file-input')).setInputFiles({
       name: 'late-label.txt',
       mimeType: 'text/plain',
@@ -299,7 +299,7 @@ test.describe('AI provenance (#1167)', () => {
   });
 
   test('the create page control stores nothing until it is touched', async ({ page }) => {
-    await page.goto('/posts/new');
+    await page.goto('/create');
     const group = page.locator(tid('ai-provenance-create'));
     await expect(group).toBeVisible();
 
@@ -319,7 +319,7 @@ test.describe('AI provenance (#1167)', () => {
   });
 
   test('set at upload on the create page, it reaches the asset and the post', async ({ page }) => {
-    await page.goto('/posts/new');
+    await page.goto('/create');
     await page.locator(tid('create-file-input')).setInputFiles({
       name: 'ai-probe.txt',
       mimeType: 'text/plain',

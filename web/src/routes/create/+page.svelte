@@ -1,7 +1,15 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // The full-page create surface (#1119 slice 1).
+  // The full-page create surface (#1119 slice 1), at `/create`.
+  //
+  // ⚠️ NOT `/posts/new`. That was the first spelling and it made
+  // the upload modal's link to this page — which lives in the root
+  // layout, so it is in the DOM everywhere — the first match for
+  // `a[href^="/posts/"]`, the locator ten dogfood cases use to find
+  // a post card. Invisible and first is the worst combination: three
+  // specs spent 30s each clicking a link they could not see. A create
+  // URL that cannot be confused with a post permalink is the fix.
   //
   // ## What this is, and what it is not
   //
