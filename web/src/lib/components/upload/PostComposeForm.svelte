@@ -2,58 +2,32 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // The compose form at the bottom of the upload modal. Title,
-  // description, visibility, tags, post-mode toggle, workflow state,
+  // description, visibility, tags, post-mode toggle, draft toggle,
   // collection prefill, and the "Just upload as assets — no post"
   // escape hatch.
   //
   // All bindings flow into upload.compose, which the store reads at
   // submit() time. State is intentionally lightweight: no validation
-  // beyond what the server enforces, no async dependencies beyond
-  // the workflow-states fetch.
+  // beyond what the server enforces, and no async dependencies at all.
+  //
+  // WHAT USED TO BE HERE: a "workflow state" <select>, populated from
+  // GET /workflow/states?domain=post, whose options were the raw state
+  // rows — "Work in progress" and "Published" — and whose value was a
+  // state UUID posted straight through as `state_id`. It rendered
+  // (the domain has two states, so its `states.length > 1` guard
+  // passed), it asked the artist about a state machine, and picking
+  // "Work in progress" did nothing whatsoever, because no read path in
+  // the product looked at post state.
+  //
+  // ADR 0091 decision 7 makes that choice real and makes it one
+  // question: publish now, or save a draft. The control is a checkbox
+  // beside the submit button rather than a dropdown of state names,
+  // and the wire carries a boolean rather than a UUID — so there is no
+  // longer any way for this form to point a post at a state in another
+  // domain.
 
   import { upload } from '$stores/upload.svelte';
   import { t } from '$stores/lang.svelte';
-  import { api } from '$api/client';
-
-  // Workflow states for the post domain. Loaded once when the form
-  // mounts; the API call is cached server-side so this is cheap.
-  interface WorkflowState {
-    id: string;
-    code: string;
-    label: string;
-    sort_order: number;
-    is_initial: boolean;
-    is_terminal: boolean;
-    icon: string;
-    color: string;
-    requires_note: boolean;
-  }
-
-  let states = $state<WorkflowState[]>([]);
-  let statesLoaded = $state(false);
-
-  $effect(() => {
-    void loadStates();
-  });
-
-  async function loadStates() {
-    try {
-      const { data } = await api.GET('/workflow/states', {
-        params: { query: { domain: 'post' } },
-      });
-      if (data) states = data as WorkflowState[];
-    } catch {
-      // Soft fail — the dropdown just doesn't render. Default state
-      // (NULL → server's is_initial) still works.
-    } finally {
-      statesLoaded = true;
-    }
-  }
-
-  // Show the state dropdown only when there's a real choice. With 1
-  // state in the domain there's nothing meaningful for the user to
-  // pick.
-  const showStates = $derived(states.length > 1);
 
   // Tag chip input.
   let tagDraft = $state('');
@@ -153,20 +127,17 @@
         </select>
       </label>
 
-      {#if showStates}
-        <label class="block text-xs">
-          <span class="mb-1 block text-fg-muted">{t('upload.compose.workflow_state_label')}</span>
-          <select
-            bind:value={upload.compose.stateId}
-            class="w-full rounded border border-border-strong bg-surface-elevated px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
-          >
-            <option value={null}>{t('upload.compose.workflow_state_default')}</option>
-            {#each states as s (s.id)}
-              <option value={s.id}>{s.label}</option>
-            {/each}
-          </select>
-        </label>
-      {/if}
+      <label class="flex items-start gap-2 text-xs">
+        <input
+          type="checkbox"
+          bind:checked={upload.compose.draft}
+          class="mt-0.5 rounded border-border-strong focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        <span>
+          <span class="block text-fg">{t('upload.compose.draft_label')}</span>
+          <span class="block text-fg-muted">{t('upload.compose.draft_hint')}</span>
+        </span>
+      </label>
     </div>
 
     <!-- Tags -->

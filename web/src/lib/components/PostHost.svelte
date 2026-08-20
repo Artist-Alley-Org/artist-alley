@@ -555,6 +555,49 @@
     stubAction('Edit post');
   }
 
+  // ── Publish / unpublish (#1161, ADR 0091 decisions 6 + 7) ────────────
+  // A post is a draft or it is published, and moving between the two is
+  // a deliberate act with its own control. Before this the only way a
+  // post reached the world was "the upload finished", and the only way
+  // to take it back was to delete it.
+  //
+  // The item is author-and-moderator, mirroring the API: publishing
+  // widens who can reach the post, so the server holds it to the same
+  // narrow gate a change of `visibility` takes. `canDelete('post', …)`
+  // is the client's existing spelling of "author, global posts.admin or
+  // system.admin" — the same three the publish endpoint accepts — so it
+  // is reused rather than restated. A team-scoped holder sees no button
+  // and would be refused anyway; see $lib/deletable for why that
+  // ceiling is not worked around.
+  let publishBusy = $state(false);
+  let publishError = $state<string | null>(null);
+
+  const canPublishThisPost = $derived(
+    !!post && canDelete('post', post.author_user_ref),
+  );
+
+  async function togglePublication() {
+    if (!post || publishBusy) return;
+    publishBusy = true;
+    publishError = null;
+    const path = post.draft ? '/posts/{id}/publish' : '/posts/{id}/unpublish';
+    const { data, error } = await api.POST(path, {
+      params: { path: { id: post.id } },
+    });
+    publishBusy = false;
+    if (error || !data) {
+      publishError =
+        (error as { error?: string } | undefined)?.error ?? t('post_menu.publish_failed');
+      return;
+    }
+    // Take the SERVER's post rather than flipping the flag locally. The
+    // response is the same shape a GET returns, so whatever else the
+    // move changed arrives with it — and a client that toggled its own
+    // copy would keep showing "Unpublish" after a refusal the user
+    // never saw.
+    pl.aux.post = data as typeof pl.aux.post;
+  }
+
   // ── Delete this post (#981) ───────────────────────────────────────
   // "Delete post" was stubAction() until that issue: the whole soft-
   // delete/restore arc (#930 ownership gates, #936 self-restore,
@@ -913,8 +956,23 @@
                posts.admin holder, which is the instance moderator role,
                and hiding the item from them would mean moderation had
                to happen through the API. -->
-          {#if canDeleteThisPost}
+          {#if canPublishThisPost}
             {#if isOwner || hasVisibleMembers}
+              <div class="my-1 h-px bg-border"></div>
+            {/if}
+            <button
+              type="button"
+              role="menuitem"
+              onclick={togglePublication}
+              disabled={publishBusy}
+              data-testid="post-publish-toggle"
+              class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated disabled:opacity-50"
+            >
+              {post?.draft ? t('post_menu.publish_post') : t('post_menu.unpublish_post')}
+            </button>
+          {/if}
+          {#if canDeleteThisPost}
+            {#if isOwner || hasVisibleMembers || canPublishThisPost}
               <div class="my-1 h-px bg-border"></div>
             {/if}
             <button type="button" role="menuitem" onclick={deletePost} data-testid="post-delete" class="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-container">
@@ -932,6 +990,20 @@
            post-level, not redundant with the header). -->
 
       <div class="mb-3 flex flex-wrap gap-1.5">
+        <!-- The draft badge sits FIRST and reads louder than the
+             visibility chip beside it, because the two say different
+             things and the loud one is the surprising one: `public`
+             here means "who may read it once published", and a reader
+             who saw only that chip on an unpublished post would
+             reasonably conclude the work was live. #1161. -->
+        {#if post.draft}
+          <span
+            data-testid="post-draft-badge"
+            class="inline-flex items-center rounded-full bg-warning-container px-2 py-0.5 text-xs font-medium text-on-warning-container"
+          >
+            {t('post_menu.draft_badge')}
+          </span>
+        {/if}
         <span class="inline-flex items-center rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-fg-muted">
           {post.visibility}
         </span>

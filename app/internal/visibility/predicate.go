@@ -52,11 +52,14 @@ import (
 //     ones do; the soft-delete conjunct spans the whole predicate (#451)
 //     so an owner's soft-deleted collections stay out of browse lists,
 //     matching the asset and post branches.
-//   - Post, anonymous: soft-delete + visibility='public'. The old
-//     branch filtered on 'public' while the CHECK constraint forbade
-//     that value, so it matched zero rows and only looked like
-//     working anonymous support. 00008 makes it real.
-//   - Post, authenticated: soft-delete + the full post read rule —
+//   - Post, anonymous: soft-delete + PUBLISHED + visibility='public'.
+//     The old branch filtered on 'public' while the CHECK constraint
+//     forbade that value, so it matched zero rows and only looked like
+//     working anonymous support. 00008 makes it real. Publication is a
+//     separate conjunct as of #1161 — a draft is not a stranger's to
+//     read at any tier — and the anonymous read rule carries it too,
+//     so [IncludeDrafts] cannot open one to an unauthenticated caller.
+//   - Post, authenticated: soft-delete + PUBLISHED + the full post read rule —
 //     author OR public/org-only OR private-with-posts.admin OR
 //     followers-you-follow OR a live post_acls grant. This branch used
 //     to read `public OR author` while the browse list composed the
@@ -64,7 +67,10 @@ import (
 //     silently dropped every org-only and followers post the caller
 //     could read anywhere else (#873). One expression now, in
 //     post_rule.go, spliced by both. The `private` disjunct needs the
-//     caller's capabilities: pass [WithPostCaps].
+//     caller's capabilities: pass [WithPostCaps]. The PUBLISHED
+//     conjunct is what keeps a draft off every shared surface (ADR
+//     0091 decision 7); [IncludeDrafts] waives it for the single-item
+//     gate and the author's own drafts listing, and for nothing else.
 //
 // The anonymous branches bind NO arguments. Callers append the
 // returned args last and never hard-code a placeholder after the
@@ -194,11 +200,26 @@ func (p Predicate) ToSQL(alias string, argOffset int) (fragment string, args []a
 		// trash view must not be able to shed an authorization disjunct
 		// along with the soft-delete conjunct, and that failure would be
 		// silent.
+		//
+		// PUBLICATION is a THIRD conjunct, and it sits out here for the
+		// same reason soft-delete does: it is an axis of its own, it is
+		// not about the caller, and exactly one narrow option waives it
+		// ([IncludeDrafts]). Held inside the read rule it could not be
+		// waived for the single-item gate without also waiving an
+		// authorization disjunct — which is the failure ADR 0063 keeps
+		// structurally impossible rather than asking reviewers to
+		// notice. See postPublishedExpr for why it is fail-closed and
+		// why it is not `visible_by_default`.
 		expr, args := postReadableExpr(a, argOffset+1, p.caller, p.postCaps)
-		if p.includeSoftDeleted {
-			return " AND (" + expr + ")", args
+		conds := make([]string, 0, 3)
+		if !p.includeSoftDeleted {
+			conds = append(conds, a+"deleted_at IS NULL")
 		}
-		return fmt.Sprintf(" AND (%sdeleted_at IS NULL AND (%s))", a, expr), args
+		if !p.includeDrafts {
+			conds = append(conds, postPublishedExpr(a))
+		}
+		conds = append(conds, "("+expr+")")
+		return " AND (" + strings.Join(conds, " AND ") + ")", args
 	}
 	// Unreachable — Filter constructor validates entity type.
 	return " AND (FALSE)", nil

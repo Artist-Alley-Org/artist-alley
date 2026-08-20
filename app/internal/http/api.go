@@ -1570,6 +1570,14 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// runtime config changes (admin updates site.base_url → next
 	// emit uses the new value, no restart).
 	s.posts.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	// The publish / unpublish endpoints move a post between the `post`
+	// domain's `wip` and `published` states through the state machine,
+	// so the edge list, the `posts.publish` gate and the workflow_audit
+	// row all apply (ADR 0091 decision 7, #1161). Wired here rather
+	// than at construction because the move commits in the same
+	// transaction as the federation activity, which is what the line
+	// above installs.
+	s.posts.SetWorkflow(workflow.NewService(pool, logger))
 	s.social.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	s.messages.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	s.collections.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
@@ -3291,6 +3299,16 @@ func (s *apiServer) AddPostAsset(ctx context.Context, req openapi.AddPostAssetRe
 }
 func (s *apiServer) RemovePostAsset(ctx context.Context, req openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
 	return s.posts.RemovePostAsset(ctx, req)
+}
+func (s *apiServer) PublishPost(ctx context.Context, req openapi.PublishPostRequestObject) (openapi.PublishPostResponseObject, error) {
+	resp, err := s.posts.PublishPost(ctx, req)
+	s.invalidateSearchOnPostWrite(ctx, err)
+	return resp, err
+}
+func (s *apiServer) UnpublishPost(ctx context.Context, req openapi.UnpublishPostRequestObject) (openapi.UnpublishPostResponseObject, error) {
+	resp, err := s.posts.UnpublishPost(ctx, req)
+	s.invalidateSearchOnPostWrite(ctx, err)
+	return resp, err
 }
 func (s *apiServer) ListPostAcls(ctx context.Context, req openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
 	return s.posts.ListPostAcls(ctx, req)

@@ -99,6 +99,22 @@ func (s *Service) InitialStateID(ctx context.Context, domain string) (uuid.UUID,
 	return uuid.UUID(row.ID.Bytes), nil
 }
 
+// StateIDByCode resolves one state of a domain by its stable code —
+// e.g. ("post", "wip"). Callers that must MOVE a resource to a named
+// state need its id, and looking it up here means there is no Go-side
+// copy of a UUID to go stale when an install reseeds its state machine.
+//
+// Returns pgx.ErrNoRows when the domain has no such state, which is a
+// setup gap rather than a runtime condition: every caller today names
+// a state the 00001 baseline creates.
+func (s *Service) StateIDByCode(ctx context.Context, domain, code string) (uuid.UUID, error) {
+	row, err := New(s.Pool).GetStateByCode(ctx, GetStateByCodeParams{Domain: domain, Code: code})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return uuid.UUID(row.ID.Bytes), nil
+}
+
 // Transition moves the resource to toStateID, enforcing the workflow's
 // from→to edge list and the per-transition capability gate.
 //
@@ -115,8 +131,51 @@ func (s *Service) InitialStateID(ctx context.Context, domain string) (uuid.UUID,
 //     resource's state_id. Both succeed together or neither does.
 //
 // Caller may pass a nil note; it's stored as the empty string.
+//
+// This form opens and commits its own transaction. A caller that has
+// to land the move ALONGSIDE another write — the post publish /
+// unpublish handlers, which must record the federation activity in the
+// same commit per ADR 0044 — uses [Service.TransitionInTx] instead.
 func (s *Service) Transition(
 	ctx context.Context,
+	kind ResourceKind,
+	resourceID uuid.UUID,
+	toStateID uuid.UUID,
+	caller *auth.Identity,
+	note string,
+) error {
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("workflow: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := s.TransitionInTx(ctx, tx, kind, resourceID, toStateID, caller, note); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("workflow: commit: %w", err)
+	}
+	return nil
+}
+
+// TransitionInTx is [Service.Transition] run inside a transaction the
+// caller owns and commits. Same gates, same audit row, same errors.
+//
+// EVERY step runs in `tx`, reads included, which is stricter than the
+// version this was split out of: that one loaded the resource's current
+// state on the pool and then updated it in a transaction, so a
+// concurrent move between the two was decided against a state that had
+// already changed. The `rows == 0` backstop below caught the resource
+// VANISHING in that window and nothing caught it MOVING.
+//
+// The tx is the caller's precisely so that a state change and whatever
+// else the move implies commit together — for a post that is the
+// federation activity telling peers the work is now published, and an
+// activity written without the state change (or the reverse) is the
+// split-brain ADR 0044 exists to prevent.
+func (s *Service) TransitionInTx(
+	ctx context.Context,
+	tx pgx.Tx,
 	kind ResourceKind,
 	resourceID uuid.UUID,
 	toStateID uuid.UUID,
@@ -130,7 +189,7 @@ func (s *Service) Transition(
 	pgResID := pgtype.UUID{Bytes: resourceID, Valid: true}
 	pgToID := pgtype.UUID{Bytes: toStateID, Valid: true}
 
-	q := New(s.Pool)
+	q := New(tx)
 
 	// 1. Load the resource's current state + team scope.
 	var fromState pgtype.UUID
@@ -197,14 +256,9 @@ func (s *Service) Transition(
 		}
 	}
 
-	// 4. Audit + update in one transaction so we never write audit
-	//    without the state change (or vice versa).
-	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("workflow: begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	tq := New(tx)
+	// 4. Audit + update, in the caller's transaction so we never write
+	//    audit without the state change (or vice versa).
+	tq := q
 
 	actor := caller.UserRef
 	if err := tq.InsertWorkflowAudit(ctx, InsertWorkflowAuditParams{
@@ -239,10 +293,6 @@ func (s *Service) Transition(
 		// UPDATE — race with soft-delete. Surface as not-found so the
 		// handler returns 404 rather than 500.
 		return ErrResourceNotFound
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("workflow: commit: %w", err)
 	}
 	return nil
 }

@@ -191,6 +191,25 @@ WHERE post_id = $1
   AND principal_id   = $3
   AND permission     = $4;
 
+-- name: GetWorkflowStateIDByCode :one
+-- Resolve one workflow state's id from its stable (domain, code) key
+-- — for posts, ('post','published') and ('post','wip') (ADR 0091
+-- decision 7). UNIQUE (domain, code), so this is one index probe.
+--
+-- This package reads the row rather than caching the UUID because a
+-- cached id is silently wrong the first time an install reseeds its
+-- state machine, and "silently wrong" here means every post looks like
+-- a draft. It is asked once per create and once per cache MISS on the
+-- read path, never per row.
+SELECT id FROM workflow_states WHERE domain = $1 AND code = $2;
+
+-- name: GetPostInitialStateID :one
+-- The domain's entry-point state (`is_initial`), used for a post that
+-- is created already published. Asked by name rather than assumed to be
+-- 'published' so an install that moved its entry point is obeyed; a
+-- partial unique index guarantees at most one row per domain.
+SELECT id FROM workflow_states WHERE domain = $1 AND is_initial = TRUE LIMIT 1;
+
 -- name: GetAssetOwnerRef :one
 -- The asset's owner, for the ownership gate on GET /assets/{id}/posts
 -- (ADR 0091 decision 5). Soft-deleted assets answer no rows: a deleted

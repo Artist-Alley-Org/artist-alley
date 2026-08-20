@@ -1385,6 +1385,16 @@ func (*PanicShim) LikePost(context.Context, openapi.LikePostRequestObject) (open
 	panic("PanicShim: LikePost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// PublishPost panics by default; test shims override.
+func (*PanicShim) PublishPost(context.Context, openapi.PublishPostRequestObject) (openapi.PublishPostResponseObject, error) {
+	panic("PanicShim: PublishPost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UnpublishPost panics by default; test shims override.
+func (*PanicShim) UnpublishPost(context.Context, openapi.UnpublishPostRequestObject) (openapi.UnpublishPostResponseObject, error) {
+	panic("PanicShim: UnpublishPost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListPostWhiteboards panics by default; test shims override.
 func (*PanicShim) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
 	panic("PanicShim: ListPostWhiteboards called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

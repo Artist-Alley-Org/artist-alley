@@ -785,20 +785,21 @@ type Notification struct {
 }
 
 type Post struct {
-	ID                    pgtype.UUID
-	AuthorUserRef         int64
-	Title                 string
-	Description           string
-	Visibility            string
-	CoverAssetID          pgtype.UUID
-	PostedAt              pgtype.Timestamptz
-	LikeCount             int64
-	CommentCount          int64
-	SearchText            interface{}
-	OriginServerID        pgtype.UUID
-	DeletedAt             pgtype.Timestamptz
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
+	ID             pgtype.UUID
+	AuthorUserRef  int64
+	Title          string
+	Description    string
+	Visibility     string
+	CoverAssetID   pgtype.UUID
+	PostedAt       pgtype.Timestamptz
+	LikeCount      int64
+	CommentCount   int64
+	SearchText     interface{}
+	OriginServerID pgtype.UUID
+	DeletedAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	// The post's workflow state, domain = 'post' (ADR 0091 decision 7). Two states are reachable: `published` — the post is on shared surfaces — and `wip`, the DRAFT state, which is visible to its author and to a posts.admin holder and appears on no shared surface at all. Set by POST /posts from the request's `draft` flag and moved only by workflow.Service.Transition (POST /posts/{id}/publish and /unpublish), which validates the edge and writes workflow_audit; no request body accepts this column. READ FAIL-CLOSED: visibility.postPublishedExpr asks `state_id = <published>`, so a NULL or unrecognised state withholds the post rather than showing it — the FK is ON DELETE SET NULL, and the other spelling would publish every draft the moment a state row was deleted. This is the ONE place a workflow state decides publication, and it is deliberate: the `post` domain has exactly these two states and ADR 0091 identifies them with draft/published. An ASSET's workflow state means something else entirely — where the file is in its production process — and must never be read this way.
 	StateID               pgtype.UUID
 	TeamID                pgtype.UUID
 	CoverThumbnailAssetID pgtype.UUID
