@@ -14,6 +14,12 @@
 // The end-to-end "post appears in feed" assertion is split into
 // its own test so a slow downstream notification doesn't make
 // the whole flow flaky.
+//
+// #1119 — THE MODAL IS NOT RETIRED. The full-page create surface
+// (create-page-1119.spec.ts) is the surface for composing a post
+// properly; this one stays as the quick path, and both drive the same
+// store. So this file goes on pinning modal behaviour, and gains one
+// case below that the modal ALSO has to satisfy.
 
 import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
@@ -37,6 +43,36 @@ test.describe('UI-14 upload flow', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toBeHidden();
+  });
+
+  // #1167 / ADR 0094 — the modal's AI control stores NOTHING until it is
+  // touched, and this case fails against the implementation everyone
+  // reaches for first.
+  //
+  // The obvious build is a boolean defaulted to false and sent
+  // unconditionally, exactly as the mature checkbox beside it is sent.
+  // On this axis that is wrong: `mature: false` is a true statement
+  // about an unlabelled work, whereas `ai_provenance: 'none'` is a
+  // POSITIVE CLAIM — "the maker declares no generative AI was involved"
+  // — and sending it for an untouched control disclaims AI on the
+  // artist's behalf. So the control has no pre-selected option and the
+  // create body omits the key.
+  test('the modal AI control is undeclared until touched', async ({ page }) => {
+    await page.locator(tid('nav-upload-button')).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.locator(tid('upload-file-input')).setInputFiles({
+      name: 'ui-14-ai.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from(`ui-14 ai fixture ${Date.now()}-${Math.random()}`),
+    });
+
+    const group = page.locator(tid('ai-provenance-row'));
+    await expect(group).toBeVisible();
+    await expect(
+      group,
+      'a pre-selected "No AI" would be the form making a disclosure nobody made',
+    ).toHaveAttribute('data-value', 'undeclared');
+    await expect(page.locator(tid('ai-provenance-row-none'))).not.toBeChecked();
   });
 
   test('uploading a file via the API surfaces it in the feed', async ({ page }) => {
@@ -66,6 +102,14 @@ test.describe('UI-14 upload flow', () => {
     });
     expect(asset.status()).toBe(201);
     const assetJson = await asset.json();
+    // #1167 — an asset created without the field is UNDECLARED, and the
+    // API must say so by omitting the value rather than by reporting
+    // `none`. Asserted on the ordinary create path, because that is the
+    // path every pre-existing caller takes.
+    expect(
+      assetJson.ai_provenance ?? null,
+      'a caller that did not mention AI has not declared anything about it',
+    ).toBeNull();
 
     // Wrap in a one-asset post so it lands in the feed.
     const post = await page.request.post('/api/v1/posts', {

@@ -149,15 +149,16 @@ const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
-    state_id, processing_status, thumbhash, team_id, mature
+    state_id, processing_status, thumbhash, team_id, mature,
+    ai_provenance
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15
+    $11, $12, $13, $14, $15, $16
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id, mature
+          created_at, updated_at, team_id, mature, ai_provenance
 `
 
 type CreateAssetParams struct {
@@ -176,6 +177,7 @@ type CreateAssetParams struct {
 	Thumbhash        []byte
 	TeamID           pgtype.UUID
 	Mature           bool
+	AiProvenance     *string
 }
 
 type CreateAssetRow struct {
@@ -197,6 +199,7 @@ type CreateAssetRow struct {
 	UpdatedAt        pgtype.Timestamptz
 	TeamID           pgtype.UUID
 	Mature           bool
+	AiProvenance     *string
 }
 
 func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (CreateAssetRow, error) {
@@ -216,6 +219,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		arg.Thumbhash,
 		arg.TeamID,
 		arg.Mature,
+		arg.AiProvenance,
 	)
 	var i CreateAssetRow
 	err := row.Scan(
@@ -237,6 +241,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		&i.UpdatedAt,
 		&i.TeamID,
 		&i.Mature,
+		&i.AiProvenance,
 	)
 	return i, err
 }
@@ -282,7 +287,7 @@ const getAsset = `-- name: GetAsset :one
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, team_id, mature
+       created_at, updated_at, team_id, mature, ai_provenance
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -306,6 +311,7 @@ type GetAssetRow struct {
 	UpdatedAt        pgtype.Timestamptz
 	TeamID           pgtype.UUID
 	Mature           bool
+	AiProvenance     *string
 }
 
 // Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -336,6 +342,7 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.UpdatedAt,
 		&i.TeamID,
 		&i.Mature,
+		&i.AiProvenance,
 	)
 	return i, err
 }
@@ -1321,21 +1328,35 @@ UPDATE assets SET
     -- it is, which is what makes the artist's own edit and the operator
     -- override the same column on the same endpoint.
     mature      = COALESCE($5,      mature),
+    -- #1167 / ADR 0094. Two inputs rather than one, because this column
+    -- is NULLABLE and null already means "leave alone" for every other
+    -- field here. Without the explicit clear there would be no way to
+    -- return a declared work to UNDECLARED, and "undeclared" is a state
+    -- the maker is entitled to be in — it is the state of someone who
+    -- has not been asked. Same shape as field_definition.edit_tab's
+    -- clear_edit_tab, for the same reason. The handler refuses the two
+    -- together rather than picking a winner.
+    ai_provenance = CASE
+        WHEN $6::boolean THEN NULL
+        ELSE COALESCE($7, ai_provenance)
+    END,
     updated_at  = NOW()
-WHERE id = $6 AND deleted_at IS NULL
+WHERE id = $8 AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id, mature
+          created_at, updated_at, team_id, mature, ai_provenance
 `
 
 type UpdateAssetParams struct {
-	Title       *string
-	Description *string
-	Status      *string
-	Metadata    []byte
-	Mature      *bool
-	ID          pgtype.UUID
+	Title             *string
+	Description       *string
+	Status            *string
+	Metadata          []byte
+	Mature            *bool
+	ClearAiProvenance bool
+	AiProvenance      *string
+	ID                pgtype.UUID
 }
 
 type UpdateAssetRow struct {
@@ -1357,6 +1378,7 @@ type UpdateAssetRow struct {
 	UpdatedAt        pgtype.Timestamptz
 	TeamID           pgtype.UUID
 	Mature           bool
+	AiProvenance     *string
 }
 
 // Partial update via COALESCE: any field passed as NULL keeps its
@@ -1368,6 +1390,8 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		arg.Status,
 		arg.Metadata,
 		arg.Mature,
+		arg.ClearAiProvenance,
+		arg.AiProvenance,
 		arg.ID,
 	)
 	var i UpdateAssetRow
@@ -1390,6 +1414,7 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		&i.UpdatedAt,
 		&i.TeamID,
 		&i.Mature,
+		&i.AiProvenance,
 	)
 	return i, err
 }

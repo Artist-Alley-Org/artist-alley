@@ -4341,6 +4341,81 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /assets/{id}/companion-requirements:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getAssetCompanionRequirements
+      summary: What this model file says it needs, and what is still missing
+      description: |
+        Reads the stored model and reports the external files it
+        DECLARES — its glTF `buffers[].uri` / `images[].uri`, its FBX
+        Video/Texture filenames, its OBJ `mtllib` lines — then subtracts
+        the companions already attached (#754).
+
+        ## Why this exists
+
+        A multi-file model only renders if its siblings are registered
+        as companions. Nothing on the upload path derived that list, so
+        an artist who uploaded `structure-wall.glb` without knowing it
+        names `Textures/planks.png` got a job that SUCCEEDED and a card
+        and viewer that came out grey. That is the symptom chain #689
+        chased into the renderer before #750 traced it to missing
+        companion rows: the failure is silent and reads as a renderer
+        bug rather than a missing-input bug.
+
+        This endpoint is purely informational and purely additive. It
+        attaches nothing, writes nothing, and enqueues nothing — the
+        client decides what to do with the answer, and
+        `POST /assets/{id}/companions` remains the only way to attach.
+
+        ## `status` is three-valued on purpose
+
+        A format we cannot read must never come back as "declares
+        nothing", and neither must a container we failed to parse. The
+        three are distinguished so a UI can say the true thing:
+
+          * `ok` — the file was read and `declared` is its reference list
+            (possibly empty, which for a GLB is a RESULT and not an
+            assumption: 363 of the 374 GLBs in the seed catalogue
+            reference external textures).
+          * `unsupported` — no reader exists for this extension. STL,
+            PLY and DAE land here, and so does every non-model asset.
+            This is a gap in our parsers, NOT a claim that the file is
+            self-contained.
+          * `unreadable` — the extension is one we read and the bytes
+            did not parse. `detail` carries why.
+
+        ## `partial`
+
+        True only for OBJ. An OBJ names `.mtl` material libraries, and
+        each `.mtl` names the textures it uses — but the second level
+        lives INSIDE a file that has not been uploaded yet, so only the
+        first level is knowable here. The seeder resolves both levels
+        because it has the directory on disk; content-addressed storage
+        has no sibling directory. A client must say so rather than
+        under-report silently: the deeper references become discoverable
+        once the `.mtl` is attached and this endpoint is asked again.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: What the model declares, and what of it is still missing.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetCompanionRequirements" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /assets/{id}/alternates:
     parameters:
       - name: id
@@ -13934,15 +14009,18 @@ components:
             rendered every active field for the asset type before this
             flag existed.
 
-            Declared here and obeyed by the create/edit work (#1119):
-            this release stores and returns it, and the upload form
-            still renders every field. A client must therefore treat a
-            `false` as a statement of operator intent it should honour
-            once it learns to, not as a guarantee the server enforces —
-            nothing about field VALUES changes either way. A hidden
-            field can still be written through
-            `PUT /assets/{id}/fields/{field_id}`, which is deliberate:
-            this is a form-composition hint, never an access control.
+            OBEYED, as of #1119, by the full-page create surface: that
+            page asks for the asset type the server actually assigned to
+            the uploaded file and renders only the fields whose flag is
+            true. The older upload MODAL still renders every field —
+            both surfaces coexist, the modal being the quick path — so
+            `false` is honoured on the create page and not yet in the
+            modal.
+
+            It remains a form-composition hint and never an access
+            control: nothing about field VALUES changes either way, and
+            a hidden field can still be written through
+            `PUT /assets/{id}/fields/{field_id}`.
 
             Not mutually exclusive with `required`, because required-ness
             is enforced on the value-write path and not at asset
@@ -15576,6 +15654,37 @@ components:
             whether its preview is blurred, are the server's decisions
             (ADR 0090 §3). The flag is here so a client can LABEL what it
             was given, never so it can decide what to hide.
+        ai_provenance:
+          type: string
+          nullable: true
+          enum: [none, assisted, generated]
+          description: |
+            The MAKER'S DECLARATION about generative-AI involvement in
+            this work (#1167, ADR 0094).
+
+            ⚠️ ABSENT/NULL MEANS UNDECLARED — NOBODY WAS ASKED. It does
+            NOT mean `none`. Every asset that predates the feature is
+            undeclared and was deliberately not backfilled: writing
+            `none` onto those rows would assert "the maker declares no
+            generative AI" on the maker's behalf, which is a fabricated
+            disclosure on the one topic where a false disclaimer is the
+            worst available error. A client that renders a missing
+            value as "no AI" is lying for the artist. Render it as
+            "not stated", or render nothing.
+
+            ⚠️ A DECLARATION IS NOT A PERMISSION (ADR 0094 §4). This is
+            orthogonal to `sensitivity` and to `mature`. It is a FILTER
+            a viewer may apply to their own feed and NEVER a gate that
+            withholds the work from anyone: the work stays public,
+            findable and countable, and nothing derived from it —
+            search text, facets, suggest, thumbhash, embeddings, counts,
+            covers — is withheld on account of it. That is what keeps
+            this field cheap, and it holds only while nothing gates on
+            it.
+
+            Does not federate yet: the v1 envelope rejects unknown
+            top-level fields. ADR 0094 §6 pre-decides the wire mapping
+            for the next `@context` bump.
         file_hash: { type: string, nullable: true, description: sha256 of the linked storage object }
         file_extension: { type: string, nullable: true }
         file_size_bytes: { type: integer, format: int64, nullable: true }
@@ -16489,6 +16598,28 @@ components:
 
             Orthogonal to `sensitivity`, which answers a different
             question; setting one says nothing about the other.
+        ai_provenance:
+          type: string
+          nullable: true
+          enum: [none, assisted, generated]
+          description: |
+            Declare generative-AI involvement in this work (#1167, ADR
+            0094). One three-position control at upload, not a
+            checkbox: `none` / `assisted` / `generated`.
+
+            ⚠️ OMIT IT TO LEAVE THE WORK UNDECLARED, and omitting is the
+            default. `none` is a POSITIVE CLAIM — "the maker declares no
+            generative AI was involved" — so a client must send it only
+            when the person actually said so. Never send `none` as a
+            zero value the way `mature: false` is sent; the two fields
+            are not analogous and this is the difference.
+
+            Three values rather than a boolean because `assisted` and
+            `generated` are the distinction people argue about, and a
+            boolean collapses them irreversibly (ADR 0094 §2). Accepted
+            on every instance — unlike `mature`, this is never refused
+            by operator policy, because it withholds nothing from
+            anybody.
         file_hash:
           type: string
           nullable: true
@@ -16561,6 +16692,30 @@ components:
             accepted, including on a disallowing instance: an operator
             who has just switched the feature off must still be able to
             unmark what was marked while it was on.
+        ai_provenance:
+          type: string
+          nullable: true
+          enum: [none, assisted, generated]
+          description: |
+            Set this asset's AI declaration (#1167, ADR 0094). PATCH
+            semantics: absent leaves it as it is.
+
+            To move a declared work back to UNDECLARED, send
+            `clear_ai_provenance: true`. Sending `null` here cannot mean
+            that, because null is already "leave alone" for every other
+            property on this schema — the same reason `edit_tab` has a
+            `clear_edit_tab` companion.
+        clear_ai_provenance:
+          type: boolean
+          description: |
+            Return this asset to UNDECLARED (#1167, ADR 0094) — the
+            state of a work nobody has been asked about.
+
+            Offered because a declaration is a statement a person makes
+            and a person may not have meant to make it. Refused with 400
+            alongside a non-null `ai_provenance`: the two would contradict
+            each other and guessing which the caller meant is worse than
+            asking again.
         tags:
           type: array
           items: { type: string, minLength: 1, maxLength: 64 }
@@ -16803,6 +16958,37 @@ components:
             Prefer `draft` for anything a UI renders. This field is the
             underlying identity, kept on the wire for admin surfaces
             that show workflow history.
+        ai_provenance:
+          type: string
+          nullable: true
+          enum: [none, assisted, generated]
+          readOnly: true
+          description: |
+            DERIVED from the post's live contributors — its member
+            assets AND its two cover pictures (#1167, ADR 0094). Never
+            accepted on a request body; maintained by a database
+            trigger, as `mature` is, so it cannot be forgotten by a
+            write path nobody has written yet.
+
+            The rule is ASYMMETRIC:
+
+              * a POSITIVE claim propagates on ANY — one `generated`
+                contributor makes the post `generated`, failing that one
+                `assisted` contributor makes it `assisted`;
+              * the NEGATIVE claim requires ALL — the post reads `none`
+                only when it has at least one live contributor and every
+                one of them declares `none`.
+
+            So ONE UNDECLARED CONTRIBUTOR MAKES THE POST UNDECLARED.
+            Deriving `none` over a contributor nobody asked would
+            fabricate that maker's disclaimer at the post level, which
+            is the same error the nullable asset column exists to
+            prevent. A post with no live contributors is undeclared too.
+
+            The covers arm is deliberate: `posts.mature` shipped
+            members-only and #1147 was the bill — a card shows its
+            cover first, so a label that ignores the cover is not true
+            of what the post presents.
         posted_at: { type: string, format: date-time }
         like_count: { type: integer, format: int64 }
         liked:
@@ -20775,6 +20961,62 @@ components:
           type: integer
           description: Char offset of the match in the plain-text chapter body.
 
+    AssetCompanionRequirements:
+      type: object
+      description: |
+        The external files a stored model declares, and which of them
+        are still unattached (#754). Informational only — nothing here
+        attaches, writes or enqueues anything.
+      required: [asset_id, status, partial, declared, missing, attached]
+      properties:
+        asset_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [ok, unsupported, unreadable]
+          description: |
+            `ok` — the file was read; `declared` is its reference list,
+            and an empty list means it genuinely declares none.
+            `unsupported` — no reader exists for this extension (STL,
+            PLY, DAE, and every non-model asset). ⚠️ NOT a claim that
+            the file is self-contained.
+            `unreadable` — a format we do read, whose bytes did not
+            parse. `detail` says why.
+        detail:
+          type: string
+          description: Why the file could not be read. Present only when `status` is `unreadable`.
+        partial:
+          type: boolean
+          description: |
+            True when the declared list is known to be incomplete — OBJ
+            only. An OBJ names `.mtl` libraries and each `.mtl` names
+            textures, but that second level lives inside a file not yet
+            uploaded, so only the first is knowable here. Attach the
+            `.mtl` and ask again to see the rest.
+        declared:
+          type: array
+          items: { type: string }
+          description: |
+            Every external file the model references, as clean relative
+            forward-slash paths in declaration order, de-duplicated.
+            Embedded `data:` URIs, remote URLs, absolute paths and
+            anything escaping the model's directory are excluded — none
+            of those needs a companion.
+        missing:
+          type: array
+          items: { type: string }
+          description: |
+            The subset of `declared` with no companion attached at that
+            path. This is the list a create surface names to the artist
+            ("this model needs `Textures/planks.png`"). Empty means the
+            model has everything it asked for.
+        attached:
+          type: array
+          items: { type: string }
+          description: |
+            The subset of `declared` already satisfied by a companion
+            row. A companion attached at a path the model does NOT
+            declare appears in neither list — it is not wrong, just not
+            something the model asked for.
     AssetCompanion:
       type: object
       description: |

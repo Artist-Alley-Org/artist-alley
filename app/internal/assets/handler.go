@@ -107,6 +107,20 @@ const CacheDomainAssetCompanions = "asset.companions"
 // alternate list and need to broadcast invalidations through this key.
 const CacheDomainAssetAlternates = "asset.alternates"
 
+// CacheDomainAssetDeclaredCompanions keys the parsed declaration list of
+// a stored model (#754).
+//
+// ⭐ KEYED ON THE OBJECT HASH, NOT THE ASSET ID, and that is what makes
+// it free of an invalidation story. Storage is content-addressed, so the
+// bytes behind a hash never change and neither does what they declare.
+// Attaching or removing a companion changes which of those declarations
+// are still MISSING, and that half is recomputed per request from
+// `asset_companions` — which has its own cache and its own invalidation
+// on exactly those writes. Caching the parse and not the subtraction
+// keeps the expensive part (a storage read) permanently valid and the
+// cheap part (a set difference) always correct.
+const CacheDomainAssetDeclaredCompanions = "asset.companions.declared"
+
 // CacheDomainEPUBSpine + CacheDomainEPUBChapter — EPUB reader caches.
 // Spine is small (chapter index per asset); chapter HTML is bigger
 // (post-rewrite XHTML body). Both are invalidated only on asset re-
@@ -163,6 +177,10 @@ type Handler struct {
 	// a few hundred chapters total.
 	epubSpine    *cache.Cache[[]openapi.EpubSpineEntry]
 	epubChapters *cache.Cache[[]byte]
+	// declaredCompanions caches what a stored model SAYS it needs,
+	// keyed on the object hash — see CacheDomainAssetDeclaredCompanions
+	// for why that key means the entry never goes stale.
+	declaredCompanions *cache.Cache[declaredCompanions]
 
 	// registry is kept for cross-package invalidations. Soft-deleting
 	// or restoring an asset changes what every post holding it renders,
@@ -275,6 +293,9 @@ func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Lo
 		h.alternates = cache.Register[[]openapi.AssetAlternate](registry, CacheDomainAssetAlternates, 5_000)
 		h.epubSpine = cache.Register[[]openapi.EpubSpineEntry](registry, CacheDomainEPUBSpine, 5_000)
 		h.epubChapters = cache.Register[[]byte](registry, CacheDomainEPUBChapter, 2_000)
+		// Keyed on object hash, so entries are immutable and the only
+		// pressure is working-set size. Small values (a path list).
+		h.declaredCompanions = cache.Register[declaredCompanions](registry, CacheDomainAssetDeclaredCompanions, 5_000)
 	}
 	return h
 }
@@ -422,6 +443,22 @@ func (h *Handler) CreateAsset(
 		}, nil
 	}
 
+	// #1167 / ADR 0094 — the maker's AI declaration. Three values plus
+	// absent, and ABSENT IS NOT `none`: it means nobody was asked. So
+	// there is no zero value to substitute here the way `mature` gets
+	// `false` above, and the pointer is carried through untouched.
+	//
+	// No policy gate, deliberately. `mature` is refused when the
+	// instance disallows it because that flag decides who is HANDED the
+	// work; this one withholds nothing from anybody (ADR 0094 §4), so
+	// there is no operator switch it could contradict.
+	aiProvenancePtr, aiErr := aiProvenanceFromCreate(in.AiProvenance)
+	if aiErr != nil {
+		return openapi.CreateAsset400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: aiErr.Error()},
+		}, nil
+	}
+
 	var thumbhashBytes []byte
 	if fileHashPtr != nil && isImageExt(in.FileExtension) {
 		hCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -489,6 +526,7 @@ func (h *Handler) CreateAsset(
 		Thumbhash:        thumbhashBytes,
 		TeamID:           teamID,
 		Mature:           mature,
+		AiProvenance:     aiProvenancePtr,
 	})
 	if err != nil {
 		// The team gate above already refused every team this caller
@@ -1643,13 +1681,39 @@ func (h *Handler) UpdateAsset(
 		maturePtr = req.Body.Mature
 	}
 
+	// #1167 / ADR 0094. Two inputs, because the column is nullable and
+	// null already means "leave alone" everywhere else on this body —
+	// so "make this undeclared again" needs its own word. Sending both
+	// is a contradiction and is refused rather than resolved: guessing
+	// which one the caller meant is worse than asking again.
+	var aiProvenancePtr *string
+	clearAI := req.Body != nil && req.Body.ClearAiProvenance != nil && *req.Body.ClearAiProvenance
+	if req.Body != nil && req.Body.AiProvenance != nil {
+		if clearAI {
+			return openapi.UpdateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "ai_provenance and clear_ai_provenance are mutually exclusive",
+				},
+			}, nil
+		}
+		v, aiErr := aiProvenanceValue(string(*req.Body.AiProvenance))
+		if aiErr != nil {
+			return openapi.UpdateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: aiErr.Error()},
+			}, nil
+		}
+		aiProvenancePtr = v
+	}
+
 	row, err := q.UpdateAsset(ctx, UpdateAssetParams{
-		ID:          pgID,
-		Title:       titlePtr,
-		Description: descPtr,
-		Status:      statusPtr,
-		Metadata:    metaJSON,
-		Mature:      maturePtr,
+		ID:                pgID,
+		Title:             titlePtr,
+		Description:       descPtr,
+		Status:            statusPtr,
+		Metadata:          metaJSON,
+		Mature:            maturePtr,
+		AiProvenance:      aiProvenancePtr,
+		ClearAiProvenance: clearAI,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -2525,6 +2589,11 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 		// server-side (ADR 0090 §3). This is here so a client can say
 		// what it was given.
 		Mature: &row.Mature,
+		// #1167 / ADR 0094. nil here means UNDECLARED — nobody was
+		// asked — and a client must not render it as "no AI". It is
+		// never a gate: unlike `mature` above, nothing about this value
+		// changes who receives the row.
+		AiProvenance: aiProvenanceToAPI(row.AiProvenance),
 	}
 	if len(details) > 0 {
 		td := make([]openapi.AssetTagDetail, 0, len(details))
@@ -2610,6 +2679,23 @@ func rowToAssetRow(r CreateAssetRow) GetAssetRow {
 		Thumbhash:        r.Thumbhash,
 		CreatedAt:        r.CreatedAt,
 		UpdatedAt:        r.UpdatedAt,
+		// ⚠️ #1116 AGAIN, ON THE OTHER PATH (found by #1167's specs).
+		//
+		// #1116 fixed updateRowToGetRow below — the PATCH converter that
+		// dropped `mature` and so told a client its flag had not taken.
+		// This is the CREATE converter and it had the identical hole,
+		// which nothing noticed for the same reason: the handler echoes
+		// its own zero value consistently, so a response-body assertion
+		// agrees with the bug. `POST /assets` with `mature: true` has
+		// been answering `mature: false` ever since #1115.
+		//
+		// It matters more for the declaration than for the rating. A
+		// client rendering straight from the create response was told
+		// the maker's AI disclosure did not take — and on that axis the
+		// artist's reasonable next move is to try again, or to conclude
+		// they failed to disclose.
+		Mature:       r.Mature,
+		AiProvenance: r.AiProvenance,
 	}
 }
 
@@ -2651,6 +2737,13 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 		// this endpoint is held to, and every such client was being told
 		// an asset it had just marked mature was not.
 		Mature: r.Mature,
+		// #1167 — carried here for the reason the block above spells
+		// out. UpdateAsset's RETURNING has this column, and a converter
+		// that drops it tells a client its declaration did not take
+		// while the database has it. On this axis in particular that is
+		// the worst available answer: the artist retries, or worse,
+		// believes they failed to disclose.
+		AiProvenance: r.AiProvenance,
 	}
 }
 

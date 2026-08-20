@@ -3029,6 +3029,9 @@ func (s *apiServer) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetT
 func (s *apiServer) ListAssetCompanions(ctx context.Context, req openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
 	return s.assets.ListAssetCompanions(ctx, req)
 }
+func (s *apiServer) GetAssetCompanionRequirements(ctx context.Context, req openapi.GetAssetCompanionRequirementsRequestObject) (openapi.GetAssetCompanionRequirementsResponseObject, error) {
+	return s.assets.GetAssetCompanionRequirements(ctx, req)
+}
 func (s *apiServer) AddAssetCompanion(ctx context.Context, req openapi.AddAssetCompanionRequestObject) (openapi.AddAssetCompanionResponseObject, error) {
 	return s.assets.AddAssetCompanion(ctx, req)
 }

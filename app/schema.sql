@@ -311,6 +311,34 @@ $$;
 
 
 --
+-- Name: assets_ai_provenance_sync(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assets_ai_provenance_sync() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    r record;
+BEGIN
+    IF NEW.ai_provenance IS NOT DISTINCT FROM OLD.ai_provenance
+       AND (NEW.deleted_at IS NULL) IS NOT DISTINCT FROM (OLD.deleted_at IS NULL) THEN
+        RETURN NULL;
+    END IF;
+    FOR r IN
+        SELECT post_id FROM public.post_assets WHERE asset_id = NEW.id
+        UNION
+        SELECT id AS post_id FROM public.posts
+         WHERE cover_asset_id = NEW.id
+            OR cover_thumbnail_asset_id = NEW.id
+    LOOP
+        PERFORM public.recompute_post_ai_provenance(r.post_id);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: assets_mature_sync(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -490,6 +518,60 @@ $$;
 
 
 --
+-- Name: post_ai_provenance(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_ai_provenance(p_post_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+    WITH contributors AS (
+        SELECT a.ai_provenance
+          FROM public.post_assets pa
+          JOIN public.assets a ON a.id = pa.asset_id
+         WHERE pa.post_id = p_post_id
+           AND a.deleted_at IS NULL
+        UNION ALL
+        SELECT a.ai_provenance
+          FROM public.posts p
+          JOIN public.assets a
+            ON a.id IN (p.cover_asset_id, p.cover_thumbnail_asset_id)
+         WHERE p.id = p_post_id
+           AND a.deleted_at IS NULL
+    )
+    SELECT CASE
+        -- ANY, strongest first.
+        WHEN count(*) FILTER (WHERE ai_provenance = 'generated') > 0 THEN 'generated'
+        WHEN count(*) FILTER (WHERE ai_provenance = 'assisted')  > 0 THEN 'assisted'
+        -- ALL, and only over a non-empty set.
+        WHEN count(*) > 0
+             AND count(*) FILTER (WHERE ai_provenance = 'none') = count(*) THEN 'none'
+        -- Undeclared: no contributors, or at least one nobody asked.
+        ELSE NULL
+    END
+      FROM contributors;
+$$;
+
+
+--
+-- Name: post_assets_ai_provenance_sync(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_assets_ai_provenance_sync() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        PERFORM public.recompute_post_ai_provenance(OLD.post_id);
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        PERFORM public.recompute_post_ai_provenance(NEW.post_id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: post_assets_mature_sync(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -577,6 +659,25 @@ CREATE FUNCTION public.post_tags_search_text_trigger() RETURNS trigger
     AS $$
 BEGIN
     PERFORM rebuild_post_search_text(COALESCE(NEW.post_id, OLD.post_id));
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: posts_cover_ai_provenance_sync(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.posts_cover_ai_provenance_sync() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE'
+       AND NEW.cover_asset_id IS NOT DISTINCT FROM OLD.cover_asset_id
+       AND NEW.cover_thumbnail_asset_id IS NOT DISTINCT FROM OLD.cover_thumbnail_asset_id THEN
+        RETURN NULL;
+    END IF;
+    PERFORM public.recompute_post_ai_provenance(NEW.id);
     RETURN NULL;
 END;
 $$;
@@ -678,6 +779,25 @@ BEGIN
         setweight(to_tsvector('english', COALESCE(asset_search, '')), 'D')
      WHERE id = p_post_id;
 END; $$;
+
+
+--
+-- Name: recompute_post_ai_provenance(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.recompute_post_ai_provenance(p_post_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF p_post_id IS NULL THEN
+        RETURN;
+    END IF;
+    UPDATE public.posts p
+       SET ai_provenance = public.post_ai_provenance(p_post_id)
+     WHERE p.id = p_post_id
+       AND p.ai_provenance IS DISTINCT FROM public.post_ai_provenance(p_post_id);
+END;
+$$;
 
 
 --
@@ -1190,6 +1310,8 @@ CREATE TABLE public.assets (
     deleted_reason text,
     deleted_by_user_ref bigint,
     mature boolean DEFAULT false NOT NULL,
+    ai_provenance text,
+    CONSTRAINT assets_ai_provenance_check CHECK (((ai_provenance IS NULL) OR (ai_provenance = ANY (ARRAY['none'::text, 'assisted'::text, 'generated'::text])))),
     CONSTRAINT assets_processing_status_check CHECK ((processing_status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT assets_sensitivity_check CHECK ((sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text]))),
     CONSTRAINT assets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])))
@@ -1208,6 +1330,13 @@ COMMENT ON COLUMN public.assets.sensitivity IS 'Intrinsic sensitivity tier (publ
 --
 
 COMMENT ON COLUMN public.assets.page_count IS 'For paginated assets (PDF today; comics + ebooks later), the total page count extracted by the metadata pipeline. NULL = not paginated OR extractor has not run yet; both are read the same way by clients.';
+
+
+--
+-- Name: COLUMN assets.ai_provenance; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.assets.ai_provenance IS 'The MAKER''S DECLARATION about generative-AI involvement in this work (#1167, ADR 0094). Three declared values — `none` (the maker declares no generative AI was involved), `assisted` (AI used in part: upscaling, inpainting, an AI-generated texture on hand-made geometry), `generated` (substantially AI-generated) — plus NULL, which means UNDECLARED: nobody was asked. ⚠️ NULL IS NOT `none`. The column is nullable and unbackfilled precisely so the rows predating the feature do not assert a disclaimer their makers never made; a reader that renders NULL as "no AI" is lying on the artist''s behalf. ⚠️ A DECLARATION IS NOT A PERMISSION (ADR 0094 §4): this is orthogonal to `sensitivity` and to `mature`; it is a FILTER a viewer may apply to their own feed and never a GATE that withholds the work from others, and nothing derived from the asset — search text, facets, suggest, thumbhash, embeddings, counts, covers — is withheld on account of it. That property is what keeps this column cheap and it holds only while nothing gates on it. Extraction may one day CORROBORATE `generated`/`assisted` from `Iptc4xmpExt:DigitalSourceType` on an UNDECLARED work, and may NEVER establish `none`: the IPTC vocabulary has no term meaning "no AI", so absence of an AI term is not evidence of absence (ADR 0094 §3). Does not federate yet — the v1 envelope rejects unknown top-level fields; the wire mapping is pre-decided in ADR 0094 §6.';
 
 
 --
@@ -2331,6 +2460,8 @@ CREATE TABLE public.posts (
     deleted_reason text,
     deleted_by_user_ref bigint,
     mature boolean DEFAULT false NOT NULL,
+    ai_provenance text,
+    CONSTRAINT posts_ai_provenance_check CHECK (((ai_provenance IS NULL) OR (ai_provenance = ANY (ARRAY['none'::text, 'assisted'::text, 'generated'::text])))),
     CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
 
@@ -2347,6 +2478,13 @@ COMMENT ON COLUMN public.posts.state_id IS 'The post''s workflow state, domain =
 --
 
 COMMENT ON COLUMN public.posts.subtitle_track_override IS 'Per-post override for the parent asset''s subtitle tracks. NULL means use the asset''s intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.';
+
+
+--
+-- Name: COLUMN posts.ai_provenance; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.ai_provenance IS 'DERIVED from the post''s live CONTRIBUTORS — its member assets AND its two cover pictures (#1167, ADR 0094). Never written by a request body; maintained by `public.post_ai_provenance` via triggers on `post_assets`, `assets` and `posts`, exactly as `posts.mature` is. The rule is asymmetric: a POSITIVE claim propagates on ANY (one `generated` contributor makes the post `generated`, else one `assisted` contributor makes it `assisted`), and the NEGATIVE claim requires ALL (the post reads `none` only when it has at least one live contributor and every one of them declares `none`). One undeclared contributor makes the post undeclared, because deriving `none` over a contributor nobody asked would fabricate that maker''s disclaimer at the post level. A post with no live contributors is NULL. The covers arm is present from the first migration deliberately: `posts.mature` shipped without it and #1147 was the bill.';
 
 
 --
@@ -4079,6 +4217,13 @@ CREATE INDEX asset_type_acls_principal_idx ON public.asset_type_acls USING btree
 
 
 --
+-- Name: assets_ai_provenance_declared_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX assets_ai_provenance_declared_idx ON public.assets USING btree (ai_provenance) WHERE (ai_provenance = ANY (ARRAY['assisted'::text, 'generated'::text]));
+
+
+--
 -- Name: assets_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5094,6 +5239,13 @@ CREATE INDEX post_tags_tag_trgm ON public.post_tags USING gin (tag public.gin_tr
 
 
 --
+-- Name: posts_ai_provenance_declared_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_ai_provenance_declared_idx ON public.posts USING btree (ai_provenance) WHERE (ai_provenance = ANY (ARRAY['assisted'::text, 'generated'::text]));
+
+
+--
 -- Name: posts_author_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5626,6 +5778,13 @@ CREATE TRIGGER asset_type_acl_sweep_after_team_delete AFTER DELETE ON public.tea
 
 
 --
+-- Name: assets assets_ai_provenance_sync_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER assets_ai_provenance_sync_trg AFTER UPDATE ON public.assets FOR EACH ROW EXECUTE FUNCTION public.assets_ai_provenance_sync();
+
+
+--
 -- Name: assets assets_mature_sync_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5717,6 +5876,13 @@ CREATE TRIGGER likes_maintain_counter_insert AFTER INSERT ON public.likes FOR EA
 
 
 --
+-- Name: post_assets post_assets_ai_provenance_sync_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER post_assets_ai_provenance_sync_trg AFTER INSERT OR DELETE OR UPDATE ON public.post_assets FOR EACH ROW EXECUTE FUNCTION public.post_assets_ai_provenance_sync();
+
+
+--
 -- Name: post_assets post_assets_mature_sync_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5735,6 +5901,13 @@ CREATE TRIGGER post_assets_search_text AFTER INSERT OR DELETE OR UPDATE ON publi
 --
 
 CREATE TRIGGER post_tags_search_text AFTER INSERT OR DELETE OR UPDATE ON public.post_tags FOR EACH ROW EXECUTE FUNCTION public.post_tags_search_text_trigger();
+
+
+--
+-- Name: posts posts_cover_ai_provenance_sync_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER posts_cover_ai_provenance_sync_trg AFTER INSERT OR UPDATE ON public.posts FOR EACH ROW EXECUTE FUNCTION public.posts_cover_ai_provenance_sync();
 
 
 --

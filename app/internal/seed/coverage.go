@@ -404,9 +404,14 @@ func boolValue(b bool) string {
 func resolveCompanionAssets(assets []manifestAsset, siteRoot string) map[string]bool {
 	out := make(map[string]bool, len(assets))
 	for _, a := range assets {
-		switch strings.ToLower(a.FileExtension) {
-		case "gltf", "glb", "obj", "fbx":
-		default:
+		// The extension list is format3d's to own, not ours (#754).
+		// This pre-filter used to spell it out here — a third copy of
+		// the same list, and copies of this list have drifted before:
+		// runner.go's said `"gltf", "obj"` and cost 363 GLBs their
+		// companion rows (#750). Asking keeps the skip (an os.Open per
+		// non-model asset is real cost at catalogue scale) without
+		// re-stating the fact.
+		if format3d.CompanionSupportFor(a.FileExtension) == format3d.CompanionUnsupported {
 			continue
 		}
 		found, _, err := format3d.ResolveCompanions(filepath.Join(siteRoot, a.FilePath))

@@ -162,6 +162,138 @@ func ParseMTLTextures(mtl []byte) []string {
 	return out
 }
 
+// CompanionSupport reports how much of a model's reference list this
+// package can read from the file's bytes alone.
+type CompanionSupport int
+
+const (
+	// CompanionUnsupported: no reader exists for this extension. STL,
+	// PLY and DAE land here, and so does every non-model file.
+	//
+	// ⚠️ This is NOT the claim "the file declares no companions". It is
+	// the claim "we cannot tell". DAE in particular declares images in
+	// <library_images> and we simply do not read them yet. Callers must
+	// keep the two apart: reporting "nothing needed" for a format we
+	// never opened is how a silent grey render gets blamed on the
+	// renderer (#689 chased exactly that before #750 found the real
+	// cause).
+	CompanionUnsupported CompanionSupport = iota
+
+	// CompanionComplete: every reference the format can express was
+	// read from the bytes handed in.
+	CompanionComplete
+
+	// CompanionFirstLevel: only the first level of references is
+	// knowable from the bytes alone.
+	//
+	// OBJ is the one case. An .obj names .mtl material libraries and
+	// each .mtl names its texture maps, so the full list needs the .mtl
+	// CONTENT — which, at ingest, has not been uploaded yet. The seeder
+	// gets the second level because it has the directory on disk;
+	// content-addressed storage has no sibling directory to recurse
+	// into. A caller reporting a first-level list must say so.
+	CompanionFirstLevel
+)
+
+// CompanionSupportFor reports, from an extension alone, how much of a
+// model's reference list this package can read.
+//
+// ⭐ THIS IS THE EXTENSION TABLE, AND IT IS THE ONLY ONE. Everything
+// that wants to know "can companions be read from this file" asks here
+// rather than writing `case "gltf", "glb", ...` of its own. Three copies
+// of that list existed and they had already drifted: seed's
+// applyAssetCompanions pre-filtered on `case "gltf", "obj"` and cost 363
+// seeded GLBs their companion rows (#750). A list that must agree with
+// another list eventually does not.
+//
+// `ext` may carry a leading dot and any case.
+func CompanionSupportFor(ext string) CompanionSupport {
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "gltf", "glb", "fbx":
+		return CompanionComplete
+	case "obj":
+		return CompanionFirstLevel
+	default:
+		return CompanionUnsupported
+	}
+}
+
+// DeclaredCompanions reads a model file from r and returns the external
+// resources it DECLARES — nothing about whether they exist.
+//
+// This is the half of companion discovery that needs only the model's
+// own bytes, split out of ResolveCompanions so the ingest path can use
+// it (#754). ResolveCompanions fuses two jobs — parse the declarations,
+// then check the filesystem for them relative to the model's directory
+// — and only the first is meaningful for an uploaded asset: an upload
+// lives in content-addressed storage under a hash, with no sibling
+// directory, so there is nothing for the second half to stat.
+//
+// `ext` is the file extension, with or without a leading dot, in any
+// case. r is read at most once and never rewound; glb and fbx consume
+// only the leading header and reference records rather than buffering
+// the geometry that dwarfs them.
+//
+// A container that fails to parse returns an error, NEVER an empty
+// list. "We could not finish reading this" and "this declares nothing"
+// are different answers and the caller decides what to do about each.
+func DeclaredCompanions(ext string, r io.Reader) ([]string, CompanionSupport, error) {
+	support := CompanionSupportFor(ext)
+	if support == CompanionUnsupported {
+		return nil, support, nil
+	}
+
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "gltf":
+		raw, err := io.ReadAll(r)
+		if err != nil {
+			return nil, support, fmt.Errorf("read gltf: %w", err)
+		}
+		declared, err := ParseGLTFCompanions(raw)
+		if err != nil {
+			return nil, support, err
+		}
+		return declared, support, nil
+
+	case "glb":
+		// Streamed: only the leading header + JSON chunk is needed, and
+		// the BIN chunk after it is the bulk of the file.
+		declared, err := ParseGLBCompanions(r)
+		if err != nil {
+			return nil, support, err
+		}
+		return declared, support, nil
+
+	case "fbx":
+		// Streamed for the same reason glb is: the references sit in
+		// small Video/Texture records and the geometry is skipped, not
+		// buffered.
+		declared, err := ParseFBXCompanions(r)
+		if err != nil {
+			return nil, support, err
+		}
+		return declared, support, nil
+
+	case "obj":
+		raw, err := io.ReadAll(r)
+		if err != nil {
+			return nil, support, fmt.Errorf("read obj: %w", err)
+		}
+		// The .mtl libraries only. Their textures are a second level
+		// that needs each .mtl's bytes — see CompanionFirstLevel.
+		return ParseOBJMaterialLibs(raw), support, nil
+
+	default:
+		// Unreachable by construction: CompanionSupportFor said we read
+		// this extension and this switch says we do not. It is an ERROR
+		// rather than an empty list on purpose — someone widening the
+		// table without adding a parser must find out loudly, not by
+		// having every file of the new format report that it needs
+		// nothing.
+		return nil, support, fmt.Errorf("companions: no parser for extension %q despite support %v", ext, support)
+	}
+}
+
 // ResolveCompanions walks the on-disk companions of a model file and
 // returns their paths RELATIVE to the model's directory (forward-slash),
 // deterministically ordered. glTF and GLB resolve their buffer + image
@@ -175,70 +307,62 @@ func ParseMTLTextures(mtl []byte) []string {
 // references whose file is absent (so the caller can log the gap without
 // failing). A subdirectory reference (e.g. `textures/foo.png`) is
 // preserved in the returned relative path.
+//
+// The declaration half now comes from DeclaredCompanions, which owns the
+// extension table. What remains here is the part that genuinely needs a
+// filesystem: the OBJ second level (each .mtl's own textures, read from
+// the .mtl beside the model) and the existence check.
 func ResolveCompanions(mainPath string) (found []string, missing []string, err error) {
 	dir := filepath.Dir(mainPath)
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(mainPath), "."))
 
+	// Asked BEFORE the open, for two reasons. It keeps this function's
+	// behaviour on an unreadable extension exactly what it was — nil,
+	// nil, nil, with no attempt to touch the file — and it keeps the
+	// seeder from opening every .png in the catalogue to be told there
+	// is no parser for it.
+	support := CompanionSupportFor(ext)
+	if support == CompanionUnsupported {
+		// No reader for this format's references (STL, PLY, DAE, ...).
+		// Not the same claim as "it has none" — see the file header.
+		return nil, nil, nil
+	}
+
+	f, oErr := os.Open(mainPath)
+	if oErr != nil {
+		return nil, nil, fmt.Errorf("open model: %w", oErr)
+	}
 	// declared holds every relative companion path we should look for,
-	// in discovery order; exists filters against the filesystem.
-	var declared []string
-	switch ext {
-	case "gltf":
-		raw, rerr := os.ReadFile(mainPath)
-		if rerr != nil {
-			return nil, nil, fmt.Errorf("read gltf: %w", rerr)
-		}
-		declared, err = ParseGLTFCompanions(raw)
-		if err != nil {
-			return nil, nil, err
-		}
-	case "glb":
-		// Streamed, not ReadFile: only the leading header + JSON chunk is
-		// needed, and the BIN chunk after it is the bulk of the file.
-		f, oErr := os.Open(mainPath)
-		if oErr != nil {
-			return nil, nil, fmt.Errorf("open glb: %w", oErr)
-		}
-		declared, err = ParseGLBCompanions(f)
-		f.Close()
-		if err != nil {
-			// A malformed container resolves to no companions rather than
-			// killing the caller's run; the error carries why, and the
-			// seed/ingest caller logs it per the soft-fail contract.
-			return nil, nil, err
-		}
-	case "fbx":
-		// Streamed for the same reason GLB is: the references sit in small
-		// Video/Texture records and the geometry that dwarfs them is
-		// skipped, not buffered.
-		f, oErr := os.Open(mainPath)
-		if oErr != nil {
-			return nil, nil, fmt.Errorf("open fbx: %w", oErr)
-		}
-		declared, err = ParseFBXCompanions(f)
-		f.Close()
-		if err != nil {
-			// Soft-fail contract, as for glb: an unreadable container
-			// resolves to no companions and the error says why, rather than
-			// silently claiming the model has none.
-			return nil, nil, err
-		}
-	case "obj":
-		raw, rerr := os.ReadFile(mainPath)
-		if rerr != nil {
-			return nil, nil, fmt.Errorf("read obj: %w", rerr)
-		}
-		// mtllib files, then each .mtl's textures (paths are relative to
-		// the .mtl, which for our seed layout is the model dir).
-		seen := make(map[string]struct{})
+	// in discovery order; the stat loop below filters against the
+	// filesystem.
+	declared, _, err := DeclaredCompanions(ext, f)
+	f.Close()
+	if err != nil {
+		// A malformed container resolves to an error rather than to an
+		// empty list; the seed/ingest caller logs it per the soft-fail
+		// contract. "We could not read it" must never be recorded as
+		// "it needs nothing".
+		return nil, nil, err
+	}
+
+	if support == CompanionFirstLevel {
+		// OBJ: expand each declared .mtl into the textures it names.
+		// This is the level that needs the filesystem, which is exactly
+		// why DeclaredCompanions stops short of it — an uploaded .obj
+		// has no sibling .mtl to open.
+		//
+		// Paths inside a .mtl are relative to the .mtl, which for our
+		// seed layout is usually but not always the model directory.
+		seen := make(map[string]struct{}, len(declared))
+		expanded := make([]string, 0, len(declared))
 		addDeclared := func(rel string) {
 			if _, dup := seen[rel]; dup {
 				return
 			}
 			seen[rel] = struct{}{}
-			declared = append(declared, rel)
+			expanded = append(expanded, rel)
 		}
-		for _, mtlRel := range ParseOBJMaterialLibs(raw) {
+		for _, mtlRel := range declared {
 			addDeclared(mtlRel)
 			mtlAbs := filepath.Join(dir, filepath.FromSlash(mtlRel))
 			mtlBytes, mErr := os.ReadFile(mtlAbs)
@@ -254,10 +378,7 @@ func ResolveCompanions(mainPath string) (found []string, missing []string, err e
 				addDeclared(rel)
 			}
 		}
-	default:
-		// No reader for this format's references (STL, PLY, DAE, ...).
-		// Not the same claim as "it has none" — see the file header.
-		return nil, nil, nil
+		declared = expanded
 	}
 
 	for _, rel := range declared {

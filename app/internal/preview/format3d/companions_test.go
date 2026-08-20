@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -362,5 +363,168 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #754 — the declaration half, separated
+// ---------------------------------------------------------------------------
+
+// TestCompanionSupportFor is the extension TABLE, asserted directly.
+//
+// It exists because three copies of this list used to be spelled out
+// across the tree and they had already drifted: seed's
+// applyAssetCompanions pre-filtered on `case "gltf", "obj"` and cost 363
+// seeded GLBs their companion rows (#750). Now there is one table and
+// this is the test that guards its contents.
+func TestCompanionSupportFor(t *testing.T) {
+	for _, c := range []struct {
+		ext  string
+		want CompanionSupport
+	}{
+		{"gltf", CompanionComplete},
+		{"glb", CompanionComplete},
+		{".GLB", CompanionComplete}, // leading dot + case are both tolerated
+		{"fbx", CompanionComplete},
+		{"obj", CompanionFirstLevel},
+		// Not a claim that these are self-contained — a claim that we
+		// cannot read their references. DAE in particular declares
+		// images in <library_images>.
+		{"dae", CompanionUnsupported},
+		{"stl", CompanionUnsupported},
+		{"ply", CompanionUnsupported},
+		{"png", CompanionUnsupported},
+		{"", CompanionUnsupported},
+	} {
+		if got := CompanionSupportFor(c.ext); got != c.want {
+			t.Errorf("CompanionSupportFor(%q) = %v, want %v", c.ext, got, c.want)
+		}
+	}
+}
+
+// TestDeclaredCompanions_ReadsFromBytesAlone is the property the upload
+// path needs: no filesystem, no sibling directory, just the model's own
+// bytes. An uploaded asset lives in content-addressed storage under a
+// hash and has neither.
+func TestDeclaredCompanions_ReadsFromBytesAlone(t *testing.T) {
+	doc := `{
+		"asset":{"version":"2.0"},
+		"buffers":[{"uri":"geometry.bin","byteLength":4}],
+		"images":[{"uri":"Textures/planks.png"},{"uri":"data:image/png;base64,iVBORw0KGgo="}]
+	}`
+
+	t.Run("glb", func(t *testing.T) {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "wall.glb")
+		writeGLB(t, p, doc, []byte("bin\x00"))
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		got, support, err := DeclaredCompanions("glb", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if support != CompanionComplete {
+			t.Errorf("support = %v, want CompanionComplete", support)
+		}
+		want := []string{"geometry.bin", "Textures/planks.png"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("declared = %v, want %v (the data: URI needs no companion)", got, want)
+		}
+	})
+
+	t.Run("gltf", func(t *testing.T) {
+		got, support, err := DeclaredCompanions(".GLTF", strings.NewReader(doc))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if support != CompanionComplete {
+			t.Errorf("support = %v, want CompanionComplete", support)
+		}
+		if !reflect.DeepEqual(got, []string{"geometry.bin", "Textures/planks.png"}) {
+			t.Errorf("declared = %v", got)
+		}
+	})
+}
+
+// TestDeclaredCompanions_OBJIsFirstLevelOnly.
+//
+// An .obj names .mtl libraries and each .mtl names its textures. The
+// second level needs the .mtl's CONTENT, which at ingest has not been
+// uploaded. Reporting the first level is correct; reporting it WITHOUT
+// saying so would under-report silently, which recreates the original
+// bug one level down.
+func TestDeclaredCompanions_OBJIsFirstLevelOnly(t *testing.T) {
+	obj := "mtllib barrel.mtl extra.mtl\nv 0 0 0\n"
+	got, support, err := DeclaredCompanions("obj", strings.NewReader(obj))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if support != CompanionFirstLevel {
+		t.Fatalf("support = %v, want CompanionFirstLevel — a caller that thinks this "+
+			"list is complete will tell the artist a lie by omission", support)
+	}
+	if !reflect.DeepEqual(got, []string{"barrel.mtl", "extra.mtl"}) {
+		t.Errorf("declared = %v", got)
+	}
+}
+
+// TestDeclaredCompanions_UnsupportedIsNotEmpty.
+//
+// ⚠️ The one answer this function must never give: a confident empty
+// list for a format nobody could read. `unsupported` and "declares
+// nothing" are different sentences and the support value is how the
+// caller tells them apart.
+func TestDeclaredCompanions_UnsupportedIsNotEmpty(t *testing.T) {
+	got, support, err := DeclaredCompanions("dae", strings.NewReader("<COLLADA/>"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if support != CompanionUnsupported {
+		t.Fatalf("support = %v, want CompanionUnsupported", support)
+	}
+	if got != nil {
+		t.Errorf("declared = %v, want nil", got)
+	}
+}
+
+// TestDeclaredCompanions_MalformedErrorsRatherThanReportingNone.
+//
+// The soft-fail contract belongs to the CALLER. A container we could not
+// finish reading must never come back as "declares no companions" — that
+// is the silent-success failure the endpoint above it exists to remove.
+func TestDeclaredCompanions_MalformedErrorsRatherThanReportingNone(t *testing.T) {
+	got, _, err := DeclaredCompanions("glb", strings.NewReader("not a glb at all"))
+	if err == nil {
+		t.Fatalf("malformed GLB parsed without error, declared = %v", got)
+	}
+	if got != nil {
+		t.Errorf("declared = %v, want nil alongside the error", got)
+	}
+}
+
+// TestResolveCompanions_StillResolvesTheOBJSecondLevel.
+//
+// The refactor moved the extension table out of ResolveCompanions and
+// left it the filesystem half. The OBJ second level — each .mtl's own
+// textures, read from the .mtl beside the model — is the part that
+// genuinely needs a directory, and it must survive the move.
+func TestResolveCompanions_StillResolvesTheOBJSecondLevel(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "barrel.obj"), "mtllib barrel.mtl\nv 0 0 0\n")
+	writeFile(t, filepath.Join(dir, "barrel.mtl"), "newmtl m\nmap_Kd wood.png\n")
+	writeFile(t, filepath.Join(dir, "wood.png"), "png")
+
+	found, missing, err := ResolveCompanions(filepath.Join(dir, "barrel.obj"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"barrel.mtl", "wood.png"}
+	if !reflect.DeepEqual(found, want) {
+		t.Fatalf("found = %v, want %v — the .mtl recursion did not survive the split", found, want)
+	}
+	if missing != nil {
+		t.Errorf("missing = %v, want nil", missing)
 	}
 }

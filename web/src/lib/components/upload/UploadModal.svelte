@@ -179,6 +179,31 @@
         {/if}
       </p>
       <div class="flex items-center gap-2">
+        <!-- The way IN to the full-page create surface (#1119). The two
+             coexist by design — this modal is the quick path — but a
+             page nothing links to is a page nobody finds. It CLOSES the
+             modal first: both drive the same store, and the page's
+             onMount claims the queue, so leaving the dialog open behind
+             it would show a stale copy of what the page is editing.
+
+             ⚠️ THE HREF IS `/create`, NOT `/posts/new`, AND THAT IS LOAD
+             BEARING. This modal is mounted in the ROOT LAYOUT, so this
+             anchor is in the DOM on every page whether the dialog is
+             open or not — and ten locators across the dogfood suite
+             find a post card with `a[href^="/posts/"]`. Under
+             `/posts/new` this invisible link won whenever it beat the
+             feed to render, and three specs hung for 30s clicking it.
+             A create URL that cannot be mistaken for a post permalink
+             is the fix; tightening ten locators around an ambiguity we
+             introduced is not. -->
+        <a
+          href="/create"
+          onclick={() => upload.close()}
+          data-testid="upload-open-full-page"
+          class="rounded-md px-2 py-1.5 text-sm text-fg-muted underline-offset-2 hover:text-fg hover:underline"
+        >
+          {t('create.open_full_page')}
+        </a>
         <button
           type="button"
           onclick={() => upload.reset()}
