@@ -55,6 +55,25 @@ export interface PendingFieldValue {
 
 // ---- Types ----------------------------------------------------------------
 
+/**
+ * The maker's AI declaration (#1167, ADR 0094). `null` is the fourth
+ * state and the default: UNDECLARED. It is a different statement from
+ * `'none'` and the difference is load-bearing — see UploadRow.
+ */
+export type AiProvenance = 'none' | 'assisted' | 'generated' | null;
+
+/** What a stored model declares it needs, and what of that is missing (#754). */
+export interface CompanionRequirements {
+  status: 'ok' | 'unsupported' | 'unreadable';
+  /** True when only the first level of references is knowable — OBJ. */
+  partial: boolean;
+  declared: string[];
+  missing: string[];
+  attached: string[];
+  /** Why the file could not be read; set only when status is 'unreadable'. */
+  detail?: string;
+}
+
 export type UploadRowState =
   | 'queued'       // accepted, not yet started
   | 'uploading'    // PUT /storage/objects in flight
@@ -98,6 +117,54 @@ export interface UploadRow {
    * accepts, unlike `true`, which is a 400.
    */
   mature: boolean;
+  /**
+   * The maker's AI declaration for this asset (#1167, ADR 0094).
+   *
+   * ⚠️ `null` MEANS UNDECLARED — nobody was asked — and it is NOT
+   * `'none'`. `'none'` is a positive claim ("no generative AI was
+   * involved") and must only ever be set because a person chose it.
+   * The create body therefore OMITS the key when this is null, rather
+   * than sending a zero value the way `mature` above sends `false`.
+   * The two fields look alike and this is where they differ.
+   */
+  aiProvenance: AiProvenance;
+  /**
+   * What `mature` and `aiProvenance` were when the asset row was
+   * CREATED — i.e. what the server was actually told.
+   *
+   * ⚠️ These exist because the upload starts the instant a file is
+   * added, so `POST /assets` has usually already gone by the time the
+   * artist reaches the self-label controls. Before this, a label set
+   * after the row went `ready` was written to a local field nothing
+   * ever sent: the box stayed ticked, the submit succeeded, and the
+   * asset was stored unlabelled. That is true of `mature` in shipped
+   * code as well as of the declaration — same mechanism, same silence.
+   *
+   * Null until the row is created; compared at submit so only a real
+   * difference costs a PATCH.
+   */
+  sentMature: boolean | null;
+  sentAiProvenance: AiProvenance | undefined;
+  /**
+   * The asset type the SERVER assigned, read back from POST /assets.
+   *
+   * Not a guess. The frontend has no mime→asset_type mapping and must
+   * not grow one: `assetTypeFor` in the Go handler is the rule, it
+   * promotes whatever generic type we send to the real one by
+   * extension, and a client-side mirror of that table is a second
+   * expression of it that is free to disagree. So the create surface
+   * asks for the answer instead of computing it, and uses it to decide
+   * which field definitions to offer (#1119). Null until the row is
+   * ready.
+   */
+  assetType: number | null;
+  /**
+   * What the stored model says it still needs (#754). Populated after
+   * the asset row exists, for model files only. Null means "not asked
+   * yet or not applicable" — the UI distinguishes that from an answer
+   * of `unsupported`, which means "we cannot read this format".
+   */
+  requirements: CompanionRequirements | null;
   /** Last error message, for the retry surface. */
   error: string | null;
   /**
@@ -172,6 +239,26 @@ export interface PostComposeState {
    *  server took the UUID without validating which domain it belonged
    *  to. Publication is now one boolean on both sides. */
   draft: boolean;
+  /**
+   * The AI declaration for the WHOLE composition (#1167, ADR 0094).
+   *
+   * ⚠️ It lives here and not only on the rows, and that is a bug fix
+   * rather than a convenience. The create page asks this ONCE — the
+   * artist is describing the work, not each file of it — and a control
+   * that only wrote through to `rows` was INERT before any file had
+   * been dropped: an artist who declared first and dropped second had
+   * their answer discarded, silently, on the one axis where silence is
+   * worst. Rows inherit this at enqueue time, so the order of the two
+   * acts stops mattering.
+   *
+   * Null is UNDECLARED and is the default. Never `'none'`, which is a
+   * positive claim the artist has to actually make.
+   *
+   * The MODAL does not use this: its control is per-file and writes
+   * `row.aiProvenance` directly, which `sharedAiProvenance` falls back
+   * to reading.
+   */
+  aiProvenance: AiProvenance;
   /** Thumbnail strategy. 'member' = first ready row; 'separate' = the standalone-cover asset. */
   thumbMode: 'member' | 'separate';
   /** Which member-row's asset to use as cover when thumbMode === 'member'. */
@@ -218,6 +305,7 @@ class UploadState {
     tags: [],
     collectionId: null,
     draft: false,
+    aiProvenance: null,
     thumbMode: 'member',
     thumbMemberRowId: null,
     thumbSeparateAssetId: null,
@@ -227,6 +315,13 @@ class UploadState {
   contextTeamId = $state<string | null>(null);
 
   // Final-step state — the POST /posts call(s) after every file is ready.
+  /**
+   * Post ids created by the last successful submit(), in creation
+   * order. Read immediately after submit() resolves true — reset()
+   * empties it at the START of the next run, not the end of this one,
+   * so the caller always has a window to read it.
+   */
+  createdPostIds = $state<string[]>([]);
   composeBusy = $state(false);
   composeError = $state<string | null>(null);
 
@@ -434,6 +529,13 @@ class UploadState {
         this.composeError = t('upload.err_field_values');
         return false;
       }
+      // Self-labels the artist set after the row was created. Before
+      // the posts, so a post is never made around an asset carrying a
+      // label its owner thinks they applied and the server never saw.
+      for (const row of ready) {
+        await this.flushSelfLabels(row);
+      }
+      this.createdPostIds = [];
       if (this.compose.enabled) {
         await this.createPosts(ready);
       }
@@ -471,6 +573,47 @@ class UploadState {
     if (this.compose.collectionId) this.compose.enabled = true;
   }
 
+  /**
+   * The AI declaration every queued row shares, or null when they
+   * disagree or nothing was declared (#1167, ADR 0094).
+   *
+   * Read by ThumbnailPicker so a STANDALONE COVER carries the same
+   * statement as the work it fronts. That is not tidiness: a cover is a
+   * CONTRIBUTOR to the post's derived value (migration 00060 follows
+   * 00054's completed rule, because a card shows its cover first), and
+   * the derivation's negative arm requires unanimity. Leaving the cover
+   * undeclared would take a post whose every member declared `none`
+   * back to UNDECLARED — the artist would have answered the question
+   * and had the answer quietly dropped by an unrelated control.
+   */
+  get sharedAiProvenance(): AiProvenance {
+    // The composition-level answer wins where there is one: the create
+    // page sets it, and it is meaningful with ZERO rows queued.
+    if (this.compose.aiProvenance !== null) return this.compose.aiProvenance;
+    // Otherwise fall back to the rows agreeing, which is how the MODAL
+    // reaches an answer — its control is per-file and never touches
+    // `compose`.
+    if (this.rows.length === 0) return null;
+    const first = this.rows[0].aiProvenance;
+    return this.rows.every((r) => r.aiProvenance === first) ? first : null;
+  }
+
+  /**
+   * Declare AI involvement for the whole composition, writing through to
+   * every row already queued (#1167).
+   *
+   * Both halves are necessary, and the bug that produced this method
+   * needed both. Storing it makes the choice survive until files
+   * arrive; writing through applies it to files that arrived first.
+   * With only the write-through the control was INERT on an empty page
+   * — an artist who declared before dropping had their answer
+   * discarded, silently, on the one axis where silence is worst.
+   */
+  setAiProvenance(v: AiProvenance): void {
+    this.compose.aiProvenance = v;
+    for (const row of this.rows) row.aiProvenance = v;
+  }
+
   /** True when the modal was opened from a collection, in which case
    *  the post is not optional — see applyContext. Read by the compose
    *  form to explain the disabled toggle rather than just disabling it. */
@@ -488,6 +631,7 @@ class UploadState {
       tags: [],
       collectionId: this.compose.collectionId, // preserve context across resets
       draft: false,
+      aiProvenance: null,
       thumbMode: 'member',
       thumbMemberRowId: null,
       thumbSeparateAssetId: null,
@@ -514,6 +658,15 @@ class UploadState {
         // OFF by default, per ADR 0090 §2 and the owner's minimal-
         // friction bar. A default of true would mislabel the library.
         mature: false,
+        // Inherited from the composition, which is UNDECLARED unless the
+        // artist has said otherwise. A default of 'none' would have the
+        // form disclaim AI on their behalf before they touched anything,
+        // which is the one thing ADR 0094 exists to stop.
+        aiProvenance: this.compose.aiProvenance,
+        sentMature: null,
+        sentAiProvenance: undefined,
+        assetType: null,
+        requirements: null,
         error: null,
         fieldValues: new Map(),
         fieldsWritten: false,
@@ -559,6 +712,11 @@ class UploadState {
         // is refused with a 400 where the operator has switched the
         // feature off.
         mature: row.mature,
+        // #1167 — OMITTED when undeclared, never sent as a zero value.
+        // `mature: false` above is a true statement about an unlabelled
+        // work; `ai_provenance: 'none'` would be a disclaimer nobody
+        // made, so absence is the only honest wire form for it.
+        ...(row.aiProvenance ? { ai_provenance: row.aiProvenance } : {}),
         // Legacy-derived: stuff the upload context into the asset's
         // metadata JSONB so it's preserved even before the proper
         // field_value extraction lands. This mirrors what the legacy
@@ -575,6 +733,16 @@ class UploadState {
         throw new Error(extractError(error) ?? t('upload.err_create_asset'));
       }
       row.assetId = data.id;
+      // Remember what the create request carried, so submit can tell a
+      // label the artist set AFTERWARDS from one that already landed.
+      row.sentMature = body.mature ?? false;
+      row.sentAiProvenance = row.aiProvenance;
+      // What the server actually decided this file is (#1119). The
+      // request asked for DEFAULT_ASSET_TYPE and the handler promotes
+      // it by extension, so this is the first point at which the real
+      // type is known — and it is the type whose field definitions the
+      // create page must offer.
+      row.assetType = typeof data.asset_type === 'number' ? data.asset_type : null;
       // Companions get uploaded immediately so the asset is ready
       // to render (the preview worker queues on field-value-write
       // time, and a 3D worker needs its textures staged before
@@ -589,11 +757,92 @@ class UploadState {
       // by default so most users open it AFTER the upload finishes).
       // We flush field values at submit time instead of here.
       row.state = 'ready';
+      // #754 — ask the model what it still needs. AFTER the row is
+      // ready and deliberately not awaited into the row's state: this
+      // is advisory, and an upload must not be reported as failed
+      // because the advice could not be fetched.
+      void this.loadRequirements(row);
     } catch (e) {
       row.error = e instanceof Error ? e.message : t('upload.err_upload_failed');
       row.state = 'errored';
     } finally {
       this.kick();
+    }
+  }
+
+  /**
+   * Send self-labels the artist set AFTER the asset row was created.
+   *
+   * ⛔ THE BUG THIS FIXES IS SILENT AND PRE-EXISTING. The upload starts
+   * the moment a file is added, so `POST /assets` has normally already
+   * gone by the time anybody reaches the mature checkbox or the AI
+   * control. Their values were only ever read in the create body, so a
+   * label applied a second later went nowhere: the control stayed set,
+   * the submit reported success, and the stored asset carried nothing.
+   * `mature` has behaved this way since #1115.
+   *
+   * A refusal ABORTS the submit rather than being swallowed. On these
+   * two axes in particular the artist has to learn their label did not
+   * take — an accepted-but-inert write is how a library fills with
+   * flags nothing enforces, and on the AI axis the artist's reasonable
+   * conclusion is that they failed to disclose.
+   */
+  private async flushSelfLabels(row: UploadRow): Promise<void> {
+    if (!row.assetId) return;
+    const body: Record<string, unknown> = {};
+    if (row.sentMature !== null && row.mature !== row.sentMature) {
+      body.mature = row.mature;
+    }
+    if (row.sentAiProvenance !== undefined && row.aiProvenance !== row.sentAiProvenance) {
+      // Two words for two different changes: the column is nullable and
+      // `null` on this body already means "leave alone".
+      if (row.aiProvenance === null) body.clear_ai_provenance = true;
+      else body.ai_provenance = row.aiProvenance;
+    }
+    if (Object.keys(body).length === 0) return;
+
+    const { error } = await api.PATCH('/assets/{id}', {
+      params: { path: { id: row.assetId } },
+      body: body as never,
+    });
+    if (error) {
+      throw new Error(extractError(error) ?? t('upload.err_create_asset'));
+    }
+    row.sentMature = row.mature;
+    row.sentAiProvenance = row.aiProvenance;
+  }
+
+  /**
+   * Ask the server what this model still needs (#754).
+   *
+   * Advisory and best-effort by construction: an upload is complete
+   * whether or not this answers, and every failure path leaves
+   * `row.requirements` null, which the UI reads as "nothing to say"
+   * rather than as "nothing needed". The distinction matters — a
+   * silent "nothing needed" for a model that actually references three
+   * textures is precisely the failure this endpoint exists to remove.
+   *
+   * Companions the user attached BY HAND in the same flow are already
+   * on the asset by the time this runs (uploadCompanions is awaited
+   * above), so they show up as `attached` and not as `missing`.
+   */
+  async loadRequirements(row: UploadRow): Promise<void> {
+    if (!row.assetId) return;
+    try {
+      const { data, error } = await api.GET('/assets/{id}/companion-requirements', {
+        params: { path: { id: row.assetId } },
+      });
+      if (error || !data) return;
+      row.requirements = {
+        status: data.status,
+        partial: !!data.partial,
+        declared: data.declared ?? [],
+        missing: data.missing ?? [],
+        attached: data.attached ?? [],
+        detail: data.detail,
+      };
+    } catch {
+      // Advisory. Leave it null.
     }
   }
 
@@ -766,6 +1015,11 @@ class UploadState {
     if (error || !data) {
       throw new Error(extractError(error) ?? t('upload.err_create_post'));
     }
+    // Kept so a caller can go TO what it just made (#1119). The modal
+    // never needed it — it closes onto whatever page you were on — but
+    // a full-page create flow that drops you back on an empty form has
+    // thrown away the only thing you wanted.
+    this.createdPostIds.push(data.id);
   }
 }
 
@@ -897,6 +1151,48 @@ export interface FieldDef {
   // extraction pipeline will treat it as a decision and never improve
   // on it.
   default_value?: FieldDefault | null;
+  /**
+   * Whether this field is OFFERED on the upload / create surface
+   * (#1173, ADR 0092 §3, consumed by #1119).
+   *
+   * ⚠️ READ IT AS `!== false`, NEVER AS `=== true`. It defaults TRUE on
+   * the server precisely so that shipping the flag mid-release changes
+   * nothing, and a field that predates the column — or one served by an
+   * older peer — arrives with the key ABSENT. Reading absent as "off"
+   * would empty the create form on every install at once.
+   *
+   * It is a form-composition hint and not access control: a hidden
+   * field's values are unaffected and can still be written directly.
+   */
+  show_on_upload?: boolean;
+  /**
+   * The column this field MIRRORS, when it is a mirror of one (`title`,
+   * `description`).
+   *
+   * A surface that already renders the column with a first-class
+   * control must skip the mirrored field rather than offer a second
+   * editor for the same value — two inputs writing one column is a
+   * last-write-wins race the artist can see and cannot explain.
+   */
+  mirrors_column?: string | null;
+}
+
+/**
+ * The fields a create surface should offer for an asset type.
+ *
+ * Two subtractions on top of `fieldsForAssetType`, and both are #1119's
+ * job rather than the server's — `show_on_upload` is stored and served
+ * but deliberately not enforced, because it governs a FORM and not a
+ * permission (see FieldDefinition in openapi.yaml).
+ */
+export function fieldsOfferedOnUpload(defs: FieldDef[]): FieldDef[] {
+  return defs.filter(
+    (f) =>
+      // Participation is OPT-OUT: unset means unchanged, means offered.
+      f.show_on_upload !== false &&
+      // A mirrored column already has a first-class control on the page.
+      !f.mirrors_column,
+  );
 }
 
 /**

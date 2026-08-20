@@ -33,6 +33,8 @@
   } from '$lib/fieldOptions';
   import { describeDefault, CONTEXT_KEYS } from '$lib/fieldDefaults';
   import VocabularyCombobox from '$components/VocabularyCombobox.svelte';
+  import AiProvenanceControl from '$components/AiProvenanceControl.svelte';
+  import CompanionRequirementsNote from './CompanionRequirementsNote.svelte';
 
   // What the server will put on this field if the artist leaves it
   // alone. Shown, never pre-filled: pre-filling would send the value
@@ -320,6 +322,25 @@
         <span class="text-fg-muted">{t('upload.file_row.mature')}</span>
       </label>
     {/if}
+
+    <!-- #1167, ADR 0094 — the maker's AI declaration. Beside the mature
+         label because both are one-decision self-labels the artist
+         makes about their own work, and different from it in two ways
+         that matter: it is never gated by operator policy (it withholds
+         nothing from anybody), and it has no zero value — untouched
+         stores NOTHING, because "undeclared" and "declares no AI" are
+         different statements. -->
+    <AiProvenanceControl
+      value={row.aiProvenance}
+      testid="row"
+      onchange={(v) => (row.aiProvenance = v)}
+    />
+
+    <!-- #754 — what this model still needs, once the server has read
+         it. Renders nothing at all for a format we cannot parse, which
+         is deliberate: "no companions needed" is a claim, and we have
+         no basis for it there. -->
+    <CompanionRequirementsNote requirements={row.requirements} testid="row" />
 
     <!-- Progress bar + size -->
     {#if row.state === 'uploading' || row.state === 'asset-creating' || row.state === 'queued'}

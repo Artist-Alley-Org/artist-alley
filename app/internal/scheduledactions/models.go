@@ -99,6 +99,8 @@ type Asset struct {
 	DeletedReason    *string `json:"deleted_reason"`
 	DeletedByUserRef *int64  `json:"deleted_by_user_ref"`
 	Mature           bool    `json:"mature"`
+	// The MAKER'S DECLARATION about generative-AI involvement in this work (#1167, ADR 0094). Three declared values — `none` (the maker declares no generative AI was involved), `assisted` (AI used in part: upscaling, inpainting, an AI-generated texture on hand-made geometry), `generated` (substantially AI-generated) — plus NULL, which means UNDECLARED: nobody was asked. ⚠️ NULL IS NOT `none`. The column is nullable and unbackfilled precisely so the rows predating the feature do not assert a disclaimer their makers never made; a reader that renders NULL as "no AI" is lying on the artist's behalf. ⚠️ A DECLARATION IS NOT A PERMISSION (ADR 0094 §4): this is orthogonal to `sensitivity` and to `mature`; it is a FILTER a viewer may apply to their own feed and never a GATE that withholds the work from others, and nothing derived from the asset — search text, facets, suggest, thumbhash, embeddings, counts, covers — is withheld on account of it. That property is what keeps this column cheap and it holds only while nothing gates on it. Extraction may one day CORROBORATE `generated`/`assisted` from `Iptc4xmpExt:DigitalSourceType` on an UNDECLARED work, and may NEVER establish `none`: the IPTC vocabulary has no term meaning "no AI", so absence of an AI term is not evidence of absence (ADR 0094 §3). Does not federate yet — the v1 envelope rejects unknown top-level fields; the wire mapping is pre-decided in ADR 0094 §6.
+	AiProvenance *string `json:"ai_provenance"`
 }
 
 type AssetAlternate struct {
@@ -808,6 +810,8 @@ type Post struct {
 	DeletedReason         *string `json:"deleted_reason"`
 	DeletedByUserRef      *int64  `json:"deleted_by_user_ref"`
 	Mature                bool    `json:"mature"`
+	// DERIVED from the post's live CONTRIBUTORS — its member assets AND its two cover pictures (#1167, ADR 0094). Never written by a request body; maintained by `public.post_ai_provenance` via triggers on `post_assets`, `assets` and `posts`, exactly as `posts.mature` is. The rule is asymmetric: a POSITIVE claim propagates on ANY (one `generated` contributor makes the post `generated`, else one `assisted` contributor makes it `assisted`), and the NEGATIVE claim requires ALL (the post reads `none` only when it has at least one live contributor and every one of them declares `none`). One undeclared contributor makes the post undeclared, because deriving `none` over a contributor nobody asked would fabricate that maker's disclaimer at the post level. A post with no live contributors is NULL. The covers arm is present from the first migration deliberately: `posts.mature` shipped without it and #1147 was the bill.
+	AiProvenance *string `json:"ai_provenance"`
 }
 
 type PostAcl struct {

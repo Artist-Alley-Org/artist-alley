@@ -59,10 +59,20 @@
     def: FieldDef;
     value: Value;
     disabled?: boolean;
+    /**
+     * Let a vocabulary control ask the SERVER for matches rather than
+     * filtering the options it was handed (#1119, ADR 0092 §1).
+     *
+     * Off by default so every existing caller is unchanged. The create
+     * page turns it on, because a page carrying twenty vocabulary
+     * fields would otherwise ship every term of all twenty before the
+     * artist touched a control.
+     */
+    serverVocabulary?: boolean;
     onchange: (v: Value) => void;
   }
 
-  let { def, value, disabled = false, onchange }: Props = $props();
+  let { def, value, disabled = false, serverVocabulary = false, onchange }: Props = $props();
 
   // Snapshot local copies of the bound fields so Svelte's reactivity
   // tracks them per-input. The component is uncontrolled at the
@@ -175,6 +185,7 @@
         {disabled}
         label={def.label}
         testid={def.code}
+        fieldId={serverVocabulary ? def.id : null}
         onchange={emitMultiSelect}
       />
     </div>

@@ -19,9 +19,19 @@ RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
           origin_server_id, team_id, state_id, created_at, updated_at;
 
 -- name: GetPost :one
+-- `ai_provenance` is DERIVED (#1167, ADR 0094) — maintained by the
+-- triggers 00060 installs, never written by a request. It is selected
+-- HERE and in no other post query on purpose: every read path that
+-- renders a post — detail, browse, by-asset, the collection lateral —
+-- goes through fetchFullPost, so one projection serves all of them, and
+-- CreatePost/UpdatePost must NOT return it. Their RETURNING clause runs
+-- before the AFTER triggers that derive it, so the value they could
+-- report is the pre-membership one: null on every create. fetchFullPost
+-- re-reads after members are inserted, which is where the truth is.
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
        cover_thumbnail_asset_id, posted_at, like_count, comment_count,
-       origin_server_id, team_id, state_id, created_at, updated_at
+       origin_server_id, team_id, state_id, created_at, updated_at,
+       ai_provenance
 FROM posts
 WHERE id = $1 AND deleted_at IS NULL;
 

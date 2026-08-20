@@ -2378,6 +2378,16 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string, publ
 		v := openapi_types.UUID(p.StateID.Bytes)
 		out.StateId = &v
 	}
+	// #1167 / ADR 0094 — DERIVED by trigger from the post's live
+	// members and its two cover pictures, never written by a request.
+	// nil means UNDECLARED, which is also what one undeclared
+	// contributor produces: the post cannot disclaim AI on behalf of a
+	// maker nobody asked. Safe to cache cross-caller with the rest of
+	// this object — it is a property of the post, not of the reader.
+	if p.AiProvenance != nil && *p.AiProvenance != "" {
+		v := openapi.PostAiProvenance(*p.AiProvenance)
+		out.AiProvenance = &v
+	}
 	for _, m := range members {
 		a := memberToAsset(m)
 		// Restricted is FALSE here and the asset is complete, always.

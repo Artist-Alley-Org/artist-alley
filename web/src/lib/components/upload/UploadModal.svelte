@@ -179,6 +179,20 @@
         {/if}
       </p>
       <div class="flex items-center gap-2">
+        <!-- The way IN to the full-page create surface (#1119). The two
+             coexist by design — this modal is the quick path — but a
+             page nothing links to is a page nobody finds. It CLOSES the
+             modal first: both drive the same store, and the page's
+             onMount claims the queue, so leaving the dialog open behind
+             it would show a stale copy of what the page is editing. -->
+        <a
+          href="/posts/new"
+          onclick={() => upload.close()}
+          data-testid="upload-open-full-page"
+          class="rounded-md px-2 py-1.5 text-sm text-fg-muted underline-offset-2 hover:text-fg hover:underline"
+        >
+          {t('create.open_full_page')}
+        </a>
         <button
           type="button"
           onclick={() => upload.reset()}
