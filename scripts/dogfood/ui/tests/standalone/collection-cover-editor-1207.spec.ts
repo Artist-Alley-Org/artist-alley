@@ -41,6 +41,10 @@ interface CollectionPayload {
 }
 
 let collectionId: string | undefined;
+// The post carrying the fixture members into the collection (#1161).
+// Held at module scope beside collectionId because afterAll deletes it
+// for the same reason it deletes the collection.
+let fixturePostId: string | undefined;
 let memberIds: string[] = [];
 /** Deliberately NOT a member — the #1074 proof needs a picture the
  *  collection does not contain. */
@@ -319,15 +323,47 @@ test.describe('#1207 the collection cover editor', () => {
     expect(created.status(), 'fixture collection must be created').toBe(201);
     collectionId = ((await created.json()) as { id: string }).id;
 
-    for (const assetId of [...memberIds, portraitId]) {
-      const pinned = await request.post(`/api/v1/collections/${collectionId}/resources`, {
-        data: { asset_id: assetId, pinned: true },
-      });
-      expect(pinned.ok(), `pinning ${assetId} must succeed`).toBeTruthy();
-    }
+    // The fixture assets reach the collection AS A POST (#1161, ADR
+    // 0091). They used to be pinned individually through
+    // `POST /collections/{id}/resources`; that endpoint is retired,
+    // because a collection holds posts and pinning a bare asset was a
+    // second publication path with no title and no author's decision.
+    //
+    // One post with all three as members, which is also what the cover
+    // picker now reads: its options are the member assets of the
+    // collection's posts, not a separate list of pinned assets. Reaching
+    // them any other way here would test the picker against a state the
+    // product can no longer produce.
+    const post = await request.post('/api/v1/posts', {
+      data: {
+        title: 'fixture post for #1207',
+        visibility: 'public',
+        members: [...memberIds, portraitId].map((asset_id, sort_order) => ({
+          asset_id,
+          sort_order,
+        })),
+      },
+    });
+    expect(post.status(), 'fixture post must be created').toBe(201);
+    fixturePostId = ((await post.json()) as { id: string }).id;
+    const postId = fixturePostId;
+
+    const pinned = await request.post(`/api/v1/collections/${collectionId}/posts`, {
+      data: { post_id: postId, pinned: true },
+    });
+    expect(pinned.ok(), 'pinning the fixture post must succeed').toBeTruthy();
   });
 
   test.afterAll(async ({ request }) => {
+    // The fixture POST goes, not just the collection (#1161). Members
+    // reach a collection through a post now, so this spec puts a real
+    // post on the instance — and a leaked one sits at the head of the
+    // feed for every later spec that reaches for "the newest post".
+    if (fixturePostId) {
+      await request.delete(`/api/v1/posts/${fixturePostId}`).catch(() => undefined);
+      fixturePostId = undefined;
+    }
+
     // The switch goes back to whatever this install had, whatever else
     // happened. Restored even on failure, and only when we know what it
     // was — an undefined prior means beforeAll never got far enough to
@@ -963,10 +999,16 @@ test.describe('#1207 the collection cover editor', () => {
     // AND IT IS NOT A MEMBER. The whole point of the free pointer is
     // that choosing a picture does not add it to the collection — a
     // cover that quietly joined would change what the collection IS.
-    const members = await request.get(`/api/v1/collections/${collectionId}/resources?limit=200`);
-    const { items } = (await members.json()) as { items: Array<{ asset_id: string }> };
+    // "Member" now means "a member asset of a post in this collection"
+    // (#1161): the collection holds posts, and the picker's options are
+    // their members, so that is the set a cover must not have joined.
+    const members = await request.get(`/api/v1/collections/${collectionId}/posts?limit=200`);
+    const { items } = (await members.json()) as {
+      items: Array<{ members?: Array<{ asset_id: string }> }>;
+    };
+    const memberAssetIds = items.flatMap((p) => (p.members ?? []).map((m) => m.asset_id));
     expect(
-      items.some((m) => m.asset_id === outsiderId),
+      memberAssetIds.includes(outsiderId),
       'choosing a cover added it to the collection — the pointer is supposed to be free',
     ).toBe(false);
   });

@@ -297,24 +297,68 @@
   const tiers = $derived(publicOffered ? ALL_TIERS : ALL_TIERS.filter((v) => v !== 'public'));
   const publicIsInert = $derived(!site.publicModeEnabled && visibility === 'public');
 
-  // The members are the picker's options. The API accepts ANY asset the
-  // curator may picture — that is what lets a cover outlive the member
-  // it was chosen from — but the members are the set that can be shown
-  // as pictures without inventing a whole asset browser in a modal, and
-  // "upload a banner, add it, pick it" reaches the rest.
+  // What is IN the collection is the picker's options. The API accepts
+  // ANY asset the curator may picture — that is what lets a cover
+  // outlive the thing it was chosen from — but "the pictures already in
+  // this collection" is the set that can be shown without inventing a
+  // whole asset browser in a modal, and "upload a banner, add it, pick
+  // it" reaches the rest.
+  //
+  // ⚠️ THE SOURCE CHANGED, and this is the load-bearing half of #1161
+  // on the client. It read `GET /collections/{id}/resources` — the
+  // collection's pinned ASSETS — and ADR 0091 retired the endpoints
+  // that put assets there, so on any collection made from now on that
+  // list is permanently empty and the picker has nothing to offer. The
+  // ADR's own consequence line calls for replacing this read.
+  //
+  // It reads the collection's POSTS instead, and flattens their
+  // members. That is the same sentence the old code meant — "the
+  // pictures in this collection" — said in the model that now holds:
+  // a collection contains posts, a post contains assets. No new
+  // endpoint and no server change; `GET /collections/{id}/posts`
+  // already returns hydrated posts whose members carry the same
+  // readability marks this filter reads.
   //
   // A member this reader may not picture is dropped rather than shown
   // disabled: the server would refuse it, and offering a control that
-  // cannot succeed is worse than not offering it.
+  // cannot succeed is worse than not offering it. Duplicates are
+  // collapsed — one asset can be a member of several posts in the same
+  // collection, and the picker should offer each picture once.
   async function loadCoverChoices(id: string) {
     coverLoading = true;
     try {
-      const { data } = await api.GET('/collections/{id}/resources', {
+      const { data } = await api.GET('/collections/{id}/posts', {
         params: { path: { id }, query: { limit: 60 } },
       });
-      coverChoices = ((data?.items ?? []) as unknown as CoverChoice[]).filter(
-        (m) => !m.restricted && m.preview_available === true,
-      );
+      // ⚠️ `preview_available` and `ladder_available` sit on the
+      // member's ASSET here, not on the member itself. On the old
+      // `CollectionResource` shape they were top-level, and reading
+      // them at the wrong depth silently yields `undefined` — which
+      // this filter treats as "not picturable" and hands back an empty
+      // picker that looks exactly like a collection with no pictures
+      // in it. Flattened onto the CoverChoice the picker already
+      // renders, so the depth is dealt with once, here.
+      type PostMemberRow = {
+        asset_id?: string;
+        restricted?: boolean;
+        asset?: { preview_available?: boolean; ladder_available?: boolean };
+      };
+      const seen = new Set<string>();
+      const out: CoverChoice[] = [];
+      for (const post of (data?.items ?? []) as Array<{ members?: PostMemberRow[] }>) {
+        for (const m of post.members ?? []) {
+          if (!m.asset_id || seen.has(m.asset_id)) continue;
+          if (m.restricted || m.asset?.preview_available !== true) continue;
+          seen.add(m.asset_id);
+          out.push({
+            asset_id: m.asset_id,
+            restricted: false,
+            preview_available: true,
+            ladder_available: m.asset?.ladder_available,
+          });
+        }
+      }
+      coverChoices = out;
     } catch {
       // A picker that failed to load must not block renaming the
       // collection, so this is not surfaced as a form error.

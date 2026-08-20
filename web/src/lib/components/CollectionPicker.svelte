@@ -20,25 +20,26 @@
   // The two are not exclusive: nothing prevents a caller passing both,
   // and the confirm loop reports one combined count.
   //
-  // ⚠️ `assetIds` HAS NO CALLER as of #1185, and that is deliberate
-  // rather than an oversight to tidy. Its three call sites — the
-  // viewer's Edit menu, the playlist's "Add all to collection", and
-  // CardMenu on an ASSET card — were removed because a collection shows
-  // posts only, so every one of them wrote a `collection_resources` row
-  // that no surface displays. The arm is left standing because
-  // `POST /collections/{id}/resources` is still a live, supported
-  // endpoint and #1161 owns the decision to retire it along with the
-  // post-creating flow that replaces these entry points. Deleting the
-  // client here would prejudge that; leaving it costs a defaulted prop
-  // and can write nothing on its own.
+  // The `assetIds` arm is GONE (#1161). #1185 removed its three call
+  // sites — the viewer's Edit menu, the playlist's "Add all to
+  // collection", and CardMenu on an asset card — because a collection
+  // shows posts only, so each of them wrote a `collection_resources`
+  // row no surface displayed. The arm itself was left standing on the
+  // grounds that `POST /collections/{id}/resources` was still a live
+  // endpoint and #1161 owned the decision to retire it.
+  //
+  // It did. The endpoint is gone (ADR 0091: a collection holds posts,
+  // and pinning a bare asset was a second publication path), so the
+  // client that called it goes with it rather than sitting here as a
+  // ready-made way back onto a path the model closed.
   //
   // Behaviour:
   //   - Lists the caller's writable collections (tab=mine).
   //     Free-text search filters server-side via `q=`.
   //   - "+ New collection" inline form creates one and selects it.
-  //   - On confirm: POSTs each asset to /collections/{id}/resources and
-  //     each post to /collections/{id}/posts, sequentially (small
-  //     enough that we don't bother with batching for now).
+  //   - On confirm: POSTs each post to /collections/{id}/posts,
+  //     sequentially (small enough that we don't bother with batching
+  //     for now).
   //   - Toast-style banner with success / partial-failure summary.
   //   - Closes on ESC, backdrop click, ×, and on successful add.
 
@@ -47,9 +48,6 @@
   import { t } from '$stores/lang.svelte';
 
   interface Props {
-    /** Asset ids to add. One element for the single-asset case, many
-        for the bulk-from-playlist case. */
-    assetIds?: string[];
     /** Post ids to add as REFERENCES (#882) — the post keeps its
         author and its lifecycle; the collection holds a pointer, and
         the author deleting the post removes it from here too. */
@@ -63,11 +61,11 @@
     onAdded?: (collectionId: string, addedCount: number) => void;
   }
 
-  let { assetIds = [], postIds = [], onClose, onAdded }: Props = $props();
+  let { postIds = [], onClose, onAdded }: Props = $props();
 
   // The header count and the all-failed test both work off the total,
   // so neither has to know which table an item lands in.
-  const itemCount = $derived(assetIds.length + postIds.length);
+  const itemCount = $derived(postIds.length);
 
   interface CollectionRow {
     id: string;
@@ -145,27 +143,10 @@
     // Sequential adds — keeps the failure mode legible. The working set
     // is small (1 for per-item, 1–dozens for bulk-from-playlist); for a
     // future 1000-item bulk we'd switch to a server-side batch endpoint.
-    for (const assetId of assetIds) {
-      const { error } = await api.POST('/collections/{id}/resources', {
-        params: { path: { id: col.id } },
-        body: {
-          asset_id: assetId,
-          // openapi-typescript generates these as required even
-          // though the spec has defaults; pass them explicitly.
-          sort_order: 0,
-          pinned: true,
-        },
-      });
-      if (error) {
-        failed += 1;
-      } else {
-        added += 1;
-      }
-    }
-    // Posts go to their own endpoint — a different table, the same
-    // membership columns (#882). A post the caller may not read comes
-    // back 404, indistinguishable from one that does not exist, so
-    // there is nothing to report beyond "this one did not go in".
+    // Posts are the only thing a collection holds (#1161, ADR 0091
+    // decision 1). A post the caller may not read comes back 404,
+    // indistinguishable from one that does not exist, so there is
+    // nothing to report beyond "this one did not go in".
     for (const postId of postIds) {
       const { error } = await api.POST('/collections/{id}/posts', {
         params: { path: { id: col.id } },

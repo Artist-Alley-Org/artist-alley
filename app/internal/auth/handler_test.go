@@ -587,12 +587,6 @@ func (a authOnlyImpl) DeleteCollection(_ context.Context, _ openapi.DeleteCollec
 func (a authOnlyImpl) ListCollectionResources(_ context.Context, _ openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
 	panic("ListCollectionResources called from auth test shim")
 }
-func (a authOnlyImpl) AddCollectionResource(_ context.Context, _ openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
-	panic("AddCollectionResource called from auth test shim")
-}
-func (a authOnlyImpl) RemoveCollectionResource(_ context.Context, _ openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
-	panic("RemoveCollectionResource called from auth test shim")
-}
 func (a authOnlyImpl) ListPosts(context.Context, openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
 	panic("ListPosts called from auth test shim")
 }

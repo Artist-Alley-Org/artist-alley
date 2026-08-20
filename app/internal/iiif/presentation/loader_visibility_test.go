@@ -123,10 +123,15 @@ var iiifCollSeeds = []iiifCollSeed{
 type iiifFixture struct {
 	assets      map[string]uuid.UUID
 	collections map[string]uuid.UUID
+	// posts is one post per collection — the container the members now
+	// travel in (#1161). Kept only so the cleanup can find them.
+	posts []uuid.UUID
 }
 
-// seedIIIF plants assets, collections, and pins EVERY asset into every
-// collection so the member list exercises the row predicate.
+// seedIIIF plants assets and collections, and puts EVERY asset into
+// every collection — as members of one post per collection (#1161, ADR
+// 0091: a collection contains posts) — so the member list exercises the
+// row predicate.
 func seedIIIF(t *testing.T, pool *pgxpool.Pool) iiifFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -137,7 +142,7 @@ func seedIIIF(t *testing.T, pool *pgxpool.Pool) iiifFixture {
 
 	t.Cleanup(func() {
 		bg := context.Background()
-		_, _ = pool.Exec(bg, `DELETE FROM collection_resources WHERE collection_id IN (SELECT id FROM collections WHERE owner_user_ref=$1)`, iiifOwner)
+		_, _ = pool.Exec(bg, `DELETE FROM posts WHERE author_user_ref=$1`, iiifOwner)
 		_, _ = pool.Exec(bg, `DELETE FROM collections WHERE owner_user_ref=$1`, iiifOwner)
 		_, _ = pool.Exec(bg, `DELETE FROM assets WHERE owner_user_ref=$1`, iiifOwner)
 	})
@@ -173,13 +178,34 @@ func seedIIIF(t *testing.T, pool *pgxpool.Pool) iiifFixture {
 			id, "#661 "+c.label, "secret collection description", iiifOwner, c.visibility, i); err != nil {
 			t.Fatalf("seed collection %s: %v", c.label, err)
 		}
+		// The members reach the collection THROUGH A POST (#1161, ADR
+		// 0091): a collection contains posts, a post contains assets,
+		// and the loader reads that path now.
+		//
+		// The post is `public` and owned by the same fixture owner, so
+		// it adds no gating of its own — every case in this file is
+		// about the ASSET plane, and a post tier that withheld rows
+		// would make the asset assertions pass for the wrong reason.
+		var postID uuid.UUID
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO posts (author_user_ref, title, visibility)
+			VALUES ($1, $2, 'public') RETURNING id`,
+			iiifOwner, "#661 post for "+c.label).Scan(&postID); err != nil {
+			t.Fatalf("seed post for %s: %v", c.label, err)
+		}
+		f.posts = append(f.posts, postID)
 		for j, s := range iiifAssetSeeds {
 			if _, err := pool.Exec(ctx, `
-				INSERT INTO collection_resources (collection_id, asset_id, sort_order, pinned)
-				VALUES ($1,$2,$3,TRUE) ON CONFLICT DO NOTHING`,
-				id, f.assets[s.label], j); err != nil {
-				t.Fatalf("pin %s into %s: %v", s.label, c.label, err)
+				INSERT INTO post_assets (post_id, asset_id, sort_order)
+				VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+				postID, f.assets[s.label], j); err != nil {
+				t.Fatalf("add %s to the post for %s: %v", s.label, c.label, err)
 			}
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO collection_posts (collection_id, post_id, sort_order, pinned)
+			VALUES ($1,$2,0,TRUE) ON CONFLICT DO NOTHING`, id, postID); err != nil {
+			t.Fatalf("pin the post into %s: %v", c.label, err)
 		}
 	}
 	return f
