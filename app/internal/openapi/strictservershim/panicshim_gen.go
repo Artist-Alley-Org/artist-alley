@@ -910,6 +910,11 @@ func (*PanicShim) LintAsset(context.Context, openapi.LintAssetRequestObject) (op
 	panic("PanicShim: LintAsset called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListAssetPosts panics by default; test shims override.
+func (*PanicShim) ListAssetPosts(context.Context, openapi.ListAssetPostsRequestObject) (openapi.ListAssetPostsResponseObject, error) {
+	panic("PanicShim: ListAssetPosts called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // RecreateAssetPreview panics by default; test shims override.
 func (*PanicShim) RecreateAssetPreview(context.Context, openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
 	panic("PanicShim: RecreateAssetPreview called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1168,16 +1173,6 @@ func (*PanicShim) RemoveCollectionPost(context.Context, openapi.RemoveCollection
 // ListCollectionResources panics by default; test shims override.
 func (*PanicShim) ListCollectionResources(context.Context, openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
 	panic("PanicShim: ListCollectionResources called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
-}
-
-// AddCollectionResource panics by default; test shims override.
-func (*PanicShim) AddCollectionResource(context.Context, openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
-	panic("PanicShim: AddCollectionResource called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
-}
-
-// RemoveCollectionResource panics by default; test shims override.
-func (*PanicShim) RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
-	panic("PanicShim: RemoveCollectionResource called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // DeleteComment panics by default; test shims override.

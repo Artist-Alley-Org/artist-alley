@@ -4967,6 +4967,81 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /assets/{id}/posts:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listAssetPosts
+      summary: Where this asset of mine appears
+      description: |
+        The OWNER's answer to "where has my file ended up" (ADR 0091
+        decision 5). An asset is personal storage; it reaches a shared
+        surface only as a member of a post, and this is how its owner
+        sees which posts those are — INCLUDING posts by other people.
+
+        # Not the same question as `GET /posts/by-asset/{id}`
+
+        That operation is the reader's: it lists the posts featuring an
+        asset that the CALLER may read, and a post they may not read is
+        simply absent. Absent is the right answer to a reader and the
+        wrong one to an owner, who would conclude their file was
+        nowhere.
+
+        This operation is the owner's, and it is the ONE place in the
+        product where somebody learns something about a post they may
+        not read. So it is deliberately the most conservative shape the
+        decision allows:
+
+          * `items` — the posts the ordinary read rule ALREADY grants
+            this caller, in full, exactly as `/posts/by-asset` returns
+            them. Nothing new is disclosed here.
+          * `withheld_count` — how many FURTHER posts contain this
+            asset. An integer and nothing else. No id, no title, no
+            author, no tier, no timestamp — nothing that could be
+            turned back into the post. The count is the whole
+            disclosure, and it is what makes "my file is being used
+            somewhere I cannot see" sayable at all.
+
+        A caller cannot walk the count into anything: there is no
+        cursor over the withheld set, no filter that shrinks it
+        selectively, and no per-post handle to probe with. Asking twice
+        gives the same integer.
+
+        ADR 0091's first amendment flags this as the part with NO
+        PRIOR ART — on art platforms a post's files are always the
+        author's own, so this case never arises there. It is ours,
+        which is the reason to under-build it rather than over-build
+        it. Widening it later is a decision somebody can make on
+        purpose; narrowing it after people have relied on it is not.
+
+        # Who may ask
+
+        The asset's OWNER, plus `assets.admin` / `system.admin`. Anyone
+        else gets the same `404` a nonexistent asset gets, because
+        "this asset is used in 3 posts you cannot see" is the owner's
+        information about their own file, and answering it for a
+        stranger would make the endpoint a usage oracle over the whole
+        library.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The posts this asset appears in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetPostUsage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /assets/{id}/similar:
     parameters:
       - name: id
@@ -7129,6 +7204,22 @@ paths:
       operationId: listCollectionResources
       summary: List the assets pinned in a collection
       description: |
+        READ ONLY, and the last of its family. The write endpoints that
+        put assets here — `POST /collections/{id}/resources` and
+        `DELETE …/{asset_id}` — were retired with #1161: a collection
+        holds POSTS (ADR 0091 decision 1), so pinning a bare asset was
+        a second publication path with no title, no framing and no
+        moment where the artist decided the work was ready. v0.10.1
+        (#1185) took away the UI; this took away the endpoints.
+
+        Existing rows are NOT converted into posts (decision 4) — an
+        auto-generated post is a publication nobody authored. They stay
+        readable, here, and nowhere else.
+
+        This operation survives because the collection COVER PICKER
+        reads it, and reading which assets a collection holds is not a
+        publication path.
+
         Returns assets currently pinned in this collection (excludes
         rows where the per-membership `expires_at` has passed), in
         `sort_order ASC, added_at ASC` order so the list matches the
@@ -7157,69 +7248,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-    post:
-      operationId: addCollectionResource
-      summary: Add (or re-pin) an asset in a collection
-      description: |
-        Idempotent on `(collection_id, asset_id)`. Re-adding an
-        existing membership updates `sort_order`, `pinned`, and
-        `expires_at` but keeps `added_at` fixed.
-
-        You may only collect what you can actually see. The asset must
-        be readable by the caller on both planes — it must exist and
-        not be soft-deleted, AND the caller must be entitled to its
-        content under the sensitivity tier (ADR 0064). An asset the
-        caller cannot read is reported exactly as one that does not
-        exist: `404` with `asset not found`, so this endpoint cannot
-        be used to probe whether a UUID exists.
-      tags: [collections]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CollectionResourceWrite" }
-      responses:
-        "204":
-          description: Resource added
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /collections/{id}/resources/{asset_id}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-      - name: asset_id
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-    delete:
-      operationId: removeCollectionResource
-      summary: Remove an asset from a collection
-      tags: [collections]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
-      responses:
-        "204":
-          description: Removed (or was already absent)
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
   /collections/{id}/posts:
     parameters:
       - name: id
@@ -15237,17 +15265,40 @@ components:
             Absent on a `restricted` placeholder, like every other
             asset-derived key above — the withheld row's permitted key
             set is unchanged by this addition.
-    CollectionResourceWrite:
+    AssetPostUsage:
       type: object
-      required: [asset_id]
+      description: |
+        The answer to `GET /assets/{id}/posts` (ADR 0091 decision 5).
+
+        Two fields, and the split between them IS the disclosure rule:
+        everything the caller is entitled to arrives as a whole post in
+        `items`, and everything they are not is compressed to a single
+        integer that carries no handle back to the post it counted.
+      required: [items, withheld_count]
       properties:
-        asset_id: { type: string, format: uuid }
-        sort_order: { type: integer, default: 0 }
-        pinned: { type: boolean, default: true }
-        expires_at:
-          type: string
-          format: date-time
-          nullable: true
+        items:
+          type: array
+          description: |
+            The posts containing this asset that the ordinary post read
+            rule grants this caller — the same rule, the same shape and
+            the same per-caller enrichment `GET /posts` applies.
+          items: { $ref: "#/components/schemas/Post" }
+        withheld_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            How many FURTHER live posts contain this asset — posts the
+            caller may not read.
+
+            Existence and count, never identity. There is no companion
+            array of ids, no cursor, and no filter that moves this
+            number selectively, because any of those would turn the
+            count back into the posts it counted. `0` means the caller
+            can already see every post this asset is in.
+
+            Soft-deleted posts are not counted: a deleted post is not
+            somewhere the asset appears.
     CollectionResourceList:
       type: object
       required: [items]
@@ -15261,10 +15312,12 @@ components:
     CollectionPostWrite:
       type: object
       description: |
-        The body of `POST /collections/{id}/posts` (#882). Mirrors
-        CollectionResourceWrite field for field, because
+        The body of `POST /collections/{id}/posts` (#882). It used to
+        mirror `CollectionResourceWrite` field for field, because
         `collection_posts` and `collection_resources` carry the same
         membership columns — a reference plus the curator's ordering.
+        That schema is gone with its endpoint (#1161): a collection
+        holds posts, so this is the only membership a caller writes.
 
         There is no post-side counterpart of `CollectionResource`: the
         listing returns whole `Post` objects, so the collection page

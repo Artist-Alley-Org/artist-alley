@@ -83,16 +83,30 @@
 <div class="space-y-4 rounded-lg border border-border bg-surface-elevated p-4">
   <!-- "Create a post" toggle. When off, the rest of the form
        collapses — the upload still happens, just no post wraps the
-       resulting assets. -->
+       resulting assets.
+
+       It is NOT off-able when the modal was opened from a collection
+       (#1161, ADR 0091 decision 3). A collection holds posts, so
+       dropping files there without one used to write a membership row
+       nothing rendered and now would write nothing at all: either way
+       the artist watches an upload succeed into an empty collection.
+       The control stays visible and says why rather than vanishing,
+       because a control that disappears looks like a bug. -->
   <label class="flex items-center gap-2 text-sm">
     <input
       type="checkbox"
       bind:checked={upload.compose.enabled}
+      disabled={upload.postRequired}
       data-testid="upload-compose-enabled"
-      class="h-4 w-4 rounded border-border-strong accent-accent"
+      class="h-4 w-4 rounded border-border-strong accent-accent disabled:opacity-50"
     />
     <span class="font-medium text-fg">{t('upload.compose.toggle')}</span>
   </label>
+  {#if upload.postRequired}
+    <p class="-mt-2 text-xs text-fg-muted" data-testid="upload-post-required">
+      {t('upload.compose.post_required')}
+    </p>
+  {/if}
 
   {#if upload.compose.enabled}
     <!-- Title + description -->

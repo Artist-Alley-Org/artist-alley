@@ -116,10 +116,18 @@ async function pickDeterministicImageAsset(page: Page): Promise<string> {
   return candidates[0].id;
 }
 
-// provisionCollectionWithAsset creates a collection and pins one
-// deterministic, preview-friendly asset into it, returning both ids.
-// Uses page.request so it runs with the logged-in admin's cookies.
-async function provisionCollectionWithAsset(
+// provisionEmptyCollection creates a collection and picks one
+// deterministic, preview-friendly asset — WITHOUT pinning the asset
+// into it, because #1161 retired the endpoint that could.
+//
+// That retirement is why this helper changed shape. It used to POST to
+// `/collections/{id}/resources`, and the first test below then checked
+// that the resulting bare membership rendered as nothing (#1185's
+// finding). ADR 0091 closed the write path entirely, so the state that
+// test described can no longer be created through the API at all —
+// which is a STRONGER guarantee than the one it was asserting, and the
+// first test below now asserts that instead.
+async function provisionEmptyCollection(
   page: Page,
 ): Promise<{ collectionId: string; assetId: string }> {
   const assetId = await pickDeterministicImageAsset(page);
@@ -129,11 +137,6 @@ async function provisionCollectionWithAsset(
   });
   expect(createRes.ok(), 'POST /collections should succeed').toBeTruthy();
   const collection = (await createRes.json()) as { id: string };
-
-  const pinRes = await page.request.post(`/api/v1/collections/${collection.id}/resources`, {
-    data: { asset_id: assetId, pinned: true },
-  });
-  expect(pinRes.ok(), 'pinning the asset should succeed').toBeTruthy();
 
   return { collectionId: collection.id, assetId };
 }
@@ -152,11 +155,31 @@ test.describe('UI-30 collections are posts-only, and /assets/{id} still resolves
     }
   });
 
-  test('a collection holding only a pinned asset renders as empty — no asset section (#1185)', async ({
+  test('a bare asset can no longer be pinned at all, and the wall shows nothing (#1185, #1161)', async ({
     page,
   }) => {
-    const provisioned = await provisionCollectionWithAsset(page);
+    const provisioned = await provisionEmptyCollection(page);
     collectionId = provisioned.collectionId;
+
+    // #1161 / ADR 0091: the write endpoints are gone, so the state
+    // #1185 hid from the page cannot be reached through the API at
+    // all. 404 or 405 both mean "not routed"; a handler answering
+    // anything else would mean the endpoint is merely unused.
+    const pinRes = await page.request.post(`/api/v1/collections/${collectionId}/resources`, {
+      data: { asset_id: provisioned.assetId, pinned: true },
+    });
+    expect(
+      [404, 405],
+      `POST /collections/{id}/resources answered ${pinRes.status()} — the retired write endpoint is still routed`,
+    ).toContain(pinRes.status());
+
+    const rmRes = await page.request.delete(
+      `/api/v1/collections/${collectionId}/resources/${provisioned.assetId}`,
+    );
+    expect(
+      [404, 405],
+      `DELETE /collections/{id}/resources/{asset_id} answered ${rmRes.status()} — still routed`,
+    ).toContain(rmRes.status());
 
     await page.goto(`/collections/${collectionId}`);
 
@@ -187,7 +210,7 @@ test.describe('UI-30 collections are posts-only, and /assets/{id} still resolves
   test('the /assets/{id} permalink opens the viewer and survives a reload (#475)', async ({
     page,
   }) => {
-    const provisioned = await provisionCollectionWithAsset(page);
+    const provisioned = await provisionEmptyCollection(page);
     collectionId = provisioned.collectionId;
 
     // Collect real API failures during the navigation — the #475 class

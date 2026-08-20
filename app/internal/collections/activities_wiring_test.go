@@ -6,7 +6,11 @@
 //
 // One test per shape:
 //   - CreateCollection — Create(aa:Collection) lands.
-//   - AddCollectionResource — Add(asset, target=collection) lands.
+//   - AddCollectionResource covered the Add(asset, target=collection)
+//     emission until #1161 retired that endpoint (ADR 0091: a
+//     collection holds posts). The Add verb is still exercised on the
+//     surviving membership path — posts.AddCollectionPost, in
+//     posts/collection_posts_test.go.
 //
 // Skips without AA_DB_PASSWORD per project convention.
 
@@ -19,14 +23,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
@@ -175,71 +175,5 @@ func TestCreateCollection_EmitsActivity(t *testing.T) {
 	}
 	if payloadName != "Wiring Test Collection" {
 		t.Errorf("payload.name: got %q", payloadName)
-	}
-}
-
-func TestAddCollectionResource_EmitsAddActivity(t *testing.T) {
-	fx := setupWiringFixture(t)
-	ctx, cancel := context.WithTimeout(fx.withIdentity(context.Background()), 15*time.Second)
-	defer cancel()
-
-	// Create a collection first.
-	createResp, err := fx.collections.CreateCollection(ctx, openapi.CreateCollectionRequestObject{
-		Body: &openapi.CollectionCreate{Name: "Add Activity Test Coll"},
-	})
-	if err != nil {
-		t.Fatalf("CreateCollection: %v", err)
-	}
-	collID := createResp.(openapi.CreateCollection201JSONResponse).Id
-
-	// Create a throwaway asset so AddCollectionResource has a real
-	// FK target. Cleanup deletes it after the test.
-	assetID := uuid.New()
-	if _, err := fx.pool.Exec(ctx,
-		`INSERT INTO assets (id, title, description, asset_type, status, owner_user_ref)
-		 VALUES ($1, $2, '', 1, 'active', $3)`,
-		pgtype.UUID{Bytes: assetID, Valid: true}, "wiring-test-asset", fx.userRef,
-	); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = fx.pool.Exec(context.Background(),
-			`DELETE FROM assets WHERE id = $1`,
-			pgtype.UUID{Bytes: assetID, Valid: true})
-	})
-
-	addResp, err := fx.collections.AddCollectionResource(ctx, openapi.AddCollectionResourceRequestObject{
-		Id:   collID,
-		Body: &openapi.CollectionResourceWrite{AssetId: openapi_types.UUID(assetID)},
-	})
-	if err != nil {
-		t.Fatalf("AddCollectionResource: %v", err)
-	}
-	if _, ok := addResp.(openapi.AddCollectionResource204Response); !ok {
-		t.Fatalf("unexpected response: %T", addResp)
-	}
-
-	// Activity row: Add(object=asset, target=collection).
-	var activityType, objectKind, targetURI string
-	var objectLocalID *string
-	if err := fx.pool.QueryRow(ctx,
-		`SELECT activity_type, COALESCE(object_kind,''), object_local_id, COALESCE(target_uri,'')
-		 FROM activities WHERE actor_user_ref=$1 AND activity_type='Add'
-		 ORDER BY published_at DESC LIMIT 1`,
-		fx.userRef,
-	).Scan(&activityType, &objectKind, &objectLocalID, &targetURI); err != nil {
-		t.Fatalf("read Add activity: %v", err)
-	}
-	if activityType != "Add" {
-		t.Errorf("activity_type: got %q want Add", activityType)
-	}
-	if objectKind != "asset" {
-		t.Errorf("object_kind: got %q want asset", objectKind)
-	}
-	if objectLocalID == nil || *objectLocalID != assetID.String() {
-		t.Errorf("object_local_id: got %v want %s", objectLocalID, assetID)
-	}
-	if !strings.Contains(targetURI, collID.String()) {
-		t.Errorf("target_uri should reference the collection (%s); got %q", collID, targetURI)
 	}
 }

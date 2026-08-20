@@ -134,6 +134,28 @@ func (q *Queries) AddPostTag(ctx context.Context, arg AddPostTagParams) error {
 	return err
 }
 
+const countLivePostsForAsset = `-- name: CountLivePostsForAsset :one
+SELECT COUNT(*)::BIGINT AS value
+FROM posts p
+WHERE p.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM post_assets pa
+                WHERE pa.post_id = p.id AND pa.asset_id = $1)
+`
+
+// How many live posts contain this asset, with NO read rule applied.
+//
+// The raw total is half of decision 5's disclosure: the handler
+// subtracts the posts the caller may actually read and reports the
+// remainder as `withheld_count`. It is deliberately a COUNT and not a
+// list — see the operation's description for why an id, a title or a
+// cursor over the same set would undo the whole point.
+func (q *Queries) CountLivePostsForAsset(ctx context.Context, assetID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countLivePostsForAsset, assetID)
+	var value int64
+	err := row.Scan(&value)
+	return value, err
+}
+
 const createPost = `-- name: CreatePost :one
 
 INSERT INTO posts (
@@ -214,6 +236,20 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getAssetOwnerRef = `-- name: GetAssetOwnerRef :one
+SELECT owner_user_ref FROM assets WHERE id = $1 AND deleted_at IS NULL
+`
+
+// The asset's owner, for the ownership gate on GET /assets/{id}/posts
+// (ADR 0091 decision 5). Soft-deleted assets answer no rows: a deleted
+// file has no "where does it appear" to report.
+func (q *Queries) GetAssetOwnerRef(ctx context.Context, id pgtype.UUID) (*int64, error) {
+	row := q.db.QueryRow(ctx, getAssetOwnerRef, id)
+	var owner_user_ref *int64
+	err := row.Scan(&owner_user_ref)
+	return owner_user_ref, err
 }
 
 const getPost = `-- name: GetPost :one

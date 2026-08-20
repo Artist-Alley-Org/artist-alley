@@ -135,7 +135,39 @@ func TestCollectionLifecycle(t *testing.T) {
 	}
 }
 
-// TestCollectionResources covers add / list / remove on the membership
+// pinResource writes a `collection_resources` row directly.
+//
+// It used to be `POST /collections/{id}/resources`; that endpoint was
+// retired with #1161 (ADR 0091: a collection holds posts, so pinning a
+// bare asset was a second publication path). The ROWS still exist and
+// the READ endpoint still serves them — for the cover picker, and for
+// installs that have them from before — so the listing, its pagination
+// and its field-plane filtering still need covering. Seeding by SQL is
+// how a read-only surface gets tested once nothing can write to it.
+func pinResource(t *testing.T, pool *pgxpool.Pool, collectionID, assetID string, sortOrder int) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO collection_resources (collection_id, asset_id, sort_order, pinned)
+		 VALUES ($1, $2, $3, TRUE)
+		 ON CONFLICT (collection_id, asset_id)
+		 DO UPDATE SET sort_order = EXCLUDED.sort_order`,
+		collectionID, assetID, sortOrder); err != nil {
+		t.Fatalf("pin resource: %v", err)
+	}
+}
+
+// TestCollectionResources covers the surviving READ side of the
+// membership surface: listing, ordering, cursor pagination, and the
+// rows' survival across a soft-delete.
+//
+// It also pins the RETIREMENT itself (#1161): the two write endpoints
+// must be gone from the router, not merely unreferenced by the UI. A
+// live, caller-less write endpoint is the state ADR 0091 exists to
+// leave behind — the model says a collection holds posts and the API
+// still offers the other thing.
+//
+// Original header follows:
+// covers add / list / remove on the membership
 // side, including pagination and the cascade through DeleteCollection.
 func TestCollectionResources(t *testing.T) {
 	pwd := os.Getenv("AA_DB_PASSWORD")
@@ -156,12 +188,16 @@ func TestCollectionResources(t *testing.T) {
 		"visibility": "private",
 	})
 
-	// Adding to a non-existent asset -> 404
-	noAsset := postJSON(t, router, "/collections/"+col+"/resources", map[string]any{
+	// The retirement (#1161). The router must not answer these at all.
+	// 405 or 404 both mean "gone"; a 2xx/4xx from a HANDLER would mean
+	// the endpoint is still live and merely unused by the UI.
+	if rr := postJSON(t, router, "/collections/"+col+"/resources", map[string]any{
 		"asset_id": uuid.New().String(),
-	})
-	if noAsset.Code != http.StatusNotFound {
-		t.Errorf("missing asset: status=%d want 404 body=%s", noAsset.Code, noAsset.Body.String())
+	}); rr.Code != http.StatusNotFound && rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST …/resources answered %d — the write endpoint is still routed", rr.Code)
+	}
+	if rr := deleteReq(t, router, "/collections/"+col+"/resources/"+uuid.New().String()); rr.Code != http.StatusNotFound && rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("DELETE …/resources/{id} answered %d — the write endpoint is still routed", rr.Code)
 	}
 
 	// Insert two assets directly so we don't have to wire the assets
@@ -173,29 +209,8 @@ func TestCollectionResources(t *testing.T) {
 			`DELETE FROM assets WHERE owner_user_ref = $1`, userRef)
 	})
 
-	// Add asset1 (sort_order defaults to 0), asset2 (sort_order 10)
-	r := postJSON(t, router, "/collections/"+col+"/resources", map[string]any{
-		"asset_id": asset1,
-	})
-	if r.Code != http.StatusNoContent {
-		t.Fatalf("add asset1: %d body=%s", r.Code, r.Body.String())
-	}
-	r = postJSON(t, router, "/collections/"+col+"/resources", map[string]any{
-		"asset_id":   asset2,
-		"sort_order": 10,
-	})
-	if r.Code != http.StatusNoContent {
-		t.Fatalf("add asset2: %d body=%s", r.Code, r.Body.String())
-	}
-
-	// Re-add asset1 with new sort_order to confirm upsert
-	r = postJSON(t, router, "/collections/"+col+"/resources", map[string]any{
-		"asset_id":   asset1,
-		"sort_order": 5,
-	})
-	if r.Code != http.StatusNoContent {
-		t.Fatalf("re-add asset1: %d body=%s", r.Code, r.Body.String())
-	}
+	pinResource(t, pool, col, asset1, 5)
+	pinResource(t, pool, col, asset2, 10)
 
 	// List -> 2 entries in (5, 10) sort_order
 	listRR := httptest.NewRecorder()
@@ -231,10 +246,12 @@ func TestCollectionResources(t *testing.T) {
 		t.Errorf("second page should have no next_cursor, got %q", *page2.NextCursor)
 	}
 
-	// Remove asset2 -> list shrinks to 1
-	rmRR := deleteReq(t, router, "/collections/"+col+"/resources/"+asset2)
-	if rmRR.Code != http.StatusNoContent {
-		t.Fatalf("remove: %d", rmRR.Code)
+	// Drop asset2 (by SQL — the DELETE endpoint is retired) and the
+	// list shrinks to 1.
+	if _, err := pool.Exec(context.Background(),
+		`DELETE FROM collection_resources WHERE collection_id=$1 AND asset_id=$2`,
+		col, asset2); err != nil {
+		t.Fatalf("unpin: %v", err)
 	}
 	listRR2 := httptest.NewRecorder()
 	router.ServeHTTP(listRR2, httptest.NewRequest(http.MethodGet, "/collections/"+col+"/resources", nil))
@@ -520,12 +537,6 @@ func (s collShim) DeleteCollection(ctx context.Context, req openapi.DeleteCollec
 func (s collShim) ListCollectionResources(ctx context.Context, req openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
 	return s.h.ListCollectionResources(ctx, req)
 }
-func (s collShim) AddCollectionResource(ctx context.Context, req openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
-	return s.h.AddCollectionResource(ctx, req)
-}
-func (s collShim) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
-	return s.h.RemoveCollectionResource(ctx, req)
-}
 
 // TestGetCollection_NonOwnerDenied is the regression test for the hole
 // #439 closed: before visibility.CanSee was added to GetCollection, the
@@ -682,11 +693,8 @@ func TestListCollectionResources_RowFiltering(t *testing.T) {
 	setAssetTier(t, pool, pubAsset, "active", "public")
 	setAssetTier(t, pool, draftAsset, "draft", "public")
 
-	for _, a := range []string{pubAsset, draftAsset} {
-		rr := postJSON(t, ownerRouter, "/collections/"+colID+"/resources", map[string]any{"asset_id": a})
-		if rr.Code >= 300 {
-			t.Fatalf("pin %s: status=%d body=%s", a, rr.Code, rr.Body.String())
-		}
+	for i, a := range []string{pubAsset, draftAsset} {
+		pinResource(t, pool, colID, a, i)
 	}
 
 	// Decodes the contents page as raw maps — the key SET on the wire is

@@ -449,6 +449,26 @@ class UploadState {
   private applyContext(ctx: OpenContext): void {
     if (ctx.collectionId !== undefined) this.compose.collectionId = ctx.collectionId;
     if (ctx.teamId !== undefined) this.contextTeamId = ctx.teamId ?? null;
+    // Uploading INTO a collection means making a post there (#1161,
+    // ADR 0091 decision 3: publication is never a side effect, and a
+    // collection holds posts).
+    //
+    // The "just upload as assets" escape hatch cannot apply on this
+    // path, and turning it off is not a UI preference here — it is the
+    // difference between the files landing in the collection and
+    // landing nowhere the user was looking. Before the resources
+    // endpoints were retired the escape hatch quietly wrote a
+    // `collection_resources` row that no surface displayed; now it
+    // would write nothing at all. Either way the artist dropped files
+    // on a collection page and got an empty collection.
+    if (this.compose.collectionId) this.compose.enabled = true;
+  }
+
+  /** True when the modal was opened from a collection, in which case
+   *  the post is not optional — see applyContext. Read by the compose
+   *  form to explain the disabled toggle rather than just disabling it. */
+  get postRequired(): boolean {
+    return !!this.compose.collectionId;
   }
 
   private resetCompose(): void {

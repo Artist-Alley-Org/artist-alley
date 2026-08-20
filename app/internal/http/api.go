@@ -3165,12 +3165,6 @@ func (s *apiServer) RestoreCollection(ctx context.Context, req openapi.RestoreCo
 func (s *apiServer) ListCollectionResources(ctx context.Context, req openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
 	return s.collections.ListCollectionResources(ctx, req)
 }
-func (s *apiServer) AddCollectionResource(ctx context.Context, req openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
-	return s.collections.AddCollectionResource(ctx, req)
-}
-func (s *apiServer) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
-	return s.collections.RemoveCollectionResource(ctx, req)
-}
 
 // The /collections/{id}/posts trio delegates to POSTS, not collections
 // (#882). The payload is a hydrated Post and the gate is the post read
@@ -3257,6 +3251,15 @@ func (s *apiServer) ListPostsSharedWithMe(ctx context.Context, req openapi.ListP
 }
 func (s *apiServer) GetPostsByAsset(ctx context.Context, req openapi.GetPostsByAssetRequestObject) (openapi.GetPostsByAssetResponseObject, error) {
 	return s.posts.GetPostsByAsset(ctx, req)
+}
+
+// ListAssetPosts (`GET /assets/{id}/posts`) delegates to POSTS despite
+// its path, for the reason the /collections/{id}/posts trio does: the
+// payload is hydrated Posts and the gate is the post read rule, both of
+// which live there. The asset half is one ownership lookup (ADR 0091
+// decision 5).
+func (s *apiServer) ListAssetPosts(ctx context.Context, req openapi.ListAssetPostsRequestObject) (openapi.ListAssetPostsResponseObject, error) {
+	return s.posts.ListAssetPosts(ctx, req)
 }
 func (s *apiServer) CreatePost(ctx context.Context, req openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
 	resp, err := s.posts.CreatePost(ctx, req)

@@ -1216,209 +1216,39 @@ func (h *Handler) ListCollectionResources(
 }
 
 // ---------------------------------------------------------------------------
-// AddCollectionResource
+// The asset-membership WRITE endpoints are gone (#1161, ADR 0091)
 // ---------------------------------------------------------------------------
-
-func (h *Handler) AddCollectionResource(
-	ctx context.Context,
-	req openapi.AddCollectionResourceRequestObject,
-) (openapi.AddCollectionResourceResponseObject, error) {
-	caller := auth.IdentityFromContext(ctx)
-	if caller == nil {
-		return openapi.AddCollectionResource401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
-		}, nil
-	}
-	if req.Body == nil {
-		return openapi.AddCollectionResource400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
-		}, nil
-	}
-
-	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	q := New(h.Pool)
-	cur, err := q.GetCollection(ctx, pgID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return openapi.AddCollectionResource404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
-			}, nil
-		}
-		return nil, err
-	}
-	if !canMutateCollection(caller, cur) {
-		return openapi.AddCollectionResource403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the owner of this collection"},
-		}, nil
-	}
-
-	in := req.Body
-	pgAsset := pgtype.UUID{Bytes: uuid.UUID(in.AssetId), Valid: true}
-	assetIDStr := uuid.UUID(in.AssetId).String()
-
-	// #882 — the ASSET gate. Everything above authorises the
-	// COLLECTION; until this landed nothing looked at the asset at all,
-	// so any collection owner could pin any asset in the instance given
-	// its UUID, and a 404-vs-204 probe confirmed whether an arbitrary
-	// UUID existed.
-	//
-	// A refusal here is deliberately the SAME 404 the FK miss below
-	// returns — same status, same body. Anything else (403
-	// "forbidden", a distinct message) re-creates the enumeration
-	// oracle this check exists to remove.
-	collectible, err := h.mayCollectAsset(ctx, caller, uuid.UUID(in.AssetId))
-	if err != nil {
-		return nil, fmt.Errorf("collections: add resource: asset gate: %w", err)
-	}
-	if !collectible {
-		return openapi.AddCollectionResource404JSONResponse{
-			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
-		}, nil
-	}
-
-	// Gold-standard path: Add(object=asset, target=collection)
-	// per AP §6.6 / §7.8. 1.22.B-cleanup made activities required.
-	var fkAssetMissing bool
-	em := emit.AddToCollection(
-		h.actorContext(ctx, caller),
-		activities.ObjectKindAsset,
-		assetIDStr,
-		uuid.UUID(pgID.Bytes).String(),
-		cur.Name,
-	)
-	errRun := h.activities.WithEmission(ctx, activities.EmissionInput{
-		Activity: em.Activity,
-	}, func(tx pgx.Tx) error {
-		err := New(tx).AddCollectionResource(ctx, AddCollectionResourceParams{
-			CollectionID: pgID,
-			AssetID:      pgAsset,
-			SortOrder:    int32Or(in.SortOrder, 0),
-			Pinned:       boolOr(in.Pinned, true),
-			ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
-		})
-		if err != nil && strings.Contains(err.Error(), "collection_resources_asset_id_fkey") {
-			fkAssetMissing = true
-			return errAssetMissing
-		}
-		return err
-	})
-	if fkAssetMissing {
-		return openapi.AddCollectionResource404JSONResponse{
-			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
-		}, nil
-	}
-	if errRun != nil {
-		return nil, fmt.Errorf("collections: add resource: %w", errRun)
-	}
-	h.cacheInvalidate(ctx, pgID)
-	return openapi.AddCollectionResource204Response{}, nil
-}
-
-// errAssetMissing is the sentinel signalling FK-violation on
-// asset_id inside the WithEmission closure. Used to roll back +
-// return 404 without surfacing as a 500 server error. It is now a
-// race backstop rather than the primary path — mayCollectAsset
-// rejects an absent asset before any activity is emitted.
-var errAssetMissing = errors.New("collections: asset row absent")
-
-// mayCollectAsset answers "may this caller put THIS asset into a
-// collection" (#882). You may only collect what you can actually see.
 //
-// # Why this is not visibility.CanSee alone
+// `POST /collections/{id}/resources` and
+// `DELETE /collections/{id}/resources/{asset_id}` used to live here.
+// They wrote `collection_resources` rows — a bare asset pinned into a
+// collection — and that is the second publication path ADR 0091 exists
+// to remove: "collections and browse contain posts only", so dropping
+// a file into a collection published it with no title, no framing and
+// no moment where the artist decided the work was ready.
 //
-// The obvious call — CanSee(EntityAsset) — gates NOTHING here. Per ADR
-// 0064 sensitivity lives on the CONTENT plane, not the row plane, so
-// EntityAsset's authenticated predicate is `deleted_at IS NULL` and
-// nothing more (visibility/predicate.go, EntityAsset branch; CanSee's
-// own doc says as much). Every authenticated caller is row-visible to
-// every undeleted asset, so a gate built on CanSee alone would return
-// true for a restricted asset it has never been allowed to view, and
-// would review as if it worked.
+// v0.10.1 (#1185) removed the visible half: the collection page's asset
+// section and every affordance that reached these endpoints. That left
+// two live, supported, caller-less write endpoints — which is worse
+// than either state, because the model says one thing and the API still
+// offers the other.
 //
-// # The rule
+// The READ endpoint stays. `GET /collections/{id}/resources` is what
+// the cover picker uses, and reading which assets a collection once
+// held is not a publication path.
 //
-// The two-plane conjunction that answers it — CanSee(EntityAsset) AND
-// CanReadContent — lives in visibility.CanSeeAssetContent, which carries the
-// full reasoning: why each plane is load-bearing on its own account, why
-// the SystemAdmin / ContentReadAll short-circuits are inherited, and why
-// it fails closed. #922 needed the identical question on the post
-// surface, so the composition moved beside the planes it composes rather
-// than being copied — a second expression of a security rule is the
-// defect epic #665 exists to remove.
+// ⚠️ The rows are NOT converted into posts. ADR 0091 decision 4 is
+// explicit: an auto-generated post is a publication nobody authored,
+// with a title nobody wrote. The memberships simply stop being
+// writable; the assets remain in their owners' storage, losing nothing.
 //
-// This wrapper is the collections-side adapter: nil / identity handling,
-// and the auth.Identity → visibility.Caller + CapabilityChecker
-// translation.
-func (h *Handler) mayCollectAsset(ctx context.Context, id *auth.Identity, assetID uuid.UUID) (bool, error) {
-	if id == nil {
-		return false, nil
-	}
-	return visibility.CanSeeAssetContent(
-		ctx,
-		h.Pool,
-		visibility.NewCaller(&id.UserRef),
-		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
-		assetID,
-		visibility.MatureFromContext(ctx),
-	)
-}
-
-// ---------------------------------------------------------------------------
-// RemoveCollectionResource
-// ---------------------------------------------------------------------------
-
-func (h *Handler) RemoveCollectionResource(
-	ctx context.Context,
-	req openapi.RemoveCollectionResourceRequestObject,
-) (openapi.RemoveCollectionResourceResponseObject, error) {
-	caller := auth.IdentityFromContext(ctx)
-	if caller == nil {
-		return openapi.RemoveCollectionResource401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
-		}, nil
-	}
-	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	q := New(h.Pool)
-	cur, err := q.GetCollection(ctx, pgID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return openapi.RemoveCollectionResource404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
-			}, nil
-		}
-		return nil, err
-	}
-	if !canMutateCollection(caller, cur) {
-		return openapi.RemoveCollectionResource403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the owner of this collection"},
-		}, nil
-	}
-	assetIDStr := uuid.UUID(req.AssetId).String()
-	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.AssetId), Valid: true}
-
-	// Gold-standard path: Remove(object=asset, target=collection)
-	// per AP §6.7 / §7.9. 1.22.B-cleanup made activities required.
-	em := emit.RemoveFromCollection(
-		h.actorContext(ctx, caller),
-		activities.ObjectKindAsset,
-		assetIDStr,
-		uuid.UUID(pgID.Bytes).String(),
-		cur.Name,
-	)
-	errRun := h.activities.WithEmission(ctx, activities.EmissionInput{
-		Activity: em.Activity,
-	}, func(tx pgx.Tx) error {
-		return New(tx).RemoveCollectionResource(ctx, RemoveCollectionResourceParams{
-			CollectionID: pgID,
-			AssetID:      pgAsset,
-		})
-	})
-	if errRun != nil {
-		return nil, fmt.Errorf("collections: remove resource: %w", errRun)
-	}
-	h.cacheInvalidate(ctx, pgID)
-	return openapi.RemoveCollectionResource204Response{}, nil
-}
+// `mayCollectAsset` and the `errAssetMissing` sentinel went with them.
+// The RULE they adapted did not: it lives in
+// visibility.CanSeeAssetContent, which posts.mayAttachAsset composes
+// for exactly the same question on the surface that now owns it — "you
+// may only put in a post what you can actually see". Keeping a
+// caller-less collections-side copy would have left a second adapter
+// for a future contributor to reach for on a path this ADR closed.
 
 // ---------------------------------------------------------------------------
 // ACLs — additive grants on top of visibility (ADR 0010 L6)
@@ -2114,6 +1944,4 @@ var _ interface {
 	UpdateCollection(context.Context, openapi.UpdateCollectionRequestObject) (openapi.UpdateCollectionResponseObject, error)
 	DeleteCollection(context.Context, openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error)
 	ListCollectionResources(context.Context, openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error)
-	AddCollectionResource(context.Context, openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error)
-	RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error)
 } = (*Handler)(nil)

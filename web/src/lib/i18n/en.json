@@ -3399,6 +3399,7 @@
       "post_mode_label": "Post mode",
       "mode_one_post": "One post with all files",
       "mode_one_per_file": "One post per file",
+      "post_required": "Files added to a collection become a post \u2014 collections hold posts, not loose files.",
       "workflow_state_label": "Workflow state",
       "workflow_state_default": "Default",
       "tags_label": "Tags",
