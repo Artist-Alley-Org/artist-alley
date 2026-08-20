@@ -163,8 +163,15 @@ export interface PostComposeState {
   tags: string[];
   /** Optional collection to add the post(s) to. */
   collectionId: string | null;
-  /** Workflow state UUID (post domain). Null = use server default. */
-  stateId: string | null;
+  /** Save as a draft instead of publishing (ADR 0091 decision 7).
+   *
+   *  Replaces `stateId`, which was a raw workflow-state UUID picked
+   *  from a dropdown of every state in the `post` domain. That control
+   *  asked the artist a question about the state machine ("wip or
+   *  published?") to answer a question about their own work, and the
+   *  server took the UUID without validating which domain it belonged
+   *  to. Publication is now one boolean on both sides. */
+  draft: boolean;
   /** Thumbnail strategy. 'member' = first ready row; 'separate' = the standalone-cover asset. */
   thumbMode: 'member' | 'separate';
   /** Which member-row's asset to use as cover when thumbMode === 'member'. */
@@ -210,7 +217,7 @@ class UploadState {
     visibility: 'org-only',
     tags: [],
     collectionId: null,
-    stateId: null,
+    draft: false,
     thumbMode: 'member',
     thumbMemberRowId: null,
     thumbSeparateAssetId: null,
@@ -460,7 +467,7 @@ class UploadState {
       visibility: 'org-only',
       tags: [],
       collectionId: this.compose.collectionId, // preserve context across resets
-      stateId: null,
+      draft: false,
       thumbMode: 'member',
       thumbMemberRowId: null,
       thumbSeparateAssetId: null,
@@ -729,7 +736,7 @@ class UploadState {
       visibility: c.visibility,
       cover_asset_id: coverAssetId,
       cover_thumbnail_asset_id: coverThumbnailAssetId,
-      state_id: c.stateId ?? undefined,
+      draft: c.draft,
       members: memberIds,
       tags: c.tags.length ? c.tags : undefined,
       collection_id: c.collectionId ?? undefined,

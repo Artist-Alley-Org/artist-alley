@@ -6043,6 +6043,33 @@ paths:
             Admin-only. When `true`, soft-deleted posts appear
             alongside live rows. Non-admin callers ignored.
           schema: { type: boolean, default: false }
+        - name: draft
+          in: query
+          required: false
+          description: |
+            Restrict the page to DRAFTS — posts whose author has not
+            published them (ADR 0091 decision 7). This is the "my
+            unfinished work" listing, and it is the ONLY listing on
+            this API that returns a draft at all.
+
+            Omitted or `false` is the ordinary feed: published posts
+            only, for every caller including the author of a draft.
+            That is not a default anyone can talk their way out of by
+            combining filters — an unpublished post is absent from
+            browse, from search, from a collection, from `?feed=
+            following` and from its own author's `?author_ref=me`
+            page, because "on a shared surface" is decided before any
+            of them.
+
+            NARROWING like every other filter here. The read rule is
+            ANDed on after it and is STRICTER for a draft than for a
+            published post: a draft is readable by its author and by a
+            `posts.admin` holder only, whatever its `visibility` tier
+            says. So `?draft=true` returns your own drafts, an
+            instance moderator's returns everyone's, and a stranger's
+            returns an empty page rather than somebody's unfinished
+            `public` post.
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: A page of posts
@@ -6088,6 +6115,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":
@@ -6246,6 +6275,129 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /posts/{id}/publish:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: publishPost
+      summary: Publish a draft post
+      description: |
+        Moves the post from the `post` domain's `wip` state to its
+        `published` state — the deliberate act ADR 0091 exists to
+        require. The post appears on shared surfaces from this moment
+        and its `Create` activity reaches the federation outbox here,
+        not at upload time.
+
+        Two gates, and they are different questions:
+
+          * `posts.publish` — may this caller publish AT ALL. Enforced
+            by the workflow state machine, which owns the `wip` →
+            `published` edge, so an operator who wants publication to
+            be an approval step revokes the capability from the Base
+            role and the edge closes for everyone at once.
+          * authorship — may this caller publish THIS post. Publishing
+            WIDENS who can reach the post, so it is held to the same
+            narrow gate `PATCH /posts/{id}`'s `visibility` field is:
+            the author, a global `posts.admin` holder, or
+            `system.admin`. A team-scoped `posts.admin` can edit a
+            colleague's post and cannot publish it, exactly as it
+            cannot re-tier it (#930).
+
+        Idempotent in effect but not in status: publishing an
+        already-published post is refused with `409`, because the
+        request asks for a transition the state machine does not have
+        and answering `200` would tell the caller a move happened.
+
+        Every move is written to `workflow_audit` — who, when, from
+        which state to which — in the same transaction as the state
+        change.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The published post
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The post is already published
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /posts/{id}/unpublish:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: unpublishPost
+      summary: Return a published post to draft
+      description: |
+        Moves the post back from `published` to `wip` (ADR 0091
+        decisions 6 and 7). The post leaves every shared surface and
+        KEEPS EVERYTHING ELSE: title, description, tags, members,
+        cover, visibility tier, likes and comments are untouched, and
+        publishing it again restores exactly what left.
+
+        This is what makes "take it down for now" a non-destructive
+        act. Deleting the post is a different request with different
+        consequences, and neither one touches the member assets —
+        storage and publication are separate lifecycles, so removing a
+        post never removes the files it showed.
+
+        Peers are told. A `Delete` activity goes to the federation
+        outbox so a remote instance drops its copy rather than
+        continuing to serve a post its author withdrew; re-publishing
+        emits a fresh `Create`.
+
+        Gated on the ordinary post-mutation rule — author, team-scoped
+        or global `posts.admin`, or `system.admin` — which is WIDER
+        than publish deliberately. Unpublishing narrows who can reach
+        the post, and a management capability that can tidy up but not
+        hand out is the right asymmetry (the same one that lets
+        `posts.admin` revoke an ACL it may not grant).
+
+        Refused with `409` when the post is not published, for the
+        same reason publish is: the state machine has no such edge.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The post, now a draft
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The post is not published
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /posts/{id}/acls:
     parameters:
@@ -16491,7 +16643,7 @@ components:
         `members` array is the ordered list of assets in the post;
         `cover_asset_id` is the one shown in feed/grid cards.
       required:
-        [id, author_user_ref, title, description, visibility,
+        [id, author_user_ref, title, description, visibility, draft,
          posted_at, like_count, comment_count, tags, members,
          created_at, updated_at]
       properties:
@@ -16555,14 +16707,49 @@ components:
             cropped detail or an entirely separate cover image). When
             set, the feed card prefers this asset's variants over
             `cover_asset_id`.
+        draft:
+          type: boolean
+          description: |
+            The post is a DRAFT — its author has not put it in front of
+            people yet (ADR 0091 decision 7).
+
+            A draft appears on NO shared surface: not browse, not
+            search, not a collection, not its own author's feed, and
+            nothing about it is federated to a peer. It is readable by
+            its author (and by a `posts.admin` holder) through
+            `GET /posts/{id}` and listable by them through
+            `GET /posts?draft=true`, and by nobody else — a `public`
+            draft is no more readable by a stranger than a `private`
+            one, because publication and visibility are different
+            questions. `visibility` says who may read it ONCE
+            published; this says whether it is published at all.
+
+            The two lifecycles are separate in the other direction too:
+            a draft's member assets are ordinary assets in their
+            owners' storage, unaffected by whether the post that shows
+            them is published.
+
+            Derived from `state_id` — true when the post's workflow
+            state is the `post` domain's `wip` state, false when it is
+            `published`. It is on the wire so a client never has to
+            resolve a state UUID against `GET /workflow/states` to
+            answer the one question the UI actually asks.
         state_id:
           type: string
           format: uuid
           nullable: true
           description: |
-            Optional workflow state. Must reference a row in
-            `workflow_state` whose `domain = 'post'`. NULL = no
-            workflow tracking on this post.
+            The post's workflow state — a row in `workflow_states`
+            whose `domain = 'post'`. READ-ONLY on this API: it is set
+            by `POST /posts` (from `draft`) and moved by
+            `POST /posts/{id}/publish` and
+            `POST /posts/{id}/unpublish`, which go through the
+            workflow state machine so the move is validated and
+            audited. No request body accepts it.
+
+            Prefer `draft` for anything a UI renders. This field is the
+            underlying identity, kept on the wire for admin surfaces
+            that show workflow history.
         posted_at: { type: string, format: date-time }
         like_count: { type: integer, format: int64 }
         liked:
@@ -16860,14 +17047,31 @@ components:
           description: |
             Optional standalone thumbnail asset (not a post member).
             Useful for "upload a custom cover" UX in the upload modal.
-        state_id:
-          type: string
-          format: uuid
-          nullable: true
+        draft:
+          type: boolean
+          default: false
           description: |
-            Optional workflow state, domain = 'post'. When omitted the
-            post is placed in the post domain's initial state, or NULL
-            if no initial state is configured.
+            Create the post as a DRAFT instead of publishing it
+            (ADR 0091 decision 7). Omitted or `false` publishes
+            immediately, which is what every caller before this field
+            existed did.
+
+            THIS REPLACES `state_id`, which this schema used to accept
+            and the handler used to write verbatim into the row with
+            its domain unvalidated. That was harmless only while
+            nothing read post state; the moment state decides who sees
+            a post it becomes a way to choose your own publication
+            status by UUID, and a way to point a post at another
+            domain's state entirely. The workflow state is now the
+            server's to set: `false` here means the `post` domain's
+            initial state, `true` means its `wip` state, and no other
+            value is expressible on this endpoint.
+
+            Publishing a post you created as a draft is
+            `POST /posts/{id}/publish`, which is capability-gated and
+            audited. Creating one already published requires the same
+            `posts.publish` capability that endpoint does — omitting
+            this field does not route around it.
         members:
           type: array
           minItems: 1
@@ -16918,10 +17122,6 @@ components:
             Before #946 this property was declared here and silently
             dropped by the handler — the request answered 200 and the
             column was unchanged.
-        state_id:
-          type: string
-          format: uuid
-          nullable: true
         tags:
           type: array
           items: { type: string, minLength: 1, maxLength: 64 }

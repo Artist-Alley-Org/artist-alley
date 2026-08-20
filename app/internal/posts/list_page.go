@@ -110,6 +110,24 @@ type ListPostsPageParams struct {
 	// liking a post you cannot read does not make it readable by you or
 	// by anyone else.
 	LikedByUserRef *int64
+	// Draft restricts the page to UNPUBLISHED posts — the author's own
+	// drafts listing (`GET /posts?draft=true`, ADR 0091 decision 7).
+	//
+	// It is the ONE filter here that changes which PREDICATE the page
+	// is built from rather than merely narrowing within it: false (the
+	// default, and every other surface) composes the read rule with its
+	// publication conjunct intact, so no combination of the other
+	// filters can produce a draft. True waives that conjunct and adds
+	// the complement as a plain conjunct, so the page is drafts and
+	// nothing but drafts.
+	//
+	// It is still NARROWING in the sense that matters. Waiving the
+	// publication conjunct does not widen authorization: the read rule
+	// itself holds a draft to its author and to a posts.admin holder
+	// whichever way this is set (visibility.postReadableExpr), so a
+	// stranger asking for drafts gets an empty page rather than
+	// somebody's unfinished work.
+	Draft bool
 	// Kinds is the browse footer's type filter (#1166): the set of
 	// cover-asset kinds the page is restricted to, already parsed off
 	// `?kind=`. Nil means no filter; a NON-NIL EMPTY SLICE means the
@@ -355,7 +373,19 @@ func (h *Handler) ListPostsPageGated(
 		args = append(args, kindArgs...)
 	}
 
-	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "posts", len(args))
+	// The drafts page (ADR 0091 decision 7). Two halves that must move
+	// together: waive the read rule's publication conjunct, and add its
+	// complement so the page cannot also return published rows. Neither
+	// half alone is a listing anybody asked for — the first is browse
+	// with drafts mixed in.
+	var ruleOpts []visibility.Option
+	var draftFrag string
+	if p.Draft {
+		ruleOpts = append(ruleOpts, visibility.IncludeDrafts())
+		draftFrag = "\n  AND " + visibility.PostUnpublishedSQL("")
+	}
+
+	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "posts", len(args), ruleOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -391,6 +421,7 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
                       AND lk.target_id = posts.id
                       AND lk.user_ref = $11::BIGINT))
   AND ` + order.keysetSQL("posted_at", "id", 7, 8))
+	b.WriteString(draftFrag)
 	b.WriteString(kindFrag)
 	b.WriteString(matureFrag)
 	b.WriteString(ruleFrag)

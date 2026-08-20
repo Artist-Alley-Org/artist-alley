@@ -62,6 +62,17 @@ func (f *pmFixture) user(label string) int64 {
 	f.t.Cleanup(func() {
 		_, _ = f.pool.Exec(context.Background(), `DELETE FROM "user" WHERE ref = $1`, ref)
 	})
+	// Every real signed-in account holds `posts.publish` — registration
+	// puts it on the Base role and migration 00059 grants it there
+	// (#1161). A fixture user without it is a caller registration cannot
+	// produce, and CreatePost refuses to publish for one, so the team
+	// gate's cases would fail on the wrong axis entirely.
+	//
+	// Granted GLOBALLY and directly rather than through a role, because
+	// this fixture builds users by INSERT and its identities come back
+	// through the real auth.Resolver; a global grant is the shortest
+	// path to "an ordinary user" that the resolver will actually see.
+	f.grant(ref, "posts.publish", nil)
 	return ref
 }
 

@@ -324,7 +324,13 @@ BEGIN
        AND (NEW.deleted_at IS NULL) IS NOT DISTINCT FROM (OLD.deleted_at IS NULL) THEN
         RETURN NULL;
     END IF;
-    FOR r IN SELECT DISTINCT post_id FROM public.post_assets WHERE asset_id = NEW.id LOOP
+    FOR r IN
+        SELECT post_id FROM public.post_assets WHERE asset_id = NEW.id
+        UNION
+        SELECT id AS post_id FROM public.posts
+         WHERE cover_asset_id = NEW.id
+            OR cover_thumbnail_asset_id = NEW.id
+    LOOP
         PERFORM public.recompute_post_mature(r.post_id);
     END LOOP;
     RETURN NULL;
@@ -517,6 +523,52 @@ $$;
 
 
 --
+-- Name: post_initial_state_id(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_initial_state_id() RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT id FROM public.workflow_states
+     WHERE domain = 'post' AND is_initial
+     LIMIT 1
+$$;
+
+
+--
+-- Name: FUNCTION post_initial_state_id(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.post_initial_state_id() IS 'The `post` workflow domain''s entry-point state, as the DEFAULT for posts.state_id (ADR 0091 decision 7). A function because a column DEFAULT cannot hold a sub-select. Its job is to make "a post is born published" true of the SCHEMA rather than of each INSERT path in turn — the seeder, the API handler and every test fixture would otherwise each have to remember, and under the fail-closed read rule forgetting means the post is invisible to everybody including its author. Explicit writers (posts.createStateID) still choose, which is how a draft gets created.';
+
+
+--
+-- Name: post_is_mature(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_is_mature(p_post_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT EXISTS (
+        SELECT 1
+          FROM public.post_assets pa
+          JOIN public.assets a ON a.id = pa.asset_id
+         WHERE pa.post_id = p_post_id
+           AND a.deleted_at IS NULL
+           AND a.mature
+    ) OR EXISTS (
+        SELECT 1
+          FROM public.posts p
+          JOIN public.assets a
+            ON a.id IN (p.cover_asset_id, p.cover_thumbnail_asset_id)
+         WHERE p.id = p_post_id
+           AND a.deleted_at IS NULL
+           AND a.mature
+    );
+$$;
+
+
+--
 -- Name: post_tags_search_text_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -525,6 +577,25 @@ CREATE FUNCTION public.post_tags_search_text_trigger() RETURNS trigger
     AS $$
 BEGIN
     PERFORM rebuild_post_search_text(COALESCE(NEW.post_id, OLD.post_id));
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: posts_cover_mature_sync(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.posts_cover_mature_sync() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE'
+       AND NEW.cover_asset_id IS NOT DISTINCT FROM OLD.cover_asset_id
+       AND NEW.cover_thumbnail_asset_id IS NOT DISTINCT FROM OLD.cover_thumbnail_asset_id THEN
+        RETURN NULL;
+    END IF;
+    PERFORM public.recompute_post_mature(NEW.id);
     RETURN NULL;
 END;
 $$;
@@ -621,26 +692,9 @@ BEGIN
         RETURN;
     END IF;
     UPDATE public.posts p
-       SET mature = EXISTS (
-               SELECT 1
-                 FROM public.post_assets pa
-                 JOIN public.assets a ON a.id = pa.asset_id
-                WHERE pa.post_id = p_post_id
-                  AND a.deleted_at IS NULL
-                  AND a.mature
-           )
+       SET mature = public.post_is_mature(p_post_id)
      WHERE p.id = p_post_id
-       -- Write only on a real change. Without this every membership
-       -- edit touches the post row, which invalidates caches and
-       -- bumps nothing anybody asked to bump.
-       AND p.mature IS DISTINCT FROM EXISTS (
-               SELECT 1
-                 FROM public.post_assets pa
-                 JOIN public.assets a ON a.id = pa.asset_id
-                WHERE pa.post_id = p_post_id
-                  AND a.deleted_at IS NULL
-                  AND a.mature
-           );
+       AND p.mature IS DISTINCT FROM public.post_is_mature(p_post_id);
 END;
 $$;
 
@@ -2270,7 +2324,7 @@ CREATE TABLE public.posts (
     deleted_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    state_id uuid,
+    state_id uuid DEFAULT public.post_initial_state_id(),
     team_id uuid,
     cover_thumbnail_asset_id uuid,
     subtitle_track_override jsonb,
@@ -2279,6 +2333,13 @@ CREATE TABLE public.posts (
     mature boolean DEFAULT false NOT NULL,
     CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
+
+
+--
+-- Name: COLUMN posts.state_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.state_id IS 'The post''s workflow state, domain = ''post'' (ADR 0091 decision 7). Two states are reachable: `published` — the post is on shared surfaces — and `wip`, the DRAFT state, which is visible to its author and to a posts.admin holder and appears on no shared surface at all. Set by POST /posts from the request''s `draft` flag and moved only by workflow.Service.Transition (POST /posts/{id}/publish and /unpublish), which validates the edge and writes workflow_audit; no request body accepts this column. READ FAIL-CLOSED: visibility.postPublishedExpr asks `state_id = <published>`, so a NULL or unrecognised state withholds the post rather than showing it — the FK is ON DELETE SET NULL, and the other spelling would publish every draft the moment a state row was deleted. This is the ONE place a workflow state decides publication, and it is deliberate: the `post` domain has exactly these two states and ADR 0091 identifies them with draft/published. An ASSET''s workflow state means something else entirely — where the file is in its production process — and must never be read this way.';
 
 
 --
@@ -5674,6 +5735,13 @@ CREATE TRIGGER post_assets_search_text AFTER INSERT OR DELETE OR UPDATE ON publi
 --
 
 CREATE TRIGGER post_tags_search_text AFTER INSERT OR DELETE OR UPDATE ON public.post_tags FOR EACH ROW EXECUTE FUNCTION public.post_tags_search_text_trigger();
+
+
+--
+-- Name: posts posts_cover_mature_sync_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER posts_cover_mature_sync_trg AFTER INSERT OR UPDATE ON public.posts FOR EACH ROW EXECUTE FUNCTION public.posts_cover_mature_sync();
 
 
 --

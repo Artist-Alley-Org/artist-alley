@@ -28,6 +28,11 @@ export interface PostForPlaylist {
   title: string;
   description: string;
   visibility: 'private' | 'followers' | 'public';
+  /** The post is unpublished (#1161, ADR 0091 decision 7). Present on
+   *  every post the API returns; declared optional here only because
+   *  this local mirror of the schema is hand-written and older cached
+   *  payloads may predate the field. */
+  draft?: boolean;
   cover_asset_id?: string | null;
   posted_at: string;
   like_count: number;

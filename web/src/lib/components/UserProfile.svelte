@@ -75,6 +75,10 @@
   let { ref, username }: Props = $props();
 
   let profile = $state<Record<string, any> | null>(null);
+  // Declared up here with `profile` rather than beside its other uses:
+  // TABS reads it, and `$derived` bindings are block-scoped even though
+  // their evaluation is lazy.
+  const isSelf = $derived(!!profile && !!auth.user && auth.user.ref === profile.ref);
   let notFound = $state(false);
   let loading = $state(true);
   let posts = $state<any[]>([]);
@@ -89,14 +93,28 @@
   let likesLoaded = $state(false);
   let likesLoading = $state(false);
 
-  type Tab = 'portfolio' | 'about' | 'likes';
-  const TABS: Tab[] = ['portfolio', 'about', 'likes'];
+  type Tab = 'portfolio' | 'about' | 'likes' | 'drafts';
+  // Drafts is the profile owner's tab and NOBODY else's (#1161, ADR
+  // 0091 decision 7). It is not merely hidden from visitors — the API
+  // refuses them too, so a visitor who types `?tab=drafts` gets an
+  // empty tab rather than a private one. Filtering it out of TABS is
+  // about not offering a control that would do nothing.
+  //
+  // It lives here rather than as a fourth pill on browse because
+  // "unfinished work" is a fact about a person, not a slice of the
+  // wall — and because every segment of the browse footer's filter
+  // must be a value `GET /posts?feed=` accepts, which `draft` is not
+  // (it is its own parameter). Bending that invariant to fit one tab
+  // is how the #691 dead pills happened.
+  const BASE_TABS: Tab[] = ['portfolio', 'about', 'likes'];
 
   // The URL owns the tab, for the reasons browse's `?q=` / `?team=`
   // already do: it survives a reload, it travels in a shared link, and
   // it answers the back button. It also composes with `?post=` — the
   // viewer host deletes only its own param on close, so closing a post
   // opened from Likes returns to Likes.
+  const TABS = $derived<Tab[]>(isSelf ? [...BASE_TABS, 'drafts'] : BASE_TABS);
+
   const activeTab = $derived<Tab>(
     (TABS as string[]).includes(page.url.searchParams.get('tab') ?? '')
       ? (page.url.searchParams.get('tab') as Tab)
@@ -118,7 +136,7 @@
    *  everything they see today — the uploads grid survives HERE and
    *  nowhere else. `auth.user` is null for an anonymous viewer, which
    *  resolves this to false without a separate branch. */
-  const isSelf = $derived(!!profile && !!auth.user && auth.user.ref === profile.ref);
+
 
   async function loadProfile() {
     if (username) {
@@ -165,6 +183,33 @@
     }
   }
 
+  // ── Drafts (#1161) ────────────────────────────────────────────────
+  // Lazy like Likes: fetched the first time the tab is opened, whether
+  // by click or by a deep link into `?tab=drafts`.
+  //
+  // `draft: true` is the ONE listing on the API that returns an
+  // unpublished post, and it is narrowing rather than widening — the
+  // read rule still decides, and it holds a draft to its author and to
+  // a posts.admin holder. So this fetch cannot show somebody else's
+  // work even if `ownerRef` were wrong.
+  let drafts = $state<any[]>([]);
+  let draftsLoading = $state(false);
+  let draftsLoaded = $state(false);
+
+  async function loadDrafts(ownerRef: number) {
+    if (draftsLoaded || draftsLoading) return;
+    draftsLoading = true;
+    try {
+      const p = await api
+        .GET('/posts', { params: { query: { author_ref: ownerRef, draft: true, limit: 24 } } })
+        .catch(() => ({ data: null }));
+      drafts = (p.data?.items ?? []) as any[];
+      draftsLoaded = true;
+    } finally {
+      draftsLoading = false;
+    }
+  }
+
   async function loadLikes(ownerRef: number) {
     if (likesLoaded || likesLoading) return;
     likesLoading = true;
@@ -200,6 +245,10 @@
     if (activeTab === 'likes' && profile) void loadLikes(profile.ref);
   });
 
+  $effect(() => {
+    if (activeTab === 'drafts' && profile && isSelf) void loadDrafts(profile.ref);
+  });
+
   const socialEntries = $derived(
     profile?.social_links ? Object.entries(profile.social_links as Record<string, string>) : [],
   );
@@ -221,13 +270,18 @@
   const sortedCollections = $derived(rev(collections));
   const sortedAssets = $derived(rev(assets));
   const sortedLikedPosts = $derived(rev(likedPosts));
+  const sortedDrafts = $derived(rev(drafts));
   const sortedLikedAssets = $derived(rev(likedAssets));
 
   // What the viewer host walks with ← / →: whichever post grid is on
   // screen. Portfolio and Likes never render together, so this is
   // unambiguous, and on About there is no grid and the arrows go inert.
   const hostedPostIds = $derived(
-    activeTab === 'likes' ? sortedLikedPosts.map((p) => p.id) : sortedPosts.map((p) => p.id),
+    activeTab === 'likes'
+      ? sortedLikedPosts.map((p) => p.id)
+      : activeTab === 'drafts'
+        ? sortedDrafts.map((p) => p.id)
+        : sortedPosts.map((p) => p.id),
   );
 
   const portfolioEmpty = $derived(!posts.length && !collections.length && !assets.length);
@@ -365,6 +419,25 @@
           <p class="text-fg-muted">{t('profile.about.empty')}</p>
         {/if}
       </section>
+    {:else if activeTab === 'drafts'}
+      {#if draftsLoading && !draftsLoaded}
+        <p class="mt-10 text-center text-fg-muted">{t('common.loading')}</p>
+      {:else if drafts.length}
+        <section class="mt-10">
+          <h2 class="mb-3 text-lg font-semibold text-fg">{t('profile.section.drafts')}</h2>
+          <p class="mb-4 text-sm text-fg-muted">{t('profile.drafts.hint')}</p>
+          <ContentGrid mode={browseView.mode} items={sortedDrafts} tileMin={browseView.tileMin}>
+            {#snippet card(item, mode)}
+              <PostCard post={item} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} />
+            {/snippet}
+            {#snippet list()}
+              <PostListTable items={sortedDrafts} loading={false} />
+            {/snippet}
+          </ContentGrid>
+        </section>
+      {:else}
+        <p class="mt-10 text-center text-fg-muted">{t('profile.drafts.empty')}</p>
+      {/if}
     {:else if activeTab === 'likes'}
       {#if likesLoading && !likesLoaded}
         <p class="mt-10 text-center text-fg-muted">{t('common.loading')}</p>

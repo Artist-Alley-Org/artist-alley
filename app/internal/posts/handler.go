@@ -60,6 +60,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/users"
 	"github.com/mscrnt/artist-alley/app/internal/viewkind"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
+	"github.com/mscrnt/artist-alley/app/internal/workflow"
 )
 
 // Cache domain name. Stable string used as NOTIFY target — peer
@@ -80,6 +81,19 @@ const cacheDomainPostByID = cache.DomainPostByID
 const (
 	CapPostsAdmin  = visibility.PostsAdmin
 	CapSystemAdmin = visibility.SystemAdmin
+
+	// CapPostsPublish gates the act of publishing (ADR 0091 decision
+	// 7). It is the capability the `post` domain's own workflow
+	// transitions have carried since the 00001 baseline — this package
+	// names it because CREATING a post already published has to be held
+	// to the same bar as moving one there, or an operator who revokes
+	// publication rights has closed the door and left the window open.
+	//
+	// It says whether a caller may publish AT ALL. Whether they may
+	// publish THIS post is canWidenPostAccess, and the two are checked
+	// separately on purpose: one is instance policy, the other is
+	// authorship.
+	CapPostsPublish = "posts.publish"
 )
 
 const maxListLimit = 200
@@ -168,6 +182,22 @@ type Handler struct {
 	// (#1116). Nil until wired, and a nil resolver DISQUALIFIES rather
 	// than widens — see visibility.ResolveMatureOr.
 	matureResolver visibility.MatureResolver
+
+	// workflow moves a post between the `post` domain's two states —
+	// `wip` (draft) and `published` — for POST /posts/{id}/publish and
+	// /unpublish (ADR 0091 decision 7).
+	//
+	// The state machine rather than a direct UPDATE, because the move
+	// is exactly what it is for: the edge list decides which moves
+	// exist, `posts.publish` gates them as instance policy, and every
+	// move lands a workflow_audit row saying who moved what and when.
+	// Until #1161 the service had no callers at all and the audit table
+	// no rows.
+	//
+	// nil-safe in the sense that matters: the publish handlers refuse
+	// with 500 rather than falling back to writing state_id by hand,
+	// because a fallback that skips the gate is worse than an outage.
+	workflow *workflow.Service
 }
 
 // notifier is the notifications.Writer slice this package needs.
@@ -200,6 +230,11 @@ func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx c
 	h.activities = w
 	h.baseURLFn = baseURLFn
 }
+
+// SetWorkflow installs the workflow state machine used by the publish /
+// unpublish handlers. Post-construction setter like the rest, so the
+// boot order stays linear.
+func (h *Handler) SetWorkflow(w *workflow.Service) { h.workflow = w }
 
 // SetMentions installs the @-mention notification service (Phase
 // 1.55.X). Post-construction setter, same shape as the others.
@@ -254,6 +289,32 @@ func (h *Handler) CreatePost(
 	if !validVisibility(visibility) {
 		return openapi.CreatePost400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be public|private|org-only|followers|explicit-share"},
+		}, nil
+	}
+
+	// Draft or published (ADR 0091 decision 7). Omitted means published,
+	// which is what every caller did before the flag existed.
+	//
+	// Creating a post ALREADY PUBLISHED is held to `posts.publish`, the
+	// same capability the wip → published transition carries. Without
+	// this the capability would gate only the second half of a two-step
+	// route to the same place: an operator who revoked publication
+	// rights would find every post still arriving published, straight
+	// from the compose form.
+	//
+	// Creating a DRAFT needs nothing beyond being signed in. A draft is
+	// on no shared surface, so it is not publication and there is
+	// nothing for a policy lever to hold back.
+	//
+	// The refusal is 403 rather than a silent downgrade to draft. A
+	// post that quietly did not publish is exactly the "did it work?"
+	// ambiguity the compose form must never have.
+	draft := in.Draft != nil && *in.Draft
+	if !draft && !id.Can(CapPostsPublish) && !id.Can(CapSystemAdmin) {
+		return openapi.CreatePost403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "publishing requires the posts.publish capability; create the post as a draft instead",
+			},
 		}, nil
 	}
 
@@ -345,12 +406,21 @@ func (h *Handler) CreatePost(
 		teamID = pgtype.UUID{Bytes: uuid.UUID(*in.TeamId), Valid: true}
 	}
 
-	// state_id: domain 'post' UUID, optional. DB FK guards the value;
-	// we don't validate the domain here — the workflow.Service will
-	// reject illegal transitions later if a typo slipped through.
-	var stateID pgtype.UUID
-	if in.StateId != nil {
-		stateID = pgtype.UUID{Bytes: uuid.UUID(*in.StateId), Valid: true}
+	// The post's workflow state is the SERVER's to choose (ADR 0091
+	// decision 7). `PostCreate` used to carry `state_id` and this
+	// handler wrote it verbatim, with a comment saying outright that
+	// the domain was not validated — so a caller could point a post at
+	// any state row on the instance, another domain's included. That
+	// was inert only while nothing read post state. It is now the
+	// difference between published and not, so the field is gone from
+	// the schema and the only thing a caller may say is `draft`.
+	//
+	// Resolved from the state machine on every create rather than
+	// cached: it is one indexed lookup on a unique key, and a cached
+	// UUID is wrong the first time an install reseeds its states.
+	stateID, err := h.createStateID(ctx, draft)
+	if err != nil {
+		return nil, err
 	}
 
 	row, err := q.CreatePost(ctx, CreatePostParams{
@@ -439,7 +509,15 @@ func (h *Handler) CreatePost(
 	// activities ledger to publish to peers; without this the new
 	// post would be invisible to federation. 1.22.B-cleanup made
 	// this required — no more silent skip.
-	{
+	//
+	// A DRAFT EMITS NOTHING (ADR 0091 decision 7). Federation is a
+	// shared surface like any other, and it is the one surface where
+	// withholding after the fact is not possible: an activity dispatched
+	// to a peer has left this instance's control, so a draft that
+	// emitted here would be a publication no local read rule could take
+	// back. The Create activity is emitted at PUBLISH time instead —
+	// see PublishPost — which is also where it honestly belongs.
+	if !draft {
 		actorCtx := emit.ActorContext{
 			UserRef:  id.UserRef,
 			Username: id.Username,
@@ -740,7 +818,21 @@ func (h *Handler) UpdatePost(
 	}
 
 	// Record the Update activity in the same tx per ADR 0044.
-	{
+	//
+	// NOT FOR A DRAFT (ADR 0091 decision 7). An unpublished post has
+	// never been sent to a peer, so an Update naming it would be the
+	// first thing federation ever heard about it — a publication by
+	// side effect, out of a PATCH, and the one kind that cannot be
+	// withdrawn afterwards. The post's Create activity is emitted when
+	// its author publishes it, carrying whatever the edits left behind.
+	//
+	// Read from the row loaded inside this transaction, so an edit
+	// racing a publish is decided by one consistent snapshot.
+	publishedState, err := h.postStateID(ctx, visibility.PostPublishedStateCode)
+	if err != nil {
+		return nil, err
+	}
+	if !isDraftState(current.StateID, publishedState) {
 		actorCtx := emit.ActorContext{
 			UserRef:  caller.UserRef,
 			Username: caller.Username,
@@ -1241,6 +1333,19 @@ func (h *Handler) ListPosts(
 	// default instead of a 500 or an arbitrary order.
 	ascending := req.Params.Dir != nil && *req.Params.Dir == openapi.Asc
 
+	// ?draft=true — the author's own drafts listing (ADR 0091 decision
+	// 7). The ONE way a draft reaches a listing at all, and it returns
+	// drafts EXCLUSIVELY rather than mixing them into the feed; see
+	// ListPostsPageParams.Draft. No capability gate here on purpose:
+	// the read rule is stricter for a draft than for a published post
+	// whatever the caller holds, so a stranger asking gets an empty
+	// page rather than a 403 that would confirm drafts exist.
+	//
+	// An anonymous caller reaches this under public mode and gets
+	// nothing, by the same route: the anonymous read rule refuses every
+	// unpublished post before any filter here is consulted.
+	wantDrafts := req.Params.Draft != nil && *req.Params.Draft
+
 	fetch := limit + 1
 	rows, err := h.ListPostsPageGated(ctx, caller, ListPostsPageParams{
 		IncludeDeleted:  includeDeletedArg,
@@ -1253,6 +1358,7 @@ func (h *Handler) ListPosts(
 		LikedByUserRef:  likedByPtr,
 		Kinds:           kinds,
 		KindsRequested:  kindsRequested,
+		Draft:           wantDrafts,
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
@@ -1265,6 +1371,14 @@ func (h *Handler) ListPosts(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("posts: list: %w", err)
+	}
+
+	// Resolved once for the page. Only the soft-deleted branch below
+	// needs it — every other item comes through fetchFullPost, which
+	// carries `draft` on the cached object.
+	listPublishedState, err := h.postStateID(ctx, visibility.PostPublishedStateCode)
+	if err != nil {
+		return nil, err
 	}
 
 	items := make([]openapi.Post, 0, limit)
@@ -1282,7 +1396,7 @@ func (h *Handler) ListPosts(
 				// (include_deleted=true) surface it from the list row
 				// rather than dropping it.
 				if r.DeletedAt.Valid {
-					items = append(items, deletedPostFromListRow(r))
+					items = append(items, deletedPostFromListRow(r, listPublishedState))
 					lastPostedAt = r.PostedAt.Time
 					lastID = uuid.UUID(r.ID.Bytes)
 				}
@@ -1922,7 +2036,14 @@ func (h *Handler) fetchFullPost(ctx context.Context, id pgtype.UUID) (*openapi.P
 	if err != nil {
 		return nil, fmt.Errorf("posts: list tags: %w", err)
 	}
-	out := postRowToAPI(row, members, tags)
+	// On the MISS path only: `draft` is a property of the post, not of
+	// the caller, so it belongs in the cached object and costs one
+	// indexed lookup per miss rather than one per request.
+	publishedState, err := h.postStateID(ctx, visibility.PostPublishedStateCode)
+	if err != nil {
+		return nil, err
+	}
+	out := postRowToAPI(row, members, tags, publishedState)
 	if h.byID != nil {
 		h.byID.Add(key, out)
 	}
@@ -2217,13 +2338,18 @@ var defaultFeedTiers = []string{"public", "org-only", "followers", "explicit-sha
 // Row → API conversions
 // ---------------------------------------------------------------------------
 
-func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) openapi.Post {
+// publishedState is the `post` domain's published state id, resolved
+// once per call by the caller (fetchFullPost) rather than looked up per
+// row. It decides the API's `draft` field — see isDraftState, and see
+// visibility.postPublishedExpr for the SQL half of the same question.
+func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string, publishedState pgtype.UUID) openapi.Post {
 	out := openapi.Post{
 		Id:            openapi_types.UUID(p.ID.Bytes),
 		AuthorUserRef: p.AuthorUserRef,
 		Title:         p.Title,
 		Description:   p.Description,
 		Visibility:    openapi.PostVisibility(p.Visibility),
+		Draft:         isDraftState(p.StateID, publishedState),
 		PostedAt:      p.PostedAt.Time,
 		LikeCount:     p.LikeCount,
 		CommentCount:  p.CommentCount,
@@ -2274,12 +2400,13 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) open
 // deleted_at IS NULL, so a deleted post can't be fully hydrated — the
 // scalar fields the list row carries are enough for the trash view
 // (title + deletion metadata + a restore target).
-func deletedPostFromListRow(r ListPostsPageRow) openapi.Post {
+func deletedPostFromListRow(r ListPostsPageRow, publishedState pgtype.UUID) openapi.Post {
 	out := openapi.Post{
 		Id:            openapi_types.UUID(r.ID.Bytes),
 		AuthorUserRef: r.AuthorUserRef,
 		Title:         r.Title,
 		Visibility:    openapi.PostVisibility(r.Visibility),
+		Draft:         isDraftState(r.StateID, publishedState),
 		PostedAt:      r.PostedAt.Time,
 		CreatedAt:     r.CreatedAt.Time,
 		UpdatedAt:     r.UpdatedAt.Time,
