@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // openTestPool wires a pgxpool against the compose stack. Skips
@@ -22,7 +24,7 @@ func openTestPool(t *testing.T) *pgxpool.Pool {
 	}
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	user := envOr("AA_DB_USER", "artist_alley")
 
 	dsn := "host=" + host + " port=" + port + " user=" + user + " password=" + pwd + " dbname=" + name + " sslmode=disable"

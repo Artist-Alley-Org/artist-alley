@@ -14,6 +14,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // TestSiteRoundTrip writes and reads a Site config, confirming the
@@ -98,7 +99,7 @@ func TestSMTPPassword_EncryptedAtRest(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	clean := func() { _, _ = pool.Exec(context.Background(), `DELETE FROM system_config WHERE key = 'smtp'`) }
 	clean()
 	t.Cleanup(clean)
@@ -253,7 +254,7 @@ func withStore(t *testing.T, fn func(context.Context, *sysconfig.Store)) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	store := sysconfig.NewStore(pool)
 
 	// Pre- and post-clean the keys this test set touches.
@@ -272,7 +273,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

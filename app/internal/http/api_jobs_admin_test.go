@@ -27,6 +27,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func openPoolForJobs(t *testing.T) *pgxpool.Pool {
@@ -38,7 +39,7 @@ func openPoolForJobs(t *testing.T) *pgxpool.Pool {
 	dsn := "host=" + envOrSens("AA_DB_HOST", "postgres") +
 		" port=" + envOrSens("AA_DB_PORT", "5432") +
 		" user=" + envOrSens("AA_DB_USER", "artist_alley") +
-		" dbname=" + envOrSens("AA_DB_NAME", "artist_alley") +
+		" dbname=" + testdb.Name(t) +
 		" sslmode=disable password=" + pwd
 	ctx := t.Context()
 
@@ -59,7 +60,7 @@ func withCaps(caps ...string) context.Context {
 
 func TestJobsAdmin_CapGate(t *testing.T) {
 	pool := openPoolForJobs(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	s := &apiServer{jobsAdmin: jobs.NewAdminHandler(pool)}
 
 	readCtx := withCaps(jobs.CapJobsRead)  // read-only auditor
@@ -141,7 +142,7 @@ func mustStatusCounts(t *testing.T, s *apiServer, ctx context.Context) openapi.L
 
 func TestJobsAdmin_ActionGate(t *testing.T) {
 	pool := openPoolForJobs(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	s := &apiServer{
 		jobsAdmin: jobs.NewAdminHandler(pool),
 		jobsSvc:   jobs.NewService(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), jobs.NewRegistry()),
@@ -218,7 +219,7 @@ func TestJobsAdmin_ActionGate(t *testing.T) {
 // be neither requeued nor cancelled (409, row untouched).
 func TestJobsAdmin_RequeueCancelGuards(t *testing.T) {
 	pool := openPoolForJobs(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	s := &apiServer{jobsAdmin: jobs.NewAdminHandler(pool)}
 	adminCtx := withCaps("system.admin")
 	ctx := context.Background()

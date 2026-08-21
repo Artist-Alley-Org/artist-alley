@@ -1,0 +1,35 @@
+# scripts/dogfood/corpus-budget.txt — the corpus-leak RATCHET (#1245)
+#
+# The invariant is "a suite run ends with the corpus counts it began
+# with", and the suite does not satisfy it yet: roughly 25 specs each
+# leave one to ten rows behind. Making the run RED today would put the
+# dogfood suite permanently in the failed state, and an agent that sees
+# red it did not cause learns to discount the suite — which is the exact
+# pathology #1245 exists to stop. A permanently-failing guard is not a
+# guard.
+#
+# So this file records the leak that already exists, and run-ui.sh fails
+# only when a run leaks MORE than this. New leaks are caught from today;
+# the existing ones are visible in every run's output and are a debt with
+# a number on it rather than a vague complaint.
+#
+# ⚠️ THIS RATCHET ONLY EVER TURNS DOWN. Raising a number to make a run
+# pass converts the guard back into decoration — fix the spec instead.
+# The target is all zeroes.
+#
+# Measured on the shared coding stack, 2026-08-21, full standalone suite
+# (345 tests) immediately after `aa sweep-fixtures -apply`:
+#
+#   run 1 (338 passed / 2 failed):  assets +54  posts +23  collections +16  fields +27  users +3
+#
+# The budget is that measurement. A second full run is recorded in the
+# sprint PR; where it exceeded run 1 the larger number is used, because
+# the leak is per-spec and a spec that did not reach its cleanup on one
+# run is still the same defect.
+#
+# Format: <table> <max_tolerated_delta>
+assets 60
+posts 26
+collections 18
+field_definition 30
+user 4

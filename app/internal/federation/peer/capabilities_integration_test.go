@@ -56,7 +56,7 @@ func fixturePeer(t *testing.T, ctx context.Context, r *peer.Registry, admin int6
 
 func TestSetPeerCapabilities_PersistsAndMovesNegotiatedAt(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
@@ -80,7 +80,7 @@ func TestSetPeerCapabilities_PersistsAndMovesNegotiatedAt(t *testing.T) {
 
 func TestGetPeer_DefaultsToEmptyCapsAndNullNegotiatedAt(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
@@ -106,7 +106,7 @@ func TestSetPeerCapabilities_InvalidatesByURLCache(t *testing.T) {
 	// post-negotiation value being visible without a process
 	// bounce.
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	admin := fixtureAdmin(t, ctx, pool)
 	reg := cache.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -139,7 +139,7 @@ func TestSetPeerCapabilities_InvalidatesByURLCache(t *testing.T) {
 
 func TestListPeersMissingCapabilities_ReturnsOnlyUnNegotiated(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
@@ -188,7 +188,7 @@ func TestHandshake_OfferWithCapabilitiesField_StoresIntersection(t *testing.T) {
 	// which exercises the nil-vs-non-nil discrimination via the
 	// actual handleOffer path.
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
@@ -231,7 +231,7 @@ func TestHandshake_OfferLeavesNegotiatedAtNull_OnLegacyPeer(t *testing.T) {
 	// must appear in ListPeersMissingCapabilities until
 	// SetCapabilities runs.
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
@@ -258,7 +258,7 @@ func TestHandshake_OfferWithEmptyCapabilitiesField_RecordsEmpty(t *testing.T) {
 	// capabilities_negotiated_at MUST be non-NULL even though
 	// capabilities is empty.
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
@@ -287,7 +287,7 @@ func TestHandshake_ReNegotiation_OverwritesCapabilities(t *testing.T) {
 	// must fully overwrite, not append. Otherwise rotating
 	// capabilities away would silently keep the old ones.
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)

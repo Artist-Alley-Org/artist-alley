@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 )
 
@@ -36,7 +37,7 @@ func openResolvePool(t *testing.T) *pgxpool.Pool {
 	host := envResolveOr("AA_DB_HOST", "postgres")
 	port := envResolveOr("AA_DB_PORT", "5432")
 	user := envResolveOr("AA_DB_USER", "artist_alley")
-	name := envResolveOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -70,7 +71,7 @@ func randResolveHex(t *testing.T, n int) string {
 
 func TestResolveUsername_ReturnsKnownUsername(t *testing.T) {
 	pool := openResolvePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	username := "resolve-test-" + randResolveHex(t, 6)
@@ -94,7 +95,7 @@ func TestResolveUsername_ReturnsKnownUsername(t *testing.T) {
 
 func TestResolveUsername_ReturnsEmptyOnUnknownRef(t *testing.T) {
 	pool := openResolvePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	h := users.NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
@@ -107,7 +108,7 @@ func TestResolveUsername_ReturnsEmptyOnUnknownRef(t *testing.T) {
 
 func TestResolveUsername_UsesCacheWhenAvailable(t *testing.T) {
 	pool := openResolvePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	reg := cache.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))

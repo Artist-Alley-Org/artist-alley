@@ -17,11 +17,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func TestEnqueue_NoIdempotencyKey_AllowsDuplicates(t *testing.T) {
 	pool := openTestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanIdempotencyTestRows(t, pool)
 	t.Cleanup(func() { cleanIdempotencyTestRows(t, pool) })
@@ -43,7 +44,7 @@ func TestEnqueue_NoIdempotencyKey_AllowsDuplicates(t *testing.T) {
 
 func TestEnqueue_SameIdempotencyKey_ReturnsExistingJob(t *testing.T) {
 	pool := openTestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanIdempotencyTestRows(t, pool)
 	t.Cleanup(func() { cleanIdempotencyTestRows(t, pool) })
@@ -74,7 +75,7 @@ func TestEnqueue_SameIdempotencyKey_ReturnsExistingJob(t *testing.T) {
 
 func TestEnqueue_DifferentIdempotencyKeys_AllowDifferentJobs(t *testing.T) {
 	pool := openTestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanIdempotencyTestRows(t, pool)
 	t.Cleanup(func() { cleanIdempotencyTestRows(t, pool) })
@@ -100,7 +101,7 @@ func TestEnqueue_IdempotencyKey_ScopedToType(t *testing.T) {
 	// Same key with a different type → no dedup (the partial UNIQUE
 	// INDEX is on (type, idempotency_key)).
 	pool := openTestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanIdempotencyTestRows(t, pool)
 	t.Cleanup(func() { cleanIdempotencyTestRows(t, pool) })
@@ -132,7 +133,7 @@ func openTestPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

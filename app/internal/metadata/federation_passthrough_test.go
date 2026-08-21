@@ -34,7 +34,7 @@ func TestCollectionField_Upsert_DoesNotEmitFederationActivity(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })

@@ -33,6 +33,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func openWiringPool(t *testing.T) *pgxpool.Pool {
@@ -44,7 +45,7 @@ func openWiringPool(t *testing.T) *pgxpool.Pool {
 	host := envWiringOr("AA_DB_HOST", "postgres")
 	port := envWiringOr("AA_DB_PORT", "5432")
 	user := envWiringOr("AA_DB_USER", "artist_alley")
-	name := envWiringOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

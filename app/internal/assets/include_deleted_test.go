@@ -45,7 +45,7 @@ func TestListAssets_IncludeDeletedGate(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	// A soft-deleted asset + a live asset, both owned by the caller. The
 	// live one keeps the list non-empty, so a missing deleted row reads

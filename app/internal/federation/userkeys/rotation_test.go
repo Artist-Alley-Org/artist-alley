@@ -97,7 +97,7 @@ func userWithKey(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (int64, 
 func TestRotateForUser_GeneratesNewVersionAndDemotesPrevious(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	ref, v1Pub := userWithKey(t, ctx, pool)
@@ -138,7 +138,7 @@ func TestRotateForUser_GeneratesNewVersionAndDemotesPrevious(t *testing.T) {
 func TestRotateForUser_DemotedRowCarriesRetentionAndMetadata(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	ref, _ := userWithKey(t, ctx, pool)
@@ -179,7 +179,7 @@ func TestRotateForUser_DemotedRowCarriesRetentionAndMetadata(t *testing.T) {
 func TestRotateForUser_NewRowRecordsRotatedByUserRef(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	ref, _ := userWithKey(t, ctx, pool)
@@ -207,7 +207,7 @@ func TestRotateForUser_NewRowRecordsRotatedByUserRef(t *testing.T) {
 func TestRotateForUser_DistinguishesSelfVsAdminRotation(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	subject, _ := userWithKey(t, ctx, pool)
@@ -251,7 +251,7 @@ func TestRotateForUser_DistinguishesSelfVsAdminRotation(t *testing.T) {
 func TestRotateForUser_NoPreviousKey_InsertsAsV1(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// Fresh user with no keypair (the I-b backfill safety net
@@ -285,7 +285,7 @@ func TestRotateForUser_NoPreviousKey_InsertsAsV1(t *testing.T) {
 func TestRotateForUser_AuditFiresWithExpectedMetadata(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	ref, _ := userWithKey(t, ctx, pool)
@@ -318,7 +318,7 @@ func TestRotateForUser_AuditFiresWithExpectedMetadata(t *testing.T) {
 func TestRotateForUser_NonPositiveRetentionFallsBackToDefault(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	ref, _ := userWithKey(t, ctx, pool)

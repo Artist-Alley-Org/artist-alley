@@ -20,6 +20,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // All tests in this file are integration tests against the live
@@ -345,7 +346,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	ensureUserTable(t, ctx, pool)
 
@@ -386,15 +387,20 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 			t.Fatalf("pre-clean: %v: %v", sql, err)
 		}
 	}
+	// Teardown. This runs AFTER the pool-close cleanup was registered
+	// above, and t.Cleanup is LIFO, so the pool is still open here —
+	// which it was not when this was a `defer pool.Close()` (#870).
+	// testdb.Purge reports failures rather than discarding them, so a
+	// future re-break is a red test instead of a silent leak.
 	t.Cleanup(func() {
-		// Best-effort: remove the user and any rows that reference them.
-		cleanCtx := context.Background()
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM api_tokens WHERE user_ref = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_grants WHERE user_ref = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_revokes WHERE user_ref = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_roles WHERE user_ref = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM sessions WHERE user_ref = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM "user" WHERE ref = $1`, userRef)
+		testdb.Purge(t, pool, userRef,
+			`DELETE FROM api_tokens WHERE user_ref = $1`,
+			`DELETE FROM user_capability_grants WHERE user_ref = $1`,
+			`DELETE FROM user_capability_revokes WHERE user_ref = $1`,
+			`DELETE FROM user_roles WHERE user_ref = $1`,
+			`DELETE FROM sessions WHERE user_ref = $1`,
+			`DELETE FROM "user" WHERE ref = $1`,
+		)
 	})
 
 	// Real chi router wired exactly as the production server does it.
@@ -743,7 +749,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

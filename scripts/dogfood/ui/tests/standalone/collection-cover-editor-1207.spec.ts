@@ -1544,19 +1544,66 @@ test.describe('#1207 the collection cover editor', () => {
         'nothing',
     ).toBe(false);
 
-    // BACK TO NULL, BACK TO THE OLD PICTURE, byte for byte. This is the
-    // regression that matters: every collection that exists has a null
-    // zoom, and none of them may change.
+    // BACK TO NULL, BACK TO THE OLD PICTURE. This is the regression that
+    // matters: every collection that exists has a null zoom, and none of
+    // them may change.
+    //
+    // ⚠️ THIS USED TO BE `Buffer.compare(beforeShot, restoredShot) === 0`
+    // — a BYTE-EXACT screenshot equality (#1241). It failed the federation
+    // nightly on 08-20 and passed it on 08-19 at the identical commit
+    // 1c856cb0, because a byte comparison cannot tell the two things
+    // apart that it is standing between:
+    //
+    //   the state did not reset   (the bug — must be red)
+    //   one pixel rendered differently   (JPEG/scaler/GPU variance — must be green)
+    //
+    // Re-running it decides nothing: it is roughly a coin flip by
+    // construction, so a green re-run is not evidence and the owner keeps
+    // getting the failure mail.
+    //
+    // So the claim is made on the STATE that "restored" actually means,
+    // measured the same way the zoom was proven to APPLY twenty lines up.
+    // `zoomGeom` showed the picture laid out at 3x its box; clearing must
+    // put it back to exactly its box — which is `fitGeom`, the sub-pixel
+    // fit asserted before any zoom existed. Same instrument, same
+    // tolerance, opposite direction. A stuck zoom lands at 3.0 and reds
+    // it; a re-encoded pixel cannot move a layout ratio at all.
     const cleared = await request.patch(`/api/v1/collections/${collectionId}`, {
       data: { clear_cover_zoom: true },
     });
     expect(cleared.status()).toBe(200);
     const restored = await loadTile();
     expect(await restored.getAttribute('data-zoom')).toBe('');
+    const restoredGeom = await restored.evaluate((el) => {
+      const img = el as HTMLImageElement;
+      const box = img.parentElement!.getBoundingClientRect();
+      const r = img.getBoundingClientRect();
+      return {
+        dw: r.width - box.width,
+        dh: r.height - box.height,
+        dx: r.x - box.x,
+        dy: r.y - box.y,
+        scale: r.width / box.width,
+      };
+    });
+    const stuck =
+      `clearing the zoom did not restore the tile's geometry: ` +
+      `${JSON.stringify(restoredGeom)}. A scale near 3 means the cleared zoom is ` +
+      `still being painted; the fit this must return to was asserted above as ` +
+      `${JSON.stringify(fitGeom)}.`;
+    expect(Math.abs(restoredGeom.dw), stuck).toBeLessThan(0.5);
+    expect(Math.abs(restoredGeom.dh), stuck).toBeLessThan(0.5);
+    expect(Math.abs(restoredGeom.dx), stuck).toBeLessThan(0.5);
+    expect(Math.abs(restoredGeom.dy), stuck).toBeLessThan(0.5);
+    expect(restoredGeom.scale, stuck).toBeCloseTo(1, 2);
+
+    // And the SOURCE is back to the rung an unzoomed tile requests. The
+    // geometry above proves the layout; this proves the tile is not
+    // painting a zoom-era variant scaled to look right.
     expect(
-      Buffer.compare(beforeShot, await restored.screenshot()) === 0,
-      'clearing the zoom did not restore the exact picture the tile painted before it existed',
-    ).toBe(true);
+      await restored.getAttribute('src'),
+      'the restored tile is not requesting the variant it painted before the zoom existed',
+    ).toBe(await before.getAttribute('src'));
   });
 
   test('the featured strip paints the zoom on the real card', async ({ page, request }) => {

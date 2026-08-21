@@ -23,6 +23,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func openPool(t *testing.T) *pgxpool.Pool {
@@ -34,7 +35,7 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -153,7 +154,7 @@ func encryptForRecipient(t *testing.T, plaintext, recipientPub []byte) (senderPu
 
 func TestDecryptForUser_CurrentKey_AttemptCountOne(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	userRef := fixtureUser(t, ctx, pool)
 
@@ -182,7 +183,7 @@ func TestDecryptForUser_CurrentKey_AttemptCountOne(t *testing.T) {
 
 func TestDecryptForUser_RetainedKey_FallbackAttemptCountTwo(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	userRef := fixtureUser(t, ctx, pool)
 
@@ -218,7 +219,7 @@ func TestDecryptForUser_OldestRetainedKey_AttemptCountIsRowPosition(t *testing.T
 	// oldest retained. Walk: current → retained v3 → retained v2
 	// → retained v1 (success). Attempt count = 4.
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	userRef := fixtureUser(t, ctx, pool)
 
@@ -246,7 +247,7 @@ func TestDecryptForUser_OldestRetainedKey_AttemptCountIsRowPosition(t *testing.T
 
 func TestDecryptForUser_NoKeyWorks_ErrEncryptionDecryptFailed(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	userRef := fixtureUser(t, ctx, pool)
 
@@ -271,7 +272,7 @@ func TestDecryptForUser_NoReceiverKey_TypedError(t *testing.T) {
 	// User exists but has no federation_user_keys row at all
 	// (post-I-b invariant violation; defensive).
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	userRef := fixtureUser(t, ctx, pool)
 
@@ -290,7 +291,7 @@ func TestDecryptForUser_EmptySenderPubkey_TypedError(t *testing.T) {
 	// error from ErrEncryptionDecryptFailed so the dispatcher
 	// can route the right audit reason.
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	userRef := fixtureUser(t, ctx, pool)
 	_, _ = seedUserKey(t, ctx, pool, userRef, 1, true, time.Time{})
@@ -305,7 +306,7 @@ func TestDecryptForUser_EmptySenderPubkey_TypedError(t *testing.T) {
 
 func TestDecryptForUser_TamperedCiphertext_ErrEncryptionDecryptFailed(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	userRef := fixtureUser(t, ctx, pool)
 
@@ -330,7 +331,7 @@ func TestDecryptForUser_ExpiredRetainedKey_NotAttempted(t *testing.T) {
 	// but the query filter is what enforces the rotation grace
 	// window contract.
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	userRef := fixtureUser(t, ctx, pool)
 

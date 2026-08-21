@@ -16,6 +16,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func retPool(t *testing.T) *pgxpool.Pool {
@@ -33,7 +35,7 @@ func retPool(t *testing.T) *pgxpool.Pool {
 	dsn := "host=" + env("AA_DB_HOST", "postgres") +
 		" port=" + env("AA_DB_PORT", "5432") +
 		" user=" + env("AA_DB_USER", "artist_alley") +
-		" dbname=" + env("AA_DB_NAME", "artist_alley") +
+		" dbname=" + testdb.Name(t) +
 		" sslmode=disable password=" + pwd
 	ctx := t.Context()
 

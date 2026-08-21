@@ -25,6 +25,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
 	"github.com/mscrnt/artist-alley/app/internal/setup"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 const testScrambleKey = "setup-test-scramble-key"
@@ -388,21 +389,23 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	// Defers run LIFO: pool.Close() is registered FIRST so it runs
-	// LAST, ensuring the admin snapshot-restore (registered after)
-	// still has a live pool to talk to. t.Cleanup runs even later
-	// than function defers, so it can't be used here.
-	defer pool.Close()
+	// Registered FIRST, and t.Cleanup is LIFO, so the pool closes LAST
+	// — after every teardown registered later, including any the test
+	// body registers itself. That last part is what a function-scoped
+	// `defer pool.Close()` could not give (#870): it fired when this
+	// helper returned, leaving test-body cleanups to run against a
+	// closed pool.
+	t.Cleanup(pool.Close)
 
 	fx := &fixture{
 		pool:          pool,
 		sysCfg:        sysconfig.NewStore(pool),
-		dbName:        envOr("AA_DB_NAME", "artist_alley"),
+		dbName:        testdb.Name(t),
 		adminUsername: "setup_test_admin_" + uniqueSuffix(),
 		cfg: config.Config{
 			DBHost:      envOr("AA_DB_HOST", "postgres"),
 			DBPort:      5432,
-			DBName:      envOr("AA_DB_NAME", "artist_alley"),
+			DBName:      testdb.Name(t),
 			ScrambleKey: testScrambleKey,
 			SetupDefaults: config.SetupDefaults{
 				SiteName:       "artist-alley",
@@ -417,11 +420,12 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	// admin survives unchanged. Pre-clean still has to drop everything
 	// to satisfy the test's needs_setup=true gate.
 	//
-	// Use defer (not t.Cleanup): t.Cleanup runs after function defers,
-	// by which time `defer pool.Close()` above has shut the pool. Our
-	// restore needs a live pool, so it has to ride a defer that fires
-	// BEFORE pool close — which means registering it AFTER pool.Close's
-	// defer so LIFO order works in our favor.
+	// A function-scoped defer, which runs before any t.Cleanup — so the
+	// restore finishes while the pool is still open. (This used to
+	// explain that t.Cleanup could NOT be used, because pool.Close rode
+	// a function defer back then. #870 moved pool.Close onto a
+	// first-registered t.Cleanup, so either form works now; the restore
+	// stays on defer because it is function-local state.)
 	fx.snapshotAdmins(ctx)
 	fx.cleanupAdmin(ctx)
 	defer func() {
@@ -547,7 +551,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

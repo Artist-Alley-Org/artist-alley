@@ -38,6 +38,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/directory"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // rewriteTransport routes https:// fake URLs to a local
@@ -78,7 +79,7 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -202,7 +203,7 @@ func (f *fakeDirectoryServer) handleListing(w http.ResponseWriter, _ *http.Reque
 
 func TestNormalizeDirectoryURL_AcceptsValid(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	admin := fixtureAdmin(t, ctx, pool)
@@ -233,7 +234,7 @@ func TestNormalizeDirectoryURL_AcceptsValid(t *testing.T) {
 
 func TestNormalizeDirectoryURL_Rejects(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	admin := fixtureAdmin(t, ctx, pool)
@@ -291,7 +292,7 @@ func TestFetchOperator_ParsesAndRejectsSpecMismatch(t *testing.T) {
 
 func TestPoll_HappyPath_PersistsEntries(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	admin := fixtureAdmin(t, ctx, pool)
@@ -367,7 +368,7 @@ func TestPoll_HappyPath_PersistsEntries(t *testing.T) {
 
 func TestPoll_TamperedSignature_PreservesCachedEntries(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	admin := fixtureAdmin(t, ctx, pool)
@@ -429,7 +430,7 @@ func TestPoll_TamperedSignature_PreservesCachedEntries(t *testing.T) {
 
 func TestUnsubscribe_CascadesEntries(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	admin := fixtureAdmin(t, ctx, pool)

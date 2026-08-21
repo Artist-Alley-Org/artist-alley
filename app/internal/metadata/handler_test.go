@@ -25,6 +25,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // TestFieldDefinitionLifecycle covers create / list / get / update /
@@ -37,7 +38,7 @@ func TestFieldDefinitionLifecycle(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	router, _ := makeRouter(t, pool /*admin=*/, true)
 
@@ -166,7 +167,7 @@ func TestSetFieldExtraction(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
@@ -253,7 +254,7 @@ func TestNonAdminCannotCreateField(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	router, _ := makeRouter(t, pool /*admin=*/, false)
 	rr := postJSON(t, router, "/fields", map[string]any{
@@ -273,7 +274,7 @@ func TestAssetFieldValueLifecycle(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	router, userRef := makeRouter(t, pool /*admin=*/, true)
 	cleanTestFields(t, pool)
@@ -557,7 +558,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

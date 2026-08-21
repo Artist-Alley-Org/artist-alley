@@ -140,7 +140,7 @@ func TestGetAssetForAI_HappyPath(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const ownerRef int64 = 9_142_001
 	const hash = "deadbeefcafebabe1234567890abcdef0123456789abcdef0123456789abcdef"
@@ -194,7 +194,7 @@ func TestGetAssetForAI_NotFoundReturnsSentinel(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	h := newBridgeHandler(t, pool)
 
 	_, err := h.GetAssetForAI(context.Background(), uuid.New())
@@ -213,7 +213,7 @@ func TestSetAITagsForAsset_PreservesManualAndImport(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const ownerRef int64 = 9_142_002
 	assetID := seedBridgeAsset(t, pool, ownerRef, "merge test",
@@ -261,7 +261,7 @@ func TestSetAITagsForAsset_EmptyInputClearsAIOnly(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const ownerRef int64 = 9_142_003
 	assetID := seedBridgeAsset(t, pool, ownerRef, "empty clears",
@@ -294,7 +294,7 @@ func TestSetAITagsForAsset_NotFoundReturnsSentinel(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	h := newBridgeHandler(t, pool)
 	err := h.SetAITagsForAsset(context.Background(), uuid.New(),

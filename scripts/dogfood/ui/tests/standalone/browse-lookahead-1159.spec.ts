@@ -238,7 +238,10 @@ const readGeometry = (): Geometry => {
 };
 
 test.describe('#1159 browse feed lookahead', () => {
-  test('a fast continuous wheel scroll never reaches unrendered feed', async ({ page }) => {
+  test('a fast continuous wheel scroll never reaches unrendered feed', async ({
+    page,
+    request,
+  }) => {
     // The walk is ~10s of real scrolling plus login and first paint.
     test.setTimeout(120_000);
 
@@ -330,6 +333,43 @@ test.describe('#1159 browse feed lookahead', () => {
         `tiles: 0 with skeletons > 0 means the first page had not arrived — a wait bug, not a seed one.`,
     ).toBeTruthy();
 
+    // ── the corpus precondition, MEASURED rather than assumed (#1241) ─
+    //
+    // Every assertion after this one is about a loader that RUNS during
+    // the walk, and whether it can run at all is a property of the
+    // seeded feed, not of the code under test. When the feed was too
+    // short the spec used to go red on `walkFetches` — reporting a
+    // product regression for a dataset problem, which is the failure
+    // that reached the owner's inbox on 08-20 and not on 08-19 at the
+    // same commit.
+    //
+    // ⚠️ THE PRECONDITION IS CHECKED WITH AN INSTRUMENT THE BUG CANNOT
+    // TOUCH. "How many posts exist" is asked of the API directly; the
+    // lookahead cannot change that number. So a small corpus SKIPS, and
+    // a corpus that is provably big enough while the loader still failed
+    // to fetch stays a FAILURE — which is the regression this spec is
+    // for. Skipping on `walkFetches` itself would have made the test
+    // permanently green and stopped it watching anything.
+    //
+    // The landing chase has finished by here, so its page count is known
+    // rather than estimated: whatever it consumed is unavailable to the
+    // walk, and the walk needs MIN_WALK_FETCHES pages on top of it.
+    const landingPages = feedRequests.length;
+    const needPosts = (landingPages + MIN_WALK_FETCHES) * FEED_PAGE;
+    const probe = await request.get(`/api/v1/posts?limit=${needPosts}`);
+    const availablePosts = probe.ok()
+      ? (((await probe.json()) as { items?: unknown[] }).items ?? []).length
+      : -1;
+    test.skip(
+      availablePosts >= 0 && availablePosts < needPosts,
+      `the seeded feed cannot support this walk: ${availablePosts} post(s) are visible, ` +
+        `and the landing chase already spent ${landingPages} page(s) of ${FEED_PAGE}, ` +
+        `leaving fewer than the ${MIN_WALK_FETCHES} the walk needs to make the loader run. ` +
+        `Seed more posts. This is a DATASET shortfall, not a lookahead regression — the ` +
+        `two are told apart by asking the API how much feed exists, which no lookahead ` +
+        `behaviour can influence.`,
+    );
+
     // ── the in-page sampler ──────────────────────────────────────────
     await page.evaluate(() => {
       const w = window as unknown as { __aaSamples?: unknown[]; __aaRun?: boolean };
@@ -402,16 +442,20 @@ test.describe('#1159 browse feed lookahead', () => {
     const travelled = samples[samples.length - 1].y - samples[0].y;
     const walkFetches = feedRequests.length - atWalkStart.requests;
     const walkCommits = feedResponses.length - atWalkStart.responses;
+    // The corpus was PROVED sufficient by the precondition above, which
+    // asked the API how much feed exists — so reaching here with too few
+    // fetches is the LOADER, not the dataset. The message used to blame
+    // the seed, which is what sent a dataset-shaped explanation to the
+    // owner for a run that had already ruled the dataset out (#1241).
     const tooSmall =
-      `the seeded feed is too small for this walk: it held ` +
+      `the loader did not run during the walk, and the corpus is not the reason: ` +
+      `${availablePosts} post(s) were confirmed available before the wheel turned, ` +
+      `against the ${needPosts} this walk needs. The wall held ` +
       `${atWalkStart.geometry.tiles} posts when the wheel turned and ` +
-      `${geometry.tiles} at the end, which asked the loader for ` +
-      `${walkFetches} more page(s) and landed ${walkCommits} — under the ` +
-      `${MIN_WALK_FETCHES} this needs to be measuring a running loader ` +
-      `rather than a static wall. Seed more posts, or lower FEED_PAGE ` +
-      `(${FEED_PAGE}) — but not far: pages much shorter than the buffer ` +
-      `cannot refill it at wheel speed, which reds this test for a ` +
-      `fall-behind the test itself manufactured.`;
+      `${geometry.tiles} at the end, asking for ${walkFetches} more page(s) ` +
+      `and landing ${walkCommits} — under the ${MIN_WALK_FETCHES} required. ` +
+      `A sufficient corpus with a loader that stopped fetching is the ` +
+      `regression this spec is for.`;
     expect(walkFetches, tooSmall).toBeGreaterThanOrEqual(MIN_WALK_FETCHES);
     expect(walkCommits, tooSmall).toBeGreaterThanOrEqual(MIN_WALK_FETCHES);
 

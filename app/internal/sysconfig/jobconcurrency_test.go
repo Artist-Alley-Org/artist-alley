@@ -21,7 +21,7 @@ func TestGetJobTypeConcurrency(t *testing.T) {
 	}
 	ctx := context.Background()
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	// The baseline migration seeds ai.tag=4, ai.caption=2, ai.embed=8,
 	// ai.transcribe=1. Add a 0 (uncapped) row and a non-numeric row to
