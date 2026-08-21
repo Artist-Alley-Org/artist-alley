@@ -27,6 +27,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/logging"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // openCompanionTestPool mirrors the DSN convention in admin_test.go
@@ -47,7 +48,7 @@ func openCompanionTestPool(t *testing.T) *pgxpool.Pool {
 	dsn := "host=" + envOr("AA_DB_HOST", "postgres") +
 		" port=" + envOr("AA_DB_PORT", "5432") +
 		" user=" + envOr("AA_DB_USER", "artist_alley") +
-		" dbname=" + envOr("AA_DB_NAME", "artist_alley") +
+		" dbname=" + testdb.Name(t) +
 		" sslmode=disable password=" + pwd
 	ctx := t.Context()
 

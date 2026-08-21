@@ -14,7 +14,7 @@ import (
 func TestEnsureCurrentForUser_CreatesKeyForKeylessUser(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -44,7 +44,7 @@ func TestEnsureCurrentForUser_CreatesKeyForKeylessUser(t *testing.T) {
 func TestEnsureCurrentForUser_NoOpWhenKeyAlreadyExists(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -89,7 +89,7 @@ func TestEnsureCurrentForUser_ConcurrentCallsConvergeOnOneKey(t *testing.T) {
 	// alreadyHadKey=true. Exactly one current key persists.
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)

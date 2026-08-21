@@ -30,7 +30,7 @@ func withSMTPTestHandler(t *testing.T, fn func(ctx context.Context, h *sysconfig
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := sysconfig.NewStore(pool)
 	h := sysconfig.NewHTTPHandler(pool, store, logger)

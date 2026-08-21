@@ -53,7 +53,7 @@ func TestReferenceValueResolvesToTitle(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
@@ -118,7 +118,7 @@ func TestReferenceValueDegradesForDeletedTarget(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
@@ -173,7 +173,7 @@ func TestReferenceValueDegradesForDanglingRef(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
@@ -219,7 +219,7 @@ func TestReferenceWriteRejectsDanglingRef(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
@@ -275,7 +275,7 @@ func TestReferenceResolutionLeavesResolvedOptionsAlone(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
@@ -358,7 +358,7 @@ func TestReferenceResolutionIsUnreachableAnonymously(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })

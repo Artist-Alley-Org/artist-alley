@@ -25,6 +25,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // TestCollectionLifecycle covers create / get / patch / delete on the
@@ -39,7 +40,7 @@ func TestCollectionLifecycle(t *testing.T) {
 
 	_ = ctx
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
@@ -175,7 +176,7 @@ func TestCollectionResources(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
@@ -299,7 +300,7 @@ func TestListCollectionsFilters(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
@@ -485,7 +486,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -557,7 +558,7 @@ func TestGetCollection_NonOwnerDenied(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
@@ -624,7 +625,7 @@ func TestListCollectionResources_ParentGate(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
 
@@ -677,7 +678,7 @@ func TestListCollectionResources_RowFiltering(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
 

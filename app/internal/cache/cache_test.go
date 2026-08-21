@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // TestCacheBasicGetAdd covers the LRU surface: hit, miss, add, len,
@@ -64,9 +65,9 @@ func TestNotifyRoundTrip(t *testing.T) {
 	ctx := t.Context()
 
 	poolA := openPool(t, pwd)
-	defer poolA.Close()
+	t.Cleanup(poolA.Close)
 	poolB := openPool(t, pwd)
-	defer poolB.Close()
+	t.Cleanup(poolB.Close)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	regA := cache.NewRegistry(poolA, logger)
@@ -123,9 +124,9 @@ func TestNotifyPurgeAll(t *testing.T) {
 	ctx := t.Context()
 
 	poolA := openPool(t, pwd)
-	defer poolA.Close()
+	t.Cleanup(poolA.Close)
 	poolB := openPool(t, pwd)
-	defer poolB.Close()
+	t.Cleanup(poolB.Close)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	regA := cache.NewRegistry(poolA, logger)
@@ -174,9 +175,9 @@ func TestNotifyFlushAll(t *testing.T) {
 	ctx := t.Context()
 
 	poolA := openPool(t, pwd)
-	defer poolA.Close()
+	t.Cleanup(poolA.Close)
 	poolB := openPool(t, pwd)
-	defer poolB.Close()
+	t.Cleanup(poolB.Close)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// Only regB registers caches + LISTENs — it stands in for a running
@@ -222,7 +223,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

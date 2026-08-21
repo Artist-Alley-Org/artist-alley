@@ -42,7 +42,7 @@ func TestBooleanValueEndToEnd(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	cleanCollectionTestRows(t, pool)

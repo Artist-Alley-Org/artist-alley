@@ -63,6 +63,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // --- harness ---------------------------------------------------------------
@@ -115,7 +116,7 @@ func openActivityPool(t *testing.T, pwd string) *pgxpool.Pool {
 	dsn := "host=" + envOr("AA_DB_HOST", "postgres") +
 		" port=" + envOr("AA_DB_PORT", "5432") +
 		" user=" + envOr("AA_DB_USER", "artist_alley") +
-		" dbname=" + envOr("AA_DB_NAME", "artist_alley") +
+		" dbname=" + testdb.Name(t) +
 		" sslmode=disable password=" + pwd
 	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {

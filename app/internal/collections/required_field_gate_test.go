@@ -68,7 +68,7 @@ func (g *fakeMetadataGate) UpsertCollectionFieldValueInTx(
 func TestCreateCollection_MissingRequiredField_422(t *testing.T) {
 	pwd := readEnvPwd(t)
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
@@ -99,7 +99,7 @@ func TestCreateCollection_MissingRequiredField_422(t *testing.T) {
 func TestCreateCollection_AllRequiredFieldsProvided_Seeds(t *testing.T) {
 	pwd := readEnvPwd(t)
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
@@ -137,7 +137,7 @@ func TestCreateCollection_AllRequiredFieldsProvided_Seeds(t *testing.T) {
 func TestCreateCollection_NoRequiredFields_Succeeds(t *testing.T) {
 	pwd := readEnvPwd(t)
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
@@ -160,7 +160,7 @@ func TestCreateCollection_NoRequiredFields_Succeeds(t *testing.T) {
 func TestCreateCollection_UpsertFails_RollsBack(t *testing.T) {
 	pwd := readEnvPwd(t)
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })

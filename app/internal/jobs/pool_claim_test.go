@@ -41,7 +41,7 @@ func (h *ranHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 // TestPool_NilTypes_ClaimsAndRunsJob is the regression guard.
 func TestPool_NilTypes_ClaimsAndRunsJob(t *testing.T) {
 	pool := openTestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	clean := func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM jobs WHERE type = 'claim_test_unrestricted'`)

@@ -76,6 +76,62 @@ if [ ! -d node_modules/@playwright/test/.local-browsers ] && \
     npx playwright install chromium
 fi
 
+# --- 1b. corpus census, before ------------------------------------------
+#
+# THE INVARIANT (#1245): a suite run must END with the corpus counts it
+# BEGAN with. Every spec is supposed to clean up after itself, and for a
+# long time most of them did not — the shared coding stack accumulated
+# 1,544 fixture assets, 878 collections and 1,155 field definitions,
+# until 44% of the asset table was litter and the newest-200 window held
+# no raster image at all. Nine specs then failed there for reasons that
+# had nothing to do with what they assert.
+#
+# Sprint 5 and #1198 both checked this per-spec. Per-spec is the weaker
+# place for it: it only guards the specs that remembered to ask, and the
+# leak always comes from the one that did not. At suite level it catches
+# the NEXT leak without anyone opting in.
+#
+# It is a REPORT plus a non-zero exit, not a cleanup. Deleting whatever
+# a run added would hide which spec added it, and the point is to name
+# the leak while the run that caused it is still on screen.
+
+corpus_census() {
+    docker compose exec -T postgres psql -U "${POSTGRES_USER:-artist_alley}" \
+        -d "${POSTGRES_DB:-artist_alley}" -tA -F'|' -c "
+        SELECT (SELECT count(*) FROM assets)
+            || '|' || (SELECT count(*) FROM posts)
+            || '|' || (SELECT count(*) FROM collections)
+            || '|' || (SELECT count(*) FROM field_definition)
+            || '|' || (SELECT count(*) FROM \"user\");" 2>/dev/null | tr -d '[:space:]'
+}
+
+# The census reads the LOCAL compose stack. If the suite is pointed at a
+# different host, the two would be describing different databases and a
+# clean diff would mean nothing — so check they agree, and skip loudly
+# rather than report a comparison that is not a comparison. This is the
+# same class of mistake as running the suite against the wrong stack;
+# it just fails silently instead of visibly.
+census_enabled="yes"
+census_host_port="$(printf '%s' "${STUDIO_A_HOST:-http://localhost:5173}" | sed -E 's#.*:([0-9]+).*#\1#')"
+expected_port="$(grep -E '^VITE_HOST_PORT=' "${ROOT}/.env" 2>/dev/null | tail -1 | cut -d= -f2)"
+expected_port="${expected_port:-5173}"
+if [ "$census_host_port" != "$expected_port" ]; then
+    warn "corpus invariant SKIPPED: suite targets port ${census_host_port} but this checkout's compose stack is on ${expected_port}."
+    warn "  The census would read a different database than the tests drive."
+    census_enabled="no"
+fi
+if [ "$census_enabled" = "yes" ]; then
+    # shellcheck disable=SC2046
+    export $(grep -E '^(POSTGRES_DB|POSTGRES_USER)=' "${ROOT}/.env" 2>/dev/null | tail -2 | xargs) 2>/dev/null || true
+    corpus_before="$(corpus_census)"
+    if [ -z "$corpus_before" ]; then
+        warn "corpus invariant SKIPPED: could not read the database (is the stack up?)"
+        census_enabled="no"
+    else
+        step "Corpus census (before): assets|posts|collections|fields|users = ${corpus_before}"
+    fi
+fi
+
 # --- 2. run tests --------------------------------------------------------
 
 if [ "$mode" = "all" ]; then
@@ -112,6 +168,53 @@ const c = (s, n) => `[${s}m${n}[0m`;
 console.log(`  Total: ${total}   ${c("1;32", "PASS:")} ${fmt(pass)}   ${c("1;31", "FAIL:")} ${fmt(fail)}   ${c("1;33", "SKIP:")} ${fmt(skip)}   FLAKY: ${flaky}   wall: ${Math.round(ms)}ms`);
 '
     printf '\nHTML report: %s/.pw-report/index.html\n' "$UI_DIR"
+fi
+
+# --- 4. corpus census, after --------------------------------------------
+
+if [ "$census_enabled" = "yes" ]; then
+    corpus_after="$(corpus_census)"
+    step "Corpus census (after):  assets|posts|collections|fields|users = ${corpus_after}"
+    if [ -z "$corpus_after" ]; then
+        warn "corpus invariant INCONCLUSIVE: the database was unreadable after the run."
+    elif [ "$corpus_after" != "$corpus_before" ]; then
+        # The RATCHET (scripts/dogfood/corpus-budget.txt). Roughly 25
+        # specs still leave rows behind, so failing on any drift would
+        # make this suite permanently red — and a guard that is always
+        # red is one nobody reads. The budget records the leak that
+        # already exists; only a BIGGER leak fails the run.
+        budget_file="${ROOT}/scripts/dogfood/corpus-budget.txt"
+        printf '\n\033[1;33mCORPUS DRIFT\033[0m — this run did not fully clean up after itself.\n'
+        printf '  %-18s %10s %10s %10s %10s\n' "TABLE" "BEFORE" "AFTER" "DELTA" "BUDGET"
+        IFS='|' read -r b1 b2 b3 b4 b5 <<< "$corpus_before"
+        IFS='|' read -r a1 a2 a3 a4 a5 <<< "$corpus_after"
+        over=0
+        i=1
+        for t in assets posts collections field_definition user; do
+            eval "b=\$b$i; a=\$a$i"
+            delta=$((a - b))
+            allowed="$(grep -E "^${t} " "$budget_file" 2>/dev/null | awk '{print $2}')"
+            allowed="${allowed:-0}"
+            flag=""
+            if [ "$delta" -gt "$allowed" ]; then flag="  <== OVER BUDGET"; over=1; fi
+            printf '  %-18s %10s %10s %+10d %10s%s\n' "$t" "$b" "$a" "$delta" "$allowed" "$flag"
+            i=$((i + 1))
+        done
+        if [ "$over" -eq 1 ]; then
+            printf '\n\033[1;31mA NEW LEAK\033[0m — a table drifted further than %s allows.\n' "$budget_file"
+            printf 'Find the spec that stopped cleaning up. Do NOT raise the budget to make this\n'
+            printf 'pass: the ratchet only turns down. Do not reseed, and do not delete the\n'
+            printf 'difference by hand — `aa sweep-fixtures` (dry run by default) clears the backlog.\n'
+            # Distinct from Playwright's own failure code so a leak is not
+            # mistaken for a failing assertion.
+            [ "$rc" -eq 0 ] && rc=3
+        else
+            printf '\nWithin the recorded budget — no NEW leak. The drift itself is still debt:\n'
+            printf 'the target in %s is all zeroes.\n' "$budget_file"
+        fi
+    else
+        printf '\n\033[1;32mCorpus invariant holds\033[0m — the run left the database as it found it.\n'
+    fi
 fi
 
 exit $rc

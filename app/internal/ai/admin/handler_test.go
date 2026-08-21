@@ -22,11 +22,12 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func TestGetConfig_RequiresAuth(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	router := makeRouter(t, pool, nil)
 
 	resp := mustDo(t, router, http.MethodGet, "/admin/ai/config", "")
@@ -37,7 +38,7 @@ func TestGetConfig_RequiresAuth(t *testing.T) {
 
 func TestGetConfig_RequiresAIAdminCap(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	router := makeRouter(t, pool, []string{}) // authed but no caps
 
 	resp := mustDo(t, router, http.MethodGet, "/admin/ai/config", "")
@@ -48,7 +49,7 @@ func TestGetConfig_RequiresAIAdminCap(t *testing.T) {
 
 func TestGetConfig_HappyPath_ReturnsSeededDefaults(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	router := makeRouter(t, pool, []string{aiadmin.CapAIAdmin})
 
 	resp := mustDo(t, router, http.MethodGet, "/admin/ai/config", "")
@@ -67,7 +68,7 @@ func TestGetConfig_HappyPath_ReturnsSeededDefaults(t *testing.T) {
 
 func TestPutConfig_ValidatorRejectsLockOnWithEmptyLocalList(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	router := makeRouter(t, pool, []string{aiadmin.CapAIAdmin})
 
 	// lock_sensitive_to_local=true + local_providers=[] is the
@@ -129,7 +130,7 @@ func TestPutConfig_HappyPath_PersistsAndReturns200(t *testing.T) {
 
 func TestGetUsage_EmptyPeriod_ReturnsZeroes(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	router := makeRouter(t, pool, []string{aiadmin.CapAIAdmin})
 
 	// Pick a billing period in the far past that won't have data.
@@ -159,7 +160,7 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user + " dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
 

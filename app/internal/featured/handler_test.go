@@ -27,6 +27,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/featured"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func TestAdd_AppendsWithIncreasingPositions(t *testing.T) {
@@ -156,7 +157,7 @@ func openPoolF(t *testing.T) *pgxpool.Pool {
 	host := envOrF("AA_DB_HOST", "postgres")
 	port := envOrF("AA_DB_PORT", "5432")
 	user := envOrF("AA_DB_USER", "artist_alley")
-	name := envOrF("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

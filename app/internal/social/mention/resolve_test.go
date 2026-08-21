@@ -15,6 +15,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // These tests exercise the DB-backed resolver + the service fire path.
@@ -30,7 +31,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	host := envOrDef("AA_DB_HOST", "postgres")
 	port := envOrDef("AA_DB_PORT", "5432")
 	user := envOrDef("AA_DB_USER", "artist_alley")
-	name := envOrDef("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -79,7 +80,7 @@ func newResolver(t *testing.T, pool *pgxpool.Pool) *Resolver {
 
 func TestResolveLocal_KnownUser_ReturnsRef(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ref := insertUser(t, pool, "mentiontest_alice_"+unique())
 	r := newResolver(t, pool)
 
@@ -91,7 +92,7 @@ func TestResolveLocal_KnownUser_ReturnsRef(t *testing.T) {
 
 func TestResolveLocal_CaseInsensitive(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	name := "MentionTest_Bob_" + unique()
 	ref := insertUser(t, pool, name)
 	r := newResolver(t, pool)
@@ -105,7 +106,7 @@ func TestResolveLocal_CaseInsensitive(t *testing.T) {
 
 func TestResolveLocal_UnknownUser_Dropped(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	r := newResolver(t, pool)
 
 	got := r.ResolveLocal(context.Background(), []Mention{{Username: "nobody_" + unique()}})
@@ -116,7 +117,7 @@ func TestResolveLocal_UnknownUser_Dropped(t *testing.T) {
 
 func TestResolveLocal_SkipsFederated(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ref := insertUser(t, pool, "mentiontest_carol_"+unique())
 	r := newResolver(t, pool)
 
@@ -133,7 +134,7 @@ func TestResolveLocal_SkipsFederated(t *testing.T) {
 
 func TestResolveLocal_CacheHit(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	name := "mentiontest_dave_" + unique()
 	ref := insertUser(t, pool, name)
 	r := newResolver(t, pool)
@@ -173,7 +174,7 @@ func (c *captureNotifier) Notify(_ context.Context, recipient int64, actor *int6
 
 func TestService_Process_FiresPerResolvedRef(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	a := insertUser(t, pool, "mentiontest_svc_a_"+unique())
 	b := insertUser(t, pool, "mentiontest_svc_b_"+unique())
 	an := uname(t, pool, a)
@@ -209,7 +210,7 @@ func TestService_Process_FiresPerResolvedRef(t *testing.T) {
 
 func TestService_Process_NoMentions_FiresNothing(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	r := newResolver(t, pool)
 	cap := &captureNotifier{}
 	svc := NewService(r, cap, slog.New(slog.NewTextHandler(io.Discard, nil)))

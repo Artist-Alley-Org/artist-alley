@@ -32,6 +32,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func openPool(t *testing.T) *pgxpool.Pool {
@@ -43,7 +44,7 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -152,7 +153,7 @@ func stubVisibleServer(t *testing.T, peers []map[string]string) *httptest.Server
 
 func TestVisibleSnapshot_FiltersByShareToggle(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	admin := fixtureAdmin(t, ctx, pool)
@@ -223,7 +224,7 @@ func TestVisibleSnapshot_FiltersByShareToggle(t *testing.T) {
 
 func TestRefreshFromSource_PersistsAndDedupsOnReFetch(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	admin := fixtureAdmin(t, ctx, pool)
@@ -299,7 +300,7 @@ func TestRefreshFromSource_PersistsAndDedupsOnReFetch(t *testing.T) {
 
 func TestListSuggestions_DedupsAgainstOwnPeers(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	admin := fixtureAdmin(t, ctx, pool)

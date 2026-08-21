@@ -28,6 +28,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // TestAssetLifecycle_HappyPath exercises the whole asset entity flow:
@@ -43,7 +44,7 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	backend, err := storagefs.New(t.TempDir())
 	if err != nil {
@@ -274,7 +275,7 @@ func TestCreateAssetWithoutFile(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	backend, err := storagefs.New(t.TempDir())
 	if err != nil {
@@ -332,7 +333,7 @@ func TestCreateAssetInputValidation(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	backend, _ := storagefs.New(t.TempDir())
 	svc := storage.NewService(backend, pool)
 	svc.TempDir = t.TempDir()
@@ -519,7 +520,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

@@ -33,6 +33,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func openPool(t *testing.T) *pgxpool.Pool {
@@ -44,7 +45,7 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -159,7 +160,7 @@ func newHandler(t *testing.T, pool *pgxpool.Pool, withCache bool) *remote.Handle
 
 func TestGetEncryptionKey_ErrNoActorForUnknownURI(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	h := newHandler(t, pool, true)
 
 	_, err := h.GetEncryptionKey(context.Background(), "https://never-seen.local/users/x")
@@ -170,7 +171,7 @@ func TestGetEncryptionKey_ErrNoActorForUnknownURI(t *testing.T) {
 
 func TestGetEncryptionKey_ErrNoEncryptionKeyForKeylessRow(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, true)
 
@@ -183,7 +184,7 @@ func TestGetEncryptionKey_ErrNoEncryptionKeyForKeylessRow(t *testing.T) {
 
 func TestGetEncryptionKey_ReturnsPersistedShape(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, true)
 
@@ -222,7 +223,7 @@ func TestGetEncryptionKey_ReturnsPersistedShape(t *testing.T) {
 
 func TestGetEncryptionKey_CacheHitOnSecondRead(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, true)
 
@@ -262,7 +263,7 @@ func TestGetEncryptionKey_CacheHitOnSecondRead(t *testing.T) {
 
 func TestSetEncryptionKey_InvalidatesCacheSoNextReadIsFresh(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, true)
 
@@ -303,7 +304,7 @@ func TestSetEncryptionKey_InvalidatesCacheSoNextReadIsFresh(t *testing.T) {
 
 func TestSetEncryptionKey_ChangedTrueOnFirstSet(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, true)
 
@@ -322,7 +323,7 @@ func TestSetEncryptionKey_ChangedTrueOnFirstSet(t *testing.T) {
 
 func TestSetEncryptionKey_ChangedTrueOnVersionBump(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, true)
 
@@ -344,7 +345,7 @@ func TestSetEncryptionKey_ChangedTrueOnVersionBump(t *testing.T) {
 
 func TestSetEncryptionKey_ChangedFalseOnIdempotentRefresh(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, true)
 
@@ -380,7 +381,7 @@ func TestSetEncryptionKey_ChangedFalseOnIdempotentRefresh(t *testing.T) {
 
 func TestSetEncryptionKey_ErrNoActorWhenRowMissing(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	h := newHandler(t, pool, true)
 
 	_, _, err := h.SetEncryptionKey(context.Background(),
@@ -392,7 +393,7 @@ func TestSetEncryptionKey_ErrNoActorWhenRowMissing(t *testing.T) {
 
 func TestSetEncryptionKey_ErrMalformedOnWrongLength(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, true)
 
@@ -407,7 +408,7 @@ func TestSetEncryptionKey_ErrMalformedOnWrongLength(t *testing.T) {
 
 func TestSetEncryptionKey_ErrMalformedOnVersionZero(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, true)
 
@@ -430,7 +431,7 @@ func TestCountMissingEncryptionKey_ReturnsNonError(t *testing.T) {
 	// column probe below + the partial-index EXPLAIN coverage
 	// earlier in this file.
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, true)
 
@@ -475,7 +476,7 @@ func TestHandler_WorksWithoutCache(t *testing.T) {
 	// without cache support is unlikely in production but tests
 	// use it routinely.
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool, false)
 

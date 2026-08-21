@@ -82,7 +82,7 @@ func TestActorKeys_GetWhenAbsent(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	h := users.NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ref, _ := newTestUser(t, ctx, pool)
@@ -101,7 +101,7 @@ func TestActorKeys_EnsureGeneratesAndPersists(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	initAtrestForTest(t)
 
 	h := users.NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
@@ -168,7 +168,7 @@ func TestActorKeys_EnsureIsIdempotent(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	initAtrestForTest(t)
 
 	h := users.NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
@@ -200,7 +200,7 @@ func TestActorKeys_EnsureRefusesWithoutMasterKey(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	// Deliberately do NOT init atrest. Confirm Ensure refuses.
 	atrest.Reset()
 
@@ -221,7 +221,7 @@ func TestActorKeys_CacheHitAfterEnsure(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	initAtrestForTest(t)
 
 	reg := cache.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))

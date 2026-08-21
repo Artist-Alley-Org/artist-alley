@@ -228,7 +228,7 @@ func withAuditStore(t *testing.T, fn func(context.Context, *sysconfig.Handler, *
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := sysconfig.NewStore(pool)
