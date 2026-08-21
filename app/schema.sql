@@ -518,37 +518,58 @@ $$;
 
 
 --
+-- Name: post_ai_contributors(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_ai_contributors(p_post_id uuid) RETURNS TABLE(declaration text)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT a.ai_provenance
+      FROM public.post_assets pa
+      JOIN public.assets a ON a.id = pa.asset_id
+     WHERE pa.post_id = p_post_id
+       AND a.deleted_at IS NULL
+    UNION ALL
+    SELECT a.ai_provenance
+      FROM public.posts p
+      JOIN public.assets a
+        ON a.id IN (p.cover_asset_id, p.cover_thumbnail_asset_id)
+     WHERE p.id = p_post_id
+       AND a.deleted_at IS NULL;
+$$;
+
+
+--
 -- Name: post_ai_provenance(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.post_ai_provenance(p_post_id uuid) RETURNS text
     LANGUAGE sql STABLE
     AS $$
-    WITH contributors AS (
-        SELECT a.ai_provenance
-          FROM public.post_assets pa
-          JOIN public.assets a ON a.id = pa.asset_id
-         WHERE pa.post_id = p_post_id
-           AND a.deleted_at IS NULL
-        UNION ALL
-        SELECT a.ai_provenance
-          FROM public.posts p
-          JOIN public.assets a
-            ON a.id IN (p.cover_asset_id, p.cover_thumbnail_asset_id)
-         WHERE p.id = p_post_id
-           AND a.deleted_at IS NULL
-    )
     SELECT CASE
         -- ANY, strongest first.
-        WHEN count(*) FILTER (WHERE ai_provenance = 'generated') > 0 THEN 'generated'
-        WHEN count(*) FILTER (WHERE ai_provenance = 'assisted')  > 0 THEN 'assisted'
+        WHEN count(*) FILTER (WHERE declaration = 'generated') > 0 THEN 'generated'
+        WHEN count(*) FILTER (WHERE declaration = 'assisted')  > 0 THEN 'assisted'
         -- ALL, and only over a non-empty set.
         WHEN count(*) > 0
-             AND count(*) FILTER (WHERE ai_provenance = 'none') = count(*) THEN 'none'
+             AND count(*) FILTER (WHERE declaration = 'none') = count(*) THEN 'none'
         -- Undeclared: no contributors, or at least one nobody asked.
         ELSE NULL
     END
-      FROM contributors;
+      FROM public.post_ai_contributors(p_post_id);
+$$;
+
+
+--
+-- Name: post_ai_pure(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_ai_pure(p_post_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT count(*) > 0
+       AND count(*) FILTER (WHERE declaration = 'generated') = count(*)
+      FROM public.post_ai_contributors(p_post_id);
 $$;
 
 
@@ -788,14 +809,21 @@ END; $$;
 CREATE FUNCTION public.recompute_post_ai_provenance(p_post_id uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
+DECLARE
+    v_provenance text;
+    v_pure       boolean;
 BEGIN
     IF p_post_id IS NULL THEN
         RETURN;
     END IF;
+    SELECT public.post_ai_provenance(p_post_id), public.post_ai_pure(p_post_id)
+      INTO v_provenance, v_pure;
     UPDATE public.posts p
-       SET ai_provenance = public.post_ai_provenance(p_post_id)
+       SET ai_provenance = v_provenance,
+           ai_pure       = v_pure
      WHERE p.id = p_post_id
-       AND p.ai_provenance IS DISTINCT FROM public.post_ai_provenance(p_post_id);
+       AND (p.ai_provenance IS DISTINCT FROM v_provenance
+            OR p.ai_pure IS DISTINCT FROM v_pure);
 END;
 $$;
 
@@ -2461,6 +2489,7 @@ CREATE TABLE public.posts (
     deleted_by_user_ref bigint,
     mature boolean DEFAULT false NOT NULL,
     ai_provenance text,
+    ai_pure boolean DEFAULT false NOT NULL,
     CONSTRAINT posts_ai_provenance_check CHECK (((ai_provenance IS NULL) OR (ai_provenance = ANY (ARRAY['none'::text, 'assisted'::text, 'generated'::text])))),
     CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
@@ -2485,6 +2514,13 @@ COMMENT ON COLUMN public.posts.subtitle_track_override IS 'Per-post override for
 --
 
 COMMENT ON COLUMN public.posts.ai_provenance IS 'DERIVED from the post''s live CONTRIBUTORS — its member assets AND its two cover pictures (#1167, ADR 0094). Never written by a request body; maintained by `public.post_ai_provenance` via triggers on `post_assets`, `assets` and `posts`, exactly as `posts.mature` is. The rule is asymmetric: a POSITIVE claim propagates on ANY (one `generated` contributor makes the post `generated`, else one `assisted` contributor makes it `assisted`), and the NEGATIVE claim requires ALL (the post reads `none` only when it has at least one live contributor and every one of them declares `none`). One undeclared contributor makes the post undeclared, because deriving `none` over a contributor nobody asked would fabricate that maker''s disclaimer at the post level. A post with no live contributors is NULL. The covers arm is present from the first migration deliberately: `posts.mature` shipped without it and #1147 was the bill.';
+
+
+--
+-- Name: COLUMN posts.ai_pure; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.ai_pure IS 'DERIVED — TRUE when this post has at least one live CONTRIBUTOR and EVERY one of them declares `generated` (#1242, ADR 0094 fourth amendment). Contributors are the member assets UNION the two cover pictures, exactly as `ai_provenance` counts them. ⚠️ THIS IS THE FILTERING FACT AND `ai_provenance` IS THE LABELLING FACT; they are not interchangeable. `ai_provenance` propagates a positive claim on ANY member, so `{generated, none}`, `{generated, undeclared}` and `{generated, assisted}` all read `generated` — a "hide AI work" filter keyed on it would exclude exactly the MIXED posts the owner''s ruling protects, because excluding a post for one member''s declaration punishes the honest declaration the design depends on. `assisted` NEVER contributes to purity: an all-`assisted` post is human work made with AI help. An UNDECLARED contributor makes the post NOT pure, because not-knowing must never hide an artist''s work. A post with no live contributors is not pure. NOT NULL is correct here where `assets.ai_provenance` is nullable: `false` is a statement about OUR KNOWLEDGE ("we cannot say this post is purely AI"), not a disclaimer written on a maker''s behalf. ⛔ A FILTER, NEVER A GATE (ADR 0094 §4): nothing withholds on this column, nothing is subtracted from counts, facets or suggest, and it carries no derived-copies obligation for exactly that reason.';
 
 
 --
@@ -5243,6 +5279,13 @@ CREATE INDEX post_tags_tag_trgm ON public.post_tags USING gin (tag public.gin_tr
 --
 
 CREATE INDEX posts_ai_provenance_declared_idx ON public.posts USING btree (ai_provenance) WHERE (ai_provenance = ANY (ARRAY['assisted'::text, 'generated'::text]));
+
+
+--
+-- Name: posts_ai_pure_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_ai_pure_idx ON public.posts USING btree (ai_pure) WHERE ai_pure;
 
 
 --

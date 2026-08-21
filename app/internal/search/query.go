@@ -938,11 +938,12 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	if err != nil {
 		return nil, 0, err
 	}
-	// #907 — a collection carries none of the five facet dimensions: no
-	// file extension, no asset type, no sensitivity tier, and its tags
-	// live on the assets inside it rather than on the row. So ANY active
-	// selection makes this entity unsatisfiable and it drops out of the
-	// page entirely — zero hits AND zero count, never "no constraint".
+	// #907 — a collection carries almost none of the facet dimensions:
+	// no file extension, no asset type, no sensitivity tier, and its
+	// tags live on the assets inside it rather than on the row. So a
+	// selection naming one of those makes this entity unsatisfiable and
+	// it drops out of the page entirely — zero hits AND zero count,
+	// never "no constraint".
 	//
 	// This is the seam #910 (search inside a collection) opens: that
 	// feature is a `collection` DIMENSION on the asset and post
@@ -951,7 +952,25 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	// while ResourceSpace writes a `!collection<id>` parser special to
 	// reach the same place. One FacetType const and one case in
 	// facet.dimensionSQL, and nothing in this function moves.
-	if _, _, ok := q.Filters.SQL(visibility.EntityCollection, "c", 0); !ok {
+	//
+	// ⚠️ #1242 CHANGED THE SECOND HALF OF THAT, and the change is the
+	// reason this reads the fragment instead of discarding it. The
+	// rendered SQL used to go to `_, _` — safe only because EVERY
+	// dimension was unsatisfiable here, so the fragment was known to be
+	// empty whenever the branch continued. `ai:` is satisfiable for a
+	// collection (facet.FacetAI's EntityCollection arm explains why an
+	// EXCLUSION must not silently remove every collection from the
+	// page), so from now on the fragment can be non-empty and dropping
+	// it would return `ai:pure` collections to a caller who asked for
+	// pure-AI work — a filter that looks applied and is not, which is
+	// #907's whole defect. It is applied to the COUNT as well, because a
+	// count that outlives its result set is an oracle the hits are not.
+	//
+	// $1=query text, $2=limit, predicate args from $3, selection args
+	// after those.
+	selFrag, selArgs, satisfiable := q.Filters.SQL(
+		visibility.EntityCollection, "c", 2+len(visArgs))
+	if !satisfiable {
 		return nil, 0, nil
 	}
 	// ⚠️ THE SOFT-DELETE CONJUNCT IS LOAD-BEARING AND IS NOT A DUPLICATE
@@ -971,19 +990,19 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 		       c.created_at, c.updated_at, c.visibility,
 		       ts_rank_cd(c.search_text, plainto_tsquery('english', $1)) AS score
 		  FROM collections c
-		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + `
+		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + selFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM collections c
-			 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + `
+			 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + selFrag + `
 			 LIMIT $2
 		) x
 	`
-	hitsArgs := append([]any{q.Text, limit}, visArgs...)
-	countArgs := append([]any{q.Text, TotalCountCap + 1}, visArgs...)
+	hitsArgs := append(append([]any{q.Text, limit}, visArgs...), selArgs...)
+	countArgs := append(append([]any{q.Text, TotalCountCap + 1}, visArgs...), selArgs...)
 	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
 		return nil, 0, err
