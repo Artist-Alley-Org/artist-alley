@@ -93,6 +93,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **The test environment stopped producing failures nobody caused.** The long-lived development
+  database had silted up with rows left behind by test runs — enough that nine browser tests failed
+  for reasons in nobody's changes, which teaches everyone to ignore the test suite. Leaked rows are
+  now separated from real content by where they came from rather than by what they look like, and
+  swept with a dry run first. Two tests that measured the wrong thing were rewritten: one compared
+  screenshots pixel-for-pixel and now checks the layout it actually cares about, and one assumed a
+  precondition it now measures (#1245, #1241, PR #1246).
+- **A stray `go test` can no longer wipe the development database.** Forty-six test files defaulted
+  to the real database when run directly rather than through the test script; they now share one
+  guarded entry point that refuses anything but a test database (#1125, PR #1246).
+- **Test cleanup that never ran now runs.** Per-test cleanup was registered to happen *after* the
+  database connection had already been closed, across 22 places, so every cleanup silently did
+  nothing and its error was discarded. Verified by looking for the rows afterwards rather than by a
+  passing run — which is exactly what it produced while broken (#870, PR #1246).
+
 - **The test suite stopped lying.** Several browser specs had been failing locally while passing
   in CI — and one of them was passing *vacuously*, sampling only frames taken after the moment it
   meant to measure, so neither result meant anything. Fixture accounts and posts left behind by
