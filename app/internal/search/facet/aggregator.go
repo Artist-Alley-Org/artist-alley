@@ -87,12 +87,82 @@ const (
 	// naming a field this caller cannot read, and the search returns
 	// empty rather than an error, for the same no-oracle reason.
 	FacetField FacetType = "field"
+
+	// FacetAI excludes — or isolates — PURELY AI-generated work
+	// (#1242, ADR 0094 fourth amendment). Two values, and they
+	// partition the corpus: [AIPure] and [AINotPure].
+	//
+	// # It keys on PURITY, and keying it on `ai_provenance` would be
+	// the bug
+	//
+	// `posts.ai_provenance` is the LABELLING fact — "does this post
+	// contain AI?" — and its positive arm propagates on ANY member, so
+	// `{generated, generated}`, `{generated, none}`,
+	// `{generated, undeclared}` and `{generated, assisted}` all read
+	// `generated`. A "hide AI work" filter keyed on that column would
+	// exclude the three MIXED posts along with the pure one, which is
+	// exactly what the owner's ruling forbids: an artist who used a
+	// generative tool to explore compositions and then painted the final
+	// piece by hand has made human work, and excluding their post for
+	// one member's declaration punishes the honest declaration the whole
+	// design depends on. So the dimension reads `posts.ai_pure`, the
+	// second derived fact (migration 00061).
+	//
+	// # It fails toward SHOWING
+	//
+	// An UNDECLARED contributor makes a post not-pure, so it SURVIVES
+	// [AINotPure]. Wrongly hiding human work is a worse error than
+	// showing one more AI post to someone who asked not to see them —
+	// ADR 0094 §3 and both amendments take the same direction, and the
+	// SQL below carries it in two places: `IS DISTINCT FROM` on the
+	// asset arm (`<> 'generated'` is NULL for an undeclared asset, and
+	// a NULL conjunct hides the row) and NOT NULL on `posts.ai_pure`.
+	//
+	// # ⛔ A FILTER, NEVER A GATE (ADR 0094 §4)
+	//
+	// Nothing is withheld on this axis. The work stays public, findable
+	// and countable; a caller who does not ask for this dimension sees
+	// pure-AI work in their hits, their counts, their facet buckets and
+	// their suggestions exactly as before. That is what keeps the column
+	// free of the derived-copies obligation the #1066 list would
+	// otherwise impose, and it is why an operator policy ("no AI on this
+	// instance") is NOT this dimension — that is moderation, and it
+	// belongs in the sensitivity/state machinery.
+	//
+	// # Filter-only, like FacetCollection and FacetField
+	//
+	// No [Aggregator] and absent from [AllFacets]. A two-bucket rail
+	// reading "not_pure 1,946 / pure 1" is not a discovery surface, and
+	// the control this dimension exists for is a toggle rather than a
+	// bucket list. #907's invariant — a bucket's number equals what
+	// ticking it returns — makes no promise a dimension without buckets
+	// can break.
+	FacetAI FacetType = "ai"
+)
+
+// The [FacetAI] value vocabulary. CLOSED, validated in
+// [FacetType.canonicalValue], and a 400 out of [ParseSelection] for
+// anything else — a filter that looked applied and was not is the whole
+// defect the `filter=` parameter was introduced to fix.
+//
+// They are a PARTITION, not a pair of independent flags: every row is
+// exactly one of them, which is what makes the OR of both terms mean
+// "no constraint" rather than "nothing" — see [FacetType.conjunctive].
+const (
+	// AIPure selects work that is ENTIRELY AI-generated: every live
+	// contributor declares `generated`, over a non-empty set.
+	AIPure = "pure"
+	// AINotPure selects everything else — mixed work, wholly human
+	// work, and work nobody was asked about. This is the value a
+	// "hide AI work" control sends.
+	AINotPure = "not_pure"
 )
 
 // AllFacets returns the set of aggregators the dispatcher runs when
 // the caller doesn't restrict via ?facets=...
 //
-// FacetCollection is deliberately absent — see its doc.
+// FacetCollection, FacetField and FacetAI are deliberately absent — see
+// their docs.
 func AllFacets() []FacetType {
 	return []FacetType{FacetAssetType, FacetTag, FacetSensitivity, FacetOwner, FacetExtension}
 }
@@ -115,6 +185,8 @@ func ParseFacetType(s string) (FacetType, bool) {
 		return FacetCollection, true
 	case "field":
 		return FacetField, true
+	case "ai":
+		return FacetAI, true
 	}
 	return "", false
 }

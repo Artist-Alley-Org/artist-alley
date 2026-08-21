@@ -205,6 +205,17 @@ func (s Selection) CacheKey() string {
 // A tag is the one multi-valued dimension, and the DSL already fixes its
 // meaning — `tag:a tag:b` documents "carries EVERY tag" — so the rail
 // and the typed query say the same thing.
+//
+// ⭐ [FacetAI] was checked against that argument rather than inheriting
+// the default, because it is the first dimension added since the rule
+// was written and #1242 is entirely a plural rule. A post has exactly
+// ONE purity state, so it lands on the same side as extension and
+// sensitivity: `ai:pure ai:not_pure` under AND returns nothing forever,
+// which is a filter that looks applied and is not — the failure this
+// whole file exists to prevent. Under OR it returns everything, which is
+// the honest reading of "show me pure work or non-pure work" and is
+// exactly what the caller asked for, since the two values PARTITION the
+// corpus. Non-conjunctive, deliberately.
 func (t FacetType) conjunctive() bool { return t == FacetTag }
 
 // canonicalValue validates a value for dimension t and returns the form
@@ -236,6 +247,23 @@ func (t FacetType) canonicalValue(v string) (string, bool) {
 			return "", false
 		}
 		return id.String(), true
+	case FacetAI:
+		// #1242 — the THIRD dimension with a value grammar, and the
+		// first whose vocabulary is a CLOSED SET of two.
+		//
+		// Rejecting an unknown value matters more here than for the
+		// opaque-text dimensions, and for a different reason than
+		// `collection:`. There is no `::UUID` cast to raise a 22P02;
+		// what a tolerated `ai:generated` or `ai:false` would do is
+		// render a predicate matching nothing, and a caller who asked to
+		// hide AI work would get an EMPTY page rather than an unfiltered
+		// one. Failing at the parser turns that into a 400 the client
+		// can see.
+		switch v = strings.ToLower(strings.TrimSpace(v)); v {
+		case AIPure, AINotPure:
+			return v, true
+		}
+		return "", false
 	case FacetField:
 		// #1157/#1165 — `<code><op><value>`. The SECOND dimension with a
 		// value grammar, the first whose value is compound, and now the
@@ -861,6 +889,70 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 	case FacetExtension:
 		if e == visibility.EntityAsset {
 			return `LOWER(` + a + `file_extension) = LOWER(` + p + `::TEXT)`, true
+		}
+	case FacetAI:
+		// #1242 — "hide AI work", as an ordinary predicate.
+		//
+		// Every arm is spelled as `<is this row pure?> = <did the caller
+		// ask for pure?>`, and both halves are TOTAL booleans. That is
+		// not a stylistic choice: it is what keeps the fails-toward-
+		// showing direction out of three-valued logic. The obvious
+		// spelling of the asset arm — `ai_provenance <> 'generated'` —
+		// evaluates to NULL for an UNDECLARED asset, and a NULL conjunct
+		// drops the row, so every work nobody was asked about would
+		// vanish from a search that asked to see non-AI work. That is
+		// the exact error ADR 0094 §3 and both amendments forbid,
+		// arriving through SQL's NULL semantics instead of through a
+		// derivation. `IS NOT DISTINCT FROM` and a NOT NULL column are
+		// the two ways it is prevented here.
+		//
+		// The literals below are spliced from the Go constants
+		// [AIPure] / [AINotPure], never from caller text; the caller's
+		// bytes stay in the placeholder, where [FacetType.canonicalValue]
+		// has already confirmed they are one of the two.
+		switch e {
+		case visibility.EntityPost:
+			// The maintained derived fact (migration 00061). NOT NULL,
+			// so `= (…)` is total.
+			//
+			// ⚠️ NOT `ai_provenance`. That column answers "does this post
+			// CONTAIN AI?" and reads `generated` for {generated, none},
+			// {generated, undeclared} and {generated, assisted} alike —
+			// keying the filter on it would exclude precisely the mixed
+			// posts the owner's ruling protects.
+			return `(` + a + `ai_pure = (` + p + `::TEXT = '` + AIPure + `'))`, true
+		case visibility.EntityAsset:
+			// The SAME rule over a one-element contributor set, which is
+			// what an asset is: it is pure exactly when its own maker
+			// declared `generated`. No second column, because there is
+			// no set to reduce and therefore nothing a stored value
+			// could disagree with.
+			return `((` + a + `ai_provenance IS NOT DISTINCT FROM 'generated')
+			          = (` + p + `::TEXT = '` + AIPure + `'))`, true
+		case visibility.EntityCollection:
+			// ⭐ A collection is SATISFIABLE here, and it is the only
+			// dimension for which that is true — see runCollections,
+			// which had to start applying the rendered fragment for this
+			// arm to mean anything.
+			//
+			// The reason is the direction of the question. Every other
+			// dimension is a POSITIVE narrowing: a caller who asks for
+			// `extension:png` is asking about files, and a collection
+			// dropping out of that page is the answer, not a loss. This
+			// one is an EXCLUSION wearing a value's clothes — the caller
+			// is saying "not that" — and letting an exclusion silently
+			// remove every collection from the page would hide curated
+			// human work from someone who asked to see less AI work.
+			// That is the fails-toward-showing rule, and it applies to
+			// the mechanism as much as to the derivation.
+			//
+			// So: a collection is never a pure-AI WORK — it is a
+			// container, and we derive no purity for it — which makes it
+			// a member of `not_pure` and never of `pure`. The
+			// placeholder is read (rather than a bare TRUE/FALSE)
+			// because every term appends exactly one arg and pgx rejects
+			// a statement that does not name it.
+			return `(` + p + `::TEXT = '` + AINotPure + `')`, true
 		}
 	case FacetField:
 		// #1157 — one metadata field's value, as an ordinary predicate.

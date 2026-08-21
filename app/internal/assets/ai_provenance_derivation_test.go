@@ -84,7 +84,7 @@ func aipAsset(t *testing.T, pool *pgxpool.Pool, decl string) uuid.UUID {
 		t.Fatalf("seed asset (%q): %v", decl, err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id = $1`, id)
+		testdb.Purge(t, pool, id, `DELETE FROM assets WHERE id = $1`)
 	})
 	return id
 }
@@ -101,7 +101,10 @@ func aipPost(t *testing.T, pool *pgxpool.Pool, members ...uuid.UUID) uuid.UUID {
 		t.Fatalf("seed post: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM posts WHERE id = $1`, id)
+		// #870 — REPORTED teardown, not `_, _ =`. `post_assets` goes with
+		// the post by FK cascade; the members are dropped by aipAsset's
+		// own cleanup, which runs after this one.
+		testdb.Purge(t, pool, id, `DELETE FROM posts WHERE id = $1`)
 	})
 	for i, m := range members {
 		if _, err := pool.Exec(ctx,
