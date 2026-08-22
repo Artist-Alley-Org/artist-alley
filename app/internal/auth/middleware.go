@@ -416,12 +416,37 @@ func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 // performs. That is the difference between testing the gate and
 // testing the fixture (#930).
 //
-// Same failure mode as loadCapabilities: a lookup error leaves the cap
-// sets empty rather than failing, so the caller can do nothing
-// privileged.
+// It is also how a NON-HTTP caller acts as a user: the scheduled-action
+// reaper publishes a post on behalf of the account that scheduled it
+// (#1238), and that account's capabilities have to be the ones the
+// database holds at fire time, not a literal written when the work was
+// queued.
+//
+// The user row is loaded as well as the capabilities. Username is not
+// decoration on this path — `emit.ActorContext.URI()` builds the
+// federation actor handle as `{baseURL}/users/{username}`, so an
+// identity carrying only a ref would publish to peers as an actor whose
+// URI ends in a slash. A caller that needs a real user checks Username
+// itself; see posts.MovePostPublication.
+//
+// Same failure mode as loadCapabilities: a lookup error leaves the
+// identity thin (no username, empty cap sets) rather than failing, so
+// the caller can do nothing privileged and can see that it could not be
+// resolved.
 func (r *Resolver) LoadIdentity(ctx context.Context, userRef int64) *Identity {
-	id := &Identity{UserRef: userRef, AuthMethod: "session"}
-	r.loadCapabilities(ctx, New(r.Pool), id)
+	q := New(r.Pool)
+	id, err := r.loadUser(ctx, q, userRef)
+	if err != nil {
+		if r.Logger != nil {
+			r.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.identity.load.error",
+				slog.Int64("user_ref", userRef),
+				slog.String("err", err.Error()),
+			)
+		}
+		id = &Identity{UserRef: userRef}
+	}
+	id.AuthMethod = "session"
+	r.loadCapabilities(ctx, q, id)
 	return id
 }
 

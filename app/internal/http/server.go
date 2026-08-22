@@ -423,6 +423,16 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// newAPIServer's positional args — same shape as the
 		// password-policy + audit-recorder setters above.
 		impl.auth.SetProviderRegistry(providers)
+		// #1238 — the identity a NON-HTTP caller acts as. The
+		// scheduled-action reaper publishes a post on behalf of the
+		// account that scheduled it, and that account's capabilities and
+		// username have to come from the database at fire time: the
+		// capability is what an operator revokes to make publication an
+		// approval step, and the username is the federation actor URI.
+		// Out-of-band like the setters above rather than a thirteenth
+		// positional arg on newAPIServer — the resolver is built here,
+		// after it.
+		impl.posts.SetActorLoader(resolver)
 		// Bind the email seam onto the sysconfig handler so the
 		// /admin/system/smtp/test endpoint can render + drive the
 		// boot-configured Sender.

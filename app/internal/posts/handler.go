@@ -199,6 +199,27 @@ type Handler struct {
 	// with 500 rather than falling back to writing state_id by hand,
 	// because a fallback that skips the gate is worse than an outage.
 	workflow *workflow.Service
+
+	// actorLoader resolves a user ref to the identity a NON-HTTP caller
+	// acts as — today only the scheduled-action reaper, which has a
+	// `created_by` on the action row and no request context (#1238).
+	//
+	// A loader rather than a hand-built literal because both halves of
+	// what the publication core does with a caller come from the
+	// database: its capabilities decide whether the move is permitted
+	// at fire time, and its username IS the federation actor URI. A
+	// synthesised identity would have neither and would still publish.
+	//
+	// nil-safe: unwired, MovePostPublication refuses. There is no
+	// degraded mode — see its comment.
+	actorLoader actorLoader
+}
+
+// actorLoader is the auth.Resolver slice this package needs to act on
+// behalf of a user with no request behind them. Declared locally, the
+// same shape as `notifier` above, so the wiring at boot is one line.
+type actorLoader interface {
+	LoadIdentity(ctx context.Context, userRef int64) *auth.Identity
 }
 
 // notifier is the notifications.Writer slice this package needs.
@@ -244,6 +265,11 @@ func (h *Handler) SetMentions(m *mention.Service) { h.mentions = m }
 // SetNotifier installs the cross-package notifications writer (#875).
 // Post-construction setter, same shape as social.Handler's.
 func (h *Handler) SetNotifier(n notifier) { h.notifier = n }
+
+// SetActorLoader installs the identity resolver MovePostPublication
+// acts through (#1238). Post-construction setter, same shape as the
+// rest.
+func (h *Handler) SetActorLoader(l actorLoader) { h.actorLoader = l }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
 	h := &Handler{Pool: pool, Logger: logger, registry: registry}

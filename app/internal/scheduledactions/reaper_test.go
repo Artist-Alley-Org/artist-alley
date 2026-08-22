@@ -87,7 +87,7 @@ func newReaper(t *testing.T, pool *pgxpool.Pool, n Notifier) *ReaperJob {
 // Handle tick without the re-enqueue. Returns (doneCount, failedCount).
 func drain(t *testing.T, h *ReaperJob) (int, int) {
 	t.Helper()
-	exec := &executor{rec: h.Rec, notifier: h.Notifier}
+	exec := h.newExecutor()
 	done, failed := 0, 0
 	for {
 		outcome, claimed, err := h.processOne(context.Background(), exec)

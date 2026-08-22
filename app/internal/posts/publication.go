@@ -76,6 +76,25 @@ import (
 // must not be a destructive act — and it is why the only column either
 // endpoint writes is `state_id`. Member assets are untouched either
 // way: storage and publication are separate lifecycles.
+//
+// # A third entry, and no third implementation (#1238)
+//
+// Scheduled publication needs this body from a background job that has
+// no request and therefore no context identity. MovePostPublication is
+// that entry: it loads the actor named on the scheduled row and hands
+// it to movePublicationAs, the same function the endpoints reach after
+// reading their caller off the context.
+//
+// It is an ENTRY, not a bypass. The read gate, the 404-vs-403 ordering,
+// the authorship gate and the `posts.publish` capability all apply to
+// it exactly as they apply to a request — and they are evaluated when
+// the action FIRES, so an operator who revokes publication rights has
+// stopped tomorrow's scheduled publish as well as today's button.
+//
+// The alternative was an UPDATE in the reaper's own queries. That is
+// the defect this arrangement exists to make impossible: it would move
+// `state_id` without the activity beside it, and the post would be
+// published on this instance and on no other, silently.
 
 // publicationTargets holds the two state ids this file moves between,
 // resolved from the database on each call. Not cached: see
@@ -236,8 +255,28 @@ type publicationResult struct {
 	status  int
 	message string
 	post    *openapi.Post
+
+	// noop distinguishes the TWO refusals that both answer 409: "the
+	// post is already in the state you asked for" (this flag) and "this
+	// instance's edge list has no such move" (not). On the wire they are
+	// the same status with different prose, which is right for a caller
+	// who asked for a move; a STANDING instruction — a scheduled
+	// publication (#1238) — has to tell them apart, because finding the
+	// world already in the state it was told to reach is success and a
+	// missing edge is not.
+	noop bool
 }
 
+// movePublication is the HTTP entry: resolve the request's identity,
+// run the shared body, and — only on success — render the post for the
+// caller who asked.
+//
+// The split below is #1238's seam and nothing more. Everything that
+// decides an OUTCOME (the read gate, the 404-vs-403 ordering, the
+// authorship gates, the no-op refusal, the transaction) lives in
+// movePublicationAs, unchanged; what stays here is the two things that
+// only make sense for an HTTP request — reading the caller off the
+// context, and hydrating a response body for them.
 func (h *Handler) movePublication(
 	ctx context.Context,
 	postID uuid.UUID,
@@ -247,6 +286,84 @@ func (h *Handler) movePublication(
 	if caller == nil || caller.IsAnonymous() {
 		return publicationResult{status: 401, message: "authentication required"}, nil
 	}
+	res, err := h.movePublicationAs(ctx, caller, postID, publish)
+	if err != nil || res.status != 200 {
+		return res, err
+	}
+	pgID := pgtype.UUID{Bytes: postID, Valid: true}
+	full, err := h.fetchFullPost(ctx, pgID)
+	if err != nil {
+		return publicationResult{}, err
+	}
+	if err := h.enrichForCaller(ctx, full); err != nil {
+		return publicationResult{}, err
+	}
+	res.post = full
+	return res, nil
+}
+
+// MovePostPublication is the publication core's non-HTTP entry point:
+// publish (or unpublish) a post on behalf of actorUserRef, with no
+// request and no context identity behind it. Today's one caller is the
+// scheduled-action reaper (#1238); the arm exists so a scheduled
+// publication goes through THIS body rather than writing `state_id`
+// itself, which would move the post without telling any peer about it.
+//
+// The gates are not relaxed for it. The actor is loaded through the
+// real resolver, so its capabilities are the ones the database says it
+// has at FIRE time — an operator who revoked `posts.publish` between
+// the schedule and the fire has stopped the publication, which is the
+// whole point of that capability being instance policy.
+//
+// Returns moved=false with a nil error for the idempotent no-op: the
+// post is already in the state the instruction asked for. That is
+// SUCCESS for a standing instruction (see publicationResult.noop), and
+// it is the cell of #1238's fire-time table that two schedules for the
+// same post, and an author who publishes manually first, both land in.
+func (h *Handler) MovePostPublication(
+	ctx context.Context,
+	postID uuid.UUID,
+	publish bool,
+	actorUserRef int64,
+) (bool, error) {
+	if h.actorLoader == nil {
+		// Refuse rather than synthesise an identity. A hand-built actor
+		// would carry no capabilities and no username, which would fail
+		// the workflow gate and mint a federation actor URI ending in
+		// "/users/" — a fabricated caller is worse than an outage.
+		return false, errors.New("posts: actor loader not wired")
+	}
+	if actorUserRef == 0 {
+		return false, errors.New("posts: publication needs an actor to attribute")
+	}
+	actor := h.actorLoader.LoadIdentity(ctx, actorUserRef)
+	if actor == nil || actor.IsAnonymous() || actor.Username == "" {
+		return false, fmt.Errorf("posts: no usable identity for actor %d", actorUserRef)
+	}
+	res, err := h.movePublicationAs(ctx, actor, postID, publish)
+	if err != nil {
+		return false, err
+	}
+	switch {
+	case res.status == 200:
+		return true, nil
+	case res.noop:
+		return false, nil
+	default:
+		return false, fmt.Errorf("posts: publication refused (%d): %s", res.status, res.message)
+	}
+}
+
+// movePublicationAs is the body both entries share: every gate, the
+// transaction, and the invalidations. The caller is passed EXPLICITLY
+// rather than read off the context, which is the only reason a reaper
+// with no HTTP identity can reach it.
+func (h *Handler) movePublicationAs(
+	ctx context.Context,
+	caller *auth.Identity,
+	postID uuid.UUID,
+	publish bool,
+) (publicationResult, error) {
 	if h.workflow == nil {
 		// Refuse rather than fall back to a direct state write. A
 		// fallback would skip the capability gate and the audit row,
@@ -311,7 +428,7 @@ func (h *Handler) movePublication(
 		if !publish {
 			msg = "post is not published"
 		}
-		return publicationResult{status: 409, message: msg}, nil
+		return publicationResult{status: 409, message: msg, noop: true}, nil
 	}
 
 	// The state move and the federation activity in ONE transaction
@@ -372,15 +489,10 @@ func (h *Handler) movePublication(
 	h.cacheInvalidate(ctx, pgID)
 	// The author's cached profile carries a post_count that counts only
 	// what a reader may see, so a post entering or leaving the shared
-	// surfaces moves it.
+	// surfaces moves it. Both entries need this, which is why it is here
+	// and not in the HTTP wrapper: a scheduled publication that left a
+	// stale count behind would be a post on the site the profile denies.
 	users.InvalidateProfile(ctx, h.registry, cur.AuthorUserRef)
 
-	full, err := h.fetchFullPost(ctx, pgID)
-	if err != nil {
-		return publicationResult{}, err
-	}
-	if err := h.enrichForCaller(ctx, full); err != nil {
-		return publicationResult{}, err
-	}
-	return publicationResult{status: 200, post: full}, nil
+	return publicationResult{status: 200}, nil
 }
