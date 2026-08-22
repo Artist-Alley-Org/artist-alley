@@ -153,3 +153,48 @@ a decision, it is whatever the code happened to do — and *singular right, plur
 to any test that uses one of the thing. When a dimension can appear more than once, state its
 combination rule here and assert the N≥2 case with the arithmetic written out (`both < min(a, b)`),
 never `both > 0`, because a count assertion that passes on a union passes on the bug.
+
+## Amendment — 2026-08-22, after implementing the first arm (#1251 slice 1, PR #1252)
+
+**Decision 1 is unimplementable as literally worded, and this amendment fixes the wording rather
+than the decision.** It says a filtered feed *"composes the query through the search engine"*.
+Read as "executes via `Engine.Run`", that destroys browse:
+
+- `search/query.go:766` orders by `score DESC, id DESC`, where score is
+  `ts_rank_cd(search_text, plainto_tsquery('english', $1))`. **Text-less, every post scores 0**, so
+  the ordering collapses to `id DESC` — the wall would be sorted **by UUID**.
+- The feed orders by a `(posted_at, id)` **keyset** (`posts/list_page.go:184`), where the `ORDER BY`
+  and the cursor predicate are deliberately *"the SAME fact stated"* — chronological browse with
+  stable pagination.
+
+**What crosses is the GRAMMAR, not the executor.** That is what decision 3 already says (*"a filter
+is defined once… surfaces render controls, they do not implement it"*) and what the Consequences
+describe (*"a thin translation into the query grammar"*). Decision 1 should be read as: **a filtered
+feed composes its filters through the shared filter grammar, and keeps its own ranking, cursor and
+scope.** Ranking and pagination are properties of the surface; a filter is not.
+
+**⭐ The first arm found the real seam, and it was not the one anyone predicted.** The obstacle was
+never scope — the feed still binds its scope parameters unchanged, exactly as decision 2 requires.
+It was the **caller**. `kind` is the first dimension whose *predicate* needs one, because the read
+rule is a conjunct on each candidate **member**, inside the correlated `EXISTS` the renderer builds;
+hoisting it up to the post is precisely the implementation the no-probe leak test exists to fail.
+
+This file had recorded that as impossible (`facet/selection.go:56-61`): *"dimensionSQL is
+caller-blind by design … there is nowhere to put the caller's identity without changing the arity
+for every dimension."* That argument is sound for a whole-query authorization (`Selection.Authorize`)
+and cannot hold for a per-member conjunct. `Selection.SQL`/`dimensionSQL` now take a
+`facet.RenderContext`, and the claim is corrected at the source.
+
+⚠️ **The safety property that makes that widening acceptable, and it must survive any future
+change:** `visibility.Caller`'s zero value is `{UserRef: 0, IsAnonymous: false}` — **"user zero",
+which is WIDER than anonymous**, because the anonymous branch of the field plane adds status
+conjuncts this one skips. A dimension that read a forgotten `RenderContext` would therefore fail
+**OPEN**. So a dimension needing a caller requires `RenderContext.CallerArg` to be non-empty and
+returns `ok=false` without it (`selection.go:1136-1141`), which `Selection.SQL` turns into "this
+entity matches nothing" — the fail-closed direction the rest of the file takes.
+
+**Corollary for the remaining arms.** `Tag` and `Visibility` (slice ii) are caller-independent
+predicates, so they do not need a `RenderContext` — but any *future* dimension that does must add
+the same refusal, and the no-probe assertion must be carried onto **every** surface the dimension
+reaches, not just the one that motivated it. Slice 1 added `search/kind_filter_test.go` for exactly
+that reason.

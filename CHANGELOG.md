@@ -99,6 +99,13 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **Browse's type filter now uses the same machinery as search.** Filtering the wall by kind of work
+  was implemented separately from the identical filter in search — two copies of one rule, which is
+  how they drift apart. Browse now composes the shared one, so a filter is written once and behaves
+  the same wherever it appears. No change to what anyone sees: the same posts, the same order, the
+  same pagination, verified by capturing the feed before and after across 40 combinations (#1251 in
+  part, PR #1252).
+
 - **The test environment stopped producing failures nobody caused.** The long-lived development
   database had silted up with rows left behind by test runs — enough that nine browser tests failed
   for reasons in nobody's changes, which teaches everyone to ignore the test suite. Leaked rows are
