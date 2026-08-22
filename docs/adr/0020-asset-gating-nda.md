@@ -129,6 +129,44 @@ nil/error seam, lives in ADR 0064's 2026-08-05 amendment.
 Everything below stands as the Phase 1.28 design. Read it as the visual
 specification it is.
 
+## Amendment (2026-08-22): the engine grew a POST arm, and the pair table became explicit (#1238, PR #1256)
+
+Three facts the engine now embodies that this ADR did not state, plus one acceptance:
+
+**1. The supported (action, target) pairs are DERIVED from the executors and enforced at schedule
+time.** `validTargets()` used to accept `post`/`collection`/`user` for every verb while three of
+the four mutating arms refused everything but `asset` — so a bad pair enqueued cleanly and failed
+at fire time with nobody watching. `executorTargets()` now maps each verb to the targets its
+executor genuinely acts on (`notify` runs on any target, because `notifyRecipient` addresses via
+`params.recipient`; the mutating verbs are asset-only except as below), and `Store.Schedule`
+refuses everything outside the table. Eleven previously-schedulable pairs became unschedulable.
+**An unrunnable action is refused while someone is watching, never deferred to a failure nobody
+sees.**
+
+**2. `change_state` on a `post` target goes through the PUBLICATION CORE, never through SQL.** A
+post's state is its publication (ADR 0091), and publication commits the state move and the
+federation activity in ONE transaction — an executor writing `posts.state_id` directly would
+publish without federating. The seam: `posts.movePublicationAs(caller, …)` carries every gate and
+the transaction; the HTTP wrapper keeps only context-identity → 401 and response hydration, so the
+endpoints' 404-vs-403 ordering (their existence-probe defence) is untouched. The executor reaches
+it through a `Publisher` interface and owns no SQL; the actor is the action's `created_by`, loaded
+as a REAL identity (`auth.Resolver.LoadIdentity`) — capabilities, username, actor URI — and the arm
+**refuses to run rather than synthesise an identity**.
+
+**3. A scheduled post state change requires `created_by` AT SCHEDULE TIME.** The column is nullable
+because a retention delete has nobody behind it; a publication cannot borrow that — it publishes as
+that user and federates in their name.
+
+**4. Scheduled UNPUBLISH is deliberately allowed.** `change_state` to `wip` on a post runs through
+the same seam and gates. It fits this ADR's own family — admin-scheduled takedowns at dates
+(restrict, delete) — and refusing `wip` would special-case one legitimate post state, re-creating
+the enqueue-then-die class for it. The surface remains `system.admin` (this file's own cap ruling);
+an AUTHOR scheduling their own post is a different authorization story and stays with epic #1119.
+
+Fire-time semantics, decided with the owner: draft → published · already published → idempotent
+no-op success (audit-noted) · soft-deleted → StateFailed with reason · unpublished-again →
+publishes, because a schedule is a standing instruction until cancelled.
+
 ## Context
 
 Game studios constantly handle pre-announcement material that must NOT

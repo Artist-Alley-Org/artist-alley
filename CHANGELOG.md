@@ -9,6 +9,13 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Publishing a post can now be scheduled** (groundwork). An administrator-scheduled action can
+  publish — or unpublish — a post at a future time, going through the same path as pressing the
+  button: the post becomes visible and its federation announcement goes out together, as one act.
+  Scheduling anything the system cannot actually run is refused *when you schedule it*, with a
+  clear error, instead of quietly failing weeks later. The artist-facing "publish at..." control
+  arrives with the create-page work; this makes it possible (#1238, PR #1256).
+
 - **You can hide AI-made work while you browse.** The type-filter menu on the browse wall gains a
   "Hide AI-made work" switch. It hides only work that is *entirely* AI-generated — a piece that
   used AI along the way and was finished by hand stays visible, and so does anything with no
@@ -81,6 +88,11 @@ where applicable, otherwise note "no-spec-impact."
   title nobody wrote (#1161, PR #1232).
 
 ### Fixed
+
+- **The quick-upload dialog no longer shows a blank visibility choice.** It offered three options
+  while defaulting to a fourth, so the control rendered empty and the form posted a tier it never
+  showed you — on the field that decides who can see the work. It now presents the same four
+  choices as the full create page, with the real default selected (#1240, PR #1256).
 
 - **Browsers set to block site data no longer get an empty browse page.** Reading a remembered
   setting could throw in that configuration, and it happened while the page was starting up — so
