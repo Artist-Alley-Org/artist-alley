@@ -139,6 +139,15 @@ the old grouping a June range returned 74 rows instead of 6.
 > Implemented as a sub-group key of **(code, operator)** within a dimension. Every dimension other
 > than `field:` has exactly one sub-group, which is the shape this loop had before #1165.
 
+**Second arm, 2026-08-21 (#1242, PR #1250).** The `ai` dimension is the first filter added to the
+grammar since this rule was written, and it exercised it: two `ai:` terms combine with **OR**
+(a post has one purity state, so AND returns nothing forever), and because `pure`/`not_pure`
+partition the corpus, both terms together are equivalent to no filter — asserted rather than
+assumed. Implementation also found that `query.go:954` **discarded** the rendered fragment for
+collections (`if _, _, ok :=`), which was inert only while no dimension was satisfiable there.
+⚠️ **Decision 3 says a filter is defined once; that is not the same as it being APPLIED
+everywhere it is defined.** Check both when adding an arm.
+
 **The lesson worth carrying past this ADR:** a composition rule that is never written down is not
 a decision, it is whatever the code happened to do — and *singular right, plural wrong* is invisible
 to any test that uses one of the thing. When a dimension can appear more than once, state its

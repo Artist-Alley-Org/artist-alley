@@ -9,6 +9,12 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Hiding AI work now keeps the mixed pieces.** Choosing to hide AI-created work excludes only
+  posts where *everything* is declared AI-generated. A piece that used AI for part of the process —
+  an early idea, an upscale — and was finished by hand still shows, because excluding it for one
+  file's declaration would punish the artist for being honest. Work with no declaration at all is
+  never hidden: not knowing must not hide someone's work (#1242, PR #1250).
+
 - **Advanced search can ask for more than exact matches.** Fields can now be searched for words
   they contain and for dates between two points, instead of only exact equality — so "title
   contains sunset" and "captured between March and June" are expressible at last. The page also

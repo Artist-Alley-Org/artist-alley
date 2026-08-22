@@ -256,3 +256,40 @@ post-level fact; asset-level chrome states the asset's.
 
 **4. This stays a filter.** Nothing here gates. Decision 4 is untouched, and with it the freedom
 from any derived-copies obligation.
+
+## Fifth amendment — 2026-08-21, after implementation (PR #1250)
+
+The fourth amendment called for a second derived fact. It shipped, and three parts of the shape are
+worth recording because each is a place a later reader would "simplify" it wrongly.
+
+**1. Two columns, and a shared contributor population.** `posts.ai_pure` sits beside
+`posts.ai_provenance`; a single `post_ai_contributors()` function now defines the population
+(members ∪ both cover pictures) and *both* derivations read from it. The two facts answer different
+questions — `ai_provenance` **labels** ("does this contain AI?", positive on ANY), `ai_pure`
+**filters** ("is this purely AI?", requires ALL) — and they are not interchangeable. ⚠️ **Do not
+collapse them into one column or one enum value.** A filter keyed on `ai_provenance` excludes
+exactly the mixed posts this ADR protects; that is the whole reason the second fact exists.
+
+**2. ⭐ `ai_pure` is NOT NULL, where `assets.ai_provenance` is nullable — and the asymmetry is
+correct.** On the asset, NULL means *nobody was asked*, and decision 2 forbids fabricating a
+disclaimer on a maker's behalf. On the post, `false` says *"we cannot say this post is purely AI"* —
+a statement about **our knowledge**, not a claim about the maker. Nothing is asserted on anyone's
+behalf by it, so a three-valued column would add a state with no distinct meaning.
+
+**3. Two `ai:` terms mean OR, and the reasoning is the corpus, not convention.** A post has one
+purity state, so ANDing two values returns nothing forever — the same argument `selection.go:208`
+already makes for asset type and owner. Because `pure` and `not_pure` **partition** the corpus, both
+terms together are equivalent to no filter at all, which is asserted rather than assumed so the
+choice stays checkable.
+
+**4. The mechanism must fail toward showing too, not just the rule.** Implementation found that
+`query.go:954` discarded the rendered filter fragment for collections, so a satisfiable `ai:` term
+there would have returned every matching collection unfiltered. Fixing it, the collection arm was
+made **satisfiable** rather than left unsatisfiable-and-silent: an exclusion that deletes every
+collection would hide curated human work from someone asking to see *less* AI work. Decision 3's
+direction applies to the plumbing, not only to the semantics.
+
+⚠️ **A consequence of content-addressed storage, surprising the first time:** one asset can be a
+member of many posts, so **declaring a single asset AI-generated re-derives every post it appears
+in**. That is correct — the declaration is about the file — but it means the blast radius of one
+checkbox is not one post, and #1243's per-asset labelling will meet the same fact.
