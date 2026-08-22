@@ -77,10 +77,13 @@ function post() {
  *  `overflow-hidden` and gains a transform on hover), so querying the
  *  render container finds nothing whether the item is there or not.
  *  Every assertion below reads the panel this returns. */
-async function openMenu(kind: 'asset' | 'post'): Promise<HTMLElement> {
+async function openMenu(
+  kind: 'asset' | 'post',
+  assetOverrides: Partial<CardAsset> = {},
+): Promise<HTMLElement> {
   const { container } =
     kind === 'asset'
-      ? render(AssetCard, { asset: asset(), mode: 'grid' as const })
+      ? render(AssetCard, { asset: asset(assetOverrides), mode: 'grid' as const })
       : // eslint-disable-next-line @typescript-eslint/no-explicit-any
         render(PostCard, { post: post() as any, mode: 'grid' as const });
 
@@ -134,5 +137,74 @@ describe('add-to-collection is a POST affordance only (#1185)', () => {
     expect(collectItem(await openMenu('post'))).toBeNull();
     document.body.innerHTML = '';
     expect(collectItem(await openMenu('asset'))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "Where is this used" is an OWNER affordance on an ASSET card (#1237)
+// ---------------------------------------------------------------------------
+//
+// The endpoint behind it, `GET /assets/{id}/posts`, answers 404 to a
+// caller who is neither the asset's owner nor an admin — the SAME 404 a
+// nonexistent asset id gets, so that it cannot be walked to discover
+// which assets exist or whose files are in use. A menu item rendered for
+// everyone would therefore send most viewers to a page that cannot
+// answer, on a route whose whole design is not to.
+//
+// So the card decides, and the card's gate is `canEdit`: the two
+// disjuncts a client can evaluate exactly (owner, global assets.admin)
+// out of the several the server accepts. Both are asserted below, plus
+// the two negatives — because "the item is absent" passes just as well
+// when the menu failed to open or the whole feature was deleted.
+const usageItem = (panel: HTMLElement) => panel.querySelector('[data-testid="card-usage"]');
+
+describe('where-is-this-used is an owner affordance (#1237)', () => {
+  beforeEach(() => {
+    auth.user = { ref: 42, username: 'viewer' } as never;
+    auth.caps = [];
+  });
+  afterEach(() => {
+    auth.user = null;
+    auth.caps = [];
+    document.body.innerHTML = '';
+  });
+
+  it("the OWNER's own asset card offers it, pointing at the asset's usage route", async () => {
+    const panel = await openMenu('asset', { owner_user_ref: 42 });
+    const item = usageItem(panel);
+    expect(item, 'the owner should be offered "where is this used"').toBeTruthy();
+    expect(item!.getAttribute('href')).toBe(`/assets/${ASSET_ID}/usage`);
+  });
+
+  it("another user's asset card does not", async () => {
+    // The load-bearing negative. `owner_user_ref` is somebody else's, so
+    // the endpoint would 404 and the item must not be drawn.
+    expect(usageItem(await openMenu('asset', { owner_user_ref: 999 }))).toBeNull();
+  });
+
+  it('an asset whose owner the surface did not carry does not', async () => {
+    // Absent reads as "not mine", the safe direction — the same rule the
+    // edit item follows. A hand-mapped grid that drops the column must
+    // not turn the item on for every card it renders.
+    expect(usageItem(await openMenu('asset', { owner_user_ref: null }))).toBeNull();
+  });
+
+  it("a global assets.admin is offered it on somebody else's asset", async () => {
+    // The second disjunct the client can evaluate, and the control that
+    // keeps the negatives above from passing on "the item never renders".
+    auth.caps = ['assets.admin'];
+    expect(usageItem(await openMenu('asset', { owner_user_ref: 999 }))).toBeTruthy();
+  });
+
+  it('a POST card never offers it', async () => {
+    // The question is "where did my FILE end up". A post is the thing a
+    // file ends up in; asking it of a post is not a question this
+    // product has, and PostCard hands over no path.
+    expect(usageItem(await openMenu('post'))).toBeNull();
+  });
+
+  it('offers it to nobody while signed out', async () => {
+    auth.user = null;
+    expect(usageItem(await openMenu('asset', { owner_user_ref: 42 }))).toBeNull();
   });
 });

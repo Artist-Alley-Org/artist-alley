@@ -128,7 +128,17 @@ func (h *Handler) ListAssetPosts(
 		return nil, err
 	}
 
-	// The withheld half. Total minus readable, floored at zero.
+	// The withheld half. Every live post, minus the ones this caller may
+	// read, floored at zero.
+	//
+	// ⚠️ THE SUBTRAHEND IS A COUNT, NOT `len(items)` (#1237). `items`
+	// comes off ListPostsByAssetGated's `LIMIT 200`, so subtracting its
+	// length made TRUNCATION look like withholding: an asset in 250
+	// posts the caller may read in full reported 50 withheld, and the
+	// prose built on that number — "also used in 50 posts you cannot
+	// see" — was false. CountPostsByAssetGated answers the same question
+	// unbounded, and both compose the same clause so the two can never
+	// disagree about which posts are readable.
 	//
 	// The floor is not defensive padding: the two queries run outside a
 	// single snapshot, so a post deleted between them would make the
@@ -143,12 +153,19 @@ func (h *Handler) ListAssetPosts(
 	// opted in to being SHOWN something, and this shows nothing. Making
 	// the number move with a display preference would tell the owner
 	// their file was in fewer places than it is (ADR 0090 §1 — the two
-	// axes are independent).
+	// axes are independent). It IS applied to the readable count, which
+	// is what puts a mature post the viewer opted out of into this
+	// remainder rather than into `items`.
 	total, err := New(h.Pool).CountLivePostsForAsset(ctx, pgAsset)
 	if err != nil {
 		return nil, fmt.Errorf("posts: asset usage: count: %w", err)
 	}
-	withheld := total - int64(len(items))
+	readable, err := h.CountPostsByAssetGated(ctx, caller, assetID,
+		h.resolveMature(ctx, caller), caller.Can(CapSystemAdmin))
+	if err != nil {
+		return nil, err
+	}
+	withheld := total - readable
 	if withheld < 0 {
 		withheld = 0
 	}

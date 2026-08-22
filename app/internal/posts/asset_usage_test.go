@@ -236,3 +236,95 @@ func TestAssetPosts_AnonymousIsRefused(t *testing.T) {
 		t.Errorf("anonymous got %T, want 401", resp)
 	}
 }
+
+// TestAssetPosts_TruncationIsNotWithholding is the arithmetic fix
+// (#1237).
+//
+// `items` comes off ListPostsByAssetGated's `LIMIT 200`. The endpoint
+// used to derive `withheld_count` as `total − len(items)`, so an asset
+// in more than 200 posts the caller may read IN FULL reported the
+// overflow as withheld — and the copy the UI puts on that number, "also
+// used in N posts you cannot see", was then false about the caller's own
+// entitlement.
+//
+// # Why 201 posts and not a browser
+//
+// The defect lives entirely between the bounded list and the total, so
+// it is provable at that seam and only at that seam. Driving it through
+// the UI would need 201 posts on screen to assert one integer, and would
+// still be asserting the same subtraction. So this seeds the smallest
+// corpus that crosses the bound and pins all three quantities at once:
+// the list truncates (200), the gated COUNT does not (201), and the
+// endpoint reports nothing withheld — because nothing IS.
+//
+// The middle assertion is the one that keeps this honest. Without it a
+// future change that simply raised the LIMIT would make the test pass
+// while leaving the same bug one post further out.
+func TestAssetPosts_TruncationIsNotWithholding(t *testing.T) {
+	pool := previewPool(t)
+	h := peHandler(pool)
+
+	asset := auSeedAsset(t, pool, auOwner)
+
+	// 201 PUBLIC posts by the asset's own owner: every one of them is
+	// readable, so the honest withheld count is zero and any non-zero
+	// answer is arithmetic rather than access.
+	//
+	// Seeded in one round trip per table — 201 individual inserts with
+	// their own cleanup hooks is a minute of test time for no extra
+	// assertion.
+	const total = 201
+	ids := make([]uuid.UUID, total)
+	for i := range ids {
+		ids[i] = uuid.New()
+	}
+	if _, err := pool.Exec(t.Context(),
+		`INSERT INTO posts (id, author_user_ref, title, description, visibility)
+		 SELECT u.id, $2, 'au bulk post', 'au body', 'public'
+		   FROM UNNEST($1::UUID[]) AS u(id)`, ids, auOwner); err != nil {
+		t.Fatalf("seed posts: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM posts WHERE id = ANY($1::UUID[])`, ids)
+	})
+	if _, err := pool.Exec(t.Context(),
+		`INSERT INTO post_assets (post_id, asset_id, sort_order)
+		 SELECT u.id, $2, 0 FROM UNNEST($1::UUID[]) AS u(id)`, ids, asset); err != nil {
+		t.Fatalf("seed members: %v", err)
+	}
+
+	caller := auID(auOwner)
+	mature := h.resolveMature(t.Context(), caller)
+
+	listed, err := h.ListPostsByAssetGated(t.Context(), caller, asset, mature, false)
+	if err != nil {
+		t.Fatalf("ListPostsByAssetGated: %v", err)
+	}
+	if len(listed) != 200 {
+		t.Fatalf("the bounded list returned %d ids, want 200 — this test's whole subject "+
+			"is what happens at the LIMIT, so a corpus that does not reach it proves nothing",
+			len(listed))
+	}
+
+	counted, err := h.CountPostsByAssetGated(t.Context(), caller, asset, mature, false)
+	if err != nil {
+		t.Fatalf("CountPostsByAssetGated: %v", err)
+	}
+	if counted != total {
+		t.Errorf("the gated COUNT returned %d, want %d — it must answer over the whole "+
+			"readable set, or it is just the bounded list with extra steps", counted, total)
+	}
+
+	resp := auCall(t, h, caller, asset)
+	ok, is := resp.(openapi.ListAssetPosts200JSONResponse)
+	if !is {
+		t.Fatalf("owner got %T, want 200", resp)
+	}
+	if ok.WithheldCount != 0 {
+		t.Errorf("withheld_count = %d, want 0 — all %d posts are the caller's own and "+
+			"readable, so the only thing this number can be counting is the page bound. "+
+			"A count that says %d would put \"you cannot see these\" on posts the caller "+
+			"wrote", ok.WithheldCount, total, ok.WithheldCount)
+	}
+}

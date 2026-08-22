@@ -724,6 +724,46 @@ LIMIT $3::INTEGER`
 	return out, nil
 }
 
+// postsByAssetBodySQL builds the FROM + WHERE both by-asset queries run,
+// and it is ONE expression on purpose (#1237).
+//
+// [Handler.ListPostsByAssetGated] returns a bounded page; [Handler.CountPostsByAssetGated]
+// counts the whole readable set. `GET /assets/{id}/posts` SUBTRACTS one
+// from a total, so the moment the two disagree about which posts are
+// readable the difference stops meaning "withheld" and starts meaning
+// "withheld, plus however much the two rules drifted". Two copies of a
+// read rule that are then subtracted from each other is the #665 defect
+// with an arithmetic amplifier bolted on.
+//
+// Returns the clause and its args; `$1` is always the asset id.
+func (h *Handler) postsByAssetBodySQL(
+	ctx context.Context,
+	id *auth.Identity,
+	assetID uuid.UUID,
+	mature visibility.MatureViewer,
+	matureAdmin bool,
+) (string, []any, error) {
+	args := []any{assetID} // $1
+	// $2 only when the conjunct is present — see ListPostsPageGated.
+	matureFrag := visibility.MatureFilterSQL(
+		"p", visibility.MatureOwnerColPost, "$2", mature, matureAdmin)
+	if matureFrag != "" {
+		args = append(args, matureOwnerArg(id))
+	}
+	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "p", len(args))
+	if err != nil {
+		return "", nil, err
+	}
+	args = append(args, ruleArgs...)
+
+	return `
+FROM posts p
+WHERE p.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM post_assets pa
+                WHERE pa.post_id = p.id AND pa.asset_id = $1::UUID)` +
+		matureFrag + ruleFrag, args, nil
+}
+
 // ListPostsByAssetGated returns the ids of posts the caller may read
 // whose members include the given asset (#478 slice-2, ADR 0070).
 // Bounded (no cursor) — an asset lands in few posts, and the client only
@@ -742,6 +782,12 @@ LIMIT $3::INTEGER`
 // gate upstream would probably have refused already is not the
 // argument; a predicate that depends on another endpoint's behaviour is
 // a predicate whose correctness moves when that endpoint does.
+//
+// ⚠️ THE `LIMIT 200` IS A TRUNCATION, NOT A GATE. A caller of this
+// function cannot tell a 200-row answer from "there are exactly 200".
+// That distinction was invisible while the only caller wanted "one or
+// several", and became a wrong number the moment `GET /assets/{id}/posts`
+// subtracted this length from a total — see CountPostsByAssetGated.
 func (h *Handler) ListPostsByAssetGated(
 	ctx context.Context,
 	id *auth.Identity,
@@ -749,25 +795,12 @@ func (h *Handler) ListPostsByAssetGated(
 	mature visibility.MatureViewer,
 	matureAdmin bool,
 ) ([]pgtype.UUID, error) {
-	args := []any{assetID} // $1
-	// $2 only when the conjunct is present — see ListPostsPageGated.
-	matureFrag := visibility.MatureFilterSQL(
-		"p", visibility.MatureOwnerColPost, "$2", mature, matureAdmin)
-	if matureFrag != "" {
-		args = append(args, matureOwnerArg(id))
-	}
-	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "p", len(args))
+	body, args, err := h.postsByAssetBodySQL(ctx, id, assetID, mature, matureAdmin)
 	if err != nil {
 		return nil, err
 	}
-	args = append(args, ruleArgs...)
 
-	sql := `SELECT p.id
-FROM posts p
-WHERE p.deleted_at IS NULL
-  AND EXISTS (SELECT 1 FROM post_assets pa
-                WHERE pa.post_id = p.id AND pa.asset_id = $1::UUID)` +
-		matureFrag + ruleFrag + `
+	sql := `SELECT p.id` + body + `
 ORDER BY p.posted_at DESC, p.id DESC
 LIMIT 200`
 
@@ -789,4 +822,49 @@ LIMIT 200`
 		return nil, fmt.Errorf("posts: by asset rows: %w", err)
 	}
 	return out, nil
+}
+
+// CountPostsByAssetGated counts every post the caller may read whose
+// members include the given asset — the same set ListPostsByAssetGated
+// pages, UNBOUNDED (#1237).
+//
+// # Why this exists rather than len(the list)
+//
+// `GET /assets/{id}/posts` answers with the readable posts plus
+// `withheld_count`, "how many further posts contain this asset that you
+// may not read". It derived that as `total − len(items)`, and `items`
+// comes off a `LIMIT 200`. So an asset in 250 posts the caller may read
+// in FULL reported 50 withheld: the arithmetic counted the truncation as
+// a restriction, and the UI copy built on it ("also used in 50 posts you
+// cannot see") was simply false — the caller could see all 250.
+//
+// It is the wrong direction for a disclosure count to fail in, too. The
+// number is meant to be the smallest honest answer (the handler floors
+// it at zero for the same reason), and truncation pushed it UP.
+//
+// So the endpoint subtracts this count instead, and the truncation goes
+// back to being a page size: the list still stops at 200, but nothing
+// reads a restriction into where it stopped.
+//
+// The mature axis rides the shared clause exactly as the list's does, so
+// a mature post a disqualified viewer cannot be shown is excluded here
+// too and therefore lands in the withheld remainder. That is deliberate
+// and is ADR 0090 §1: the total this is subtracted FROM is mature-blind,
+// so an owner still learns the true number of places their file is used.
+func (h *Handler) CountPostsByAssetGated(
+	ctx context.Context,
+	id *auth.Identity,
+	assetID uuid.UUID,
+	mature visibility.MatureViewer,
+	matureAdmin bool,
+) (int64, error) {
+	body, args, err := h.postsByAssetBodySQL(ctx, id, assetID, mature, matureAdmin)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	if err := h.Pool.QueryRow(ctx, `SELECT count(*)::BIGINT`+body, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("posts: by asset count: %w", err)
+	}
+	return n, nil
 }
