@@ -33,9 +33,32 @@
   // nothing about the page you are looking at. Same choice the team and
   // tag chips already made (#1113, #1123), so all three of the browse
   // page's narrowing controls read out of one place.
+  //
+  // #1251 slice 3 adds a THIRD control to the right cluster: the
+  // "Hide AI-made work" toggle (ADR 0094 fourth amendment). It is a
+  // sibling of the type filter on screen and its OPPOSITE on ownership,
+  // and the split is the paragraph above applied honestly rather than
+  // copied:
+  //
+  //   `?kind=` describes the WALL. A filtered wall is a thing you send
+  //   someone, so it belongs in the URL where the back button can walk
+  //   it.
+  //
+  //   The AI toggle describes the READER. "I would rather not look at
+  //   AI work" should survive a reload and every navigation, and pasting
+  //   it into someone else's browser would impose your preference on
+  //   them while looking like sharing a link. So it lives in the
+  //   browseView store, where the latest/following pill lives, and
+  //   persists to localStorage — see readHideAI for why it is a device
+  //   preference and not an account one.
+  //
+  // A control here must be one the server can serve, exactly as FILTERS
+  // above must be: the toggle sends `?ai=not_pure`, a declared parameter
+  // of `GET /posts` since this slice.
   import ViewControls from '$components/ViewControls.svelte';
   import FooterTabs from '$components/FooterTabs.svelte';
   import FeedKindFilter from '$components/FeedKindFilter.svelte';
+  import FeedAIFilter from '$components/FeedAIFilter.svelte';
   import { browseView, type FeedFilter } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
 
@@ -78,6 +101,16 @@
   {/snippet}
 
   {#snippet trailing()}
+    <!-- The AI toggle sits LEFT of the type filter, so the cluster reads
+         outward from the sort control in order of how often it is
+         touched: sort (every session) → type (sometimes) → AI (set once
+         and left alone). Reordering these is cosmetic; what is not is
+         that the toggle has no panel to hold the auto-hiding bar open,
+         so it must not be the control a reader has to chase. -->
+    <FeedAIFilter
+      hidden={browseView.hideAI}
+      onchange={(next) => browseView.setHideAI(next)}
+    />
     <FeedKindFilter
       selected={kinds}
       bind:open={kindOpen}

@@ -65,6 +65,7 @@ const STORAGE_COL_WIDTHS = 'aa_browse_list_col_widths';
 const STORAGE_SORT = 'aa_browse_list_sort';
 const STORAGE_FILTER = 'aa_browse_filter';
 const STORAGE_FEED_DIR = 'aa_browse_feed_dir';
+const STORAGE_HIDE_AI = 'aa_browse_hide_ai';
 
 // ── The tile-size ladder, in rem. The stepper walks these rungs; the
 //    value lands in `--tile-min` and the grid does the rest.
@@ -310,10 +311,36 @@ function writeEnabledCache(modes: ViewMode[]): void {
 /** Modes whose column count is fixed at 1, so the size stepper is inert. */
 const SINGLE_COLUMN_MODES: ReadonlyArray<ViewMode> = ['list', 'feed'];
 
+// ⛔ EVERY READ BELOW IS IN A TRY/CATCH, AND FOUR OF THEM WERE NOT
+// (#1251 slice 3).
+//
+// `localStorage.getItem` does not merely return null when storage is
+// unavailable — it THROWS. A `SecurityError` in a context where site
+// data is blocked, a `QuotaExceededError` on some Safari private
+// windows, a DOM exception from a sandboxed frame: the getter itself
+// raises before any value comes back.
+//
+// The writers here have always been wrapped ("quota / disabled") and so
+// were `readEnabledCache`, `readColumns`, `readColumnWidths` and
+// `readSort` — but `readMode`, `readTileIdx`, `readFilter` and
+// `readFeedDir` were bare, and all four run inside `init()`. So on such
+// a browser the FIRST of them threw out of `init()`, out of the browse
+// page's `onMount`, and the page rendered no feed at all. Not a degraded
+// preference — a blank wall, on a class of browser nobody develops in.
+//
+// Every one of them fails to the same answer: NO LOCAL CHOICE, which
+// falls through to the account preference and then to the built-in
+// default. That is the same direction the writers already took, and it
+// is the only direction that cannot silently apply a setting the reader
+// never made.
 function readMode(): ViewMode | null {
   if (!browser) return null;
-  const v = localStorage.getItem(STORAGE_MODE);
-  return (VALID_MODES as ReadonlyArray<string>).includes(v ?? '') ? (v as ViewMode) : null;
+  try {
+    const v = localStorage.getItem(STORAGE_MODE);
+    return (VALID_MODES as ReadonlyArray<string>).includes(v ?? '') ? (v as ViewMode) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Read the tile-size rung, migrating the legacy column-count stepper.
@@ -327,18 +354,22 @@ function readMode(): ViewMode | null {
  *  who never touched the stepper sees no change at all. */
 function readTileIdx(): number {
   if (!browser) return DEFAULT_TILE_IDX;
-  const raw = localStorage.getItem(STORAGE_TILE);
-  if (raw !== null) {
-    const n = parseInt(raw, 10);
-    if (!Number.isNaN(n) && n >= TILE_MIN_IDX && n <= TILE_MAX_IDX) return n;
-    return DEFAULT_TILE_IDX;
-  }
-  const legacy = localStorage.getItem(STORAGE_SIZE_LEGACY);
-  if (legacy !== null) {
-    const s = parseInt(legacy, 10);
-    if (!Number.isNaN(s) && s >= 1 && s <= 7) {
-      return Math.max(TILE_MIN_IDX, Math.min(TILE_MAX_IDX, 9 - s));
+  try {
+    const raw = localStorage.getItem(STORAGE_TILE);
+    if (raw !== null) {
+      const n = parseInt(raw, 10);
+      if (!Number.isNaN(n) && n >= TILE_MIN_IDX && n <= TILE_MAX_IDX) return n;
+      return DEFAULT_TILE_IDX;
     }
+    const legacy = localStorage.getItem(STORAGE_SIZE_LEGACY);
+    if (legacy !== null) {
+      const s = parseInt(legacy, 10);
+      if (!Number.isNaN(s) && s >= 1 && s <= 7) {
+        return Math.max(TILE_MIN_IDX, Math.min(TILE_MAX_IDX, 9 - s));
+      }
+    }
+  } catch {
+    // See readMode: an unreadable store is NO LOCAL CHOICE.
   }
   return DEFAULT_TILE_IDX;
 }
@@ -548,10 +579,14 @@ const VALID_FILTERS: ReadonlyArray<FeedFilter> = ['latest', 'following'];
  *  cannot serve is not a choice; it is the absence of one. */
 function readFilter(): FeedFilter | null {
   if (!browser) return null;
-  const v = localStorage.getItem(STORAGE_FILTER);
-  if ((VALID_FILTERS as ReadonlyArray<string>).includes(v ?? '')) return v as FeedFilter;
-  if (v !== null) {
-    try { localStorage.removeItem(STORAGE_FILTER); } catch { /* */ }
+  try {
+    const v = localStorage.getItem(STORAGE_FILTER);
+    if ((VALID_FILTERS as ReadonlyArray<string>).includes(v ?? '')) return v as FeedFilter;
+    if (v !== null) {
+      try { localStorage.removeItem(STORAGE_FILTER); } catch { /* */ }
+    }
+  } catch {
+    // See readMode: an unreadable store is NO LOCAL CHOICE.
   }
   return null;
 }
@@ -560,12 +595,71 @@ function writeFilter(v: FeedFilter): void {
   try { localStorage.setItem(STORAGE_FILTER, v); } catch { /* */ }
 }
 
+/** "Hide AI-made work" — the browse footer's AI toggle (#1251 slice 3,
+ *  ADR 0094 fourth amendment).
+ *
+ *  # It is a DEVICE preference, not an account one, and that is decided
+ *
+ *  The three knobs above are `local ?? account ?? built-in` because
+ *  /account/preferences offers an account default for each. This one has
+ *  no account rung and deliberately gets none. `user_preferences.
+ *  mature_content.show` — the obvious precedent — is server-side because
+ *  the SERVER resolves that viewer against instance policy layers before
+ *  a row is returned; ADR 0094 §4 makes AI a filter that NEVER gates, so
+ *  a server preference would be gate-shaped machinery for a non-gate.
+ *  The accepted cost is that the toggle does not roam between devices.
+ *
+ *  # And it is a PREFERENCE, not a property of the page
+ *
+ *  Which is why it lives here and not in the URL, where `?kind=`,
+ *  `?tag=` and `?team=` live. Those three describe the WALL — a filtered
+ *  wall is a thing you send someone, and the back button should walk
+ *  them. "I would rather not look at AI work" describes the READER: it
+ *  should survive a reload and every navigation, and pasting it into
+ *  somebody else's browser would impose your preference on them under
+ *  the guise of sharing a link.
+ *
+ *  # Default OFF, and the failure direction is the same one the whole
+ *  # axis takes
+ *
+ *  Absent, unparseable, or unreadable storage all mean OFF — nothing
+ *  hidden. ADR 0094 §3 and both amendments run this way: wrongly hiding
+ *  human work is the worse error, so every unknown resolves toward
+ *  SHOWING. A quota-exceeded or disabled localStorage therefore renders
+ *  the ordinary unfiltered wall rather than crashing or silently
+ *  filtering. */
+function readHideAI(): boolean {
+  if (!browser) return false;
+  try {
+    return localStorage.getItem(STORAGE_HIDE_AI) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeHideAI(v: boolean): void {
+  if (!browser) return;
+  try {
+    // Removed rather than written `0`. "Off" is the default, so a stored
+    // false is a key that says nothing, and leaving one behind makes
+    // "this device has an opinion" indistinguishable from "this device
+    // is on the default" for anything that later wants to tell them
+    // apart — the distinction readFilter's #706 note is built on.
+    if (v) localStorage.setItem(STORAGE_HIDE_AI, '1');
+    else localStorage.removeItem(STORAGE_HIDE_AI);
+  } catch { /* quota / disabled */ }
+}
+
 /** The persisted feed direction, or null when unset — same null-means-
  *  no-local-choice contract as readMode / readFilter / readSort. */
 function readFeedDir(): SortDir | null {
   if (!browser) return null;
-  const v = localStorage.getItem(STORAGE_FEED_DIR);
-  return v === 'asc' || v === 'desc' ? v : null;
+  try {
+    const v = localStorage.getItem(STORAGE_FEED_DIR);
+    return v === 'asc' || v === 'desc' ? v : null;
+  } catch {
+    // See readMode: an unreadable store is NO LOCAL CHOICE.
+    return null;
+  }
 }
 function writeFeedDir(v: SortDir): void {
   if (!browser) return;
@@ -636,6 +730,21 @@ class BrowseViewState {
   filter = $state<FeedFilter>('latest');
   /** Sort direction for the feed itself (newest-first vs oldest-first). */
   feedDir = $state<SortDir>('desc');
+  /** "Hide AI-made work" (#1251 slice 3). ON sends `ai=not_pure`; OFF
+   *  sends no parameter at all.
+   *
+   *  ⚠️ ON HIDES PURELY-AI POSTS ONLY. A post mixing AI and human
+   *  contributors stays on the wall, which is the owner's ruling and not
+   *  an approximation of it: excluding a post because ONE member was
+   *  honestly declared would punish exactly the declaration the design
+   *  depends on. The client does not compute that distinction — the
+   *  server's `ai` dimension keys on `posts.ai_pure` — and it must not
+   *  start, or there would be two answers to one question.
+   *
+   *  ⛔ NOT A THREE-STATE. There is no "show only AI" here. The wire
+   *  vocabulary has a `pure` value for symmetry with `filter=ai:` on
+   *  /search, and no control on this site emits it. */
+  hideAI = $state(false);
   hydrated = $state(false);
 
   /** The active rung in rem, after the thumbnail density offset. */
@@ -795,6 +904,11 @@ class BrowseViewState {
     this.tileIdx = readTileIdx();
     this.listColumns = readColumns();
     this.columnWidths = readColumnWidths();
+    // Read HERE and not in applyAccountDefaults, which is the
+    // account-seeding path: this preference has no account rung (see
+    // readHideAI), so `local ?? built-in` is the whole ladder and there
+    // is nothing for a re-seed on sign-in to reconsider.
+    this.hideAI = readHideAI();
     this.applyAccountDefaults(defaults);
     this.hydrated = true;
   }
@@ -919,6 +1033,30 @@ class BrowseViewState {
   toggleFeedDir(): void {
     this.feedDir = this.feedDir === 'asc' ? 'desc' : 'asc';
     writeFeedDir(this.feedDir);
+  }
+
+  /** Flip "hide AI-made work" and remember it on this device (#1251). */
+  setHideAI(v: boolean): void {
+    this.hideAI = v;
+    writeHideAI(v);
+  }
+
+  /** The `?ai=` value the feed request should carry, or null for "send
+   *  nothing".
+   *
+   *  ⭐ IT IS RESOLVED HERE RATHER THAN AT THE FETCH SITE so the ONE
+   *  place that knows the toggle's meaning is the one that owns the
+   *  toggle. A page spelling `browseView.hideAI ? 'not_pure' : undefined`
+   *  inline is a second copy of the mapping, and the second copy is
+   *  where a future "show only AI" gets half-added.
+   *
+   *  ⚠️ OFF IS `null`, NOT `'pure'`. The two wire values PARTITION the
+   *  corpus, so sending `pure` when the toggle is off would show ONLY AI
+   *  work — the exact inverse of the control — rather than everything.
+   *  "No filter" is spelled by omitting the parameter, the same way the
+   *  type filter spells "all types". */
+  get aiParam(): 'not_pure' | null {
+    return this.hideAI ? 'not_pure' : null;
   }
 
   /** Resolve visible column defs in the user's chosen order.

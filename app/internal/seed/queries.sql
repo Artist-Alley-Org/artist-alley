@@ -263,17 +263,38 @@ ON CONFLICT (subject_kind, subject_id, scope, team_id, band_id) DO NOTHING;
 -- deriving it from the tier. Posts get theirs from the 00052/00054
 -- trigger when their membership lands — never written directly.
 --
+-- `ai_provenance` is carried the same way and for the same reason
+-- (#1251 slice 3, ADR 0094): it is the MAKER'S DECLARATION, a fact the
+-- catalogue authors, and NULL — the overwhelming majority — means
+-- UNDECLARED rather than `none`. Posts get their two derived AI facts
+-- (`ai_provenance`, `ai_pure`) from the 00060/00061 triggers when their
+-- membership and covers land, never written directly, exactly as
+-- `mature` works one column over.
+--
+-- ⚠️ THE ORDER OF THE PHASES IS WHAT MAKES THAT WORK. applyAssets runs
+-- before applyPosts, so every declaration is already on the asset row
+-- when `post_assets` is written and the recompute fires with the real
+-- population. A declaration written AFTER a post exists would still be
+-- correct — the trigger on `assets` covers that path — but the seed
+-- never takes it.
+--
 -- A bare ON CONFLICT DO NOTHING catches
 -- both the id pkey (resumed run) AND the (owner_user_ref, file_hash)
 -- partial unique index (byte-identical duplicate owned by the same
 -- user) — the latter legitimately collapses one asset, matching the
 -- product's content-address invariant.
+--
+-- ⛔ THAT COLLAPSE IS WHY A DECLARATION IS NOT A PER-POST KNOB. One
+-- asset row can be a member of MANY posts, so declaring a shared asset
+-- `generated` moves every post containing it. A catalogue entry that
+-- wants to move exactly one post has to name an asset unique to it.
 INSERT INTO assets (
     id, title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata,
-    state_id, team_id, sensitivity, mature, created_at, updated_at
+    state_id, team_id, sensitivity, mature, ai_provenance,
+    created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 ON CONFLICT DO NOTHING
 RETURNING id;
 

@@ -34,11 +34,11 @@ import (
 // than narrowing within it (decision 2), and so are the feed's ordering
 // and its keyset cursor.
 
-// feedFilters folds the feed's three filter parameters into ONE
+// feedFilters folds the feed's four filter parameters into ONE
 // [facet.Selection] — the whole of what this query narrows by, in one
 // value, rendered by one call.
 //
-// ⛔ IT IS NOT REACHED WITH AN AMBIGUOUS EMPTY. Two of the three
+// ⛔ IT IS NOT REACHED WITH AN AMBIGUOUS EMPTY. Two of the four
 // parameters have a "requested but naming nothing" state that must
 // select NOTHING while their absent state selects EVERYTHING, and those
 // two readings are one line apart and differ by the whole feed. A
@@ -58,6 +58,10 @@ import (
 //   - `tag` is CONJUNCTIVE — the only dimension that is — so two tags
 //     mean "carries EVERY tag", matching what `tag:a tag:b` has
 //     documented in the DSL since it shipped.
+//   - `ai` is non-conjunctive too, and it is the one dimension this
+//     surface can only ever send ONE value of. Its two values partition
+//     the corpus, so the union of both is the whole corpus — see the
+//     note at its arm below.
 //
 // ⚠️ THAT LAST ONE IS NEW TO THIS SURFACE. The feed's parameter was a
 // `*string` and could not express two tags at all, so composing through
@@ -81,6 +85,19 @@ func feedFilters(p ListPostsPageParams) facet.Selection {
 		for _, k := range p.Kinds {
 			sel = sel.With(facet.FacetKind, string(k))
 		}
+	}
+	// The AI axis (#1251 slice 3). ONE term or none — the handler has
+	// already validated the value against the dimension's own closed
+	// vocabulary, so anything that reaches here is `pure` or `not_pure`
+	// and an unrecognised value became a 400 rather than a term.
+	//
+	// ⚠️ IT ADDS NO SECOND TERM, EVER, and that is the whole reason it
+	// needs no "requested but empty" companion. `ai` is non-conjunctive,
+	// and its two values PARTITION the corpus, so a selection carrying
+	// both would OR to "no constraint" — the widening a narrowing filter
+	// may never do. The hide control sends exactly `not_pure`.
+	if p.AI != "" {
+		sel = sel.With(facet.FacetAI, p.AI)
 	}
 	return sel
 }
@@ -130,7 +147,7 @@ func feedFiltersSelectNothing(p ListPostsPageParams) bool {
 // [facet.ParseSelection] REJECTS one outright with a 400, because there
 // is only ever one value in a `filter=` token and nothing left to narrow
 // to. Neither can widen, which is the property that matters — see
-// facet.FacetType.canonicalValue's FacetKind arm.
+// facet.FacetType.CanonicalValue's FacetKind arm.
 func kindSelection(kinds []viewkind.Kind) facet.Selection {
 	var sel facet.Selection
 	for _, k := range kinds {

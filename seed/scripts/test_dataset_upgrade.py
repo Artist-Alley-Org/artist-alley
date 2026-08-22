@@ -1336,6 +1336,109 @@ class TestAliasProfilesTrackTheirSource(unittest.TestCase):
             json.loads((p / "studio-b.assets.json").read_text(encoding="utf-8")))
 
 
+class TestAIDeclarations(unittest.TestCase):
+    """The AI declarations must SURVIVE a re-assembly (#1251 slice 3).
+
+    The browse footer's "Hide AI-made work" toggle has nothing to hide
+    on a corpus where every asset is undeclared, which is what
+    `metadata.csv` produces — the studio simulation has no notion of
+    generative AI. A handful of declarations therefore ride in an
+    upgrade doc, for exactly the reason this whole file exists: the
+    profile is REGENERATED from the CSV, so a hand-added key is dropped
+    by the next assembly and the toggle goes silently inert.
+
+    "Silently" is the operative word and the reason these tests are
+    worth their length. A dropped declaration breaks nothing: the
+    control still renders, still flips, still sends its parameter, and
+    the wall still fills. It just stops demonstrating anything, and
+    nothing anywhere says so."""
+
+    def _docs(self):
+        out = {}
+        for site in ("site_a", "site_b"):
+            p = UPGRADES / f"ai-declarations.{site}.json"
+            out[site] = json.loads(p.read_text(encoding="utf-8"))
+        return out
+
+    def test_each_site_declares_a_pure_and_a_mixed_asset(self):
+        for site, doc in self._docs().items():
+            roles = sorted(d.get("role") for d in doc)
+            self.assertEqual(
+                roles, ["mixed", "pure"],
+                f"{site}: the demonstration is a PAIR — one post that becomes purely "
+                f"AI and one that mixes AI with undeclared work and must STAY visible. "
+                f"One of them alone cannot show the owner's ruling.")
+            for d in doc:
+                self.assertEqual(d["ai_provenance"], "generated")
+                self.assertTrue(d.get("post_id"), f"{site}: {d['id']} names no post")
+                self.assertTrue(d.get("why"), f"{site}: {d['id']} records no reasoning")
+
+    def test_each_declared_asset_belongs_to_exactly_one_post(self):
+        """⛔ One asset row can be a member of MANY posts. Declaring a
+        shared one moves every post containing it, so a doc that named a
+        shared asset would have a blast radius nobody wrote down."""
+        for site, prof, posts in (
+            ("site_a", "studio-a.assets.json", "studio-a.posts.json"),
+            ("site_b", "studio-b.assets.json", "studio-b.posts.json"),
+        ):
+            p = SCRIPTS.parent / "profiles"
+            ids = {e["id"] for e in json.loads((p / prof).read_text(encoding="utf-8"))}
+            all_posts = json.loads((p / posts).read_text(encoding="utf-8"))
+            for d in self._docs()[site]:
+                self.assertIn(d["id"], ids, f"{site}: declares an asset this profile lacks")
+                holders = [q["id"] for q in all_posts
+                           if d["id"] in (q.get("asset_ids") or [])]
+                self.assertEqual(
+                    holders, [d["post_id"]],
+                    f"{site}: asset {d['id']} is held by {holders}, but the doc claims "
+                    f"only {d['post_id']} — declaring it would move posts nobody listed.")
+
+    def test_the_committed_profiles_carry_them(self):
+        """Applying the doc to the committed profile is a NO-OP, which is
+        what "already upgraded" means for every other doc here."""
+        p = SCRIPTS.parent / "profiles"
+        for site, prof in (("site_a", "studio-a.assets.json"),
+                           ("site_b", "studio-b.assets.json")):
+            entries = json.loads((p / prof).read_text(encoding="utf-8"))
+            before = {e["id"]: e.get("ai_provenance") for e in entries}
+            up.apply_ai_declarations(entries, self._docs()[site])
+            after = {e["id"]: e.get("ai_provenance") for e in entries}
+            self.assertEqual(
+                before, after,
+                f"{prof} is NOT already upgraded — re-running the pipeline would be the "
+                f"only thing that made the toggle demonstrable, and nobody re-runs it.")
+
+    def test_declaring_leaves_the_acquisition_stamp_alone(self):
+        """⛔ ADR 0095. The fixture sweep partitions the asset table on
+        `metadata.acquisition_source` alone; a seeded asset without it is
+        indistinguishable from real uploaded content and becomes
+        sweep-bait. Declaring AI must not cost an asset that stamp."""
+        p = SCRIPTS.parent / "profiles"
+        for site, prof in (("site_a", "studio-a.assets.json"),
+                           ("site_b", "studio-b.assets.json")):
+            by_id = {e["id"]: e
+                     for e in json.loads((p / prof).read_text(encoding="utf-8"))}
+            for d in self._docs()[site]:
+                meta = by_id[d["id"]].get("metadata") or {}
+                self.assertIn("acquisition_source", meta,
+                              f"{site}: declared asset {d['id']} lost its seed stamp")
+
+    def test_an_unknown_id_is_reported_rather_than_ignored(self):
+        prof = [{"id": "a"}]
+        out = up.apply_ai_declarations(
+            prof, [{"id": "nope", "ai_provenance": "generated", "role": "pure"}])
+        self.assertTrue(any(o.startswith("MISSING") for _, o in out),
+                        "a declaration naming an id the profile lacks must be reported; "
+                        "silence here is a toggle that quietly hides nothing")
+
+    def test_applying_twice_is_idempotent(self):
+        prof = [{"id": "a"}]
+        doc = [{"id": "a", "ai_provenance": "generated", "role": "pure"}]
+        up.apply_ai_declarations(prof, doc)
+        up.apply_ai_declarations(prof, doc)
+        self.assertEqual(prof, [{"id": "a", "ai_provenance": "generated"}])
+
+
 class TestArchiveRecordsAreOutOfMediaUrlScope(unittest.TestCase):
     """resolve_media_urls' gate must not fail 895 records for lacking a
     field that cannot exist for them — nor stop checking the ones it

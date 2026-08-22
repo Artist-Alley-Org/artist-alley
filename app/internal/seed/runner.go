@@ -720,9 +720,21 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 			// their flag is derived by the 00052/00054 triggers off
 			// membership (and off the cover), which is why applyPosts
 			// has nothing to say about it.
-			Mature:    a.Mature,
-			CreatedAt: created,
-			UpdatedAt: updated,
+			Mature: a.Mature,
+			// The maker's AI declaration, written verbatim and NULL
+			// when the catalogue says nothing (#1251 slice 3, ADR
+			// 0094). NULL is UNDECLARED, not `none`: writing `none`
+			// over a work nobody was asked about would fabricate that
+			// maker's disclaimer, which is the one thing the nullable
+			// column exists to prevent.
+			//
+			// Posts are NOT written from here — `ai_provenance` and
+			// `ai_pure` are both derived by the 00060/00061 triggers off
+			// the post's contributors (members UNION the two covers),
+			// same as `mature` above.
+			AiProvenance: a.AiProvenance,
+			CreatedAt:    created,
+			UpdatedAt:    updated,
 		}
 		id, err := r.q.SeedInsertAsset(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {

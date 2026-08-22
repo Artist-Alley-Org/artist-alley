@@ -293,7 +293,7 @@ func TestTagFilter_TwoTagsIntersect(t *testing.T) {
 // separately.
 //
 // ⚠️ Note the deliberate ASYMMETRY with the tier dimension beside it,
-// which IS case-folded (facet.FacetType.canonicalValue). A tier is an
+// which IS case-folded (facet.FacetType.CanonicalValue). A tier is an
 // enum this repository authored; a tag is user text whose bytes are its
 // identity.
 func TestTagFilter_IsExactAndNotCaseFolded(t *testing.T) {

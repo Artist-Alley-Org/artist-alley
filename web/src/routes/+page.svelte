@@ -238,6 +238,23 @@
       // can't serve now fails to typecheck here.
       params.feed = browseView.filter;
       params.dir = browseView.feedDir;
+      // #1251 slice 3 — the footer's "Hide AI-made work" toggle. ON
+      // sends `ai=not_pure`; OFF sends NOTHING, which is what
+      // `aiParam` returning null means. The mapping lives on the store
+      // beside the flag, not here, so the one place that knows what the
+      // toggle means is the one that owns it.
+      //
+      // ⚠️ ONLY the purely-AI posts go. A post mixing AI and human
+      // contributors stays on the wall — the server decides that on
+      // `posts.ai_pure`, and this page must never try to reproduce the
+      // rule locally, which would be the second query language ADR 0093
+      // exists to refuse.
+      //
+      // A plain parameter of the same query as `team_id`, `tag` and
+      // `kind`, for the same reason: composition is the server's job,
+      // so "this studio's videos, minus the AI ones" is one request.
+      const ai = browseView.aiParam;
+      if (ai) params.ai = ai;
 
       const { data, error: apiErr } = await api.GET('/posts', {
         params: { query: params as never },
@@ -304,9 +321,20 @@
   // searches for anything in it silently returned nothing, and every
   // diff rendered as "Binary file not shown" (#925). Do not put a raw
   // control byte back in here.
+  //
+  // ⚠️ EVERY INPUT `fetchPage` READS MUST BE IN HERE. The AI toggle
+  // (#1251 slice 3) is the newest one and the first that is neither in
+  // the URL nor already keyed for some other reason: flipping it changes
+  // which posts the request returns, so a key that ignored it would
+  // leave the previous wall on screen — a control that visibly does
+  // nothing, which is #691's defect in a different costume. It also has
+  // to be here for the SNAPSHOT to stay honest, since `capture` and
+  // `restore` compare this exact string: pages captured with the toggle
+  // OFF must not be handed back to a page loaded with it ON, or the
+  // hidden posts come straight back on a back-navigation.
   const feedKey = () =>
     `${query}\u001f${browseView.filter}\u001f${browseView.feedDir}\u001f${activeTeamId ?? ''}` +
-    `\u001f${activeTag ?? ''}\u001f${activeKinds}`;
+    `\u001f${activeTag ?? ''}\u001f${activeKinds}\u001f${browseView.aiParam ?? ''}`;
 
   /** The feedKey whose first page we've already loaded (or restored).
    *  Guards the effect against re-fetching a set we already hold —

@@ -60,7 +60,7 @@ const (
 	// would stop being a parse-time whitelist. One dimension whose
 	// value names the field keeps the whitelist closed and puts the
 	// open set where it belongs, in the value grammar. See
-	// [FacetType.canonicalValue].
+	// [FacetType.CanonicalValue].
 	//
 	// This is the #1157 advanced page's whole mechanism, and it is
 	// deliberately the SAME mechanism the rail already uses — the
@@ -257,7 +257,7 @@ const (
 // the order the `posts_visibility_check` / `collections_visibility_check`
 // constraints list them, widest last.
 //
-// CLOSED and validated in [FacetType.canonicalValue] for the reason
+// CLOSED and validated in [FacetType.CanonicalValue] for the reason
 // [FacetAI]'s pair is: there is no `::UUID` cast here to raise a 22P02,
 // so a tolerated `visibility:orgonly` would render a predicate matching
 // nothing and hand back an EMPTY page to a caller who asked to narrow.
@@ -287,7 +287,7 @@ func VisibilityTiers() []string {
 }
 
 // The [FacetAI] value vocabulary. CLOSED, validated in
-// [FacetType.canonicalValue], and a 400 out of [ParseSelection] for
+// [FacetType.CanonicalValue], and a 400 out of [ParseSelection] for
 // anything else — a filter that looked applied and was not is the whole
 // defect the `filter=` parameter was introduced to fix.
 //
