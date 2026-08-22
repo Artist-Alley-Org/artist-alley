@@ -104,16 +104,35 @@
 
     <!-- Visibility + post mode + workflow state — three pickers in a row. -->
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+      <!-- Visibility. THE SAME FOUR TIERS AS /create, IN THE SAME ORDER,
+           WITH THE SAME LABELS (#1240).
+
+           This select used to offer three — public / followers / private
+           — while the store it binds to defaults to `org-only`. A
+           <select> bound to a value none of its options carry renders
+           BLANK, so the modal showed no tier at all and then posted
+           `org-only` anyway: the control disagreed with the request it
+           produced, which is the one thing a form must never do.
+
+           `org-only` is first because it is the default, and a default
+           that is not offered cannot be shown honestly. The labels come
+           from the `create` catalogue rather than a second set here, so
+           the two create surfaces cannot drift into describing the same
+           tier differently — the same reason UploadModal already reads
+           create.open_full_page. -->
       <label class="block text-xs">
         <span class="mb-1 block text-fg-muted">{t('upload.compose.visibility_label')}</span>
         <select
           bind:value={upload.compose.visibility}
+          data-testid="upload-visibility"
           class="w-full rounded border border-border-strong bg-surface-elevated px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         >
-          <option value="public">{t('upload.compose.visibility_public')}</option>
-          <option value="followers">{t('upload.compose.visibility_followers')}</option>
-          <option value="private">{t('upload.compose.visibility_private')}</option>
+          <option value="org-only">{t('create.vis_org_only')}</option>
+          <option value="followers">{t('create.vis_followers')}</option>
+          <option value="private">{t('create.vis_private')}</option>
+          <option value="public">{t('create.vis_public')}</option>
         </select>
+        <span class="mt-1 block text-fg-muted">{t('create.visibility_help')}</span>
       </label>
 
       <label class="block text-xs">
