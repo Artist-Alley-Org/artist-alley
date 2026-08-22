@@ -6056,7 +6056,30 @@ paths:
         - name: tag
           in: query
           required: false
-          schema: { type: string }
+          description: |
+            Narrow the feed to posts carrying the named tag(s) (#1123).
+
+            REPEATABLE, and the repeat means AND: `?tag=a&tag=b` selects
+            posts carrying EVERY one of them. That is the meaning
+            `tag:a tag:b` has in the search DSL, and since #1251 both
+            surfaces render it from the same predicate rather than each
+            holding a copy.
+
+            Repeated rather than a comma list — unlike `kind` on this
+            same operation — because a tag is user text in which a comma
+            is a legal character, so splitting on one would turn an exact
+            match into two tags that intersect to nothing. A single
+            `?tag=x` is unchanged.
+
+            Matching is EXACT and NOT case-folded (migration 00050), and
+            it NARROWS: the read rule is ANDed on afterwards, so a tag
+            can never surface a post the caller could not already read.
+            Blank values are ignored.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items: { type: string }
         - name: team_id
           in: query
           required: false

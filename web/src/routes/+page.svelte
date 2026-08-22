@@ -200,7 +200,7 @@
     const gen = ++generation;
     let appended = 0;
     try {
-      const params: Record<string, string | number> = { limit: PAGE };
+      const params: Record<string, string | number | string[]> = { limit: PAGE };
       if (q.trim() !== '') params.q = q.trim();
       // #1113 — the same parameter the team page has always sent
       // (routes/teams/[id]/+page.svelte). The filter is the server's,
@@ -211,7 +211,13 @@
       // shipped; the rail chip just gives it a control. It intersects
       // with `q` and the feed pill server-side for the same reason
       // `team_id` does: they are all parameters of one query.
-      if (tag) params.tag = tag;
+      //
+      // Sent as a ONE-ELEMENT ARRAY since #1251 slice 2 made the
+      // parameter repeatable (`?tag=a&tag=b`, meaning AND). The rail is
+      // single-select and this page's `?tag=` is still one value, so the
+      // request on the wire is byte-identical to what it always was;
+      // what changed is that the server can now be asked for more.
+      if (tag) params.tag = [tag];
       // #1166 — the footer's type filter. Comma-joined, straight from
       // the URL, and a plain parameter of the same query for the same
       // reason `team_id` and `tag` are: composition is the server's

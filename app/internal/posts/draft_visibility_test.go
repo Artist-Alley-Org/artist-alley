@@ -146,7 +146,7 @@ func TestDraft_AbsentFromEverySharedSurface(t *testing.T) {
 	moderator := dvID(dvModerator, CapPostsAdmin)
 
 	authorRef := dvAuthor
-	tag := "dvprobe"
+	tag := []string{"dvprobe"}
 
 	surfaces := []struct {
 		name   string

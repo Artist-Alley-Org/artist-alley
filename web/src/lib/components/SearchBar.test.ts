@@ -120,7 +120,14 @@ describe('SearchBar (#1156 — no live refine)', () => {
     await fireEvent.mouseDown(row);
 
     expect(onsearch).toHaveBeenCalledTimes(1);
-    expect(onsearch).toHaveBeenCalledWith('sculpture');
+    // #1077 — the commit carries the suggestion's DIMENSION, not just its
+    // text. The stub answers `kind: 'tag'`, and a tag is the one kind
+    // that maps to a structured filter; the count above is the #1156
+    // property and is unchanged.
+    expect(onsearch).toHaveBeenCalledWith('sculpture', {
+      dimension: 'tag',
+      value: 'sculpture',
+    });
   });
 
   it('Arrow Down highlights the SUGGESTION, not a history row', async () => {
@@ -141,7 +148,42 @@ describe('SearchBar (#1156 — no live refine)', () => {
     await fireEvent.keyDown(input, { key: 'Enter' });
 
     expect(onsearch).toHaveBeenCalledTimes(1);
-    expect(onsearch).toHaveBeenCalledWith('sculpture');
+    // Same commit, reached by keyboard: Arrow Down + Enter must carry the
+    // dimension too, or the typed path would work with a mouse and
+    // silently degrade to free text for a keyboard user (#1077).
+    expect(onsearch).toHaveBeenCalledWith('sculpture', {
+      dimension: 'tag',
+      value: 'sculpture',
+    });
+  });
+
+  it('a picked TAG is not written into the free-text history (#1077)', async () => {
+    // Every history row commits as free text, so a tag stored there would
+    // re-run the exact query #1077 exists to remove — under a heading
+    // promising it worked before. The filter lives in the URL instead.
+    const { getByTestId, findByTestId } = render(SearchBar, {
+      props: { value: '', onsearch },
+    });
+    const input = getByTestId('nav-search') as HTMLInputElement;
+
+    await typeChars(input, 'scul');
+    await settle();
+    await fireEvent.mouseDown(await findByTestId('search-suggestion'));
+
+    expect(JSON.parse(localStorage.getItem('search_history') ?? '[]')).toEqual([]);
+  });
+
+  it('typed free text still commits WITHOUT a term, and IS remembered', async () => {
+    // The positive control for the two above: only a typed suggestion is
+    // structured. Plain text is unchanged in both respects.
+    const { getByTestId } = render(SearchBar, { props: { value: '', onsearch } });
+    const input = getByTestId('nav-search') as HTMLInputElement;
+
+    await typeChars(input, 'scul');
+    await fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onsearch).toHaveBeenCalledWith('scul');
+    expect(JSON.parse(localStorage.getItem('search_history') ?? '[]')).toEqual(['scul']);
   });
 
   it('Escape with the dropdown open closes it and searches nothing', async () => {

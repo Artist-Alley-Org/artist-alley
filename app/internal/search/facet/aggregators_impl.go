@@ -141,9 +141,24 @@ func buildAssetVisibilityAppendedSQL(
 // existence. See that method for the rule.
 //
 // satisfiable=false means the selection names a dimension assets do not
-// have. No dimension is post-only today so it cannot fire, but the
-// caller honours it rather than assuming — the fail-closed direction
-// costs one branch and survives the next dimension.
+// have, and the caller honours it rather than assuming — the
+// fail-closed direction.
+//
+// ⚠️ IT FIRES NOW. This used to read "no dimension is post-only today so
+// it cannot fire", which was true when written and stopped being true
+// with [FacetVisibility] (#1251 slice 2): an asset has no sharing tier,
+// so a selection naming one makes every asset aggregator — and tagAgg's
+// asset half beneath it — return nothing rather than a count taken
+// without the filter. That is the intended answer for a POSITIVE
+// narrowing, and it is the branch that produces it, so the branch was
+// never the speculative part. The claim about its reachability was.
+//
+// The lesson 6c-i left is the one to check the next dimension against:
+// application, not just definition. `kind` needed a render context
+// threaded through here or a caller who ticked it lost every post-derived
+// tag count with no error; `visibility` needs this branch to be honoured
+// on both halves or a tier-filtered rail would count assets no tier
+// could contain.
 func buildAssetPopulationSQL(
 	ctx context.Context,
 	req Request,

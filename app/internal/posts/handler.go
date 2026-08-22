@@ -54,6 +54,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
@@ -1223,9 +1224,40 @@ func (h *Handler) ListPosts(
 			qText = &s
 		}
 	}
-	var tagPtr *string
-	if req.Params.Tag != nil && *req.Params.Tag != "" {
-		tagPtr = req.Params.Tag
+	// ?tag= narrows the feed to posts carrying the named tag(s) (#1123).
+	//
+	// REPEATABLE since #1251 slice 2 — `?tag=a&tag=b` — and the repeat
+	// means AND: "carries every one of these". That is the meaning
+	// `tag:a tag:b` has always had in the DSL, and composing the feed
+	// through the shared grammar is what makes the two surfaces agree
+	// rather than each decide. See ListPostsPageParams.Tags.
+	//
+	// A REPEATED PARAMETER rather than the comma list `?kind=` uses, and
+	// the difference is the value grammar rather than taste. A kind is
+	// drawn from a closed vocabulary that contains no commas, so a
+	// delimiter is free; a tag is user text under a normaliser that only
+	// trims whitespace, so a comma is a legal character in one and
+	// splitting on it would turn an exact match into two tags that ANDed
+	// to nothing. Repetition has no delimiter to collide with, and a
+	// single `?tag=x` is byte-identical to what it always was.
+	//
+	// Blank values are DROPPED rather than kept as a tag nothing carries.
+	// `?tag=` with no value is a control that was cleared, not a request
+	// for the empty tag, and the frontend spells "no filter" exactly that
+	// way. Which is also why `Tags` needs no "requested but empty"
+	// companion flag the way `Kinds` and `Visibility` do: after this
+	// loop, empty means absent and nothing else.
+	var tags []string
+	if req.Params.Tag != nil {
+		for _, raw := range *req.Params.Tag {
+			// Not trimmed, only tested. `post_tags.tag` is matched
+			// EXACTLY (migration 00050), so trimming here would send a
+			// different string than the corpus holds and silently return
+			// nothing for a tag that genuinely has an edge space.
+			if raw != "" {
+				tags = append(tags, raw)
+			}
+		}
 	}
 
 	// ?kind= restricts the feed to posts CONTAINING an asset of the
@@ -1353,7 +1385,7 @@ func (h *Handler) ListPosts(
 		AuthorUserRef:   authorPtr,
 		Visibility:      visPtr,
 		Q:               qText,
-		Tag:             tagPtr,
+		Tags:            tags,
 		FeedFollowerRef: followerPtr,
 		TeamID:          teamID,
 		LikedByUserRef:  likedByPtr,
@@ -2331,9 +2363,33 @@ func validVisibility(s string) bool {
 // enumerates the column's own CHECK constraint and fails when a tier
 // exists that this list does not decide about.
 //
-// Order is irrelevant — it is spliced as `visibility = ANY($3)` — and it
-// is never mutated, so one package-level slice serves every request.
-var defaultFeedTiers = []string{"public", "org-only", "followers", "explicit-share"}
+// Order is irrelevant — the tiers are ORed by the shared grammar's
+// `visibility` dimension, which is non-conjunctive — and it is never
+// mutated, so one package-level slice serves every request.
+//
+// It is DERIVED from facet.VisibilityTiers() since #1251 slice 2 rather
+// than transcribed beside it. The subtraction the paragraph above
+// describes is now literally a subtraction, so a tier added to the
+// grammar's vocabulary lands in this default automatically — which is
+// the direction the guard test says the risk runs in.
+var defaultFeedTiers = sharedTiersExcept(facet.VisibilityPrivate)
+
+// sharedTiersExcept returns the [facet.VisibilityTiers] vocabulary minus
+// the named tiers.
+func sharedTiersExcept(drop ...string) []string {
+	skip := make(map[string]bool, len(drop))
+	for _, d := range drop {
+		skip[d] = true
+	}
+	all := facet.VisibilityTiers()
+	out := make([]string, 0, len(all))
+	for _, t := range all {
+		if !skip[t] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 // ---------------------------------------------------------------------------
 // Row → API conversions
