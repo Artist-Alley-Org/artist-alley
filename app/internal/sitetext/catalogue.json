@@ -171,6 +171,13 @@
         "all": "All types",
         "apply": "Apply",
         "solo_hint": "Double-click to pick only this one"
+      },
+      "hide": {
+        "label": "Hide"
+      },
+      "ai": {
+        "label": "Hide AI-made work",
+        "hint": "Hide posts that are entirely AI-made. Work that mixes AI and human effort stays on the wall."
       }
     },
     "sort": {

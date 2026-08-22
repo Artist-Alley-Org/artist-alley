@@ -110,7 +110,33 @@ type manifestAsset struct {
 	// mature axis came to be unexercised on every seeded instance
 	// (#1217) even though the schema, the predicate and the UI had
 	// shipped.
-	Mature           bool            `json:"mature"`
+	Mature bool `json:"mature"`
+	// AiProvenance is the MAKER'S DECLARATION about generative-AI
+	// involvement (#1167, ADR 0094): `none`, `assisted`, `generated`,
+	// or ABSENT, which means UNDECLARED — nobody was asked.
+	//
+	// ⚠️ A POINTER, AND NOT A `string`, BECAUSE ABSENT IS A VALUE HERE.
+	// `assets.ai_provenance` is nullable and unbackfilled precisely so
+	// the rows predating the feature do not assert a disclaimer their
+	// makers never made, and a plain `string` would decode a missing key
+	// to `""` — which this seeder would then have to invent a rule for.
+	// Nil writes NULL, which is the honest answer for a catalogue entry
+	// nobody has declared, and it is what every entry says today bar the
+	// handful #1251 slice 3 declares on purpose.
+	//
+	// It is modelled HERE for the reason `Mature` above it records in as
+	// many words: an unmodelled JSON key is silently dropped by the
+	// decoder. #1217 is the bill for learning that the hard way — the
+	// mature axis shipped its schema, its predicate and its UI and then
+	// sat unexercised on every seeded instance because this struct did
+	// not carry the field.
+	//
+	// ⛔ IT DOES NOT REPLACE `metadata.acquisition_source` AND MUST NOT.
+	// The fixture sweep partitions the asset table on that key alone
+	// (fixturesweep.Rules, ADR 0095) — an asset the seeder wrote without
+	// it is indistinguishable from real uploaded content and becomes
+	// sweep-bait. A declared seeded asset carries BOTH.
+	AiProvenance     *string         `json:"ai_provenance"`
 	ArchiveState     string          `json:"archive_state"`
 	OwnerUsername    string          `json:"owner_username"`
 	CollectionName   string          `json:"collection_name"`

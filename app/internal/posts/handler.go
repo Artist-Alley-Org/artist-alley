@@ -1283,6 +1283,54 @@ func (h *Handler) ListPosts(
 		kinds, kindsRequested = viewkind.ParseList(*req.Params.Kind)
 	}
 
+	// ?ai= is the browse footer's "Hide AI-made work" toggle (#1251
+	// slice 3, ADR 0094 fourth amendment). The control sends
+	// `ai=not_pure` when it is ON and NOTHING when it is off; `pure` is
+	// on the wire for symmetry with `filter=ai:` and no UI emits it.
+	//
+	// Enforced by the shared grammar's `ai` dimension (facet.FacetAI,
+	// #1242), which keys on `posts.ai_pure` — the FILTERING fact —
+	// rather than on `posts.ai_provenance`, the LABELLING one. That is
+	// the owner's ruling in one column choice: `ai_provenance`
+	// propagates a positive claim on ANY member, so an exclusion keyed
+	// on it would drop the MIXED posts too, and excluding a post because
+	// one of its members was honestly declared punishes exactly the
+	// declaration the design depends on.
+	//
+	// ⭐ VALIDATED HERE, AND A BAD VALUE IS A 400 — the one filter on
+	// this operation that answers a typo with an error instead of an
+	// empty page. `?kind=nonsense` and `?visibility=nonsense` both
+	// return an empty page (see viewkind.ParseList above and
+	// ListPostsPageParams.Visibility), and the divergence is deliberate:
+	// those two are POSITIVE selections, where "only X" for an X nobody
+	// has is legibly answered by no rows. This one is an EXCLUSION over
+	// a closed two-value vocabulary, so a tolerated `?ai=generated`
+	// would render a predicate matching nothing and hand a viewer who
+	// asked to hide AI work an EMPTY WALL — indistinguishable from the
+	// site being broken. All three fail CLOSED and none can widen; this
+	// one also says so out loud. Same answer /search gives
+	// `filter=ai:junk`, from the same validator.
+	//
+	// ⛔ THE VALIDATOR IS THE DIMENSION'S OWN. A local switch over
+	// facet.AIPure / facet.AINotPure would be a second copy of the value
+	// grammar — ADR 0093 decision 3's "a filter is defined once" — so
+	// this calls facet.FacetType.CanonicalValue, which is what
+	// facet.ParseSelection calls for the `filter=` spelling.
+	//
+	// ⛔ NOT A GATE (ADR 0094 §4). A caller who sends nothing gets
+	// pure-AI work in their page exactly as before; nothing is withheld,
+	// subtracted or hidden from anybody who did not ask.
+	var aiTerm string
+	if req.Params.Ai != nil {
+		v, ok := facet.FacetAI.CanonicalValue(string(*req.Params.Ai))
+		if !ok {
+			return openapi.ListPosts400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid_ai"},
+			}, nil
+		}
+		aiTerm = v
+	}
+
 	// ?team_id= scopes the feed to one team's posts — the team page's
 	// content (#684).
 	//
@@ -1391,6 +1439,7 @@ func (h *Handler) ListPosts(
 		LikedByUserRef:  likedByPtr,
 		Kinds:           kinds,
 		KindsRequested:  kindsRequested,
+		AI:              aiTerm,
 		Draft:           wantDrafts,
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,

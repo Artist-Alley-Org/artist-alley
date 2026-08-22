@@ -6157,6 +6157,66 @@ paths:
             promising one kind. An empty value is no filter at all,
             which is what the control sends when every box is ticked.
           schema: { type: string, maxLength: 200 }
+        - name: ai
+          in: query
+          required: false
+          description: |
+            The AI axis — the browse footer's "Hide AI-made work"
+            toggle (#1251, ADR 0094 fourth amendment). Two values, and
+            they PARTITION the corpus:
+
+            - `not_pure` — everything that is NOT purely AI-generated.
+              This is the value the toggle sends, and the only one any
+              control on this site emits.
+            - `pure` — only the purely-AI work. Offered for symmetry
+              with `filter=ai:` on `/search`; no UI sends it.
+
+            ⚠️ HIDING EXCLUDES PURELY-AI POSTS ONLY. A post MIXING AI
+            and human contributors STAYS VISIBLE under `not_pure`,
+            because excluding it for one member's declaration would
+            punish the honest declaration the whole design rests on:
+            "AI could be used as part of an ideation phase and the
+            final project might be pure human made". So the predicate
+            reads `posts.ai_pure` (the FILTERING fact, migration
+            00061) and never `posts.ai_provenance` (the LABELLING
+            fact, which propagates on ANY member and would therefore
+            exclude exactly the mixed posts the ruling protects).
+
+            It FAILS TOWARD SHOWING. An UNDECLARED contributor makes a
+            post not-pure, so a work nobody was asked about survives
+            `not_pure`: wrongly hiding human work is a worse error
+            than showing one more AI post to someone who asked not to
+            see them.
+
+            ⛔ A FILTER, NEVER A GATE (ADR 0094 §4). Nothing is
+            withheld on this axis. A caller who does not send this
+            parameter sees pure-AI work in their page exactly as
+            before, and nothing derived from it — counts, facets,
+            suggest, thumbhash, embeddings — is subtracted for anyone.
+            An operator policy ("no AI on this instance") is NOT this
+            parameter; that is moderation.
+
+            NARROWING, like every other filter on this operation: a
+            plain conjunct beside the post read rule, never a disjunct
+            with it.
+
+            ⚠️ AN UNKNOWN VALUE IS A 400 HERE, where `?kind=nonsense`
+            and `?visibility=nonsense` answer an empty page — and the
+            divergence is deliberate, not an oversight to tidy up.
+            Those two are POSITIVE selections, where "show me only X"
+            for an X nobody has is legibly answered by an empty page.
+            This one is an EXCLUSION with a closed two-value
+            vocabulary, so a tolerated `?ai=generated` or `?ai=false`
+            would render a predicate matching nothing and a viewer who
+            asked to hide AI work would get an EMPTY WALL instead of an
+            unfiltered one — which reads as the site being broken.
+            All three fail CLOSED and none of them can widen; this one
+            additionally says so out loud. It is the same answer
+            `filter=ai:junk` gets from `/search`, rendered by the same
+            validator (facet.FacetType.CanonicalValue).
+          schema:
+            type: string
+            enum: [pure, not_pure]
         - name: feed
           in: query
           required: false
@@ -6249,6 +6309,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PostList" }
+        "400":
+          # ⚠️ NEW ON THIS OPERATION WITH `?ai=` (#1251). Every other
+          # filter here degrades to an empty page rather than an error;
+          # `ai` is the one whose empty page would be indistinguishable
+          # from a broken wall. See its parameter description.
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":

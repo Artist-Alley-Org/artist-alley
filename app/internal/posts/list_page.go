@@ -179,6 +179,35 @@ type ListPostsPageParams struct {
 	// typo in the query string WIDEN the result — the one direction a
 	// narrowing filter is never allowed to move.
 	KindsRequested bool
+	// AI is the browse footer's "Hide AI-made work" toggle (#1251
+	// slice 3, ADR 0094 fourth amendment), already validated off `?ai=`
+	// into one of facet.AIPure / facet.AINotPure. EMPTY MEANS NO FILTER.
+	//
+	// ⛔ IT NEEDS NO "REQUESTED BUT EMPTY" COMPANION, unlike `Kinds` and
+	// `Visibility` beside it, and the reason is that the handler REFUSES
+	// the state that would need one. Those two have a spelling that asks
+	// for a filter and names nothing it can be (`?kind=nonsense`, an
+	// empty tier set), which must select nothing rather than everything.
+	// `?ai=` has a CLOSED two-value vocabulary validated at the handler
+	// by facet.FacetType.CanonicalValue, so an unrecognised value is a
+	// 400 and never arrives here as an ambiguous emptiness. The
+	// distinction is not stylistic: it is why feedFiltersSelectNothing
+	// says nothing about this field.
+	//
+	// ⚠️ THE VALUE IS `not_pure`, NOT `pure`, FOR THE HIDE CONTROL, and
+	// the two are not each other's negation by accident — they PARTITION
+	// the corpus, so ORing both terms would mean "no constraint" rather
+	// than "nothing". The predicate reads `posts.ai_pure` (migration
+	// 00061), the FILTERING fact, and never `posts.ai_provenance`, the
+	// LABELLING one: the latter propagates on ANY member, so keying the
+	// exclusion on it would drop exactly the MIXED posts the owner's
+	// ruling protects.
+	//
+	// ⛔ A FILTER, NEVER A GATE (ADR 0094 §4). Like every other field
+	// here it is a NARROWING conjunct beside the read rule, and unlike
+	// the read rule it is only ever applied when a caller asks: nothing
+	// is withheld on this axis from anybody who did not send `?ai=`.
+	AI             string
 	CursorPostedAt pgtype.Timestamptz
 	CursorID       pgtype.UUID
 	RowLimit       int32
@@ -450,13 +479,15 @@ func (h *Handler) ListPostsPageGated(
 	// 0093 decision 1, "filtered browse does not get a parallel filter
 	// implementation", and decision 3, "a filter is defined once".
 	//
-	// THREE dimensions and ONE call. `kind` crossed in slice 1 (#1251);
-	// `visibility` and `tag` cross here in slice 2. They are rendered
-	// together rather than one fragment each because the grammar already
-	// knows how dimensions compose — within a dimension by its own
-	// conjunctive rule, across dimensions by AND — and asking it three
-	// times would be three chances to get the joining wrong in the one
-	// place it is already correct.
+	// FOUR dimensions and ONE call. `kind` crossed in slice 1 (#1251);
+	// `visibility` and `tag` crossed in slice 2; `ai` crosses in slice 3
+	// and is the payoff — the dimension arrived complete from #1242 and
+	// wiring it here cost one `sel.With`, because the composition was
+	// already built. They are rendered together rather than one fragment
+	// each because the grammar already knows how dimensions compose —
+	// within a dimension by its own conjunctive rule, across dimensions
+	// by AND — and asking it four times would be four chances to get the
+	// joining wrong in the one place it is already correct.
 	//
 	// What crosses the seam is the FILTER and only the filter. Every
 	// scoping parameter above — author, team, follow set, liked-by — is
@@ -464,10 +495,11 @@ func (h *Handler) ListPostsPageGated(
 	// rather than narrowing within it (decision 2), and so are this
 	// query's ordering and its keyset cursor. The result is the same
 	// posts in the same order on the same pages; what changed is that
-	// "which rows carry this tag", "which rows are in this tier" and
-	// "which rows are this kind" are each stated once, in
-	// facet.dimensionSQL, where /search reads them too. The tag arm in
-	// particular was a byte-identical SECOND COPY of that expression.
+	// "which rows carry this tag", "which rows are in this tier", "which
+	// rows are this kind" and "which rows are purely AI" are each stated
+	// once, in facet.dimensionSQL, where /search reads them too. The tag
+	// arm in particular was a byte-identical SECOND COPY of that
+	// expression.
 	//
 	// ⛔ THE READ RULE IS NOT IN HERE AND MUST NOT BE. `ruleFrag` below
 	// is a separate conjunct, ANDed on after this fragment, and that
@@ -484,11 +516,26 @@ func (h *Handler) ListPostsPageGated(
 		frag, selArgs, satisfiable := sel.SQL(
 			visibility.EntityPost, "posts", len(args), feedRenderContext(id, "$10"))
 		if !satisfiable {
-			// Unreachable for these three dimensions today — a post is
-			// satisfiable for all of them — and honoured rather than
-			// assumed, which is what runPosts and the aggregators do
-			// with the same answer. "Unsupported" means zero rows, never
-			// "no constraint".
+			// ⚠️ REACHABLE, and the note that stood here said it was
+			// not ("unreachable for these three dimensions today").
+			// That was true of the half it was looking at and false of
+			// the whole: a post IS satisfiable for all four dimensions,
+			// so the ENTITY arm never fires — but [facet.Selection.SQL]
+			// re-validates every VALUE through
+			// facet.FacetType.CanonicalValue and returns the same false
+			// for a value outside a closed vocabulary. `?visibility=junk`
+			// takes exactly this branch today and answers an empty page,
+			// which is the documented behaviour (see
+			// [ListPostsPageParams.Visibility]) arriving through here
+			// rather than through the `= ANY('{}')` the note assumed.
+			//
+			// `?ai=` cannot reach it: its value is validated at the
+			// handler and an unknown one is a 400 (#1251 slice 3), which
+			// is the whole reason that parameter needs no companion flag.
+			//
+			// Honoured rather than assumed either way, which is what
+			// runPosts and the aggregators do with the same answer.
+			// "Unsupported" means zero rows, never "no constraint".
 			return nil, nil
 		}
 		filterFrag = frag

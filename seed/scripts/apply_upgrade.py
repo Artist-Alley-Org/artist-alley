@@ -297,6 +297,63 @@ def apply_team_corrections(profile: list[dict],
     return out
 
 
+def apply_ai_declarations(profile: list[dict],
+                          declarations: list[dict]) -> list[tuple[str, str]]:
+    """Write the maker's AI declaration onto named profile records (#1251).
+
+    THE SMALLEST UPGRADE DOC IN THIS DIRECTORY, AND ON PURPOSE. Two
+    records per site. It exists so the browse footer's "Hide AI-made
+    work" toggle has something to hide on a freshly seeded instance:
+    every asset in the source CSV is UNDECLARED (the studio simulation
+    has no notion of generative AI), so without this the control is
+    correct, wired end to end, and observably inert — the state that
+    makes a reviewer conclude a feature is broken when it is working.
+
+    WHY A DOC RATHER THAN AN EDIT TO THE PROFILE. Same reason as this
+    file's docstring: `sanitize_and_assemble.py` regenerates the profiles
+    from `metadata.csv`, so a hand-added key is dropped by the next
+    assembly, silently, and the toggle goes inert again with nothing to
+    notice it. The declaration is an input to the pipeline or it does not
+    survive the pipeline.
+
+    WHY IT MODIFIES RATHER THAN APPENDS. `merge_added` brings NEW records
+    in; these are declarations ABOUT records the source CSV already owns,
+    and the whole point is which existing posts they make pure. Nearest
+    neighbour is `apply_team_corrections`, and this borrows its shape.
+
+    ⚠️ THE ASSETS ARE CHOSEN, NOT PICKED. One asset row can be a member
+    of MANY posts — the seeder collapses byte-identical uploads by the
+    same owner, and the catalogue reuses preview plates across posts — so
+    declaring a shared asset moves every post that contains it. Each
+    record here names an asset that belongs to exactly ONE post, and the
+    doc records which post and why, so the blast radius is checkable
+    without a database.
+
+    ⛔ IT DOES NOT TOUCH `metadata.acquisition_source`. That key is what
+    the fixture sweep partitions the asset table on (ADR 0095); an asset
+    the seeder wrote without it is indistinguishable from real uploaded
+    content. A declared seeded asset carries both, which is why this
+    writes one top-level key and nothing else.
+
+    Idempotent by construction: it writes a value, so a second run writes
+    the same value. Returns (id, outcome) per record so the caller can
+    print an id that matched nothing rather than passing over it.
+    """
+    out: list[tuple[str, str]] = []
+    by_id = {e.get("id"): e for e in profile}
+    for d in declarations:
+        aid = d["id"]
+        want = d["ai_provenance"]
+        entry = by_id.get(aid)
+        if entry is None:
+            out.append((aid, "MISSING from profile"))
+            continue
+        before = entry.get("ai_provenance")
+        entry["ai_provenance"] = want
+        out.append((aid, f"{before!r} -> {want!r} ({d.get('role', '?')})"))
+    return out
+
+
 def merge_posts(posts: list[dict], added: list[dict]) -> int:
     have = {p["id"] for p in posts}
     n = 0
@@ -449,22 +506,39 @@ def main() -> int:
             add_p += load(p)
     corrections_doc = args.upgrades / f"team-corrections.{args.site}.json"
     corrections = load(corrections_doc) if corrections_doc.is_file() else []
+    declarations_doc = args.upgrades / f"ai-declarations.{args.site}.json"
+    declarations = load(declarations_doc) if declarations_doc.is_file() else []
     profile = load(args.profile)
     posts = load(args.posts)
 
     before_assets, before_posts = len(profile), len(posts)
 
     corrected = apply_team_corrections(profile, corrections)
+    # AFTER the team corrections and BEFORE the replacements, for the
+    # same reason the corrections run first: apply_replacements takes a
+    # composition snapshot and asserts "swap the file, keep the record".
+    # A declaration is part of the record, so writing it first means that
+    # assertion covers it too.
+    declared = apply_ai_declarations(profile, declarations)
     changed, problems = apply_replacements(profile, reps)
     n_assets, n_repaired = merge_added(profile, add_a)
     n_posts = merge_posts(posts, add_p)
     problems += audit(profile, posts, reps, add_a, add_p)
+    # A declaration naming an id this profile does not hold is a
+    # PROBLEM, not a shrug. The failure it guards against is silent by
+    # nature — the toggle keeps working, the wall keeps rendering, and
+    # there is simply nothing to hide — so a mistyped or retired id has
+    # to stop the run rather than be passed over in the log.
+    problems += [f"ai declaration {aid}: {outcome}"
+                 for aid, outcome in declared if outcome.startswith("MISSING")]
 
     print(f"site        : {args.site}", file=sys.stderr)
     print(f"replacements: {changed}/{len(reps)} records repointed at the HQ pool",
           file=sys.stderr)
     for desc, n in corrected:
         print(f"correction  : {n:5d}  {desc}", file=sys.stderr)
+    for aid, outcome in declared:
+        print(f"ai-declare  : {aid}  {outcome}", file=sys.stderr)
     print(f"assets      : {before_assets} -> {len(profile)} (+{n_assets})",
           file=sys.stderr)
     print(f"posts       : {before_posts} -> {len(posts)} (+{n_posts})",

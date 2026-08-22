@@ -51,7 +51,7 @@ import (
 //     assume the value is opaque text, which is true for a tag and an
 //     extension and false for a UUID: an unparseable one reaches a
 //     `::UUID` cast and raises a Postgres error mid-query. See
-//     [FacetType.canonicalValue] — one function, same file, no new
+//     [FacetType.CanonicalValue] — one function, same file, no new
 //     concept on the wire.
 //   - A dimension whose value NAMES ANOTHER ENTITY needs authorizing,
 //     and the renderer cannot do it. Authorizing is one lookup with a
@@ -144,7 +144,7 @@ func ParseSelection(raw []string) (Selection, error) {
 		if !ok {
 			return Selection{}, ErrBadFilter
 		}
-		value, ok = ft.canonicalValue(value)
+		value, ok = ft.CanonicalValue(value)
 		if !ok {
 			return Selection{}, ErrBadFilter
 		}
@@ -260,8 +260,20 @@ func (s Selection) CacheKey() string {
 // ANDed on by every site that renders this — see [FacetVisibility].
 func (t FacetType) conjunctive() bool { return t == FacetTag }
 
-// canonicalValue validates a value for dimension t and returns the form
+// CanonicalValue validates a value for dimension t and returns the form
 // the rest of the pipeline should carry.
+//
+// ⭐ EXPORTED BY #1251 SLICE 3, and the reason is worth stating because
+// it decides where the NEXT wire parameter validates. A surface that
+// takes one dimension as a query parameter of its own — `?ai=` on the
+// browse feed, and whatever follows it — has to reject an out-of-
+// vocabulary value BEFORE it reaches [Selection.With], which is
+// error-free by design. Doing that with a local `switch` over the
+// exported value constants would be a SECOND copy of the value grammar,
+// which is the shape ADR 0093 decision 3 exists to refuse: two
+// implementations that agree today with nothing asserting they must
+// keep agreeing. So the feed calls this, and `filter=` calls this, and
+// there is one answer to "is this a legal value for this dimension".
 //
 // FIVE OF THE SIX DIMENSIONS HAVE NO USE FOR THIS, and that is worth
 // saying plainly: `extension:!!!` is a well-formed filter that matches
@@ -281,7 +293,7 @@ func (t FacetType) conjunctive() bool { return t == FacetTag }
 // Postgres takes a different subset of them. Normalising here means one
 // spelling reaches the SQL, and `{X}` and `X` share a [CacheKey] instead
 // of paying for the same query twice.
-func (t FacetType) canonicalValue(v string) (string, bool) {
+func (t FacetType) CanonicalValue(v string) (string, bool) {
 	switch t {
 	case FacetCollection:
 		id, err := uuid.Parse(v)
@@ -565,7 +577,7 @@ func (s Selection) NamesFieldDimension() bool {
 //
 // #1165 asks for an unknown or malformed operator to fail CLOSED at
 // parse time. Every failure path here returns ok=false, which
-// [FacetType.canonicalValue] turns into a 400 out of [ParseSelection]
+// [FacetType.CanonicalValue] turns into a 400 out of [ParseSelection]
 // and, for the programmatic callers that bypass it, into
 // "this entity matches nothing" out of [Selection.SQL]. Neither path can
 // reach a query. Degrading to equality — the tempting alternative, since
@@ -893,7 +905,7 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int, rc 
 			// in. Fail CLOSED here rather than letting a bad UUID reach
 			// a ::UUID cast: "this entity matches nothing" is a wrong
 			// answer a caller can act on, a 22P02 is a 500.
-			if _, ok := dim.canonicalValue(v); !ok {
+			if _, ok := dim.CanonicalValue(v); !ok {
 				return "", nil, false
 			}
 			key, ok := subGroupKey(dim, v)
@@ -913,7 +925,7 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int, rc 
 				var op FieldOp
 				if dim == FacetField {
 					// Re-split rather than threading it out of the
-					// grouping pass: canonicalValue has already proven it
+					// grouping pass: CanonicalValue has already proven it
 					// parses, so this cannot fail, and one parse function
 					// with one set of rules is what keeps the grouping
 					// and the rendering from disagreeing about where the
@@ -1049,7 +1061,7 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 		// that ordering is the safety argument rather than a detail.
 		//
 		// A plain `=` and no LOWER(), unlike [FacetSensitivity] beside
-		// it: [FacetType.canonicalValue] has already folded the value to
+		// it: [FacetType.CanonicalValue] has already folded the value to
 		// one of five literals this package wrote, so lowering the COLUMN
 		// would buy nothing and would give up
 		// `collections_visibility_idx` on the collection arm.
@@ -1111,7 +1123,7 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 		//
 		// The literals below are spliced from the Go constants
 		// [AIPure] / [AINotPure], never from caller text; the caller's
-		// bytes stay in the placeholder, where [FacetType.canonicalValue]
+		// bytes stay in the placeholder, where [FacetType.CanonicalValue]
 		// has already confirmed they are one of the two.
 		switch e {
 		case visibility.EntityPost:
@@ -1320,7 +1332,7 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 		// the leading column of each table's primary key and casting the
 		// COLUMN instead would give up that index for a sequential scan
 		// of every membership row in the install. See
-		// [FacetType.canonicalValue] for why the cast is safe.
+		// [FacetType.CanonicalValue] for why the cast is safe.
 		//
 		// Collections themselves are absent on purpose. A collection has
 		// no membership in another collection, so EntityCollection falls

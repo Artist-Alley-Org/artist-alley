@@ -1,0 +1,16 @@
+[
+ {
+  "id": "83fc3c37-76f3-f057-f398-86b4dfbd185b",
+  "ai_provenance": "generated",
+  "post_id": "96ecc77c-c39c-cbaa-0372-8492559b4b4c",
+  "role": "pure",
+  "why": "The PURE half of the demonstrable pair (#1251 slice 3). This asset is the ONLY contributor to post 96ecc77c 'Tile 0422 (raster) — lighting pass' and belongs to no other post, so declaring it `generated` derives ai_pure=true on exactly one post and nothing else moves. Verified against a seeded instance: contributor count 1, asset used by 1 post."
+ },
+ {
+  "id": "41e37ee3-b8d1-3c1a-1ffc-f6f83cee1d41",
+  "ai_provenance": "generated",
+  "post_id": "e0b87570-d5fe-7141-1020-f2e9eed8b946",
+  "role": "mixed",
+  "why": "The MIXED half. Post e0b87570 'Tile 0020 (raster) — 2-part set' has two contributors; this one is declared and c2b56d4d is deliberately left UNDECLARED, so the post reads ai_provenance='generated' (it does contain AI) and ai_pure=false (it is not entirely AI) — and therefore SURVIVES the hide toggle. That is the owner's ruling made visible in one flip beside the pure post above. This asset is unique to this post; the undeclared sibling is shared with one other post and is left alone precisely so nothing else moves."
+ }
+]

@@ -388,3 +388,89 @@ describe('list-view column widths', () => {
     expect(browseView.columnWidths).toEqual({ title: 400 });
   });
 });
+
+// ── "Hide AI-made work" (#1251 slice 3, ADR 0094 fourth amendment) ───
+//
+// Three properties, and each one inverts silently — the toggle keeps
+// rendering and the wall keeps filling whichever way they go:
+//
+//   1. OFF sends NOTHING, not `pure`. The two wire values partition the
+//      corpus, so an off state that sent `pure` would show ONLY AI work
+//      — the exact inverse of the control, from a one-word slip.
+//   2. It PERSISTS across a hydration, because a preference that resets
+//      on reload is one the reader has to set on every visit.
+//   3. It FAILS TOWARD SHOWING when storage is unreadable. Every unknown
+//      on this axis resolves toward showing (ADR 0094 §3): wrongly
+//      hiding human work is the worse error.
+describe('the AI toggle', () => {
+  it('sends nothing when OFF and `not_pure` when ON — never `pure`', () => {
+    rehydrate(null);
+    expect(browseView.hideAI).toBe(false);
+    expect(browseView.aiParam).toBeNull();
+
+    browseView.setHideAI(true);
+    expect(browseView.aiParam).toBe('not_pure');
+
+    browseView.setHideAI(false);
+    expect(browseView.aiParam).toBeNull();
+  });
+
+  it('survives a reload', () => {
+    rehydrate(null);
+    browseView.setHideAI(true);
+
+    rehydrate(null);
+    expect(browseView.hideAI).toBe(true);
+    expect(browseView.aiParam).toBe('not_pure');
+  });
+
+  it('leaves no stored value behind when turned back off', () => {
+    // "Off" is the default, so a stored `false` is a key that says
+    // nothing — and one that makes "this device chose off" and "this
+    // device never chose" indistinguishable.
+    rehydrate(null);
+    browseView.setHideAI(true);
+    expect(localStorage.getItem('aa_browse_hide_ai')).toBe('1');
+
+    browseView.setHideAI(false);
+    expect(localStorage.getItem('aa_browse_hide_ai')).toBeNull();
+
+    rehydrate(null);
+    expect(browseView.hideAI).toBe(false);
+  });
+
+  it('renders OFF, not broken, when localStorage throws', () => {
+    // A private window, a quota-exceeded profile, or a browser set to
+    // block site data. The page must render the ordinary unfiltered
+    // wall — never crash, and never silently filter.
+    const real = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    const boom = () => { throw new DOMException('denied', 'SecurityError'); };
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() { return { getItem: boom, setItem: boom, removeItem: boom }; },
+    });
+    try {
+      browseView.hydrated = false;
+      expect(() => browseView.init(null)).not.toThrow();
+      expect(browseView.hideAI).toBe(false);
+      expect(browseView.aiParam).toBeNull();
+      // And a WRITE against the same storage must not throw either —
+      // the click handler has no catch of its own.
+      expect(() => browseView.setHideAI(true)).not.toThrow();
+      expect(browseView.hideAI).toBe(true);
+    } finally {
+      if (real) Object.defineProperty(window, 'localStorage', real);
+      else delete (window as unknown as Record<string, unknown>).localStorage;
+    }
+  });
+
+  it('ignores a stored value that is not the one it writes', () => {
+    // Anything but `'1'` is not a choice this build made. It resolves
+    // toward SHOWING rather than being repaired into a preference.
+    for (const junk of ['true', 'yes', '0', 'not_pure', '']) {
+      localStorage.setItem('aa_browse_hide_ai', junk);
+      rehydrate(null);
+      expect(browseView.hideAI, `stored ${JSON.stringify(junk)}`).toBe(false);
+    }
+  });
+});

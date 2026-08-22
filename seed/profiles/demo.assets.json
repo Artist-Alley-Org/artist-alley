@@ -12228,7 +12228,8 @@
   "attribution": "Kenney (kenney.nl)",
   "layer": "A",
   "studio": "a",
-  "replaced_source_path": "unpacked/kenney_minimap-pack/Tiles/Style E/tile_0020.png"
+  "replaced_source_path": "unpacked/kenney_minimap-pack/Tiles/Style E/tile_0020.png",
+  "ai_provenance": "generated"
  },
  {
   "id": "c2b56d4d-4032-bd42-bb96-0e75159a2c7f",
@@ -46969,7 +46970,8 @@
   "attribution": "Kenney (kenney.nl)",
   "layer": "A",
   "studio": "a",
-  "replaced_source_path": "unpacked/kenney_rpg-urban-pack/Tiles/tile_0422.png"
+  "replaced_source_path": "unpacked/kenney_rpg-urban-pack/Tiles/tile_0422.png",
+  "ai_provenance": "generated"
  },
  {
   "id": "89d1de00-31f3-1950-6339-09ae7f7997e2",
