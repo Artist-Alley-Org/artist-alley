@@ -116,12 +116,17 @@ export const testIds = {
     kindFilterAll:       'kind-filter-all',
     kindFilterOption:    'kind-filter-option',
     kindFilterApply:     'kind-filter-apply',
-    // The "Hide AI-made work" toggle, which joined the same cluster in
-    // #1251 slice 3 (ADR 0094 fourth amendment). A plain switch rather
-    // than a panel — it carries one boolean — so there is one id, and
-    // its state is read off `aria-pressed` / `data-active` rather than
-    // off a checked box.
+    // The "Hide AI-made work" switch (#1251 slice 3, ADR 0094 fourth
+    // amendment). ⚠️ IT LIVES INSIDE `kindFilterPanel`, not beside
+    // `kindFilterToggle` — the owner's ruling is one menu, so the
+    // footer's right cluster still holds exactly the type-filter button
+    // and the sort toggle. A spec must OPEN the panel to reach this,
+    // which is what makes the placement itself checkable.
+    // `aiFilterActive` is the glyph the closed button draws when the
+    // switch is on, so "the button carries the state" holds for this
+    // axis as well as for the type count.
     aiFilterToggle:      'ai-filter-toggle',
+    aiFilterActive:      'ai-filter-active',
     // The card's kind badge, which is what a type-filtered wall has to
     // agree with. `cardKind` is the single-asset glyph; `cardKindMulti`
     // is the count-plus-Shapes badge a multi-asset post draws instead.
