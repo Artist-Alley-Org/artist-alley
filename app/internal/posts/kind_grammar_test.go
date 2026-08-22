@@ -227,7 +227,11 @@ func kfCountOf(got map[uuid.UUID]bool, ids ...uuid.UUID) int {
 // type filter — the two-dimension page the browse surface actually
 // renders. Empty strings mean "that control is not set", which is how
 // the frontend spells it.
-func kfFeedTagged(t *testing.T, h *Handler, callerRef int64, kind, tag string) map[uuid.UUID]bool {
+//
+// `tags` is VARIADIC since #1251 slice 2 made `?tag=` repeatable, and
+// blanks are dropped so the existing single-tag call sites — which spell
+// "not set" as `""` — keep meaning exactly what they meant.
+func kfFeedTagged(t *testing.T, h *Handler, callerRef int64, kind string, tags ...string) map[uuid.UUID]bool {
 	t.Helper()
 	ctx := context.Background()
 	if callerRef != kfNoOneAt {
@@ -239,12 +243,18 @@ func kfFeedTagged(t *testing.T, h *Handler, callerRef int64, kind, tag string) m
 	if kind != "" {
 		params.Kind = &kind
 	}
-	if tag != "" {
-		params.Tag = &tag
+	set := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if tag != "" {
+			set = append(set, tag)
+		}
+	}
+	if len(set) > 0 {
+		params.Tag = &set
 	}
 	resp, err := h.ListPosts(ctx, openapi.ListPostsRequestObject{Params: params})
 	if err != nil {
-		t.Fatalf("ListPosts(kind=%q tag=%q): %v", kind, tag, err)
+		t.Fatalf("ListPosts(kind=%q tag=%v): %v", kind, tags, err)
 	}
 	ok, is := resp.(openapi.ListPosts200JSONResponse)
 	if !is {

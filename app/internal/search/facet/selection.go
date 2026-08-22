@@ -245,6 +245,19 @@ func (s Selection) CacheKey() string {
 // is not what ticking two boxes on a type filter asks for, and it would
 // make the same two terms mean different things on two entities.
 // Non-conjunctive, deliberately, on both counts.
+//
+// ⭐ [FacetVisibility] was checked against it too (#1251 slice 2), and it
+// is the plainest case since `extension`: a post is in exactly ONE
+// sharing tier, so `visibility:public visibility:private` under AND
+// returns nothing forever — a filter that looks applied and is not.
+// Under OR it is the UNION, which is what the feed's own default has
+// been since #1193 ("every shared tier the caller may read") and what
+// this dimension has to be able to express for the feed to compose
+// through it at all. Non-conjunctive, deliberately.
+//
+// ⛔ AND NOTE WHICH DIRECTION THE OR RUNS. Widening the tier SET widens
+// the SELECTION and never the read rule, which is a separate conjunct
+// ANDed on by every site that renders this — see [FacetVisibility].
 func (t FacetType) conjunctive() bool { return t == FacetTag }
 
 // canonicalValue validates a value for dimension t and returns the form
@@ -314,6 +327,32 @@ func (t FacetType) canonicalValue(v string) (string, bool) {
 			return "", false
 		}
 		return v, true
+	case FacetVisibility:
+		// #1251 slice 2 — the FIFTH dimension with a value grammar, and
+		// like [FacetAI] and [FacetKind] its vocabulary is a CLOSED SET:
+		// the five tiers of [VisibilityTiers], which are exactly the
+		// `posts_visibility_check` constraint's values.
+		//
+		// Rejecting an unknown tier is what makes `filter=visibility:junk`
+		// a 400 rather than an empty page under a label promising one
+		// tier. It is ALSO what keeps a malformed value out of a
+		// comparison against a column the read rule reads: this dimension
+		// selects among tiers, and the set of tiers it may name is the
+		// set the database defines, never caller text that merely looks
+		// like one.
+		//
+		// ⚠️ Case-folded and trimmed, unlike [FacetTag] one arm below.
+		// The tiers are an enum this repository authored — `Public` and
+		// `public` are the same tier by construction — whereas a tag is
+		// user text whose exact bytes ARE the identity (migration 00050).
+		// Two dimensions, two answers, both deliberate.
+		v = strings.ToLower(strings.TrimSpace(v))
+		for _, tier := range VisibilityTiers() {
+			if v == tier {
+				return v, true
+			}
+		}
+		return "", false
 	case FacetField:
 		// #1157/#1165 — `<code><op><value>`. The SECOND dimension with a
 		// value grammar, the first whose value is compound, and now the
@@ -996,6 +1035,53 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 		if e == visibility.EntityAsset {
 			return `LOWER(` + a + `sensitivity) = LOWER(` + p + `::TEXT)`, true
 		}
+	case FacetVisibility:
+		// #1251 slice 2 — the sharing tier, as an ordinary predicate.
+		//
+		// ⛔ THIS IS THE ONE DIMENSION WHOSE COLUMN A READ RULE ALSO
+		// READS, and the expression below is deliberately the whole of
+		// what it does. It compares a tier to a bound value. It grants
+		// nothing, waives nothing and consults no relationship table,
+		// because every caller of [Selection.SQL] ANDs the entity's read
+		// rule on after this fragment — so the set this narrows is
+		// already the set the caller may read, and a tier named here can
+		// only ever remove rows from it. See [FacetVisibility] for why
+		// that ordering is the safety argument rather than a detail.
+		//
+		// A plain `=` and no LOWER(), unlike [FacetSensitivity] beside
+		// it: [FacetType.canonicalValue] has already folded the value to
+		// one of five literals this package wrote, so lowering the COLUMN
+		// would buy nothing and would give up
+		// `collections_visibility_idx` on the collection arm.
+		switch e {
+		case visibility.EntityPost:
+			return a + `visibility = ` + p + `::TEXT`, true
+		case visibility.EntityCollection:
+			// A collection carries the SAME five-tier column with the
+			// same CHECK constraint, so it answers this question
+			// honestly and stays on a tier-filtered page. Its own rule
+			// (visibility.CollectionReadableSQL, spliced by
+			// search.runCollections) is what decides whether the row was
+			// readable in the first place — this only narrows within it.
+			return a + `visibility = ` + p + `::TEXT`, true
+		}
+		// An ASSET falls through to ok=false and drops out of a
+		// tier-filtered page entirely. It has no `visibility` column: its
+		// axis is `sensitivity`, whose four values are a DIFFERENT
+		// vocabulary served by [FacetSensitivity], and answering a tier
+		// question with a sensitivity answer would make one token mean
+		// two things.
+		//
+		// ⚠️ This is the FIRST dimension an asset cannot satisfy, which
+		// makes [buildAssetPopulationSQL]'s unsatisfiable branch — and
+		// the drop of tagAgg's asset half beneath it — reachable for the
+		// first time. Both were already written to honour it.
+		//
+		// The direction is the safe one, by [FacetAI]'s own check: a tier
+		// filter is a POSITIVE narrowing, so an entity that cannot answer
+		// leaving the page is the answer. `ai:` had to be satisfiable for
+		// a collection precisely because it is the opposite — an
+		// EXCLUSION wearing a value's clothes.
 	case FacetOwner:
 		if e == visibility.EntityAsset {
 			return `(` + a + `owner_user_ref::TEXT = ` + p + `::TEXT

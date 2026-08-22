@@ -62,9 +62,44 @@ type ListPostsPageParams struct {
 	// to an empty page rather than to the whole feed. The distinction
 	// matters for Kinds because a user typo reaches it; no query
 	// parameter reaches this one empty.
+	//
+	// ⚠️ SINCE #1251 SLICE 2 THAT DEGRADATION IS EXPLICIT RATHER THAN
+	// INCIDENTAL. The tiers now compose through facet.FacetVisibility,
+	// and a facet selection with zero terms means "no constraint" — the
+	// OPPOSITE of `= ANY('{}')`. So the empty-non-nil case is answered by
+	// feedFiltersSelectNothing before the selection is built, which is
+	// where `Kinds`' identical distinction is answered too. The behaviour
+	// is unchanged; what changed is that keeping it is now a line
+	// somebody has to delete rather than a property of the operator.
 	Visibility []string
 	Q          *string
-	Tag        *string
+	// Tags is the tag filter (#1123), and since #1251 slice 2 it is a
+	// SET rather than one value.
+	//
+	// ⛔ ITS PLURAL MEANING IS **AND**: two tags select posts carrying
+	// EVERY one of them. That is not a choice made here — it is the
+	// meaning `tag:a tag:b` has always had in the DSL, and `tag` is the
+	// only conjunctive dimension in the shared grammar because it is the
+	// only multi-valued one (facet.FacetType.conjunctive). Composing the
+	// feed through that grammar makes the two surfaces answer the same
+	// question the same way, which is the whole of ADR 0093 decision 3.
+	//
+	// ⚠️ THE PLURAL CASE IS NEW TO THIS SURFACE. It was `Tag *string`,
+	// so the feed could not express two tags at all; there is no
+	// inherited behaviour to preserve and therefore no inherited
+	// behaviour to check the new one against. It is asserted with
+	// arithmetic instead — `both < min(a, b)` strictly, never
+	// `both > 0` — because the union is the answer a membership
+	// assertion cannot tell from the intersection, and it is the answer
+	// #1165 and #1242 each found shipped.
+	//
+	// EMPTY MEANS NO FILTER, unambiguously: the handler drops blank
+	// values, so unlike `Visibility` and `Kinds` there is no spelling
+	// that asks for a tag and names none.
+	//
+	// Matching is EXACT and NOT case-folded, on the tag STRING — see
+	// migration 00050 for why there is no id to join on.
+	Tags []string
 	// FeedFollowerRef is ?feed=following, and "following" is the UNION
 	// of the two follow graphs (#1048): posts by an author this ref
 	// follows, OR posts belonging to a team it follows. It had only the
@@ -272,9 +307,18 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 //   - author_user_ref: limit to posts by a given user
 //   - visibility: narrow to a SET of tiers WITHIN what the caller may
 //     read (#1193 — it was one tier, which is why the default could not
-//     be the union it should always have been)
+//     be the union it should always have been). Since #1251 slice 2 the
+//     predicate is the shared grammar's `visibility` dimension
+//     (facet.FacetVisibility); the tiers OR together and the read rule is
+//     still a SEPARATE conjunct ANDed on below, which is the property
+//     that keeps this a display filter and not a grant.
 //   - q: plain-text TSVECTOR search across post search_text
-//   - tag: single-tag filter (intersects with q if both given)
+//   - tag: a SET of tags, ANDed — "carries every one of these". Since
+//     #1251 slice 2 the predicate is the shared grammar's `tag`
+//     dimension (facet.FacetTag), which is where /search reads it too;
+//     the feed used to hold a byte-identical second copy of it. It was
+//     a single value before that, so the plural is NEW here — see
+//     ListPostsPageParams.Tags.
 //   - feed_follower_ref: restrict to what the given ref follows
 //     (?feed=following) — authors OR teams OR tags. Three EXISTS,
 //     hitting the user_follows PK, the team_follows PK and the
@@ -310,7 +354,12 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 //
 // The tag EXISTS joins `post_tags` on the tag STRING because that is
 // what the corpus is keyed by — see migration 00050 for why there is no
-// id to join on, and why matching is exact rather than case-folded.
+// id to join on, and why matching is exact rather than case-folded. That
+// remains true of the `?tag=` FILTER after #1251 slice 2 moved it into
+// facet.dimensionSQL: the shared expression joins the same table on the
+// same string with the same `=`. The follow-set EXISTS above is the
+// other, separate reader of `post_tags` and stays here, because a follow
+// set is SCOPE and not a filter (ADR 0093 decision 2).
 //
 // `liked_by` is the newest member of that list and the one whose
 // narrowing property is load-bearing rather than incidental: the likes
@@ -320,28 +369,53 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 // post the viewer cannot read is simply not on the page — see
 // LikedByUserRef above.
 //
-// Placeholder discipline (ADR 0063): the builder binds $1–$12, the kind
-// selection binds above that when present, the rule's fragment owns
-// everything above them, and its args are appended LAST.
+// Placeholder discipline (ADR 0063): the builder binds $1–$10, the
+// filter selection binds above that when present, the rule's fragment
+// owns everything above them, and its args are appended LAST.
+//
+// ⚠️ THE NUMBERING MOVED IN #1251 SLICE 2 and every reference had to move
+// with it. `visibility` was $3 and `tag` was $5; both conjuncts are now
+// rendered by facet.Selection.SQL, which numbers from whatever is
+// already bound, so the two slots are gone and the seven parameters
+// above them shifted down by two. The three OTHER readers of a
+// hardcoded number — the keyset predicate, `LIMIT`, and the caller ref
+// the mature and kind fragments name — are updated below and are the
+// whole of what an off-by-one here would break. The capture-based
+// comparison in the PR is what proves it did not: the same feed, the
+// same ids, the same cursor tokens, before and after.
 func (h *Handler) ListPostsPageGated(
 	ctx context.Context,
 	id *auth.Identity,
 	p ListPostsPageParams,
 ) ([]ListPostsPageRow, error) {
+	// ⛔ THE "ASKED FOR, NAMED NOTHING" CASE, ANSWERED BEFORE THE
+	// SELECTION IS BUILT — because a facet selection cannot carry it.
+	//
+	// `?kind=nonsense` and an EMPTY NON-NIL `Visibility` are both a
+	// caller naming a set with nothing in it, and both must return an
+	// empty page. Zero terms in a facet.Selection means the OPPOSITE —
+	// no constraint at all — so folding either into the selection would
+	// turn a typo into "show me everything", which is the one direction
+	// a narrowing filter may never move.
+	//
+	// It sits here rather than inside feedFilters because only this scope
+	// can answer with a page. See feedFiltersSelectNothing.
+	if feedFiltersSelectNothing(p) {
+		return nil, nil
+	}
+
 	args := []any{
 		p.IncludeDeleted,  // $1
 		p.AuthorUserRef,   // $2
-		p.Visibility,      // $3
-		p.Q,               // $4
-		p.Tag,             // $5
-		p.FeedFollowerRef, // $6
-		p.CursorPostedAt,  // $7
-		p.CursorID,        // $8
-		p.RowLimit,        // $9
-		p.TeamID,          // $10
-		p.LikedByUserRef,  // $11
+		p.Q,               // $3
+		p.FeedFollowerRef, // $4
+		p.CursorPostedAt,  // $5
+		p.CursorID,        // $6
+		p.RowLimit,        // $7
+		p.TeamID,          // $8
+		p.LikedByUserRef,  // $9
 	}
-	// $12 — the caller's own ref, read by the mature owner exemption and
+	// $10 — the caller's own ref, read by the mature owner exemption and
 	// by the kind conjunct's per-member field gate. Bound BEFORE
 	// readRuleSQL is asked for its offset, so the rule's own placeholders
 	// start above it (ADR 0063's discipline: whoever binds last counts
@@ -353,7 +427,7 @@ func (h *Handler) ListPostsPageGated(
 	// ⚠️ IT IS BOUND UNCONDITIONALLY AND REFERENCED UNCONDITIONALLY, and
 	// the second half is what makes the first half safe. Postgres cannot
 	// infer a type for a parameter no statement mentions —
-	// `could not determine data type of parameter $12` (42P18) — and
+	// `could not determine data type of parameter $10` (42P18) — and
 	// BOTH readers of this value fold to the empty string on some
 	// callers: MatureFilterSQL renders nothing for a qualified viewer or
 	// an admin, and FieldsReadableSQL renders nothing for system.admin /
@@ -368,13 +442,21 @@ func (h *Handler) ListPostsPageGated(
 	// single-arm test does not take. The tautology below is the same one
 	// search.runPosts uses on its own caller ref, for the same reason,
 	// and Postgres folds it away.
-	args = append(args, matureOwnerArg(id)) // $12
+	args = append(args, matureOwnerArg(id)) // $10
 	matureFrag := visibility.MatureFilterSQL(
-		"", visibility.MatureOwnerColPost, "$12", p.Mature, p.MatureAdmin)
+		"", visibility.MatureOwnerColPost, "$10", p.Mature, p.MatureAdmin)
 
-	// The `?kind=` conjunct (#1166/#1190), composed through the SHARED
-	// FILTER GRAMMAR since #1251 — ADR 0093 decision 1, "filtered browse
-	// does not get a parallel filter implementation".
+	// ⭐ THE FEED'S FILTERS, COMPOSED THROUGH THE SHARED GRAMMAR — ADR
+	// 0093 decision 1, "filtered browse does not get a parallel filter
+	// implementation", and decision 3, "a filter is defined once".
+	//
+	// THREE dimensions and ONE call. `kind` crossed in slice 1 (#1251);
+	// `visibility` and `tag` cross here in slice 2. They are rendered
+	// together rather than one fragment each because the grammar already
+	// knows how dimensions compose — within a dimension by its own
+	// conjunctive rule, across dimensions by AND — and asking it three
+	// times would be three chances to get the joining wrong in the one
+	// place it is already correct.
 	//
 	// What crosses the seam is the FILTER and only the filter. Every
 	// scoping parameter above — author, team, follow set, liked-by — is
@@ -382,34 +464,35 @@ func (h *Handler) ListPostsPageGated(
 	// rather than narrowing within it (decision 2), and so are this
 	// query's ordering and its keyset cursor. The result is the same
 	// posts in the same order on the same pages; what changed is that
-	// "which rows is a kind" is now stated once, in facet.dimensionSQL,
-	// where /search reads it too.
+	// "which rows carry this tag", "which rows are in this tier" and
+	// "which rows are this kind" are each stated once, in
+	// facet.dimensionSQL, where /search reads them too. The tag arm in
+	// particular was a byte-identical SECOND COPY of that expression.
 	//
-	// ⚠️ THE TWO MEANINGS OF AN EMPTY SELECTION ARE ONE LINE APART AND
-	// THEY ARE OPPOSITE. Nil Kinds with KindsRequested false is an absent
-	// parameter and must return the whole feed; an empty term set with
-	// KindsRequested TRUE is `?kind=nonsense`, which must return nothing.
-	// Collapsing them turns a typo into "show me everything" — the one
-	// direction a narrowing filter may never move. See KindsRequested.
-	var kindFrag string
-	if p.KindsRequested {
-		sel := kindSelection(p.Kinds)
-		if sel.Empty() {
-			// Requested, and nothing renderable was named.
-			return nil, nil
-		}
-		frag, kindArgs, satisfiable := sel.SQL(
-			visibility.EntityPost, "posts", len(args), kindRenderContext(id, "$12"))
+	// ⛔ THE READ RULE IS NOT IN HERE AND MUST NOT BE. `ruleFrag` below
+	// is a separate conjunct, ANDed on after this fragment, and that
+	// ordering is the whole reason `?visibility=` is a display filter
+	// rather than a grant: naming five tiers selects among the ones the
+	// caller could already read. A tier that reached the rule would be an
+	// authorization bypass wearing a filter's clothes — see
+	// facet.FacetVisibility.
+	//
+	// The "asked for, named nothing" case was answered at the top of this
+	// function, where it can return a page. See feedFiltersSelectNothing.
+	var filterFrag string
+	if sel := feedFilters(p); !sel.Empty() {
+		frag, selArgs, satisfiable := sel.SQL(
+			visibility.EntityPost, "posts", len(args), feedRenderContext(id, "$10"))
 		if !satisfiable {
-			// Unreachable for this dimension today — a post is
-			// satisfiable for `kind:` — and honoured rather than
+			// Unreachable for these three dimensions today — a post is
+			// satisfiable for all of them — and honoured rather than
 			// assumed, which is what runPosts and the aggregators do
 			// with the same answer. "Unsupported" means zero rows, never
 			// "no constraint".
 			return nil, nil
 		}
-		kindFrag = frag
-		args = append(args, kindArgs...)
+		filterFrag = frag
+		args = append(args, selArgs...)
 	}
 
 	// The drafts page (ADR 0091 decision 7). Two halves that must move
@@ -437,37 +520,33 @@ func (h *Handler) ListPostsPageGated(
 FROM posts
 WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT IS NULL OR author_user_ref = $2::BIGINT)
-  AND ($3::TEXT[] IS NULL OR visibility = ANY($3::TEXT[]))
-  AND ($4::TEXT IS NULL OR search_text @@ plainto_tsquery('english', $4::TEXT))
-  AND ($5::TEXT IS NULL
-       OR EXISTS (SELECT 1 FROM post_tags pt
-                    WHERE pt.post_id = posts.id AND pt.tag = $5::TEXT))
-  AND ($6::BIGINT IS NULL
+  AND ($3::TEXT IS NULL OR search_text @@ plainto_tsquery('english', $3::TEXT))
+  AND ($4::BIGINT IS NULL
        OR EXISTS (SELECT 1 FROM user_follows ff
-                    WHERE ff.follower_user_ref = $6::BIGINT
+                    WHERE ff.follower_user_ref = $4::BIGINT
                       AND ff.followee_user_ref = posts.author_user_ref)
        OR EXISTS (SELECT 1 FROM team_follows tf
-                    WHERE tf.user_ref = $6::BIGINT
+                    WHERE tf.user_ref = $4::BIGINT
                       AND tf.team_id = posts.team_id)
        OR EXISTS (SELECT 1 FROM tag_follows gf
                     JOIN post_tags pgt ON pgt.tag = gf.tag
-                    WHERE gf.user_ref = $6::BIGINT
+                    WHERE gf.user_ref = $4::BIGINT
                       AND pgt.post_id = posts.id))
-  AND ($10::UUID IS NULL OR team_id = $10::UUID)
-  AND ($11::BIGINT IS NULL
+  AND ($8::UUID IS NULL OR team_id = $8::UUID)
+  AND ($9::BIGINT IS NULL
        OR EXISTS (SELECT 1 FROM likes lk
                     WHERE lk.target_kind = 'post'
                       AND lk.target_id = posts.id
-                      AND lk.user_ref = $11::BIGINT))
-  AND ($12::BIGINT IS NULL OR TRUE)
-  AND ` + order.keysetSQL("posted_at", "id", 7, 8))
+                      AND lk.user_ref = $9::BIGINT))
+  AND ($10::BIGINT IS NULL OR TRUE)
+  AND ` + order.keysetSQL("posted_at", "id", 5, 6))
 	b.WriteString(draftFrag)
-	b.WriteString(kindFrag)
+	b.WriteString(filterFrag)
 	b.WriteString(matureFrag)
 	b.WriteString(ruleFrag)
 	b.WriteString(`
 ` + order.orderBySQL("posted_at", "id") + `
-LIMIT $9::INTEGER`)
+LIMIT $7::INTEGER`)
 
 	rows, err := h.Pool.Query(ctx, b.String(), args...)
 	if err != nil {

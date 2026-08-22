@@ -189,7 +189,102 @@ const (
 	// counts, so there is no bucket whose number could disagree with
 	// what ticking it returns.
 	FacetKind FacetType = "kind"
+
+	// FacetVisibility narrows to a SHARING TIER — private, org-only,
+	// followers, explicit-share, public — the browse feed's
+	// `?visibility=` parameter, converged onto the shared grammar by
+	// #1251 slice 2 per ADR 0093 decision 1.
+	//
+	// # ⛔ IT NARROWS, AND NOTHING ABOUT MOVING IT HERE MAY CHANGE THAT
+	//
+	// This is the only dimension whose column is also an input to a READ
+	// RULE, so it is the only one where "a filter" and "an authorization
+	// decision" name the same word, and the distinction is the whole
+	// safety argument. A tier is SELECTED here and GRANTED nowhere: every
+	// site that renders this fragment ANDs the entity's read rule on
+	// after it (posts.ListPostsPageGated splices `readRuleSQL`,
+	// search.runPosts splices `visibility.Filter`), so naming five tiers
+	// picks among the ones the caller could already read rather than
+	// adding any. A `visibility` filter that could widen would be an
+	// authorization bypass wearing a filter's clothes.
+	//
+	// The composition is a property of the SITES, not of this const, and
+	// that is why it is asserted rather than asserted-about: see
+	// posts.TestVisibilityFilter_NarrowsNeverWidens, which drives a tier
+	// the caller cannot read from both sides and requires an EMPTY page
+	// for the stranger and the real rows for the owner.
+	//
+	// # Posts AND collections, because they share one vocabulary
+	//
+	// `posts.visibility` and `collections.visibility` carry the SAME
+	// five-value CHECK constraint and the same meaning (ADR 0009/0010's
+	// tiers). Assets do not have the column at all — their axis is
+	// `sensitivity`, a DIFFERENT four-value vocabulary already served by
+	// [FacetSensitivity] — so the asset arm falls through to ok=false and
+	// assets drop out of a tier-filtered page entirely.
+	//
+	// ⚠️ That makes this THE FIRST DIMENSION NO ASSET CAN SATISFY, which
+	// retires a claim [buildAssetPopulationSQL] made in its doc ("no
+	// dimension is post-only today so it cannot fire"). The branch it
+	// guarded was already correct; what was untrue was that it was
+	// unreachable.
+	//
+	// The direction check [FacetAI]'s collection arm established applies
+	// and this lands on the other side of it: a tier filter is a POSITIVE
+	// narrowing — the caller is asking FOR something, not excluding it —
+	// so an entity that cannot answer leaving the page is the answer,
+	// not a loss.
+	//
+	// # Its values combine with OR
+	//
+	// A post is in exactly ONE tier, so AND is unsatisfiable — the same
+	// reason [FacetExtension] and [FacetSensitivity] are non-conjunctive.
+	// OR is also what the feed's own default needs: #1193 made the
+	// signed-in default the UNION of four shared tiers, and it is
+	// expressed here as four terms of this dimension.
+	//
+	// # Filter-only, like FacetCollection, FacetField, FacetAI and
+	// FacetKind
+	//
+	// No [Aggregator] and absent from [AllFacets]. A tier rail would be a
+	// bucket list of the sharing states of other people's work, which is
+	// a moderation view rather than a discovery surface, and the control
+	// this dimension exists for is the feed's own display filter.
+	FacetVisibility FacetType = "visibility"
 )
+
+// The [FacetVisibility] value vocabulary — the five sharing tiers, in
+// the order the `posts_visibility_check` / `collections_visibility_check`
+// constraints list them, widest last.
+//
+// CLOSED and validated in [FacetType.canonicalValue] for the reason
+// [FacetAI]'s pair is: there is no `::UUID` cast here to raise a 22P02,
+// so a tolerated `visibility:orgonly` would render a predicate matching
+// nothing and hand back an EMPTY page to a caller who asked to narrow.
+// A 400 at the parser is a mistake the client can see.
+//
+// ⛔ It is a display vocabulary, NOT a permission vocabulary. Adding a
+// value here does not admit a row; the read rule ANDed on after this
+// decides that, and it consults its own tables. See [FacetVisibility].
+const (
+	VisibilityPrivate       = "private"
+	VisibilityOrgOnly       = "org-only"
+	VisibilityFollowers     = "followers"
+	VisibilityExplicitShare = "explicit-share"
+	VisibilityPublic        = "public"
+)
+
+// VisibilityTiers returns the [FacetVisibility] vocabulary.
+//
+// Exported because the feed's default tier set is expressed as a subset
+// of it (posts.defaultFeedTiers) and because the value validator and the
+// tests both need one list rather than two that agree today.
+func VisibilityTiers() []string {
+	return []string{
+		VisibilityPrivate, VisibilityOrgOnly, VisibilityFollowers,
+		VisibilityExplicitShare, VisibilityPublic,
+	}
+}
 
 // The [FacetAI] value vocabulary. CLOSED, validated in
 // [FacetType.canonicalValue], and a 400 out of [ParseSelection] for
@@ -212,8 +307,8 @@ const (
 // AllFacets returns the set of aggregators the dispatcher runs when
 // the caller doesn't restrict via ?facets=...
 //
-// FacetCollection, FacetField, FacetAI and FacetKind are deliberately
-// absent — see their docs.
+// FacetCollection, FacetField, FacetAI, FacetKind and FacetVisibility
+// are deliberately absent — see their docs.
 func AllFacets() []FacetType {
 	return []FacetType{FacetAssetType, FacetTag, FacetSensitivity, FacetOwner, FacetExtension}
 }
@@ -240,6 +335,8 @@ func ParseFacetType(s string) (FacetType, bool) {
 		return FacetAI, true
 	case "kind":
 		return FacetKind, true
+	case "visibility":
+		return FacetVisibility, true
 	}
 	return "", false
 }
