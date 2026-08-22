@@ -4,6 +4,7 @@
 package search
 
 import (
+	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -52,6 +53,30 @@ func callerOf(q Query) (visibility.Caller, visibility.CapabilityChecker) {
 // that widens a projection must travel by a route the key can see.
 func mutCapsOf(q Query) visibility.AssetMutationCaps {
 	return q.MutationCaps
+}
+
+// renderContextOf is the caller half of [facet.Selection.SQL] (#1251) —
+// the inputs a dimension needs when its predicate has to decide, in SQL,
+// whether this caller may see the value it selects on.
+//
+// `callerArg` is the placeholder the CALLING STATEMENT has already bound
+// with the caller's ref — $3 in runAssets and runPosts, $2 in
+// enrichAssetHits — so there is one such value per statement rather than
+// one per filter term. Passing "" is how a statement says it has no such
+// placeholder (runCollections does not bind one and needs none), and the
+// dimensions that require it then render nothing — see
+// facet.RenderContext for why that is the fail-closed direction.
+//
+// Same routing argument as [mutCapsOf] above: every component here is
+// already on the Query, so every component is already in the result
+// cache key.
+func renderContextOf(q Query, callerArg string) facet.RenderContext {
+	return facet.RenderContext{
+		Caller:       visibility.NewCaller(q.CallerUserRef),
+		Caps:         q.Caps,
+		MutationCaps: q.MutationCaps,
+		CallerArg:    callerArg,
+	}
 }
 
 // callerRefOf is the bare user_ref the FieldsColumnsSQL fragment binds

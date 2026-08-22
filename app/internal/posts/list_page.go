@@ -281,10 +281,12 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 //     tag_follows PK respectively (#1123).
 //   - team_id: restrict to one team's posts (#684)
 //   - liked_by: restrict to posts a given ref has liked (#1106)
-//   - kind: restrict to posts whose COVER asset is of a given kind —
-//     the browse footer's type filter (#1166). See kindFilterSQL, and
-//     note that its EXISTS carries the field-plane readability rule for
-//     the cover, so a cover this caller cannot see matches no kind.
+//   - kind: restrict to posts holding a member of a given badge kind —
+//     the browse footer's type filter (#1166, widened from the cover to
+//     the whole membership by #1190). Since #1251 the predicate is the
+//     shared grammar's `kind` dimension (facet.FacetKind); note that its
+//     EXISTS carries the field-plane readability rule PER MEMBER, so a
+//     member this caller cannot see contributes no kind.
 //
 // Every one of those NARROWS. The read rule is ANDed onto the result,
 // never ORed into it, so no filter here can surface a row the caller
@@ -318,9 +320,9 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 // post the viewer cannot read is simply not on the page — see
 // LikedByUserRef above.
 //
-// Placeholder discipline (ADR 0063): the builder binds $1–$11, the
-// mature and kind conjuncts bind above that when present, the rule's
-// fragment owns everything above them, and its args are appended LAST.
+// Placeholder discipline (ADR 0063): the builder binds $1–$12, the kind
+// selection binds above that when present, the rule's fragment owns
+// everything above them, and its args are appended LAST.
 func (h *Handler) ListPostsPageGated(
 	ctx context.Context,
 	id *auth.Identity,
@@ -339,36 +341,73 @@ func (h *Handler) ListPostsPageGated(
 		p.TeamID,          // $10
 		p.LikedByUserRef,  // $11
 	}
-	// $12 — the caller's own ref, for the mature owner exemption. Bound
-	// BEFORE readRuleSQL is asked for its offset, so the rule's own
-	// placeholders start above it (ADR 0063's discipline: whoever binds
-	// last counts what is already there). A bound placeholder rather
-	// than an inlined literal, unlike the facet aggregators: this is the
-	// hottest query in the app and a per-user query TEXT would defeat
-	// statement caching for a value that changes nothing about the plan.
+	// $12 — the caller's own ref, read by the mature owner exemption and
+	// by the kind conjunct's per-member field gate. Bound BEFORE
+	// readRuleSQL is asked for its offset, so the rule's own placeholders
+	// start above it (ADR 0063's discipline: whoever binds last counts
+	// what is already there). A bound placeholder rather than an inlined
+	// literal, unlike the facet aggregators: this is the hottest query in
+	// the app and a per-user query TEXT would defeat statement caching
+	// for a value that changes nothing about the plan.
 	//
-	// ⚠️ BOUND ONLY WHEN THE FRAGMENT REFERENCES IT. MatureFilterSQL
-	// returns the EMPTY STRING for a qualified viewer and for an admin —
-	// no conjunct at all, so Postgres never sees a filter on the common
-	// path. Binding $12 unconditionally therefore sent a parameter no
-	// statement mentioned, and Postgres cannot infer a type for one:
-	// `could not determine data type of parameter $12` (42P18), on every
-	// request by a QUALIFIED reader. The unqualified path — the one a
-	// single-arm test exercises — worked perfectly, which is why this
-	// reached the suite instead of the keyboard.
+	// ⚠️ IT IS BOUND UNCONDITIONALLY AND REFERENCED UNCONDITIONALLY, and
+	// the second half is what makes the first half safe. Postgres cannot
+	// infer a type for a parameter no statement mentions —
+	// `could not determine data type of parameter $12` (42P18) — and
+	// BOTH readers of this value fold to the empty string on some
+	// callers: MatureFilterSQL renders nothing for a qualified viewer or
+	// an admin, and FieldsReadableSQL renders nothing for system.admin /
+	// content.read.all / a global assets.admin.
+	//
+	// It used to be bound only when the mature fragment referenced it,
+	// which was correct while that fragment was its only reader and
+	// stopped being correct the moment a second one appeared: "bind it
+	// if EITHER of two fragments happens to be non-empty" is a condition
+	// that has to be re-derived every time a third arrives, and getting
+	// it wrong is a 42P18 on exactly one class of caller — the path a
+	// single-arm test does not take. The tautology below is the same one
+	// search.runPosts uses on its own caller ref, for the same reason,
+	// and Postgres folds it away.
+	args = append(args, matureOwnerArg(id)) // $12
 	matureFrag := visibility.MatureFilterSQL(
 		"", visibility.MatureOwnerColPost, "$12", p.Mature, p.MatureAdmin)
-	if matureFrag != "" {
-		args = append(args, matureOwnerArg(id))
-	}
 
-	// The `?kind=` conjunct (#1166). Bound AFTER the mature fragment
-	// because that one names `$12` literally, and BEFORE readRuleSQL is
-	// asked for its offset — same discipline, whoever binds last counts
-	// what is already there.
+	// The `?kind=` conjunct (#1166/#1190), composed through the SHARED
+	// FILTER GRAMMAR since #1251 — ADR 0093 decision 1, "filtered browse
+	// does not get a parallel filter implementation".
+	//
+	// What crosses the seam is the FILTER and only the filter. Every
+	// scoping parameter above — author, team, follow set, liked-by — is
+	// still bound and applied here, because scope selects the corpus
+	// rather than narrowing within it (decision 2), and so are this
+	// query's ordering and its keyset cursor. The result is the same
+	// posts in the same order on the same pages; what changed is that
+	// "which rows is a kind" is now stated once, in facet.dimensionSQL,
+	// where /search reads it too.
+	//
+	// ⚠️ THE TWO MEANINGS OF AN EMPTY SELECTION ARE ONE LINE APART AND
+	// THEY ARE OPPOSITE. Nil Kinds with KindsRequested false is an absent
+	// parameter and must return the whole feed; an empty term set with
+	// KindsRequested TRUE is `?kind=nonsense`, which must return nothing.
+	// Collapsing them turns a typo into "show me everything" — the one
+	// direction a narrowing filter may never move. See KindsRequested.
 	var kindFrag string
 	if p.KindsRequested {
-		frag, kindArgs := kindFilterSQL(id, viewkind.Compile(p.Kinds), len(args))
+		sel := kindSelection(p.Kinds)
+		if sel.Empty() {
+			// Requested, and nothing renderable was named.
+			return nil, nil
+		}
+		frag, kindArgs, satisfiable := sel.SQL(
+			visibility.EntityPost, "posts", len(args), kindRenderContext(id, "$12"))
+		if !satisfiable {
+			// Unreachable for this dimension today — a post is
+			// satisfiable for `kind:` — and honoured rather than
+			// assumed, which is what runPosts and the aggregators do
+			// with the same answer. "Unsupported" means zero rows, never
+			// "no constraint".
+			return nil, nil
+		}
 		kindFrag = frag
 		args = append(args, kindArgs...)
 	}
@@ -420,6 +459,7 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
                     WHERE lk.target_kind = 'post'
                       AND lk.target_id = posts.id
                       AND lk.user_ref = $11::BIGINT))
+  AND ($12::BIGINT IS NULL OR TRUE)
   AND ` + order.keysetSQL("posted_at", "id", 7, 8))
 	b.WriteString(draftFrag)
 	b.WriteString(kindFrag)

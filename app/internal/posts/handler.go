@@ -1232,11 +1232,12 @@ func (h *Handler) ListPosts(
 	// named kind(s) — the browse footer's type filter (#1166, widened
 	// from cover-only to any-member by #1190).
 	//
-	// Parsed here and enforced in kindFilterSQL, which carries the
-	// per-member field-plane readability rule with it: a member the
-	// caller may not read contributes no kind, because the card
-	// withholds everything about it and a filter that could still select
-	// the post through it would hand the same fact back by elimination.
+	// Parsed here and enforced by the shared filter grammar's `kind`
+	// dimension (facet.FacetKind, #1251), which carries the per-member
+	// field-plane readability rule with it: a member the caller may not
+	// read contributes no kind, because the card withholds everything
+	// about it and a filter that could still select the post through it
+	// would hand the same fact back by elimination.
 	//
 	// No authorization decision at this layer, for the same reason
 	// ?team_id= has none: the conjunct NARROWS and the post read rule

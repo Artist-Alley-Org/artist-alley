@@ -46,8 +46,19 @@ func ParseHitType(s string) (HitType, bool) {
 // engine. The HTTP handler builds one from the request query
 // string; tests construct freely.
 type Query struct {
-	// Text is the free-text search query. Empty text is rejected
-	// upstream — /search requires a query.
+	// Text is the free-text search query, and it is OPTIONAL.
+	//
+	// ⚠️ This comment used to read "empty text is rejected upstream —
+	// /search requires a query", and it has been wrong since #1157. What
+	// counts as a search is decided in ONE place, [Engine.Run], because
+	// that is the only place that can see all three of text, similarity
+	// hint and facet selection; the upstream copy at the HTTP edge was
+	// DELETED rather than widened, precisely so the two could not come to
+	// disagree (ADR 0070 / #1023). A query carrying a filter and no text
+	// is a complete question — "everything at pipeline stage Final" is
+	// the primary thing an advanced search page exists to ask — and it
+	// returns a normal result body. Only a request with none of the three
+	// gets ErrEmptyQuery.
 	Text string
 
 	// Types is the set of entity kinds to search. Empty slice

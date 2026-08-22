@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -138,6 +139,56 @@ const (
 	// ticking it returns — makes no promise a dimension without buckets
 	// can break.
 	FacetAI FacetType = "ai"
+
+	// FacetKind narrows to the BADGE KIND a card draws — image, video,
+	// ebook, 3d — the browse footer's type filter (#1166), converged
+	// onto the shared grammar by #1251 per ADR 0093 decision 1.
+	//
+	// # It is DERIVED, which is why it is a dimension and not a column
+	//
+	// There is no `kind` column and there deliberately is not one. The
+	// glyph in a tile's corner is resolved in the browser by
+	// `kindForAsset` from two inputs — `asset_type` and
+	// `file_extension` — and package viewkind is the server-side mirror
+	// of that derivation, held to its source by a parity test. The
+	// predicate below is [viewkind.KindSQL], the same derivation
+	// transcribed to SQL, so "the filter selected this row" and "the
+	// card draws this badge" are one decision rather than two that agree
+	// today. Filtering on `asset_type` instead was the obvious shortcut
+	// and it is provably wrong on the seeded corpus: ref 2 is "Document"
+	// and the badge splits it into `ebook` and `doc`.
+	//
+	// # ⚠️ THE FIRST DIMENSION WHOSE PREDICATE NEEDS THE CALLER
+	//
+	// [Selection]'s own doc used to state that dimensionSQL is
+	// caller-blind BY DESIGN, and that a dimension needing the caller
+	// must handle it at the execution chokepoints instead. That holds
+	// for a question with a whole-query answer — "may you read this
+	// collection", "may you read this field" — and it cannot hold for
+	// this one, because the readability rule here applies PER MEMBER of
+	// a post, inside a correlated EXISTS that only the renderer builds.
+	// So [RenderContext] exists and dimensionSQL takes it. See the post
+	// arm in [dimensionSQL] for what is at stake if it is dropped: a
+	// restricted member's kind becomes recoverable by asking for each
+	// kind in turn.
+	//
+	// # Its values combine with OR
+	//
+	// The control is a multi-select — "show me images and videos" — and
+	// `?kind=image,video` has meant the union since #1166. For an ASSET,
+	// AND would be unsatisfiable (a row resolves to exactly one kind).
+	// For a POST it would be satisfiable and WRONG: it would read "a post
+	// holding both an image and a video", which is not what ticking two
+	// boxes on a type filter asks for. Non-conjunctive on both counts —
+	// see [FacetType.conjunctive].
+	//
+	// # Filter-only, like FacetCollection, FacetField and FacetAI
+	//
+	// No [Aggregator] and absent from [AllFacets]. The browse footer
+	// renders its boxes from the VOCABULARY (viewkind.All), not from
+	// counts, so there is no bucket whose number could disagree with
+	// what ticking it returns.
+	FacetKind FacetType = "kind"
 )
 
 // The [FacetAI] value vocabulary. CLOSED, validated in
@@ -161,8 +212,8 @@ const (
 // AllFacets returns the set of aggregators the dispatcher runs when
 // the caller doesn't restrict via ?facets=...
 //
-// FacetCollection, FacetField and FacetAI are deliberately absent — see
-// their docs.
+// FacetCollection, FacetField, FacetAI and FacetKind are deliberately
+// absent — see their docs.
 func AllFacets() []FacetType {
 	return []FacetType{FacetAssetType, FacetTag, FacetSensitivity, FacetOwner, FacetExtension}
 }
@@ -187,6 +238,8 @@ func ParseFacetType(s string) (FacetType, bool) {
 		return FacetField, true
 	case "ai":
 		return FacetAI, true
+	case "kind":
+		return FacetKind, true
 	}
 	return "", false
 }
@@ -279,6 +332,32 @@ type Request struct {
 	// Timeout caps EACH aggregator's runtime independently.
 	// Zero = DefaultAggregatorTimeout.
 	Timeout time.Duration
+}
+
+// renderContext is the caller half of [Selection.SQL] for an aggregator
+// (#1251).
+//
+// The caller ref is INLINED as a literal rather than bound, matching the
+// two [visibility.FieldsReadableSQL] / [visibility.MatureFilterSQL] call
+// sites in aggregators_impl.go and for the reason recorded there: it is
+// an int64 this process produced, never caller-supplied text, and
+// threading another placeholder through four aggregators' arg lists is
+// where an off-by-one lives. The hot browse feed makes the opposite
+// trade — see [RenderContext.CallerArg].
+//
+// ⚠️ IT IS NOT OPTIONAL HERE, even though no aggregator counts a
+// kind bucket. A caller who has ticked `kind:` and asks for the TAG
+// facet reaches the post branch with that term in its selection, and a
+// zero context would make the post half unsatisfiable — silently
+// dropping every post-derived tag count from a rail whose whole
+// invariant is that its number equals what ticking it returns.
+func (r Request) renderContext() RenderContext {
+	return RenderContext{
+		Caller:       r.Caller,
+		Caps:         r.Caps,
+		MutationCaps: r.MutationCaps,
+		CallerArg:    strconv.FormatInt(r.Caller.UserRef, 10),
+	}
 }
 
 // DefaultAggregatorTimeout is the fallback if Request.Timeout is

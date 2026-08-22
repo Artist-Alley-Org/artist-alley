@@ -284,78 +284,13 @@ func ParseList(s string) (kinds []Kind, ok bool) {
 	return out, true
 }
 
-// Selection is the compiled form of a kind filter: the three sets a SQL
-// builder needs, derived from the same tables the Go resolver uses so
-// the query and [ForAsset] cannot disagree.
-type Selection struct {
-	// AssetTypeRefs are the overriding refs whose kind was selected.
-	// An asset carrying one of these matches regardless of extension.
-	AssetTypeRefs []int64
-	// Extensions are the extensions that resolve to a selected kind,
-	// for assets NOT carrying an overriding ref.
-	Extensions []string
-	// IncludePlaceholder selects assets whose extension resolves to
-	// nothing — the badge's blank-page glyph.
-	IncludePlaceholder bool
-}
-
-// Empty reports a selection that can match no asset at all. It is
-// reachable — `?kind=sequence` names a real kind that no single asset
-// can ever resolve to — and the caller must render it as a
-// never-satisfied conjunct rather than as no conjunct.
-func (s Selection) Empty() bool {
-	return len(s.AssetTypeRefs) == 0 && len(s.Extensions) == 0 && !s.IncludePlaceholder
-}
-
-// Compile turns a parsed kind list into the sets the SQL builder binds.
-func Compile(kinds []Kind) Selection {
-	want := make(map[Kind]struct{}, len(kinds))
-	for _, k := range kinds {
-		want[k] = struct{}{}
-	}
-	var sel Selection
-	for ref, k := range assetTypeKind {
-		if _, ok := want[k]; ok {
-			sel.AssetTypeRefs = append(sel.AssetTypeRefs, ref)
-		}
-	}
-	sort.Slice(sel.AssetTypeRefs, func(i, j int) bool {
-		return sel.AssetTypeRefs[i] < sel.AssetTypeRefs[j]
-	})
-	for _, group := range extensionOrder {
-		if _, ok := want[group.kind]; !ok {
-			continue
-		}
-		for _, e := range group.exts {
-			// Precedence: an extension claimed by an earlier group
-			// belongs to that group's kind, so a later group must not
-			// pull it in. `ts` must not join the doc selection.
-			if extIndex[e] == group.kind {
-				sel.Extensions = append(sel.Extensions, e)
-			}
-		}
-	}
-	sort.Strings(sel.Extensions)
-	_, sel.IncludePlaceholder = want[KindPlaceholder]
-	return sel
-}
-
-// OverrideRefs is every ref in the override map, selected or not. The
-// SQL builder needs it for the negative half of the rule: an asset
-// carrying ANY overriding ref has its extension ignored, so it must not
-// fall through to the extension arm.
-func OverrideRefs() []int64 {
-	out := make([]int64, 0, len(assetTypeKind))
-	for ref := range assetTypeKind {
-		out = append(out, ref)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
 // KnownExtensions is every extension the resolver recognises, sorted.
-// The SQL builder needs it only when [Selection.IncludePlaceholder] is
-// set, where "resolves to nothing" is expressed as "in none of these".
+//
+// Nothing in the query path needs it since #1251 moved the filter onto
+// [KindSQL], which resolves a row's kind rather than testing it against
+// compiled sets. It survives as the VOCABULARY, which is what the parity
+// tests enumerate: TestKindSQLMirrorsResolver walks it to prove the
+// rendered branch table claims each extension exactly once.
 func KnownExtensions() []string {
 	out := make([]string, 0, len(extIndex))
 	for e := range extIndex {
