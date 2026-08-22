@@ -74,6 +74,13 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Picking a tag suggestion now finds what the tag counts.** The search box could suggest a tag
+  and then find nothing when you picked it, because the pick ran as ordinary text — and many tags
+  exist only as labels, not as words in any description. A picked tag now applies the real tag
+  filter, so choosing "open-licence" returns exactly the items the sidebar says carry it. Tag
+  suggestions also cover tags on individual files now, not only tags on posts — gated so a tag you
+  could only learn from something unreadable is never offered (#1077, PR #1253).
+
 - **Adding a second filter to an advanced search no longer widens the results.** Two filters on
   different fields were being combined as "either" instead of "both", so narrowing a search made it
   return *more* — 907 matches for one filter and 596 for another gave 1,191 together, when the
@@ -98,6 +105,11 @@ where applicable, otherwise note "no-spec-impact."
   a database and language stack this project no longer uses (#1093, #996, PR #1226).
 
 ### Internal
+
+- **Browse's tag and visibility filters joined the shared machinery.** Same convergence as the
+  type filter before them, deleting a duplicated tag predicate; the wall's results are unchanged,
+  verified byte-for-byte across 336 captured pages. Filtering by two tags is now possible and means
+  "both", matching what the search language already documented (#1251 in part, PR #1253).
 
 - **Browse's type filter now uses the same machinery as search.** Filtering the wall by kind of work
   was implemented separately from the identical filter in search — two copies of one rule, which is
