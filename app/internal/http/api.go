@@ -1159,12 +1159,20 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// the notification writer built just above; seeded once at boot via
 	// EnsureScheduled (idempotent). The reaper writes audit rows
 	// tx-bound with each domain change.
+	//
+	// Publisher (#1238) is the posts handler itself: a scheduled post
+	// state change is a PUBLICATION, and publication moves the state and
+	// emits the federation activity in one transaction. Handing the
+	// reaper the same body the endpoint runs is what keeps a scheduled
+	// publish from being a post that exists here and nowhere else. The
+	// identity it acts as is wired in server.go — SetActorLoader.
 	jobSvc.Registry.Register(&scheduledactions.ReaperJob{
-		Pool:     pool,
-		Jobs:     jobSvc,
-		Rec:      auditRec,
-		Notifier: socialNotifyAdapter{w: notifWriter},
-		Logger:   logger,
+		Pool:      pool,
+		Jobs:      jobSvc,
+		Rec:       auditRec,
+		Notifier:  socialNotifyAdapter{w: notifWriter},
+		Publisher: s.posts,
+		Logger:    logger,
 	})
 	if err := scheduledactions.EnsureScheduled(context.Background(), jobSvc); err != nil {
 		logger.LogAttrs(context.Background(), slog.LevelWarn,
