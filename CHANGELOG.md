@@ -9,6 +9,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **You can hide AI-made work while you browse.** The type-filter menu on the browse wall gains a
+  "Hide AI-made work" switch. It hides only work that is *entirely* AI-generated — a piece that
+  used AI along the way and was finished by hand stays visible, and so does anything with no
+  declaration at all, because not knowing must never hide someone's work. The choice sticks across
+  reloads on that browser, applies with the same Apply button as the type filters, and the closed
+  button shows a marker so you can tell the wall is being thinned without opening the menu
+  (#1251, #1242's dimension, PR #1254).
+
 - **Hiding AI work now keeps the mixed pieces.** Choosing to hide AI-created work excludes only
   posts where *everything* is declared AI-generated. A piece that used AI for part of the process —
   an early idea, an upscale — and was finished by hand still shows, because excluding it for one
@@ -73,6 +81,11 @@ where applicable, otherwise note "no-spec-impact."
   title nobody wrote (#1161, PR #1232).
 
 ### Fixed
+
+- **Browsers set to block site data no longer get an empty browse page.** Reading a remembered
+  setting could throw in that configuration, and it happened while the page was starting up — so
+  nothing rendered at all. The browse page's settings reads are now guarded; a wider sweep of the
+  remaining settings is tracked separately (#1255 filed, fixed for browse in PR #1254).
 
 - **Picking a tag suggestion now finds what the tag counts.** The search box could suggest a tag
   and then find nothing when you picked it, because the pick ran as ordinary text — and many tags
