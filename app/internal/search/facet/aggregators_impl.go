@@ -155,7 +155,7 @@ func buildAssetPopulationSQL(
 		return "", nil, false, err
 	}
 	selFrag, selArgs, ok := req.Selection.ForFacet(own).SQL(
-		visibility.EntityAsset, "a", offset+len(args))
+		visibility.EntityAsset, "a", offset+len(args), req.renderContext())
 	if !ok {
 		return "", nil, false, nil
 	}
@@ -375,7 +375,7 @@ func (tagAgg) Aggregate(ctx context.Context, pool *pgxpool.Pool, req Request) ([
 	postOffset := 1 + len(assetArgs)
 	postFrag, postArgs := postPred.ToSQL("p", postOffset)
 	postSelFrag, postSelArgs, postOK := req.Selection.ForFacet(FacetTag).SQL(
-		visibility.EntityPost, "p", postOffset+len(postArgs))
+		visibility.EntityPost, "p", postOffset+len(postArgs), req.renderContext())
 	postFrag += postSelFrag
 	postArgs = append(postArgs, postSelArgs...)
 	// #1117 — the mature conjunct on the POST half, reading the derived

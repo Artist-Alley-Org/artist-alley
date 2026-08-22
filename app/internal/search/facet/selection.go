@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/mscrnt/artist-alley/app/internal/viewkind"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -53,16 +54,34 @@ import (
 //     [FacetType.canonicalValue] — one function, same file, no new
 //     concept on the wire.
 //   - A dimension whose value NAMES ANOTHER ENTITY needs authorizing,
-//     and the renderer cannot do it. dimensionSQL is caller-blind by
-//     design (it takes an entity, a dimension, an alias and one
-//     placeholder index) and every term renders exactly one placeholder,
-//     so there is nowhere to put the caller's identity without changing
-//     the arity for every dimension. It is therefore a separate step at
-//     the two execution chokepoints — see [Selection.Authorize].
+//     and the renderer cannot do it. Authorizing is one lookup with a
+//     WHOLE-QUERY answer, so it is a separate step at the two execution
+//     chokepoints — see [Selection.Authorize].
 //
 // Both are properties of the VALUE's type rather than of the mechanism,
 // and neither needed a second query path, a bespoke parameter, or a
 // change to the wire vocabulary.
+//
+// ⛔ THE SECOND BULLET USED TO SAY MORE THAN IT COULD KEEP, and #1251
+// is where it stopped being true. It read "dimensionSQL is caller-blind
+// by design … so there is nowhere to put the caller's identity without
+// changing the arity for every dimension", which conflated two claims: a
+// dimension may need the caller for AUTHORIZATION (a whole-query yes/no,
+// which Authorize handles) or inside its PREDICATE (a per-row conjunct,
+// which nothing handled). [FacetKind] is the second kind: a post matches
+// through its members, and a member the caller may not read must
+// contribute no kind, inside the correlated EXISTS the renderer builds.
+// So dimensionSQL now takes a [RenderContext] and is no longer
+// caller-blind.
+//
+// The arity worry turned out to be avoidable, and the way it was avoided
+// is worth copying: the DERIVATION moved instead of the plumbing.
+// [viewkind.KindSQL] resolves a row to its kind, so a term is
+// `<expression> = $n` — still one placeholder, still one arg — where the
+// obvious shape (compile the selected kinds to asset-type refs and
+// extension sets, then test membership) needed three bound arrays. If a
+// dimension seems to need more placeholders, ask whether it is testing a
+// derived value that could be COMPUTED and compared instead.
 type Selection struct {
 	// terms is kept in insertion order and deduplicated by
 	// (Type, Value). Small by construction — a rail with more than a
@@ -216,6 +235,16 @@ func (s Selection) CacheKey() string {
 // the honest reading of "show me pure work or non-pure work" and is
 // exactly what the caller asked for, since the two values PARTITION the
 // corpus. Non-conjunctive, deliberately.
+//
+// ⭐ [FacetKind] was checked against it too, and it is the first
+// dimension where the two entities give DIFFERENT reasons for the same
+// answer. An asset resolves to exactly one kind, so AND is the
+// unsatisfiable reading extension and sensitivity already have. A POST
+// is a set of members, so `kind:image AND kind:video` IS satisfiable
+// there — and still wrong: it would mean "a post holding both", which
+// is not what ticking two boxes on a type filter asks for, and it would
+// make the same two terms mean different things on two entities.
+// Non-conjunctive, deliberately, on both counts.
 func (t FacetType) conjunctive() bool { return t == FacetTag }
 
 // canonicalValue validates a value for dimension t and returns the form
@@ -264,6 +293,27 @@ func (t FacetType) canonicalValue(v string) (string, bool) {
 			return v, true
 		}
 		return "", false
+	case FacetKind:
+		// #1251 — the FOURTH dimension with a value grammar, and like
+		// [FacetAI] its vocabulary is a CLOSED SET: package viewkind's
+		// [viewkind.All], which a parity test holds to the frontend's
+		// ViewKind union.
+		//
+		// Rejecting an unknown name here is what makes `filter=kind:junk`
+		// a 400 out of [ParseSelection] rather than a predicate that
+		// matches nothing. ⚠️ The FEED's `?kind=` parameter answers the
+		// same mistake differently — `viewkind.ParseList` DROPS an
+		// unrecognised name and reports that a filter was asked for, so
+		// `?kind=nonsense` yields an empty page — and the two are not in
+		// conflict: `?kind=` is a comma list where one junk term beside a
+		// real one must still narrow to the real one, while `filter=` is
+		// one dimension and one value, where there is nothing left to
+		// narrow to. Both fail CLOSED; neither can widen.
+		v = strings.ToLower(strings.TrimSpace(v))
+		if !viewkind.Valid(v) {
+			return "", false
+		}
+		return v, true
 	case FacetField:
 		// #1157/#1165 — `<code><op><value>`. The SECOND dimension with a
 		// value grammar, the first whose value is compound, and now the
@@ -690,6 +740,60 @@ func fieldReadable(
 	return caps != nil && caps(*readCap), nil
 }
 
+// RenderContext carries the caller-dependent inputs a dimension needs
+// when its predicate has to decide, IN SQL, whether this caller may see
+// the value it is selecting on (#1251).
+//
+// # Why it exists, when [Selection.Authorize] already handles the caller
+//
+// Authorize answers questions with a WHOLE-QUERY answer: may you read
+// this collection, may you read this field. One lookup, one boolean, and
+// a refusal means an empty result set — so it can sit at the execution
+// chokepoint and the renderer can stay caller-blind, which is what this
+// file used to say it would always be.
+//
+// [FacetKind] is the first dimension that cannot be served that way. A
+// post matches a kind through its MEMBERS, and a member the caller may
+// not read must contribute no kind — otherwise asking for each kind in
+// turn recovers the withheld one by elimination (#902/#1066, and
+// posts.TestKindFilter_RestrictedMemberIsNeverProbeable is the assertion
+// that pins it). That rule is a conjunct on each candidate member, INSIDE
+// the correlated EXISTS the renderer builds, and there is nowhere else to
+// put it: hoisting it up to the post is precisely the implementation the
+// leak test exists to fail.
+//
+// # ⚠️ THE ZERO VALUE MUST NOT BE USABLE, and it is not
+//
+// [visibility.Caller]'s zero value is `{UserRef: 0, IsAnonymous: false}`
+// — "user zero", which is WIDER than anonymous, because the anonymous
+// branch of the field plane adds status conjuncts that this one skips. A
+// dimension that read a forgotten RenderContext would therefore fail
+// OPEN. So a dimension that needs one requires [RenderContext.CallerArg]
+// to be non-empty and returns ok=false without it, which
+// [Selection.SQL] turns into "this entity matches nothing" — the
+// fail-closed direction the rest of this file takes.
+type RenderContext struct {
+	// Caller is the reader whose readability is being composed.
+	Caller visibility.Caller
+	// Caps and MutationCaps are that caller's resolved content-plane and
+	// assets.admin capabilities — the same two values every other splice
+	// site of [visibility.FieldsReadableSQL] passes.
+	Caps         visibility.ContentCaps
+	MutationCaps visibility.AssetMutationCaps
+	// CallerArg is an ALREADY-BOUND placeholder ("$3") holding the
+	// caller's user_ref, with 0 for anonymous — the same contract
+	// FieldsReadableSQL's own `callerArg` parameter has, and the reason
+	// this is a placeholder rather than an inlined literal is
+	// posts.ListPostsPageGated: it is the hottest query in the app and a
+	// per-user query TEXT would defeat statement caching for a value that
+	// changes nothing about the plan. (The facet aggregators inline it;
+	// they run on a colder path.)
+	//
+	// EMPTY MEANS "no caller was supplied", which is not the same as
+	// anonymous and is treated as a programming error — see the type doc.
+	CallerArg string
+}
+
 // SQL renders the selection as a WHERE-clause suffix for entity e.
 //
 // Follows the same contract as [visibility.Predicate.ToSQL]: the
@@ -697,13 +801,20 @@ func fieldReadable(
 // argOffset+1, and the caller appends the returned args in order. alias
 // is the table alias ("" for an un-aliased FROM).
 //
+// rc carries the caller for the dimensions whose predicate needs one —
+// today only [FacetKind], and see [RenderContext] for why that could not
+// be handled at the execution chokepoint the way [Selection.Authorize]
+// is. Every other dimension ignores it, so a caller-blind site (the
+// facet aggregators counting a dimension none of whose values name a
+// kind) may pass the zero value and get exactly its previous rendering.
+//
 // satisfiable is FALSE when this entity has no column for one of the
 // selected dimensions — a collection has no file extension, a post has
 // no sensitivity tier. The caller must then skip the entity entirely
 // rather than render the fragment: "unsupported" means zero rows and
 // zero count, not "no constraint". Getting that backwards would widen a
 // filtered search to the rows it was asked to exclude.
-func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int) (fragment string, args []any, satisfiable bool) {
+func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int, rc RenderContext) (fragment string, args []any, satisfiable bool) {
 	if len(s.terms) == 0 {
 		return "", nil, true
 	}
@@ -771,7 +882,7 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int) (fr
 					_, op, _, _ = SplitFieldTerm(v)
 				}
 				idx++
-				expr, ok := dimensionSQL(e, dim, a, idx, op)
+				expr, ok := dimensionSQL(e, dim, a, idx, op, rc)
 				if !ok {
 					return "", nil, false
 				}
@@ -844,6 +955,10 @@ func subGroupKey(dim FacetType, v string) (string, bool) {
 // the ref it was given; a human writing `type:Image` or `owner:alice`
 // in the DSL sends the name. One expression serves both so the two
 // entry points cannot disagree about what `type:3` means.
+//
+// rc is the caller context [FacetKind]'s post arm needs and every other
+// dimension ignores; see [RenderContext].
+//
 // op is the [FieldOp] of a [FacetField] term and is EMPTY for every
 // other dimension. It is a parameter rather than something re-derived
 // here because [Selection.SQL] has already parsed the value to group by
@@ -854,9 +969,11 @@ func subGroupKey(dim FacetType, v string) (string, bool) {
 // callers rely on. Each operator renders a DIFFERENT EXPRESSION over the
 // SAME single placeholder, still carrying `<code><op><value>`; the split
 // still happens in SQL. That is what kept #1165 from having to change
-// the arity for every dimension — the objection [Selection.Authorize]'s
-// doc records against threading the caller through applies here too.
-func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op FieldOp) (string, bool) {
+// the arity for every dimension, and #1251 held the same line for
+// [FacetKind] by moving the DERIVATION into SQL rather than binding the
+// compiled sets — see [Selection]'s doc. `rc` is not a counter-example:
+// it is one value for the whole selection, not a per-term placeholder.
+func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op FieldOp, rc RenderContext) (string, bool) {
 	p := placeholder(idx)
 	switch dim {
 	case FacetTag:
@@ -954,6 +1071,95 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 			// a statement that does not name it.
 			return `(` + p + `::TEXT = '` + AINotPure + `')`, true
 		}
+	case FacetKind:
+		// #1166/#1190, converged onto the grammar by #1251 — the badge
+		// kind, as an ordinary predicate.
+		//
+		// ONE PLACEHOLDER, holding the kind NAME, compared against
+		// [viewkind.KindSQL] — the SQL twin of the same resolver the card
+		// draws its glyph from. The derivation is transcribed once, in
+		// package viewkind beside the Go form and its parity tests, so
+		// this file states WHICH ROWS a kind selects and never what a kind
+		// IS.
+		switch e {
+		case visibility.EntityAsset:
+			// An asset IS the row, so the question is direct. No
+			// readability conjunct here: the asset arm's field plane is
+			// applied by the execution site to the whole selection
+			// (runAssets / enrichAssetHits both append
+			// FieldsReadableSQL under an active filter, for #907's
+			// reason), and the row this predicate reads is the row that
+			// gate covers.
+			return viewkind.KindSQL(strings.TrimSuffix(a, ".")) + ` = ` + p + `::TEXT`, true
+		case visibility.EntityPost:
+			// ⭐⭐ A POST MATCHES THROUGH ITS MEMBERS, AND THE READABILITY
+			// CONJUNCT LIVES PER MEMBER. Both halves are load-bearing and
+			// they are the whole reason [RenderContext] exists.
+			//
+			// ANY MEMBER, NOT THE COVER (#1190). The owner's ruling: "a
+			// post containing an ebook matches the ebook filter, cover or
+			// not". #1166 shipped the cover-only reading and it answered
+			// the wrong question — a five-file art drop whose first image
+			// happens to be the cover was unreachable by every kind it
+			// actually contains.
+			//
+			// The membership is `post_assets` and the EXPLICIT COVER IS
+			// NOT ADDED BESIDE IT, even though `posts.cover_asset_id` can
+			// name a non-member. PostCard resolves its cover as
+			// `cover_asset_id ?? members[0]` and then LOOKS IT UP IN
+			// `post.members`, so a cover that is not a member yields no
+			// coverAsset, no kind badge and no extension band. Selecting a
+			// post by a fact its card cannot draw is the disagreement this
+			// filter's whole test suite is built to catch.
+			//
+			// ⛔ AND THE GATE SITS INSIDE THE EXISTS, BESIDE THE MATCH.
+			// visibility.FieldsReadableSQL is the SQL twin of the exact Go
+			// call posts.enrichPreview makes to decide
+			// `PostMember.Restricted`, so "this member matched" and "this
+			// member's kind is drawable" are one decision. Dropping it —
+			// or hoisting it out to the post — turns the filter into an
+			// oracle for a value the card deliberately withholds: a
+			// restricted member shows no kind and no extension anywhere on
+			// the card, and a filter that could still select the post lets
+			// a reader recover that member's kind by asking for each kind
+			// in turn. That is the derived-copy defect class of
+			// #902/#1066 arriving through a new channel.
+			//
+			// It cannot widen: it is a conjunct INSIDE an EXISTS that is
+			// itself a conjunct, and the whole fragment only ever removes
+			// rows.
+			//
+			// `deleted_at IS NULL` is ListPostAssets' own filter, so the
+			// assets considered here are exactly the ones that reach
+			// `post.members` — a soft-deleted asset is not a member of
+			// anything the reader can see.
+			if rc.CallerArg == "" {
+				// No caller was supplied. Fail closed rather than render
+				// the zero Caller, which reads as "user zero" and is wider
+				// than anonymous — see [RenderContext].
+				return "", false
+			}
+			readable := visibility.FieldsReadableSQL(
+				"fkm", rc.CallerArg, rc.Caller, rc.Caps, rc.MutationCaps)
+			return `EXISTS (SELECT 1 FROM post_assets fkp
+			                 JOIN assets fkm ON fkm.id = fkp.asset_id
+			                WHERE fkp.post_id = ` + a + `id
+			                  AND fkm.deleted_at IS NULL
+			                  AND ` + viewkind.KindSQL("fkm") + ` = ` + p + `::TEXT` +
+				readable + `)`, true
+		}
+		// A collection has no members that resolve to a badge kind — its
+		// mosaic is composed from the assets INSIDE it, which are reached
+		// by `collection:` on the asset entity rather than by this
+		// dimension. So it falls through to ok=false and drops out of a
+		// kind-filtered page entirely.
+		//
+		// ⚠️ That is the POSITIVE-NARROWING direction, and the check
+		// [FacetAI]'s collection arm records is why it is safe here: a
+		// caller asking for `kind:image` is asking about files, so a
+		// collection leaving the page is the answer rather than a loss.
+		// `ai:` had to be satisfiable precisely because it is an
+		// EXCLUSION wearing a value's clothes.
 	case FacetField:
 		// #1157 — one metadata field's value, as an ordinary predicate.
 		// #1165 — under one of four operators.
@@ -963,8 +1169,8 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 		// function's contract is that every term renders exactly one
 		// placeholder, and [Selection.SQL] appends exactly one arg per
 		// term. Taking two here would change the arity for every
-		// dimension — the same objection [Selection.Authorize]'s doc
-		// records against threading the caller through. `split_part`
+		// dimension, which is the line [FacetKind] also had to hold and
+		// held by computing its value in SQL. `split_part`
 		// takes the code, and `substr(… position(<op> …))` takes
 		// everything after the FIRST operator occurrence, so a value
 		// containing the operator's own characters survives intact.
@@ -982,10 +1188,14 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 		// renders its rows from exactly that set, so the backend has to
 		// agree or the page would offer a filter the engine ignores.
 		//
-		// ⛔ read_capability is NOT here. It is caller-dependent and
-		// this function is caller-blind by design — see
-		// [Selection.Authorize], which refuses the whole search when a
-		// term names a field this caller may not read.
+		// ⛔ read_capability is NOT here, even though this function does
+		// now receive a [RenderContext] (#1251). What that context
+		// carries is a caller's RESOLVED, closed-set capabilities, and
+		// `read_capability` is an open set an operator types at runtime —
+		// the same reason [Query.CapChecker] cannot be a cache-key
+		// component. It stays with [Selection.Authorize], which refuses
+		// the whole search when a term names a field this caller may not
+		// read.
 		if e == visibility.EntityAsset {
 			match, ok := fieldValueSQL(op, p)
 			if !ok {

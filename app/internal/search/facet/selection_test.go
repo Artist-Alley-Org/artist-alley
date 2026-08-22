@@ -146,7 +146,7 @@ func TestFieldOperator_UnknownIsUnsatisfiableInSQL(t *testing.T) {
 	} {
 		t.Run(bad, func(t *testing.T) {
 			sel := Selection{}.With(FacetField, bad)
-			frag, args, satisfiable := sel.SQL(visibility.EntityAsset, "assets", 0)
+			frag, args, satisfiable := sel.SQL(visibility.EntityAsset, "assets", 0, RenderContext{})
 			if satisfiable {
 				t.Errorf("SQL for a malformed term %q reported satisfiable, "+
 					"fragment=%q args=%v — a term the parser would have refused "+
@@ -212,7 +212,7 @@ func TestFieldOperator_TermsCombine(t *testing.T) {
 			for _, term := range c.terms {
 				sel = sel.With(FacetField, term)
 			}
-			frag, args, satisfiable := sel.SQL(visibility.EntityAsset, "assets", 0)
+			frag, args, satisfiable := sel.SQL(visibility.EntityAsset, "assets", 0, RenderContext{})
 			if !satisfiable {
 				t.Fatalf("selection %v was unsatisfiable", c.terms)
 			}
@@ -306,7 +306,7 @@ func TestFieldOperator_ReadsTheRightColumn(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			frag, _, satisfiable := Selection{}.With(FacetField, c.term).
-				SQL(visibility.EntityAsset, "assets", 0)
+				SQL(visibility.EntityAsset, "assets", 0, RenderContext{})
 			if !satisfiable {
 				t.Fatalf("term %q was unsatisfiable", c.term)
 			}

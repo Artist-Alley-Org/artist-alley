@@ -425,7 +425,12 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) ([]Hi
 		ids = append(ids, h.ID)
 	}
 	// $1=ids, $2=caller ref, $3=ladder; the selection continues at $4.
-	selFrag, selArgs, satisfiable := q.Filters.SQL(visibility.EntityAsset, "assets", 3)
+	// $2 is the caller ref this statement has already bound, so a
+	// dimension whose predicate carries a per-row readability conjunct
+	// (facet.FacetKind's post arm) reads it from there rather than
+	// binding a second copy of the same value.
+	selFrag, selArgs, satisfiable := q.Filters.SQL(
+		visibility.EntityAsset, "assets", 3, renderContextOf(q, "$2"))
 	if !satisfiable {
 		return nil, nil
 	}
@@ -612,7 +617,8 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	// predicate args start at $5, and the facet selection's args
 	// continue after those.
 	visFrag, visArgs := pred.ToSQL("", 4)
-	selFrag, selArgs, satisfiable := q.Filters.SQL(visibility.EntityAsset, "assets", 4+len(visArgs))
+	selFrag, selArgs, satisfiable := q.Filters.SQL(
+		visibility.EntityAsset, "assets", 4+len(visArgs), renderContextOf(q, "$3"))
 	if !satisfiable {
 		return nil, 0, nil
 	}
@@ -967,9 +973,13 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	// count that outlives its result set is an oracle the hits are not.
 	//
 	// $1=query text, $2=limit, predicate args from $3, selection args
-	// after those.
+	// after those. NO CALLER-REF PLACEHOLDER, and none is needed: no
+	// dimension a COLLECTION can satisfy carries a per-row readability
+	// conjunct. Passing "" says that rather than pointing at an arbitrary
+	// placeholder, and it fails CLOSED if a future dimension changes it —
+	// see facet.RenderContext.
 	selFrag, selArgs, satisfiable := q.Filters.SQL(
-		visibility.EntityCollection, "c", 2+len(visArgs))
+		visibility.EntityCollection, "c", 2+len(visArgs), renderContextOf(q, ""))
 	if !satisfiable {
 		return nil, 0, nil
 	}
@@ -1101,12 +1111,19 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 	// $1=query text, $2=limit, $3=caller ref (bound for the mature
 	// conjunct below), predicate args from $4.
 	visFrag, visArgs := pred.ToSQL("", 3)
-	// #907 — a post satisfies exactly one facet dimension, `tag`, via
-	// post_tags. Any selection naming another one drops posts from the
-	// page. No content-plane conjunct here: the post read rule the
-	// predicate above composes IS the post plane, and unlike an asset a
-	// post has no separate field-withholding tier for its tags.
-	selFrag, selArgs, satisfiable := q.Filters.SQL(visibility.EntityPost, "posts", 3+len(visArgs))
+	// #907 — a selection naming a dimension posts do not carry drops
+	// them from the page. `tag` was the only one for three releases;
+	// `collection`, `ai` and now `kind` (#1251) joined it.
+	//
+	// No content-plane conjunct here, unlike runAssets: the post read
+	// rule the predicate above composes IS the post plane, and a post has
+	// no separate field-withholding tier for its tags. ⚠️ `kind` is the
+	// exception that proves the shape — it selects through the post's
+	// MEMBERS, which do have such a tier, so its predicate carries the
+	// member gate INSIDE its own EXISTS. That is why this call passes a
+	// render context; see facet.RenderContext.
+	selFrag, selArgs, satisfiable := q.Filters.SQL(
+		visibility.EntityPost, "posts", 3+len(visArgs), renderContextOf(q, "$3"))
 	if !satisfiable {
 		return nil, 0, nil
 	}
