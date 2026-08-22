@@ -29,10 +29,12 @@
 // The fields are REQUIRED here and nullable rather than optional, which
 // is the whole point: `null` is a real answer ("this asset has no
 // extension"), while a missing key is a caller that forgot. Only the
-// first is expressible now. The matching OpenAPI schemas (Asset,
-// CollectionResource) list them as required-but-nullable for the same
-// reason, so a surface passing an API row through verbatim satisfies
-// this contract for free and only hand-mapped literals have to think.
+// first is expressible now. The matching OpenAPI schemas (Asset, and
+// PostMember's nested asset) list them as required-but-nullable for the
+// same reason, so a surface passing an API row through verbatim
+// satisfies this contract for free and only hand-mapped literals have to
+// think. (`CollectionResource` was the third; it retired with its
+// endpoint in #1236.)
 //
 // If you add a field CardThumb reads to decide presentation, add it
 // here too — that is what keeps the next refactor honest.

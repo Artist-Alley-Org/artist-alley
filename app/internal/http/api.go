@@ -3181,9 +3181,6 @@ func (s *apiServer) RestoreCollection(ctx context.Context, req openapi.RestoreCo
 	s.invalidateOwnerProfileOnCollectionDelete(ctx, uuid.UUID(req.Id), err)
 	return resp, err
 }
-func (s *apiServer) ListCollectionResources(ctx context.Context, req openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
-	return s.collections.ListCollectionResources(ctx, req)
-}
 
 // The /collections/{id}/posts trio delegates to POSTS, not collections
 // (#882). The payload is a hydrated Post and the gate is the post read

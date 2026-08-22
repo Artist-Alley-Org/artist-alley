@@ -106,6 +106,13 @@ func ccoCoversOf(t *testing.T, pool *pgxpool.Pool, caller int64, collID uuid.UUI
 
 // ccoSeed plants a PUBLIC collection (so both callers can reach it),
 // one member both may picture, and returns the pieces.
+//
+// The member is pinned as a POST's cover, not as a bare
+// `collection_resources` row. #1236 made posts the mosaic's only source
+// — a collection's tile summarises what the collection contains, and a
+// bare asset is inside nothing a reader can open — so a directly-pinned
+// member would compose an EMPTY mosaic here and the override tests below
+// would be comparing the chosen cover against nothing.
 func ccoSeed(t *testing.T, pool *pgxpool.Pool) (collID, member uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
@@ -120,9 +127,19 @@ func ccoSeed(t *testing.T, pool *pgxpool.Pool) (collID, member uuid.UUID) {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM collections WHERE id = $1`, collID)
 	})
 	member = ccoRenderableAsset(t, pool, ccoOwner, "public")
+	postID := uuid.New()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO collection_resources (collection_id, asset_id, sort_order, pinned)
-		VALUES ($1, $2, 0, TRUE)`, collID, member); err != nil {
+		INSERT INTO posts (id, author_user_ref, title, visibility, cover_asset_id)
+		VALUES ($1, $2, $3, 'public', $4)`,
+		postID, ccoOwner, "cco member post", member); err != nil {
+		t.Fatalf("seed member post: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM posts WHERE id = $1`, postID)
+	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO collection_posts (collection_id, post_id, sort_order, pinned)
+		VALUES ($1, $2, 0, TRUE)`, collID, postID); err != nil {
 		t.Fatalf("pin member: %v", err)
 	}
 	return collID, member

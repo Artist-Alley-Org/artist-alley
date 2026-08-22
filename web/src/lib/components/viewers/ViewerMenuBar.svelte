@@ -46,8 +46,9 @@
        is the `onAddToCollection` hook that enabled it. This menu bar is
        always in ASSET context, and a collection shows posts only, so the
        item wrote a `collection_resources` row that nothing renders. The
-       endpoint is untouched (#1161 retires it); the replacement flow —
-       turn this asset into a post in a collection — is #1161's too, and
+       endpoints are gone as well now (#1161 the writes, #1236 the read);
+       the replacement flow — turn this asset into a post in a
+       collection — is #1161's too, and
        a disabled "coming soon" stub in its place would advertise it
        before it exists. */
     /** Optional — Edit menu's "Recreate previews" item appears when

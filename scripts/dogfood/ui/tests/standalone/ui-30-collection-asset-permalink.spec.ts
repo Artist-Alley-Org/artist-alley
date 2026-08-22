@@ -1,17 +1,21 @@
 // ui-30-collection-asset-permalink.spec.ts
 //
-// TWO assertions over one fixture — a collection with a single pinned
-// asset — because #1185 turned the first one inside out.
+// TWO assertions over one fixture — a collection that cannot hold a bare
+// asset at all — because #1185 turned the first one inside out and #1161
+// then removed the state it described.
 //
-// 1. #1185 — A COLLECTION SHOWS POSTS ONLY. The owner's ruling: "non-post
-//    assets only belong to their uploader; collections and browse contain
-//    posts only." So a collection holding nothing but a pinned asset is,
-//    to every reader, EMPTY. This spec pins the absence: no
-//    `collection-assets` section, no asset tile, and the empty state on
-//    the page. Pinning the absence rather than deleting the old assertion
-//    is deliberate — `POST /collections/{id}/resources` still succeeds
-//    (dropping it is #1161), so nothing else in the suite would notice
-//    the section coming back.
+// 1. #1185 / #1161 / #1236 — A COLLECTION SHOWS POSTS ONLY. The owner's
+//    ruling: "non-post assets only belong to their uploader; collections
+//    and browse contain posts only." So a collection holding nothing but
+//    a pinned asset is, to every reader, EMPTY. This spec pins the
+//    absence: no `collection-assets` section, no asset tile, and the
+//    empty state on the page.
+//
+//    It also pins the RETIREMENT of the whole endpoint family, which is
+//    the stronger guarantee: #1161 took the two writes, #1236 took the
+//    read, and none of the three may be routed. Without that, the
+//    section could come back and nothing else in the suite would
+//    notice.
 //
 // 2. #475 / ADR 0068 layer 3 — THE /assets/{id} PERMALINK STILL RESOLVES.
 //    That route did not exist once, so every AssetCard linked into a 404.
@@ -155,7 +159,7 @@ test.describe('UI-30 collections are posts-only, and /assets/{id} still resolves
     }
   });
 
-  test('a bare asset can no longer be pinned at all, and the wall shows nothing (#1185, #1161)', async ({
+  test('the asset-membership endpoints are gone and the wall shows nothing (#1185, #1161, #1236)', async ({
     page,
   }) => {
     const provisioned = await provisionEmptyCollection(page);
@@ -180,6 +184,21 @@ test.describe('UI-30 collections are posts-only, and /assets/{id} still resolves
       [404, 405],
       `DELETE /collections/{id}/resources/{asset_id} answered ${rmRes.status()} — still routed`,
     ).toContain(rmRes.status());
+
+    // #1236: the READ joins them. It outlived the writes by one release
+    // on the claim that the cover picker used it — a claim #1232 had
+    // already falsified by moving the picker to posts.
+    //
+    // ⚠️ Asked as the collection's OWNER, which is what makes the
+    // assertion mean anything. A 404 to anyone else is what the parent
+    // visibility gate used to answer, so it would read the same whether
+    // the route existed or not; the owner is the one caller the live
+    // endpoint answered 200 for.
+    const listRes = await page.request.get(`/api/v1/collections/${collectionId}/resources`);
+    expect(
+      [404, 405],
+      `GET /collections/{id}/resources answered ${listRes.status()} for the collection's OWNER — the retired read endpoint is still routed`,
+    ).toContain(listRes.status());
 
     await page.goto(`/collections/${collectionId}`);
 

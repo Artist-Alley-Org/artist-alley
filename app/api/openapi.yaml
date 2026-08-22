@@ -5662,6 +5662,27 @@ paths:
             type: string
             enum: [active, deprecated, archived, any]
             default: active
+            # PINNED (#1236). oapi-codegen names an enum constant after
+            # its VALUE and only falls back to a type prefix when two
+            # enums in the spec collide. These four collided with
+            # `CollectionResource.status` (draft/active/archived) and so
+            # generated as `SearchFieldValuesParamsStatus*`; retiring
+            # that schema removed the collision and silently renamed
+            # them to bare `Active` / `Any` / `Archived` / `Deprecated`
+            # at package scope in `openapi`, breaking
+            # metadata/vocabulary_search.go.
+            #
+            # The names are pinned here rather than the call sites
+            # rewritten, because the bare forms are both meaningless at
+            # their use sites and unstable: the next schema anywhere in
+            # this file with an `active` enum would rename them again.
+            # A generated identifier should not depend on what OTHER
+            # schemas happen to exist.
+            x-enum-varnames:
+              - SearchFieldValuesParamsStatusActive
+              - SearchFieldValuesParamsStatusDeprecated
+              - SearchFieldValuesParamsStatusArchived
+              - SearchFieldValuesParamsStatusAny
       responses:
         "200":
           description: The matching terms, capped at `limit`.
@@ -6329,12 +6350,13 @@ paths:
         ties them together with the descriptive metadata.
 
         Every asset named in `members` must be one the caller can
-        actually read — the same two-plane rule
-        `addCollectionResource` applies (#922, #882, ADR 0064). An
-        asset the caller cannot read answers `404` with the identical
-        body a nonexistent UUID gets, so the endpoint is not a
-        UUID-existence probe. Nothing is written when a member is
-        refused: the gate runs before the transaction opens.
+        actually read — the two-plane rule of #922 / ADR 0064, which
+        `addCollectionResource` also applied until #1161 retired it and
+        left this endpoint as the rule's only caller. An asset the
+        caller cannot read answers `404` with the identical body a
+        nonexistent UUID gets, so the endpoint is not a UUID-existence
+        probe. Nothing is written when a member is refused: the gate
+        runs before the transaction opens.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -7166,10 +7188,10 @@ paths:
         change this container", and read access to the ASSET answers
         "may you reach the thing being put in it". Both are required.
 
-        The asset gate is the same two-plane rule `createPost` and
-        `addCollectionResource` apply (ADR 0064). An asset the caller
-        cannot read answers `404` with the identical body a nonexistent
-        UUID gets.
+        The asset gate is the same two-plane rule `createPost` applies
+        (ADR 0064) — and the one `addCollectionResource` applied before
+        #1161 retired it. An asset the caller cannot read answers `404`
+        with the identical body a nonexistent UUID gets.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -7510,60 +7532,6 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /collections/{id}/resources:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-    get:
-      operationId: listCollectionResources
-      summary: List the assets pinned in a collection
-      description: |
-        READ ONLY, and the last of its family. The write endpoints that
-        put assets here — `POST /collections/{id}/resources` and
-        `DELETE …/{asset_id}` — were retired with #1161: a collection
-        holds POSTS (ADR 0091 decision 1), so pinning a bare asset was
-        a second publication path with no title, no framing and no
-        moment where the artist decided the work was ready. v0.10.1
-        (#1185) took away the UI; this took away the endpoints.
-
-        Existing rows are NOT converted into posts (decision 4) — an
-        auto-generated post is a publication nobody authored. They stay
-        readable, here, and nowhere else.
-
-        This operation survives because the collection COVER PICKER
-        reads it, and reading which assets a collection holds is not a
-        publication path.
-
-        Returns assets currently pinned in this collection (excludes
-        rows where the per-membership `expires_at` has passed), in
-        `sort_order ASC, added_at ASC` order so the list matches the
-        admin-arranged sequence. Joined onto assets for thumb/title
-        without an N+1.
-      tags: [collections]
-      # Anonymous-readable (#438). Documentary only — the handler
-      # guard enforces access, not this block.
-      security: []
-      parameters:
-        - name: limit
-          in: query
-          required: false
-          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
-        - name: cursor
-          in: query
-          required: false
-          schema: { type: string }
-      responses:
-        "200":
-          description: A page of resources
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/CollectionResourceList" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
   /collections/{id}/posts:
     parameters:
       - name: id
@@ -7587,16 +7555,18 @@ paths:
         possible), so membership never widens a post: a post you may
         not read is simply not in this list.
 
-        That is deliberately NOT the placeholder shape
-        `GET /collections/{id}/resources` uses for assets. An asset
-        placeholder exists so the reader can see that a restriction is
-        there and ask for access (#881/#883); a post carries its
-        author's title and description in the row itself, and the post
-        surface has no request-access flow to attach to. Absence is the
-        honest answer here.
+        A post you may not read is ABSENT, not placeheld. The member
+        grid's asset listing used to answer the other way — a withheld
+        member came back as a visible placeholder so the reader could
+        see a restriction and ask for access (#881/#883) — but a post
+        carries its author's title and description in the row itself,
+        and the post surface has no request-access flow to attach to.
+        Absence is the honest answer here. (That listing,
+        `GET /collections/{id}/resources`, retired with #1236; this is
+        the only membership listing a collection has.)
       tags: [collections]
-      # Anonymous-readable, same as the resources listing (#438).
-      # Documentary only — the handler guard enforces access.
+      # Anonymous-readable (#438). Documentary only — the handler
+      # guard enforces access.
       security: []
       parameters:
         - name: limit
@@ -15108,33 +15078,36 @@ components:
             answers here. A client cannot tell an overridden cover from
             a one-member mosaic, and does not need to.
 
-            BOTH MEMBER KINDS CONTRIBUTE. `collection_resources` supply
-            their asset directly, and `collection_posts` supply
+            POSTS ARE THE ONLY SOURCE (#1236). Each contributing
+            member is a `collection_posts` row, supplying
             `cover_thumbnail_asset_id ?? cover_asset_id` — the same
             preference a feed card uses. #882 made a post-only
             collection an ordinary thing to own ("save someone else's
             post"), and until #1026 such a collection had no cover
             source at all and rendered as an empty folder.
 
-            ORDER is the curator's, `added_at` ascending, INTERLEAVED
-            across both kinds: the arrangement is the curation, and the
-            two membership tables are one shelf.
+            `collection_resources` rows used to contribute their asset
+            directly, and stopped when #1161 removed bare-asset
+            membership as a publication path: a tile summarises what a
+            collection CONTAINS, and after #1185 took the asset section
+            off the page those assets were inside nothing a reader
+            could open. A COLLECTION WITH NO POSTS THEREFORE HAS NO
+            COVERS — the field is absent, and the client paints its
+            empty state.
+
+            ORDER is the curator's, `added_at` ascending: the
+            arrangement is the curation.
 
             EACH ASSET APPEARS AT MOST ONCE, at its earliest position.
-            One asset can be reached by several routes — pinned
-            directly AND carried as a post's cover, or shared as the
-            cover of two posts — and the same picture twice summarises
-            nothing. Clients may therefore key a list on `asset_id`.
+            Two posts in one collection can share a cover, and the same
+            picture twice summarises nothing. Clients may therefore key
+            a list on `asset_id`.
 
             WITHHELD MEMBERS ARE SKIPPED, NOT SLOTTED. Only members
             passing the caller's picture plane (ADR 0064) and having a
             `col` rendition appear, so a restricted member never
-            occupies a slot a renderable one behind it could fill.
-            That is deliberately NOT the placeholder shape
-            `GET /collections/{id}/resources` uses: a placeholder there
-            exists so the reader can see a restriction and ask for
-            access (#881/#883), whereas a blank quarter of a mosaic
-            says nothing and costs a picture.
+            occupies a slot a renderable one behind it could fill. A
+            blank quarter of a mosaic says nothing and costs a picture.
 
             ABSENT means "not composed on this surface", never "no
             members" — an empty array is the honest "nothing to show".
@@ -15444,146 +15417,6 @@ components:
           description: |
             Opaque token for the next page; omitted on the final page.
             Pass back unchanged as the `cursor` query parameter.
-    CollectionResource:
-      type: object
-      description: |
-        One asset's membership in a collection, joined with the
-        asset's identifying columns so the UI can render without a
-        follow-up fetch.
-
-        RESTRICTED MEMBERS (#883) — identical contract to PostMember, see
-        there for the reasoning. When the caller fails
-        `visibility.FieldsReadable` this row degrades to a placeholder:
-        `restricted` is true and EVERY joined-in `assets` column below
-        (title, asset_type, status, file_hash, file_extension, thumbhash,
-        pixel_width, pixel_height, asset_created_at, and the three
-        availability flags) is ABSENT — not empty-string, not zero, not
-        null — so a client cannot distinguish "withheld" from "genuinely
-        empty" and infer from the difference.
-
-        That is why those fields moved out of `required`. The permitted
-        key set on a restricted row is exactly the `collection_resources`
-        row's own columns — collection_id, asset_id, sort_order, pinned,
-        expires_at, added_at — plus `restricted` and
-        `owner_display_name`. No column of `assets` crosses the boundary,
-        so a column added to that table later is withheld by
-        construction.
-
-        On a NON-restricted row every one of those fields is still sent,
-        unchanged and unconditionally; #595's argument for keeping the
-        card-critical ones non-optional (a surface that hand-maps a
-        narrower object silently loses video badges and sprite-scrub)
-        still holds, and the allow-list test in
-        `collections/member_allowlist_test.go` is what now pins it,
-        because `required` no longer can.
-      required:
-        [collection_id, asset_id, sort_order, pinned, added_at, restricted]
-      properties:
-        collection_id: { type: string, format: uuid }
-        asset_id: { type: string, format: uuid }
-        sort_order: { type: integer }
-        pinned: { type: boolean }
-        expires_at:
-          type: string
-          format: date-time
-          nullable: true
-        added_at: { type: string, format: date-time }
-        restricted:
-          type: boolean
-          description: |
-            True when the caller may not see this member. Every
-            asset-derived field is then absent and the client renders a
-            placeholder tile (#883).
-        owner_display_name:
-          type: string
-          description: |
-            Set only when `restricted` is true: the display name of the
-            asset's owner. Absent — not empty — when unresolvable.
-        title: { type: string }
-        asset_type: { type: integer, format: int64 }
-        status: { type: string, enum: [draft, active, archived] }
-        file_hash:
-          type: string
-          nullable: true
-        file_extension:
-          type: string
-          nullable: true
-          description: |
-            REQUIRED (nullable), same as Asset.file_extension. A member
-            tile is rendered by the same CardThumb as every other
-            surface, and CardThumb derives the media TYPE from this
-            field alone — video / 3D badge and the sprite-scrub hover
-            preview both key off it. Omitting it renders a collection
-            member as an untyped still (#595).
-        thumbhash:
-          type: string
-          nullable: true
-          description: |
-            REQUIRED (nullable), same as Asset.thumbhash — the member
-            tile's blur-up placeholder. See file_extension above for why
-            the card-critical fields are required rather than optional.
-        preview_available:
-          type: boolean
-          description: |
-            True iff a servable `col` variant exists for this asset AND
-            the caller passes the content plane (ADR 0064). Same contract
-            + 0064-safety as Asset.preview_available — the tile renders a
-            thumbnail only when true, else a placeholder with no byte
-            request (#471).
-        ladder_available:
-          type: boolean
-          description: |
-            True iff every variant in the operator's CONFIGURED preview
-            ladder exists for this member asset AND the caller passes the
-            content plane. Identical contract to Asset.ladder_available —
-            see there for why this is computed from config rather than
-            from the default rung list.
-        scrub_available:
-          type: boolean
-          description: |
-            True iff a servable `sprites.vtt` cue file exists for this
-            member asset AND the caller passes the content plane.
-            Identical contract to Asset.scrub_available — a collection
-            member renders through the same CardThumb as every other
-            surface, so it needs the same hover-scrub gate (#835).
-        pixel_width:
-          type: integer
-          format: int32
-          nullable: true
-          description: |
-            REQUIRED (nullable), same contract as Asset.pixel_width — a
-            member tile is laid out by the same CardThumb as every other
-            surface, and in masonry that frame sizes itself from this
-            ratio (#640). Null when the install has no recorded
-            dimensions for the asset; see Asset.pixel_width for when
-            that happens.
-        pixel_height:
-          type: integer
-          format: int32
-          nullable: true
-          description: |
-            REQUIRED (nullable), same as Asset.pixel_height. Projected
-            as a PAIR with `pixel_width` — never one without the other.
-        asset_created_at: { type: string, format: date-time }
-        card_fields:
-          type: array
-          items: { $ref: '#/components/schemas/CardField' }
-          description: |
-            The values of the fields an operator marked `show_on_card`,
-            already resolved to display strings and in the order the
-            field definitions declare — identical contract to
-            Asset.card_fields, see there.
-
-            #1133: this key was missing, and with it the flag had never
-            worked on the member grid. A collection member renders
-            through the same card as a browse tile, so "at a glance"
-            meant one thing on browse and nothing here. The values are
-            resolved by the same projection the browse page uses
-            (metadata.CardFieldsForAssets), not by a second one.
-
-            Absent on a `restricted` placeholder, like every other
-            asset-derived key above — the withheld row's permitted key
-            set is unchanged by this addition.
     AssetPostUsage:
       type: object
       description: |
@@ -15618,30 +15451,31 @@ components:
 
             Soft-deleted posts are not counted: a deleted post is not
             somewhere the asset appears.
-    CollectionResourceList:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/CollectionResource" }
-        next_cursor:
-          type: string
-          nullable: true
+
+            ⚠️ INDEPENDENT OF HOW MANY `items` CAME BACK. `items` is a
+            bounded page; this counts what the caller may NOT read, so
+            an asset in more readable posts than one page holds still
+            reports `0` here. The two are answers to different
+            questions and a client must not derive either from the
+            other — in particular `withheld_count` is not
+            "total − items.length", which is how #1237 found the server
+            reporting readable-but-truncated posts as withheld.
     CollectionPostWrite:
       type: object
       description: |
-        The body of `POST /collections/{id}/posts` (#882). It used to
-        mirror `CollectionResourceWrite` field for field, because
+        The body of `POST /collections/{id}/posts` (#882), and the only
+        membership a caller writes. It used to mirror
+        `CollectionResourceWrite` field for field, because
         `collection_posts` and `collection_resources` carry the same
         membership columns — a reference plus the curator's ordering.
-        That schema is gone with its endpoint (#1161): a collection
-        holds posts, so this is the only membership a caller writes.
+        That schema went with its write endpoints in #1161 and the read
+        side (`CollectionResource`) with #1236: a collection holds
+        posts.
 
-        There is no post-side counterpart of `CollectionResource`: the
-        listing returns whole `Post` objects, so the collection page
-        renders the same PostCard as browse rather than a second,
-        narrower post shape that would drift from it.
+        There is no narrower post-membership shape on the read side
+        either — `GET /collections/{id}/posts` returns whole `Post`
+        objects, so the collection page renders the same PostCard as
+        browse rather than a second shape that would drift from it.
       required: [post_id]
       properties:
         post_id: { type: string, format: uuid }
@@ -16134,14 +15968,18 @@ components:
             empty (#1110). Null for every non-collection subject.
 
             Caller-scoped, not a raw `COUNT(*)`. The membership is the
-            same one the mosaic composes from (pinned, unexpired, over
-            both `collection_posts` and `collection_resources`), with
-            each half gated by the caller's own read predicate — the
-            post rule for posts, the asset predicate for resources. A
-            bare count would publish the SIZE of the withheld part of a
-            public collection, which is the derived-copy leak class
-            #902 closed for search text and #1066 closed for
-            embeddings, arriving through a subtitle.
+            same one the mosaic composes from — pinned, unexpired
+            `collection_posts` rows, gated by the caller's own post read
+            predicate. A bare count would publish the SIZE of the
+            withheld part of a public collection, which is the
+            derived-copy leak class #902 closed for search text and
+            #1066 closed for embeddings, arriving through a subtitle.
+
+            #1236 dropped the `collection_resources` half that used to
+            be added to this. The tile describes what the page shows,
+            and the page shows posts; a tile advertising more items than
+            the collection opens to is the count disagreeing with the
+            thing it counts.
         cover_asset_id:
           type: string
           format: uuid

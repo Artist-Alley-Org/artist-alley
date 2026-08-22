@@ -42,55 +42,6 @@ func (q *Queries) AddCollectionAcl(ctx context.Context, arg AddCollectionAclPara
 	return err
 }
 
-const addCollectionResource = `-- name: AddCollectionResource :exec
-
-INSERT INTO collection_resources (
-    collection_id, asset_id, sort_order, pinned, expires_at
-) VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (collection_id, asset_id) DO UPDATE SET
-    sort_order = EXCLUDED.sort_order,
-    pinned     = EXCLUDED.pinned,
-    expires_at = EXCLUDED.expires_at
-`
-
-type AddCollectionResourceParams struct {
-	CollectionID pgtype.UUID
-	AssetID      pgtype.UUID
-	SortOrder    int32
-	Pinned       bool
-	ExpiresAt    pgtype.Timestamptz
-}
-
-// ---------------------------------------------------------------------------
-// collection_resources (manual membership)
-// ---------------------------------------------------------------------------
-// Idempotent on the PK (collection_id, asset_id). A re-add updates
-// sort_order + expires_at + pinned but keeps added_at fixed.
-func (q *Queries) AddCollectionResource(ctx context.Context, arg AddCollectionResourceParams) error {
-	_, err := q.db.Exec(ctx, addCollectionResource,
-		arg.CollectionID,
-		arg.AssetID,
-		arg.SortOrder,
-		arg.Pinned,
-		arg.ExpiresAt,
-	)
-	return err
-}
-
-const countCollectionResources = `-- name: CountCollectionResources :one
-SELECT COUNT(*)::BIGINT AS value
-FROM collection_resources
-WHERE collection_id = $1 AND pinned = TRUE
-  AND (expires_at IS NULL OR expires_at > NOW())
-`
-
-func (q *Queries) CountCollectionResources(ctx context.Context, collectionID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countCollectionResources, collectionID)
-	var value int64
-	err := row.Scan(&value)
-	return value, err
-}
-
 const createCollection = `-- name: CreateCollection :one
 
 
@@ -304,7 +255,6 @@ func (q *Queries) GetCollectionIncludingDeleted(ctx context.Context, id pgtype.U
 }
 
 const listCollectionAcls = `-- name: ListCollectionAcls :many
-
 SELECT collection_id, principal_type, principal_id, permission,
        granted_at, granted_by_user_ref, expires_at
 FROM collection_acls
@@ -312,9 +262,6 @@ WHERE collection_id = $1
 ORDER BY granted_at DESC, principal_type, principal_id, permission
 `
 
-// ---------------------------------------------------------------------------
-// ACLs (Phase 1.7.B-7c)
-// ---------------------------------------------------------------------------
 func (q *Queries) ListCollectionAcls(ctx context.Context, collectionID pgtype.UUID) ([]CollectionAcl, error) {
 	rows, err := q.db.Query(ctx, listCollectionAcls, collectionID)
 	if err != nil {
@@ -332,106 +279,6 @@ func (q *Queries) ListCollectionAcls(ctx context.Context, collectionID pgtype.UU
 			&i.GrantedAt,
 			&i.GrantedByUserRef,
 			&i.ExpiresAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listCollectionResourcesPage = `-- name: ListCollectionResourcesPage :many
-SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
-       cr.expires_at, cr.added_at,
-       a.title, a.asset_type, a.status, a.file_hash,
-       a.file_extension, a.thumbhash,
-       a.created_at AS asset_created_at
-FROM collection_resources cr
-JOIN assets a ON a.id = cr.asset_id
-WHERE cr.collection_id = $1
-  AND cr.pinned = TRUE
-  AND (cr.expires_at IS NULL OR cr.expires_at > NOW())
-  AND a.deleted_at IS NULL
-  AND ($2::INTEGER IS NULL
-       OR cr.sort_order > $2::INTEGER
-       OR (cr.sort_order = $2::INTEGER
-           AND cr.added_at > $3::TIMESTAMPTZ))
-ORDER BY cr.sort_order ASC, cr.added_at ASC
-LIMIT $4::INTEGER
-`
-
-type ListCollectionResourcesPageParams struct {
-	CollectionID    pgtype.UUID
-	CursorSortOrder *int32
-	CursorAddedAt   pgtype.Timestamptz
-	RowLimit        int32
-}
-
-type ListCollectionResourcesPageRow struct {
-	CollectionID   pgtype.UUID
-	AssetID        pgtype.UUID
-	SortOrder      int32
-	Pinned         bool
-	ExpiresAt      pgtype.Timestamptz
-	AddedAt        pgtype.Timestamptz
-	Title          string
-	AssetType      int64
-	Status         string
-	FileHash       *string
-	FileExtension  *string
-	Thumbhash      []byte
-	AssetCreatedAt pgtype.Timestamptz
-}
-
-// NOT THE ENFORCEMENT PATH. Applies no visibility predicate; nothing in
-// production calls it. Collection contents go through
-// ListCollectionResourcesPageGated (resources_page.go), which splices
-// visibility.Predicate — sqlc's static SQL cannot take a runtime
-// fragment (#438). Retained for its generated row shape, which stays in
-// sync with the schema. Do not call it from handler code.
-//
-// #661 proposed deleting it as dead. The QUERY is unreachable, but the
-// generated ListCollectionResourcesPageRow is load-bearing: the gated
-// row embeds it and resourceRowToAPI consumes it, so deleting the query
-// means hand-writing that struct and losing the schema sync this
-// comment relies on. Keeping it is the better trade.
-// Returns pinned members, sorted by sort_order then added_at. Excludes
-// expired-membership rows. Joined onto assets so the list can carry
-// the title/thumb/type the front-end needs without an N+1.
-// file_extension + thumbhash are part of that set (#595): a member tile
-// renders through the same CardThumb as browse, which derives the media
-// type (video / 3D badge + sprite-scrub hover) from the extension alone.
-func (q *Queries) ListCollectionResourcesPage(ctx context.Context, arg ListCollectionResourcesPageParams) ([]ListCollectionResourcesPageRow, error) {
-	rows, err := q.db.Query(ctx, listCollectionResourcesPage,
-		arg.CollectionID,
-		arg.CursorSortOrder,
-		arg.CursorAddedAt,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListCollectionResourcesPageRow
-	for rows.Next() {
-		var i ListCollectionResourcesPageRow
-		if err := rows.Scan(
-			&i.CollectionID,
-			&i.AssetID,
-			&i.SortOrder,
-			&i.Pinned,
-			&i.ExpiresAt,
-			&i.AddedAt,
-			&i.Title,
-			&i.AssetType,
-			&i.Status,
-			&i.FileHash,
-			&i.FileExtension,
-			&i.Thumbhash,
-			&i.AssetCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -601,20 +448,6 @@ func (q *Queries) RemoveCollectionAcl(ctx context.Context, arg RemoveCollectionA
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const removeCollectionResource = `-- name: RemoveCollectionResource :exec
-DELETE FROM collection_resources WHERE collection_id = $1 AND asset_id = $2
-`
-
-type RemoveCollectionResourceParams struct {
-	CollectionID pgtype.UUID
-	AssetID      pgtype.UUID
-}
-
-func (q *Queries) RemoveCollectionResource(ctx context.Context, arg RemoveCollectionResourceParams) error {
-	_, err := q.db.Exec(ctx, removeCollectionResource, arg.CollectionID, arg.AssetID)
-	return err
 }
 
 const updateCollection = `-- name: UpdateCollection :one

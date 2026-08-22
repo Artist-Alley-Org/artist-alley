@@ -120,17 +120,47 @@ func ccPost(t *testing.T, pool *pgxpool.Pool, author int64, vis, coverAssetID, t
 	return id.String()
 }
 
-// ccPinAsset / ccPinPost make a membership row at an EXPLICIT added_at,
-// which is the axis the mosaic orders on. Written directly rather than
-// through the add endpoints because the interleave is the property under
-// test and `now()` cannot express it.
-func ccPinAsset(t *testing.T, pool *pgxpool.Pool, colID, assetID string, at time.Time) {
+// ccPinAssetViaPost / ccPinPost make a membership row at an EXPLICIT
+// added_at, which is the axis the mosaic orders on. Written directly
+// rather than through the add endpoint because the ordering is a
+// property under test and `now()` cannot express it.
+//
+// ccPinAssetViaPost replaced ccPinAsset with #1236. The old helper wrote
+// a `collection_resources` row — the direct route, which no longer
+// paints a tile. Every assertion those fixtures made is about the ASSET
+// PICTURE PLANE (restricted, draft, mature, caps) and survives the
+// change unaltered, because the mosaic gates a post's cover asset with
+// the identical `previewFrag` + mature conjunct it used to splice on the
+// direct half: `renderable` joins `assets` whichever half fed it.
+//
+// The wrapper post is PUBLIC and authored by the reader, so the post
+// plane admits it unconditionally and the asset plane stays the only
+// variable — which is what each caller wants. A test that needs the POST
+// half withheld builds its own post through ccPost.
+func ccPinAssetViaPost(t *testing.T, pool *pgxpool.Pool, colID, assetID string, at time.Time) {
+	t.Helper()
+	ccPinPost(t, pool, colID, ccPost(t, pool, ccOwner, "public", assetID, ""), at)
+}
+
+// ccPinBareAsset writes the RETIRED direct membership row —
+// `collection_resources` — which no rendered surface draws any more
+// (#1236). It exists so the tests above can prove the mosaic ignores
+// such a row, which is a fact about rows that must be PRESENT.
+//
+// The table itself is internal by decision, not gone; see the note in
+// handler.go for the writers and readers that keep it alive.
+func ccPinBareAsset(t *testing.T, pool *pgxpool.Pool, colID, assetID string, at time.Time) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(),
 		`INSERT INTO collection_resources (collection_id, asset_id, sort_order, pinned, added_at)
 		 VALUES ($1, $2, 0, TRUE, $3)`, colID, assetID, at); err != nil {
-		t.Fatalf("pin asset: %v", err)
+		t.Fatalf("pin bare asset: %v", err)
 	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM collection_resources WHERE collection_id = $1 AND asset_id = $2`,
+			colID, assetID)
+	})
 }
 
 func ccPinPost(t *testing.T, pool *pgxpool.Pool, colID, postID string, at time.Time) {
@@ -240,38 +270,117 @@ func TestCollectionCovers_PrefersPostThumbnail(t *testing.T) {
 	}
 }
 
-// TestCollectionCovers_InterleavesBothKinds pins the ordering decision:
-// added_at ascending across BOTH membership tables. A composer that
-// concatenated (all assets, then all posts) returns the same SET and the
-// wrong arrangement, and the arrangement is the curation.
-func TestCollectionCovers_InterleavesBothKinds(t *testing.T) {
+// TestCollectionCovers_OrdersByAddedAt pins the ordering decision:
+// added_at ascending, which is the arrangement the curator built. A
+// composer that ordered by sort_order or by post id returns the same SET
+// and the wrong arrangement, and the arrangement is the curation.
+//
+// This used to be TestCollectionCovers_InterleavesBothKinds, asserting
+// the interleave ACROSS the two membership tables. #1236 left one table,
+// so there is nothing to interleave — but added_at is still the lead
+// key, and a rank that lost it would still be wrong.
+func TestCollectionCovers_OrdersByAddedAt(t *testing.T) {
 	pool := ccSetup(t)
 	router, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
-	colID := mustCreate(t, router, map[string]any{"name": "ct_covers_interleave", "visibility": "private"})
+	colID := mustCreate(t, router, map[string]any{"name": "ct_covers_order", "visibility": "private"})
 
 	base := time.Now().Add(-time.Hour)
-	a1 := ccRenderableAsset(t, pool, ccOwner, "ct_il_a1", "public")
 	p1 := ccRenderableAsset(t, pool, ccOwner, "ct_il_p1", "public")
-	a2 := ccRenderableAsset(t, pool, ccOwner, "ct_il_a2", "public")
 	p2 := ccRenderableAsset(t, pool, ccOwner, "ct_il_p2", "public")
+	p3 := ccRenderableAsset(t, pool, ccOwner, "ct_il_p3", "public")
 
-	ccPinAsset(t, pool, colID, a1, base)
-	ccPinPost(t, pool, colID, ccPost(t, pool, ccOwner, "public", p1, ""), base.Add(1*time.Minute))
-	ccPinAsset(t, pool, colID, a2, base.Add(2*time.Minute))
-	ccPinPost(t, pool, colID, ccPost(t, pool, ccOwner, "public", p2, ""), base.Add(3*time.Minute))
+	// Pinned OUT of added_at order, so a composer that simply returned
+	// insertion order would fail.
+	ccPinPost(t, pool, colID, ccPost(t, pool, ccOwner, "public", p2, ""), base.Add(2*time.Minute))
+	ccPinPost(t, pool, colID, ccPost(t, pool, ccOwner, "public", p1, ""), base)
+	ccPinPost(t, pool, colID, ccPost(t, pool, ccOwner, "public", p3, ""), base.Add(4*time.Minute))
 
 	got := strings.Join(ccCovers(t, router, colID), ",")
-	want := strings.Join([]string{a1, p1, a2, p2}, ",")
+	want := strings.Join([]string{p1, p2, p3}, ",")
 	if got != want {
-		t.Errorf("covers = %v\nwant   %v\nthe two membership tables are one shelf; "+
-			"added_at is the curator's arrangement across both", got, want)
+		t.Errorf("covers = %v\nwant   %v\nadded_at ascending is the curator's arrangement", got, want)
 	}
 }
 
-// TestCollectionCovers_DeduplicatesOneAssetReachedTwice — an asset can
-// be a cover candidate by several routes at once: pinned directly AND
-// carried as a post's cover, or shared as the cover of two posts. Seed
-// data has plenty of both.
+// TestCollectionCovers_BareAssetMembersPaintNothing is #1236's central
+// assertion, on a collection carrying BOTH halves.
+//
+// A `collection_resources` row is not a member of anything a reader can
+// open: #1161 retired the write path and #1185 took the asset section
+// off the collection page. This composer was the last surface still
+// drawing them, so the tile summarised content the collection does not
+// contain — and on the seeded corpus the bare half outnumbered the post
+// half roughly two to one, so it was most of the tile.
+//
+// The bare assets here are PUBLIC and carry a `col` rendition, so they
+// are candidates on every axis except the one that now matters: which
+// table they arrived through. An implementation that kept the half
+// returns four covers; the fixture is built so the wrong answer is not
+// merely a different order but a different SET.
+func TestCollectionCovers_BareAssetMembersPaintNothing(t *testing.T) {
+	pool := ccSetup(t)
+	router, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, router, map[string]any{"name": "ct_covers_bare", "visibility": "private"})
+
+	base := time.Now().Add(-time.Hour)
+	bare1 := ccRenderableAsset(t, pool, ccOwner, "ct_bare_1", "public")
+	bare2 := ccRenderableAsset(t, pool, ccOwner, "ct_bare_2", "public")
+	viaPost := ccRenderableAsset(t, pool, ccOwner, "ct_bare_via_post", "public")
+
+	// The bare rows go FIRST, so a surviving half would take the lead
+	// slots and the assertion cannot pass by accident on ordering.
+	ccPinBareAsset(t, pool, colID, bare1, base)
+	ccPinBareAsset(t, pool, colID, bare2, base.Add(time.Minute))
+	ccPinPost(t, pool, colID, ccPost(t, pool, ccOwner, "public", viaPost, ""), base.Add(2*time.Minute))
+
+	got := ccCovers(t, router, colID)
+	if strings.Join(got, ",") != viaPost {
+		t.Errorf("covers = %v, want [%s] — a bare `collection_resources` row is not a "+
+			"member of anything the collection page shows, so it must not paint the "+
+			"tile that stands for the collection (#1236)", got, viaPost)
+	}
+}
+
+// TestCollectionCovers_BareAssetOnlyCollectionHasNoCover is the visible
+// cost of the change, asserted rather than discovered.
+//
+// A collection holding ONLY bare assets used to paint a full mosaic and
+// open to an empty page. It now yields no covers at all — which is the
+// honest answer, because the collection IS empty. 13 collections on the
+// seeded corpus are in exactly this state (leftover ui-13 / UI-30
+// fixtures).
+//
+// ⚠️ This is NOT a return of #1026. That defect was a collection with
+// RENDERABLE MEMBERS drawing nothing, and before it, withheld members
+// crowding renderable ones out of the slots. An empty array here is the
+// same answer an empty collection gets, and CollectionCard's deliberate
+// empty state renders it — see the header note in covers.go.
+func TestCollectionCovers_BareAssetOnlyCollectionHasNoCover(t *testing.T) {
+	pool := ccSetup(t)
+	router, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, router, map[string]any{"name": "ct_covers_bare_only", "visibility": "private"})
+
+	base := time.Now().Add(-time.Hour)
+	for i, title := range []string{"ct_bare_only_1", "ct_bare_only_2", "ct_bare_only_3"} {
+		ccPinBareAsset(t, pool, colID,
+			ccRenderableAsset(t, pool, ccOwner, title, "public"),
+			base.Add(time.Duration(i)*time.Minute))
+	}
+
+	if got := ccCovers(t, router, colID); len(got) != 0 {
+		t.Errorf("covers = %v, want [] — a collection whose only members are bare assets "+
+			"contains nothing a reader can open, so the tile has nothing to summarise", got)
+	}
+}
+
+// TestCollectionCovers_DeduplicatesOneAssetReachedTwice — one asset can
+// be a cover candidate several times over: two posts in a collection
+// sharing a cover, the same file posted twice, a repost. Seed data has
+// plenty.
+//
+// (Before #1236 there was a third route — pinned directly AND carried as
+// a post's cover — and it is gone with the direct half. The DISTINCT ON
+// is not: two posts sharing a cover is the ordinary case and always was.)
 //
 // Two things go wrong without the DISTINCT ON. The mosaic paints the
 // same picture two to four times, which summarises nothing; and
@@ -293,10 +402,10 @@ func TestCollectionCovers_DeduplicatesOneAssetReachedTwice(t *testing.T) {
 	other := ccRenderableAsset(t, pool, ccOwner, "ct_dedupe_other", "public")
 
 	// The same asset three ways, then one distinct member behind them.
-	ccPinAsset(t, pool, colID, shared, base)
+	ccPinPost(t, pool, colID, ccPost(t, pool, ccOwner, "public", shared, ""), base)
 	ccPinPost(t, pool, colID, ccPost(t, pool, ccOwner, "public", shared, ""), base.Add(time.Minute))
 	ccPinPost(t, pool, colID, ccPost(t, pool, ccOwner, "public", shared, ""), base.Add(2*time.Minute))
-	ccPinAsset(t, pool, colID, other, base.Add(3*time.Minute))
+	ccPinAssetViaPost(t, pool, colID, other, base.Add(3*time.Minute))
 
 	got := ccCovers(t, router, colID)
 	want := []string{shared, other}
@@ -327,12 +436,18 @@ func TestCollectionCovers_WithheldMembersDoNotCrowdTheMosaic(t *testing.T) {
 	base := time.Now().Add(-time.Hour)
 	at := func(i int) time.Time { return base.Add(time.Duration(i) * time.Minute) }
 
-	// Four withheld members at the head, alternating kinds so a
-	// per-table bug cannot hide behind the other table.
+	// Four withheld members at the head, alternating the PLANE that
+	// withholds them so a bug in one gate cannot hide behind the other:
+	// a stranger's restricted asset carried by a post the caller may
+	// read (the asset plane refuses the picture), then a public asset
+	// carried by a stranger's PRIVATE post (the post plane refuses the
+	// row). Before #1236 the alternation was across the two membership
+	// tables; the two planes are the pair that is left, and they are the
+	// pair that matters.
 	hidden := make([]string, 0, 4)
 	for i := 0; i < 2; i++ {
 		a := ccRenderableAsset(t, pool, ccStranger, "ct_crowd_hidden_asset", "restricted")
-		ccPinAsset(t, pool, colID, a, at(2*i))
+		ccPinAssetViaPost(t, pool, colID, a, at(2*i))
 		hidden = append(hidden, a)
 
 		pc := ccRenderableAsset(t, pool, ccStranger, "ct_crowd_hidden_post_cover", "public")
@@ -344,7 +459,7 @@ func TestCollectionCovers_WithheldMembersDoNotCrowdTheMosaic(t *testing.T) {
 	want := make([]string, 0, 4)
 	for i := 0; i < 2; i++ {
 		a := ccRenderableAsset(t, pool, ccOwner, "ct_crowd_ok_asset", "public")
-		ccPinAsset(t, pool, colID, a, at(4+2*i))
+		ccPinAssetViaPost(t, pool, colID, a, at(4+2*i))
 		want = append(want, a)
 
 		pc := ccRenderableAsset(t, pool, ccOwner, "ct_crowd_ok_post_cover", "public")
@@ -398,8 +513,8 @@ func TestCollectionCovers_WithheldMemberContributesNothing(t *testing.T) {
 	secretAsset := ccRenderableAsset(t, pool, ccStranger, "ct_wh_secret_asset", "restricted")
 	secretPostCover := ccRenderableAsset(t, pool, ccStranger, "ct_wh_secret_post_cover", "public")
 
-	ccPinAsset(t, pool, colID, open, base)
-	ccPinAsset(t, pool, colID, secretAsset, base.Add(time.Minute))
+	ccPinAssetViaPost(t, pool, colID, open, base)
+	ccPinAssetViaPost(t, pool, colID, secretAsset, base.Add(time.Minute))
 	ccPinPost(t, pool, colID,
 		ccPost(t, pool, ccStranger, "private", secretPostCover, ""), base.Add(2*time.Minute))
 
@@ -443,9 +558,9 @@ func TestCollectionCovers_AnonymousCaller(t *testing.T) {
 	draft := ccRenderableAsset(t, pool, ccOwner, "ct_anon_draft", "public")
 	setAssetTier(t, pool, draft, "draft", "public")
 	restricted := ccRenderableAsset(t, pool, ccOwner, "ct_anon_restricted", "restricted")
-	ccPinAsset(t, pool, colID, draft, base)
-	ccPinAsset(t, pool, colID, restricted, base.Add(time.Minute))
-	ccPinAsset(t, pool, colID, open, base.Add(2*time.Minute))
+	ccPinAssetViaPost(t, pool, colID, draft, base)
+	ccPinAssetViaPost(t, pool, colID, restricted, base.Add(time.Minute))
+	ccPinAssetViaPost(t, pool, colID, open, base.Add(2*time.Minute))
 
 	got := ccCovers(t, anon, colID)
 	if len(got) != 1 || got[0] != open {
@@ -498,8 +613,8 @@ func TestCollectionCovers_CapsHoldingCallerSeesEverything(t *testing.T) {
 	base := time.Now().Add(-time.Hour)
 	open := ccRenderableAsset(t, pool, ccOwner, "ct_caps_open", "public")
 	secret := ccRenderableAsset(t, pool, ccStranger, "ct_caps_secret", "restricted")
-	ccPinAsset(t, pool, colID, secret, base)
-	ccPinAsset(t, pool, colID, open, base.Add(time.Minute))
+	ccPinAssetViaPost(t, pool, colID, secret, base)
+	ccPinAssetViaPost(t, pool, colID, open, base.Add(time.Minute))
 
 	for _, cap := range []string{"content.read.all", "system.admin"} {
 		t.Run(cap, func(t *testing.T) {
@@ -611,9 +726,9 @@ func TestCollectionCover_OverrideIsTheSoleEntry(t *testing.T) {
 	m1 := ccRenderableAsset(t, pool, ccOwner, "ct_sole_m1", "public")
 	m2 := ccRenderableAsset(t, pool, ccOwner, "ct_sole_m2", "public")
 	m3 := ccRenderableAsset(t, pool, ccOwner, "ct_sole_m3", "public")
-	ccPinAsset(t, pool, colID, m1, base)
-	ccPinAsset(t, pool, colID, m2, base.Add(time.Minute))
-	ccPinAsset(t, pool, colID, m3, base.Add(2*time.Minute))
+	ccPinAssetViaPost(t, pool, colID, m1, base)
+	ccPinAssetViaPost(t, pool, colID, m2, base.Add(time.Minute))
+	ccPinAssetViaPost(t, pool, colID, m3, base.Add(2*time.Minute))
 
 	// NOT a member — the whole point of the free pointer is that it need
 	// not be one, and a test using a member could not tell the two
@@ -670,7 +785,7 @@ func TestCollectionCover_ClearRevertsToMosaic(t *testing.T) {
 	colID := mustCreate(t, router, map[string]any{"name": "ct_cover_clear", "visibility": "private"})
 
 	member := ccRenderableAsset(t, pool, ccOwner, "ct_clear_member", "public")
-	ccPinAsset(t, pool, colID, member, time.Now().Add(-time.Hour))
+	ccPinAssetViaPost(t, pool, colID, member, time.Now().Add(-time.Hour))
 	chosen := ccRenderableAsset(t, pool, ccOwner, "ct_clear_chosen", "public")
 
 	ccSetCover(t, router, colID, chosen)
@@ -729,7 +844,7 @@ func TestCollectionCover_WithheldOverrideFallsBackToMosaic(t *testing.T) {
 	// A member EVERYONE may picture, so "the mosaic" is a non-empty
 	// answer and "fell back" is distinguishable from "returned nothing".
 	open := ccRenderableAsset(t, pool, ccOwner, "ct_wo_open", "public")
-	ccPinAsset(t, pool, colID, open, time.Now().Add(-time.Hour))
+	ccPinAssetViaPost(t, pool, colID, open, time.Now().Add(-time.Hour))
 
 	// Restricted and owned by the curator: they may picture it (owner
 	// branch of the picture plane), the stranger may not.
@@ -810,7 +925,7 @@ func TestCollectionCover_DeletedAssetRevertsToMosaic(t *testing.T) {
 	colID := mustCreate(t, router, map[string]any{"name": "ct_cover_fk", "visibility": "private"})
 
 	member := ccRenderableAsset(t, pool, ccOwner, "ct_fk_member", "public")
-	ccPinAsset(t, pool, colID, member, time.Now().Add(-time.Hour))
+	ccPinAssetViaPost(t, pool, colID, member, time.Now().Add(-time.Hour))
 	chosen := ccRenderableAsset(t, pool, ccOwner, "ct_fk_chosen", "public")
 	ccSetCover(t, router, colID, chosen)
 
@@ -847,7 +962,7 @@ func TestCollectionCover_SoftDeletedOverrideFallsBackButKeepsThePointer(t *testi
 	colID := mustCreate(t, router, map[string]any{"name": "ct_cover_soft", "visibility": "private"})
 
 	member := ccRenderableAsset(t, pool, ccOwner, "ct_soft_member", "public")
-	ccPinAsset(t, pool, colID, member, time.Now().Add(-time.Hour))
+	ccPinAssetViaPost(t, pool, colID, member, time.Now().Add(-time.Hour))
 	chosen := ccRenderableAsset(t, pool, ccOwner, "ct_soft_chosen", "public")
 	ccSetCover(t, router, colID, chosen)
 
@@ -885,7 +1000,7 @@ func TestCollectionCover_OverrideWithoutAColRenditionFallsBack(t *testing.T) {
 	colID := mustCreate(t, router, map[string]any{"name": "ct_cover_norend", "visibility": "private"})
 
 	member := ccRenderableAsset(t, pool, ccOwner, "ct_norend_member", "public")
-	ccPinAsset(t, pool, colID, member, time.Now().Add(-time.Hour))
+	ccPinAssetViaPost(t, pool, colID, member, time.Now().Add(-time.Hour))
 
 	pending := ccRenderableAsset(t, pool, ccOwner, "ct_norend_pending", "public")
 	if _, err := pool.Exec(context.Background(),
@@ -1010,8 +1125,8 @@ func TestCollectionCovers_MatureMemberWithheldFromDisqualifiedViewer(t *testing.
 	ccMarkMature(t, pool, adult)
 	plain := ccRenderableAsset(t, pool, ccStranger, "ct_mat_plain", "public")
 
-	ccPinAsset(t, pool, colID, adult, base)
-	ccPinAsset(t, pool, colID, plain, base.Add(time.Minute))
+	ccPinAssetViaPost(t, pool, colID, adult, base)
+	ccPinAssetViaPost(t, pool, colID, plain, base.Add(time.Minute))
 
 	// LEAK ARM. A reader who has not opted in, on a collection anyone may
 	// read, holding a member anyone may read.
@@ -1060,7 +1175,7 @@ func TestCollectionCovers_MatureOwnerStillSeesTheirOwnTile(t *testing.T) {
 
 	mine := ccRenderableAsset(t, pool, ccOwner, "ct_mat_mine", "public")
 	ccMarkMature(t, pool, mine)
-	ccPinAsset(t, pool, colID, mine, time.Now().Add(-time.Hour))
+	ccPinAssetViaPost(t, pool, colID, mine, time.Now().Add(-time.Hour))
 
 	got := ccCovers(t, ccMatureRouter(t, pool, ccOwner, visibility.MatureViewer{}), colID)
 	if len(got) != 1 || got[0] != mine {
@@ -1092,7 +1207,7 @@ func TestCollectionCovers_MatureOverrideFallsBackToMosaic(t *testing.T) {
 	// A member everyone may picture, so "fell back" is distinguishable
 	// from "returned nothing".
 	open := ccRenderableAsset(t, pool, ccOwner, "ct_mo_open", "public")
-	ccPinAsset(t, pool, colID, open, time.Now().Add(-time.Hour))
+	ccPinAssetViaPost(t, pool, colID, open, time.Now().Add(-time.Hour))
 
 	adult := ccRenderableAsset(t, pool, ccOwner, "ct_mo_adult", "public")
 	ccMarkMature(t, pool, adult)
@@ -1147,7 +1262,7 @@ func TestCollectionCovers_MatureOnlyCollectionYieldsNoTileNotABlank(t *testing.T
 
 	adult := ccRenderableAsset(t, pool, ccStranger, "ct_mono_adult", "public")
 	ccMarkMature(t, pool, adult)
-	ccPinAsset(t, pool, colID, adult, time.Now().Add(-time.Hour))
+	ccPinAssetViaPost(t, pool, colID, adult, time.Now().Add(-time.Hour))
 
 	got := ccCovers(t, ccMatureRouter(t, pool, ccOwner, visibility.MatureViewer{}), colID)
 	if len(got) != 0 {

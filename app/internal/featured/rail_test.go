@@ -545,9 +545,14 @@ func railPostVisibility(t *testing.T, pool *pgxpool.Pool, post uuid.UUID, vis st
 	}
 }
 
-// railAddResource pins an asset directly into a collection — the other
-// half of a collection's membership, and the half the mosaic and this
-// count both read alongside posts.
+// railAddResource writes a RETIRED direct membership row —
+// `collection_resources`. It was the other half of a collection's
+// membership, and the half both the mosaic and this count read alongside
+// posts until #1236 dropped it from each.
+//
+// Kept precisely so the count can be asserted to IGNORE such a row: that
+// is a fact about rows which must be present, and a fixture that stopped
+// writing them would leave the change unpinned.
 func railAddResource(t *testing.T, pool *pgxpool.Pool, coll, asset uuid.UUID) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(),
@@ -684,6 +689,13 @@ func TestRail_EmbargoAssetSubtitleIsWithheldWithItsPixels(t *testing.T) {
 // TestRail_ItemCountCountsOnlyWhatTheCallerCanSee is the count half of
 // the same rule. A public collection whose membership is partly withheld
 // must not report the size of the withheld part.
+//
+// #1236 added a second thing to it: the count is POSTS ONLY. It is the
+// mosaic's sibling — one paints the tile, the other labels it — and a
+// tile that says "3 items" over a collection which opens to 2 posts is
+// the count disagreeing with the thing it counts. So the two pinned bare
+// assets below are seeded and must contribute NOTHING, one of them
+// readable so the assertion cannot pass on the gate alone.
 func TestRail_ItemCountCountsOnlyWhatTheCallerCanSee(t *testing.T) {
 	pool := railPool(t)
 	anon := visibility.NewCaller(nil)
@@ -698,7 +710,11 @@ func TestRail_ItemCountCountsOnlyWhatTheCallerCanSee(t *testing.T) {
 		railPostVisibility(t, pool, p, vis)
 	}
 
-	// One pinned resource it may see, one gated by sensitivity.
+	// Two bare assets pinned directly (#1236): one this caller could
+	// read, one gated by sensitivity. NEITHER may reach the count — the
+	// readable one is the load-bearing half of that pair, because a
+	// count that still summed the resource leg would pass an assertion
+	// built only from withheld ones.
 	railAddResource(t, pool, coll, railStoredAsset(t, pool, "rail-count-res-ok", "public", true))
 	railAddResource(t, pool, coll, railStoredAsset(t, pool, "rail-count-res-gated", "embargo", true))
 
@@ -709,13 +725,17 @@ func TestRail_ItemCountCountsOnlyWhatTheCallerCanSee(t *testing.T) {
 	if row.ItemCount == nil {
 		t.Fatal("item_count is nil for a collection subject; the card has no subtitle fallback")
 	}
-	// 2 readable posts + 1 readable resource. The org-only post and the
-	// embargo asset are members this caller cannot open, and a count
-	// that included them would publish the size of the withheld part.
-	if want := int32(3); *row.ItemCount != want {
-		t.Errorf("item_count = %d, want %d — the count must cover only the members this "+
-			"caller can see, or a subtitle becomes the side channel #902 closed for "+
-			"search text", *row.ItemCount, want)
+	// 2 readable POSTS, and nothing else. The org-only post is a member
+	// this caller cannot open, and a count that included it would
+	// publish the size of the withheld part. The two pinned bare assets
+	// are not members of anything the collection page shows, and a count
+	// that included the readable one would advertise 3 items on a tile
+	// that opens to 2 (#1236).
+	if want := int32(2); *row.ItemCount != want {
+		t.Errorf("item_count = %d, want %d — the count covers the POSTS this caller can "+
+			"see: withheld members would make the subtitle the side channel #902 closed "+
+			"for search text, and bare assets would make it disagree with the page",
+			*row.ItemCount, want)
 	}
 }
 

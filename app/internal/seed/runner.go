@@ -810,7 +810,20 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 				return fmt.Errorf("asset tag %s: %w", a.ID, err)
 			}
 		}
-		// collection membership
+		// Collection membership — a `collection_resources` row, written
+		// DELIBERATELY and kept after #1236 retired every rendered
+		// surface that read it.
+		//
+		// It is not what publishes the asset: applyCollectionPostBackfill
+		// below authors a post for every member the dataset left bare,
+		// and THAT is what the collection page and the cover mosaic
+		// draw. This row is the dataset's own record of which collection
+		// an asset belongs to, and two live consumers still resolve
+		// "assets inside this collection" through it — the `collection:`
+		// search facet and the reindex job's ScopeCollection. Dropping
+		// the write would make a seeded install's scoped search answer
+		// empty. See the header note in collections/handler.go for the
+		// full consumer list.
 		if a.CollectionName != "" {
 			if cid, ok := r.collections[a.CollectionName]; ok {
 				if err := r.q.SeedInsertCollectionResource(ctx, SeedInsertCollectionResourceParams{
@@ -1288,9 +1301,13 @@ func postVisibility(p manifestPost, coverTier string) string {
 // asset the dataset left bare (#1185).
 //
 // A collection renders POSTS and nothing else now. `collection_resources`
-// is still written by applyAssets and still feeds the cover mosaic, but
-// nothing draws it as content — so an asset pinned to a collection that no
-// post in that collection frames simply vanishes from the page. Measured
+// is still written by applyAssets — deliberately, see the note there —
+// but since #1236 it feeds NOTHING that is drawn: the cover mosaic and
+// the featured rail's item count were the last two surfaces reading it,
+// and both now compose from `collection_posts` alone. So an asset pinned
+// to a collection that no post in that collection frames vanishes from
+// the page AND from the tile, which is why this backfill matters more
+// than it did when the mosaic still papered over it. Measured
 // against site_a that is 37 of Internet Reference's 118 members: the
 // dataset's own generator groups loose assets into bundles keyed on
 // (collection, team, asset_type) and leaves a tail behind, and 36 of those
