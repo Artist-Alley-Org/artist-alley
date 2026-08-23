@@ -42,7 +42,9 @@
 // the results page actually reports for the SAME viewer, not "the count
 // is plausible" and not "the count is non-zero".
 
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { APIRequestContext, Page } from '@playwright/test';
+import { publicModeHold } from '../../helpers/public-mode';
 import { loginAsAdminViaAPI, LOGGED_OUT } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
 
@@ -128,49 +130,41 @@ test.describe.configure({ mode: 'serial' });
 
 let probeId = '';
 let typeRef = 0;
-let priorPublicMode: boolean | undefined;
 
 /**
- * Read / set / restore the instance's anonymous-browsing switch.
+ * ⚠️ CONTENDED INSTANCE STATE: `system.public_mode`.
  *
- * ⚠️ INSTANCE CONFIG IS A FIXTURE, and this file learned it the hard
- * way: the anonymous arm below passed locally and 401'd in CI, because
- * the coding stack happens to have public mode ON and CI's dogfood stack
- * has it OFF. A spec that asserts anonymous behaviour cannot inherit
- * that setting from whichever stack it lands on — it has to own it, the
- * same way it owns the field definition it filters against.
+ * INSTANCE CONFIG IS A FIXTURE, and this file learned it the hard way:
+ * the anonymous arm below passed locally and 401'd in CI, because the
+ * coding stack happens to have public mode ON and CI's dogfood stack has
+ * it OFF. A spec that asserts anonymous behaviour cannot inherit that
+ * setting from whichever stack it lands on — it has to own it, the same
+ * way it owns the field definition it filters against.
  *
- * The prior value is captured before anything is changed and restored in
- * `afterAll` EVEN ON FAILURE, because the dogfood stack is persistent:
- * a spec that left the toggle flipped would silently change the instance
- * every later spec runs against. Same read/set/restore contract as
- * collection-public-tier-1195.
+ * OWNING IT MEANS EXCLUDING THE OTHER THREE WRITERS, not merely putting
+ * the value back: collection-public-tier-1195,
+ * collection-cover-editor-1207 and ai-toggle-1251 write the same
+ * setting, and this file's read-prior used to happen in `beforeAll` —
+ * minutes before the write it belonged to, with three other specs free
+ * to move the switch in between. So the read and the write now happen
+ * together, inside the cross-file lock (helpers/public-mode.ts), and
+ * only around the ONE test that needs the switch. `afterAll` keeps a
+ * release as a backstop for a crash inside that window; it is idempotent
+ * and writes nothing when the test already gave the switch back.
  */
-async function setPublicMode(request: APIRequestContext, on: boolean) {
-  const r = await request.patch('/api/v1/admin/system/public-mode', { data: { enabled: on } });
-  expect(r.status(), `public mode must be settable to ${on}`).toBe(200);
-  expect(((await r.json()) as { enabled: boolean }).enabled).toBe(on);
-}
+const publicMode = publicModeHold('advanced-operators-1165-1173-1197');
 
 test.beforeAll(async ({ request }) => {
   typeRef = await imageTypeRef(request);
   probeId = await ensureProbeField(request, typeRef);
-
-  const mode = await request.get('/api/v1/admin/system/public-mode');
-  expect(mode.status(), 'public-mode state must be readable as admin').toBe(200);
-  priorPublicMode = ((await mode.json()) as { enabled: boolean }).enabled;
 });
 
 test.afterAll(async ({ request }) => {
   await loginAsAdminViaAPI(request);
-  // Restored FIRST and unconditionally: the early return below is about
+  // Released FIRST and unconditionally: the early return below is about
   // the probe field, and letting it skip the switch would leave the
-  // instance altered for every spec that runs after this one.
-  if (priorPublicMode !== undefined) {
-    await request
-      .patch('/api/v1/admin/system/public-mode', { data: { enabled: priorPublicMode } })
-      .catch(() => undefined);
-  }
+  // instance altered — and the lock held — for every spec after this one.
+  await publicMode.release(request);
   if (!probeId) return;
   await request.delete(`/api/v1/fields/${probeId}`);
 });
@@ -423,6 +417,10 @@ test.describe('advanced search — operators, sections, live count', () => {
     // unchanged; only the fixture's guarantee got stronger.
     const filter = encodeURIComponent('sensitivity:restricted');
 
+    // The wait for the switch can outlast the default 30s test budget —
+    // 1207 holds it across its whole file — so the wait gets room.
+    test.setTimeout(600_000);
+
     await loginAsAdminViaAPI(request);
 
     // Anonymous browsing ON, so the anonymous leg is refused (or not) by
@@ -430,34 +428,43 @@ test.describe('advanced search — operators, sections, live count', () => {
     // 401 here would not be evidence about the count at all — it would
     // mean the request never reached the query, which is exactly how
     // this test failed in CI while passing locally.
-    await setPublicMode(request, true);
-
-    const asAdmin = await request.get(`/api/v1/search?filter=${filter}&limit=1`);
-    expect(asAdmin.ok(), `admin search → ${asAdmin.status()}`).toBeTruthy();
-    const adminTotal = ((await asAdmin.json()) as { total_count: number }).total_count;
-
-    // A precondition, stated separately so a thin seed says so in those
-    // words instead of arriving as a confusing `0 < 0`.
-    expect(
-      adminTotal,
-      'the seeded stack must hold at least one restricted asset for this comparison — ' +
-        'sensitivity is a required coverage class, so zero here is a SEED failure ' +
-        'rather than a count failure',
-    ).toBeGreaterThan(0);
-
-    const anon = await browser.newContext({ storageState: LOGGED_OUT });
+    //
+    // Taken and given back HERE rather than around the whole file: the
+    // window is one pair of searches, and every millisecond of it is a
+    // millisecond three other specs spend queued.
+    await publicMode.acquire(request);
     try {
-      const r = await anon.request.get(`/api/v1/search?filter=${filter}&limit=1`);
-      expect(r.ok(), `anonymous search → ${r.status()}`).toBeTruthy();
-      const anonTotal = ((await r.json()) as { total_count: number }).total_count;
+      await publicMode.set(request, true);
+
+      const asAdmin = await request.get(`/api/v1/search?filter=${filter}&limit=1`);
+      expect(asAdmin.ok(), `admin search → ${asAdmin.status()}`).toBeTruthy();
+      const adminTotal = ((await asAdmin.json()) as { total_count: number }).total_count;
+
+      // A precondition, stated separately so a thin seed says so in those
+      // words instead of arriving as a confusing `0 < 0`.
       expect(
-        anonTotal,
-        `anonymous counted ${anonTotal} and the admin counted ${adminTotal}. A count ` +
-          'that ignored the viewer would let a stranger measure the restricted ' +
-          'corpus one filter at a time.',
-      ).toBeLessThan(adminTotal);
+        adminTotal,
+        'the seeded stack must hold at least one restricted asset for this comparison — ' +
+          'sensitivity is a required coverage class, so zero here is a SEED failure ' +
+          'rather than a count failure',
+      ).toBeGreaterThan(0);
+
+      const anon = await browser.newContext({ storageState: LOGGED_OUT });
+      try {
+        const r = await anon.request.get(`/api/v1/search?filter=${filter}&limit=1`);
+        expect(r.ok(), `anonymous search → ${r.status()}`).toBeTruthy();
+        const anonTotal = ((await r.json()) as { total_count: number }).total_count;
+        expect(
+          anonTotal,
+          `anonymous counted ${anonTotal} and the admin counted ${adminTotal}. A count ` +
+            'that ignored the viewer would let a stranger measure the restricted ' +
+            'corpus one filter at a time.',
+        ).toBeLessThan(adminTotal);
+      } finally {
+        await anon.close();
+      }
     } finally {
-      await anon.close();
+      await publicMode.release(request);
     }
   });
 });

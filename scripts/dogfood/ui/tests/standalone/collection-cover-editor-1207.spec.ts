@@ -24,6 +24,7 @@
 import zlib from 'node:zlib';
 
 import { expect, test, type Page } from '../../helpers/test';
+import { publicModeHold } from '../../helpers/public-mode';
 
 const STAMP = Date.now();
 const COLLECTION_NAME = `#1207 cover editor ${STAMP}`;
@@ -163,11 +164,20 @@ const TOKEN = `cvrfix${STAMP}`;
  *  left flipped. Same shape collection-public-tier-1195 uses, which is
  *  the spec that established it and passes on CI.
  *
+ *  ⚠️ CONTENDED INSTANCE STATE: `system.public_mode`. This file is one
+ *  of four writers — collection-public-tier-1195, ai-toggle-1251 and
+ *  advanced-operators-1165-1173-1197 are the others — and "owns it for
+ *  its duration" was only ever true of one worker. It holds the switch
+ *  from beforeAll to afterAll, which is the LONGEST hold of the four, so
+ *  it is the one the others queue behind; that is deliberate, because
+ *  half its assertions are anonymous reads and it cannot narrow the
+ *  window. Taken through the cross-file lock in helpers/public-mode.ts.
+ *
  *  No cache dance is needed: the admin write path calls
  *  InvalidatePublicMode BEFORE it returns (sysconfig/handler.go:799),
  *  so a 200 from the PATCH means the flag is already live for the next
  *  request on every node. Restart-free by construction. */
-let priorPublicMode: boolean | undefined;
+const publicMode = publicModeHold('collection-cover-editor-1207');
 
 test.describe('#1207 the collection cover editor', () => {
   test.describe.configure({ mode: 'serial' });
@@ -229,25 +239,20 @@ test.describe('#1207 the collection cover editor', () => {
     return id;
   }
 
-  async function setPublicMode(
-    request: import('@playwright/test').APIRequestContext,
-    on: boolean,
-  ) {
-    const r = await request.patch('/api/v1/admin/system/public-mode', { data: { enabled: on } });
-    expect(r.status(), `public mode must be settable to ${on}`).toBe(200);
-    // The response is the stored value, so this also confirms the write
-    // landed rather than merely being accepted.
-    expect(((await r.json()) as { enabled: boolean }).enabled).toBe(on);
-  }
-
   test.beforeAll(async ({ request, browser }) => {
+    // Room to queue behind another writer of the same setting. The
+    // default 30s hook budget is shorter than 1195's or 1251's window,
+    // so waiting would otherwise die as a hook timeout — a failure that
+    // says nothing about covers.
+    test.setTimeout(600_000);
+
     // THE CONFIG FIXTURE, FIRST — before any asset exists, because the
     // provisioning check below reads anonymously and would otherwise be
-    // measuring the switch rather than the assets.
-    const mode = await request.get('/api/v1/admin/system/public-mode');
-    expect(mode.status(), 'public-mode state must be readable as admin').toBe(200);
-    priorPublicMode = ((await mode.json()) as { enabled: boolean }).enabled;
-    if (!priorPublicMode) await setPublicMode(request, true);
+    // measuring the switch rather than the assets. The prior value is
+    // read inside the lock, so it is the INSTANCE's value and never
+    // another spec's temporary one.
+    const prior = await publicMode.acquire(request);
+    if (!prior) await publicMode.set(request, true);
 
     // ⚠️ THE SPEC BUILDS ITS OWN FIXTURES. It used to pick two assets
     // out of the seeded library and check they were anonymously
@@ -365,15 +370,11 @@ test.describe('#1207 the collection cover editor', () => {
     }
 
     // The switch goes back to whatever this install had, whatever else
-    // happened. Restored even on failure, and only when we know what it
-    // was — an undefined prior means beforeAll never got far enough to
-    // read it, and guessing would be how a private install gets left
-    // public by a test run.
-    if (priorPublicMode !== undefined) {
-      await request
-        .patch('/api/v1/admin/system/public-mode', { data: { enabled: priorPublicMode } })
-        .catch(() => undefined);
-    }
+    // happened, and the lock is handed on with it. Restored even on
+    // failure, and only when we know what it was — a hold that never
+    // acquired restores nothing, and guessing would be how a private
+    // install gets left public by a test run.
+    await publicMode.release(request);
     // Collection first, then the pictures it pointed at — the reverse
     // order would leave the collection briefly pointing at soft-deleted
     // assets. Both are soft-deletes, so neither is destructive, and

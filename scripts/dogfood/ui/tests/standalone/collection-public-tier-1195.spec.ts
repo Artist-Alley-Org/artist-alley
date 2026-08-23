@@ -19,7 +19,9 @@
 // without storing anything (#946), and would say nothing about the one
 // thing `public` is FOR.
 //
-// ⚠️ THIS SPEC OWNS THE PUBLIC-MODE SWITCH FOR ITS DURATION, and has to.
+// ⚠️ CONTENDED INSTANCE STATE: `system.public_mode`.
+//
+// THIS SPEC OWNS THE PUBLIC-MODE SWITCH FOR ITS DURATION, and has to.
 // The option is gated on the instance flag, so a spec that merely
 // assumed a state would pass on the dev box (public mode on) and fail in
 // CI (a fresh install, off) — which is exactly what the first version of
@@ -27,9 +29,25 @@
 // in afterAll, the same shape share-discovery-875-876 uses for
 // self-registration. Serial mode, because the tests hand the switch to
 // each other.
+//
+// It is NOT the only writer: collection-cover-editor-1207,
+// ai-toggle-1251 and advanced-operators-1165-1173-1197 write the same
+// setting, and serial mode says nothing about two FILES in two workers.
+// So the switch is taken through the cross-file lock in
+// helpers/public-mode.ts, which reads the prior value INSIDE the
+// critical section; see that file for the lost-update shape.
+//
+// ⚠️ THAT IS NOT WHY THIS FILE GOES RED, and the guess that it was cost
+// a round: the rotating "the published collection must be readable
+// anonymously — expected 200, received 404" survives the lock. The
+// instance is public when this asserts; the COLLECTION is not, because
+// the save stored `private`. The stored rows are the evidence — 2 of 27
+// `#1195 published` collections carry `visibility = 'private'`, and both
+// timestamps land on an observed failure. See the read-back below.
 
 import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
+import { publicModeHold } from '../../helpers/public-mode';
 
 const STAMP = Date.now();
 const PUBLISHED = `#1195 published ${STAMP}`;
@@ -37,15 +55,19 @@ const PRIVATE = `#1195 stays private ${STAMP}`;
 
 let publishedId: string | undefined;
 let privateId: string | undefined;
-let priorPublicMode: boolean | undefined;
+const publicMode = publicModeHold('collection-public-tier-1195');
 
 test.describe('#1195 the collection edit modal can publish a collection', () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async ({ request }) => {
-    const mode = await request.get('/api/v1/admin/system/public-mode');
-    expect(mode.status(), 'public-mode state must be readable as admin').toBe(200);
-    priorPublicMode = ((await mode.json()) as { enabled: boolean }).enabled;
+    // Waiting for another writer to give the switch back is normal and
+    // can outlast the default 30s hook budget — 1207 holds it for its
+    // whole file. A hook that dies waiting would look like a product
+    // failure, so the wait gets room and the lock's own timeout (which
+    // names the holder) is what reports a genuine jam.
+    test.setTimeout(360_000);
+    await publicMode.acquire(request);
 
     for (const [name, set] of [
       [PUBLISHED, (id: string) => (publishedId = id)],
@@ -60,20 +82,16 @@ test.describe('#1195 the collection edit modal can publish a collection', () => 
   });
 
   test.afterAll(async ({ request }) => {
-    if (priorPublicMode !== undefined) {
-      await request
-        .patch('/api/v1/admin/system/public-mode', { data: { enabled: priorPublicMode } })
-        .catch(() => undefined);
-    }
+    // The switch goes back and the lock is handed on FIRST, so a
+    // fixture-delete failure below cannot leave the next spec waiting.
+    await publicMode.release(request);
     for (const id of [publishedId, privateId]) {
       if (id) await request.delete(`/api/v1/collections/${id}`).catch(() => undefined);
     }
   });
 
   async function setPublicMode(request: import('@playwright/test').APIRequestContext, on: boolean) {
-    const r = await request.patch('/api/v1/admin/system/public-mode', { data: { enabled: on } });
-    expect(r.status(), `public mode must be settable to ${on}`).toBe(200);
-    expect(((await r.json()) as { enabled: boolean }).enabled).toBe(on);
+    await publicMode.set(request, on);
   }
 
   async function openEditModal(page: import('@playwright/test').Page, id: string) {

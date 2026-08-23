@@ -140,6 +140,13 @@ else
     step "Running Playwright UI suite (mode: $mode)"
 fi
 mkdir -p .pw-results
+
+# Where the cross-file instance-config lock records each hold (#1248).
+# Truncated per run so the audit below describes THIS run and not a
+# fortnight of them.
+export AA_LOCK_AUDIT="${UI_DIR}/.pw-results/instance-locks.jsonl"
+rm -f "$AA_LOCK_AUDIT"
+
 pw_args=()
 if [ "$mode" != "all" ]; then
     pw_args+=(--project "$mode")
@@ -168,6 +175,24 @@ const c = (s, n) => `[${s}m${n}[0m`;
 console.log(`  Total: ${total}   ${c("1;32", "PASS:")} ${fmt(pass)}   ${c("1;31", "FAIL:")} ${fmt(fail)}   ${c("1;33", "SKIP:")} ${fmt(skip)}   FLAKY: ${flaky}   wall: ${Math.round(ms)}ms`);
 '
     printf '\nHTML report: %s/.pw-report/index.html\n' "$UI_DIR"
+fi
+
+# --- 3b. shared-instance-config locks ------------------------------------
+#
+# Four specs write `system.public_mode` and each one reads the prior
+# value, sets what it needs and puts the prior back — a contract that is
+# correct for one writer and a lost update for two (#1248). The lock in
+# helpers/instance-lock.ts makes those windows mutually exclusive ACROSS
+# FILES, which the `mode: 'serial'` they all already declare does not.
+#
+# "They cannot interleave" is a claim about a race, and a race that is
+# merely unlikely passes most runs — so it is checked from the run's own
+# audit rather than asserted. Exit 4 is distinct from the ratchet's 3 and
+# from Playwright's own, so the failure kinds are told apart by status.
+if [ -f "$AA_LOCK_AUDIT" ]; then
+    node "${UI_DIR}/instance-lock-audit.mjs" "$AA_LOCK_AUDIT"
+    audit_rc=$?
+    if [ "$audit_rc" -ne 0 ] && [ "$rc" -eq 0 ]; then rc=$audit_rc; fi
 fi
 
 # --- 4. corpus census, after --------------------------------------------
