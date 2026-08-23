@@ -490,9 +490,17 @@
            to #556, superseding "actions visible in the details tile".
            Thumbnail renders the SAME component inline in its bottom band
            (#1136); still exactly one per card. -->
+      <!-- `usagePath` rides the SAME gate as `editPath` (#1237). Both
+           ask "is this plainly the viewer's own file", and the two
+           disjuncts canEdit can evaluate — owner, or a global
+           assets.admin — are exactly the ones GET /assets/{id}/posts
+           admits. The one it cannot see, a TEAM-scoped assets.admin,
+           errs the same safe way it does for edit: no shortcut from
+           this menu, and the route still reachable by URL. -->
       <CardMenu
         detailPath="/assets/{asset.id}"
         editPath={canEdit ? `/assets/${asset.id}/edit` : null}
+        usagePath={canEdit ? `/assets/${asset.id}/usage` : null}
       />
     {/if}
   </CardThumb>

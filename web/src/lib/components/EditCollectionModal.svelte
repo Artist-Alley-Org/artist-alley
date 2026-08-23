@@ -61,11 +61,13 @@
 
   // One choosable picture in the cover picker.
   //
-  // CollectionResource joins the asset's columns in FLAT, not nested
-  // under an `asset` object — and on a member this reader may not see,
-  // #883 makes every one of them ABSENT rather than null, with
-  // `restricted` as the flag saying which shape the row is. So both
-  // fields below are optional and both have to be checked.
+  // The retired `CollectionResource` shape joined the asset's columns in
+  // FLAT, not nested under an `asset` object — and on a member the
+  // reader may not see, #883 made every one of them ABSENT rather than
+  // null, with `restricted` as the flag saying which shape the row was.
+  // The post members this picker reads now are nested instead (see
+  // loadCoverChoices), but the optionality is the same on both, so both
+  // fields below stay optional and both have to be checked.
   //
   // `ladder_available` joins them for the crop preview (#1195): it is
   // what decides which picture the featured card actually loads, and
@@ -310,6 +312,10 @@
   // that put assets there, so on any collection made from now on that
   // list is permanently empty and the picker has nothing to offer. The
   // ADR's own consequence line calls for replacing this read.
+  //
+  // That move is also what falsified the reason the read endpoint was
+  // kept: it survived #1161 on the note "the cover picker uses it",
+  // which this function had already stopped doing. #1236 retired it.
   //
   // It reads the collection's POSTS instead, and flattens their
   // members. That is the same sentence the old code meant — "the

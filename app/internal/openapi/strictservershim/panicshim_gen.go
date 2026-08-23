@@ -1175,11 +1175,6 @@ func (*PanicShim) RemoveCollectionPost(context.Context, openapi.RemoveCollection
 	panic("PanicShim: RemoveCollectionPost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
-// ListCollectionResources panics by default; test shims override.
-func (*PanicShim) ListCollectionResources(context.Context, openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
-	panic("PanicShim: ListCollectionResources called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
-}
-
 // DeleteComment panics by default; test shims override.
 func (*PanicShim) DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
 	panic("PanicShim: DeleteComment called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

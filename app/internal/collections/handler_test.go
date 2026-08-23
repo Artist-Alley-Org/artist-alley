@@ -138,13 +138,11 @@ func TestCollectionLifecycle(t *testing.T) {
 
 // pinResource writes a `collection_resources` row directly.
 //
-// It used to be `POST /collections/{id}/resources`; that endpoint was
-// retired with #1161 (ADR 0091: a collection holds posts, so pinning a
-// bare asset was a second publication path). The ROWS still exist and
-// the READ endpoint still serves them — for the cover picker, and for
-// installs that have them from before — so the listing, its pagination
-// and its field-plane filtering still need covering. Seeding by SQL is
-// how a read-only surface gets tested once nothing can write to it.
+// Every endpoint that touched this table is retired (#1161, #1236), so
+// SQL is the only way to put a row there — which is the point: the
+// table itself STAYS (it is internal by decision, see the note in
+// handler.go), and this helper is what lets a test assert facts about
+// rows nothing on the API surface can create.
 func pinResource(t *testing.T, pool *pgxpool.Pool, collectionID, assetID string, sortOrder int) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(),
@@ -157,19 +155,24 @@ func pinResource(t *testing.T, pool *pgxpool.Pool, collectionID, assetID string,
 	}
 }
 
-// TestCollectionResources covers the surviving READ side of the
-// membership surface: listing, ordering, cursor pagination, and the
-// rows' survival across a soft-delete.
+// TestCollectionResources pins the RETIREMENT of the asset-membership
+// surface (#1161, #1236) and the one thing about it that is still true:
+// the rows outlive a soft-delete.
 //
-// It also pins the RETIREMENT itself (#1161): the two write endpoints
-// must be gone from the router, not merely unreferenced by the UI. A
-// live, caller-less write endpoint is the state ADR 0091 exists to
-// leave behind — the model says a collection holds posts and the API
-// still offers the other thing.
+// All three endpoints must be GONE FROM THE ROUTER, not merely
+// unreferenced by the UI. A live, caller-less endpoint is the state
+// ADR 0091 exists to leave behind — the model says a collection holds
+// posts and the API still offers the other thing. #1161 took the two
+// writes; #1236 took the read, which had outlived them on the claim
+// that the cover picker used it (#1232 had already moved the picker to
+// posts, so the claim was false when it was written).
 //
-// Original header follows:
-// covers add / list / remove on the membership
-// side, including pagination and the cascade through DeleteCollection.
+// The listing, its pagination and its field-plane filtering used to be
+// asserted here and next door. They went with the endpoint: there is no
+// surface left for a restricted placeholder to render on. The rules
+// they pinned are still pinned at their own homes —
+// posts/member_allowlist_test.go for #883's allow-list, and
+// visibility.TestOwnerDisplayNameSQL_OptOutIsAbsence for #1023.
 func TestCollectionResources(t *testing.T) {
 	pwd := os.Getenv("AA_DB_PASSWORD")
 	if pwd == "" {
@@ -177,21 +180,24 @@ func TestCollectionResources(t *testing.T) {
 	}
 	pool := openPool(t, pwd)
 	t.Cleanup(pool.Close)
-
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
 
 	router, userRef := makeRouter(t, pool, 720010, false)
 
-	// Create the collection
 	col := mustCreate(t, router, map[string]any{
 		"name":       "ct_with_members",
 		"visibility": "private",
 	})
 
-	// The retirement (#1161). The router must not answer these at all.
-	// 405 or 404 both mean "gone"; a 2xx/4xx from a HANDLER would mean
-	// the endpoint is still live and merely unused by the UI.
+	// The retirement. 405 or 404 both mean "gone"; a 2xx/4xx from a
+	// HANDLER would mean the endpoint is still live.
+	//
+	// ⚠️ The GET is asserted from the OWNER's router deliberately. A
+	// stranger's 404 would be indistinguishable from the parent
+	// visibility gate that used to answer for them, so it would pass
+	// whether the route existed or not. The owner is the one caller the
+	// live endpoint answered 200 for.
 	if rr := postJSON(t, router, "/collections/"+col+"/resources", map[string]any{
 		"asset_id": uuid.New().String(),
 	}); rr.Code != http.StatusNotFound && rr.Code != http.StatusMethodNotAllowed {
@@ -199,6 +205,12 @@ func TestCollectionResources(t *testing.T) {
 	}
 	if rr := deleteReq(t, router, "/collections/"+col+"/resources/"+uuid.New().String()); rr.Code != http.StatusNotFound && rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("DELETE …/resources/{id} answered %d — the write endpoint is still routed", rr.Code)
+	}
+	getRR := httptest.NewRecorder()
+	router.ServeHTTP(getRR, httptest.NewRequest(http.MethodGet, "/collections/"+col+"/resources", nil))
+	if getRR.Code != http.StatusNotFound && getRR.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET …/resources answered %d for the collection's OWNER — the read "+
+			"endpoint is still routed (#1236 retired it)", getRR.Code)
 	}
 
 	// Insert two assets directly so we don't have to wire the assets
@@ -212,55 +224,6 @@ func TestCollectionResources(t *testing.T) {
 
 	pinResource(t, pool, col, asset1, 5)
 	pinResource(t, pool, col, asset2, 10)
-
-	// List -> 2 entries in (5, 10) sort_order
-	listRR := httptest.NewRecorder()
-	router.ServeHTTP(listRR, httptest.NewRequest(http.MethodGet, "/collections/"+col+"/resources", nil))
-	if listRR.Code != http.StatusOK {
-		t.Fatalf("list resources: %d", listRR.Code)
-	}
-	var page openapi.CollectionResourceList
-	mustDecode(t, listRR.Body.Bytes(), &page)
-	if len(page.Items) != 2 {
-		t.Fatalf("expected 2 resources, got %d", len(page.Items))
-	}
-	if page.Items[0].SortOrder != 5 || page.Items[1].SortOrder != 10 {
-		t.Errorf("sort order: got %d, %d; want 5, 10", page.Items[0].SortOrder, page.Items[1].SortOrder)
-	}
-
-	// Page through with limit=1 to exercise the cursor
-	pageRR := httptest.NewRecorder()
-	router.ServeHTTP(pageRR, httptest.NewRequest(http.MethodGet, "/collections/"+col+"/resources?limit=1", nil))
-	mustDecode(t, pageRR.Body.Bytes(), &page)
-	if len(page.Items) != 1 || page.NextCursor == nil {
-		t.Fatalf("first page: items=%d cursor=%v want 1 + cursor", len(page.Items), page.NextCursor)
-	}
-	page2RR := httptest.NewRecorder()
-	router.ServeHTTP(page2RR, httptest.NewRequest(http.MethodGet,
-		"/collections/"+col+"/resources?limit=1&cursor="+*page.NextCursor, nil))
-	var page2 openapi.CollectionResourceList
-	mustDecode(t, page2RR.Body.Bytes(), &page2)
-	if len(page2.Items) != 1 {
-		t.Errorf("second page: %d want 1", len(page2.Items))
-	}
-	if page2.NextCursor != nil {
-		t.Errorf("second page should have no next_cursor, got %q", *page2.NextCursor)
-	}
-
-	// Drop asset2 (by SQL — the DELETE endpoint is retired) and the
-	// list shrinks to 1.
-	if _, err := pool.Exec(context.Background(),
-		`DELETE FROM collection_resources WHERE collection_id=$1 AND asset_id=$2`,
-		col, asset2); err != nil {
-		t.Fatalf("unpin: %v", err)
-	}
-	listRR2 := httptest.NewRecorder()
-	router.ServeHTTP(listRR2, httptest.NewRequest(http.MethodGet, "/collections/"+col+"/resources", nil))
-	var page3 openapi.CollectionResourceList
-	mustDecode(t, listRR2.Body.Bytes(), &page3)
-	if len(page3.Items) != 1 {
-		t.Errorf("after remove: %d want 1", len(page3.Items))
-	}
 
 	// Phase 1.55.C-1b: DELETE is now soft-delete on collections.
 	// The row survives (with deleted_at set); collection_resources
@@ -286,8 +249,8 @@ func TestCollectionResources(t *testing.T) {
 		`SELECT COUNT(*) FROM collection_resources WHERE collection_id = $1`, col).Scan(&stillPresent); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if stillPresent == 0 {
-		t.Errorf("expected collection_resources to survive soft-delete; got 0 rows")
+	if stillPresent != 2 {
+		t.Errorf("expected both collection_resources rows to survive soft-delete; got %d", stillPresent)
 	}
 }
 
@@ -535,9 +498,6 @@ func (s collShim) UpdateCollection(ctx context.Context, req openapi.UpdateCollec
 func (s collShim) DeleteCollection(ctx context.Context, req openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error) {
 	return s.h.DeleteCollection(ctx, req)
 }
-func (s collShim) ListCollectionResources(ctx context.Context, req openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
-	return s.h.ListCollectionResources(ctx, req)
-}
 
 // TestGetCollection_NonOwnerDenied is the regression test for the hole
 // #439 closed: before visibility.CanSee was added to GetCollection, the
@@ -612,151 +572,5 @@ func setAssetTier(t *testing.T, pool *pgxpool.Pool, assetID, status, sensitivity
 		`UPDATE assets SET status=$2, sensitivity=$3, processing_status='ready' WHERE id=$1`,
 		assetID, status, sensitivity); err != nil {
 		t.Fatalf("set asset tier: %v", err)
-	}
-}
-
-// TestListCollectionResources_ParentGate covers the PARENT half of #438:
-// before this, any authenticated caller could enumerate any collection's
-// contents. Removing the CanSee call from ListCollectionResources fails
-// this test and only this one.
-func TestListCollectionResources_ParentGate(t *testing.T) {
-	pwd := os.Getenv("AA_DB_PASSWORD")
-	if pwd == "" {
-		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
-	}
-	pool := openPool(t, pwd)
-	t.Cleanup(pool.Close)
-	cleanTestCollections(t, pool)
-	t.Cleanup(func() { cleanTestCollections(t, pool) })
-
-	const ownerRef, strangerRef int64 = 720081, 720082
-	ownerRouter, _ := makeRouter(t, pool, ownerRef /*admin=*/, false)
-	strangerRouter, _ := makeRouter(t, pool, strangerRef /*admin=*/, false)
-
-	id := mustCreate(t, ownerRouter, map[string]any{
-		"name": "ct_private_contents", "visibility": "private",
-	})
-
-	// Owner can list — otherwise a gate denying everyone would pass below.
-	ownRR := httptest.NewRecorder()
-	ownerRouter.ServeHTTP(ownRR, httptest.NewRequest(http.MethodGet, "/collections/"+id+"/resources", nil))
-	if ownRR.Code != http.StatusOK {
-		t.Fatalf("owner list: status=%d want 200 body=%s", ownRR.Code, ownRR.Body.String())
-	}
-
-	// An authenticated stranger with no ACL must not.
-	strRR := httptest.NewRecorder()
-	strangerRouter.ServeHTTP(strRR, httptest.NewRequest(http.MethodGet, "/collections/"+id+"/resources", nil))
-	if strRR.Code != http.StatusNotFound {
-		t.Errorf("stranger list: status=%d want 404 — an authenticated caller must not "+
-			"enumerate a private collection's contents (visibility.CanSee on the parent)", strRR.Code)
-	}
-
-	// Anonymous likewise.
-	anonRR := httptest.NewRecorder()
-	anonRouter(t, pool).ServeHTTP(anonRR, httptest.NewRequest(http.MethodGet, "/collections/"+id+"/resources", nil))
-	if anonRR.Code != http.StatusNotFound {
-		t.Errorf("anonymous list on a private collection: status=%d want 404", anonRR.Code)
-	}
-}
-
-// TestListCollectionResources_RowFiltering covers the ROW half, which the
-// parent gate cannot: a PUBLIC collection may contain non-public assets.
-// Weakening the member gate fails this test and not the parent-gate one —
-// that separation is the point.
-//
-// #883 changed the SHAPE of the answer, not the guarantee. A member the
-// caller may not see is no longer dropped from the list; it comes back as
-// a placeholder — `restricted: true` plus the collection_resources
-// columns, and not one asset field. So this asserts on the FIELDS rather
-// than on the row count, which is the stronger statement anyway: the row
-// count only ever proved the draft was not enumerable, and what actually
-// matters is that its title, status and file_hash do not ship.
-func TestListCollectionResources_RowFiltering(t *testing.T) {
-	pwd := os.Getenv("AA_DB_PASSWORD")
-	if pwd == "" {
-		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
-	}
-	pool := openPool(t, pwd)
-	t.Cleanup(pool.Close)
-	cleanTestCollections(t, pool)
-	t.Cleanup(func() { cleanTestCollections(t, pool) })
-
-	const ownerRef int64 = 720091
-	ownerRouter, _ := makeRouter(t, pool, ownerRef /*admin=*/, false)
-
-	colID := mustCreate(t, ownerRouter, map[string]any{
-		"name": "ct_public_mixed", "visibility": "public",
-	})
-
-	pubAsset := mustInsertAsset(t, pool, ownerRef, "ct_public_asset")
-	draftAsset := mustInsertAsset(t, pool, ownerRef, "ct_draft_asset")
-	setAssetTier(t, pool, pubAsset, "active", "public")
-	setAssetTier(t, pool, draftAsset, "draft", "public")
-
-	for i, a := range []string{pubAsset, draftAsset} {
-		pinResource(t, pool, colID, a, i)
-	}
-
-	// Decodes the contents page as raw maps — the key SET on the wire is
-	// the thing under test, and a struct cannot tell "absent" from
-	// "present and empty".
-	list := func(t *testing.T, r chi.Router) map[string]map[string]any {
-		t.Helper()
-		rr := httptest.NewRecorder()
-		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/collections/"+colID+"/resources", nil))
-		if rr.Code != http.StatusOK {
-			t.Fatalf("list: status=%d body=%s", rr.Code, rr.Body.String())
-		}
-		var page struct {
-			Items []map[string]any `json:"items"`
-		}
-		mustDecode(t, rr.Body.Bytes(), &page)
-		out := make(map[string]map[string]any, len(page.Items))
-		for _, it := range page.Items {
-			id, _ := it["asset_id"].(string)
-			out[id] = it
-		}
-		return out
-	}
-
-	// The owner sees both, in full — proves the pins landed and the query
-	// works, and that the gate is not simply redacting everything.
-	own := list(t, ownerRouter)
-	if len(own) != 2 {
-		t.Fatalf("owner sees %d rows, want 2 (both pinned assets)", len(own))
-	}
-	for _, id := range []string{pubAsset, draftAsset} {
-		if own[id]["restricted"] != false {
-			t.Errorf("owner: asset %s came back restricted=%v — an owner reads their own "+
-				"drafts through a container", id, own[id]["restricted"])
-		}
-		if own[id]["title"] == nil {
-			t.Errorf("owner: asset %s lost its title", id)
-		}
-	}
-
-	// An anonymous caller gets BOTH rows, but the draft as a placeholder.
-	// Its title, status and file_hash — the three fields the old shape
-	// leaked — must be absent, not empty.
-	anon := list(t, anonRouter(t, pool))
-	if len(anon) != 2 {
-		t.Fatalf("anonymous sees %d rows, want 2 (the public one plus a placeholder "+
-			"for the draft — #883 keeps the member VISIBLE so the restriction is "+
-			"legible and #881 has something to attach to)", len(anon))
-	}
-	if anon[pubAsset]["restricted"] != false || anon[pubAsset]["title"] == nil {
-		t.Errorf("anonymous: the PUBLIC member should be untouched, got %v", anon[pubAsset])
-	}
-	if anon[draftAsset]["restricted"] != true {
-		t.Fatalf("anonymous: a public collection's DRAFT member must be a placeholder, got %v",
-			anon[draftAsset])
-	}
-	for _, k := range []string{"title", "status", "file_hash", "file_extension", "thumbhash",
-		"asset_type", "asset_created_at", "preview_available", "ladder_available", "scrub_available"} {
-		if _, present := anon[draftAsset][k]; present {
-			t.Errorf("anonymous: the draft placeholder shipped %q — a public collection's "+
-				"DRAFT contents must not be readable through it (%v)", k, anon[draftAsset])
-		}
 	}
 }

@@ -8,17 +8,12 @@
   //   - CardMenu on a post card, and PostHost's post menu, for the POST
   //     itself (#882)
   //
-  // TWO kinds of member, one picker (#882). A collection holds assets
-  // (`collection_resources`) and posts (`collection_posts`), which are
-  // separate tables behind separate endpoints, but from where the user
-  // is standing it is one action — "put this in a collection" — and the
-  // list of collections to choose from is the same list. So the picker
-  // takes both sets and posts each to its own endpoint; it does not
-  // grow a second component, and neither does the user grow a second
-  // mental model.
-  //
-  // The two are not exclusive: nothing prevents a caller passing both,
-  // and the confirm loop reports one combined count.
+  // It used to hold TWO kinds of member (#882): assets
+  // (`collection_resources`) and posts (`collection_posts`), separate
+  // tables behind separate endpoints, presented as one action here
+  // because from where the user is standing "put this in a collection"
+  // is one thing. One kind is left; the picker keeps the shape, because
+  // what made it one action was the user's model, not the table count.
   //
   // The `assetIds` arm is GONE (#1161). #1185 removed its three call
   // sites — the viewer's Edit menu, the playlist's "Add all to

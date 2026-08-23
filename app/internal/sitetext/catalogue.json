@@ -276,7 +276,8 @@
       "copied": "Link copied",
       "manage_access": "Manage access…",
       "add_to_collection": "Add to collection…",
-      "edit": "Edit…"
+      "edit": "Edit…",
+      "usage": "Where this is used"
     },
     "select": {
       "label": "Select",
@@ -3522,6 +3523,20 @@
     "title": "Posts featuring this asset",
     "heading": "Posts featuring this asset",
     "none": "No posts feature this asset, or none are visible to you."
+  },
+  "asset_usage": {
+    "title": "Where this file is used",
+    "heading": "Where this file is used",
+    "sub": "Posts that include “{title}”.",
+    "sub_untitled": "Posts that include this file.",
+    "back": "Back to the file",
+    "none": "This file is not in any post yet.",
+    "none_hint": "It stays in your library until you put it in a post.",
+    "withheld": "It is also in {count} posts you cannot open.",
+    "withheld_one": "It is also in 1 post you cannot open.",
+    "withheld_only": "This file is in {count} posts, and you cannot open any of them.",
+    "withheld_only_one": "This file is in 1 post, and you cannot open it.",
+    "withheld_why": "We can tell you the number and nothing else. A post you cannot open stays closed, including its title and its author."
   },
   "vocabulary": {
     "input_aria": "Terms",

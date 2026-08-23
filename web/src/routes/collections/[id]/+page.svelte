@@ -17,10 +17,13 @@
   // of member there is one ordering, the curator's, and no headings to
   // disambiguate.
   //
-  // `collection_resources` still EXISTS: the table, the API endpoints
-  // and the "save an asset to a collection" writers are all untouched,
-  // and dropping them is #1161's job. This route simply no longer reads
-  // them — `GET /collections/{id}/resources` has no caller here any more.
+  // The ENDPOINTS are gone too now: #1161 took the two writes and #1236
+  // took the read, so there is no longer an API surface that puts an
+  // asset in a collection or lists the ones already there. The TABLE
+  // still exists — it is internal by decision, with the seeder and
+  // save-as-collection writing it and the federation shares gate and
+  // scoped search reading it (see collections/handler.go for the list).
+  // Nothing on this page reads any of it.
   //
   // The post grid renders through the shared ContentGrid + the
   // floating ViewControls bar (#582), the same chrome browse and the

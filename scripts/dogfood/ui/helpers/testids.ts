@@ -146,6 +146,38 @@ export const testIds = {
     emptyHint:           'browse-empty-hint',
   },
 
+  // The per-card ⋯ menu, and the items whose PRESENCE is a gate
+  // rather than a layout detail (#1237). The trigger and the panel are
+  // here because an "item is absent" assertion is only meaningful when
+  // the spec can prove the menu opened at all.
+  cardMenu: {
+    trigger:          'card-menu-trigger',
+    panel:            'card-menu-panel',
+    edit:             'card-edit',
+    manageAccess:     'card-manage-access',
+    addToCollection:  'card-add-to-collection',
+    // "Where is this used" — the OWNER's entry (#1237). Present only
+    // when the CARD hands over a path, because the endpoint behind it
+    // 404s a caller who is neither the asset's owner nor an admin.
+    usage:            'card-usage',
+  },
+
+  // "Where is this file used" — /assets/{id}/usage (#1237).
+  assetUsage: {
+    heading:          'asset-usage-heading',
+    sub:              'asset-usage-sub',
+    back:             'asset-usage-back',
+    // The withheld remainder, as ONE line of prose. There is
+    // deliberately no per-item id here, and there must never be one:
+    // the count carries no handle back to the posts it counted, and an
+    // element per post would re-create the enumeration the API refused.
+    withheld:         'asset-usage-withheld',
+    withheldWhy:      'asset-usage-withheld-why',
+    // The asset is in no post at all — distinct from "every post is
+    // withheld", which prints a count instead.
+    none:             'asset-usage-none',
+  },
+
   // Generic page surfaces ------------------------------------
   page: {
     errorBoundary:    'page-error-boundary',
