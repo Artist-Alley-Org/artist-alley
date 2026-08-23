@@ -119,6 +119,59 @@
 // fix. The request count is asserted against the distance actually
 // travelled, so a prefetch loop — the #1103-era failure — reds this
 // even though it would trivially satisfy every gap assertion above.
+//
+// # ⛔ THE ROTATING FAILURE IS RESPONSE LATENCY (#1248, measured 2026-08-23)
+//
+// #1248 lists this spec among specs that fail and pass in rotation, with
+// "129 of 214 sampled frames blank, worst 33.14px". That number was
+// reproduced exactly, and it is NOT #1159 coming back.
+//
+// It cannot be reproduced by loading the BROWSER. Twenty-plus executions
+// on the coding stack with no failure: 3 full two-worker suite runs, 5
+// solo runs, 6 with two copies of itself running concurrently, and 3
+// each at 3x/6x CPU throttle (which produced one skeleton frame, never a
+// blank one). It reproduces on the first try by adding round-trip
+// latency (AA_UI_API_LATENCY_MS, helpers/test.ts):
+//
+//   added latency   blank frames        worst blank
+//     0 ms          0                   —          (passes)
+//    50 ms          0                   —          (passes 3/3)
+//   100 ms          6-15 of ~265        33.45px    (fails 3/3)
+//   150 ms          67-69 of ~268       33.33px    (fails 3/3)
+//   200 ms          92-94 of ~247       33.27px    (fails 3/3)
+//   400 ms          132-135 of ~228     33.14px    (fails 3/3)
+//
+// ⭐ READ THE TWO COLUMNS AGAINST EACH OTHER. The frame COUNT scales
+// with latency; the worst blank does NOT — it is pinned at ~33px at
+// every latency, including the one that reproduces the reported figure
+// to the last decimal. A loader falling further and further behind would
+// move the second column. A reader parked at the bottom of the scroll
+// range WAITING would not, and that is what this is: `scrollTop` cannot
+// exceed `scrollHeight - clientHeight`, so once the reader reaches the
+// end of loaded feed the measured gap stops growing and is bounded by
+// whatever sits below the wall inside the scrollport.
+//
+// That 33px is the page's own bottom chrome, not unrendered feed:
+// `space-y-4` between the wall and the sentinel (16px) + the sentinel's
+// own `h-px` (1px) + the container's `py-4` bottom padding (16px)
+// (web/src/routes/+page.svelte:733, :1042).
+//
+// So the verdict is STARVATION, and the arithmetic says it must be. The
+// chase is SEQUENTIAL — one request in flight, stated above — and each
+// 12-post page is ~390px of wall. At the 1.6k px/s this walk produces, a
+// round trip costing more than ~240ms consumes more feed than it
+// delivers, so the buffer drains by a fixed amount per round no matter
+// how many screenfuls it started with. Lookahead depth expressed in
+// SCREENFULS does not convert into tolerance of LATENCY; only
+// concurrency or a page size that scales with reading speed would. That
+// is a product enhancement to file, not a regression this spec found.
+//
+// ⛔ Which is why nothing here is tuned. The threshold and the wheel
+// constants are untouched: the bar is still zero blank frames, this
+// still reds on the pre-#1159 route, and a stack whose API answers in
+// tens of milliseconds — which every stack this runs on does when it is
+// not thrashing — still passes it. Raising the threshold would buy a
+// green run by giving up the assertion.
 
 import { test, expect } from '../../helpers/test';
 
@@ -475,10 +528,22 @@ test.describe('#1159 browse feed lookahead', () => {
     const blankFrames = samples.filter((s) => s.blank > 0);
     const skeletonFrames = samples.filter((s) => s.skeleton > 0);
 
+    // ⚠️ THE px FIGURE IS NOT A DEPTH, and reading it as one sent a whole
+    // investigation the wrong way (see the latency table in the header).
+    // It saturates at ~33px — the chrome below the wall — because the
+    // reader cannot scroll past the end of the scroll range. What scales
+    // with how badly the loader is losing is the FRAME COUNT, so the
+    // message leads with the time those frames represent.
+    const blankPct = Math.round((blankFrames.length / Math.max(1, samples.length)) * 100);
     expect(
       blankFrames.length,
-      `${blankFrames.length}/${samples.length} frames showed blank below the wall ` +
-        `(worst ${Math.max(0, ...blankFrames.map((s) => s.blank))}px) — the loader fell behind the reader`,
+      `${blankFrames.length}/${samples.length} frames (${blankPct}% of the walk) showed the ` +
+        `reader at the end of loaded feed with more pages still to come — the loader fell ` +
+        `behind the reader. Worst gap ${Math.max(0, ...blankFrames.map((s) => s.blank))}px, ` +
+        `which SATURATES at the ~33px of chrome below the wall and is therefore not a ` +
+        `measure of how far behind it fell; the percentage is. If the API on this stack is ` +
+        `answering slowly, that is the cause — this walk cannot absorb a round trip over ` +
+        `~240ms and the header says why.`,
     ).toBe(0);
 
     expect(

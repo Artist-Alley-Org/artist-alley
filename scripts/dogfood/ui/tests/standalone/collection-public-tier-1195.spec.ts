@@ -41,9 +41,27 @@
 // a round: the rotating "the published collection must be readable
 // anonymously — expected 200, received 404" survives the lock. The
 // instance is public when this asserts; the COLLECTION is not, because
-// the save stored `private`. The stored rows are the evidence — 2 of 27
+// the save stored `private`. The stored rows agree — 2 of 27
 // `#1195 published` collections carry `visibility = 'private'`, and both
-// timestamps land on an observed failure. See the read-back below.
+// timestamps land on an observed failure.
+//
+// ⛔ AND THE MODAL IS WHAT SENT IT. The request recorder below caught the
+// failing run's PATCH:
+//
+//   {"name":"#1195 published …","description":"fixture for #1195",
+//    "visibility":"private","if_unchanged_since":"…"}
+//
+// `visibility: private` — sent immediately after this test asserted the
+// Public radio WAS checked. So the component's state was put back
+// between the click and the submit, and nothing below the browser is
+// involved. EditCollectionModal.svelte:201 is where to look: that
+// `$effect` re-seeds `name`, `description`, `visibility`, `coverAssetId`
+// and `framing` from the `collection` prop whenever the prop changes
+// identity — not only when the dialog opens — and the file's own comment
+// records this already happening mid-edit under the full parallel suite.
+// The fix applied then covered `page` only, not the edited fields.
+//
+// A product defect, filed rather than fixed here.
 
 import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
@@ -110,6 +128,23 @@ test.describe('#1195 the collection edit modal can publish a collection', () => 
   }) => {
     await setPublicMode(request, true);
 
+    // ⚠️ WHAT THE MODAL ACTUALLY SENT, kept for the failure message.
+    //
+    // This test used to report its failure as a bare `Expected 200,
+    // received 404` from the anonymous read, and 404 has TWO causes here
+    // that need opposite responses: the instance refused an anonymous
+    // caller, or the collection is not public because the SAVE stored the
+    // wrong tier. They are indistinguishable from outside, and a whole
+    // round went into the first before the stored rows ruled it out.
+    // Recording the PATCH costs nothing on the passing path and turns the
+    // next failure into a diagnosis rather than an investigation.
+    const patches: string[] = [];
+    page.on('request', (r) => {
+      if (r.method() === 'PATCH' && r.url().includes('/api/v1/collections/')) {
+        patches.push(r.postData() ?? '(no body)');
+      }
+    });
+
     // The control, taken FIRST and with anonymous browsing already ON, so
     // the refusal is about the TIER and not about the instance switch. A
     // brand-new collection is `private`.
@@ -149,6 +184,30 @@ test.describe('#1195 the collection edit modal can publish a collection', () => 
     await expect(publicRadio, 'the Public radio did not take the click').toBeChecked();
     await page.getByRole('button', { name: /^save$/i }).click();
     await expect(dialog).toBeHidden();
+
+    // ── which of the two 404s is it? ─────────────────────────────────
+    //
+    // Asked BEFORE the anonymous read and as the admin, purely to name
+    // the failure. It is NOT the assertion this file exists for — an
+    // admin read-back would pass on a build that echoed its own request
+    // body (#946), which is why the claim below is still made with no
+    // session at all. This only decides which story the failure tells.
+    const asOwner = await request.get(`/api/v1/collections/${publishedId}`);
+    const storedTier =
+      asOwner.status() === 200
+        ? ((await asOwner.json()) as { visibility?: string }).visibility
+        : `unreadable (${asOwner.status()})`;
+    expect(
+      storedTier,
+      `the modal reported a successful save and the STORED tier is ${storedTier}. ` +
+        `The curator chose Public; something between the click and the PATCH put the old ` +
+        `value back. What the modal sent: ${JSON.stringify(patches)}. This is a SAVE ` +
+        `defect in the collection edit modal, not an anonymous-read one — the anonymous ` +
+        `404 below is the API correctly refusing a collection that is still private. ` +
+        `Observed twice on 2026-08-23 under the full two-worker suite and never once in ` +
+        `isolation (0 failures in 6 solo runs, 8 instrumented repeats at two workers, and ` +
+        `3 runs each at 4x and 8x CPU throttle).`,
+    ).toBe('public');
 
     const anonAfter = await browser.newContext({ storageState: { cookies: [], origins: [] } });
     try {

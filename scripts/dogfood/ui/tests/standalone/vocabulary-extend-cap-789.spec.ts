@@ -92,6 +92,23 @@ async function openMetadata(page: Page, code: string): Promise<void> {
 }
 
 test.describe('vocabulary extension is a capability (#789, ADR 0092 §2)', () => {
+  // ⛔ SERIAL, and this is the whole of the rotating failure #1248 lists
+  // against line 171 — it is not load and it is not timing.
+  //
+  // `beforeAll` runs ONCE PER WORKER. Without serial mode Playwright puts
+  // this file's two tests in two workers, both enter `beforeAll`, and
+  // both create a field whose `code` is `vocab789_${Date.now()}`. `code`
+  // is UNIQUE, so when the two calls land in the same millisecond the
+  // second gets `400 {"error":"field code already exists"}` and the
+  // NON-HOLDER test — whichever of the two lost — dies in setup with a
+  // message about field codes.
+  //
+  // Measured on the coding stack: 0 failures in 5 runs at one worker,
+  // 1 in 5 at two. advanced-vocab-1191 and
+  // advanced-operators-1165-1173-1197 both carry this line already, and
+  // both name the same reason; this file was the one that did not.
+  test.describe.configure({ mode: 'serial' });
+
   test.beforeAll(async ({ browser, request }) => {
     const fixture = await ensureFixtureUser(browser, request, {
       username: PROBE_USER,

@@ -61,6 +61,7 @@ const HYDRATION_SIGNAL = 'main, header[role="banner"]';
 
 const CPU_THROTTLE = Number(process.env.AA_UI_CPU_THROTTLE ?? '1');
 const FRAME_STALL_MS = Number(process.env.AA_UI_FRAME_STALL_MS ?? '0');
+const API_LATENCY_MS = Number(process.env.AA_UI_API_LATENCY_MS ?? '0');
 
 async function applyCPUThrottle(page: Page): Promise<void> {
   if (!(CPU_THROTTLE > 1)) return;
@@ -119,6 +120,51 @@ async function applyFrameStall(page: Page): Promise<void> {
   }, FRAME_STALL_MS);
 }
 
+/**
+ * Add `AA_UI_API_LATENCY_MS` of round-trip latency to every request.
+ *
+ * The third knob, and the one that reaches what the other two cannot. A
+ * CPU throttle and a frame stall both slow the BROWSER; a loaded runner
+ * also slows the SERVER, and for anything whose correctness is "the next
+ * page arrived before the reader did" that is the variable that decides
+ * it. browse-lookahead-1159's own header describes the CI condition it
+ * was failing under as ~31 outstanding renders landing on the first
+ * seconds of the suite — app latency, not renderer latency — and that
+ * condition cannot be produced on a persistent seeded stack at all,
+ * because content-addressed storage dedupes a re-uploaded file and the
+ * render job then does no work.
+ *
+ *   AA_UI_API_LATENCY_MS=400 npx playwright test --project standalone \
+ *     --grep "never reaches unrendered feed"
+ *
+ * ⚠️ Applied through CDP rather than `page.route`, and that is not a
+ * style choice: route handlers are matched most-recent-first and a
+ * handler that calls `route.continue()` does not fall through to the
+ * ones registered before it. browse-lookahead-1159 installs its own
+ * route on `/api/v1/posts` — the exact endpoint the latency has to reach
+ * — so a fixture-level route would have been silently bypassed for the
+ * one request that mattered and produced a confident null result.
+ * Network emulation sits below interception and reaches everything.
+ *
+ * Chromium-only and deliberately silent elsewhere, like the CPU throttle
+ * above: the knob is a diagnostic, not a gate. Off by default.
+ */
+async function applyNetworkLatency(page: Page): Promise<void> {
+  if (!(API_LATENCY_MS > 0)) return;
+  try {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Network.enable');
+    await cdp.send('Network.emulateNetworkConditions', {
+      offline: false,
+      latency: API_LATENCY_MS,
+      downloadThroughput: -1,
+      uploadThroughput: -1,
+    });
+  } catch {
+    // no CDP available — run at full speed
+  }
+}
+
 export const test = base.extend<{}>({
   // WHO CREATED THE ROW (#1247). All FOUR paths a spec can write through
   // are watched, because a spec leaks the same row whichever it used:
@@ -149,6 +195,7 @@ export const test = base.extend<{}>({
     watchContext(page.context(), identFor(testInfo), ledgerPath(testInfo));
     await applyCPUThrottle(page);
     await applyFrameStall(page);
+    await applyNetworkLatency(page);
     const originalGoto = page.goto.bind(page);
     // Replace page.goto so every navigation auto-waits for
     // hydration. Signature mirrors Playwright's
