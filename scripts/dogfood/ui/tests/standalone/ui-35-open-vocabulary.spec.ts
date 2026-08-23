@@ -29,9 +29,18 @@
 import { test, expect, type Page } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
+import { trackUploadedRows } from '../../helpers/uploaded-rows';
 
 /** Field codes this run created, cleaned up in afterEach. */
 let createdFieldIds: string[] = [];
+
+/** ⚠️ THE UPLOADS ARE ROWS TOO, and this file used to leave every one of
+ *  them behind: three real assets a run, forever, on a persistent stack.
+ *  It went unnoticed because the ids never reach the test — the modal
+ *  POSTs them from the browser — so there was nothing obvious to delete.
+ *  The tracker reads the id off the modal's own response; see
+ *  helpers/uploaded-rows.ts. Named by the fixture ledger (#1247). */
+const uploaded = trackUploadedRows();
 
 async function createField(
   page: Page,
@@ -69,11 +78,15 @@ async function openMetadata(page: Page): Promise<void> {
 test.describe('UI-35 open-vocabulary entry', () => {
   test.beforeEach(async ({ page }) => {
     createdFieldIds = [];
+    uploaded.watch(page);
     await loginAsAdminViaUI(page);
     await page.goto('/');
   });
 
   test.afterEach(async ({ request }) => {
+    // Uploads first: a field cannot be archived out from under a value
+    // that still references it, and the asset is what holds the value.
+    await uploaded.cleanup(request);
     for (const id of createdFieldIds) {
       await request.delete(`/api/v1/fields/${id}`).catch(() => undefined);
     }

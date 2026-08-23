@@ -27,7 +27,8 @@
 // source legitimately says "DSL" all over its comments and the
 // question is only ever what a person can read.
 
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { APIRequestContext, Page } from '@playwright/test';
 import { loginAsAdminViaAPI } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
 

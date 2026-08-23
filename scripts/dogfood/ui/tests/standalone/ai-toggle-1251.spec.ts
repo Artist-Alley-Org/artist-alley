@@ -82,6 +82,7 @@ import { test, expect, type Page } from '../../helpers/test';
 import type { APIRequestContext } from '@playwright/test';
 import { loginAsAdminViaAPI, LOGGED_OUT } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
+import { publicModeHold } from '../../helpers/public-mode';
 
 /** A token that appears in every fixture title and nowhere in the seed,
  *  so `/?q=<TOKEN>` renders a wall of exactly these three posts. Reading
@@ -94,7 +95,22 @@ let pureId = '';
 let mixedId = '';
 let plainId = '';
 const assetIds: string[] = [];
-let priorPublicMode: boolean | undefined;
+/** ⚠️ CONTENDED INSTANCE STATE: `system.public_mode`.
+ *
+ *  This file is one of FOUR writers of the instance's anonymous-browsing
+ *  switch — collection-public-tier-1195, collection-cover-editor-1207
+ *  and advanced-operators-1165-1173-1197 are the others — and each one
+ *  read the prior value, set what it needed, and put the prior back.
+ *  That contract is sound for one writer and a lost update for two: the
+ *  second reads the first's TEMPORARY value as "the instance's", asserts
+ *  against a mode it did not ask for, and then publishes that temporary
+ *  value as the restore. Serial mode does not help; it orders tests
+ *  inside a describe, not files across workers.
+ *
+ *  So the switch is taken through the cross-file lock in
+ *  helpers/public-mode.ts, which reads the prior INSIDE the critical
+ *  section, and only around the one test below that needs it. */
+const publicMode = publicModeHold('ai-toggle-1251');
 
 async function makeAsset(request: APIRequestContext, decl: string | null): Promise<string> {
   const up = await request.post('/api/v1/storage/objects', {
@@ -224,10 +240,6 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
   test.beforeAll(async ({ request }) => {
     await loginAsAdminViaAPI(request);
 
-    const mode = await request.get('/api/v1/admin/system/public-mode');
-    expect(mode.status(), 'public-mode state must be readable as admin').toBe(200);
-    priorPublicMode = ((await mode.json()) as { enabled: boolean }).enabled;
-
     const gen1 = await makeAsset(request, 'generated');
     const gen2 = await makeAsset(request, 'generated');
     const undeclared1 = await makeAsset(request, null);
@@ -261,11 +273,9 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
   });
 
   test.afterAll(async ({ request }) => {
-    if (priorPublicMode !== undefined) {
-      await request
-        .patch('/api/v1/admin/system/public-mode', { data: { enabled: priorPublicMode } })
-        .catch(() => undefined);
-    }
+    // A backstop for a crash inside the window below: idempotent, so it
+    // writes nothing when the test already gave the switch back.
+    await publicMode.release(request);
     // Posts first, then their assets. A post delete leaves its members
     // standing, and leftovers pile up at the top of every newest-first
     // grid where the NEXT spec reads (#1198).
@@ -517,20 +527,22 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
     await gotoFixtureWall(page);
     expect(await feedIds(page, '')).toContain(pureId);
 
-    // ⚠️ `public_mode` IS SHARED INSTANCE CONFIG, and this spec is now a
-    // second writer of it — `collection-public-tier-1195` is the other,
-    // and #1248 names exactly that contention as the thing to rule in or
-    // out before calling a rotating failure a timing flake.
+    // ⚠️ `public_mode` IS SHARED INSTANCE CONFIG, and there are FOUR
+    // writers of it — 1195, 1207 and advanced-operators are the others.
+    // #1248 named exactly that contention as the thing to rule in or out
+    // before calling a rotating failure a timing flake; it was real, and
+    // the answer is the cross-file lock rather than a narrower window.
     //
-    // So the window is as narrow as the assertion allows: set it, assert
-    // anonymously, put it straight back in a `finally` — rather than
-    // holding it for the file the way a beforeAll/afterAll pair would.
-    // The prior value is captured once in beforeAll and restored again in
-    // afterAll as a backstop, because a crash inside this block would
-    // otherwise leave the instance switched.
-    const r = await request.patch('/api/v1/admin/system/public-mode', { data: { enabled: true } });
-    expect(r.status(), 'public mode must be settable for the anonymous half').toBe(200);
+    // The window stays as narrow as the assertion allows anyway — take
+    // it, assert anonymously, give it straight back in a `finally` —
+    // because every millisecond of it is a millisecond the other three
+    // specs spend queued behind this one. Waiting for the switch can
+    // outlast the default 30s budget (1207 holds it across its whole
+    // file), so the test gets room to queue.
+    test.setTimeout(600_000);
+    await publicMode.acquire(request);
     try {
+      await publicMode.set(request, true);
       // Anonymous, no parameter: same answer. ADR 0094 §4 — the work
       // stays public, findable and countable for everyone who did not
       // ask to hide it.
@@ -558,11 +570,7 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
         await anon.close();
       }
     } finally {
-      if (priorPublicMode !== undefined) {
-        await request
-          .patch('/api/v1/admin/system/public-mode', { data: { enabled: priorPublicMode } })
-          .catch(() => undefined);
-      }
+      await publicMode.release(request);
     }
   });
 

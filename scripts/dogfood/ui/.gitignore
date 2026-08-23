@@ -3,3 +3,4 @@ node_modules/
 .pw-report/
 playwright-report/
 test-results/
+.pw-artifacts/

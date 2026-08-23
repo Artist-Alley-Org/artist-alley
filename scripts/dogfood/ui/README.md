@@ -15,7 +15,7 @@ under `scripts/dogfood/scenarios/`. Catches:
 
 | Set          | Where                     | Needs                                                                                     |
 | ------------ | ------------------------- | ----------------------------------------------------------------------------------------- |
-| `standalone` | `tests/standalone/`       | Just the dev stack. Default for PR / pre-merge checks. **133 tests in ~60s.**             |
+| `standalone` | `tests/standalone/`       | Just the dev stack. Default for PR / pre-merge checks. **~364 tests in ~5 min at 2 workers.** |
 | `federation` | `tests/federation/`       | Dev stack + `dogfood` profile + `pair.sh` run. Run during dogfood weeks. **4 tests in ~4s.** |
 
 The split is at the file level — each test file is in exactly
@@ -58,16 +58,81 @@ Subsequent runs reuse the install (~1s startup vs ~60s).
 scripts/dogfood/ui/
 ├── package.json              @playwright/test
 ├── playwright.config.ts      Two projects: standalone + federation
+├── fixture-ledger-report.mjs Which spec left which rows (#1247)
+├── instance-lock-audit.mjs   Proof the config windows did not overlap (#1248)
 ├── helpers/
+│   ├── test.ts               THE `test` EVERY SPEC IMPORTS — hydration + ledger
 │   ├── auth.ts               loginAsAdminViaUI / loginAsAdminViaAPI
+│   ├── fixture-ledger.ts     Records creates + deletes against their spec
+│   ├── instance-lock.ts      Cross-process mutex over shared instance state
+│   ├── public-mode.ts        `system.public_mode`, borrowed under that lock
+│   ├── fixture-user.ts       The one reused throwaway account (#1198)
 │   ├── routes.ts             48-route manifest (anon / user / admin / catch-all)
 │   ├── assertions.ts         expectPageRendersCleanly, expectPath
 │   └── testids.ts            Canonical `data-testid` catalogue
 ├── tests/
-│   ├── standalone/           (16 files, 133 tests)
+│   ├── standalone/           (59 files, ~364 tests)
 │   └── federation/           (2 files, 4 tests)
 └── README.md
 ```
+
+## Two rules the suite enforces on itself
+
+The dogfood stack is persistent and the suite runs with two workers, so
+a spec can change what a LATER spec sees — in the database, or in the
+instance's own configuration. Both are guarded, and both guards report
+from the run's own evidence rather than from a claim.
+
+### 1. Import `test` from `helpers/test`, never from `@playwright/test`
+
+```ts
+import { test, expect } from '../../helpers/test';
+import type { APIRequestContext, Page } from '@playwright/test'; // types are fine
+```
+
+That fixture wraps `page.goto()` to wait for hydration, and it is also
+where the **fixture ledger** (#1247) hangs: every row a spec creates
+through the API — directly, or by driving a form — is recorded against
+the spec that created it, and every delete against the spec that removed
+it. After each run `fixture-ledger-report.mjs` nets the two and prints
+which spec left which rows, so the corpus census's "assets +12" has an
+owner instead of being a number nobody can act on.
+
+A spec that imports `test` from `@playwright/test` is invisible to that
+accounting — which is exactly the spec a leak tends to come from.
+
+### 2. Take shared instance config through `helpers/public-mode.ts`
+
+`system.public_mode` has four writers, and each used to read the prior
+value, set what it needed and put the prior back. That is a lost update
+the moment two of them run at once: the second reads the first's
+TEMPORARY value as the instance's, asserts against a mode it did not ask
+for, and then publishes that temporary value as its "restore".
+
+`test.describe.configure({ mode: 'serial' })` does not help — it orders
+tests inside one describe block, not files across workers.
+`helpers/instance-lock.ts` is a cross-process mutex (an O_EXCL lock file
+keyed by the instance's base URL, so two checkouts driving one stack
+still exclude each other), and `helpers/public-mode.ts` reads the prior
+value **inside** the lock, which is the actual fix.
+
+Every hold records its window; `instance-lock-audit.mjs` checks after
+each run that no two windows on one lock overlapped, and says whether
+anything ever had to wait — a run with no contention proves nothing, so
+it is reported as such rather than counted as a pass.
+
+If you add a spec that writes shared instance state, give it a lock and
+say in the file what it contends over.
+
+## What "clean up after yourself" means here
+
+`DELETE` is a **soft** delete on `assets`, `posts` and `collections`
+(`deleted_at`), and an **archive** on `field_definition` (`status`).
+`user` has no delete at all. So a spec that deletes its fixtures has
+cleaned up correctly and the ROW is still in the table — which is why
+the corpus census counts live rows, and reports the raw totals beside
+them as the sweep's backlog. `aa sweep-fixtures` is what removes rows;
+it is dry-run by default.
 
 ## Selector convention
 

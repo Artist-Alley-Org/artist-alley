@@ -95,7 +95,46 @@ fi
 # a run added would hide which spec added it, and the point is to name
 # the leak while the run that caused it is still on screen.
 
+# ⛔ IT COUNTS LIVE ROWS, AND THE FIRST VERSION DID NOT — which made the
+# invariant unsatisfiable and mis-reported every well-behaved spec as a
+# leak (#1247).
+#
+# `DELETE` is a SOFT delete on all three of assets, posts and collections
+# (`SET deleted_at = NOW()` — assets/queries.sql:93, posts:56,
+# collections:138) and an ARCHIVE on field_definition (`SET status =
+# 'archived'` — metadata/queries.sql:141, whose own comment says "we
+# never DELETE field defs in normal flow"). `user` has no delete at all.
+#
+# So `count(*)` can never come back down through any API a spec can call.
+# A spec that created three assets and deleted all three still drifted
+# +3, no teardown could have fixed it, and the ratchet's stated target of
+# all zeroes was unreachable by construction. "Roughly 25 specs leak" was
+# partly measuring the instrument.
+#
+# LIVE rows are also what the invariant is FOR. The harm #1245 records —
+# the newest-200 window holding no raster image, the bootstrap admin off
+# page 1 of /admin/users — is caused by rows the app can still see. Every
+# index that feeds those surfaces is partial on `deleted_at IS NULL`. A
+# soft-deleted row is invisible to browse, to search and to every admin
+# list; it is disk, and `aa sweep-fixtures` is what reclaims disk.
+#
+# The raw totals are still reported, as a second line and ungated: they
+# are the sweep's backlog, and losing sight of them would be a different
+# mistake.
 corpus_census() {
+    docker compose exec -T postgres psql -U "${POSTGRES_USER:-artist_alley}" \
+        -d "${POSTGRES_DB:-artist_alley}" -tA -F'|' -c "
+        SELECT (SELECT count(*) FROM assets WHERE deleted_at IS NULL)
+            || '|' || (SELECT count(*) FROM posts WHERE deleted_at IS NULL)
+            || '|' || (SELECT count(*) FROM collections WHERE deleted_at IS NULL)
+            || '|' || (SELECT count(*) FROM field_definition WHERE status <> 'archived')
+            || '|' || (SELECT count(*) FROM \"user\");" 2>/dev/null | tr -d '[:space:]'
+}
+
+# The same five tables counted RAW — soft-deleted and archived rows
+# included. Reported, never gated: this is the sweep's backlog, not the
+# suite's tidiness.
+corpus_total() {
     docker compose exec -T postgres psql -U "${POSTGRES_USER:-artist_alley}" \
         -d "${POSTGRES_DB:-artist_alley}" -tA -F'|' -c "
         SELECT (SELECT count(*) FROM assets)
@@ -124,11 +163,12 @@ if [ "$census_enabled" = "yes" ]; then
     # shellcheck disable=SC2046
     export $(grep -E '^(POSTGRES_DB|POSTGRES_USER)=' "${ROOT}/.env" 2>/dev/null | tail -2 | xargs) 2>/dev/null || true
     corpus_before="$(corpus_census)"
+    total_before="$(corpus_total)"
     if [ -z "$corpus_before" ]; then
         warn "corpus invariant SKIPPED: could not read the database (is the stack up?)"
         census_enabled="no"
     else
-        step "Corpus census (before): assets|posts|collections|fields|users = ${corpus_before}"
+        step "Corpus census (before): assets|posts|collections|fields|users = ${corpus_before}   (raw incl. soft-deleted: ${total_before})"
     fi
 fi
 
@@ -140,6 +180,18 @@ else
     step "Running Playwright UI suite (mode: $mode)"
 fi
 mkdir -p .pw-results
+
+# Where the cross-file instance-config lock records each hold (#1248).
+# Truncated per run so the audit below describes THIS run and not a
+# fortnight of them.
+export AA_LOCK_AUDIT="${UI_DIR}/.pw-artifacts/instance-locks.jsonl"
+rm -f "$AA_LOCK_AUDIT"
+
+# Where helpers/fixture-ledger.ts records who created and who deleted
+# each row (#1247). Truncated per run for the same reason.
+export AA_FIXTURE_LEDGER="${UI_DIR}/.pw-artifacts/fixture-ledger.jsonl"
+rm -f "$AA_FIXTURE_LEDGER"
+
 pw_args=()
 if [ "$mode" != "all" ]; then
     pw_args+=(--project "$mode")
@@ -170,11 +222,39 @@ console.log(`  Total: ${total}   ${c("1;32", "PASS:")} ${fmt(pass)}   ${c("1;31"
     printf '\nHTML report: %s/.pw-report/index.html\n' "$UI_DIR"
 fi
 
+# --- 3b. shared-instance-config locks ------------------------------------
+#
+# Four specs write `system.public_mode` and each one reads the prior
+# value, sets what it needs and puts the prior back — a contract that is
+# correct for one writer and a lost update for two (#1248). The lock in
+# helpers/instance-lock.ts makes those windows mutually exclusive ACROSS
+# FILES, which the `mode: 'serial'` they all already declare does not.
+#
+# "They cannot interleave" is a claim about a race, and a race that is
+# merely unlikely passes most runs — so it is checked from the run's own
+# audit rather than asserted. Exit 4 is distinct from the ratchet's 3 and
+# from Playwright's own, so the failure kinds are told apart by status.
+if [ -f "$AA_LOCK_AUDIT" ]; then
+    node "${UI_DIR}/instance-lock-audit.mjs" "$AA_LOCK_AUDIT"
+    audit_rc=$?
+    if [ "$audit_rc" -ne 0 ] && [ "$rc" -eq 0 ]; then rc=$audit_rc; fi
+fi
+
+# --- 3c. who left the rows -----------------------------------------------
+#
+# The census below reports drift per TABLE. This says which SPEC it
+# belongs to (#1247) — recorded as each row was created rather than
+# inferred from names afterwards, because a naming rule is safe for a
+# report and is the exact rule that nearly deleted five real assets when
+# it was used for deletion (fixturesweep/rules.go).
+node "${UI_DIR}/fixture-ledger-report.mjs" "$AA_FIXTURE_LEDGER"
+
 # --- 4. corpus census, after --------------------------------------------
 
 if [ "$census_enabled" = "yes" ]; then
     corpus_after="$(corpus_census)"
-    step "Corpus census (after):  assets|posts|collections|fields|users = ${corpus_after}"
+    total_after="$(corpus_total)"
+    step "Corpus census (after):  assets|posts|collections|fields|users = ${corpus_after}   (raw incl. soft-deleted: ${total_after})"
     if [ -z "$corpus_after" ]; then
         warn "corpus invariant INCONCLUSIVE: the database was unreadable after the run."
     elif [ "$corpus_after" != "$corpus_before" ]; then
@@ -185,19 +265,25 @@ if [ "$census_enabled" = "yes" ]; then
         # already exists; only a BIGGER leak fails the run.
         budget_file="${ROOT}/scripts/dogfood/corpus-budget.txt"
         printf '\n\033[1;33mCORPUS DRIFT\033[0m — this run did not fully clean up after itself.\n'
-        printf '  %-18s %10s %10s %10s %10s\n' "TABLE" "BEFORE" "AFTER" "DELTA" "BUDGET"
+        printf '  %-18s %10s %10s %10s %10s %10s\n' "TABLE" "BEFORE" "AFTER" "DELTA" "BUDGET" "RAW Δ"
         IFS='|' read -r b1 b2 b3 b4 b5 <<< "$corpus_before"
         IFS='|' read -r a1 a2 a3 a4 a5 <<< "$corpus_after"
+        IFS='|' read -r r1 r2 r3 r4 r5 <<< "$total_before"
+        IFS='|' read -r s1 s2 s3 s4 s5 <<< "$total_after"
         over=0
         i=1
         for t in assets posts collections field_definition user; do
-            eval "b=\$b$i; a=\$a$i"
+            eval "b=\$b$i; a=\$a$i; rb=\$r$i; ra=\$s$i"
             delta=$((a - b))
+            # The RAW delta counts soft-deleted and archived rows too, so
+            # it is always >= DELTA and never comes down through the API.
+            # Reported so the sweep's backlog stays visible; never gated.
+            raw_delta=$((${ra:-0} - ${rb:-0}))
             allowed="$(grep -E "^${t} " "$budget_file" 2>/dev/null | awk '{print $2}')"
             allowed="${allowed:-0}"
             flag=""
             if [ "$delta" -gt "$allowed" ]; then flag="  <== OVER BUDGET"; over=1; fi
-            printf '  %-18s %10s %10s %+10d %10s%s\n' "$t" "$b" "$a" "$delta" "$allowed" "$flag"
+            printf '  %-18s %10s %10s %+10d %10s %+10d%s\n' "$t" "$b" "$a" "$delta" "$allowed" "$raw_delta" "$flag"
             i=$((i + 1))
         done
         if [ "$over" -eq 1 ]; then
@@ -214,6 +300,11 @@ if [ "$census_enabled" = "yes" ]; then
         fi
     else
         printf '\n\033[1;32mCorpus invariant holds\033[0m — the run left the database as it found it.\n'
+        if [ "$total_after" != "$total_before" ]; then
+            printf 'Raw row counts still moved (%s → %s): every spec cleaned up, and a soft\n' \
+                "$total_before" "$total_after"
+            printf 'delete leaves the row behind. `aa sweep-fixtures` reclaims those.\n'
+        fi
     fi
 fi
 

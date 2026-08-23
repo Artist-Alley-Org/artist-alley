@@ -29,7 +29,8 @@
 //   - the 403 on the ACL list is asserted in the same test as a 200 on
 //     the post itself, so #876 cannot pass by the share having broken.
 
-import { test, expect, type APIRequestContext, type Browser } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { APIRequestContext, Browser } from '@playwright/test';
 import { LOGGED_OUT } from '../../helpers/auth';
 import { ensureFixtureUser, restoreSelfRegistration } from '../../helpers/fixture-user';
 import { tid } from '../../helpers/testids';

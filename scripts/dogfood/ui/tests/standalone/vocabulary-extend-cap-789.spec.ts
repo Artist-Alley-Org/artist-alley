@@ -28,6 +28,7 @@ import { test, expect, type Page } from '../../helpers/test';
 import { loginAsAdminViaUI, LOGGED_OUT } from '../../helpers/auth';
 import { ensureFixtureUser, restoreSelfRegistration } from '../../helpers/fixture-user';
 import { tid } from '../../helpers/testids';
+import { trackUploadedRows } from '../../helpers/uploaded-rows';
 
 const EXTEND_CAP = 'fields.vocabulary.extend';
 
@@ -42,8 +43,18 @@ let priorSelfRegistration: unknown;
 let fieldId = '';
 let fieldCode = '';
 
+/** ⚠️ BOTH TESTS UPLOAD A REAL FILE, and neither used to remove it: two
+ *  live assets a run on a persistent stack, which the fixture ledger
+ *  named (#1247). The ids never reach the test — the modal POSTs them
+ *  from the browser — so they are read off its own response instead; see
+ *  helpers/uploaded-rows.ts. The second test drives a SEPARATE context
+ *  as the non-holder, so the watch goes on the page rather than on a
+ *  fixture, and the admin's request context does the deleting. */
+const uploaded = trackUploadedRows();
+
 /** Open the upload modal with one small file queued. */
 async function queueOneFile(page: Page, name: string): Promise<void> {
+  uploaded.watch(page);
   await page.locator(tid('nav-upload-button')).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.locator(tid('upload-file-input')).setInputFiles({
@@ -81,6 +92,23 @@ async function openMetadata(page: Page, code: string): Promise<void> {
 }
 
 test.describe('vocabulary extension is a capability (#789, ADR 0092 §2)', () => {
+  // ⛔ SERIAL, and this is the whole of the rotating failure #1248 lists
+  // against line 171 — it is not load and it is not timing.
+  //
+  // `beforeAll` runs ONCE PER WORKER. Without serial mode Playwright puts
+  // this file's two tests in two workers, both enter `beforeAll`, and
+  // both create a field whose `code` is `vocab789_${Date.now()}`. `code`
+  // is UNIQUE, so when the two calls land in the same millisecond the
+  // second gets `400 {"error":"field code already exists"}` and the
+  // NON-HOLDER test — whichever of the two lost — dies in setup with a
+  // message about field codes.
+  //
+  // Measured on the coding stack: 0 failures in 5 runs at one worker,
+  // 1 in 5 at two. advanced-vocab-1191 and
+  // advanced-operators-1165-1173-1197 both carry this line already, and
+  // both name the same reason; this file was the one that did not.
+  test.describe.configure({ mode: 'serial' });
+
   test.beforeAll(async ({ browser, request }) => {
     const fixture = await ensureFixtureUser(browser, request, {
       username: PROBE_USER,
@@ -122,6 +150,9 @@ test.describe('vocabulary extension is a capability (#789, ADR 0092 §2)', () =>
   });
 
   test.afterAll(async ({ request }) => {
+    // The uploads first — the probe field below cannot be archived
+    // cleanly while an asset still carries a value for it.
+    await uploaded.cleanup(request);
     if (probeRef) {
       await request
         .delete(`/api/v1/admin/users/${probeRef}/revokes/${EXTEND_CAP}`)
