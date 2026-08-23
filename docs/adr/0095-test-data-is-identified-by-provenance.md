@@ -98,3 +98,46 @@ accumulated rows still need clearing meanwhile.
 **A dedicated `is_fixture` column.** Rejected: it is a second source of truth that a test could
 forget to set, whereas provenance is stamped by the code path that already knows the answer, and is
 absent by default for anything created through the API.
+
+---
+
+## Amendment, 2026-08-23 (#1247, PR #1261): what "cleaned up" MEASURES
+
+This ADR decided how to tell a fixture from real content. Sprint 9 found that the *invariant built
+on top of it* was measuring the wrong quantity, which is a different failure and worth recording
+beside the identification rule.
+
+**Every delete a dogfood spec can call is a soft delete or an archive.** `collections/queries.sql:138`,
+`posts/queries.sql:56` and `assets/queries.sql:93` all `SET deleted_at = NOW()`;
+`metadata/queries.sql:146` sets `status = 'archived'`; `user` has no delete endpoint at all. So
+`count(*)` **can never come down through any API a spec can reach**, and the corpus census scored a
+spec that created three rows and correctly deleted all three as a `+3` leak.
+
+The scale of the error was visible the whole time and nobody looked: **151 collection rows, 7 live.**
+Four of the five tables in the budget were already clean before any fix, and #1247 had been planned
+as "roughly 25 specs each leaving one to ten rows behind."
+
+**Decision: the corpus invariant is the LIVE row count** — a run must end with the live counts it
+began with. That is the only quantity a spec can control, so it is the only fair thing to score it on.
+
+**And the census reports BOTH:**
+
+```
+Corpus census (before): assets|posts|collections|fields|users = 2015|851|7|27|36
+                        (raw incl. soft-deleted: 3063|1299|347|476|36)
+```
+
+The second half is what keeps this from being a re-measurement that flatters the number. Soft-deleted
+rows really do accumulate — one full run adds ~59 assets, ~25 posts, ~16 collections, ~22 fields to
+the raw counts — and whether that ever needs a retention policy is a product question, not a test one.
+Hiding it would have made that question unaskable.
+
+⚠️ **Attribution may use names; DELETION may not.** The fixture ledger identifies a leaking row by
+whatever stamp the creating spec left, which is fine for a report. Deletion stays on this ADR's
+provenance rule (`NOT (metadata ? 'acquisition_source')`), because an appearance-based rule for
+deletion is what nearly destroyed five real assets in sprint 6a — the reason this ADR exists.
+
+⚠️ **The invariant still does not run in CI.** `run-ui.sh` enables the census only when the port in
+`STUDIO_A_HOST` matches the checkout's `VITE_HOST_PORT`, and CI drives the suite at
+`http://app.aa:8080`. So the all-zeroes budget currently guards a developer's laptop and nothing
+else — which is how the leak reached ~50 rows a run unnoticed. Tracked as **#1263**.

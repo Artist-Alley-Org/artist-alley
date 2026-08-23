@@ -96,6 +96,11 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Development only — the test suite stopped miscounting its own cleanup.** The dogfood suite's
+  corpus check counted deleted rows as leaks, because deleting through the API marks a row deleted
+  rather than removing it. Four of the five tables it watched were already clean; three specs that
+  genuinely left rows behind are fixed. No effect on the running product (#1247, PR #1261).
+
 - **A collection's tile now shows what the collection actually contains.** The mosaic a collection
   falls back to, and the item count on its featured tile, were both composed partly from loose
   files that stopped being members of anything visible when collections became post-only. On the
