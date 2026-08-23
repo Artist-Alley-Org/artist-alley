@@ -239,3 +239,70 @@ validation, which was inert only while nothing read post state — and post stat
 difference between published and not. **The server owns the state; the only thing a caller may
 say is `draft`.** The matching gap on `PATCH /posts/{id}`, which still accepts and ignores
 `state_id`, is deliberately unwired and tracked as #949.
+
+---
+
+## Amendment, 2026-08-22 (#1236, #1237 — PR #1258): the bullet is finished, and the table stays
+
+The first amendment's *"not done"* half is done. Recorded here because it resolves an
+either/or this ADR left open, and because the resolution is the opposite of the one that looked
+obvious from the tracker.
+
+**1. The mosaic and the rail count compose from posts only.**
+
+`covers.go`'s `members` CTE dropped its `collection_resources` half, and the featured rail's
+`item_count` dropped the matching leg for the same reason — a tile is a summary of what the
+collection contains, and after #1161 that is posts. On the seeded corpus the rail's numbers moved
+from 1540 / 390 / 350 / 190 / 225 to **446 / 120 / 102 / 72 / 69**, which are exactly the pinned
+post counts; the difference was bare assets no surface displayed. A collection with no posts and
+no chosen cover now draws its deliberate empty state, which is the honest answer and is **not** a
+regression of #1026 (that defect was a collection with *renderable* members drawing nothing).
+
+**2. `GET /collections/{id}/resources` is retired**, with the cursors, the row mapper,
+`decorateMemberCardFields`, four dead sqlc queries and the strict-server entry. The comment that
+kept it alive — *"the cover picker uses it"* — had been falsified by the very PR that wrote it.
+
+**3. ⛔ `collection_resources` BECOMES INTERNAL. It is not dropped, and this is a decision, not a
+deferral.** The first amendment offered "internal or disappears"; the answer is *internal*,
+because a counter-example search for live consumers found **five**, and one of them is a WRITE
+path that a grep for endpoints would never have surfaced:
+
+| consumer | direction | where |
+|---|---|---|
+| the seeder | **writes** | `SeedInsertCollectionResource`, `app/internal/seed/queries.sql` |
+| save-as-collection | **writes** | `createCollectionWithResults`, `app/internal/search/saveas.go` |
+| federation shares gate | reads | container resolution, `app/internal/federation/shares/gate.go` |
+| the `collection:` search facet | reads | `search`'s `dimensionSQL`, asset entity |
+| the reindex job | reads | `ScopeCollection` |
+
+Anyone proposing a `DROP TABLE` must account for all five. A note at the table's seam in
+`collections/handler.go` says so in the code, so the obligation does not live only here.
+
+⚠️ The save-as-collection writer turned out to be **broken in its own right** — it writes
+`pinned = false`, and every reader above requires `pinned = TRUE`, so it produces a collection
+that opens empty and whose own scoped-search filter cannot find its members. Filed as **#1259**.
+Decision 4 still binds there: whatever fixes it must not convert bare rows into posts.
+
+**4. Decision 5's disclosure has an arithmetic contract, now stated: `withheld_count` is NOT
+`total − len(items)`.**
+
+The shipped handler computed exactly that, while the readable list is capped at `LIMIT 200`. Past
+200 readable posts the truncated remainder was being reported as *withheld* — telling an owner
+their file was in posts they could not open when they simply had not been sent them. The count is
+a statement about **entitlement**, never about pagination, and the two must not be conflated in
+any future widening of this endpoint.
+
+### Two implementation traps this work uncovered, recorded so they are not rediscovered
+
+- **A UNION branch can be supplying a sibling's column name.** The post half's
+  `COALESCE(cover_thumbnail_asset_id, cover_asset_id)` was unaliased and inherited `asset_id` from
+  the asset half above it. Removing that half left the CTE with a generated name and **every
+  collection read in the product failed `42703`** — hub, detail, search hits, rail. Caught by
+  search's live-schema contract test, not by any cover test. Alias every UNION branch column
+  explicitly.
+- **Retiring a schema can rename an unrelated generated enum.** oapi-codegen names an enum
+  constant after its VALUE and falls back to a type prefix only when two enums collide.
+  `SearchFieldValuesParamsStatus*` existed *only* because it collided with `CollectionResource.status`;
+  removing that schema silently renamed the four constants to bare `Active` / `Any` / `Archived` /
+  `Deprecated` at package scope. Pinned with `x-enum-varnames` at the spec, because a generated
+  identifier should not depend on what other schemas happen to exist.

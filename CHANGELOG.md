@@ -9,6 +9,13 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **You can see where one of your files ended up.** A file's ⋯ menu gains "Where this is used",
+  which lists the posts it appears in — including posts by other people, which the shared-library
+  side of this product makes ordinary. Posts you cannot open are not listed; instead you get a
+  count and a plain sentence saying so, because the number is the whole disclosure and a title or
+  a link would give away what the post is. A file in no posts says so and reminds you it stays in
+  your library until you put it in one (#1237, PR #1258).
+
 - **Publishing a post can now be scheduled** (groundwork). An administrator-scheduled action can
   publish — or unpublish — a post at a future time, going through the same path as pressing the
   button: the post becomes visible and its federation announcement goes out together, as one act.
@@ -88,6 +95,17 @@ where applicable, otherwise note "no-spec-impact."
   title nobody wrote (#1161, PR #1232).
 
 ### Fixed
+
+- **A collection's tile now shows what the collection actually contains.** The mosaic a collection
+  falls back to, and the item count on its featured tile, were both composed partly from loose
+  files that stopped being members of anything visible when collections became post-only. On the
+  seeded library the counts were more than double the real ones. A collection with nothing in it
+  now shows its empty state rather than a picture of things you cannot find inside (#1236, PR #1258).
+
+- **"Posts you cannot open" no longer counts posts you simply weren't sent.** The
+  where-is-this-used count is capped at 200 listed posts, and everything past the cap had been
+  folded into the withheld number — so a heavily used file could report posts as hidden from you
+  when they were not (#1237, PR #1258).
 
 - **The quick-upload dialog no longer shows a blank visibility choice.** It offered three options
   while defaulting to a fourth, so the control rendered empty and the form posted a tier it never
