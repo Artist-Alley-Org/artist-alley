@@ -14,7 +14,8 @@
 // section to actually RENDER (its own heading, which only appears once
 // caps loaded and canSeeAdmin flipped true) before scanning.
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { Page } from '@playwright/test';
 
 const NO_PERMISSION = "You don't have permission to view this page.";
 

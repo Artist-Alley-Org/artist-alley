@@ -29,7 +29,8 @@
 // the seed ships, and turning a real field off mid-suite changes the
 // page under every other spec.
 
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { APIRequestContext, Page } from '@playwright/test';
 import { loginAsAdminViaAPI, LOGGED_OUT } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
 

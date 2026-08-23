@@ -39,7 +39,7 @@
 //     nothing" about a file nobody parsed is the original bug wearing a
 //     new hat.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaAPI } from '../../helpers/auth';
 import { buildGlbWithExternalTextures } from '../../helpers/glb-fixture';
 

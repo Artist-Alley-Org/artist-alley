@@ -29,7 +29,8 @@
 // That is a display default, not the read rule, and changing it is a
 // separate product decision.
 
-import { test, expect, type APIRequestContext, type Browser } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { APIRequestContext, Browser } from '@playwright/test';
 import { LOGGED_OUT } from '../../helpers/auth';
 import { ensureFixtureUser, restoreSelfRegistration } from '../../helpers/fixture-user';
 import { tid } from '../../helpers/testids';

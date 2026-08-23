@@ -12,7 +12,8 @@
 //     the ambient dev DB has neither (fresh clone), the tests skip
 //     with a clear reason rather than failing spuriously.
 
-import { test, expect, request } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import { request } from '@playwright/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 // Grab the first asset + first collection from the admin surface. Both

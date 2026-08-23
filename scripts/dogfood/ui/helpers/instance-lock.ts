@@ -120,9 +120,10 @@ function lockPath(name: string): string {
 /**
  * Where each hold's window is recorded.
  *
- * run-ui.sh points this at the run's own output dir; a bare
- * `npx playwright test` falls back to the lock dir so the audit still
- * exists and the checker still has something to read.
+ * run-ui.sh points this at `.pw-artifacts/`; a bare `npx playwright
+ * test` falls back to the lock dir so the audit still exists and the
+ * checker still has something to read. Deliberately NOT `.pw-results`:
+ * Playwright empties its own `outputDir` at the start of every run.
  */
 function auditPath(): string {
   return process.env.AA_LOCK_AUDIT ?? join(lockDir(), 'instance-locks.jsonl');

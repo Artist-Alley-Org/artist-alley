@@ -24,11 +24,21 @@
 import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
+import { trackUploadedRows } from '../../helpers/uploaded-rows';
+
+/** ⚠️ THE MODAL UPLOADS ON PICK, so a case that only inspects a control
+ *  still creates an asset (#1247). See the AI-control case below. */
+const uploaded = trackUploadedRows();
 
 test.describe('UI-14 upload flow', () => {
   test.beforeEach(async ({ page }) => {
+    uploaded.watch(page);
     await loginAsAdminViaUI(page);
     await page.goto('/');
+  });
+
+  test.afterEach(async ({ request }) => {
+    await uploaded.cleanup(request);
   });
 
   test('clicking Upload opens the modal', async ({ page }) => {
@@ -64,6 +74,25 @@ test.describe('UI-14 upload flow', () => {
       name: 'ui-14-ai.txt',
       mimeType: 'text/plain',
       buffer: Buffer.from(`ui-14 ai fixture ${Date.now()}-${Math.random()}`),
+    });
+
+    // ⛔ WAIT FOR THE UPLOAD BEFORE ASSERTING, and the reason is not
+    // patience — it is that this case was RACING ITS OWN FIXTURE.
+    //
+    // Picking the file is the commit: the row uploads immediately and
+    // the asset row is written by a POST the BROWSER makes. This case
+    // only ever looked at a control, so it used to end while that POST
+    // was still in flight — and then, depending on which side won, the
+    // instance either gained a permanent `ui 14 ai` asset or did not.
+    // Three had collected before the corpus census caught one; the
+    // fixture ledger did not, and could not, because a response that
+    // lands after the page is torn down is never reported to it.
+    //
+    // Waiting makes the fixture deterministic AND makes it deletable —
+    // the id arrives with that response, which is what afterEach removes.
+    // It changes nothing this case asserts.
+    await expect(page.getByText(/Ready|Already uploaded/).first()).toBeVisible({
+      timeout: 30_000,
     });
 
     const group = page.locator(tid('ai-provenance-row'));

@@ -19,6 +19,15 @@
 //     returning, with a 10s timeout. Tests assert against a
 //     real, mounted DOM.
 //
+// It is also where the FIXTURE LEDGER hangs (#1247): every row a spec
+// creates through the API — directly or by driving a form — is recorded
+// against the spec that created it, and every delete against the spec
+// that removed it, so the run can say WHICH spec left a row rather than
+// only that a table drifted. That is why importing `test` from here is
+// not optional: a spec that imports it from `@playwright/test` is
+// invisible to the accounting, which is precisely the spec the leak
+// tends to come from.
+//
 // Signal: `<main>` or the navbar `<header role="banner">`
 // appearing in the DOM is a reliable post-hydration marker —
 // neither exists in the static-shell index.html until the
@@ -39,6 +48,13 @@
 // Off by default, so CI timings are unchanged.
 
 import { test as base, expect, type Page } from '@playwright/test';
+import {
+  identFor,
+  ledgerPath,
+  watchBrowser,
+  watchContext,
+  watchRequestContext,
+} from './fixture-ledger';
 
 const HYDRATION_TIMEOUT_MS = 10_000;
 const HYDRATION_SIGNAL = 'main, header[role="banner"]';
@@ -104,7 +120,33 @@ async function applyFrameStall(page: Page): Promise<void> {
 }
 
 export const test = base.extend<{}>({
-  page: async ({ page }, use) => {
+  // WHO CREATED THE ROW (#1247). All FOUR paths a spec can write through
+  // are watched, because a spec leaks the same row whichever it used:
+  // the `request` fixture, the browser's own traffic, `page.request`
+  // (the CONTEXT's api context — neither of the first two), and any
+  // context the spec opens for a second principal. Nothing here is
+  // opt-in: the leak always comes from the spec that did not opt in.
+  request: async ({ request }, use, testInfo) => {
+    watchRequestContext(
+      request as unknown as { fetch: Function },
+      identFor(testInfo),
+      ledgerPath(testInfo),
+    );
+    await use(request);
+  },
+  browser: [
+    async ({ browser }, use, workerInfo) => {
+      watchBrowser(
+        browser,
+        { spec: '(worker)', title: '(worker)', file: '' },
+        ledgerPath(workerInfo),
+      );
+      await use(browser);
+    },
+    { scope: 'worker' },
+  ],
+  page: async ({ page }, use, testInfo) => {
+    watchContext(page.context(), identFor(testInfo), ledgerPath(testInfo));
     await applyCPUThrottle(page);
     await applyFrameStall(page);
     const originalGoto = page.goto.bind(page);

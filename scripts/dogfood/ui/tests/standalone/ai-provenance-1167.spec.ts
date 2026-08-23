@@ -32,7 +32,8 @@
 // #1116 defect — the handler echoes its own wrong value consistently
 // and a body assertion agrees with the bug.
 
-import { test, expect, type APIRequestContext } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { APIRequestContext } from '@playwright/test';
 import { loginAsAdminViaAPI } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
 

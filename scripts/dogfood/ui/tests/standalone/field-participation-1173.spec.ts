@@ -31,7 +31,8 @@
 // happens to ship, and turning a real field off mid-suite would change
 // the page under every other spec.
 
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { APIRequestContext, Page } from '@playwright/test';
 import { loginAsAdminViaAPI } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
 

@@ -28,6 +28,7 @@ import { test, expect, type Page } from '../../helpers/test';
 import { loginAsAdminViaUI, LOGGED_OUT } from '../../helpers/auth';
 import { ensureFixtureUser, restoreSelfRegistration } from '../../helpers/fixture-user';
 import { tid } from '../../helpers/testids';
+import { trackUploadedRows } from '../../helpers/uploaded-rows';
 
 const EXTEND_CAP = 'fields.vocabulary.extend';
 
@@ -42,8 +43,18 @@ let priorSelfRegistration: unknown;
 let fieldId = '';
 let fieldCode = '';
 
+/** ⚠️ BOTH TESTS UPLOAD A REAL FILE, and neither used to remove it: two
+ *  live assets a run on a persistent stack, which the fixture ledger
+ *  named (#1247). The ids never reach the test — the modal POSTs them
+ *  from the browser — so they are read off its own response instead; see
+ *  helpers/uploaded-rows.ts. The second test drives a SEPARATE context
+ *  as the non-holder, so the watch goes on the page rather than on a
+ *  fixture, and the admin's request context does the deleting. */
+const uploaded = trackUploadedRows();
+
 /** Open the upload modal with one small file queued. */
 async function queueOneFile(page: Page, name: string): Promise<void> {
+  uploaded.watch(page);
   await page.locator(tid('nav-upload-button')).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.locator(tid('upload-file-input')).setInputFiles({
@@ -122,6 +133,9 @@ test.describe('vocabulary extension is a capability (#789, ADR 0092 §2)', () =>
   });
 
   test.afterAll(async ({ request }) => {
+    // The uploads first — the probe field below cannot be archived
+    // cleanly while an asset still carries a value for it.
+    await uploaded.cleanup(request);
     if (probeRef) {
       await request
         .delete(`/api/v1/admin/users/${probeRef}/revokes/${EXTEND_CAP}`)

@@ -43,7 +43,8 @@
 // requires both to be absent. A DOM that names them has re-created the
 // enumeration the API refused, whether or not anything renders visibly.
 
-import { test, expect, type APIRequestContext, type Browser, type Page } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { APIRequestContext, Browser, Page } from '@playwright/test';
 import { LOGGED_OUT } from '../../helpers/auth';
 import { ensureFixtureUser, restoreSelfRegistration } from '../../helpers/fixture-user';
 import { tid } from '../../helpers/testids';

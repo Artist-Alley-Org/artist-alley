@@ -61,7 +61,8 @@
 // shape"; it is "every state that lasted long enough to be drawn",
 // which is what the rAF loop was trying and failing to observe.
 
-import { test, expect, type Locator, type Page } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { Locator, Page } from '@playwright/test';
 
 const NO_PERMISSION = "You don't have permission to view this page.";
 // #956 — the degraded panel. Distinct copy, because the whole point is
