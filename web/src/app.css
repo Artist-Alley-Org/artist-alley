@@ -427,6 +427,38 @@
   }
 }
 
+/* ── The background scroll lock (#1223).
+ *
+ * A dialog is open, so the page behind it must not move under the wheel
+ * or under a finger. The classes are put on <html> by
+ * $lib/components/modalStack — see that file for why the lock lives with
+ * the stack, why it is a class rather than an inline style on <main>,
+ * and why the gutter is a separate, measured decision.
+ *
+ * NOT in `@layer base`: this has to beat the `overflow-y-auto` utility
+ * <main> carries, and utilities sort after base. Unlayered rules win
+ * over every layer regardless of specificity, which is the honest way to
+ * say "this is a state, not a style".
+ *
+ * `overflow` and not `overflow-y`: the axis <main> declares is the only
+ * one that scrolls, but a horizontal overflow behind a dialog is no more
+ * wanted than a vertical one, and locking both is one property.
+ *
+ * The box stays a scroll container, so `scrollTop` is preserved across
+ * the lock and released unchanged; the dialog's own scrollers are
+ * untouched. */
+html.aa-modal-open main {
+  overflow: hidden;
+}
+
+/* Only when the locked scroller was actually drawing a classic
+   scrollbar. On a platform with overlay scrollbars this rule would
+   RESERVE 15px that was never there and shift the page sideways — the
+   opposite of what it is for. */
+html.aa-modal-open.aa-modal-gutter main {
+  scrollbar-gutter: stable;
+}
+
 /* ── Touch targets.
  *
  * Sized by INPUT MODALITY, not viewport width. A touchscreen laptop at
