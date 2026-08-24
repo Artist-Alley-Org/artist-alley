@@ -3,6 +3,7 @@
 <script lang="ts">
   // Edit existing collection metadata. Wraps PATCH /collections/{id}.
 
+  import { untrack } from 'svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import { site } from '$stores/site.svelte';
@@ -98,6 +99,36 @@
 
   let { open, collection, onclose, onsaved, focusCover = false }: Props = $props();
 
+  // ── THE ROW THIS DIALOG IS EDITING, AS IT WAS WHEN IT OPENED ──────
+  //
+  // #1262. The `collection` PROP is a live view of the page's copy of
+  // the row, and the page reassigns it whenever it refetches
+  // (collections/[id]/+page.svelte — `collection = data` after load(),
+  // and again in handleSaved). While the dialog is open that is a
+  // second author writing into the surface the curator is typing in,
+  // and every one of the three things the seed does was wrong for it:
+  // the unsaved field values were replaced with the stored ones, the
+  // concurrency baseline was advanced to the value SOMEONE ELSE had
+  // just written, and a conflict message the curator was reading was
+  // cleared.
+  //
+  // So the dialog takes a SNAPSHOT on open and reads that. Not a guard
+  // on the seeding effect: the tri-states in submit() ask "was this
+  // set before I started?" and the answer has to come from the same
+  // instant `baselineUpdatedAt` does, or a save composed from the
+  // curator's edits carries a clear for something a third party set
+  // thirty seconds ago. One instant, one row, one answer.
+  //
+  // `$state.raw` because it is REPLACED, never mutated — a deep proxy
+  // over a row nothing writes to buys nothing.
+  //
+  // `untrack` on the initial value is not decoration: capturing the
+  // prop's value once is precisely the intent here, and it is also what
+  // the compiler warns about (`state_referenced_locally`) because it is
+  // usually a mistake. Saying so explicitly keeps the warning list
+  // meaningful for the cases where it is one.
+  let seeded = $state.raw<Collection>(untrack(() => collection));
+
   let name = $state('');
   let description = $state('');
   let visibility = $state<Visibility>('private');
@@ -107,6 +138,13 @@
   // PATCH can detect "someone else edited this while my modal
   // was open" + show a reload-prompt instead of silently
   // clobbering.
+  //
+  // ⛔ ON OPEN IS THE WHOLE POINT, and until #1262 this was re-seeded
+  // on every change of the `collection` prop — so a refetch that
+  // landed mid-edit handed the modal the timestamp of the very write
+  // it was supposed to detect, and the save that should have 409'd
+  // went through and silently overwrote it. Seeded from `seeded`
+  // above, with everything else, exactly once per open.
   let baselineUpdatedAt = $state<string>('');
   let conflict = $state<{ updatedAt: string } | null>(null);
 
@@ -198,59 +236,75 @@
     onclose();
   }
 
+  /** Take the snapshot and fill the form from it. Called on the OPEN
+   *  EDGE only — see the effect below. */
+  function seedFromCollection() {
+    seeded = collection;
+    name = seeded.name;
+    description = seeded.description;
+    visibility = seeded.visibility as Visibility;
+    baselineUpdatedAt = seeded.updated_at;
+    coverAssetId = seeded.cover_asset_id ?? null;
+    featuredCoverAssetId = seeded.featured_cover_asset_id ?? null;
+    // `?? null` and NOT `|| null`: a stored zoom of 1 is a real value
+    // — "framed, and the answer was the fit" — and truthiness would
+    // read it as unset, silently turning an explicit choice into a
+    // clear on the next save. Same trap #1081 closed on this table.
+    framing = {
+      featured: {
+        x: seeded.featured_cover_focal_x ?? null,
+        y: seeded.featured_cover_focal_y ?? null,
+        zoom: seeded.featured_cover_zoom ?? null,
+      },
+      collection: {
+        x: seeded.cover_focal_x ?? null,
+        y: seeded.cover_focal_y ?? null,
+        zoom: seeded.cover_zoom ?? null,
+      },
+    };
+    // `page` is reset on the CLOSE edge instead of here, so that
+    // `focusCover` can open the dialog straight onto the cover page
+    // without this stealing it back. Both edges fire exactly once per
+    // open now, so the two are no longer different in kind — the split
+    // survives only because "every open starts on page 1" is a
+    // statement about the NEXT open, and close is where it is cheapest
+    // to guarantee.
+    error = null;
+    conflict = null;
+    focusCoverHandled = false;
+    previewLadder.init();
+    void loadCoverChoices(seeded.id);
+  }
+
+  // ── SEED ON THE OPEN EDGE, NOT ON EVERY PROP CHANGE (#1262) ───────
+  //
+  // `open` is the ONLY tracked read in this effect. Everything the
+  // seed touches is read inside `untrack`, which is what makes the
+  // dependency set the edge rather than the row: Svelte collects
+  // dependencies through the whole call frame (so putting the reads in
+  // a function does nothing on its own), and `collection.name` &c. are
+  // prop reads that would otherwise re-run this on every refetch.
+  //
+  // The file used to carry a note explaining why `page` alone was
+  // moved out of the seeded set — because a mid-edit re-seed snapped
+  // the curator back to page 1. That note described the mechanism of
+  // this bug and treated one field as the whole of it. The other seven
+  // were doing the same thing, one of them to the concurrency token.
   $effect(() => {
-    if (open) {
-      name = collection.name;
-      description = collection.description;
-      visibility = collection.visibility as Visibility;
-      baselineUpdatedAt = collection.updated_at;
-      coverAssetId = collection.cover_asset_id ?? null;
-      featuredCoverAssetId = collection.featured_cover_asset_id ?? null;
-      // `?? null` and NOT `|| null`: a stored zoom of 1 is a real value
-      // — "framed, and the answer was the fit" — and truthiness would
-      // read it as unset, silently turning an explicit choice into a
-      // clear on the next save. Same trap #1081 closed on this table.
-      framing = {
-        featured: {
-          x: collection.featured_cover_focal_x ?? null,
-          y: collection.featured_cover_focal_y ?? null,
-          zoom: collection.featured_cover_zoom ?? null,
-        },
-        collection: {
-          x: collection.cover_focal_x ?? null,
-          y: collection.cover_focal_y ?? null,
-          zoom: collection.cover_zoom ?? null,
-        },
-      };
-      // ⚠️ `page` IS NOT RESET HERE, and that is deliberate rather than
-      // an omission. This effect re-seeds whenever the `collection` prop
-      // changes identity, not only when the dialog opens — so a reset in
-      // this branch snaps the curator back to page 1 mid-edit if
-      // anything upstream refetches the row. Driven, not reasoned about:
-      // the 390px spec passed on its own and failed under the full
-      // parallel suite, where the refetch had time to land between two
-      // assertions, and the symptom was a picker that was in the DOM
-      // with a zero-sized box.
-      //
-      // The `else` branch below resets it on CLOSE instead, which gives
-      // the same guarantee — every open starts on page 1 — from an edge
-      // that fires once. It is also what lets `focusCover` open the
-      // dialog straight onto the cover page without the seed stealing it
-      // back.
-      error = null;
-      conflict = null;
-      focusCoverHandled = false;
-      previewLadder.init();
-      void loadCoverChoices(collection.id);
-    } else {
-      // Closed: back to page 1, so the next open starts where every
-      // open starts. There is no second dialog to tear down any more —
-      // that clean-up existed because a nested `<dialog>` left open
-      // would sit on the modal stack after its host had gone and
-      // swallow the next Escape (#1208). One dialog, one owner, and
-      // the page is just state.
-      page = 'details';
-    }
+    const isOpen = open;
+    untrack(() => {
+      if (isOpen) {
+        seedFromCollection();
+      } else {
+        // Closed: back to page 1, so the next open starts where every
+        // open starts. There is no second dialog to tear down any more
+        // — that clean-up existed because a nested `<dialog>` left open
+        // would sit on the modal stack after its host had gone and
+        // swallow the next Escape (#1208). One dialog, one owner, and
+        // the page is just state.
+        page = 'details';
+      }
+    });
   });
 
   // `focusCover` (the More-actions "Set cover" entry) opens the dialog
@@ -295,7 +349,13 @@
   // something it is not — a picker that lies about the current state is
   // worse than one that offers a tier with a caveat. The caveat is
   // printed beneath it.
-  const publicOffered = $derived(site.publicModeEnabled || collection.visibility === 'public');
+  //
+  // Read off the SNAPSHOT (#1262). A refetch that moved the stored tier
+  // off `public` mid-edit would otherwise pull the option out of the
+  // row while `visibility` still held it, leaving the radio group with
+  // nothing selected — the exact state this exception exists to
+  // prevent, arriving from the other side.
+  const publicOffered = $derived(site.publicModeEnabled || seeded.visibility === 'public');
   const tiers = $derived(publicOffered ? ALL_TIERS : ALL_TIERS.filter((v) => v !== 'public'));
   const publicIsInert = $derived(!site.publicModeEnabled && visibility === 'public');
 
@@ -419,7 +479,7 @@
     error = null;
     try {
       const { data, error: apiErr, response } = await api.PATCH('/collections/{id}', {
-        params: { path: { id: collection.id } },
+        params: { path: { id: seeded.id } },
         body: {
           name: name.trim(),
           description,
@@ -432,7 +492,7 @@
           // definition. Sending BOTH is a 400, so these are exclusive
           // branches rather than two independent keys.
           ...(coverAssetId === null
-            ? collection.cover_asset_id
+            ? seeded.cover_asset_id
               ? { clear_cover: true }
               : {}
             : { cover_asset_id: coverAssetId }),
@@ -441,18 +501,28 @@
           // over two coordinates, because half a point is not a
           // positioning the server can honour.
           //
-          // The `collection.*` guards are what keep an unrelated edit
+          // The `seeded.*` guards are what keep an unrelated edit
           // — a rename — from sending a clear for something that was
           // never set. A clear on an already-null column is harmless
           // today, but it is also a write the curator did not ask for,
           // and it would advance `updated_at` on every save.
+          //
+          // ⛔ THEY READ THE SNAPSHOT, NOT THE PROP (#1262), and this
+          // is the half of that fix that is not about the form. Each
+          // guard asks "was this already set when I started?", and the
+          // body it composes is validated against `if_unchanged_since`
+          // — a timestamp from that same instant. Read off the live
+          // prop, a refetch landing mid-edit answers about a row NOBODY
+          // in this dialog has seen: a curator who only renamed the
+          // collection would send `clear_cover: true` for a cover a
+          // third party had just chosen.
           ...(featuredCoverAssetId === null
-            ? collection.featured_cover_asset_id
+            ? seeded.featured_cover_asset_id
               ? { clear_featured_cover: true }
               : {}
             : { featured_cover_asset_id: featuredCoverAssetId }),
           ...(framing.featured.x === null || framing.featured.y === null
-            ? collection.featured_cover_focal_x != null
+            ? seeded.featured_cover_focal_x != null
               ? { clear_featured_cover_focal: true }
               : {}
             : {
@@ -460,7 +530,7 @@
                 featured_cover_focal_y: framing.featured.y,
               }),
           ...(framing.collection.x === null || framing.collection.y === null
-            ? collection.cover_focal_x != null
+            ? seeded.cover_focal_x != null
               ? { clear_cover_focal: true }
               : {}
             : { cover_focal_x: framing.collection.x, cover_focal_y: framing.collection.y }),
@@ -470,12 +540,12 @@
           // the fit, so `zoom ? … : …` would send a clear for a value
           // the curator deliberately chose.
           ...(framing.featured.zoom === null
-            ? collection.featured_cover_zoom != null
+            ? seeded.featured_cover_zoom != null
               ? { clear_featured_cover_zoom: true }
               : {}
             : { featured_cover_zoom: framing.featured.zoom }),
           ...(framing.collection.zoom === null
-            ? collection.cover_zoom != null
+            ? seeded.cover_zoom != null
               ? { clear_cover_zoom: true }
               : {}
             : { cover_zoom: framing.collection.zoom }),
@@ -606,12 +676,14 @@
       </p>
     {/if}
     {#if conflict}
-      <div role="alert" class="rounded border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+      <div role="alert" data-testid="collection-edit-conflict"
+           class="rounded border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
         <p class="font-medium text-warning">{t('collections.conflict_heading')}</p>
         <p class="mt-1 text-xs text-fg-muted">{t('collections.conflict_body')}</p>
         <button
           type="button"
           onclick={acknowledgeConflict}
+          data-testid="collection-edit-conflict-ack"
           class="mt-2 rounded border border-warning/60 px-2 py-1 text-xs font-medium text-warning hover:bg-warning/20"
         >{t('collections.conflict_overwrite')}</button>
       </div>
@@ -668,7 +740,7 @@
              them here balances a split that otherwise left a column of
              empty space beside a tall cover picker on every collection
              with no fields defined. -->
-        <CollectionFieldsSection collectionId={collection.id} />
+        <CollectionFieldsSection collectionId={seeded.id} />
       </div>
 
       <!-- The cover SUMMARY, and the door to the editor (#1207).
