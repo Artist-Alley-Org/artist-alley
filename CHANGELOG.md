@@ -96,6 +96,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Editing a collection no longer loses the change you just made.** Opening the edit dialog
+  started a background load, and when it finished the form quietly reset to the stored values — so
+  a curator who set a collection to Org-only and pressed Save could store the old setting instead,
+  while the dialog reported success. **Making a collection *more* private was affected the same
+  way**, which is why this is worth calling out: the restriction could silently fail to stick. The
+  same reset also defeated the check that catches two people editing at once (#1262, PR #1268).
+
+- **The page behind a dialog no longer scrolls when you use the mouse wheel.** Every dialog in the
+  app is affected; the page keeps its place when the dialog closes, and scrolling inside a dialog
+  still works (#1223, PR #1268).
+
 - **Development only — the test suite stopped miscounting its own cleanup.** The dogfood suite's
   corpus check counted deleted rows as leaks, because deleting through the API marks a row deleted
   rather than removing it. Four of the five tables it watched were already clean; three specs that

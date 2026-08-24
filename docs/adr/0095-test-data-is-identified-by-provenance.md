@@ -141,3 +141,41 @@ deletion is what nearly destroyed five real assets in sprint 6a — the reason t
 `STUDIO_A_HOST` matches the checkout's `VITE_HOST_PORT`, and CI drives the suite at
 `http://app.aa:8080`. So the all-zeroes budget currently guards a developer's laptop and nothing
 else — which is how the leak reached ~50 rows a run unnoticed. Tracked as **#1263**.
+
+---
+
+## Amendment, 2026-08-24 (sprint 10): the two environments differ, and tests must not encode either
+
+The 2026-08-23 amendment recorded what "cleaned up" *measures*. This is its sibling, added because
+the same asymmetry bit **twice in one sprint, in two unrelated forms** — which makes it a property
+of the system rather than a pair of bugs.
+
+**The asymmetry.** The dev/coding stack carries a **persistent, deeply-seeded** database (~2015
+live assets, reused across sprints). CI builds a **fresh, shallow** one every run (~150 assets).
+Anything calibrated against one misreports against the other, in either direction:
+
+| bitten as | what happened |
+|---|---|
+| **fixtures** (#1263) | the suite's one-time fixture cost — 4 assets + 4 posts from a top-up loop, 4 users that no API can delete — is invisible on a persistent stack because it amortises, and is paid on **every** CI run because every CI run is a first run |
+| **pixels** (#1223's spec) | a scroll test hardcoded a 400px park point measured against 5019px of dev-corpus scroll height. On CI's corpus a 9-post collection has a scroll range of **exactly 0** at both 1080p and 390px — not a smaller number, *no park point at all* |
+
+**Consequences for how tests are written here:**
+
+1. **Derive from what is measured at runtime, never from a constant observed on one stack.** A
+   pixel, a row count, an index into a list — all encode an environment. `items[0]` is the same
+   mistake as `400`: it presumes the first collection is deep enough.
+2. **Separate the assertions that need corpus depth from the ones that do not.** #1223's spec ended
+   up with four cases that read the lock directly and two that need something to scroll; only the
+   latter can be defeated by a shallow corpus, and the discriminating cases still run everywhere.
+3. **A skip must be loud.** A test that silently skips where it cannot run is the vacuous green
+   this ADR's whole family exists to prevent (see also #1272 — `run-ui.sh` exits 0 when Playwright
+   finds no tests).
+4. ⚠️ **Measure at the worst moment, not a convenient one.** `<main>`'s `margin-top` is driven by
+   the auto-hiding chrome, so hiding the navbar makes `<main>` taller and its scroll range
+   *smaller*. A range measured with the chrome up is an over-estimate that the first downward
+   scroll invalidates.
+
+**The standing fix** is to remove the asymmetry rather than teach every spec to tolerate it: move
+the one-time fixtures into `aa seed` so a fresh CI database starts already-fixtured (**#1270**).
+Until that lands, **#1263's census-in-CI is held** at `wip/1263-census-in-ci` rather than merged,
+because a guard that is permanently red is the pathology #1245 exists to end.
