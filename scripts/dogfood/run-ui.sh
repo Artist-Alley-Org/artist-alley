@@ -130,9 +130,29 @@ fi
 # The raw totals are still reported, as a second line and ungated: they
 # are the sweep's backlog, and losing sight of them would be a different
 # mistake.
+# ⛔ COMPOSE IS RUN FROM THE REPO ROOT, NOT FROM HERE (#1263).
+#
+# This script `cd`s into the UI dir at the top, and CI sets COMPOSE_FILE
+# to paths RELATIVE to the repo root
+# (`docker-compose.yml:infra/docker/ci/…`, ui-pr.yml + ui-nightly.yml
+# job env). Compose resolves those against the current directory, so from
+# here every call died with `stat …/scripts/dogfood/ui/docker-compose.yml:
+# no such file or directory` — verified by reproducing it locally. On a
+# workstation it happened to work anyway, because with COMPOSE_FILE unset
+# compose walks up to find the file; that is the whole reason this never
+# showed up outside CI.
+#
+# Subshell rather than a `cd` here: the Playwright invocation below has to
+# stay in the UI dir.
+compose() { ( cd "$ROOT" && docker compose "$@" ); }
+
+psql_tuple() {
+    compose exec -T postgres psql -U "${POSTGRES_USER:-artist_alley}" \
+        -d "${POSTGRES_DB:-artist_alley}" -tA "$@"
+}
+
 corpus_census() {
-    docker compose exec -T postgres psql -U "${POSTGRES_USER:-artist_alley}" \
-        -d "${POSTGRES_DB:-artist_alley}" -tA -F'|' -c "
+    psql_tuple -F'|' -c "
         SELECT (SELECT count(*) FROM assets WHERE deleted_at IS NULL)
             || '|' || (SELECT count(*) FROM posts WHERE deleted_at IS NULL)
             || '|' || (SELECT count(*) FROM collections WHERE deleted_at IS NULL)
@@ -144,8 +164,7 @@ corpus_census() {
 # included. Reported, never gated: this is the sweep's backlog, not the
 # suite's tidiness.
 corpus_total() {
-    docker compose exec -T postgres psql -U "${POSTGRES_USER:-artist_alley}" \
-        -d "${POSTGRES_DB:-artist_alley}" -tA -F'|' -c "
+    psql_tuple -F'|' -c "
         SELECT (SELECT count(*) FROM assets)
             || '|' || (SELECT count(*) FROM posts)
             || '|' || (SELECT count(*) FROM collections)
@@ -153,33 +172,97 @@ corpus_total() {
             || '|' || (SELECT count(*) FROM \"user\");" 2>/dev/null | tr -d '[:space:]'
 }
 
-# The census reads the LOCAL compose stack. If the suite is pointed at a
-# different host, the two would be describing different databases and a
-# clean diff would mean nothing — so check they agree, and skip loudly
-# rather than report a comparison that is not a comparison. This is the
-# same class of mistake as running the suite against the wrong stack;
-# it just fails silently instead of visibly.
+# ── DOES THE CENSUS READ THE DATABASE THE TESTS DRIVE? (#1263) ───────
+#
+# The census reads the LOCAL compose stack directly. If the suite is
+# pointed somewhere else, the two describe different databases and a
+# clean diff means nothing — so they are checked to agree, and the run
+# skips loudly rather than reporting a comparison that is not one.
+#
+# ⛔ THE PORT WAS THE WRONG PROXY FOR THAT QUESTION, and it answered NO
+# on every CI run this guard has ever seen. It compared the port in
+# STUDIO_A_HOST against VITE_HOST_PORT from the checkout's `.env`; CI
+# drives `http://app.aa:8080` (ui-pr.yml, ui-nightly.yml) against a
+# default of 5173, so `census_enabled` was `no` in the pipeline from the
+# day it was written. The stacks were the SAME one all along — reached
+# over the compose network by alias, because CI publishes no host ports
+# at all. The ratchet guarded one workstation and the all-zeroes budget
+# made CI's silence look like agreement.
+#
+# So ask the question directly instead of by proxy: every instance holds
+# an Ed25519 keypair generated at boot (federation.instance_identity in
+# system_config), and serves its PUBLIC half unauthenticated at
+# /api/v1/federation/instance. Fetch it from the host the suite drives,
+# read it out of the database the census reads, and compare. Same key,
+# same instance, same database — whatever hostname or port either side
+# was reached by.
+#
+# `node` rather than `curl` for the fetch: node is already a hard
+# dependency checked at the top of this script, and the answer needs JSON
+# parsing either way.
 census_enabled="yes"
-census_host_port="$(printf '%s' "${STUDIO_A_HOST:-http://localhost:5173}" | sed -E 's#.*:([0-9]+).*#\1#')"
-expected_port="$(grep -E '^VITE_HOST_PORT=' "${ROOT}/.env" 2>/dev/null | tail -1 | cut -d= -f2)"
-expected_port="${expected_port:-5173}"
-if [ "$census_host_port" != "$expected_port" ]; then
-    warn "corpus invariant SKIPPED: suite targets port ${census_host_port} but this checkout's compose stack is on ${expected_port}."
-    warn "  The census would read a different database than the tests drive."
+census_skip_reason=""
+census_host="${STUDIO_A_HOST:-http://localhost:5173}"
+
+census_skip() {
     census_enabled="no"
+    census_skip_reason="$1"
+    warn "corpus invariant SKIPPED: $1"
+    warn "  A SKIPPED census is not a passed one — the ratchet checked nothing on this run."
+    # An annotation, so a skip surfaces in the run summary rather than
+    # only in 20 minutes of scrollback. This is the failure mode #1263
+    # was: nobody reads a warning nobody is looking for.
+    if [ -n "${CI:-}" ]; then
+        printf '::warning title=corpus census skipped::%s\n' "$1"
+    fi
+}
+
+# The instance the SUITE drives, by its published public key. Whitespace
+# stripped on both sides because one arrives as JSON-escaped PEM and the
+# other as a psql tuple with real newlines in it.
+census_target_identity() {
+    node -e '
+      const base = process.argv[1].replace(/\/+$/, "");
+      fetch(base + "/api/v1/federation/instance", { signal: AbortSignal.timeout(15000) })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => process.stdout.write(String((j && j.public_key_pem) || "").replace(/\s+/g, "")))
+        .catch(() => {});
+    ' "$1" 2>/dev/null
+}
+
+# The instance the CENSUS reads, out of its own database.
+census_local_identity() {
+    psql_tuple -c \
+        "SELECT value->>'public_key_pem' FROM system_config WHERE key = 'federation.instance_identity';" \
+        2>/dev/null | tr -d '[:space:]'
+}
+
+# Needed by every psql call below, including the identity read, so it is
+# exported before the guard rather than inside it.
+# shellcheck disable=SC2046
+export $(grep -E '^(POSTGRES_DB|POSTGRES_USER)=' "${ROOT}/.env" 2>/dev/null | tail -2 | xargs) 2>/dev/null || true
+
+census_local_key="$(census_local_identity)"
+census_target_key="$(census_target_identity "$census_host")"
+
+if [ -z "$census_local_key" ]; then
+    census_skip "could not read this checkout's compose database (is the stack up, and is 'postgres' its service name?)"
+elif [ -z "$census_target_key" ]; then
+    census_skip "${census_host} did not answer GET /api/v1/federation/instance, so there is no way to tell whether it is this stack."
+elif [ "$census_local_key" != "$census_target_key" ]; then
+    census_skip "${census_host} is a DIFFERENT instance from this checkout's compose stack (their federation identities differ), so the census would count a database the tests never touched."
 fi
+
 if [ "$census_enabled" = "yes" ]; then
-    # shellcheck disable=SC2046
-    export $(grep -E '^(POSTGRES_DB|POSTGRES_USER)=' "${ROOT}/.env" 2>/dev/null | tail -2 | xargs) 2>/dev/null || true
     corpus_before="$(corpus_census)"
     total_before="$(corpus_total)"
     if [ -z "$corpus_before" ]; then
-        warn "corpus invariant SKIPPED: could not read the database (is the stack up?)"
-        census_enabled="no"
+        census_skip "the database went unreadable between the identity check and the census."
     else
         step "Corpus census (before): assets|posts|collections|fields|users = ${corpus_before}   (raw incl. soft-deleted: ${total_before})"
     fi
 fi
+
 
 # --- 2. run tests --------------------------------------------------------
 
@@ -392,6 +475,15 @@ if [ "$census_enabled" = "yes" ]; then
             printf 'delete leaves the row behind. `aa sweep-fixtures` reclaims those.\n'
         fi
     fi
+else
+    # ⛔ SAID AGAIN, WHERE THE VERDICT IS (#1263). The skip is announced at
+    # the top of the run too, but the top of the run is twenty minutes of
+    # Playwright output above here — and "the ratchet is green" is read
+    # off the end. A skip that only appears where nobody looks is how the
+    # census came to be off in CI for its entire existence without anyone
+    # noticing.
+    printf '\n\033[1;33mCORPUS INVARIANT NOT CHECKED\033[0m — %s\n' "$census_skip_reason"
+    printf 'This run says NOTHING about whether the suite cleaned up after itself.\n'
 fi
 
 exit $rc
