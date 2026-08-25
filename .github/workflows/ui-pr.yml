@@ -305,6 +305,18 @@ jobs:
       # It FAILS the step if the mounted catalogue cannot supply a
       # required coverage class, rather than seeding a fixture the suite
       # then passes against without exercising it (ADR 0068; #750/#753).
+      #
+      # --fixtures adds the suite's own one-time substrate (#1270): four
+      # login-capable principals and four admin-owned plates that five
+      # specs used to create for themselves and could never delete —
+      # there is no user-delete endpoint, and asset/post DELETE is a soft
+      # delete. Every database here is FRESH, so this job paid that cost
+      # on every run and the corpus census (#1245) reported it as drift.
+      # The coverage profile cannot drop these rows: they are written by
+      # a seed phase, not selected from the catalogue.
+      #
+      # ⛔ The demo does NOT get this flag. The principals' passwords are
+      # committed in seed/profiles/dataset.fixtures.json.
       - name: Seed site_a via aa seed
         env:
           # HOST daemon path, NOT the runner's /datasets bind mount.
@@ -328,7 +340,7 @@ jobs:
           docker compose run --rm --no-deps \
             -v "$SITE_A_PATH:/seed/site:ro" \
             -v "$PWD/seed/profiles:/seed/profiles:ro" \
-            app seed --site /seed/site --catalogue /seed/profiles --profile ci
+            app seed --site /seed/site --catalogue /seed/profiles --profile ci --fixtures
 
       - name: Seed diagnostic on failure
         if: failure()

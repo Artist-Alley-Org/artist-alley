@@ -1,0 +1,77 @@
+{
+ "_why": [
+  "THE SUBSTRATE THE DOGFOOD SUITE USED TO BUILD FOR ITSELF (#1270).",
+  "",
+  "Four specs need a principal that is not the bootstrap admin, and one needs the",
+  "admin to OWN something. None of that could be torn down: there is no user-delete",
+  "endpoint, and DELETE on an asset or a post is a SOFT delete. So on a fresh",
+  "database the suite paid a one-time cost of new users, assets and posts, the",
+  "corpus census (#1263) reported it as drift, and the census therefore could not",
+  "run in CI without reddening every run.",
+  "",
+  "It is seeded here instead, behind `aa seed --fixtures`, so a fresh database",
+  "starts with the substrate and a suite run adds nothing.",
+  "",
+  "⛔ WHY THE USERNAMES DO NOT SAY WHICH SPEC OWNS THEM. `fixturesweep.Rules`",
+  "identifies fixture users by NAME — `^(acl|share|vocab|sprint|ui)[0-9]+` — and its",
+  "own comment defines the real set as 'the seed's 31 plus the bootstrap admin'. A",
+  "principal the seed creates is real by that rule's own definition, so it needs a",
+  "name the rule reads as real, and the sweep is not taught an exception (ADR 0095:",
+  "a destructive rule edited to delete LESS leaves two definitions of 'real' to",
+  "drift apart). `share875_grantee` would be swept out from under the seed on every",
+  "`aa sweep-fixtures`. Which spec consumes which principal is recorded HERE and in",
+  "scripts/dogfood/ui/helpers/seeded-principal.ts, which reads this file so the",
+  "credentials have one home.",
+  "",
+  "⛔ WHY THE FLAG IS OPT-IN. These accounts can LOG IN, and their passwords are in",
+  "this file. The demo box runs `aa seed` without --fixtures and therefore never",
+  "creates them; only a dev stack and CI ask for them.",
+  "",
+  "⛔ WHY NO primary_team. The registered accounts these replace had no team, and",
+  "post-acl-share-667 asserts that a grantee CANNOT read an unshared post. Giving a",
+  "principal a team is a permission change dressed as tidiness."
+ ],
+ "principals": [
+  {
+   "username": "noor.abadi",
+   "full_name": "Noor Abadi",
+   "email": "noor.abadi@studio.local",
+   "password": "Sharing1sCaring!667",
+   "consumed_by": "scripts/dogfood/ui/tests/standalone/post-acl-share-667.spec.ts",
+   "why": "The explicit-share GRANTEE. Needs to be a principal other than the author, with no team, so that read on the shared post can only have come from the ACL row."
+  },
+  {
+   "username": "theo.bergstrom",
+   "full_name": "Theo Bergström",
+   "email": "theo.bergstrom@studio.local",
+   "password": "Sharing1sCaring!875",
+   "consumed_by": "scripts/dogfood/ui/tests/standalone/share-discovery-875-876.spec.ts",
+   "why": "The share-discovery grantee. Separate from noor.abadi on purpose: both files grant to their grantee and run in parallel workers, so one shared account would let one file's grants decide the other file's assertions."
+  },
+  {
+   "username": "rosa.linden",
+   "full_name": "Rosa Lindén",
+   "email": "rosa.linden@studio.local",
+   "password": "N0Extend!789vocab",
+   "consumed_by": "scripts/dogfood/ui/tests/standalone/vocabulary-extend-cap-789.spec.ts",
+   "why": "The vocabulary NON-HOLDER. The spec revokes fields.vocabulary.extend from this account through /admin/users/{ref}/revokes — a per-user revoke, never an edit to the Base role, which would change the instance for every other spec in the run."
+  },
+  {
+   "username": "omar.haddad",
+   "full_name": "Omar Haddad",
+   "email": "omar.haddad@studio.local",
+   "password": "WhereDidItGo!1237",
+   "consumed_by": "scripts/dogfood/ui/tests/standalone/asset-usage-1237.spec.ts",
+   "why": "The asset OWNER. /assets/{id}/usage gates on assets.owner_user_ref, so who uploads IS the fixture — it has to be someone whose context the spec can drive, which the seeded artists (no password) cannot be."
+  }
+ ],
+ "admin_uploads": {
+  "count": 4,
+  "consumed_by": "scripts/dogfood/ui/tests/standalone/marquee-select-1177.spec.ts",
+  "why": "The profile uploads grid is isSelf only (#1106), and every seeded asset belongs to one of the fictional artists — the bootstrap admin owns the collections and nothing else. A marquee sweep across fewer than four tiles is a click on one tile, so the spec used to top the admin up to four and delete nothing. One post per asset, because the mixed sweep needs POST cards on the same wall.",
+  "title_prefix": "Studio admin plate",
+  "post_title_prefix": "Studio admin plate",
+  "created_at": "2026-02-01T09:00:00Z",
+  "sweep_note": "⛔ The titles must NOT match fixturesweep's post rule — blank, `^(share|acl|ui|UI-)[0-9]*[ _-]`, a 13-digit epoch, or dogfood/fixture/probe. These posts are authored by the bootstrap admin, and `Protected` for posts is `author_user_ref <> 1 OR created_at < '2026-08-17'`, so a title that ALSO matched `Fixture` would satisfy both predicates and ABORT the whole sweep rather than merely lose these rows."
+ }
+}

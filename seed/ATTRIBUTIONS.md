@@ -213,11 +213,55 @@ motion, esports tournament, retro gaming console.
   - christmas_photo_studio_07 — Sergej Majboroda
   - abandoned_factory_canteen_01 — Sergej Majboroda
 
+### Images — generated in-house (CC0)
+
+- **Aurora R&D — AI-generated (Stable Diffusion 3.5 Large)** (CC0 1.0):
+  45 images under `images/aurora-generated/`, four per team across all
+  eleven teams (five for Reference), produced with **Stable Diffusion
+  3.5 Large** run locally through ComfyUI. No third-party model output
+  is redistributed here beyond what the model itself produced from our
+  own prompts; the weights are not included in this dataset.
+  - Every one carries
+    `metadata.acquisition_source: "Generated in-house (Stable Diffusion 3.5 Large via ComfyUI)"`,
+    `license: "CC0 1.0"`, and
+    `attribution: "Aurora R&D — AI-generated (Stable Diffusion 3.5 Large)"`.
+  - "Aurora R&D" is the fictional studio this dataset simulates — see
+    **Studio simulation metadata** below. It is not a real company.
+  - Carried in the pipeline by
+    [`seed/upgrades/generated-assets.site_a.json`](upgrades/generated-assets.site_a.json)
+    and the twelve posts in
+    [`seed/upgrades/generated-posts.site_a.json`](upgrades/generated-posts.site_a.json).
+
 ### Reference material (community contributed)
 
 - **The Models Resource** (referenced game rips) — NOT included in this
   Layer A dataset. Those assets live only in site_b (the local-only
   full dataset) and never ship publicly.
+
+## The `ai_provenance` declaration, and why only these 45
+
+`MANIFEST.json` carries an optional `ai_provenance` on an asset. It is
+the MAKER'S OWN DECLARATION about how the work was made, and the absence
+of the key means **nobody was asked** — not "no AI". Exactly 45 entries
+declare `generated`; every other entry omits the key entirely, which is
+the honest state for a corpus assembled before the field existed.
+
+**Why nothing else in the dataset declares it.** It was tried the other
+way first, and it was wrong. Two upgrade documents (`ai-declarations.site_a.json`
+and its site_b twin) declared `generated` on four **Kenney.nl** works —
+rows that carry `attribution: "Kenney (kenney.nl)"` on the same line.
+That is a false statement about a named real creator, in a dataset that
+is redistributed. Both documents were deleted in #1260 and the four rows
+were stripped; `seed/scripts/apply_upgrade.py` now refuses any record
+that declares AI without in-house provenance, so the pipeline cannot
+make the same claim again. **A declaration must be about work we
+actually made** — which is why the 45 images above exist at all.
+
+**If you do not want them**, drop the 45 entries whose
+`ai_provenance` is `"generated"` and the twelve posts that carry them
+(the eleven `<Team> — AI reference set` posts plus `Backplate study — AI
+plate beside a public-domain plate`); nothing else in the dataset
+references them.
 
 ## The `mature` label, and why these twelve
 

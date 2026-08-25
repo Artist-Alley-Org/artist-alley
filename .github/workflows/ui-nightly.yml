@@ -261,10 +261,17 @@ jobs:
             exit 1
           fi
 
+          # --fixtures on BOTH: the nightly runs `all`, which includes
+          # the standalone project, and its databases are fresh — so
+          # without the seeded substrate five specs pay the one-time
+          # create cost here too (#1270). site_b gets it for the same
+          # reason its stack exists: whatever studio-a needs, studio-b is
+          # supposed to be able to answer.
           ( docker compose run --rm --no-deps \
               -v "$SITE_A_PATH:/seed/site:ro" \
               -v "$PWD/seed/profiles:/seed/profiles:ro" \
               app seed --limit-per-extension 3 --site /seed/site --catalogue /seed/profiles \
+              --fixtures \
               2>&1 | sed 's/^/[a] /' ) &
           PID_A=$!
 
@@ -272,6 +279,7 @@ jobs:
               -v "$SITE_B_PATH:/seed/site:ro" \
               -v "$PWD/seed/profiles:/seed/profiles:ro" \
               app-b seed --limit-per-extension 3 --site /seed/site --catalogue /seed/profiles \
+              --fixtures \
               2>&1 | sed 's/^/[b] /' ) &
           PID_B=$!
 

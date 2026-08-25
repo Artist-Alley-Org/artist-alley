@@ -66,7 +66,7 @@ scripts/dogfood/ui/
 │   ├── fixture-ledger.ts     Records creates + deletes against their spec
 │   ├── instance-lock.ts      Cross-process mutex over shared instance state
 │   ├── public-mode.ts        `system.public_mode`, borrowed under that lock
-│   ├── fixture-user.ts       The one reused throwaway account (#1198)
+│   ├── seeded-principal.ts   The principals the SEED owns (#1270)
 │   ├── routes.ts             48-route manifest (anon / user / admin / catch-all)
 │   ├── assertions.ts         expectPageRendersCleanly, expectPath
 │   └── testids.ts            Canonical `data-testid` catalogue
@@ -134,6 +134,30 @@ the corpus census counts live rows, and reports the raw totals beside
 them as the sweep's backlog. `aa sweep-fixtures` is what removes rows;
 it is dry-run by default.
 
+### The rows a spec must NOT create (#1270)
+
+Some fixtures cannot be cleaned up at all: **there is no user-delete
+endpoint**, and a soft-deleted asset or post still counts against the
+raw totals. Those belong to the SEED, not to a spec:
+
+| what | who owns it |
+|---|---|
+| a principal that is not the bootstrap admin | `helpers/seeded-principal.ts` → `seed/profiles/dataset.fixtures.json` |
+| assets + posts the bootstrap admin OWNS | `aa seed --fixtures` (`app/internal/seed/fixtures.go`) |
+
+Seed them with:
+
+```bash
+aa seed --site <site> --catalogue seed/profiles --fixtures
+```
+
+⛔ **A spec that creates one of these on a miss is worse than one that
+fails.** The fallback works forever, and quietly reintroduces a
+permanent per-instance leak on every database that was seeded without
+the flag — which is what a fresh CI database is. `requireSeededPrincipal`
+and `requireAdminFixture` have no create arm on purpose; they fail and
+name the command.
+
 ## Selector convention
 
 Prefer `data-testid` for any element a test interacts with that
@@ -176,6 +200,8 @@ Fallback ordering:
 
 - Node 20+ on PATH (any LTS).
 - `scripts/dogfood/up.sh` has run.
+- The stack was seeded with `--fixtures` (see above). Without it, five
+  specs fail in setup with a message naming the command.
 - For `--federation`: `scripts/dogfood/pair.sh` has paired studio-a + studio-b.
 
 ## CI integration

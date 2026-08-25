@@ -25,6 +25,15 @@
 # Extra args after the mode are forwarded to `playwright test`
 # verbatim — so `--grep PATTERN`, `--reporter line`, etc. work
 # as usual.
+#
+# Exit codes (each failure kind gets its own, so a wrapper can tell them
+# apart by status alone):
+#   0  every selected test passed
+#   1  a test failed, or a prerequisite is missing (fail())
+#   2  unknown mode
+#   3  the corpus ratchet — a table leaked more than corpus-budget.txt allows
+#   4  the instance-lock audit — two files held shared config at once
+#   5  NO TESTS RAN — the selection matched nothing (#1272)
 
 set -uo pipefail
 
@@ -43,7 +52,7 @@ case "${1:-}" in
     federation) mode="federation"; shift ;;
     all)        mode="all"; shift ;;
     -h|--help)
-        sed -n '2,26p' "$SCRIPT_PATH"
+        sed -n '2,36p' "$SCRIPT_PATH"
         exit 0
         ;;
     "" )        ;;  # no arg → default standalone
@@ -181,6 +190,15 @@ else
 fi
 mkdir -p .pw-results
 
+# ⛔ THE RUN'S OWN EVIDENCE, AND ONLY THIS RUN'S (#1272). The summary and
+# the zero-test guard below both read .pw-results/report.json, and an
+# absent one is a load-bearing signal — "Playwright wrote no report" is
+# how a run that never started is told from one that finished. Playwright
+# cleans its outputDir per run, but that is its promise and not ours; a
+# leftover report from the last invocation would be summarised as this
+# one's, so it is removed here rather than trusted to be gone.
+rm -f .pw-results/report.json
+
 # Where the cross-file instance-config lock records each hold (#1248).
 # Truncated per run so the audit below describes THIS run and not a
 # fortnight of them.
@@ -201,6 +219,68 @@ if [ "${#passthrough[@]}" -gt 0 ]; then
 fi
 npx playwright test "${pw_args[@]}"
 rc=$?
+
+# --- 2b. did it actually RUN anything? (#1272) ---------------------------
+#
+# A run that executed nothing must not be reported like a run that passed
+# everything. A typo'd --grep, a bad --project, or a renamed spec file all
+# select zero tests, and every downstream reader — the summary below, the
+# corpus invariant below that, a human scrolling the log — describes the
+# result in the language of success: `PASS: 0  FAIL: 0`, then `Corpus
+# invariant holds`. Nothing in that output says the suite never started.
+#
+# ⚠️ MEASURED HERE, NOT ASSUMED. #1272 reports the script exiting 0 on
+# `Error: No tests found`; on @playwright/test 1.62.1 it exits 1, because
+# Playwright itself started treating an empty selection as an error in
+# 1.44 (that is what `--pass-with-no-tests` opts out of). So the hole this
+# closes is not the exit code alone — it is that "ran nothing" and
+# "assertions failed" arrive as the SAME status 1, from a log that reads
+# green either way. Both halves of #1272's acceptance need a code of its
+# own, and 1 through 4 are taken (fail, unknown mode, corpus ratchet,
+# instance-lock audit).
+#
+# The count comes from the run's own report rather than from grepping
+# Playwright's stderr for a message string, which changes between minor
+# versions — and the report was deleted before the run, so a missing one
+# means THIS run produced none.
+NO_TESTS_RC=5
+ran="unknown"
+if [ -f .pw-results/report.json ]; then
+    ran="$(node -e '
+      try {
+        const s = require("./.pw-results/report.json").stats ?? {};
+        const n = (s.expected ?? 0) + (s.unexpected ?? 0) + (s.skipped ?? 0) + (s.flaky ?? 0);
+        process.stdout.write(String(n));
+      } catch { process.stdout.write("unknown"); }
+    ' 2>/dev/null)"
+    ran="${ran:-unknown}"
+fi
+
+no_tests="no"
+if [ "$ran" = "0" ]; then
+    no_tests="yes"
+elif [ "$ran" = "unknown" ] && [ "$rc" -eq 0 ]; then
+    # Exit 0 with no report at all is a green backed by no evidence
+    # whatsoever, which is the same claim this guard refuses. A non-zero
+    # rc with no report is Playwright failing loudly on its own terms —
+    # keep its code and its message.
+    no_tests="yes"
+fi
+
+if [ "$no_tests" = "yes" ]; then
+    printf '\n\033[1;31mNO TESTS RAN\033[0m — this run executed nothing.\n'
+    printf '  mode      : %s\n' "$mode"
+    if [ "${#passthrough[@]}" -gt 0 ]; then
+        printf '  passed on : %s\n' "${passthrough[*]}"
+    fi
+    printf '  reported  : %s test(s) in .pw-results/report.json\n' "$ran"
+    printf '\nA selection that matches nothing is a typo, not a pass. Check the --grep\n'
+    printf 'pattern, the --project name, and that the spec files it names still exist.\n'
+    printf 'Exit %d is distinct from a failing assertion (Playwright'"'"'s own 1), the\n' "$NO_TESTS_RC"
+    printf 'corpus ratchet (3) and the instance-lock audit (4), so a wrapper can tell\n'
+    printf '"ran nothing" from "ran and failed".\n'
+    rc=$NO_TESTS_RC
+fi
 
 # --- 3. summary ----------------------------------------------------------
 
@@ -298,6 +378,12 @@ if [ "$census_enabled" = "yes" ]; then
             printf '\nWithin the recorded budget — no NEW leak. The drift itself is still debt:\n'
             printf 'the target in %s is all zeroes.\n' "$budget_file"
         fi
+    elif [ "$no_tests" = "yes" ]; then
+        # ⛔ NOT "the invariant holds". A run that executed nothing leaves
+        # the database as it found it by construction, so the comparison
+        # is true and means nothing — and printing the green line under a
+        # NO TESTS RAN banner is exactly the mixed signal #1272 is about.
+        printf '\n\033[1;33mCorpus unchanged\033[0m — but nothing ran, so this proves nothing.\n'
     else
         printf '\n\033[1;32mCorpus invariant holds\033[0m — the run left the database as it found it.\n'
         if [ "$total_after" != "$total_before" ]; then

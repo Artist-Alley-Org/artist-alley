@@ -39,6 +39,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -285,14 +286,24 @@ func TestSeedInsertAsset_WritesDeclarationAndDerivesPurity(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestSeedProfiles_DeclareTheDemonstrablePair asserts the committed
-// catalogues actually carry declarations, on both dogfood profiles and
-// on both of their published aliases.
+// catalogues carry the declarations the toggle demonstrates — and
+// asserts, first, that every one of them is about work WE MADE.
 //
-// ⚠️ WITHOUT THIS THE OTHER TWO TESTS ARE SATISFIED BY AN EMPTY
-// CATALOGUE. "The seeder can carry a declaration" and "some asset is
-// declared" are different claims, and the first one passing is exactly
-// the state #1217 sat in: the plumbing was fine, nothing flowed through
-// it, and every test was green.
+// ⚠️ WITHOUT THE SECOND HALF THE OTHER TWO TESTS ARE SATISFIED BY AN
+// EMPTY CATALOGUE. "The seeder can carry a declaration" and "some asset
+// is declared" are different claims, and the first one passing is
+// exactly the state #1217 sat in: the plumbing was fine, nothing flowed
+// through it, and every test was green.
+//
+// ⛔ AND WITHOUT THE FIRST HALF THIS TEST PASSED ON A FALSE STATEMENT
+// ABOUT A NAMED CREATOR. It used to ask only "does each profile declare
+// at least two assets `generated`", and both profiles did — over FOUR
+// Kenney.nl works, on rows carrying `attribution: "Kenney (kenney.nl)"`,
+// in a dataset published to Kaggle (#1260). Green the whole time. So the
+// declarable set is now positively identified by provenance, and it is
+// the same rule the seeder enforces at load time
+// (catalogues.validateAIDeclarations) and apply_upgrade.py enforces over
+// the profiles: an AI claim requires in-house provenance.
 //
 // It also asserts the ALIASES agree, because `demo` and `dev` are
 // byte-for-byte copies of `studio-a` and `studio-b` (seed/README.md) and
@@ -303,6 +314,8 @@ func TestSeedInsertAsset_WritesDeclarationAndDerivesPurity(t *testing.T) {
 func TestSeedProfiles_DeclareTheDemonstrablePair(t *testing.T) {
 	type entry struct {
 		ID           string          `json:"id"`
+		Title        string          `json:"title"`
+		Attribution  string          `json:"attribution"`
 		AiProvenance *string         `json:"ai_provenance"`
 		Metadata     json.RawMessage `json:"metadata"`
 	}
@@ -326,24 +339,48 @@ func TestSeedProfiles_DeclareTheDemonstrablePair(t *testing.T) {
 				continue
 			}
 			out[e.ID] = *e.AiProvenance
-			// ⛔ ADR 0095. A seeded asset without
-			// `metadata.acquisition_source` is indistinguishable from
-			// real uploaded content to the fixture sweep, which would
-			// then classify it as a fixture and be free to delete it.
-			// Declaring AI on an asset must not cost it that stamp.
 			var meta map[string]any
 			if err := json.Unmarshal(e.Metadata, &meta); err != nil {
 				t.Errorf("%s: asset %s has unparseable metadata: %v", path, e.ID, err)
 				continue
 			}
-			if _, ok := meta["acquisition_source"]; !ok {
+			// ⛔ ADR 0095. A seeded asset without
+			// `metadata.acquisition_source` is indistinguishable from
+			// real uploaded content to the fixture sweep, which would
+			// then classify it as a fixture and be free to delete it.
+			// Declaring AI on an asset must not cost it that stamp.
+			src, ok := meta["acquisition_source"].(string)
+			if !ok {
 				t.Errorf("%s: declared asset %s has NO metadata.acquisition_source. The "+
 					"fixture sweep partitions the asset table on that key alone (ADR "+
 					"0095), so this row is sweep-bait — a seeded asset carries BOTH.",
 					path, e.ID)
+				continue
+			}
+			// ⛔ #1260. The claim is about how the work was MADE, on a
+			// row that names its creator.
+			if !strings.HasPrefix(src, AIDeclarableSourcePrefix) {
+				t.Errorf("%s: asset %s (%q) declares ai_provenance=%q but came from %q "+
+					"and is attributed to %q. That is a false statement about a named "+
+					"creator in a published dataset — this is exactly what shipped in "+
+					"ai-declarations.site_{a,b}.json over four Kenney.nl works before "+
+					"#1260 deleted them.",
+					path, e.ID, e.Title, *e.AiProvenance, src, e.Attribution)
 			}
 		}
 		return out
+	}
+
+	// WHICH profile is expected to carry generated content, stated
+	// rather than implied. Only site_a has any: the 45 images under
+	// `images/aurora-generated/` we produced with Stable Diffusion 3.5
+	// Large. site_b's corpus is entirely third-party, so declaring
+	// anything there would mean inventing a claim about somebody —
+	// which is what the deleted docs did. Add site_b here the day
+	// site_b gets content we made, not before.
+	expectDemonstration := map[string]bool{
+		"../../../seed/profiles/studio-a.assets.json": true,
+		"../../../seed/profiles/studio-b.assets.json": false,
 	}
 
 	for _, pair := range [][2]string{
@@ -351,23 +388,29 @@ func TestSeedProfiles_DeclareTheDemonstrablePair(t *testing.T) {
 		{"../../../seed/profiles/studio-b.assets.json", "../../../seed/profiles/dev.assets.json"},
 	} {
 		src, alias := declaredIn(pair[0]), declaredIn(pair[1])
-		if len(src) == 0 {
-			t.Errorf("%s declares no AI provenance on any asset. The browse footer's "+
-				"hide toggle then has nothing to hide on a seeded instance, and a "+
-				"working control is indistinguishable from a broken one.", pair[0])
-		}
-		// The pair the toggle demonstrates: at least one `generated`, so
-		// at least one post can derive `ai_pure`.
 		gens := 0
 		for _, v := range src {
 			if v == "generated" {
 				gens++
 			}
 		}
-		if gens < 2 {
-			t.Errorf("%s declares %d assets `generated`; the demonstration needs at least "+
-				"two — one sole contributor (the PURE post) and one of several (the MIXED "+
-				"post that must STAY visible).", pair[0], gens)
+		if expectDemonstration[pair[0]] {
+			// The pair the toggle demonstrates: at least two
+			// `generated`, so at least one post can derive `ai_pure`
+			// AND one can mix a declared member with an undeclared one.
+			if gens < 2 {
+				t.Errorf("%s declares %d assets `generated`; the demonstration needs at "+
+					"least two — one whose post is entirely declared (the PURE post the "+
+					"toggle hides) and one beside an undeclared sibling (the MIXED post "+
+					"that must STAY visible). With none, the browse footer's hide toggle "+
+					"has nothing to hide on a seeded instance and a working control is "+
+					"indistinguishable from a broken one.", pair[0], gens)
+			}
+		} else if len(src) != 0 {
+			t.Errorf("%s declares %d asset(s) and is not expected to declare any — its "+
+				"corpus is entirely third-party. If content we generated was added to "+
+				"this site, say so in expectDemonstration; if not, this is a claim about "+
+				"somebody else's work (#1260).", pair[0], len(src))
 		}
 		if len(src) != len(alias) {
 			t.Errorf("%s declares %d assets and its alias %s declares %d. The two are "+
@@ -380,5 +423,44 @@ func TestSeedProfiles_DeclareTheDemonstrablePair(t *testing.T) {
 					pair[0], id, want, pair[1], got, ok)
 			}
 		}
+	}
+}
+
+// TestCatalogues_ValidateAIDeclarations is the guard the profiles cannot
+// provide, because the seeder does not read the profiles.
+//
+// `MANIFEST.json` lives on the archive share. Nothing in this repo sees
+// it, and the four false Kenney declarations #1260 removed were applied
+// BY HAND straight to manifests exactly like it. So the rule is enforced
+// again where the data actually enters the process.
+func TestCatalogues_ValidateAIDeclarations(t *testing.T) {
+	gen := "generated"
+	mk := func(source string) *catalogues {
+		return &catalogues{Assets: []manifestAsset{{
+			ID:           "83fc3c37-76f3-f057-f398-86b4dfbd185b",
+			Title:        "Brick pack brick medium slope inverted left 4",
+			AiProvenance: &gen,
+			Metadata:     json.RawMessage(`{"acquisition_source":"` + source + `"}`),
+		}}}
+	}
+
+	if err := mk("Kenney.nl").validateAIDeclarations(); err == nil {
+		t.Error("a `generated` declaration over Kenney.nl work must stop the seed; " +
+			"it reached the manifest unchallenged once already")
+	} else if !strings.Contains(err.Error(), "Kenney.nl") {
+		t.Errorf("the error must name the provenance it refused; got %q", err)
+	}
+
+	inHouse := AIDeclarableSourcePrefix + " (Stable Diffusion 3.5 Large via ComfyUI)"
+	if err := mk(inHouse).validateAIDeclarations(); err != nil {
+		t.Errorf("work we generated ourselves must be declarable; got %v", err)
+	}
+
+	// An asset with no declaration is the whole rest of the corpus and
+	// must never be examined for provenance at all.
+	c := &catalogues{Assets: []manifestAsset{{
+		ID: "x", Metadata: json.RawMessage(`{"acquisition_source":"Kenney.nl"}`)}}}
+	if err := c.validateAIDeclarations(); err != nil {
+		t.Errorf("an UNDECLARED third-party asset is the normal case; got %v", err)
 	}
 }

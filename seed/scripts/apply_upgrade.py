@@ -114,6 +114,23 @@ SITE_SOURCE_ROOT = "site"
 # bundle is not on the machine. See kenney_pack_sources.py.
 PACK_SOURCE_ROOT = "pack"
 
+# ⛔ WHO WE MAY SAY "AI" ABOUT (#1260).
+#
+# `ai_provenance` is a claim about HOW THE BYTES WERE MADE, attached to
+# a record that also names a creator — so writing it on someone else's
+# work publishes a false statement about that person. This dataset had
+# four such records: `ai-declarations.site_a.json` and its site_b twin
+# declared `generated` on four Kenney.nl works, in a dataset that ships
+# to Kaggle with `attribution: "Kenney (kenney.nl)"` on the same row.
+# They never reached the archive share, but a re-fold would have applied
+# them, and nothing in this file would have said a word.
+#
+# So the rule is positive, not a deny-list of sources we happen to know:
+# an asset may declare AI only when its own provenance says WE made it.
+# Widening this is a deliberate act with a real creator on the other end
+# of it — which is the point of making it a constant with a name.
+AI_DECLARABLE_SOURCE_PREFIX = "Generated in-house"
+
 # Upgrade doc pairs merged into every profile, in order. `added` is
 # #604/#602's video + internet material; `balance` is #572's per-team
 # fill. Kept as separate files rather than one because they answer
@@ -127,7 +144,24 @@ PACK_SOURCE_ROOT = "pack"
 # than applied by hand to the archive share for the reason this file's
 # docstring is about — the profile is the INPUT, and a manifest edited
 # in place is undone by the next assembly.
-DOC_SETS = ("added", "balance", "pexels", "mature")
+#
+# `generated` is #1260's: 45 images produced in-house with Stable
+# Diffusion 3.5 Large, four per team across all eleven teams, plus the
+# twelve posts that carry them. Each record declares its own
+# `ai_provenance: "generated"` — `merge_added` deep-copies the whole
+# record, so a NEW asset's declaration needs no separate mechanism. That
+# is the difference between this doc set and `ai-declarations.*`, which
+# exists only for declarations ABOUT records the source CSV already
+# owns.
+#
+# ⛔ THE DECLARATION AND THE BYTES ARRIVE TOGETHER, ON PURPOSE. The two
+# `ai-declarations.site_*.json` docs that used to sit beside these were
+# DELETED in #1260 because they declared `generated` on four Kenney.nl
+# works — a false statement about a named real creator, in a dataset
+# that is published. An asset that declares AI must be an asset we
+# actually generated, and the safest way to guarantee that is for the
+# declaration to ride in on the same record as the file.
+DOC_SETS = ("added", "balance", "pexels", "mature", "generated")
 
 _HASH_SUFFIX_RE = re.compile(r"-[0-9a-f]{8}(?:-\d+)?$")
 _CATEGORY_PREFIX_RE = re.compile(
@@ -301,13 +335,43 @@ def apply_ai_declarations(profile: list[dict],
                           declarations: list[dict]) -> list[tuple[str, str]]:
     """Write the maker's AI declaration onto named profile records (#1251).
 
-    THE SMALLEST UPGRADE DOC IN THIS DIRECTORY, AND ON PURPOSE. Two
-    records per site. It exists so the browse footer's "Hide AI-made
-    work" toggle has something to hide on a freshly seeded instance:
-    every asset in the source CSV is UNDECLARED (the studio simulation
-    has no notion of generative AI), so without this the control is
-    correct, wired end to end, and observably inert — the state that
-    makes a reviewer conclude a feature is broken when it is working.
+    ⛔ NO SITE SHIPS ONE OF THESE DOCS ANY MORE (#1260), AND THE REASON
+    IS THE WHOLE POINT OF THE FUNCTION. Both that existed — two records
+    per site — declared `generated` on Kenney.nl works: `Brick pack brick
+    medium slope inverted left 4`, `Animated characters retro preview`,
+    `Fish pack terrain dirt top a outline`, `Planets planet01`. Every one
+    of those rows also carries `attribution: "Kenney (kenney.nl)"` and
+    `metadata.acquisition_source: "Kenney.nl"`, and site_a is published
+    to Kaggle.
+
+    HOW IT HAPPENED IS WORTH KEEPING, because the same trap is still
+    open. The docs name records by id and describe them in prose, and
+    the prose was written against the record's PRE-#604 identity —
+    "Progress Blue Border", "Tile 0422 — lighting pass". `apply_replacements`
+    above then swapped those records onto HQ pool files and rewrote
+    `title`, `license` and `attribution` with them, exactly as it is
+    meant to: swap the file, keep the record. So an id that once named a
+    synthetic studio plate now names a Kenney work, the doc's prose still
+    described the old one, and nothing compared the two. An id is not a
+    stable description of what a record CONTAINS in a pipeline whose job
+    is to change what records contain.
+
+    The mechanism is kept because the need is real — a declaration ABOUT
+    a record the source CSV already owns cannot ride in on `merge_added`,
+    and `sanitize_and_assemble.py` regenerates the profiles from
+    `metadata.csv`, so a hand-added key is dropped by the next assembly.
+    What replaced the two docs is CONTENT WE ACTUALLY GENERATED: 45
+    images made in-house with Stable Diffusion 3.5 Large, each declaring
+    itself in `generated-assets.site_a.json`. `audit` now refuses any
+    profile record that declares AI without in-house provenance, whichever
+    route wrote it — see AI_DECLARABLE_SOURCE_PREFIX.
+
+    IT EXISTS so the browse footer's "Hide AI-made work" toggle has
+    something to hide on a freshly seeded instance: every asset in the
+    source CSV is UNDECLARED (the studio simulation has no notion of
+    generative AI), so without a declared corpus the control is correct,
+    wired end to end, and observably inert — the state that makes a
+    reviewer conclude a feature is broken when it is working.
 
     WHY A DOC RATHER THAN AN EDIT TO THE PROFILE. Same reason as this
     file's docstring: `sanitize_and_assemble.py` regenerates the profiles
@@ -465,6 +529,25 @@ def audit(profile: list[dict], posts: list[dict],
     if orphans:
         problems.append(f"{len(orphans)} added assets have no post and are "
                         f"unreachable on browse (e.g. {orphans[:2]})")
+
+    # ⛔ NOBODY ELSE'S WORK MAY BE CALLED AI (#1260). Asserted over the
+    # WHOLE profile rather than over the declaration doc, because the
+    # claim can arrive by two routes — `apply_ai_declarations` writing it
+    # onto an existing record, or `merge_added` carrying it in on a new
+    # one — and only the finished profile sees both. See
+    # AI_DECLARABLE_SOURCE_PREFIX for what this cost the first time.
+    for e in profile:
+        if not e.get("ai_provenance"):
+            continue
+        src = (e.get("metadata") or {}).get("acquisition_source") or ""
+        if not src.startswith(AI_DECLARABLE_SOURCE_PREFIX):
+            problems.append(
+                f"asset {e['id']} ({e.get('title')!r}) declares "
+                f"ai_provenance={e['ai_provenance']!r} but its provenance is "
+                f"{src!r} — attributed to {e.get('attribution')!r}. An AI "
+                "declaration on work we did not generate is a false statement "
+                "about that creator, and this dataset is published. Either the "
+                "declaration is wrong or the provenance is.")
 
     # Every copier-visible record needs a source root the copier knows.
     known_roots = {"local", "internet", "torrent_import",

@@ -113,6 +113,26 @@ func (q *Queries) SeedCollectionExists(ctx context.Context, id pgtype.UUID) (int
 	return ok, err
 }
 
+const seedFindRoleByName = `-- name: SeedFindRoleByName :one
+SELECT id FROM roles WHERE name = $1 LIMIT 1
+`
+
+// The shipped role a seeded test-fixture principal is given (#1270).
+//
+// The registration endpoint assigns the configured default role — "Base"
+// unless an operator changed it — and the four accounts this replaces
+// were REGISTERED, so they had one. `AdminHandler.CreateUser` assigns
+// none: the 31 fictional artists cannot log in and never needed caps.
+// A principal seeded with no role would sign in and then be refused
+// every write the spec drives, which reads as a permission regression
+// and is a missing fixture.
+func (q *Queries) SeedFindRoleByName(ctx context.Context, name string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedFindRoleByName, name)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const seedGetCommentByID = `-- name: SeedGetCommentByID :one
 SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
@@ -1035,4 +1055,31 @@ func (q *Queries) SeedPostExists(ctx context.Context, id pgtype.UUID) (int32, er
 	var ok int32
 	err := row.Scan(&ok)
 	return ok, err
+}
+
+const seedSetUserGlobalRole = `-- name: SeedSetUserGlobalRole :exec
+WITH _del AS (
+    DELETE FROM user_roles
+     WHERE user_ref = $1 AND team_id IS NULL
+)
+INSERT INTO user_roles (user_ref, role_id, assigned_by_user_ref)
+VALUES ($1, $2, $3)
+ON CONFLICT ON CONSTRAINT user_roles_unique DO UPDATE SET
+    assigned_at          = NOW(),
+    assigned_by_user_ref = EXCLUDED.assigned_by_user_ref
+`
+
+type SeedSetUserGlobalRoleParams struct {
+	UserRef           int64
+	RoleID            pgtype.UUID
+	AssignedByUserRef *int64
+}
+
+// Same statement auth.SetUserGlobalRole runs, so a seeded principal and
+// a registered one end up with identical role state. Global only
+// (team_id IS NULL); team-scoped assignments are untouched. Atomic at
+// statement level, so there is no window where the user has zero roles.
+func (q *Queries) SeedSetUserGlobalRole(ctx context.Context, arg SeedSetUserGlobalRoleParams) error {
+	_, err := q.db.Exec(ctx, seedSetUserGlobalRole, arg.UserRef, arg.RoleID, arg.AssignedByUserRef)
+	return err
 }
