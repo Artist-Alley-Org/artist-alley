@@ -12,9 +12,35 @@
 //     the ambient dev DB has neither (fresh clone), the tests skip
 //     with a clear reason rather than failing spuriously.
 
-import { test, expect } from '../../helpers/test';
+import { test, expect, type APIRequestContext } from '../../helpers/test';
 import { request } from '@playwright/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
+
+// ── The manifest fixture (#1227) ─────────────────────────────────────
+//
+// `firstAssetID` returns whatever is newest, and the canvas assertions
+// below used to sit behind `if (Array.isArray(manifest.items) && …)`
+// with a comment admitting why: "we can't guarantee the ambient DB has
+// a non-embargoed asset". Correct, and it made the Canvas /
+// AnnotationPage / ImageService3 checks — the substance of the test —
+// conditional on the order of a shared corpus. Nothing said which runs
+// had exercised them, and an embargoed asset arriving at the head of the
+// list would have turned the test into a shape check on an embargo stub.
+//
+// A provisioned asset settles it: the builder emits exactly one canvas
+// for every non-embargoed asset (presentation/builder.go:115) and none
+// for the embargo stub (:243), so a fresh upload is guaranteed to be the
+// case the assertions describe, and they run unconditionally.
+//
+// Only the manifest test needs it. The redirect + reachability tests
+// keep reading the catalogue on purpose: their subject is the ROUTE and
+// the asset id is a path segment they never look inside, so any id
+// answers the question they ask.
+const MANIFEST_FIXTURE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+  'base64',
+);
+let manifestAssetID: string | undefined;
 
 // Grab the first asset + first collection from the admin surface. Both
 // are used across the three tests; keeping the discovery in a helper
@@ -88,6 +114,32 @@ async function firstIIIFServableAsset(
 }
 
 test.describe('UI-12 IIIF Presentation + Content Search smoke', () => {
+  test.beforeAll(async ({ request: api }: { request: APIRequestContext }) => {
+    const up = await api.post('/api/v1/storage/objects', {
+      data: MANIFEST_FIXTURE_PNG,
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Content-Type': 'image/png' },
+    });
+    expect(up.status(), 'uploading the manifest fixture bytes').toBe(201);
+    const fileHash = String(((await up.json()) as { hash: string }).hash);
+    const stamp = Date.now();
+    const r = await api.post('/api/v1/assets', {
+      data: {
+        title: `UI-12 manifest fixture ${stamp}`,
+        asset_type: 1,
+        file_extension: 'png',
+        file_hash: fileHash,
+        original_filename: `ui-12-manifest-${stamp}.png`,
+      },
+    });
+    expect(r.status(), 'creating the manifest fixture asset').toBeLessThan(300);
+    manifestAssetID = String(((await r.json()) as { id: string }).id);
+  });
+
+  test.afterAll(async ({ request: api }: { request: APIRequestContext }) => {
+    if (!manifestAssetID) return;
+    await api.delete(`/api/v1/assets/${manifestAssetID}`).catch(() => undefined);
+  });
+
   test('collection manifest is valid IIIF 3.0 JSON', async ({ page, context, baseURL }) => {
     await loginAsAdminViaUI(page);
     const cookies = (await context.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
@@ -116,11 +168,10 @@ test.describe('UI-12 IIIF Presentation + Content Search smoke', () => {
     expect(hasSearch, 'seeAlso should surface SearchService2').toBe(true);
   });
 
-  test('asset manifest is valid IIIF 3.0 JSON with a canvas', async ({ page, context, baseURL }) => {
+  test('asset manifest is valid IIIF 3.0 JSON with a canvas', async ({ page }) => {
     await loginAsAdminViaUI(page);
-    const cookies = (await context.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
-    const aid = await firstAssetID(baseURL!, cookies);
-    test.skip(!aid, 'no assets in dev DB — upload one first');
+    const aid = manifestAssetID;
+    expect(aid, 'the manifest fixture did not land in beforeAll').toBeTruthy();
 
     const r = await page.request.get(`/api/v1/iiif/3/asset/${aid}/manifest.json`);
     expect(r.ok()).toBe(true);
@@ -132,24 +183,27 @@ test.describe('UI-12 IIIF Presentation + Content Search smoke', () => {
     expect(manifest.type).toBe('Manifest');
     expect(manifest.id).toContain(`/iiif/3/asset/${aid}/manifest.json`);
     expect(manifest.label).toBeTruthy();
-    // A non-embargoed asset has items[] with at least one Canvas.
-    // Embargoed asset (stub) has no items[]; skip the canvas
-    // assertion for that case since we can't guarantee the ambient
-    // DB has a non-embargoed asset.
-    if (Array.isArray(manifest.items) && manifest.items.length > 0) {
-      const canvas = manifest.items[0];
-      expect(canvas.type).toBe('Canvas');
-      expect(canvas.items?.[0]?.type).toBe('AnnotationPage');
-      // The AnnotationPage's Annotation targets the Canvas via
-      // motivation=painting for an image body.
-      const ann = canvas.items[0].items?.[0];
-      expect(ann?.motivation).toBe('painting');
-      // Body carries an ImageService3 profile:level0 reference —
-      // this is what makes Mirador tile via 1.54.A's Image API.
-      const svc = ann?.body?.service?.[0];
-      expect(svc?.type).toBe('ImageService3');
-      expect(svc?.profile).toBe('level0');
-    }
+    // The fixture asset is freshly uploaded and therefore NOT embargoed,
+    // which is what makes this unconditional: the builder emits exactly
+    // one canvas for a readable asset and none for the embargo stub, so
+    // "items is empty" is now a failure and not a case to step around.
+    expect(
+      Array.isArray(manifest.items) && manifest.items.length > 0,
+      'a readable asset manifest must carry a Canvas; an empty items[] is the embargo stub, ' +
+        'and this fixture is not embargoed',
+    ).toBe(true);
+    const canvas = manifest.items[0];
+    expect(canvas.type).toBe('Canvas');
+    expect(canvas.items?.[0]?.type).toBe('AnnotationPage');
+    // The AnnotationPage's Annotation targets the Canvas via
+    // motivation=painting for an image body.
+    const ann = canvas.items[0].items?.[0];
+    expect(ann?.motivation).toBe('painting');
+    // Body carries an ImageService3 profile:level0 reference —
+    // this is what makes Mirador tile via 1.54.A's Image API.
+    const svc = ann?.body?.service?.[0];
+    expect(svc?.type).toBe('ImageService3');
+    expect(svc?.profile).toBe('level0');
   });
 
   test('legacy /iiif/2/{id}/info.json redirects 301 to /iiif/3/', async ({ page, context, baseURL }) => {

@@ -17,6 +17,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
@@ -181,17 +183,18 @@ func runSeed(args []string) error {
 	//
 	// nil recorder: the seed has no audit recorder wired, which just
 	// skips the key_generated audit row. The keypair is still minted.
-	if err := bootstrap.Run(ctx, pool, bootstrap.Config{
+	bootstrapCfg := bootstrap.Config{
 		ScrambleKey:         cfg.ScrambleKey,
 		AdminPath:           cfg.BootstrapAdminPath,
 		DefaultAdminEnabled: cfg.BootstrapDefaultAdmin,
-	}, logger, nil); err != nil {
+	}
+	if err := bootstrap.Run(ctx, pool, bootstrapCfg, logger, nil); err != nil {
 		return fmt.Errorf("seed: bootstrap admin: %w", err)
 	}
 
 	if *reset {
-		if err := seed.Reset(ctx, pool, bootstrap.DefaultUsername); err != nil {
-			return fmt.Errorf("seed reset: %w", err)
+		if err := resetContent(ctx, pool, bootstrapCfg, logger); err != nil {
+			return err
 		}
 		logger.Info("seed.reset.done")
 	}
@@ -249,6 +252,75 @@ func runSeed(args []string) error {
 		"posts", counts.Posts, "comments", counts.Comments)
 	fmt.Printf("seed complete: users=%d teams=%d collections=%d assets=%d posts=%d comments=%d\n",
 		counts.Users, counts.Teams, counts.Collections, counts.Assets, counts.Posts, counts.Comments)
+	return nil
+}
+
+// resetContent is what `aa seed --reset` actually does: clear the seeded
+// content, then re-assert the bootstrap admin — because the clear takes
+// the admin's authority with it (#1274).
+//
+// # Why bootstrap.Run is called TWICE and not moved
+//
+// The call before the reset is a prerequisite, not a convenience: the
+// seeder's resolveLookups resolves the bootstrap admin as its very first
+// statement (the seed's collections are owned by it), so a seed that
+// found no admin would die with `resolve admin: no rows` (#574). Moving
+// the call after the reset would reintroduce exactly that. Calling it
+// again instead is free — Run no-ops when a system admin already exists,
+// and re-checks inside its own transaction so parallel processes cannot
+// both create one.
+//
+// # What the reset takes, and why #361's guard does not catch it
+//
+// seed.Reset TRUNCATEs `assets ... CASCADE`, and CASCADE follows every
+// foreign key that POINTS AT a truncated table, transitively, whatever
+// its ON DELETE action says. `teams.hero_asset_id` references `assets`
+// (migration 00047), and `user_roles`, `user_capability_grants` and
+// `user_capability_revokes` all reference `teams` — so truncating assets
+// empties all three, including the bootstrap admin's GLOBAL (team_id IS
+// NULL) role.
+//
+// That is the same end state #361 fixed by taking `teams` OUT of the
+// TRUNCATE list, and the per-row `DELETE FROM teams` it left behind
+// still guards the direct path. It guards only against NAMING teams,
+// though; 00047 opened a transitive route to the same table a month
+// after #361 closed the direct one, and nothing noticed. The symptom is
+// specific and was reproduced before this fix: `admin` still logs in,
+// `/api/v1/auth/me` answers with `"capabilities": []`, and every admin
+// endpoint answers 403 until the SERVER is restarted and runs the same
+// bootstrap itself (see run() below).
+//
+// # What this does NOT restore
+//
+// Only the bootstrap admin's global role, because that is all
+// bootstrap.Run asserts. Every other row of `user_roles` /
+// `user_capability_grants` / `user_capability_revokes` is gone for good.
+// For the seeded fictional users that is a no-op — the reset deletes
+// them outright and the reseed re-grants what it granted before — and
+// for an operator-created user it is equally moot, because
+// `DELETE FROM "user" WHERE username <> 'admin'` removes the user too.
+// The one real loss is a GLOBAL capability grant held by `admin` itself
+// (measured: one planted grant, gone and not rebuilt). On any instance
+// `aa seed --reset` is meant for that is inert — the restored Admin role
+// already carries everything a grant could add — but it is a loss, not a
+// no-op, and it is stated here rather than left to be discovered.
+//
+// The chosen defence is this invariant and its test
+// (reset_admin_test.go), NOT a check over the FK graph. Policing the
+// cascade closure is precisely what failed here: 00047 added a legal
+// foreign key and no rule about the graph would have objected.
+func resetContent(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	bootstrapCfg bootstrap.Config,
+	logger *slog.Logger,
+) error {
+	if err := seed.Reset(ctx, pool, bootstrap.DefaultUsername); err != nil {
+		return fmt.Errorf("seed reset: %w", err)
+	}
+	if err := bootstrap.Run(ctx, pool, bootstrapCfg, logger, nil); err != nil {
+		return fmt.Errorf("seed reset: restore bootstrap admin: %w", err)
+	}
 	return nil
 }
 
