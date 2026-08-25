@@ -29,23 +29,34 @@ test.describe('UI-15 post detail', () => {
   });
 
   test('post detail page loads + shell stays mounted', async ({ page }) => {
-    const list = await page.request.get('/api/v1/posts?limit=1');
+    // SELECTED BY PREDICATE, not by position (#1227). This used to take
+    // `items[0]` from `?limit=1` and then assert the title only `if
+    // (postTitle)` — so on a run where the newest post happened to be
+    // untitled, the one content assertion in this test silently did not
+    // happen and the summary line said "passed" either way. Which post
+    // it is does not matter; that it HAS a title does, because that is
+    // what the assertion reads. So ask for a window and take the first
+    // post that satisfies the precondition, and fail loudly rather than
+    // quietly if the instance holds none.
+    const list = await page.request.get('/api/v1/posts?limit=20');
     expect(list.status()).toBe(200);
-    const items = (await list.json()).items ?? [];
-    expect(items.length).toBeGreaterThan(0);
-    const postId = items[0].id;
-    const postTitle = items[0].title ?? '';
+    const items = ((await list.json()).items ?? []) as Array<{ id: string; title?: string }>;
+    expect(items.length, 'no posts on this instance').toBeGreaterThan(0);
+    const titled = items.find((p) => (p.title ?? '').trim().length > 0);
+    expect(
+      titled,
+      'not one of the newest 20 posts carries a title, so the render assertion below has ' +
+        'nothing to look for — seed the instance rather than letting this pass vacuously',
+    ).toBeTruthy();
 
-    await page.goto(`/posts/${postId}`);
+    await page.goto(`/posts/${titled!.id}`);
     // Shell stays mounted (proves SvelteKit didn't crash mid-route).
     await expect(page.getByRole('banner')).toBeVisible();
     await expect(page.locator('main')).toBeVisible();
     // Title appears somewhere on the page. Specific viewer element
     // (img/canvas/video/etc) varies by asset kind and load timing;
     // we don't pin which one renders.
-    if (postTitle) {
-      await expect(page.locator('body')).toContainText(postTitle);
-    }
+    await expect(page.locator('body')).toContainText(titled!.title!.trim());
   });
 
   test('comments endpoint feeds the thread on every visible post', async ({ page }) => {
