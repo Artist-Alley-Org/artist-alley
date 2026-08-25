@@ -179,3 +179,36 @@ Anything calibrated against one misreports against the other, in either directio
 the one-time fixtures into `aa seed` so a fresh CI database starts already-fixtured (**#1270**).
 Until that lands, **#1263's census-in-CI is held** at `wip/1263-census-in-ci` rather than merged,
 because a guard that is permanently red is the pathology #1245 exists to end.
+
+---
+
+## Amendment, 2026-08-25 (#1285): a loud skip is honest and still leaves a hole
+
+The 2026-08-24 amendment named two axes on which the dev and CI corpora differ. Sprint 11b found a
+**third**, and it is the one that defeats the previous amendment's own remedy.
+
+That amendment said: *"Skips must be loud."* They now are — and
+`modal-scroll-lock-1223 › 1080p` **has never run in CI**, skipping correctly with
+
+> the deepest seeded collection offers only 32px of scroll range (needs 250px)
+
+CI seeds with `--profile ci` (`ui-pr.yml:343`), a **coverage-complete subset** — 162 assets / 94
+posts against a workstation's 2,008 / 902. It is built to touch every media type and code path, not
+to be deep. So the gate for a *scroll-locking* bug cannot exercise scroll locking.
+
+**The three axes, so the next one is recognisable:**
+
+| axis | mechanism |
+|---|---|
+| fresh vs persistent | one-time costs never amortise in CI (#1263) |
+| deep vs shallow | a constant measured on the dev corpus (#1223's 400px park) |
+| **subset vs full** | `--profile ci` omits *depth* by design (#1285) |
+
+**Consequence, and it amends the previous amendment rather than repeating it:** loudness makes a
+skip *honest*, not *harmless*. A test that never runs measures nothing, and nothing in the pipeline
+currently notices that a named case has skipped on every run for a week.
+
+⭐ **The question to ask of an environment-sensitive assertion is not "does it pass?" but "does it
+RUN, everywhere it is meant to?"** Read the run output for skips, not only for failures — and
+prefer provisioning the shape (the `post-band-format-1190:71` pattern this ADR's family keeps
+arriving back at) over depending on whatever the corpus happens to hold.

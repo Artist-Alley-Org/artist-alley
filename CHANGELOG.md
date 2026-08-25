@@ -102,6 +102,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Rebuilding the demo data no longer strips the administrator's access.** Resetting and
+  re-seeding an instance left the admin account able to sign in but holding no permissions at all,
+  until the app was restarted. It now comes back usable immediately (#1274, PR #1284).
+
+- **A first-boot message could name a password that was never set.** When the server repaired an
+  existing administrator's missing role, it announced a freshly generated password it had not
+  applied — and on installations that keep the generated password in a file, overwrote the real one
+  with it. It now says plainly that the password is unchanged (#1274, PR #1284).
+
 - **Development only — the test suite stopped re-creating what the seed should own.** The dogfood
   fixtures are now seeded rather than made on first run, so a freshly built database no longer
   drifts. No effect on the running product (#1270, PR #1273).
