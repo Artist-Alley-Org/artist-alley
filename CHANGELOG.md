@@ -9,6 +9,12 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The demo library now contains work that is honestly labelled as AI-made.** Forty-five images
+  generated in-house — four for each team, in forty-five different styles — carry a maker's
+  declaration saying so, which is what lets the "hide AI-made work" switch actually demonstrate the
+  rule it implements: purely-AI work disappears, and a piece that mixes AI with human work stays
+  (#1260, PR #1273).
+
 - **You can see where one of your files ended up.** A file's ⋯ menu gains "Where this is used",
   which lists the posts it appears in — including posts by other people, which the shared-library
   side of this product makes ordinary. Posts you cannot open are not listed; instead you get a
@@ -95,6 +101,10 @@ where applicable, otherwise note "no-spec-impact."
   title nobody wrote (#1161, PR #1232).
 
 ### Fixed
+
+- **Development only — the test suite stopped re-creating what the seed should own.** The dogfood
+  fixtures are now seeded rather than made on first run, so a freshly built database no longer
+  drifts. No effect on the running product (#1270, PR #1273).
 
 - **Editing a collection no longer loses the change you just made.** Opening the edit dialog
   started a background load, and when it finished the form quietly reset to the stored values — so
