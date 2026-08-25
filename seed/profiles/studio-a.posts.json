@@ -26901,5 +26901,363 @@
   "title": "Anatomy reference — academic life studies",
   "updated_at": "2026-02-21T11:01:00Z",
   "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "bfcb7a8d-1975-5808-9136-6d18065848a9",
+   "8fa20561-0614-5963-b9b6-66e6fa5ba6cc",
+   "334acf30-830f-5b6b-b6d9-0f0c8bc38901",
+   "13cf5c4f-283e-5f1f-9d9c-413c7c586e9b"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "kai.nakamura",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2026-01-14T10:00:00Z",
+  "description": "Animation reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "d52da9c9-2574-5eac-a92d-28a386bcf16d",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "animation"
+  ],
+  "team_name": "Animation",
+  "title": "Animation — AI reference set",
+  "updated_at": "2026-01-14T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "00c2bdfe-bcf0-5ff9-9a61-8245eb07afa7",
+   "6542fbdb-824e-5b51-92ab-e91a6eee03c1",
+   "31637841-c75c-566d-a046-ae5be434ce36",
+   "213aeff9-d17c-5085-b5c8-9403cf922768"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2026-01-28T10:00:00Z",
+  "description": "Audio reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "1a3ca3a6-1175-5cb8-b5c8-544a9df86834",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "audio"
+  ],
+  "team_name": "Audio",
+  "title": "Audio — AI reference set",
+  "updated_at": "2026-01-28T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "eab1d23f-f0d2-5a63-a3da-2ceecdffd4d5",
+   "88e52c79-9648-5188-9a7d-e86c3388bc34",
+   "c07d4a4f-d9b2-530a-aa7c-8974fcf6d988",
+   "81347d98-a8b2-5d04-a5db-d19f5ba4ad46"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "hana.kim",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Heroes",
+  "created_at": "2026-02-11T10:00:00Z",
+  "description": "Characters reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "905c777a-ab11-5a76-a682-ce919f6e7ffb",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "characters"
+  ],
+  "team_name": "Characters",
+  "title": "Characters — AI reference set",
+  "updated_at": "2026-02-11T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "7293f767-fcc6-5f5c-bc0a-5ac057677beb",
+   "df9d4d99-85be-5ada-82d6-82ec2b3b329f",
+   "34ffed07-1a3c-5b60-98ec-d90e0aded0e3",
+   "b3eb7c48-2497-55ea-b375-6cc7dda330d8"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "anya.volkov",
+  "brand_workspace": "Mirror",
+  "collection_name": "Project Citylight",
+  "created_at": "2026-02-25T10:00:00Z",
+  "description": "Environment reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "c5475e39-0eec-5d18-84cc-f5477d12f457",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "environment"
+  ],
+  "team_name": "Environment",
+  "title": "Environment — AI reference set",
+  "updated_at": "2026-02-25T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "49ebea07-e336-50d1-b90c-19e531f07d4d",
+   "365b539f-8b63-516e-85ce-d50f331e36ec",
+   "d9f8cdff-667e-5e42-b982-d57b4501d5a7",
+   "c7210718-0d61-5911-9f6f-5bcbe350ba35"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "jin.liu",
+  "brand_workspace": "Mirror",
+  "collection_name": "Project Mirror",
+  "created_at": "2026-03-11T10:00:00Z",
+  "description": "Marketing Art reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "b76d21e8-4053-54a4-8fc4-11358a04d484",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "marketing-art"
+  ],
+  "team_name": "Marketing Art",
+  "title": "Marketing Art — AI reference set",
+  "updated_at": "2026-03-11T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "06a6f94a-1c97-5797-b687-786641caea46",
+   "bb9552fa-7aea-5132-9736-b7adf608423d",
+   "54f97893-e4c5-5197-a3e5-bfb372e23896",
+   "3212aff2-ee69-5adf-b9f7-d11b5b2845f9"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "bea.marquez",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2026-03-25T10:00:00Z",
+  "description": "Props reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "e7709cf1-ceef-57c9-8c2c-d9dbb0b73b27",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "props"
+  ],
+  "team_name": "Props",
+  "title": "Props — AI reference set",
+  "updated_at": "2026-03-25T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "0394241e-6c8d-55dd-80dd-a8164dfb2218",
+   "04e6e5b7-cf56-5231-a089-0c8541440285",
+   "4d1c5235-32dd-5faa-8a71-3b5f1d3151df",
+   "e125ddca-b6e9-5753-9f60-7282069534f4"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "seed.bot",
+  "brand_workspace": null,
+  "collection_name": "Art Research",
+  "created_at": "2026-04-08T10:00:00Z",
+  "description": "Reference reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "103521f4-c0a8-5fa4-b1f3-c51223f3c41d",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "reference"
+  ],
+  "team_name": "Reference",
+  "title": "Reference — AI reference set",
+  "updated_at": "2026-04-08T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "32507fdc-e32f-5b76-b507-f3cd4410685a",
+   "17c19c33-754c-5e7c-b86b-d5cbf127bfe2",
+   "c24e9c7e-c55c-5af9-82c9-28a53df6ca7f",
+   "d63c2b54-18cc-5de6-9950-af71e31a6abe"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "mira.patel",
+  "brand_workspace": "Echo",
+  "collection_name": "Engine Core",
+  "created_at": "2026-04-22T10:00:00Z",
+  "description": "Tech Art reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "4c70f152-0813-5320-a63b-4b62970ee71f",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "tech-art"
+  ],
+  "team_name": "Tech Art",
+  "title": "Tech Art — AI reference set",
+  "updated_at": "2026-04-22T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "111662c0-13c8-5f22-a800-26733fe18207",
+   "dc530cc6-0233-5030-a3e3-c8933b6b3c9f",
+   "e62a94a9-d4df-5f49-91ce-2a7d86eb8bdf",
+   "174cf6ac-3b1b-54d4-8afc-aef566f26a63"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "emma.andersen",
+  "brand_workspace": "Mirror",
+  "collection_name": "Project Citylight",
+  "created_at": "2026-05-06T10:00:00Z",
+  "description": "Textures reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "86eba8f0-cb78-5746-8598-4fdd89e8ac22",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "textures"
+  ],
+  "team_name": "Textures",
+  "title": "Textures — AI reference set",
+  "updated_at": "2026-05-06T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "7a00da45-68d5-5f73-8b03-40c2c897957c",
+   "3f8fa618-e4d5-5307-aa7a-d6e928398613",
+   "34d471f0-2bfb-508a-9ac9-40c256ea61ec",
+   "9ab66082-b974-56cc-88c7-b7e04a6bfd09"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "akira.tanaka",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Compass",
+  "created_at": "2026-05-20T10:00:00Z",
+  "description": "UI reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "89b898a4-5569-5985-9d8f-60cc93a5d523",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "ui"
+  ],
+  "team_name": "UI",
+  "title": "UI — AI reference set",
+  "updated_at": "2026-05-20T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "ea90b7e5-a9d4-578d-9060-e05220711ba1",
+   "09316c86-46fd-5036-9675-49bf98cd78ad",
+   "aff617c9-6901-56a4-863b-24f552785cc2",
+   "eb632dea-9fc0-53bd-b4a5-8da5583030a6"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "devon.reeves",
+  "brand_workspace": "Mirror",
+  "collection_name": "Project Mirror",
+  "created_at": "2026-06-03T10:00:00Z",
+  "description": "VFX reference plates generated in-house with Stable Diffusion 3.5 Large. Every member of this post declares `generated`, so the post is AI-PURE and a reader who asks to hide AI work does not see it.",
+  "id": "77fda3e9-fbb2-5381-a6ee-0dea6b102f06",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "vfx"
+  ],
+  "team_name": "VFX",
+  "title": "VFX — AI reference set",
+  "updated_at": "2026-06-03T16:00:00Z",
+  "workflow_state": "approved"
+ },
+ {
+  "asset_ids": [
+   "89e776dd-0a29-51a7-92e1-5fc1794c4412",
+   "da72edcb-61f4-5265-a903-6946462aa5a5"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "author_username": "seed.bot",
+  "brand_workspace": null,
+  "collection_name": "Art Research",
+  "created_at": "2026-06-17T10:00:00Z",
+  "description": "A backplate generated in-house with Stable Diffusion 3.5 Large, shown beside the public-domain plate it was matched to. ONE member declares `generated` and the other declares nothing, so the post is LABELLED `generated` and is NOT ai_pure — it survives the \"hide AI-made work\" filter, which is the ruling this pair exists to make visible (ADR 0094 fourth amendment).",
+  "id": "fbac4dae-8983-5b20-b9a8-3d62847442af",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "asset_group",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "tags": [
+   "ai-generated",
+   "reference"
+  ],
+  "team_name": "Reference",
+  "title": "Backplate study — AI plate beside a public-domain plate",
+  "updated_at": "2026-06-17T16:00:00Z",
+  "workflow_state": "approved"
  }
 ]

@@ -193,22 +193,73 @@ test.describe('UI-13 browse + search', () => {
    *  nothing to do with search. Every rendered card is still a bounded
    *  scan (one page of the feed) and it reaches past any one family of
    *  fixtures; the accumulation itself is #1198's. */
-  async function seededTerms(page: import('@playwright/test').Page) {
+  /** Distinct 5+-letter words off the rendered post titles, in wall
+   *  order. Stops once it has `want` of them, or runs out of wall. */
+  async function wallWords(page: import('@playwright/test').Page, want: number) {
     const links = page.locator('a[href^="/posts/"]');
     await expect(links.first()).toBeVisible();
     const n = await links.count();
     const terms: string[] = [];
-    for (let i = 0; i < n && terms.length < 2; i++) {
+    for (let i = 0; i < n && terms.length < want; i++) {
       const label = (await links.nth(i).getAttribute('aria-label')) ?? '';
-      const word = (label.match(/[A-Za-z]{5,}/g) ?? [])[0];
-      if (word && !terms.includes(word)) terms.push(word);
+      for (const word of label.match(/[A-Za-z]{5,}/g) ?? []) {
+        if (!terms.includes(word)) {
+          terms.push(word);
+          break;
+        }
+      }
     }
+    return { terms, n };
+  }
+
+  async function seededTerms(page: import('@playwright/test').Page) {
+    const { terms, n } = await wallWords(page, 2);
     expect(
       terms.length,
       `no two distinct searchable words across ${n} rendered post titles — the whole ` +
         'page is one fixture family (#1198), not a search defect',
     ).toBe(2);
     return terms as [string, string];
+  }
+
+  /** A term the ASSET index actually answers.
+   *
+   *  ⛔ A WORD OFF A POST TITLE IS NOT A WORD IN AN ASSET TITLE, and the
+   *  one caller that scopes its search to `types=asset` was relying on
+   *  the two coinciding. They coincide by luck: the wall shows posts,
+   *  newest first, and whether the newest post happens to share a word
+   *  with any asset is a property of whatever the install last seeded.
+   *  It stopped being true the moment the catalogue grew and the CI
+   *  coverage profile selected a different subset — the wall's newest
+   *  post became `Cinematic cut — Big Buck Bunny`, no asset is titled
+   *  "Cinematic", and the test failed all three attempts with an empty
+   *  grid that had nothing to do with what it asserts.
+   *
+   *  So the term is CONFIRMED against the same endpoint the test then
+   *  drives, rather than assumed. Candidates still come off the wall, so
+   *  it is still a word this corpus really contains. */
+  async function seededAssetTerm(page: import('@playwright/test').Page) {
+    const { terms, n } = await wallWords(page, 24);
+    for (const term of terms) {
+      // ⚠️ THE KEY IS `hits`, NOT `items`. /search answers a ranked
+      // envelope; the collection endpoints answer `items`. Reading the
+      // wrong one returns 0 for every term and turns this probe into a
+      // guard that rejects the whole corpus.
+      const hits = await page.evaluate(async (q: string) => {
+        const r = await fetch(
+          `/api/v1/search?q=${encodeURIComponent(q)}&types=asset&limit=1`,
+        );
+        if (!r.ok) return 0;
+        return ((await r.json()).hits ?? []).length as number;
+      }, term);
+      if (hits > 0) return term;
+    }
+    throw new Error(
+      `none of the ${terms.length} candidate words off ${n} rendered post titles ` +
+        `matched a single ASSET (${terms.join(', ')}). A post title and an asset ` +
+        'title share words only by luck; if this install genuinely has no ' +
+        'searchable asset the failure is the seed, not the search.',
+    );
   }
 
   /** Scroll the result list down past the navbar's auto-hide threshold
@@ -581,7 +632,7 @@ test.describe('UI-13 browse + search', () => {
     // so the offset half of this is measured rather than skipped.
     await page.setViewportSize({ width: 1280, height: 400 });
     await page.goto('/');
-    const [term] = await seededTerms(page);
+    const term = await seededAssetTerm(page);
     // Scoped to assets, because /assets/{id} is a route that UNMOUNTS
     // this page — the case #584 exists for, and the only one where the
     // loaded pages live nowhere but the snapshot. A post card opens

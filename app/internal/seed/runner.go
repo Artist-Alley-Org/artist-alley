@@ -236,6 +236,14 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 	if err != nil {
 		return Counts{}, err
 	}
+	// Before the shrinks, and long before any bytes move: a manifest
+	// that declares AI over somebody else's work must not reach the
+	// database (#1260). See AIDeclarableSourcePrefix for why this is
+	// checked here as well as in apply_upgrade.py — the two read
+	// different files, and the manifest is the one the repo cannot see.
+	if err := cat.validateAIDeclarations(); err != nil {
+		return Counts{}, err
+	}
 	if r.opts.Profile == ProfileCI {
 		depth := r.opts.CoverageDepth
 		if depth <= 0 {

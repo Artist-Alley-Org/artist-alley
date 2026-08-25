@@ -292,6 +292,57 @@ func guessContentType(extension string) string {
 	}
 }
 
+// AIDeclarableSourcePrefix is the provenance an asset must claim before
+// it may claim `ai_provenance` (#1260).
+//
+// ⛔ WHY THE SEEDER CHECKS THIS AT ALL, when seed/scripts/apply_upgrade.py
+// audits the same rule. The two read DIFFERENT FILES. The Python audit
+// covers `seed/profiles/*`, which is the pipeline's INPUT and lives in
+// the repo; the seeder reads `MANIFEST.json` off the archive share, which
+// is its OUTPUT and does not. A false declaration written straight into
+// the shipped manifest — which is how the last four got applied, by hand
+// — passes every check in this repo and reaches the database anyway.
+//
+// The claim is not an ordinary catalogue value. `ai_provenance` says HOW
+// THE WORK WAS MADE, on a row that also names its creator, and site_a is
+// published to Kaggle: every asset in it is a real work by an
+// identifiable third party (Kenney.nl 1,778 · Pexels 75 · Met Museum 18
+// · NASA 6 · …). Four rows already carried `generated` over
+// `attribution: "Kenney (kenney.nl)"` before #1260 removed them.
+//
+// Widening this constant publishes a claim about somebody. That is why
+// it is a named constant and a hard failure rather than a warning: a
+// seed log nobody reads is exactly how the mature axis sat dead for
+// months (#1217).
+const AIDeclarableSourcePrefix = "Generated in-house"
+
+// validateAIDeclarations refuses a manifest that declares AI on work we
+// did not make. Runs before any bytes move, so the failure costs
+// seconds rather than the whole upload phase.
+func (c *catalogues) validateAIDeclarations() error {
+	for _, a := range c.Assets {
+		if a.AiProvenance == nil || *a.AiProvenance == "" {
+			continue
+		}
+		var meta map[string]any
+		if len(a.Metadata) > 0 {
+			_ = json.Unmarshal(a.Metadata, &meta)
+		}
+		src, _ := meta["acquisition_source"].(string)
+		if strings.HasPrefix(src, AIDeclarableSourcePrefix) {
+			continue
+		}
+		return fmt.Errorf(
+			"asset %s (%q) declares ai_provenance=%q but its provenance is %q. "+
+				"An AI declaration on work we did not generate is a false statement "+
+				"about that creator, and this dataset is published — either the "+
+				"declaration is wrong or the provenance is. If we really did make it, "+
+				"say so in metadata.acquisition_source (it must start with %q)",
+			a.ID, a.Title, *a.AiProvenance, src, AIDeclarableSourcePrefix)
+	}
+	return nil
+}
+
 func loadJSON(path string, dst any) error {
 	b, err := os.ReadFile(path)
 	if err != nil {

@@ -328,6 +328,8 @@ Ships in the Phase 1.48 demo sandboxes that anyone can spin up at
 - Polyhaven HDRs (CC0, internet-fetched)
 - Khronos glTF sample models (CC-BY, internet-fetched)
 - LibriVox audiobook samples (public domain, internet-fetched)
+- 45 images generated in-house with Stable Diffusion 3.5 Large (CC0),
+  the only entries in the corpus that declare `ai_provenance` (#1260)
 
 ### Layer B — local-only, never published
 
@@ -373,6 +375,7 @@ transform):
 | `status` | `workflow_states.name` | Maps to 5-state workflow |
 | `confidentiality` | `assets.sensitivity_tier` | Public→public, Internal→team, Restricted→restricted |
 | — | `assets.mature` | Manifest `mature` (bool), a CONTENT RATING and a second axis — never derived from the tier (#1217, ADR 0090). Twelve public-domain classical nudes carry `true`; see ATTRIBUTIONS.md for the list and the reasoning. Posts get theirs from a DB trigger off membership, so `posts.json` says nothing about it |
+| — | `assets.ai_provenance` | Manifest `ai_provenance` (string), the MAKER'S declaration (#1251, ADR 0094). The key's ABSENCE is `NULL` = "nobody was asked", never `none` — writing `none` over a work nobody was asked about would fabricate that maker's disclaimer. 45 in-house generated images declare `generated`; nothing else in the corpus declares anything (#1260, and see ATTRIBUTIONS.md for why the four rows that used to are gone). Posts get `ai_provenance` + `ai_pure` from DB triggers off contributors, so `posts.json` says nothing about it |
 | `license` + `usage_rights` + `attribution` | `assets.metadata.rights` jsonb | |
 | `source` | `assets.metadata.acquisition_source` | Also drives Layer A/B |
 | — | `assets.metadata.fetched_from` | Source PAGE — attribution + licence evidence (#602) |
