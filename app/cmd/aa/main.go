@@ -19,6 +19,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
+	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/bootstrap"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/config"
@@ -99,6 +100,13 @@ func runSeed(args []string) error {
 	previews := fs.Bool("previews", true,
 		"enqueue a preview job per asset so the seed produces derivatives "+
 			"(card thumbnails, video sprites); false = fast metadata-only seed")
+	fixtures := fs.Bool("fixtures", false,
+		"also seed the dogfood suite's one-time substrate: four login-capable "+
+			"principals and four admin-owned plates the specs used to create for "+
+			"themselves on every fresh database and could never delete (there is no "+
+			"user-delete endpoint, and asset/post DELETE is a soft delete). Off by "+
+			"default — these accounts have committed passwords, so the public demo "+
+			"must not have them. Reads seed/profiles/dataset.fixtures.json")
 	forcePreviews := fs.Bool("force-previews", false,
 		"re-render variants that already exist instead of skipping them. "+
 			"--reset does NOT erase the content-addressed variant store, so a "+
@@ -204,6 +212,14 @@ func runSeed(args []string) error {
 		Logger:        logger,
 		Previews:      *previews,
 		ForcePreviews: *forcePreviews,
+		Fixtures:      *fixtures,
+		// Same hasher the setup flow and the bootstrap package use, so a
+		// seeded principal's password verifies through the ordinary login
+		// path (api.go wires the identical closure for the seed admin
+		// endpoints).
+		HashPassword: func(plaintext string) (string, error) {
+			return auth.HashPassword(plaintext, cfg.ScrambleKey)
+		},
 	})
 	counts, err := runner.Run(ctx)
 	if err != nil {

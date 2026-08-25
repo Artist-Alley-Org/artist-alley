@@ -32,7 +32,7 @@
 import { test, expect } from '../../helpers/test';
 import type { APIRequestContext, Browser } from '@playwright/test';
 import { LOGGED_OUT } from '../../helpers/auth';
-import { ensureFixtureUser, restoreSelfRegistration } from '../../helpers/fixture-user';
+import { requireSeededPrincipal, seededPrincipal } from '../../helpers/seeded-principal';
 import { tid } from '../../helpers/testids';
 
 const PNG_1PX = Buffer.from(
@@ -41,12 +41,18 @@ const PNG_1PX = Buffer.from(
 );
 
 const STAMP = Date.now();
-// The ACCOUNT is a constant; only the things this run asserts on carry
-// the stamp (#1198). A per-run account was never deleted — there is no
-// user-delete endpoint — so the suite grew the instance by two users a
-// run until the bootstrap admin fell off page 1 of /admin/users.
-const GRANTEE_USER = 'share875_grantee';
-const GRANTEE_PASS = 'Sharing1sCaring!875';
+// The ACCOUNT belongs to the SEED; only the things this run asserts on
+// carry the stamp (#1270). A per-run account was never deleted — there
+// is no user-delete endpoint — so the suite grew the instance by two
+// users a run until the bootstrap admin fell off page 1 of /admin/users.
+// Making it constant fixed run N+1; seeding it fixes run 1, which is
+// every CI run.
+//
+// ⚠️ A SEPARATE PRINCIPAL FROM post-acl-share-667's, on purpose. Both
+// files grant to their grantee and run in parallel workers; one shared
+// account would let one file's grants decide the other file's
+// assertions.
+const GRANTEE = seededPrincipal('theo.bergstrom');
 const SHARED_TITLE = `share875 shared ${STAMP}`;
 const CONTROL_TITLE = `share875 control ${STAMP}`;
 
@@ -55,7 +61,6 @@ interface Fixture {
   sharedPostId: string;
   unsharedPostId: string;
   assetId: string;
-  priorSelfRegistration: unknown;
 }
 
 let fx: Fixture | undefined;
@@ -68,11 +73,7 @@ test.describe('#875/#876 a share is announced, findable, and not a guest list', 
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async ({ browser, request }: { browser: Browser; request: APIRequestContext }) => {
-    const { ref: granteeRef, priorSelfRegistration } = await ensureFixtureUser(
-      browser,
-      request,
-      { username: GRANTEE_USER, password: GRANTEE_PASS, fullName: 'share875 grantee' },
-    );
+    const granteeRef = await requireSeededPrincipal(browser, GRANTEE.username);
 
     const up = await request.post('/api/v1/storage/objects', {
       data: PNG_1PX,
@@ -122,7 +123,7 @@ test.describe('#875/#876 a share is announced, findable, and not a guest list', 
     });
     expect(otherGrant.status(), 'granting read to a second principal').toBe(204);
 
-    fx = { granteeRef, sharedPostId, unsharedPostId, assetId, priorSelfRegistration };
+    fx = { granteeRef, sharedPostId, unsharedPostId, assetId };
   });
 
   test.afterAll(async ({ request }: { request: APIRequestContext }) => {
@@ -130,17 +131,17 @@ test.describe('#875/#876 a share is announced, findable, and not a guest list', 
     await request.delete(`/api/v1/posts/${fx.sharedPostId}`).catch(() => undefined);
     await request.delete(`/api/v1/posts/${fx.unsharedPostId}`).catch(() => undefined);
     await request.delete(`/api/v1/assets/${fx.assetId}`).catch(() => undefined);
-    // The grantee ACCOUNT deliberately survives — it is reused by the
-    // next run (#1198). Only the per-run rows above are removed.
-    await restoreSelfRegistration(request, fx.priorSelfRegistration);
+    // The grantee ACCOUNT is the seed's, not this run's, so there is
+    // nothing to remove and no instance config to put back — resolving a
+    // seeded principal never touches `self_registration` (#1270).
   });
 
   async function granteeContext(browser: Browser) {
     const ctx = await browser.newContext({ storageState: LOGGED_OUT });
     const page = await ctx.newPage();
     await page.goto('/login');
-    await page.locator(tid('login-username')).fill(GRANTEE_USER);
-    await page.locator(tid('login-password')).fill(GRANTEE_PASS);
+    await page.locator(tid('login-username')).fill(GRANTEE.username);
+    await page.locator(tid('login-password')).fill(GRANTEE.password);
     await page.locator(tid('login-submit')).click();
     await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 20_000 });
     return { ctx, page };

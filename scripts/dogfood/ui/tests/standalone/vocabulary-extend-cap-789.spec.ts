@@ -26,20 +26,24 @@
 
 import { test, expect, type Page } from '../../helpers/test';
 import { loginAsAdminViaUI, LOGGED_OUT } from '../../helpers/auth';
-import { ensureFixtureUser, restoreSelfRegistration } from '../../helpers/fixture-user';
+import { requireSeededPrincipal, seededPrincipal } from '../../helpers/seeded-principal';
 import { tid } from '../../helpers/testids';
 import { trackUploadedRows } from '../../helpers/uploaded-rows';
 
 const EXTEND_CAP = 'fields.vocabulary.extend';
 
-// A constant account, reused across runs (#1198) — a per-run one is
-// never deleted and eventually pushes the bootstrap admin off page 1 of
-// /admin/users.
-const PROBE_USER = 'vocab789_nonholder';
-const PROBE_PASS = 'N0Extend!789vocab';
+// A SEEDED account (#1270). Constant-per-instance was the earlier fix
+// (#1198) — a per-run account is never deleted and eventually pushes the
+// bootstrap admin off page 1 of /admin/users — but constant still costs
+// one account on the FIRST run against an instance, and a fresh database
+// is a first run every time. `aa seed --fixtures` creates it now.
+//
+// ⚠️ IT MUST HOLD THE Base ROLE, or "the cap is revoked" is a claim
+// about nothing. The seeder assigns the same global role the
+// registration path would have — see SeedFindRoleByName.
+const PROBE = seededPrincipal('rosa.linden');
 
 let probeRef = 0;
-let priorSelfRegistration: unknown;
 let fieldId = '';
 let fieldCode = '';
 
@@ -110,13 +114,7 @@ test.describe('vocabulary extension is a capability (#789, ADR 0092 §2)', () =>
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async ({ browser, request }) => {
-    const fixture = await ensureFixtureUser(browser, request, {
-      username: PROBE_USER,
-      password: PROBE_PASS,
-      fullName: 'vocab789 non-holder',
-    });
-    probeRef = fixture.ref;
-    priorSelfRegistration = fixture.priorSelfRegistration;
+    probeRef = await requireSeededPrincipal(browser, PROBE.username);
 
     // A field of this spec's own, so the assertions do not depend on
     // what `keywords` happens to contain on this instance. It carries
@@ -161,7 +159,6 @@ test.describe('vocabulary extension is a capability (#789, ADR 0092 §2)', () =>
     if (fieldId) {
       await request.delete(`/api/v1/fields/${fieldId}`).catch(() => undefined);
     }
-    await restoreSelfRegistration(request, priorSelfRegistration);
   });
 
   test('a capability HOLDER is offered the create arm', async ({ page }, testInfo) => {
@@ -207,8 +204,8 @@ test.describe('vocabulary extension is a capability (#789, ADR 0092 §2)', () =>
     try {
       const page = await ctx.newPage();
       await page.goto('/login');
-      await page.locator(tid('login-username')).fill(PROBE_USER);
-      await page.locator(tid('login-password')).fill(PROBE_PASS);
+      await page.locator(tid('login-username')).fill(PROBE.username);
+      await page.locator(tid('login-password')).fill(PROBE.password);
       await page.locator(tid('login-submit')).click();
       await expect(page).toHaveURL(/\/(?:\?|$)/);
 

@@ -129,62 +129,43 @@ async function clearSelection(page: Page) {
 const MIN_UPLOADS = 4;
 
 /**
- * Make sure the admin OWNS some assets and some posts.
+ * The admin OWNS assets and posts — and this spec does not make them.
  *
- * The uploads grid is `isSelf` only (#1106), so this spec needs the
- * signed-in admin to be the uploader — and `aa seed --reset` gives the
- * bootstrap admin zero assets: every seeded asset belongs to one of the
- * fictional users, and the admin only owns the collections. Depending
- * on whatever a previous session happened to leave behind is how a
- * spec passes locally and finds an empty grid in CI, so the fixture is
- * created here rather than assumed.
+ * The uploads grid is `isSelf` only (#1106), so the sweep needs the
+ * signed-in admin to be the uploader, and every seeded asset belongs to
+ * one of the fictional artists. This used to top the admin up to
+ * MIN_UPLOADS in `beforeEach` — four text assets and four posts, created
+ * on a fresh database and DELETED BY NOTHING: `DELETE` is a soft delete
+ * on both tables, so no teardown could have returned the corpus to where
+ * it started. On the long-lived coding stack the cost was paid once and
+ * invisible; on a fresh database it is paid every run, which is what
+ * kept the suite-level corpus census out of CI (#1245, #1263).
  *
- * Text assets, deliberately: they need no rendered variant to occupy a
- * tile, so the sweep is not racing a preview worker.
+ * `aa seed --fixtures` writes the plates now (app/internal/seed/
+ * fixtures.go). This asserts they are there.
+ *
+ * ⛔ IT MUST NOT FALL BACK TO CREATING THEM. A top-up branch would make
+ * this pass on an unseeded instance and put the leak straight back —
+ * silently, and only on the machines where nobody is looking.
  */
-async function ensureAdminFixture(page: Page) {
+async function requireAdminFixture(page: Page) {
   const assets = await page.request.get('/api/v1/assets?owner_ref=1&limit=50');
-  const owned = assets.ok() ? ((await assets.json()).items ?? []).length : 0;
-
-  for (let i = owned; i < MIN_UPLOADS; i++) {
-    const stamp = `${Date.now()}-${i}`;
-    const upload = await page.request.post('/api/v1/storage/objects', {
-      data: Buffer.from(`marquee-1177 fixture ${stamp}`),
-      headers: { 'Content-Type': 'application/octet-stream', 'X-Content-Type': 'text/plain' },
-    });
-    expect(upload.status(), 'fixture upload').toBe(201);
-    const { hash } = await upload.json();
-
-    const asset = await page.request.post('/api/v1/assets', {
-      data: {
-        title: `Marquee fixture ${stamp}`,
-        description: 'Fixture for the #1177 marquee spec.',
-        asset_type: 2,
-        file_hash: hash,
-        file_extension: 'txt',
-      },
-    });
-    expect(asset.status(), 'fixture asset').toBe(201);
-    const { id } = await asset.json();
-
-    // One post per fixture asset, so the profile also has POST cards
-    // for the mixed sweep — the admin owns no seeded posts either.
-    const post = await page.request.post('/api/v1/posts', {
-      data: {
-        title: `Marquee fixture post ${stamp}`,
-        visibility: 'org-only',
-        members: [{ asset_id: id }],
-      },
-    });
-    expect(post.status(), 'fixture post').toBe(201);
-  }
+  expect(assets.ok(), 'reading the admin\'s own assets').toBe(true);
+  const owned = ((await assets.json()).items ?? []).length;
+  expect(
+    owned,
+    `the bootstrap admin owns ${owned} asset(s); this spec needs at least ` +
+      `${MIN_UPLOADS} for a sweep to be a sweep rather than a click on one tile. ` +
+      `This instance was seeded without the test substrate. Re-seed with:\n\n` +
+      `    aa seed --site <site> --catalogue seed/profiles --fixtures\n`,
+  ).toBeGreaterThanOrEqual(MIN_UPLOADS);
 }
 
 test.describe('#1177 marquee selects asset cards', () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto(PROFILE);
-    await ensureAdminFixture(page);
+    await requireAdminFixture(page);
     await page.reload();
     await expect(page.getByTestId('profile-wall')).toBeVisible();
   });

@@ -179,6 +179,43 @@ type manifestPost struct {
 	IsMixedType     bool   `json:"is_mixed_type"`
 }
 
+// catFixtures is dataset.fixtures.json: the substrate the dogfood suite
+// used to build for itself on every fresh database (#1270).
+//
+// It is a CATALOGUE and not a hardcoded list because the credentials
+// have to have exactly one home — scripts/dogfood/ui/helpers/
+// seeded-principal.ts reads this same file, so a password changed here
+// reaches the suite and a password changed there reaches nothing.
+//
+// Loaded only when `aa seed --fixtures` asks for it; the demo path never
+// creates these accounts. See the file's own `_why` block.
+type catFixtures struct {
+	Principals []catFixturePrincipal `json:"principals"`
+	Admin      catFixtureAdmin       `json:"admin_uploads"`
+}
+
+type catFixturePrincipal struct {
+	Username string `json:"username"`
+	FullName string `json:"full_name"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	// ConsumedBy and Why are documentation carried in the data, so the
+	// answer to "what is this account for" travels with the account
+	// rather than living in a comment two directories away.
+	ConsumedBy string `json:"consumed_by"`
+	Why        string `json:"why"`
+}
+
+type catFixtureAdmin struct {
+	Count           int    `json:"count"`
+	TitlePrefix     string `json:"title_prefix"`
+	PostTitlePrefix string `json:"post_title_prefix"`
+	CreatedAt       string `json:"created_at"`
+	ConsumedBy      string `json:"consumed_by"`
+	Why             string `json:"why"`
+	SweepNote       string `json:"sweep_note"`
+}
+
 type catalogues struct {
 	Users       []catUser
 	Teams       []catTeam
@@ -186,6 +223,12 @@ type catalogues struct {
 	Fields      []catField
 	Assets      []manifestAsset
 	Posts       []manifestPost
+
+	// Fixtures is nil when the catalogue directory ships no
+	// dataset.fixtures.json. Absent is not an error HERE — the file is
+	// only meaningful to `--fixtures`, and applyTestFixtures is the one
+	// place that can say what its absence costs.
+	Fixtures *catFixtures
 
 	// SiteRoot is kept so coverage selection can reach the bytes:
 	// whether a model declares external companions is a property of the
@@ -212,6 +255,14 @@ func loadCatalogues(catalogueRoot, siteRoot string) (*catalogues, error) {
 	}
 	if err := loadJSON(filepath.Join(siteRoot, "posts.json"), &c.Posts); err != nil {
 		return nil, err
+	}
+	fixPath := filepath.Join(catalogueRoot, "dataset.fixtures.json")
+	if _, err := os.Stat(fixPath); err == nil {
+		var f catFixtures
+		if err := loadJSON(fixPath, &f); err != nil {
+			return nil, err
+		}
+		c.Fixtures = &f
 	}
 	return c, nil
 }

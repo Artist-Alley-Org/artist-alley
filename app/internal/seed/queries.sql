@@ -383,3 +383,30 @@ ON CONFLICT DO NOTHING;
 INSERT INTO likes (target_kind, target_id, user_ref, liked_at)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT DO NOTHING;
+
+-- name: SeedFindRoleByName :one
+-- The shipped role a seeded test-fixture principal is given (#1270).
+--
+-- The registration endpoint assigns the configured default role — "Base"
+-- unless an operator changed it — and the four accounts this replaces
+-- were REGISTERED, so they had one. `AdminHandler.CreateUser` assigns
+-- none: the 31 fictional artists cannot log in and never needed caps.
+-- A principal seeded with no role would sign in and then be refused
+-- every write the spec drives, which reads as a permission regression
+-- and is a missing fixture.
+SELECT id FROM roles WHERE name = $1 LIMIT 1;
+
+-- name: SeedSetUserGlobalRole :exec
+-- Same statement auth.SetUserGlobalRole runs, so a seeded principal and
+-- a registered one end up with identical role state. Global only
+-- (team_id IS NULL); team-scoped assignments are untouched. Atomic at
+-- statement level, so there is no window where the user has zero roles.
+WITH _del AS (
+    DELETE FROM user_roles
+     WHERE user_ref = $1 AND team_id IS NULL
+)
+INSERT INTO user_roles (user_ref, role_id, assigned_by_user_ref)
+VALUES ($1, $2, $3)
+ON CONFLICT ON CONSTRAINT user_roles_unique DO UPDATE SET
+    assigned_at          = NOW(),
+    assigned_by_user_ref = EXCLUDED.assigned_by_user_ref;

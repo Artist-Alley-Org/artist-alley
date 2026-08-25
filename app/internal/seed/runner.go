@@ -118,6 +118,21 @@ type Options struct {
 	// this flag is how an operator says "the renderer changed, rebuild
 	// them".
 	ForcePreviews bool
+
+	// Fixtures seeds the dogfood suite's one-time substrate — the four
+	// login-capable principals and the admin-owned plates the specs used
+	// to create for themselves and could never delete (#1270). Off by
+	// default: these accounts have committed passwords and the public
+	// demo must not have them. See fixtures.go.
+	Fixtures bool
+
+	// HashPassword persists a plaintext password on a seeded user. Nil
+	// leaves the column NULL, which is right for the 31 fictional
+	// artists — they are actors on posts and comments, not accounts —
+	// and refused by AdminHandler.CreateUser the moment a password is
+	// actually supplied, so a missing hasher fails loudly instead of
+	// writing plaintext or silently dropping the credential.
+	HashPassword PasswordHasher
 }
 
 // Counts is the verify-phase tally.
@@ -189,7 +204,7 @@ func NewRunner(pool *pgxpool.Pool, storageSvc *storage.Service, opts Options) *R
 		pool:    pool,
 		q:       New(pool),
 		storage: storageSvc,
-		admin:   NewAdminHandler(pool, nil, nil, nil, nil, nil),
+		admin:   NewAdminHandler(pool, nil, nil, nil, opts.HashPassword, nil),
 		// Enqueue-only Service: the seeder never runs jobs, it just
 		// inserts rows for the serving process's pool to drain. A nil
 		// Registry is fine — Enqueue doesn't consult it.
@@ -284,6 +299,11 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 		{"applyLikes", r.applyLikes},
 		{"applyComments", r.applyComments},
 		{"applyPostComments", r.applyPostComments},
+		// Last, and a no-op unless --fixtures asked for it. It depends on
+		// the admin ref, the workflow states and the asset types, and on
+		// nothing the dataset carries — so it sits after the corpus
+		// rather than inside it. See fixtures.go.
+		{"applyTestFixtures", r.applyTestFixtures},
 	}
 	for _, p := range phases {
 		start := time.Now()

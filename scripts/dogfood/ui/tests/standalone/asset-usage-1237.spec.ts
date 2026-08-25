@@ -46,14 +46,15 @@
 import { test, expect } from '../../helpers/test';
 import type { APIRequestContext, Browser, Page } from '@playwright/test';
 import { LOGGED_OUT } from '../../helpers/auth';
-import { ensureFixtureUser, restoreSelfRegistration } from '../../helpers/fixture-user';
+import { requireSeededPrincipal, seededPrincipal } from '../../helpers/seeded-principal';
 import { tid } from '../../helpers/testids';
 
 const STAMP = Date.now();
-// Constant account, stamped CONTENT (#1198) — a per-run account
-// accumulates forever and eventually reddens unrelated specs.
-const OWNER_USER = 'usage1237_owner';
-const OWNER_PASS = 'WhereDidItGo!1237';
+// SEEDED account, stamped CONTENT (#1270). A per-run account
+// accumulates forever and eventually reddens unrelated specs (#1198);
+// making it constant fixed every run but the first, and a fresh database
+// — which is every CI run — is only ever the first.
+const OWNER = seededPrincipal('omar.haddad');
 
 const SECRET_TITLE = `usage1237 SECRET private ${STAMP}`;
 
@@ -70,7 +71,6 @@ interface Fixture {
   readablePostId: string;
   secretPostId: string;
   secretPostId2: string;
-  priorSelfRegistration: unknown;
 }
 
 let fx: Fixture | undefined;
@@ -124,11 +124,7 @@ test.describe('#1237 an owner can find out where their file is used', () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async ({ browser, request }) => {
-    const { ref: ownerRef, priorSelfRegistration } = await ensureFixtureUser(browser, request, {
-      username: OWNER_USER,
-      password: OWNER_PASS,
-      fullName: 'Usage 1237 owner',
-    });
+    const ownerRef = await requireSeededPrincipal(browser, OWNER.username);
 
     // The OWNER's own assets, created in the owner's own context — the
     // endpoint gates on `assets.owner_user_ref`, so who uploads is the
@@ -140,7 +136,7 @@ test.describe('#1237 an owner can find out where their file is used', () => {
     let readablePostId: string;
     try {
       const login = await ownerCtx.request.post('/api/v1/auth/login', {
-        data: { username: OWNER_USER, password: OWNER_PASS },
+        data: { username: OWNER.username, password: OWNER.password },
         headers: { 'Content-Type': 'application/json' },
       });
       expect(login.ok(), 'signing the fixture owner in').toBe(true);
@@ -203,7 +199,6 @@ test.describe('#1237 an owner can find out where their file is used', () => {
       readablePostId,
       secretPostId,
       secretPostId2,
-      priorSelfRegistration,
     };
   });
 
@@ -220,8 +215,8 @@ test.describe('#1237 an owner can find out where their file is used', () => {
     ]) {
       await request.delete(`/api/v1/assets/${a}`).catch(() => undefined);
     }
-    // The ACCOUNT survives on purpose — the next run reuses it (#1198).
-    await restoreSelfRegistration(request, fx.priorSelfRegistration);
+    // The ACCOUNT is the seed's (#1270), so there is nothing to remove
+    // and no instance config to put back.
   });
 
   /** Sign the fixture owner in through the real form, in their own context. */
@@ -229,8 +224,8 @@ test.describe('#1237 an owner can find out where their file is used', () => {
     const ctx = await browser.newContext({ storageState: LOGGED_OUT });
     const page = await ctx.newPage();
     await page.goto('/login');
-    await page.locator(tid('login-username')).fill(OWNER_USER);
-    await page.locator(tid('login-password')).fill(OWNER_PASS);
+    await page.locator(tid('login-username')).fill(OWNER.username);
+    await page.locator(tid('login-password')).fill(OWNER.password);
     await page.locator(tid('login-submit')).click();
     await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 20_000 });
     return { ctx, page };
