@@ -212,3 +212,43 @@ currently notices that a named case has skipped on every run for a week.
 RUN, everywhere it is meant to?"** Read the run output for skips, not only for failures — and
 prefer provisioning the shape (the `post-band-format-1190:71` pattern this ADR's family keeps
 arriving back at) over depending on whatever the corpus happens to hold.
+
+---
+
+## Amendment, 2026-08-26 (#1276, PR #1297): this ADR's own rule was broken by the tool it governs
+
+**Decision 3 above says "the sweep is dry-run by default and **aborts on contradiction**." That
+behaviour was true and it was UNTESTED.** `TestSweep_ContradictionAbortsEverything` — the test that
+proves the abort — **had never executed since #1245.**
+
+`sweep_test.go`'s helper asked for `asset_types.id`. The column is **`ref`**. Every call raised
+42703, and the helper caught *any* error:
+
+```go
+if err := pool.QueryRow(ctx, `SELECT id FROM asset_types ORDER BY id LIMIT 1`).Scan(&id); err != nil {
+    t.Skipf("no asset_types in this database: %v", err)
+}
+```
+
+Three tests skipped, silently, behind a message that **blamed the database for a bug in the query**.
+
+⛔⛔ **The bitter part is that this ADR already forbade it.** The 2026-08-24 amendment, consequence
+3, reads: *"A skip must be loud. A test that silently skips where it cannot run is the vacuous
+green."* The rule was written here, and the tool this ADR exists to make safe broke it — for
+roughly two weeks, unnoticed, while the safety property it guards was cited (by the planning agent,
+in the sprint-14 brief) as settled.
+
+**What this changes:**
+
+1. **Decision 3 stands and is now genuinely verified.** All six tests execute; a deliberate
+   contradiction was introduced and the sweep refused to delete anything and named the row.
+2. ⭐ **"A skip must be loud" is sharpened: a skip must be reachable for exactly ONE reason, and
+   must prove that reason.** Skip on the specific precondition (`pgx.ErrNoRows`); anything else is
+   `t.Fatal`. **A catch-all skip is a silent `return` wearing an explanation** — and a *plausible*
+   explanation is worse than none, because it gets accepted instead of investigated.
+3. **Green is a claim about the tests that RAN.** Nobody checks the denominator. For any invariant a
+   destructive tool depends on, prove the test **fails** when the invariant is broken, rather than
+   confirming the code path exists.
+
+⚠️ Recorded because an accepted ADR is what people trust *instead of* reading the code. This one
+asserted a safety property in the present tense for two weeks while nothing was checking it.
