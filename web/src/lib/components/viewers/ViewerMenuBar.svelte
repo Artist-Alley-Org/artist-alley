@@ -20,6 +20,7 @@
   import { t } from '$stores/lang.svelte';
   import type { ViewAsset, ViewController } from './controller';
   import type { ToolContext, ToolDef } from './tools/contract';
+  import AiProvenanceBadge from '$components/AiProvenanceBadge.svelte';
 
   interface Props {
     asset: ViewAsset;
@@ -398,7 +399,7 @@
   <!-- Centered title. Hosts pass a snippet (post title + author);
        fallback is the filename + dimensions strip. Constrained to
        half the bar so a giant title can't shove the controls. -->
-  <div class="flex min-w-0 max-w-[50%] items-center justify-center px-2 text-center">
+  <div class="flex min-w-0 max-w-[50%] items-center justify-center gap-2 px-2 text-center">
     {#if titleSlot}
       {@render titleSlot()}
     {:else}
@@ -409,6 +410,32 @@
         >
       {/if}
     {/if}
+    <!-- ═══ #1243: THE VIEWER'S AI LABEL ═══════════════════════════
+         ADR 0094's amendment: "the asset viewer carries the label. A
+         claim about the work belongs where the work is being looked at,
+         not on a thumbnail in a wall of thumbnails." The card's icon is
+         a pointer; this is the sentence.
+
+         OUTSIDE the `titleSlot` branch, and that is the whole reason it
+         is here rather than in the strip above. A host that supplies a
+         title snippet REPLACES the filename strip entirely — PostHost
+         does, with "post title — by author" — so a label written inside
+         that branch would appear on the standalone asset route and
+         vanish on the post route, which is the route the issue is
+         about. One element, both routes, whatever the host does with
+         the title beside it.
+
+         It reads the ASSET under the cursor. In a post that is the
+         member being viewed, not the post: a mixed post's derived value
+         says `generated` because one member does, and stamping it on
+         the member beside it would claim a declaration its maker never
+         made. Navigating the filmstrip re-reads it per member, which is
+         what makes a mixed post visibly mixed.
+
+         `none` and `null` render nothing at all — the component's own
+         gate, not a condition here, so there is one place to get it
+         wrong instead of one per call site. -->
+    <AiProvenanceBadge value={asset.ai_provenance} variant="label" />
   </div>
 
   <!-- Spacer between centered title and right zone. -->

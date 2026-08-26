@@ -57,6 +57,12 @@ export interface PostForPlaylist {
       /** #981 — the ASSET's owner, which is not the post's author.
        *  Absent on a withheld member (the whole `asset` object is). */
       owner_user_ref?: number | null;
+      /** #1243 / ADR 0094 — THIS MEMBER'S OWN declaration, which is not
+       *  the post's derived one below. In a mixed post they disagree by
+       *  design: the post says `generated` because one contributor
+       *  does, and the member beside it says nothing at all. Absent
+       *  means UNDECLARED, never `none`. */
+      ai_provenance?: string | null;
     };
   }>;
   team_id?: string | null;
@@ -183,6 +189,18 @@ export function createPostPlaylistSource(postId: string) {
             // owner, not the post's author. Undefined on a withheld
             // member, which is correct: no owner, no ownership claim.
             owner_user_ref: m.asset?.owner_user_ref ?? null,
+            // #1243 — THE MEMBER'S OWN declaration, read off the member
+            // and never off `post.ai_provenance`. This is the second of
+            // the two hand-written ViewAsset mappers (assetSource's
+            // `toItem` is the other); they share no code, so a field
+            // added to one reaches one route.
+            //
+            // ⛔ Sourcing this from the post would mark every member of
+            // a mixed post as AI, which is a fabricated claim about
+            // whichever maker was never asked — the error ADR 0094
+            // decision 2 exists to prevent, arriving through the UI
+            // instead of through the column.
+            ai_provenance: m.asset?.ai_provenance ?? null,
           },
         }),
       );

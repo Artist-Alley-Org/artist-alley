@@ -425,7 +425,7 @@ const listPostAssets = `-- name: ListPostAssets :many
 SELECT pa.post_id, pa.asset_id, pa.sort_order, pa.added_at,
        a.title, a.description, a.asset_type, a.owner_user_ref,
        a.status, a.file_hash, a.file_extension, a.file_size_bytes,
-       a.metadata, a.created_at AS asset_created_at,
+       a.metadata, a.ai_provenance, a.created_at AS asset_created_at,
        a.updated_at AS asset_updated_at
 FROM post_assets pa
 JOIN assets a ON a.id = pa.asset_id
@@ -447,12 +447,22 @@ type ListPostAssetsRow struct {
 	FileExtension  *string
 	FileSizeBytes  *int64
 	Metadata       []byte
+	AiProvenance   *string
 	AssetCreatedAt pgtype.Timestamptz
 	AssetUpdatedAt pgtype.Timestamptz
 }
 
 // Members of a post, in display order, joined onto the asset row so
 // the API can return the full member shape in one call (no N+1).
+//
+// `a.ai_provenance` is the MEMBER'S OWN declaration (#1243, ADR 0094),
+// and it is not the same fact as the post's derived `ai_provenance`.
+// The post's answers "does this contain AI?" over the whole
+// contributor set; this one answers it about the file the reader is
+// actually looking at, which is what the viewer labels. A mixed post —
+// one declared member beside one undeclared — carries `generated` at
+// the post level and must NOT paint both members with it. NULL here
+// means UNDECLARED, never `none`.
 func (q *Queries) ListPostAssets(ctx context.Context, postID pgtype.UUID) ([]ListPostAssetsRow, error) {
 	rows, err := q.db.Query(ctx, listPostAssets, postID)
 	if err != nil {
@@ -476,6 +486,7 @@ func (q *Queries) ListPostAssets(ctx context.Context, postID pgtype.UUID) ([]Lis
 			&i.FileExtension,
 			&i.FileSizeBytes,
 			&i.Metadata,
+			&i.AiProvenance,
 			&i.AssetCreatedAt,
 			&i.AssetUpdatedAt,
 		); err != nil {

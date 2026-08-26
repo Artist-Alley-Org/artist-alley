@@ -13,6 +13,8 @@
   import CardCheckbox from './CardCheckbox.svelte';
   import CardKindBadge from './CardKindBadge.svelte';
   import CardAuthorLink from './CardAuthorLink.svelte';
+  import AiProvenanceBadge from './AiProvenanceBadge.svelte';
+  import { isMarkedAi } from '$lib/aiProvenance';
   import { kindForAsset } from './viewers/controller';
   import { thumbhashMatteColor } from '$lib/util/thumbhash';
   import { auth } from '$stores/auth.svelte';
@@ -236,6 +238,17 @@
   // available and they are the one fact a thin tile actively hides.
   const tipMeta = $derived(
     [
+      // #1243 — a compact masonry tile draws NO badge (see the kind
+      // badge's `!compact` gate), so this is the only place the
+      // declaration can appear in that density. Marked states only:
+      // `none` and `null` contribute nothing, because a "no AI" line
+      // here is the same prohibited claim as a "no AI" badge.
+      //
+      // ⚠️ FIRST — CardTooltip renders this array as one `truncate` line
+      // in an 18rem box, so a late entry is cut off on screen while a
+      // payload assertion still passes. See PostCard's matching note for
+      // the measurement.
+      isMarkedAi(asset.ai_provenance) ? t(`ai_provenance.${asset.ai_provenance}`) : null,
       asset.file_extension ? asset.file_extension.replace(/^\./, '').toUpperCase() : null,
       asset.pixel_width && asset.pixel_height ? `${asset.pixel_width} × ${asset.pixel_height}` : null,
       createdShort,
@@ -356,6 +369,19 @@
         {/if}
       </div>
       <span class="flex-1"></span>
+      <!-- #1243 — the band's middle, left of Select (ADR 0094's
+           amendment). Identical placement to PostCard's band, because
+           a one-asset post and a standalone asset are showing the same
+           fact and there is no reason for the two bands to differ.
+
+           Here the value is the ASSET'S OWN declaration rather than a
+           derived one — this wall lists files in their own right, so
+           there is nothing to derive over. -->
+      <AiProvenanceBadge
+        value={asset.ai_provenance}
+        variant="inline"
+        tooltipKey={asset.id}
+      />
       <CardCheckbox id={asset.id} placement="inline" />
     </div>
   {/if}
@@ -446,7 +472,13 @@
       <!-- NOT IN THUMBNAIL (#1136): the same badge draws in the top
            chrome band, which leaves the artwork untouched. -->
       {#if !compact && !detailed}
-        <CardKindBadge {kind} class="absolute bottom-2 right-2 z-[2]" tooltipKey={asset.id} />
+        <!-- #1243 rides the kind badge rather than claiming a fourth
+             corner — see PostCard's matching block for why the other
+             three are spoken for. -->
+        <div class="absolute bottom-2 right-2 z-[2] flex items-center gap-1.5">
+          <AiProvenanceBadge value={asset.ai_provenance} tooltipKey={asset.id} />
+          <CardKindBadge {kind} tooltipKey={asset.id} />
+        </div>
       {/if}
     {/if}
 

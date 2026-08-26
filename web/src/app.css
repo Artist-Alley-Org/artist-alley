@@ -207,6 +207,24 @@
   --color-danger-container:     oklch(28% 0.10 25);
   --color-on-danger-container:  oklch(88% 0.08 25);
 
+  /* ── AI provenance (#1243, ADR 0094). Purple, on the owner's steer.
+       A FIFTH semantic role rather than a reuse of one of the four
+       above, and that is the whole point: success / warning / danger
+       are VERDICTS, and an AI declaration is not one. Marking AI work
+       in the warning ramp would editorialise a statement the artist
+       chose to make honestly, and the entire design rests on honest
+       declaration being cheap. Purple carries no such verdict here and
+       collides with nothing else in the palette (accent is orange 43,
+       secondary blue 234, and the three states sit at 150 / 75 / 25).
+
+       Same L/C shape as `danger` at hue 300, so the container pair
+       inherits that role's contrast behaviour in both themes rather
+       than being eyeballed. */
+  --color-ai:                   oklch(72% 0.15 300);
+  --color-on-ai:                oklch(15% 0.05 300);
+  --color-ai-container:         oklch(28% 0.10 300);
+  --color-on-ai-container:      oklch(88% 0.08 300);
+
   /* ── Interaction-state overlays — WHITE in dark, not black.
        hover raised 0.05 -> 0.09: at 5% over an elevated surface the
        change was ~2 L points, i.e. not perceptible, which is half of
@@ -312,6 +330,14 @@
     --color-on-danger:            oklch(98% 0    0);
     --color-danger-container:     oklch(94% 0.05 15);
     --color-on-danger-container:  oklch(30% 0.15 15);
+
+    /* ── AI provenance — see the dark block for why this is its own
+         role and not a borrowed one. Mirrors `danger`'s light-theme
+         shape at hue 300. */
+    --color-ai:                   oklch(52% 0.20 300);
+    --color-on-ai:                oklch(98% 0    0);
+    --color-ai-container:         oklch(94% 0.05 300);
+    --color-on-ai-container:      oklch(32% 0.15 300);
 
     /* ── State overlays — BLACK in light, white in dark.
          Same 0.05 -> 0.08 bump as dark; over a near-white surface 5%

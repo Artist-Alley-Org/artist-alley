@@ -37,6 +37,9 @@ export interface AssetForPlaylist {
    *  ViewAsset.owner_user_ref: it is what the delete affordance is
    *  gated on, and it is deliberately absent from a withheld one. */
   owner_user_ref?: number | null;
+  /** #1243 / ADR 0094 — the maker's AI declaration. Absent means
+   *  UNDECLARED, never `none`. See ViewAsset.ai_provenance. */
+  ai_provenance?: string | null;
 }
 
 function toItem(a: AssetForPlaylist): PlaylistItem {
@@ -54,6 +57,12 @@ function toItem(a: AssetForPlaylist): PlaylistItem {
     // delete affordance. Null on a withheld payload by construction:
     // the placeholder's allow-list is the owner's NAME, not their ref.
     owner_user_ref: a.owner_user_ref ?? null,
+    // #1243 — ONE OF TWO MAPPERS. postSource builds the same ViewAsset
+    // for the post route with its own hand-written field list, so a
+    // value added to only one of them labels only one route. `?? null`
+    // rather than a default: UNDECLARED is the absence, and there is no
+    // value that could stand in for it.
+    ai_provenance: a.ai_provenance ?? null,
   };
   // #899 — the standalone route reaches the SAME restricted plate the
   // post route has shown since #883. Threading these two through here is

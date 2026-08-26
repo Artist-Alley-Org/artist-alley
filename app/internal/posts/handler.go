@@ -2850,6 +2850,25 @@ func memberToAsset(m ListPostAssetsRow) openapi.Asset {
 	if m.OwnerUserRef != nil {
 		a.OwnerUserRef = m.OwnerUserRef
 	}
+	// #1243 / ADR 0094 — the MEMBER'S OWN declaration, which is not the
+	// post's derived one. `postRowToAPI` sets `Post.AiProvenance` from
+	// the whole contributor set ("does this post contain AI?"); this is
+	// the per-file fact the viewer labels, and in a MIXED post they
+	// disagree by design: the post says `generated` while the member
+	// beside the declared one says nothing at all.
+	//
+	// Safe to bake into the cross-caller cache with the rest of this
+	// object — unlike `preview_available` it is a property of the asset
+	// and not of the reader. ADR 0094 §4 is what makes that true: the
+	// declaration is a FILTER a viewer may apply to their own feed and
+	// never a gate, so no caller sees a different value for it.
+	//
+	// nil stays nil. UNDECLARED is not `none`, and an omitted field is
+	// the only wire form that keeps them apart.
+	if m.AiProvenance != nil && *m.AiProvenance != "" {
+		v := openapi.AssetAiProvenance(*m.AiProvenance)
+		a.AiProvenance = &v
+	}
 	// Forward the asset-level metadata JSONB so per-kind view bodies
 	// (AudioView, future PDFView, etc.) can read their namespaced
 	// blocks without a second round-trip.
