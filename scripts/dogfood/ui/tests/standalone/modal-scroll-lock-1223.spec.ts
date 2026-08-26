@@ -184,9 +184,14 @@ async function parkPointOrSkip(page: Page, label: string): Promise<number> {
   return point;
 }
 
-/** The dialog's own scrolling body. */
-const dialogBody = (dialog: Locator) =>
-  dialog.locator('[data-testid="collection-edit-details-page"]').locator('..');
+/** The dialog's own scrolling body.
+ *
+ *  ⛔ ADDRESSED DIRECTLY SINCE #1264, not by reaching for the parent of
+ *  the details page. The edit dialog was two pages inside a wrapper and
+ *  `…details-page` + `..` was the only handle on that wrapper; it is one
+ *  surface now, and the scroller carries its own testid. This fails on
+ *  the pre-#1264 build, where `collection-edit-body` does not exist. */
+const dialogBody = (dialog: Locator) => dialog.getByTestId('collection-edit-body');
 
 test.describe('#1223 an open dialog freezes the page behind it', () => {
   // ── The two that need no scroll range at all ──────────────────────
@@ -218,9 +223,10 @@ test.describe('#1223 an open dialog freezes the page behind it', () => {
     const dialog = await openEditModal(page);
     expect(await mainOverflow(page)).toBe('hidden');
 
-    // Corpus-independent: at 390px the details page overflows the 70vh
+    // Corpus-independent: at 390px the one surface overflows its capped
     // body whatever the collection holds, because the overflow comes
-    // from the FORM, not from the wall behind it.
+    // from the FORM and the cover block below it (#1264), not from the
+    // wall behind it.
     const body = dialogBody(dialog);
     const range = await body.evaluate((el) => el.scrollHeight - el.clientHeight);
     expect(range, 'the dialog body does not overflow, so nothing here is measured').toBeGreaterThan(

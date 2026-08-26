@@ -2,7 +2,8 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // The generic modal dialog wrapper: overlay, backdrop-click close,
-  // Escape close, focus-into-panel on open and focus-restore on close.
+  // Escape close, focus-into-panel on open, FOCUS CONTAINMENT while
+  // open (#1269) and focus-restore on close.
   //
   // Was CollectionModal.svelte, whose header said it stayed collection-
   // scoped "until a second feature surface needs the exact same shape".
@@ -53,7 +54,108 @@
     return modalStack.length > 0 && modalStack[modalStack.length - 1] === token;
   }
 
+  // ── FOCUS CONTAINMENT (#1269) ──────────────────────────────────────
+  //
+  // `aria-modal="true"` (below) is a PROMISE to assistive technology
+  // that everything outside this dialog is inert. It was not being kept:
+  // measured on the collection edit dialog, 45 Tab presses left the
+  // panel 38 times and reached the body, Explore, Collections, Review,
+  // the nav search box, Advanced search and Upload. A screen reader may
+  // stop exposing the rest of the page on the strength of the attribute
+  // while a keyboard user tabs straight into it, and the false half is
+  // the one that is written down.
+  //
+  // ⚠️ THERE IS NO NATIVE INERTNESS UNDERNEATH. This is a portalled
+  // `<div role="dialog">`, not a `<dialog>` opened with `showModal()`,
+  // so the browser contributes nothing here and never did.
+
+  /** Everything inside the panel a Tab can land on, in document order.
+   *
+   *  Queried at the MOMENT OF THE KEYPRESS rather than cached: the
+   *  panel's contents are reactive — a cover picker's grid, a search
+   *  result list, a conditional warning — and a cached list would send
+   *  focus to a detached node the first time one of them changed.
+   *
+   *  The visibility test is the rendered-box one (`offsetWidth`,
+   *  `offsetHeight`, `getClientRects`) rather than a computed-style
+   *  read, because it has to admit `sr-only` controls — the visibility
+   *  radios in the collection dialog are exactly that, and they are
+   *  genuinely tabbable — while excluding anything inside a
+   *  `display: none` branch. */
+  const FOCUSABLE = [
+    'a[href]',
+    'area[href]',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    'button:not([disabled])',
+    'iframe',
+    'object',
+    'embed',
+    '[tabindex]:not([tabindex="-1"])',
+    '[contenteditable="true"]',
+  ].join(',');
+
+  function focusables(): HTMLElement[] {
+    if (!panel) return [];
+    return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+      (el) =>
+        el.tabIndex >= 0 &&
+        !el.hasAttribute('inert') &&
+        (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0),
+    );
+  }
+
+  /** Keep Tab inside the panel.
+   *
+   *  ⛔ IT GOES THROUGH THE SAME TWO GUARDS AS ESCAPE, and that is not
+   *  symmetry for its own sake — the stacking problem is identical.
+   *  `isTopModal()` is what makes the containment follow the TOP dialog
+   *  rather than whichever instance registered its document listener
+   *  first, and `defaultPrevented` is what stops a second instance
+   *  acting on an event the top one has already answered. See the
+   *  Escape handler for the observed failure both of them close.
+   *
+   *  Focus landing OUTSIDE any panel is pulled back in rather than
+   *  ignored: a click on the backdrop moves focus to the body, and a
+   *  Tab from there would otherwise walk into the chrome the attribute
+   *  claims is unavailable. */
+  function containTab(e: KeyboardEvent) {
+    const items = focusables();
+    const active = document.activeElement as HTMLElement | null;
+    const inside = !!(active && panel?.contains(active));
+    if (items.length === 0) {
+      // Nothing to land on. The panel itself is not focusable, so the
+      // only honest answer is to refuse the move — letting it through
+      // would put focus behind a dialog that says it is modal.
+      e.preventDefault();
+      return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (!inside) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+      return;
+    }
+    if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    } else if (e.shiftKey && active === first) {
+      e.preventDefault();
+      last.focus();
+    }
+    // Anywhere in the middle: the browser's own Tab is correct, and
+    // claiming the event would break arrow-key and type-ahead
+    // behaviour that composes with it.
+  }
+
   function onKeydown(e: KeyboardEvent) {
+    if (e.key === 'Tab') {
+      if (e.defaultPrevented || !open || !isTopModal()) return;
+      containTab(e);
+      return;
+    }
     if (e.key !== 'Escape') return;
     // ⚠️ TWO GUARDS, AND BOTH ARE NECESSARY. Each covers a case the
     // other cannot, and this was arrived at by instrumenting the real
@@ -111,6 +213,10 @@
 </script>
 
 {#if open}
+  <!-- `aria-modal="true"` IS NOW TRUE (#1269). It was a claim the code
+       did not keep until the Tab handler above; the choice was to make
+       it honest or to drop it, and dropping it would have left a dialog
+       that is modal in every other respect announcing that it is not. -->
   <!-- ⚠️ The overlay's own `onkeydown` is the SAME guarded handler as the
        document listener, not a second copy of the rule.
 
