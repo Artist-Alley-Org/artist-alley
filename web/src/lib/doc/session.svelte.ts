@@ -28,6 +28,11 @@
 // fields are sketched here so the contract stays stable; the panel
 // renders the section as "coming soon" until B ships.
 
+// #1255 — the shared web-storage accessor. This module used to hold a
+// private `readLS`/`writeLS` pair, and four sibling sessions held
+// byte-identical copies of it; one implementation now, imported by name.
+import { readStoredJSON, writeStoredJSON } from '$lib/util/storage';
+
 export type DocTheme = 'light' | 'sepia' | 'dark';
 export type DocFontFamily = 'sans' | 'serif' | 'mono';
 
@@ -301,39 +306,26 @@ const DEFAULTS = {
   renderMarkdown: false,
 };
 
-function readLS<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    if (v == null) return fallback;
-    return JSON.parse(v) as T;
-  } catch {
-    return fallback;
-  }
-}
-function writeLS(key: string, value: unknown): void {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
-}
-
 export function createDocSession(opts: DocSessionOpts): DocSessionInstance {
   const state = $state<DocSession>({
-    theme: readLS<DocTheme>(G_THEME, DEFAULTS.theme),
-    fontFamily: readLS<DocFontFamily>(G_FONT_FAM, DEFAULTS.fontFamily),
-    fontSize: readLS<number>(G_FONT_SIZE, DEFAULTS.fontSize),
-    lineHeight: readLS<number>(G_LINE_HT, DEFAULTS.lineHeight),
-    wrap: readLS<boolean>(G_WRAP, DEFAULTS.wrap),
-    lineNumbers: readLS<boolean>(G_LINE_NUMS, DEFAULTS.lineNumbers),
-    tabSize: readLS<number>(G_TAB_SIZE, DEFAULTS.tabSize),
-    showWhitespace: readLS<boolean>(G_WHITESPACE, DEFAULTS.showWhitespace),
-    renderMarkdown: readLS<boolean>(G_RENDER_MD, DEFAULTS.renderMarkdown),
+    theme: readStoredJSON<DocTheme>(G_THEME, DEFAULTS.theme),
+    fontFamily: readStoredJSON<DocFontFamily>(G_FONT_FAM, DEFAULTS.fontFamily),
+    fontSize: readStoredJSON<number>(G_FONT_SIZE, DEFAULTS.fontSize),
+    lineHeight: readStoredJSON<number>(G_LINE_HT, DEFAULTS.lineHeight),
+    wrap: readStoredJSON<boolean>(G_WRAP, DEFAULTS.wrap),
+    lineNumbers: readStoredJSON<boolean>(G_LINE_NUMS, DEFAULTS.lineNumbers),
+    tabSize: readStoredJSON<number>(G_TAB_SIZE, DEFAULTS.tabSize),
+    showWhitespace: readStoredJSON<boolean>(G_WHITESPACE, DEFAULTS.showWhitespace),
+    renderMarkdown: readStoredJSON<boolean>(G_RENDER_MD, DEFAULTS.renderMarkdown),
 
     languageId: 'plain',
     outline: [],
     stats: null,
     loading: true,
     loadError: null,
-    currentLine: readLS<number>(POS_KEY(opts.assetId), 1),
+    currentLine: readStoredJSON<number>(POS_KEY(opts.assetId), 1),
 
-    bookmarks: readLS<DocBookmark[]>(BOOKMARKS_KEY(opts.assetId), []),
+    bookmarks: readStoredJSON<DocBookmark[]>(BOOKMARKS_KEY(opts.assetId), []),
 
     searchQuery: '',
     searchCaseSensitive: false,
@@ -372,24 +364,24 @@ export function createDocSession(opts: DocSessionOpts): DocSessionInstance {
   let pendingJumpLine = 1;
 
   // ─── Reading prefs ───────────────────────────────────────────
-  function setTheme(t: DocTheme) { state.theme = t; writeLS(G_THEME, t); }
-  function setFontFamily(f: DocFontFamily) { state.fontFamily = f; writeLS(G_FONT_FAM, f); }
+  function setTheme(t: DocTheme) { state.theme = t; writeStoredJSON(G_THEME, t); }
+  function setFontFamily(f: DocFontFamily) { state.fontFamily = f; writeStoredJSON(G_FONT_FAM, f); }
   function setFontSize(px: number) {
     const c = Math.max(10, Math.min(24, Math.round(px)));
-    state.fontSize = c; writeLS(G_FONT_SIZE, c);
+    state.fontSize = c; writeStoredJSON(G_FONT_SIZE, c);
   }
   function setLineHeight(v: number) {
     const c = Math.max(1.0, Math.min(2.2, Math.round(v * 10) / 10));
-    state.lineHeight = c; writeLS(G_LINE_HT, c);
+    state.lineHeight = c; writeStoredJSON(G_LINE_HT, c);
   }
-  function toggleWrap() { state.wrap = !state.wrap; writeLS(G_WRAP, state.wrap); }
-  function toggleLineNumbers() { state.lineNumbers = !state.lineNumbers; writeLS(G_LINE_NUMS, state.lineNumbers); }
+  function toggleWrap() { state.wrap = !state.wrap; writeStoredJSON(G_WRAP, state.wrap); }
+  function toggleLineNumbers() { state.lineNumbers = !state.lineNumbers; writeStoredJSON(G_LINE_NUMS, state.lineNumbers); }
   function setTabSize(n: number) {
     const c = Math.max(1, Math.min(8, Math.round(n)));
-    state.tabSize = c; writeLS(G_TAB_SIZE, c);
+    state.tabSize = c; writeStoredJSON(G_TAB_SIZE, c);
   }
-  function toggleShowWhitespace() { state.showWhitespace = !state.showWhitespace; writeLS(G_WHITESPACE, state.showWhitespace); }
-  function toggleRenderMarkdown() { state.renderMarkdown = !state.renderMarkdown; writeLS(G_RENDER_MD, state.renderMarkdown); }
+  function toggleShowWhitespace() { state.showWhitespace = !state.showWhitespace; writeStoredJSON(G_WHITESPACE, state.showWhitespace); }
+  function toggleRenderMarkdown() { state.renderMarkdown = !state.renderMarkdown; writeStoredJSON(G_RENDER_MD, state.renderMarkdown); }
 
   // ─── Bookmarks ───────────────────────────────────────────────
   function addBookmark(note: string = '') {
@@ -399,13 +391,13 @@ export function createDocSession(opts: DocSessionOpts): DocSessionInstance {
       createdAt: new Date().toISOString(),
     };
     state.bookmarks = [...state.bookmarks, bm];
-    writeLS(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
+    writeStoredJSON(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
   }
   function removeBookmark(line: number, createdAt: string) {
     state.bookmarks = state.bookmarks.filter(
       (b) => !(b.line === line && b.createdAt === createdAt),
     );
-    writeLS(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
+    writeStoredJSON(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
   }
 
   // ─── Navigation ──────────────────────────────────────────────
@@ -650,5 +642,5 @@ export function createDocSession(opts: DocSessionOpts): DocSessionInstance {
 // .currentLine. Exposed as a free helper so the DocView's scroll
 // listener doesn't have to import POS_KEY directly.
 export function persistDocScroll(assetId: string, line: number) {
-  writeLS(POS_KEY(assetId), Math.max(1, Math.floor(line)));
+  writeStoredJSON(POS_KEY(assetId), Math.max(1, Math.floor(line)));
 }

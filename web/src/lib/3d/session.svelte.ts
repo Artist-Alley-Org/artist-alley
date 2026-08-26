@@ -28,6 +28,11 @@
 // Whenever you add a field: decide which bucket (per-asset / global
 // / viewer-fill) and update read+write helpers below.
 
+// #1255 — the shared web-storage accessor. This module used to hold a
+// private `readLS`/`writeLS` pair, and four sibling sessions held
+// byte-identical copies of it; one implementation now, imported by name.
+import { readStoredJSON, writeStoredJSON } from '$lib/util/storage';
+
 import type { EnvPresetId, ToneMappingId } from './environments';
 import {
   DEFAULT_KEY_INTENSITY,
@@ -322,58 +327,45 @@ const DEFAULTS = {
   showBoundingBox: false,
 };
 
-function readLS<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    if (v == null) return fallback;
-    return JSON.parse(v) as T;
-  } catch {
-    return fallback;
-  }
-}
-function writeLS(key: string, value: unknown): void {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
-}
-
 export function createModelSession(opts: ModelSessionOpts): ModelSessionInstance {
   const state = $state<ModelSession>({
     // Camera
     cameraPreset: 'iso',
-    projection: readLS<ProjectionId>(G_PROJECTION, DEFAULTS.projection),
-    fov: readLS<number>(G_FOV, DEFAULTS.fov),
-    savedView: readLS<SavedView | null>(VIEW_KEY(opts.assetId), null),
-    upAxis: readLS<UpAxisId>(G_UP_AXIS, DEFAULTS.upAxis),
-    autoRotate: readLS<boolean>(G_AUTO_ROTATE, DEFAULTS.autoRotate),
-    autoRotateSpeed: readLS<number>(G_AUTO_SPEED, DEFAULTS.autoRotateSpeed),
+    projection: readStoredJSON<ProjectionId>(G_PROJECTION, DEFAULTS.projection),
+    fov: readStoredJSON<number>(G_FOV, DEFAULTS.fov),
+    savedView: readStoredJSON<SavedView | null>(VIEW_KEY(opts.assetId), null),
+    upAxis: readStoredJSON<UpAxisId>(G_UP_AXIS, DEFAULTS.upAxis),
+    autoRotate: readStoredJSON<boolean>(G_AUTO_ROTATE, DEFAULTS.autoRotate),
+    autoRotateSpeed: readStoredJSON<number>(G_AUTO_SPEED, DEFAULTS.autoRotateSpeed),
 
     // Environment
-    envPreset: readLS<EnvPresetId>(G_ENV, DEFAULTS.envPreset),
-    envIntensity: readLS<number>(G_ENV_INT, DEFAULTS.envIntensity),
-    backgroundVisible: readLS<boolean>(G_BG_VIS, DEFAULTS.backgroundVisible),
-    toneMapping: readLS<ToneMappingId>(G_TONE, DEFAULTS.toneMapping),
-    exposure: readLS<number>(G_EXPOSURE, DEFAULTS.exposure),
+    envPreset: readStoredJSON<EnvPresetId>(G_ENV, DEFAULTS.envPreset),
+    envIntensity: readStoredJSON<number>(G_ENV_INT, DEFAULTS.envIntensity),
+    backgroundVisible: readStoredJSON<boolean>(G_BG_VIS, DEFAULTS.backgroundVisible),
+    toneMapping: readStoredJSON<ToneMappingId>(G_TONE, DEFAULTS.toneMapping),
+    exposure: readStoredJSON<number>(G_EXPOSURE, DEFAULTS.exposure),
 
     // Lighting
-    lightingPreset: readLS<LightingPresetId>(G_LIGHT_PRESET, DEFAULTS.lightingPreset),
-    keyEnabled: readLS<boolean>(G_KEY_ENABLED, DEFAULTS.keyEnabled),
-    keyIntensity: readLS<number>(G_KEY_INTENS, DEFAULTS.keyIntensity),
-    keyAzimuth: readLS<number>(G_KEY_AZ, DEFAULTS.keyAzimuth),
-    keyElevation: readLS<number>(G_KEY_EL, DEFAULTS.keyElevation),
-    keyColor: readLS<string>(G_KEY_COLOR, DEFAULTS.keyColor),
-    fillEnabled: readLS<boolean>(G_FILL_EN, DEFAULTS.fillEnabled),
-    fillIntensity: readLS<number>(G_FILL_INT, DEFAULTS.fillIntensity),
-    rimEnabled: readLS<boolean>(G_RIM_EN, DEFAULTS.rimEnabled),
-    rimIntensity: readLS<number>(G_RIM_INT, DEFAULTS.rimIntensity),
-    shadows: readLS<boolean>(G_SHADOWS, DEFAULTS.shadows),
-    shadowSoftness: readLS<number>(G_SHADOW_SOFT, DEFAULTS.shadowSoftness),
-    groundPlane: readLS<boolean>(G_GROUND, DEFAULTS.groundPlane),
-    contactShadow: readLS<boolean>(G_CONTACT, DEFAULTS.contactShadow),
+    lightingPreset: readStoredJSON<LightingPresetId>(G_LIGHT_PRESET, DEFAULTS.lightingPreset),
+    keyEnabled: readStoredJSON<boolean>(G_KEY_ENABLED, DEFAULTS.keyEnabled),
+    keyIntensity: readStoredJSON<number>(G_KEY_INTENS, DEFAULTS.keyIntensity),
+    keyAzimuth: readStoredJSON<number>(G_KEY_AZ, DEFAULTS.keyAzimuth),
+    keyElevation: readStoredJSON<number>(G_KEY_EL, DEFAULTS.keyElevation),
+    keyColor: readStoredJSON<string>(G_KEY_COLOR, DEFAULTS.keyColor),
+    fillEnabled: readStoredJSON<boolean>(G_FILL_EN, DEFAULTS.fillEnabled),
+    fillIntensity: readStoredJSON<number>(G_FILL_INT, DEFAULTS.fillIntensity),
+    rimEnabled: readStoredJSON<boolean>(G_RIM_EN, DEFAULTS.rimEnabled),
+    rimIntensity: readStoredJSON<number>(G_RIM_INT, DEFAULTS.rimIntensity),
+    shadows: readStoredJSON<boolean>(G_SHADOWS, DEFAULTS.shadows),
+    shadowSoftness: readStoredJSON<number>(G_SHADOW_SOFT, DEFAULTS.shadowSoftness),
+    groundPlane: readStoredJSON<boolean>(G_GROUND, DEFAULTS.groundPlane),
+    contactShadow: readStoredJSON<boolean>(G_CONTACT, DEFAULTS.contactShadow),
 
     // Display
-    renderMode: readLS<RenderModeId>(G_RENDER_MODE, DEFAULTS.renderMode),
-    showGrid: readLS<boolean>(G_GRID, DEFAULTS.showGrid),
-    showAxes: readLS<boolean>(G_AXES, DEFAULTS.showAxes),
-    showBoundingBox: readLS<boolean>(G_BBOX, DEFAULTS.showBoundingBox),
+    renderMode: readStoredJSON<RenderModeId>(G_RENDER_MODE, DEFAULTS.renderMode),
+    showGrid: readStoredJSON<boolean>(G_GRID, DEFAULTS.showGrid),
+    showAxes: readStoredJSON<boolean>(G_AXES, DEFAULTS.showAxes),
+    showBoundingBox: readStoredJSON<boolean>(G_BBOX, DEFAULTS.showBoundingBox),
 
     // Materials / Animation / Stats — viewer fills these in.
     materials: [],
@@ -401,65 +393,65 @@ export function createModelSession(opts: ModelSessionOpts): ModelSessionInstance
   function setCameraPreset(p: CameraPresetId) { state.cameraPreset = p; }
   function setProjection(p: ProjectionId) {
     state.projection = p;
-    writeLS(G_PROJECTION, p);
+    writeStoredJSON(G_PROJECTION, p);
   }
   function setFov(deg: number) {
     const clamped = Math.max(15, Math.min(90, Math.round(deg)));
     state.fov = clamped;
-    writeLS(G_FOV, clamped);
+    writeStoredJSON(G_FOV, clamped);
   }
   function setUpAxis(a: UpAxisId) {
     state.upAxis = a;
-    writeLS(G_UP_AXIS, a);
+    writeStoredJSON(G_UP_AXIS, a);
   }
   function saveCurrentView(view: SavedView) {
     state.savedView = view;
-    writeLS(VIEW_KEY(opts.assetId), view);
+    writeStoredJSON(VIEW_KEY(opts.assetId), view);
   }
   function clearSavedView() {
     state.savedView = null;
-    writeLS(VIEW_KEY(opts.assetId), null);
+    writeStoredJSON(VIEW_KEY(opts.assetId), null);
   }
   function frameAll() { triggers.frameAll++; }
   function resetCamera() { triggers.resetCamera++; }
   function toggleAutoRotate() {
     state.autoRotate = !state.autoRotate;
-    writeLS(G_AUTO_ROTATE, state.autoRotate);
+    writeStoredJSON(G_AUTO_ROTATE, state.autoRotate);
   }
   function setAutoRotateSpeed(v: number) {
     const clamped = Math.max(0.1, Math.min(8.0, v));
     state.autoRotateSpeed = clamped;
-    writeLS(G_AUTO_SPEED, clamped);
+    writeStoredJSON(G_AUTO_SPEED, clamped);
   }
 
   // ─── Environment ─────────────────────────────────────────────
   function setEnvPreset(p: EnvPresetId) {
     state.envPreset = p;
-    writeLS(G_ENV, p);
+    writeStoredJSON(G_ENV, p);
   }
   function setEnvIntensity(v: number) {
     const clamped = Math.max(0, Math.min(3, v));
     state.envIntensity = clamped;
-    writeLS(G_ENV_INT, clamped);
+    writeStoredJSON(G_ENV_INT, clamped);
   }
   function toggleBackgroundVisible() {
     state.backgroundVisible = !state.backgroundVisible;
-    writeLS(G_BG_VIS, state.backgroundVisible);
+    writeStoredJSON(G_BG_VIS, state.backgroundVisible);
   }
   function setToneMapping(t: ToneMappingId) {
     state.toneMapping = t;
-    writeLS(G_TONE, t);
+    writeStoredJSON(G_TONE, t);
   }
   function setExposure(v: number) {
     const clamped = Math.max(0.1, Math.min(3, v));
     state.exposure = clamped;
-    writeLS(G_EXPOSURE, clamped);
+    writeStoredJSON(G_EXPOSURE, clamped);
   }
 
   // ─── Lighting ────────────────────────────────────────────────
   function setLightingPreset(p: LightingPresetId) {
     state.lightingPreset = p;
-    writeLS(G_LIGHT_PRESET, p);
+    writeStoredJSON(G_LIGHT_PRESET, p);
     // Each preset stamps a set of toggles / intensities so the
     // user doesn't have to flip 6 controls one-by-one. Switching
     // back to 'custom' preserves their tweaks.
@@ -489,28 +481,28 @@ export function createModelSession(opts: ModelSessionOpts): ModelSessionInstance
       state.shadows = false;
     }
   }
-  function setKeyEnabled(v: boolean) { state.keyEnabled = v; writeLS(G_KEY_ENABLED, v); }
-  function setKeyIntensity(v: number) { const c = Math.max(0, Math.min(8, v)); state.keyIntensity = c; writeLS(G_KEY_INTENS, c); }
-  function setKeyAzimuth(d: number) { const c = ((d % 360) + 360) % 360; state.keyAzimuth = c; writeLS(G_KEY_AZ, c); }
-  function setKeyElevation(d: number) { const c = Math.max(-90, Math.min(90, d)); state.keyElevation = c; writeLS(G_KEY_EL, c); }
-  function setKeyColor(hex: string) { state.keyColor = hex; writeLS(G_KEY_COLOR, hex); }
-  function setFillEnabled(v: boolean) { state.fillEnabled = v; writeLS(G_FILL_EN, v); }
-  function setFillIntensity(v: number) { const c = Math.max(0, Math.min(4, v)); state.fillIntensity = c; writeLS(G_FILL_INT, c); }
-  function setRimEnabled(v: boolean) { state.rimEnabled = v; writeLS(G_RIM_EN, v); }
-  function setRimIntensity(v: number) { const c = Math.max(0, Math.min(4, v)); state.rimIntensity = c; writeLS(G_RIM_INT, c); }
-  function toggleShadows() { state.shadows = !state.shadows; writeLS(G_SHADOWS, state.shadows); }
-  function setShadowSoftness(v: number) { const c = Math.max(0, Math.min(1, v)); state.shadowSoftness = c; writeLS(G_SHADOW_SOFT, c); }
-  function toggleGroundPlane() { state.groundPlane = !state.groundPlane; writeLS(G_GROUND, state.groundPlane); }
-  function toggleContactShadow() { state.contactShadow = !state.contactShadow; writeLS(G_CONTACT, state.contactShadow); }
+  function setKeyEnabled(v: boolean) { state.keyEnabled = v; writeStoredJSON(G_KEY_ENABLED, v); }
+  function setKeyIntensity(v: number) { const c = Math.max(0, Math.min(8, v)); state.keyIntensity = c; writeStoredJSON(G_KEY_INTENS, c); }
+  function setKeyAzimuth(d: number) { const c = ((d % 360) + 360) % 360; state.keyAzimuth = c; writeStoredJSON(G_KEY_AZ, c); }
+  function setKeyElevation(d: number) { const c = Math.max(-90, Math.min(90, d)); state.keyElevation = c; writeStoredJSON(G_KEY_EL, c); }
+  function setKeyColor(hex: string) { state.keyColor = hex; writeStoredJSON(G_KEY_COLOR, hex); }
+  function setFillEnabled(v: boolean) { state.fillEnabled = v; writeStoredJSON(G_FILL_EN, v); }
+  function setFillIntensity(v: number) { const c = Math.max(0, Math.min(4, v)); state.fillIntensity = c; writeStoredJSON(G_FILL_INT, c); }
+  function setRimEnabled(v: boolean) { state.rimEnabled = v; writeStoredJSON(G_RIM_EN, v); }
+  function setRimIntensity(v: number) { const c = Math.max(0, Math.min(4, v)); state.rimIntensity = c; writeStoredJSON(G_RIM_INT, c); }
+  function toggleShadows() { state.shadows = !state.shadows; writeStoredJSON(G_SHADOWS, state.shadows); }
+  function setShadowSoftness(v: number) { const c = Math.max(0, Math.min(1, v)); state.shadowSoftness = c; writeStoredJSON(G_SHADOW_SOFT, c); }
+  function toggleGroundPlane() { state.groundPlane = !state.groundPlane; writeStoredJSON(G_GROUND, state.groundPlane); }
+  function toggleContactShadow() { state.contactShadow = !state.contactShadow; writeStoredJSON(G_CONTACT, state.contactShadow); }
 
   // ─── Display ─────────────────────────────────────────────────
   function setRenderMode(m: RenderModeId) {
     state.renderMode = m;
-    writeLS(G_RENDER_MODE, m);
+    writeStoredJSON(G_RENDER_MODE, m);
   }
-  function toggleGrid() { state.showGrid = !state.showGrid; writeLS(G_GRID, state.showGrid); }
-  function toggleAxes() { state.showAxes = !state.showAxes; writeLS(G_AXES, state.showAxes); }
-  function toggleBoundingBox() { state.showBoundingBox = !state.showBoundingBox; writeLS(G_BBOX, state.showBoundingBox); }
+  function toggleGrid() { state.showGrid = !state.showGrid; writeStoredJSON(G_GRID, state.showGrid); }
+  function toggleAxes() { state.showAxes = !state.showAxes; writeStoredJSON(G_AXES, state.showAxes); }
+  function toggleBoundingBox() { state.showBoundingBox = !state.showBoundingBox; writeStoredJSON(G_BBOX, state.showBoundingBox); }
 
   // ─── Materials ───────────────────────────────────────────────
   function setMaterialOverride(id: string, patch: MaterialOverride) {
