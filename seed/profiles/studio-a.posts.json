@@ -26830,5 +26830,62 @@
   "title": "Backplate study — AI plate beside a public-domain plate",
   "updated_at": "2026-06-17T16:00:00Z",
   "workflow_state": "approved"
+ },
+ {
+  "id": "155b61b8-9c9e-58ac-46fe-fcc79f338555",
+  "title": "Colour script → mood board (AI plate beside authored swatches)",
+  "description": "The pair ADR 0094's `assisted` state exists for. One member declares `generated` (the Stable Diffusion colour script) and the other declares `assisted` (the mood board built over it), so this post mixes two DIFFERENT declared states — the only live post in the corpus that does, and the case a single-state post cannot exercise. It is labelled and it is NOT ai_pure, because ai_pure requires every member to be `generated`.",
+  "author_username": "seed.bot",
+  "collection_name": "Art Research",
+  "team_name": "Reference",
+  "brand_workspace": null,
+  "tags": [
+   "ai-generated",
+   "ai-assisted",
+   "reference"
+  ],
+  "asset_ids": [
+   "4d1c5235-32dd-5faa-8a71-3b5f1d3151df",
+   "c4542a8f-c9a1-edfa-f2f4-1fea6ab84d96"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "is_mixed_type": false,
+  "post_kind": "asset_group",
+  "layer": "A",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "workflow_state": "approved",
+  "created_at": "2026-08-26T13:00:00Z",
+  "updated_at": "2026-08-26T13:00:00Z"
+ },
+ {
+  "id": "b80b3d04-4eec-67a1-eff5-ed0b28d503c6",
+  "title": "Studio colour chart — declared no generative AI",
+  "description": "The calibration plate, on its own. It carries the corpus's only live `none` declaration: a positive statement by its maker that no generative model was involved. ⛔ `none` must never be rendered as a \"no AI\" badge or turned into a filterable claim about other people's work — it is the state a wrong rendering damages most, and until now no one could see it.",
+  "author_username": "seed.bot",
+  "collection_name": "Art Research",
+  "team_name": "Reference",
+  "brand_workspace": null,
+  "tags": [
+   "reference",
+   "calibration",
+   "no-ai"
+  ],
+  "asset_ids": [
+   "530cb8f1-1aa4-ab97-87e8-30ad58ac59fb"
+  ],
+  "asset_types_in_post": [
+   "image"
+  ],
+  "is_mixed_type": false,
+  "post_kind": "asset_group",
+  "layer": "A",
+  "sensitivity_tier": "public",
+  "studio": "a",
+  "workflow_state": "approved",
+  "created_at": "2026-08-26T13:05:00Z",
+  "updated_at": "2026-08-26T13:05:00Z"
  }
 ]

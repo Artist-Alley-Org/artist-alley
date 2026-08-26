@@ -361,11 +361,37 @@ func guessContentType(extension string) string {
 // · NASA 6 · …). Four rows already carried `generated` over
 // `attribution: "Kenney (kenney.nl)"` before #1260 removed them.
 //
-// Widening this constant publishes a claim about somebody. That is why
-// it is a named constant and a hard failure rather than a warning: a
-// seed log nobody reads is exactly how the mature axis sat dead for
-// months (#1217).
-const AIDeclarableSourcePrefix = "Generated in-house"
+// Widening this list publishes a claim about somebody. That is why it is
+// a named constant and a hard failure rather than a warning: a seed log
+// nobody reads is exactly how the mature axis sat dead for months
+// (#1217).
+//
+// ⚠️ THE PREFIXES MEAN "WE MADE IT", NOT "AI MADE IT" (#1290). `none` is
+// a declaration too — it says no generative model was involved — and it
+// is gated identically, because asserting it over a Pexels photograph is
+// a false disclosure about that photographer exactly as `generated`
+// would be. But an artifact we made WITHOUT a model cannot honestly
+// claim "Generated in-house (Stable Diffusion 3.5 Large via ComfyUI)",
+// so until #1290 there was no provenance string a truthful `none` could
+// stand on and the corpus could not contain one. "Authored in-house" is
+// that string: ours, and silent about AI.
+//
+// ⛔ Keep this in step with AI_DECLARABLE_SOURCE_PREFIXES in
+// seed/scripts/apply_upgrade.py. They are deliberately separate checks
+// over different files (see above), which also means they can drift —
+// widening one and not the other is how a profile that passes every
+// check in the repo gets refused by the seeder that reads its output.
+var AIDeclarableSourcePrefixes = []string{"Generated in-house", "Authored in-house"}
+
+// declarableSource reports whether a provenance string says we made it.
+func declarableSource(src string) bool {
+	for _, p := range AIDeclarableSourcePrefixes {
+		if strings.HasPrefix(src, p) {
+			return true
+		}
+	}
+	return false
+}
 
 // validateAIDeclarations refuses a manifest that declares AI on work we
 // did not make. Runs before any bytes move, so the failure costs
@@ -380,16 +406,16 @@ func (c *catalogues) validateAIDeclarations() error {
 			_ = json.Unmarshal(a.Metadata, &meta)
 		}
 		src, _ := meta["acquisition_source"].(string)
-		if strings.HasPrefix(src, AIDeclarableSourcePrefix) {
+		if declarableSource(src) {
 			continue
 		}
 		return fmt.Errorf(
 			"asset %s (%q) declares ai_provenance=%q but its provenance is %q. "+
-				"An AI declaration on work we did not generate is a false statement "+
+				"An AI declaration on work we did not make is a false statement "+
 				"about that creator, and this dataset is published — either the "+
 				"declaration is wrong or the provenance is. If we really did make it, "+
-				"say so in metadata.acquisition_source (it must start with %q)",
-			a.ID, a.Title, *a.AiProvenance, src, AIDeclarableSourcePrefix)
+				"say so in metadata.acquisition_source (it must start with one of %q)",
+			a.ID, a.Title, *a.AiProvenance, src, AIDeclarableSourcePrefixes)
 	}
 	return nil
 }

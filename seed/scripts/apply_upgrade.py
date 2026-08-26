@@ -130,7 +130,17 @@ PACK_SOURCE_ROOT = "pack"
 # an asset may declare AI only when its own provenance says WE made it.
 # Widening this is a deliberate act with a real creator on the other end
 # of it — which is the point of making it a constant with a name.
-AI_DECLARABLE_SOURCE_PREFIX = "Generated in-house"
+#
+# ⚠️ THE PREFIXES MEAN "WE MADE IT", NOT "AI MADE IT". That distinction
+# only started to matter with #1290. `none` is a declaration too — it says
+# no generative model was involved — and it is subject to the same rule,
+# because asserting it on someone else's work is a false disclosure about
+# that person just as `generated` is. But an artifact we made WITHOUT a
+# model cannot honestly carry "Generated in-house (Stable Diffusion 3.5
+# Large via ComfyUI)", so before #1290 there was no provenance string a
+# truthful `none` could stand on. "Authored in-house" is that string:
+# ours, and silent about AI. Both prefixes gate every state equally.
+AI_DECLARABLE_SOURCE_PREFIXES = ("Generated in-house", "Authored in-house")
 
 # Upgrade doc pairs merged into every profile, in order. `added` is
 # #604/#602's video + internet material; `balance` is #572's per-team
@@ -162,7 +172,21 @@ AI_DECLARABLE_SOURCE_PREFIX = "Generated in-house"
 # that is published. An asset that declares AI must be an asset we
 # actually generated, and the safest way to guarantee that is for the
 # declaration to ride in on the same record as the file.
-DOC_SETS = ("added", "balance", "pexels", "mature", "generated")
+# `authored` is #1290's: the two studio plates that let the corpus declare
+# the OTHER two AI states. `generated` was the only one the dataset had —
+# `assisted` and `none` existed solely as soft-deleted test fixtures, so
+# neither had ever been rendered for a human being, and `none` is the one
+# a wrong rendering damages most.
+#
+# ⛔ THEY ARE NEW BYTES BECAUSE RE-LABELLING WAS NOT AVAILABLE. Every
+# other asset in this corpus is a third party's work or one of the 45
+# Stable Diffusion plates that already declare `generated` with their
+# provenance saying so on the same row. Writing `none` onto somebody
+# else's photograph is the disclosure ADR 0094 forbids, and re-declaring
+# an SD plate `assisted` would contradict its own acquisition_source —
+# the #1260 error, exactly. See `authored_plates.py` for how the bytes
+# are made and why each label is true of the artifact it names.
+DOC_SETS = ("added", "balance", "pexels", "mature", "generated", "authored")
 
 _HASH_SUFFIX_RE = re.compile(r"-[0-9a-f]{8}(?:-\d+)?$")
 _CATEGORY_PREFIX_RE = re.compile(
@@ -365,7 +389,7 @@ def apply_ai_declarations(profile: list[dict],
     images made in-house with Stable Diffusion 3.5 Large, each declaring
     itself in `generated-assets.site_a.json`. `audit` now refuses any
     profile record that declares AI without in-house provenance, whichever
-    route wrote it — see AI_DECLARABLE_SOURCE_PREFIX.
+    route wrote it — see AI_DECLARABLE_SOURCE_PREFIXES.
 
     IT EXISTS so the browse footer's "Hide AI-made work" toggle has
     something to hide on a freshly seeded instance: every asset in the
@@ -646,12 +670,12 @@ def audit(profile: list[dict], posts: list[dict],
     # claim can arrive by two routes — `apply_ai_declarations` writing it
     # onto an existing record, or `merge_added` carrying it in on a new
     # one — and only the finished profile sees both. See
-    # AI_DECLARABLE_SOURCE_PREFIX for what this cost the first time.
+    # AI_DECLARABLE_SOURCE_PREFIXES for what this cost the first time.
     for e in profile:
         if not e.get("ai_provenance"):
             continue
         src = (e.get("metadata") or {}).get("acquisition_source") or ""
-        if not src.startswith(AI_DECLARABLE_SOURCE_PREFIX):
+        if not src.startswith(AI_DECLARABLE_SOURCE_PREFIXES):
             problems.append(
                 f"asset {e['id']} ({e.get('title')!r}) declares "
                 f"ai_provenance={e['ai_provenance']!r} but its provenance is "

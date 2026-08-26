@@ -133,6 +133,37 @@ func (q *Queries) SeedFindRoleByName(ctx context.Context, name string) (pgtype.U
 	return id, err
 }
 
+const seedGetAssetIDByID = `-- name: SeedGetAssetIDByID :one
+SELECT id FROM assets WHERE id = $1
+`
+
+// Recovery path for SeedInsertAsset's ON CONFLICT DO NOTHING (#1290).
+//
+// ⛔ TWO DIFFERENT CONFLICTS ARRIVE AT THAT ONE `DO NOTHING`, and they
+// need opposite handling:
+//
+//	id pkey             a RESUMED run. The row IS this manifest entry.
+//	                    It must go back into the seeder's id map or every
+//	                    later phase behaves as though the asset does not
+//	                    exist.
+//	owner+file_hash     a byte-identical sibling the same owner already
+//	                    holds. There is no row for THIS manifest id, the
+//	                    collapse is correct, and skipping is right.
+//
+// Conflating them is what made a fresh post lose an existing member: on
+// an incremental re-seed, `applyPosts` resolves members out of the map
+// that `applyAssets` fills, so a post added to the catalogue after the
+// first seed silently dropped every member that already existed — and a
+// post whose members ALL existed was skipped entirely, as a no-member
+// post. The posts phase already recovers this way on its own conflict;
+// the assets phase did not.
+func (q *Queries) SeedGetAssetIDByID(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedGetAssetIDByID, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const seedGetCommentByID = `-- name: SeedGetCommentByID :one
 SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,

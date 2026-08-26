@@ -134,6 +134,47 @@ Two things now stand in the way:
 Put the change in `seed/upgrades/` and let `apply_upgrade.py` fold it into
 the profile, which is the only side the pipeline reads.
 
+### The corpus carries every AI state (#1290)
+
+`ai_provenance` has four states and the dataset declared **one**.
+`assisted` and `none` existed only as soft-deleted test fixtures, so
+neither had ever been rendered for a human — and `none` is the state a
+wrong rendering damages most, because it must never become a visible
+"no AI" claim.
+
+Re-labelling existing records was not available. Every other asset here is
+a third party's work or one of #1260's 45 Stable Diffusion plates that
+already declare `generated` with their provenance saying so on the same
+row; writing `none` over somebody's photograph is the fabricated
+disclosure ADR 0094 forbids, and re-declaring an SD plate `assisted` would
+contradict its own `acquisition_source` — the #1260 error exactly. So the
+corpus gained **two new in-house plates** instead:
+
+| plate | declares | why that is true of it |
+|---|---|---|
+| `studio-colour-chart.png` | `none` | 24 patches, a 21-step ramp and registration marks, every pixel placed arithmetically. No model anywhere in it. |
+| `reference-mood-board.png` | `assisted` | One #1260 SD plate as its left panel and a palette sampled from that plate's own pixels, with the swatch grid and rules drawn here. Part model, part not — neither `generated` nor `none` would be true. |
+
+⚠️ **The repo carries the recipe, not the bytes**, same as `kenney_hq.py
+build`. Run this once against the dataset source before the next
+`populate_archive.py`:
+
+```bash
+python3 seed/scripts/authored_plates.py build \
+    --generated-source $DATASET_SRC/aurora-generated \
+    --out             $DATASET_SRC/aurora-authored
+```
+
+Deterministic — the same inputs give byte-identical output, so a rebuild
+does not churn `file_size_bytes`. Stdlib only, so a machine without
+`sharp` can still run it.
+
+⛔ `AI_DECLARABLE_SOURCE_PREFIXES` (Python) and
+`AIDeclarableSourcePrefixes` (Go, `app/internal/seed/catalogues.go`) gate
+**every** state, `none` included, and must be widened together — they are
+deliberately separate checks over different files, which also means they
+can drift.
+
 Three rules are encoded in the tooling because each one already caused a
 silent data bug — see the module docstrings for the full story:
 

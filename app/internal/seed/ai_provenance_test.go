@@ -359,7 +359,7 @@ func TestSeedProfiles_DeclareTheDemonstrablePair(t *testing.T) {
 			}
 			// ⛔ #1260. The claim is about how the work was MADE, on a
 			// row that names its creator.
-			if !strings.HasPrefix(src, AIDeclarableSourcePrefix) {
+			if !declarableSource(src) {
 				t.Errorf("%s: asset %s (%q) declares ai_provenance=%q but came from %q "+
 					"and is attributed to %q. That is a false statement about a named "+
 					"creator in a published dataset — this is exactly what shipped in "+
@@ -451,9 +451,35 @@ func TestCatalogues_ValidateAIDeclarations(t *testing.T) {
 		t.Errorf("the error must name the provenance it refused; got %q", err)
 	}
 
-	inHouse := AIDeclarableSourcePrefix + " (Stable Diffusion 3.5 Large via ComfyUI)"
+	inHouse := AIDeclarableSourcePrefixes[0] + " (Stable Diffusion 3.5 Large via ComfyUI)"
 	if err := mk(inHouse).validateAIDeclarations(); err != nil {
 		t.Errorf("work we generated ourselves must be declarable; got %v", err)
+	}
+
+	// ⚠️ #1290. `none` is a declaration too, and the artifact that can
+	// honestly carry it is one we made WITHOUT a model — so it cannot
+	// claim "Generated in-house (Stable Diffusion …)". Both prefixes gate
+	// every state, or the corpus can never contain a truthful `none`.
+	authored := AIDeclarableSourcePrefixes[1] + " (deterministic plate generator)"
+	for _, state := range []string{"none", "assisted", "generated"} {
+		c := &catalogues{Assets: []manifestAsset{{
+			ID: "p", Title: "plate", AiProvenance: &state,
+			Metadata: json.RawMessage(`{"acquisition_source":"` + authored + `"}`)}}}
+		if err := c.validateAIDeclarations(); err != nil {
+			t.Errorf("our own authored work must be able to declare %q; got %v", state, err)
+		}
+	}
+
+	// …and the negative that keeps it honest: `none` over somebody
+	// else's photograph is a fabricated disclosure on their behalf, which
+	// ADR 0094 calls the worst available error on this topic.
+	noneState := "none"
+	c2 := &catalogues{Assets: []manifestAsset{{
+		ID: "q", Title: "photo", AiProvenance: &noneState,
+		Metadata: json.RawMessage(`{"acquisition_source":"Pexels"}`)}}}
+	if err := c2.validateAIDeclarations(); err == nil {
+		t.Error("declaring `none` over a Pexels photograph must stop the seed: it " +
+			"asserts a disclosure on a named photographer's behalf")
 	}
 
 	// An asset with no declaration is the whole rest of the corpus and
