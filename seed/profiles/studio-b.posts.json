@@ -11172,49 +11172,6 @@
   "layer": "B"
  },
  {
-  "id": "81f57645-32f0-c0d0-e2a1-4eb5af1bfce7",
-  "title": "Heroes Archive final review — 5 assets across 1 team(s)",
-  "description": "Final Review for Heroes Archive. Pulls work from Marketing Art — image.",
-  "author_username": "sam.obrien",
-  "collection_name": "Heroes Archive",
-  "team_name": "Marketing Art",
-  "brand_workspace": null,
-  "tags": [
-   "ana",
-   "baptiste",
-   "blizzard",
-   "damage",
-   "franchise:overwatch",
-   "hero",
-   "marketing",
-   "marketing-art",
-   "overwatch",
-   "pharah",
-   "portrait",
-   "support",
-   "torbjorn",
-   "tracer"
-  ],
-  "asset_ids": [
-   "f61ccbb9-bf6f-4e1f-a786-60b4829d47a1",
-   "5a48d319-f51f-f58c-f9a0-c0bb7a511102",
-   "030cb300-a886-d6b1-5e4c-3023a3d5db8b",
-   "6bb06439-d526-678d-29e9-e55a6f76602e",
-   "33c1b53f-c5b7-423f-e2a0-80e4c751a9c1"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "project_sprint",
-  "workflow_state": "in_review",
-  "sensitivity_tier": "team",
-  "created_at": "2025-12-10T09:03:38Z",
-  "updated_at": "2026-03-05T19:59:31Z",
-  "studio": "b",
-  "layer": "B"
- },
- {
   "id": "4cd67c09-8e0e-4b86-b8c7-fc2923e977de",
   "title": "Project Echo: Audio audio bundle — 5 assets",
   "description": "Audio working set for Project Echo. 5 audio assets pulled together for review.",
@@ -15224,70 +15181,6 @@
   "layer": "B"
  },
  {
-  "id": "7e6e18ee-4e2b-3109-9334-9e4107576ac1",
-  "title": "Marketing Art sprint roundup — 7 drops",
-  "description": "Marketing Art team output across 4 project(s): Cinematics Reference, Hearthstone Archive, MTG Archive.... Mix of image, video.",
-  "author_username": "ravi.patel",
-  "collection_name": "Hearthstone Archive",
-  "team_name": "Marketing Art",
-  "brand_workspace": null,
-  "tags": [
-   "avacyn restored",
-   "b",
-   "blizzard",
-   "card",
-   "cinematic",
-   "common",
-   "double masters 2022",
-   "druid",
-   "franchise:hearthstone",
-   "franchise:magic: the gathering",
-   "franchise:pokemon tcg",
-   "g",
-   "hearthstone",
-   "magic",
-   "marketing",
-   "marketing-art",
-   "minion",
-   "mtg",
-   "neutral",
-   "public-domain",
-   "r",
-   "rare",
-   "reference",
-   "source:blender-foundation",
-   "spell",
-   "tcg",
-   "the_barrens",
-   "torrent-imported",
-   "trading-card",
-   "uncommon",
-   "w",
-   "wizards"
-  ],
-  "asset_ids": [
-   "3da20b1a-e993-3643-f2cc-785fdd96aa83",
-   "9eeb6df7-2451-96ac-a61d-cb4c153dd340",
-   "0f75ae9e-6665-1924-ceb1-c3e03b2c3533",
-   "a1212c9d-8ced-8d46-15ec-58ae1e5c74b1",
-   "1203bf06-8240-ab1a-2a90-82ce831c0c2e",
-   "a1454dcc-e0fd-a278-c525-2fff0b9e4613",
-   "f47b3fdc-71fa-0688-8253-c5e49e5f10bb"
-  ],
-  "asset_types_in_post": [
-   "image",
-   "video"
-  ],
-  "is_mixed_type": true,
-  "post_kind": "team_roundup",
-  "workflow_state": "approved",
-  "sensitivity_tier": "team",
-  "created_at": "2026-02-24T12:13:06Z",
-  "updated_at": "2026-05-26T16:50:01Z",
-  "studio": "b",
-  "layer": "B"
- },
- {
   "id": "6b61d523-79b8-c9c2-1910-c1ce75bca623",
   "title": "Snapdex lock-in pass — 8 assets across 1 team(s)",
   "description": "Lock-In Pass for Snapdex. Pulls work from Marketing Art — image.",
@@ -16047,41 +15940,6 @@
    "8388e21e-cb41-f3e7-0c60-148439f86ee7",
    "e17983a0-74e1-f666-9827-9c967cf21499",
    "a8ee3241-cab1-c136-9b7d-65a8dcc2ab03"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "team_roundup",
-  "workflow_state": "approved",
-  "sensitivity_tier": "team",
-  "created_at": "2026-03-05T04:19:04Z",
-  "updated_at": "2026-05-22T08:57:22Z",
-  "studio": "shared",
-  "layer": "A"
- },
- {
-  "id": "a08d3d10-4100-a973-74c9-cc09ed94185a",
-  "title": "Tech Art sprint roundup — 5 drops",
-  "description": "Tech Art team output across 1 project(s): Engine Core. Mix of image.",
-  "author_username": "wren.carter",
-  "collection_name": "Engine Core",
-  "team_name": "Tech Art",
-  "brand_workspace": null,
-  "tags": [
-   "checker",
-   "devart",
-   "franchise:engine",
-   "placeholder",
-   "prototype",
-   "tech-art"
-  ],
-  "asset_ids": [
-   "97f6bad7-0bd6-a7ee-e6eb-a855e5024b3c",
-   "a8ee3241-cab1-c136-9b7d-65a8dcc2ab03",
-   "8388e21e-cb41-f3e7-0c60-148439f86ee7",
-   "e17983a0-74e1-f666-9827-9c967cf21499",
-   "03ef36e5-8970-ccba-311c-0d0c835d2517"
   ],
   "asset_types_in_post": [
    "image"
@@ -21464,42 +21322,6 @@
   "updated_at": "2026-05-26T00:56:50Z",
   "studio": "shared",
   "layer": "B"
- },
- {
-  "id": "3e74d6e4-50cb-b1ba-952a-c21d5ecb7dd4",
-  "title": "Audio sprint roundup — 9 drops",
-  "description": "Audio team output across 1 project(s): Project Echo. Mix of audio.",
-  "author_username": "lucas.lefebvre",
-  "collection_name": "Project Echo",
-  "team_name": "Audio",
-  "brand_workspace": null,
-  "tags": [
-   "audio",
-   "rpg",
-   "sfx"
-  ],
-  "asset_ids": [
-   "53f07755-a3dd-a28c-f16e-0ab37ddcf82c",
-   "a5f1fbc7-9ad9-def6-d3bb-e1007eaaf3bd",
-   "e01ecde3-9104-5a1c-9e92-bd3a47ebd592",
-   "7651bd86-ca64-a7fc-579b-e096868d9c74",
-   "4601f998-0766-98dc-e7e1-8cfffc4808ca",
-   "d76d64a5-8f99-5f44-5db8-7c9da39244bc",
-   "e90bf576-26bd-ddaa-cc9d-7db3355ae720",
-   "50bea3d8-b412-0928-d49a-ee87d897318d",
-   "8e0f4307-607f-8c77-590d-d10a2a6b8c0e"
-  ],
-  "asset_types_in_post": [
-   "audio"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "team_roundup",
-  "workflow_state": "final",
-  "sensitivity_tier": "team",
-  "created_at": "2026-05-03T15:37:45Z",
-  "updated_at": "2026-05-26T00:56:50Z",
-  "studio": "shared",
-  "layer": "A"
  },
  {
   "id": "ad3d177d-2d8f-318b-4714-4a3dc5542f86",

@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import unittest
+import zlib
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -32,16 +34,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import apply_upgrade as up          # noqa: E402
+import authored_plates as ap        # noqa: E402
 import audit_uncatalogued as au     # noqa: E402
 import kenney_hq as hq              # noqa: E402
 import kenney_pack_sources as kps   # noqa: E402
 import pexels_gameplay as px        # noqa: E402
+import manifest_guard as mg         # noqa: E402
 import populate_archive as pa       # noqa: E402
 import resolve_media_urls as rmu    # noqa: E402
 import studio_balance as sb         # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 UPGRADES = SCRIPTS.parent / "upgrades"
+PROFILES = SCRIPTS.parent / "profiles"
 
 
 # ---------------------------------------------------------------------------
@@ -1375,7 +1380,7 @@ class TestAIProvenance(unittest.TestCase):
                     continue
                 src = (e.get("metadata") or {}).get("acquisition_source") or ""
                 self.assertTrue(
-                    src.startswith(up.AI_DECLARABLE_SOURCE_PREFIX),
+                    src.startswith(up.AI_DECLARABLE_SOURCE_PREFIXES),
                     f"{site}: {e['id']} ({e.get('title')!r}) declares "
                     f"ai_provenance={e['ai_provenance']!r} but came from {src!r} and "
                     f"is attributed to {e.get('attribution')!r}. That is a false "
@@ -1404,12 +1409,20 @@ class TestAIProvenance(unittest.TestCase):
             [p for p in problems if "false statement" in p], [],
             "work we generated ourselves must be declarable")
 
-    def test_the_declared_corpus_is_exactly_the_generated_images(self):
-        """A declaration that arrived by any other route is the bug."""
-        add = json.loads((UPGRADES / "generated-assets.site_a.json")
-                         .read_text(encoding="utf-8"))
-        expected = {a["id"] for a in add}
-        self.assertEqual(len(expected), 45)
+    def test_the_declared_corpus_is_exactly_the_work_we_made(self):
+        """A declaration that arrived by any other route is the bug.
+
+        Two docs now, not one: #1260's 45 Stable Diffusion plates, all
+        `generated`, and #1290's two authored plates carrying `assisted`
+        and `none`. The invariant is unchanged — a declaration may only
+        ride in on a record we made — but it is no longer a synonym for
+        "the AI-generated images", because `none` is a declaration about
+        work with no model in it at all."""
+        expected = set()
+        for doc in ("generated-assets.site_a.json", "authored-assets.site_a.json"):
+            expected |= {a["id"] for a in
+                         json.loads((UPGRADES / doc).read_text(encoding="utf-8"))}
+        self.assertEqual(len(expected), 47)
         for site, prof, _ in (self.PROFILES[0], self.PROFILES[2]):
             got = {e["id"] for e in self._profile(prof) if e.get("ai_provenance")}
             self.assertEqual(got, expected, f"{site}: declared set drifted")
@@ -1668,6 +1681,419 @@ class TestPackPageSlugs(unittest.TestCase):
     def test_overrides_win(self):
         self.assertEqual(kps.page_for("2D assets/Platformer Characters 1"),
                          "https://kenney.nl/assets/platformer-characters")
+
+
+class TestManifestGuard(unittest.TestCase):
+    """#1275 — publishing must not be able to make the destination poorer.
+
+    The bug was silent by construction: `populate_archive.py` copies the
+    profile over the site's MANIFEST.json, so a profile that had fallen
+    behind the published dataset deleted the difference without a word.
+    """
+
+    @staticmethod
+    def _rec(rid, **kw):
+        base = {"id": rid, "title": f"asset {rid}", "field_values": {}}
+        base.update(kw)
+        return base
+
+    def test_identical_sides_lose_nothing(self):
+        recs = [self._rec("a", field_values={"k": "v"}), self._rec("b")]
+        cmp = mg.compare(recs, json.loads(json.dumps(recs)), "assets")
+        self.assertEqual(cmp.losses, [])
+        self.assertTrue(cmp.ok)
+
+    def test_a_record_only_at_the_destination_is_a_loss(self):
+        cmp = mg.compare([self._rec("a")], [self._rec("a"), self._rec("b")], "assets")
+        self.assertEqual([x.kind for x in cmp.losses], [mg.MISSING_RECORD])
+        self.assertEqual(cmp.losses[0].record_id, "b")
+        self.assertFalse(cmp.ok)
+
+    def test_the_source_being_ahead_is_not_a_loss(self):
+        """The normal direction. A profile with MORE than the site is what
+        publishing is FOR, and the guard must not stand in its way."""
+        cmp = mg.compare([self._rec("a"), self._rec("b")], [self._rec("a")], "assets")
+        self.assertEqual(cmp.losses, [])
+        self.assertEqual(cmp.added, ["b"])
+        self.assertTrue(cmp.ok)
+
+    def test_missing_key_emptied_value_and_changed_value_are_three_cases(self):
+        src = [self._rec("a", field_values={"kept": "x", "emptied": ""},
+                         license="CC0 1.0")]
+        dst = [self._rec("a", field_values={"kept": "y", "emptied": "was here",
+                                            "gone": "also here"},
+                         license="CC-BY 4.0")]
+        cmp = mg.compare(src, dst, "assets")
+        kinds = sorted((x.kind, x.key) for x in cmp.losses)
+        self.assertEqual(kinds, [(mg.EMPTIED_VALUE, "field_values.emptied"),
+                                 (mg.MISSING_KEY, "field_values.gone")])
+        # A different non-empty value on both sides is an EDIT. Refusing
+        # it would make the profile unable to correct anything it has
+        # already published, which is the opposite of the point.
+        self.assertEqual(sorted(x.key for x in cmp.changes),
+                         ["field_values.kept", "license"])
+        self.assertFalse(cmp.ok)
+
+    def test_false_is_a_value_not_an_absence(self):
+        """`mature: false` is a declaration. 1,947 of them were about to
+        be dropped, and an `if not value` check would have called that
+        nothing."""
+        cmp = mg.compare([self._rec("a")], [self._rec("a", mature=False)], "assets")
+        self.assertEqual([x.key for x in cmp.losses], ["mature"])
+        self.assertFalse(mg.is_empty(False))
+        self.assertFalse(mg.is_empty(0))
+        self.assertTrue(mg.is_empty(""))
+        self.assertTrue(mg.is_empty({}))
+
+    def test_duplicate_ids_in_the_source_are_refused(self):
+        cmp = mg.compare([self._rec("a"), self._rec("a")], [self._rec("a")], "posts")
+        self.assertEqual(cmp.duplicates, {"a": 2})
+        self.assertFalse(cmp.ok)
+
+    def test_a_destination_that_does_not_exist_yet_is_a_first_publish(self):
+        cmp = mg.compare([self._rec("a")], None, "assets")
+        self.assertEqual(cmp.losses, [])
+        self.assertTrue(cmp.ok)
+
+    def test_an_unreadable_destination_raises_rather_than_reading_empty(self):
+        """⛔ "Unreadable" must never collapse to "empty". That mistake
+        turns the guard into a rubber stamp on exactly the run that most
+        needs stopping."""
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "MANIFEST.json"
+            p.write_text('[{"id": "a"},')
+            with self.assertRaises(ValueError) as cm:
+                mg.load_json_list(p)
+            self.assertIn("MANIFEST.json", str(cm.exception))
+            self.assertIsNone(mg.load_json_list(Path(td) / "absent.json"))
+
+
+class TestManifestReconcile(unittest.TestCase):
+    """#1275 — the repair that lets the guard ever pass."""
+
+    def test_the_pass_can_only_add_never_replace(self):
+        """The safety property, stated as a test. A repair tool aimed at
+        published data must not be able to overwrite a later edit."""
+        profile = [_asset("a", "images/a.png", field_values={"keep": "mine"},
+                          license="CC-BY 4.0")]
+        doc = {"fill": [{"id": "a", "field_values": {"keep": "theirs",
+                                                     "add": "new"},
+                         "license": "CC0 1.0", "mature": False}]}
+        added, filled = up.apply_manifest_reconcile(profile, doc)
+        self.assertEqual((added, filled), (0, 2))
+        self.assertEqual(profile[0]["field_values"], {"keep": "mine", "add": "new"})
+        self.assertEqual(profile[0]["license"], "CC-BY 4.0")
+        self.assertIs(profile[0]["mature"], False)
+
+    def test_it_is_idempotent(self):
+        profile = [_asset("a", "images/a.png")]
+        doc = {"added": [_asset("b", "images/b.png")],
+               "fill": [{"id": "a", "field_values": {"k": "v"}}]}
+        first = up.apply_manifest_reconcile(profile, doc)
+        snapshot = json.loads(json.dumps(profile))
+        second = up.apply_manifest_reconcile(profile, doc)
+        self.assertEqual(first, (1, 1))
+        self.assertEqual(second, (0, 0))
+        self.assertEqual(profile, snapshot)
+
+    def test_an_empty_value_counts_as_absent(self):
+        profile = [_asset("a", "images/a.png", field_values={"blank": ""},
+                          description="")]
+        doc = {"fill": [{"id": "a", "field_values": {"blank": "filled"},
+                         "description": "written"}]}
+        _, filled = up.apply_manifest_reconcile(profile, doc)
+        self.assertEqual(filled, 2)
+        self.assertEqual(profile[0]["field_values"]["blank"], "filled")
+
+    def test_a_fill_naming_an_unknown_id_is_skipped_not_invented(self):
+        profile = [_asset("a", "images/a.png")]
+        _, filled = up.apply_manifest_reconcile(
+            profile, {"fill": [{"id": "ghost", "field_values": {"k": "v"}}]})
+        self.assertEqual((len(profile), filled), (1, 0))
+
+
+class TestPostDeduplication(unittest.TestCase):
+    """#1275 — two posts under one id is a coin toss, not a duplicate.
+
+    The assembler derives a roundup's id from (team, anchor asset), which
+    is not unique across the several roundups it emits per team. `aa seed`
+    keys on the stable id, so one of the two silently never exists.
+    """
+
+    def test_the_richest_row_survives(self):
+        posts = [{"id": "x", "title": "8 drops", "asset_ids": [1, 2, 3]},
+                 {"id": "x", "title": "10 drops", "asset_ids": [1, 2, 3, 4]},
+                 {"id": "y", "title": "other", "asset_ids": []}]
+        removed, ids = up.dedupe_posts(posts)
+        self.assertEqual((removed, ids), (1, ["x"]))
+        self.assertEqual([p["title"] for p in posts], ["10 drops", "other"])
+
+    def test_ties_break_on_first_appearance(self):
+        posts = [{"id": "x", "title": "first", "asset_ids": [1]},
+                 {"id": "x", "title": "second", "asset_ids": [1]}]
+        up.dedupe_posts(posts)
+        self.assertEqual([p["title"] for p in posts], ["first"])
+
+    def test_a_clean_list_is_untouched(self):
+        posts = [{"id": "a", "asset_ids": []}, {"id": "b", "asset_ids": []}]
+        self.assertEqual(up.dedupe_posts(posts), (0, []))
+        self.assertEqual([p["id"] for p in posts], ["a", "b"])
+
+    def test_the_committed_post_profiles_hold_no_duplicate_ids(self):
+        """On the real data, because that is where they were. Twelve rows
+        in studio-a and four in studio-b shared an id with a row that
+        disagreed with them."""
+        for name in ("studio-a", "studio-b"):
+            posts = json.loads((PROFILES / f"{name}.posts.json").read_text())
+            ids = [p["id"] for p in posts]
+            dupes = {i for i in ids if ids.count(i) > 1} if len(ids) != len(set(ids)) else set()
+            self.assertEqual(dupes, set(), f"{name}.posts.json")
+
+
+class TestSiteAProfileIsNotBehindItsPublishedSite(unittest.TestCase):
+    """#1275, on the committed data and WITHOUT the archive share.
+
+    The share is not reachable from CI, so the reconcile document is what
+    carries the published site's content into the repo. These assert the
+    outcome the guard needs in order to ever let a publish through.
+    """
+
+    def test_the_reconcile_document_is_committed(self):
+        doc = json.loads((UPGRADES / "manifest-reconcile.site_a.json").read_text())
+        self.assertTrue(doc.get("_why"), "the document must say why it exists")
+        self.assertEqual(len(doc["added"]), 1)
+        self.assertEqual(doc["added"][0]["id"],
+                         "0407bb0c-1d4d-58f9-a4a3-e9b0174956c7")
+        self.assertGreater(len(doc["fill"]), 1900)
+
+    def test_the_reconcile_document_never_replaces_a_committed_value(self):
+        """The add-only property, checked against the profile it targets
+        rather than against a fixture — a document that had drifted into
+        overwriting real values would pass a synthetic test."""
+        profile = {a["id"]: a
+                   for a in json.loads((PROFILES / "studio-a.assets.json").read_text())}
+        doc = json.loads((UPGRADES / "manifest-reconcile.site_a.json").read_text())
+        for entry in doc["fill"]:
+            target = profile.get(entry["id"])
+            self.assertIsNotNone(target, entry["id"])
+            for key, val in entry.items():
+                if key == "id":
+                    continue
+                if isinstance(val, dict):
+                    for k2, v2 in val.items():
+                        have = (target.get(key) or {}).get(k2)
+                        self.assertTrue(have == v2 or up._empty(have),
+                                        f"{entry['id']}.{key}.{k2} would be replaced")
+                else:
+                    have = target.get(key)
+                    self.assertTrue(have == val or up._empty(have),
+                                    f"{entry['id']}.{key} would be replaced")
+
+    def test_every_site_a_asset_carries_field_values(self):
+        """100 records had none at all, and a publish would have taken the
+        other 1,847's partial sets down with them."""
+        assets = json.loads((PROFILES / "studio-a.assets.json").read_text())
+        bare = [a["id"] for a in assets if not a.get("field_values")]
+        self.assertEqual(bare, [], f"{len(bare)} asset(s) carry no field values")
+        # 2,005 reconciled from the share (#1275) + 2 authored plates (#1290)
+        self.assertEqual(len(assets), 2007)
+
+    def test_the_extra_published_asset_is_in_the_profile(self):
+        assets = {a["id"] for a in
+                  json.loads((PROFILES / "studio-a.assets.json").read_text())}
+        self.assertIn("0407bb0c-1d4d-58f9-a4a3-e9b0174956c7", assets)
+
+
+class TestEveryAIStateIsInTheCorpus(unittest.TestCase):
+    """#1290 — a corpus that cannot produce a state cannot show it.
+
+    `generated` was the only declaration the dataset carried. `assisted`
+    and `none` existed only as soft-deleted test fixtures, so neither had
+    ever been rendered for a human being — and `none` is the state a wrong
+    rendering damages most, because it must never become a "no AI" claim.
+    """
+
+    def setUp(self):
+        self.assets = json.loads(
+            (PROFILES / "studio-a.assets.json").read_text(encoding="utf-8"))
+        self.posts = json.loads(
+            (PROFILES / "studio-a.posts.json").read_text(encoding="utf-8"))
+        self.by_id = {a["id"]: a for a in self.assets}
+
+    def test_the_profile_declares_every_state_at_least_once(self):
+        declared = {a.get("ai_provenance") for a in self.assets}
+        for state in ("generated", "assisted", "none"):
+            self.assertIn(state, declared, f"no seeded asset declares {state!r}")
+        # Undeclared must stay the overwhelming majority: the corpus
+        # models a real library, and a real library does not disclose.
+        self.assertGreater(sum(1 for a in self.assets if not a.get("ai_provenance")),
+                           1000)
+
+    def test_a_post_mixes_generated_with_assisted(self):
+        """⭐ Two DIFFERENT declared states in one post. A post that mixes
+        `generated` with UNDECLARED already existed; it cannot exercise
+        what a second declaration does, because there is only one label to
+        derive from."""
+        mixed = []
+        for p in self.posts:
+            states = {self.by_id[a].get("ai_provenance")
+                      for a in (p.get("asset_ids") or ()) if a in self.by_id}
+            if {"generated", "assisted"} <= states:
+                mixed.append(p["id"])
+        self.assertTrue(mixed, "no post mixes generated with assisted")
+
+    def test_every_declaring_asset_is_our_own_work(self):
+        """The #1260 rule, restated over all four states rather than over
+        `generated` alone — `none` asserted on somebody else's photograph
+        is a false disclosure about that person too."""
+        for a in self.assets:
+            if not a.get("ai_provenance"):
+                continue
+            src = (a.get("metadata") or {}).get("acquisition_source") or ""
+            self.assertTrue(src.startswith(up.AI_DECLARABLE_SOURCE_PREFIXES),
+                            f"{a['id']} ({a.get('title')!r}) declares "
+                            f"{a['ai_provenance']!r} from {src!r}")
+
+    def test_none_was_authored_for_a_new_asset_not_swept_over_old_ones(self):
+        """⛔ ADR 0094. The failure this guards is a BULK one — a backfill
+        that wrote `none` across the undeclared corpus would leave hundreds
+        of rows claiming a disclosure nobody made."""
+        none_assets = [a for a in self.assets if a.get("ai_provenance") == "none"]
+        self.assertEqual(len(none_assets), 1)
+        authored = {a["id"] for a in json.loads(
+            (UPGRADES / "authored-assets.site_a.json").read_text(encoding="utf-8"))}
+        self.assertIn(none_assets[0]["id"], authored,
+                      "the `none` declaration must come from the authored doc, "
+                      "not from a sweep across records that already existed")
+
+    def test_the_declaring_plates_are_reachable_on_browse(self):
+        """An asset in no post is invisible, so "the corpus has one" would
+        be true and useless."""
+        posted = {a for p in self.posts for a in (p.get("asset_ids") or ())}
+        for a in self.assets:
+            if a.get("ai_provenance") in ("assisted", "none"):
+                self.assertIn(a["id"], posted, f"{a['title']!r} is in no post")
+
+    def test_the_plate_recipe_is_committed_and_names_its_source(self):
+        """The repo carries the recipe, not the bytes — same as
+        `kenney_hq.py build`. A record pointing at bytes no one can
+        reproduce is a dead end on any machine without the share."""
+        self.assertTrue((SCRIPTS / "authored_plates.py").is_file())
+        import authored_plates as ap
+        self.assertEqual(len(ap.PLATES), 2)
+        for a in json.loads((UPGRADES / "authored-assets.site_a.json").read_text()):
+            self.assertIn(a["file_path"].rsplit("/", 1)[-1], ap.PLATES)
+            self.assertEqual(a["source_root"], "local")
+
+    def test_the_assisted_plate_really_does_carry_ai_content(self):
+        """`assisted` is only true if a model actually contributed. The
+        mood board samples one of the #1260 plates, so the claim is
+        checkable rather than decorative."""
+        import authored_plates as ap
+        gen = {a["file_path"] for a in self.assets
+               if a.get("ai_provenance") == "generated"}
+        self.assertIn(f"images/aurora-generated/{ap.MOOD_BOARD_SOURCE}", gen)
+
+
+class TestAuthoredPlatesAreDeterministic(unittest.TestCase):
+    """A plate generator that drifted would churn `file_size_bytes` in the
+    profile on every rebuild, and the guard would read that as an edit."""
+
+    def test_the_colour_chart_is_byte_identical_across_runs(self):
+        import authored_plates as ap
+        with tempfile.TemporaryDirectory() as td:
+            a, b = Path(td) / "a.png", Path(td) / "b.png"
+            ap.build_colour_chart(a)
+            ap.build_colour_chart(b)
+            self.assertEqual(a.read_bytes(), b.read_bytes())
+
+    def test_the_committed_record_matches_the_generator(self):
+        """The record's byte count and hash describe bytes this repo can
+        still produce. If they ever disagree, the profile is describing a
+        file nobody can rebuild."""
+        import authored_plates as ap
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / ap.PLATES[0]
+            size = ap.build_colour_chart(out)
+            digest = hashlib.sha256(out.read_bytes()).hexdigest()
+        rec = next(a for a in json.loads(
+            (UPGRADES / "authored-assets.site_a.json").read_text())
+            if a["file_path"].endswith(ap.PLATES[0]))
+        self.assertEqual(rec["file_size_bytes"], size)
+        self.assertEqual(rec["metadata"]["sha256"], digest)
+        self.assertEqual(rec["ai_provenance"], "none")
+
+    def test_the_reader_handles_all_five_row_filters(self):
+        """The reader is the half that runs on somebody else's bytes. The
+        writer only ever emits filter 0, so a round-trip through it would
+        exercise one branch out of five and prove nothing about the
+        Paeth predictor."""
+        import authored_plates as ap
+        w, h = 4, 5
+        pix = bytearray()
+        for y in range(h):
+            for x in range(w):
+                pix += bytes(((x * 37 + y) % 256, (y * 91 + x) % 256, (x * y * 13) % 256))
+        stride = w * 3
+
+        def encode(filter_type: int) -> bytes:
+            raw = bytearray()
+            prev = bytearray(stride)
+            for y in range(h):
+                line = pix[y * stride:(y + 1) * stride]
+                enc = bytearray()
+                for i in range(stride):
+                    a = line[i - 3] if i >= 3 else 0
+                    b = prev[i]
+                    c = prev[i - 3] if i >= 3 else 0
+                    if filter_type == 0:
+                        v = line[i]
+                    elif filter_type == 1:
+                        v = line[i] - a
+                    elif filter_type == 2:
+                        v = line[i] - b
+                    elif filter_type == 3:
+                        v = line[i] - ((a + b) >> 1)
+                    else:
+                        p = a + b - c
+                        pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                        pred = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                        v = line[i] - pred
+                    enc.append(v & 0xFF)
+                raw.append(filter_type)
+                raw += enc
+                prev = line
+            body = zlib.compress(bytes(raw), 6)
+
+            def chunk(tag, data):
+                return (struct.pack(">I", len(data)) + tag + data
+                        + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+            return (b"\x89PNG\r\n\x1a\n"
+                    + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                    + chunk(b"IDAT", body) + chunk(b"IEND", b""))
+
+        with tempfile.TemporaryDirectory() as td:
+            for ft in range(5):
+                p = Path(td) / f"f{ft}.png"
+                p.write_bytes(encode(ft))
+                gw, gh, got = ap.png_read_rgb(p)
+                self.assertEqual((gw, gh), (w, h), f"filter {ft}")
+                self.assertEqual(bytes(got), bytes(pix), f"filter {ft} decoded wrong")
+
+    def test_a_non_rgb_png_is_refused_rather_than_misread(self):
+        import authored_plates as ap
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "grey.png"
+
+            def chunk(tag, data):
+                return (struct.pack(">I", len(data)) + tag + data
+                        + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+            p.write_bytes(b"\x89PNG\r\n\x1a\n"
+                          + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, 0, 0, 0, 0))
+                          + chunk(b"IDAT", zlib.compress(b"\x00\x01\x02\x00\x03\x04"))
+                          + chunk(b"IEND", b""))
+            with self.assertRaises(ValueError):
+                ap.png_read_rgb(p)
 
 
 if __name__ == "__main__":

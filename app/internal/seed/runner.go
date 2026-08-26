@@ -697,6 +697,10 @@ func (r *Runner) applyFeatured(ctx context.Context, cat *catalogues) error {
 
 func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 	inserted, deduped, missing, queued, willSkip := 0, 0, 0, 0, 0
+	// Assets already present from an earlier seed. Reported separately
+	// from `deduped` because they mean opposite things: a resumed row IS
+	// this manifest entry, a deduped one never had a row of its own.
+	resumed := 0
 	for i, a := range cat.Assets {
 		abs := filepath.Join(r.opts.SiteRoot, a.FilePath)
 		f, err := os.Open(abs)
@@ -766,14 +770,37 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		}
 		id, err := r.q.SeedInsertAsset(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Either the id already exists (resumed run) or the
-			// (owner_user_ref, file_hash) unique index collapsed a
-			// byte-identical sibling this owner already holds — e.g.
-			// the same texture exported next to both the OBJ and FBX
-			// of a model. That collapse is the CORRECT behaviour: it
-			// mirrors the real app refusing a re-upload of identical
-			// bytes by the same owner. Skip the duplicate; posts that
-			// reference only it fall out as no-member posts.
+			// TWO different conflicts land here and they need opposite
+			// handling — see SeedGetAssetIDByID for the full story.
+			//
+			//   id pkey          a RESUMED run. The row is this entry.
+			//                    Register it, or every later phase acts
+			//                    as though the asset does not exist.
+			//   owner+file_hash  a byte-identical sibling the same owner
+			//                    already holds — e.g. the texture
+			//                    exported beside both the OBJ and the
+			//                    FBX of a model. The collapse is CORRECT
+			//                    (it mirrors the app refusing a re-upload
+			//                    of identical bytes by the same owner)
+			//                    and there is no row under this id, so
+			//                    skipping is right.
+			//
+			// Treating both as "skip" is what made an incremental
+			// re-seed drop members: `applyPosts` resolves members from
+			// the map this loop fills, so a post added to the catalogue
+			// after the first seed lost every member that already
+			// existed, and a post whose members ALL existed vanished as
+			// a no-member post. Found driving #1290 — the mixed-state
+			// post seeded with one of its two members.
+			existing, gErr := r.q.SeedGetAssetIDByID(ctx, params.ID)
+			if gErr == nil {
+				r.assets[a.ID] = existing
+				resumed++
+				continue
+			}
+			if !errors.Is(gErr, pgx.ErrNoRows) {
+				return fmt.Errorf("recover asset %s: %w", a.ID, gErr)
+			}
 			deduped++
 			continue
 		}
@@ -872,7 +899,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 	}
 	r.logFieldDrops()
 	r.log.Info("seed.assets", "inserted", inserted,
-		"deduped", deduped, "missing", missing,
+		"deduped", deduped, "resumed", resumed, "missing", missing,
 		"previews_queued", queued,
 		"previews_force", r.opts.ForcePreviews,
 		"previews_will_skip", willSkip)

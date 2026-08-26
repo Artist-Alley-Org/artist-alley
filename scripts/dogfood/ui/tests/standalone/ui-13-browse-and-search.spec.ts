@@ -264,7 +264,9 @@ test.describe('UI-13 browse + search', () => {
 
   /** Scroll the result list down past the navbar's auto-hide threshold
    *  and then back up until the navbar is on screen again. Returns the
-   *  offset the page ends at, which is what the caller asserts against.
+   *  offset the page ends at, which the caller uses only to confirm the
+   *  scroll really happened — no test asserts what becomes of that
+   *  offset afterwards (#1298).
    *
    *  Down THEN up, and not because a user would: past 96px of downward
    *  scroll the navbar auto-hides (`chromeScroll`), which translates the
@@ -335,8 +337,8 @@ test.describe('UI-13 browse + search', () => {
   }
 
   test('nav search refines /search IN PLACE and never bounces to browse', async ({ page }) => {
-    // Short viewport so the result grid overflows and the scroll
-    // assertion below has something to measure. Even a single-hit page
+    // Short viewport so the result grid overflows and the page can
+    // actually be scrolled before the refinement. Even a single-hit page
     // is taller than 400px, so this does not depend on how much the
     // install happens to have seeded.
     await page.setViewportSize({ width: 1280, height: 400 });
@@ -349,13 +351,21 @@ test.describe('UI-13 browse + search', () => {
     );
     await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
 
-    // Scroll the results, so "the fix keeps your place" is measured and
-    // not assumed, and leave the page in the state a real reader is in
-    // when they reach for the search box: scrolled down, chrome back.
+    // Leave the page in the state a real reader is in when they reach
+    // for the search box: scrolled down, chrome back. That is the state
+    // #1053 was reported from, so the refinement below is driven from it
+    // rather than from a pristine top-of-page.
+    //
+    // ⚠️ The offset is a PRECONDITION, not a subject — nothing downstream
+    // asserts what became of it, and #1298 explains why. This guard only
+    // says the precondition was really established: a helper that
+    // silently stopped scrolling would leave the refinement exercised
+    // from the top of an unscrolled page, which is not the reported bug.
     const before = await scrollResultsAndKeepChrome(page);
-    expect(before, 'the results did not scroll, so this test would prove nothing').toBeGreaterThan(
-      0,
-    );
+    expect(
+      before,
+      'the results never scrolled, so the refinement was not driven from a scrolled page',
+    ).toBeGreaterThan(0);
 
     // #1156 — typing changes nothing; Enter commits. The helper asserts
     // the URL does not move while typing, which on this surface is also
@@ -376,29 +386,53 @@ test.describe('UI-13 browse + search', () => {
     await expect(page.locator(tid('search-input'))).toHaveValue(second);
     await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
 
-    // Focus and scroll survive, as they do on browse.
+    // Focus survives, so the reader can keep typing — a remount would
+    // take it.
     await expect(nav).toBeFocused();
 
-    // Scroll survives UP TO WHAT THE NEW RESULT SET CAN HOLD.
+    // ⛔ THERE IS NO SCROLL-OFFSET ASSERTION HERE, DELIBERATELY.
     //
-    // The refinement swaps in a different, usually SHORTER wall, and the
-    // browser clamps scrollTop to that wall's maximum — losing the extra
-    // is the content being shorter, not the page jumping. The bare
-    // `toBe(before)` this replaced only held because the assertion used
-    // to run before the new grid had rendered: typing committed after a
-    // ~250ms debounce, so the read landed on the OLD wall's height. With
-    // the commit now explicit (#1156) the new wall is up by the time we
-    // look, and the clamp is visible.
+    // This test used to end with `expect(top).toBe(Math.min(before, max))`
+    // on `main`, on the theory that a refinement swaps in a shorter wall
+    // and the browser merely CLAMPS the offset to it. That model is
+    // wrong, and it is wrong in a way no wait can fix. Measured with an
+    // in-page rAF sampler across the swap (#1298):
     //
-    // Asserting `min(before, max)` keeps the property #1053 is about —
-    // the offset is preserved, not reset — and the `> 0` guard keeps it
-    // from passing vacuously if the page did jump to the top and the new
-    // wall happened to be short.
-    const { top, max } = await page
-      .locator('main')
-      .evaluate((el) => ({ top: el.scrollTop, max: Math.max(0, el.scrollHeight - el.clientHeight) }));
-    expect(top).toBe(Math.min(before, max));
-    expect(top, 'the refinement reset the scroll offset to the top').toBeGreaterThan(0);
+    //     same search term       different search term
+    //     [ 12ms, top 240]       [   5ms, top 240, scrollHeight  979]
+    //     (flat for 2.5s)        [ 984ms, top 184, scrollHeight 1097]
+    //                            [1025ms, top   0, scrollHeight  979]
+    //
+    // Re-run the same query and the offset never moves. Change the
+    // result set and it does — while `scrollHeight` GROWS, which a clamp
+    // cannot do, and while `max` (646) stays far above the 240 the model
+    // says should survive. Every tile node is replaced, and Chrome's
+    // scroll anchoring re-resolves the offset against reflowed content:
+    // it landed on 0 here and on 279 — 39px DOWN, not up — on the CI
+    // runner. Both are legitimate anchoring outcomes. The old assertion
+    // could express neither.
+    //
+    // ⚠️ IT HAD BEEN PASSING BY COINCIDENCE. It only bites when
+    // `max > before`, and `before` is a constant 240 (`jump(260)` then
+    // one 20px nudge). While a refined wall stayed shorter than the
+    // 400px viewport, `min(before, max)` collapsed to a small number
+    // that the re-anchored offset happened to match. #1275 reconciled
+    // 10,145 field values into the corpus, searchable field values are
+    // weight D of the search document, so refined walls got taller and
+    // the coincidence ran out.
+    //
+    // ⛔ AND #1053 NEVER DECIDED IT. The ruling is "typing in the nav box
+    // throws you to browse, so you cannot refine" — do not bounce off
+    // /search. Scroll preservation was this spec's own extrapolation
+    // ("as they do on browse"). Whether a refinement should keep your
+    // place AT ALL is a real product question and is open as #1298; it is
+    // not settled by an assertion smuggled in here.
+    //
+    // What #1053 did decide is asserted above and stays strict: the URL
+    // is still /search and carries the new term, the page ADOPTED that
+    // term rather than leaving a stale result set under a changed
+    // address, results are on screen, and focus survived. The sibling
+    // test below adds the kind chips and the facet filter.
   });
 
   test('refining the query keeps the kind chips and the facet filter', async ({ page }) => {

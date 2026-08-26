@@ -84,6 +84,7 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 # Every replacement asset comes from the Kenney All-in-1 pack, which is
@@ -129,7 +130,17 @@ PACK_SOURCE_ROOT = "pack"
 # an asset may declare AI only when its own provenance says WE made it.
 # Widening this is a deliberate act with a real creator on the other end
 # of it — which is the point of making it a constant with a name.
-AI_DECLARABLE_SOURCE_PREFIX = "Generated in-house"
+#
+# ⚠️ THE PREFIXES MEAN "WE MADE IT", NOT "AI MADE IT". That distinction
+# only started to matter with #1290. `none` is a declaration too — it says
+# no generative model was involved — and it is subject to the same rule,
+# because asserting it on someone else's work is a false disclosure about
+# that person just as `generated` is. But an artifact we made WITHOUT a
+# model cannot honestly carry "Generated in-house (Stable Diffusion 3.5
+# Large via ComfyUI)", so before #1290 there was no provenance string a
+# truthful `none` could stand on. "Authored in-house" is that string:
+# ours, and silent about AI. Both prefixes gate every state equally.
+AI_DECLARABLE_SOURCE_PREFIXES = ("Generated in-house", "Authored in-house")
 
 # Upgrade doc pairs merged into every profile, in order. `added` is
 # #604/#602's video + internet material; `balance` is #572's per-team
@@ -161,7 +172,21 @@ AI_DECLARABLE_SOURCE_PREFIX = "Generated in-house"
 # that is published. An asset that declares AI must be an asset we
 # actually generated, and the safest way to guarantee that is for the
 # declaration to ride in on the same record as the file.
-DOC_SETS = ("added", "balance", "pexels", "mature", "generated")
+# `authored` is #1290's: the two studio plates that let the corpus declare
+# the OTHER two AI states. `generated` was the only one the dataset had —
+# `assisted` and `none` existed solely as soft-deleted test fixtures, so
+# neither had ever been rendered for a human being, and `none` is the one
+# a wrong rendering damages most.
+#
+# ⛔ THEY ARE NEW BYTES BECAUSE RE-LABELLING WAS NOT AVAILABLE. Every
+# other asset in this corpus is a third party's work or one of the 45
+# Stable Diffusion plates that already declare `generated` with their
+# provenance saying so on the same row. Writing `none` onto somebody
+# else's photograph is the disclosure ADR 0094 forbids, and re-declaring
+# an SD plate `assisted` would contradict its own acquisition_source —
+# the #1260 error, exactly. See `authored_plates.py` for how the bytes
+# are made and why each label is true of the artifact it names.
+DOC_SETS = ("added", "balance", "pexels", "mature", "generated", "authored")
 
 _HASH_SUFFIX_RE = re.compile(r"-[0-9a-f]{8}(?:-\d+)?$")
 _CATEGORY_PREFIX_RE = re.compile(
@@ -364,7 +389,7 @@ def apply_ai_declarations(profile: list[dict],
     images made in-house with Stable Diffusion 3.5 Large, each declaring
     itself in `generated-assets.site_a.json`. `audit` now refuses any
     profile record that declares AI without in-house provenance, whichever
-    route wrote it — see AI_DECLARABLE_SOURCE_PREFIX.
+    route wrote it — see AI_DECLARABLE_SOURCE_PREFIXES.
 
     IT EXISTS so the browse footer's "Hide AI-made work" toggle has
     something to hide on a freshly seeded instance: every asset in the
@@ -427,6 +452,116 @@ def merge_posts(posts: list[dict], added: list[dict]) -> int:
         posts.append(json.loads(json.dumps(p)))
         n += 1
     return n
+
+
+def dedupe_posts(posts: list[dict]) -> tuple[int, list[str]]:
+    """Collapse posts sharing one id. Returns (removed, ids).
+
+    ⛔ WHY THIS IS A PIPELINE PASS AND NOT A HAND EDIT. The assembler
+    derives a roundup's id from `("post", "roundup", team_name,
+    anchor.id)` and a sprint's from `("post", "sprint", project, label,
+    anchor.id)` — neither of which is unique when the generator emits
+    several roundups per team over different asset windows. Measured
+    2026-08-26: eight ids in studio-a covering twelve rows, four in
+    studio-b covering four, and the twins DISAGREE — one says "Props
+    sprint roundup — 8 drops" with eight members, its twin says "— 10
+    drops" with ten.
+
+    A manifest cannot represent both. `aa seed` keys on the stable id, so
+    it takes whichever row it reads last and the other silently never
+    exists; `populate_archive.py` publishes both and pushes the coin toss
+    into the dataset. Removing them here means the next assembly removes
+    them too, which editing the profile by hand would not.
+
+    WHICH ROW SURVIVES. The one with the most members, ties broken by
+    first appearance. A roundup is its membership, so the richest row is
+    the one that loses least, and the rule is a property of the DATA
+    rather than of the order the generator happened to emit — the same
+    reason `apply_replacements` keys on the record and not on position.
+    ⚠️ It deliberately does NOT try to reproduce site_a/posts.json: that
+    file agrees with the profile on membership for all 861 shared ids and
+    disagrees on `created_at` for 840 of them, so it is a different
+    assembly, not a deduplicated copy of this one.
+    """
+    # rank = (member count, -index): most members wins, earliest breaks
+    # the tie because -index is larger for a smaller index.
+    best: dict[str, tuple[int, int]] = {}
+    for i, p in enumerate(posts):
+        pid = p["id"]
+        rank = (len(p.get("asset_ids") or ()), -i)
+        if pid not in best or rank > best[pid]:
+            best[pid] = rank
+    keep = {pid: -rank[1] for pid, rank in best.items()}
+    dup_ids = sorted(pid for pid, n in Counter(p["id"] for p in posts).items() if n > 1)
+    before = len(posts)
+    posts[:] = [p for i, p in enumerate(posts) if keep[p["id"]] == i]
+    return before - len(posts), dup_ids
+
+
+def apply_manifest_reconcile(profile: list[dict], doc: dict) -> tuple[int, int]:
+    """Carry the archive share's advantage back into the profile (#1275).
+
+    Returns (added_records, filled_values).
+
+    ⛔ THIS PASS CAN ONLY EVER ADD. It writes a key the profile does not
+    hold, or holds empty; it never replaces a value the profile already
+    has. That is the safety property, and it is why the pass is
+    idempotent and why re-running it cannot undo a later edit.
+
+    ⚠️ IT IS ALSO WHY `file_size_bytes` IS NOT RECONCILED, which looks
+    like an omission and is not. The share's site_a files disagree with
+    the profile on 160 byte counts, and the share's number matches the
+    bytes lying at the share on all 160. That is not enough to act on:
+    the profile's `file_size_bytes` describes the SOURCE file that
+    `populate_archive.py` copies — for 149 of the 160 that is a
+    kenney-hq pool render, and `kenney-hq-replacements.site_a.json`
+    records `newSize` for it — and the copier verifies the record
+    against the source, not against whatever is already at the
+    destination. So "the share matches its own bytes" says the share
+    holds an older pool build, not that the profile is wrong; writing
+    the share's number in would make the very next build refuse its own
+    input. The pool is not on every machine that runs this script, so
+    the disagreement cannot be adjudicated here. It is filed rather than
+    guessed, and `manifest_guard.py` classifies it as CHANGED_VALUE —
+    an edit, not a loss — so it never blocks a publish.
+    """
+    by_id = {a["id"]: a for a in profile}
+    n_added = 0
+    for rec in doc.get("added", ()):
+        if rec["id"] in by_id:
+            continue
+        copied = json.loads(json.dumps(rec))
+        profile.append(copied)
+        by_id[rec["id"]] = copied
+        n_added += 1
+
+    filled = 0
+    for entry in doc.get("fill", ()):
+        target = by_id.get(entry["id"])
+        if target is None:
+            continue
+        for key, val in entry.items():
+            if key == "id":
+                continue
+            if isinstance(val, dict):
+                sub = target.setdefault(key, {})
+                if not isinstance(sub, dict):
+                    continue
+                for k2, v2 in val.items():
+                    if k2 not in sub or _empty(sub[k2]):
+                        sub[k2] = v2
+                        filled += 1
+                continue
+            if key not in target or _empty(target[key]):
+                target[key] = val
+                filled += 1
+    return n_added, filled
+
+
+def _empty(v) -> bool:
+    """`False` and `0` are values, not emptiness — losing `mature: false`
+    loses a declaration."""
+    return v is None or v == "" or v == [] or v == {}
 
 
 def audit(profile: list[dict], posts: list[dict],
@@ -535,12 +670,12 @@ def audit(profile: list[dict], posts: list[dict],
     # claim can arrive by two routes — `apply_ai_declarations` writing it
     # onto an existing record, or `merge_added` carrying it in on a new
     # one — and only the finished profile sees both. See
-    # AI_DECLARABLE_SOURCE_PREFIX for what this cost the first time.
+    # AI_DECLARABLE_SOURCE_PREFIXES for what this cost the first time.
     for e in profile:
         if not e.get("ai_provenance"):
             continue
         src = (e.get("metadata") or {}).get("acquisition_source") or ""
-        if not src.startswith(AI_DECLARABLE_SOURCE_PREFIX):
+        if not src.startswith(AI_DECLARABLE_SOURCE_PREFIXES):
             problems.append(
                 f"asset {e['id']} ({e.get('title')!r}) declares "
                 f"ai_provenance={e['ai_provenance']!r} but its provenance is "
@@ -591,6 +726,8 @@ def main() -> int:
     corrections = load(corrections_doc) if corrections_doc.is_file() else []
     declarations_doc = args.upgrades / f"ai-declarations.{args.site}.json"
     declarations = load(declarations_doc) if declarations_doc.is_file() else []
+    reconcile_doc = args.upgrades / f"manifest-reconcile.{args.site}.json"
+    reconcile = load(reconcile_doc) if reconcile_doc.is_file() else {}
     profile = load(args.profile)
     posts = load(args.posts)
 
@@ -606,6 +743,13 @@ def main() -> int:
     changed, problems = apply_replacements(profile, reps)
     n_assets, n_repaired = merge_added(profile, add_a)
     n_posts = merge_posts(posts, add_p)
+    # LAST of the asset passes. The reconcile document is the archive
+    # share's advantage (#1275), and the share reflects a library that
+    # has already been through replacement, correction and merge — so
+    # applying it before them would let a later pass overwrite the very
+    # values it exists to restore.
+    n_reconciled, n_filled = apply_manifest_reconcile(profile, reconcile)
+    n_deduped, dup_ids = dedupe_posts(posts)
     problems += audit(profile, posts, reps, add_a, add_p)
     # A declaration naming an id this profile does not hold is a
     # PROBLEM, not a shrug. The failure it guards against is silent by
@@ -622,12 +766,17 @@ def main() -> int:
         print(f"correction  : {n:5d}  {desc}", file=sys.stderr)
     for aid, outcome in declared:
         print(f"ai-declare  : {aid}  {outcome}", file=sys.stderr)
-    print(f"assets      : {before_assets} -> {len(profile)} (+{n_assets})",
-          file=sys.stderr)
-    print(f"posts       : {before_posts} -> {len(posts)} (+{n_posts})",
+    print(f"assets      : {before_assets} -> {len(profile)} "
+          f"(+{n_assets} merged, +{n_reconciled} reconciled)", file=sys.stderr)
+    print(f"posts       : {before_posts} -> {len(posts)} "
+          f"(+{n_posts} merged, -{n_deduped} duplicate id row(s))", file=sys.stderr)
+    print(f"reconcile   : {n_filled} value(s) filled from the share (#1275)",
           file=sys.stderr)
     print(f"media_url   : {n_repaired} existing record(s) backfilled (#602)",
           file=sys.stderr)
+    if dup_ids:
+        print(f"duplicate id(s) collapsed: {', '.join(dup_ids[:8])}"
+              f"{' …' if len(dup_ids) > 8 else ''}", file=sys.stderr)
 
     if problems:
         print(f"\n{len(problems)} PROBLEM(S):", file=sys.stderr)
@@ -639,12 +788,16 @@ def main() -> int:
 
     if args.check:
         # In --check mode nothing may have needed doing.
-        drift = n_assets or n_posts or n_repaired or any(n for _, n in corrected)
+        drift = (n_assets or n_posts or n_repaired or n_reconciled or n_filled
+                 or n_deduped or any(n for _, n in corrected))
         if drift:
             print("\nFAIL: profile is not upgraded — re-assembly would drop "
-                  f"{n_assets} assets and {n_posts} posts, and {n_repaired} "
+                  f"{n_assets} assets and {n_posts} posts, {n_repaired} "
                   "record(s) are missing the media_url that makes them "
-                  "re-fetchable. Run without --check.", file=sys.stderr)
+                  f"re-fetchable, the share's reconcile document is short by "
+                  f"{n_reconciled} asset(s)/{n_filled} value(s) "
+                  f"(#1275), and {n_deduped} post row(s) still share an id "
+                  "with another. Run without --check.", file=sys.stderr)
             return 1
         print("\nOK: profile already reflects the upgrade.", file=sys.stderr)
         return 0

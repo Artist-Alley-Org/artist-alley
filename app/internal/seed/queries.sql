@@ -298,6 +298,29 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 ON CONFLICT DO NOTHING
 RETURNING id;
 
+-- name: SeedGetAssetIDByID :one
+-- Recovery path for SeedInsertAsset's ON CONFLICT DO NOTHING (#1290).
+--
+-- ⛔ TWO DIFFERENT CONFLICTS ARRIVE AT THAT ONE `DO NOTHING`, and they
+-- need opposite handling:
+--
+--   id pkey             a RESUMED run. The row IS this manifest entry.
+--                       It must go back into the seeder's id map or every
+--                       later phase behaves as though the asset does not
+--                       exist.
+--   owner+file_hash     a byte-identical sibling the same owner already
+--                       holds. There is no row for THIS manifest id, the
+--                       collapse is correct, and skipping is right.
+--
+-- Conflating them is what made a fresh post lose an existing member: on
+-- an incremental re-seed, `applyPosts` resolves members out of the map
+-- that `applyAssets` fills, so a post added to the catalogue after the
+-- first seed silently dropped every member that already existed — and a
+-- post whose members ALL existed was skipped entirely, as a no-member
+-- post. The posts phase already recovers this way on its own conflict;
+-- the assets phase did not.
+SELECT id FROM assets WHERE id = $1;
+
 -- name: SeedInsertAssetCompanion :exec
 -- Attach a companion blob (bin buffer / texture / .mtl) to a seeded
 -- asset under its declared relative path so multi-file glTF/OBJ models

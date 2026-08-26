@@ -39,7 +39,8 @@ func runSweepFixtures(args []string) error {
 		"actually delete. Omit for a dry run, which reports what WOULD be removed "+
 			"and rolls back without writing")
 	cataloguePath := fs.String("catalogue", "seed/profiles",
-		"catalogue directory; dataset.collections.json names the real collections")
+		"catalogue directory; dataset.collections.json names the real "+
+			"collections and studio-*.posts.json the real posts")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -51,7 +52,7 @@ func runSweepFixtures(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	seedCollections, err := loadSeedCollectionNames(*cataloguePath)
+	cat, err := loadSeedCatalogue(*cataloguePath)
 	if err != nil {
 		return err
 	}
@@ -64,9 +65,10 @@ func runSweepFixtures(args []string) error {
 
 	fmt.Printf("database : %s\n", cfg.DBName)
 	fmt.Printf("mode     : %s\n", map[bool]string{true: "APPLY (deletes rows)", false: "DRY RUN (no writes)"}[*apply])
-	fmt.Printf("catalogue: %s (%d real collection names)\n\n", *cataloguePath, len(seedCollections))
+	fmt.Printf("catalogue: %s (%d real collection names, %d real post ids)\n\n",
+		*cataloguePath, len(cat.CollectionNames), len(cat.PostIDs))
 
-	rep, rErr := fixturesweep.Run(ctx, pool, seedCollections, *apply)
+	rep, rErr := fixturesweep.Run(ctx, pool, cat, *apply)
 	if rep != nil {
 		fmt.Print(rep.String())
 	}
@@ -85,6 +87,73 @@ func runSweepFixtures(args []string) error {
 			"sweep (storage_sweep_runs) is what reclaims orphaned bytes.\n")
 	}
 	return nil
+}
+
+// loadSeedCatalogue reads what the seed profiles say is REAL, rather
+// than hardcoding it, so the rules track the dataset instead of drifting
+// from it — which is precisely how the posts rule came to claim that
+// "fixture posts are all authored by the bootstrap admin" long after
+// #1270 stopped making that true (#1276).
+func loadSeedCatalogue(dir string) (fixturesweep.Catalogue, error) {
+	names, err := loadSeedCollectionNames(dir)
+	if err != nil {
+		return fixturesweep.Catalogue{}, err
+	}
+	ids, err := loadSeedPostIDs(dir)
+	if err != nil {
+		return fixturesweep.Catalogue{}, err
+	}
+	return fixturesweep.Catalogue{CollectionNames: names, PostIDs: ids}, nil
+}
+
+// loadSeedPostIDs reads the real post ids out of the per-studio post
+// profiles. Both studios, because a stack may hold either site and the
+// protected set has to cover whichever it holds — a post id missing from
+// the set is a REAL post the sweep would stop protecting.
+//
+// ⛔ It refuses on an empty result for the same reason the collections
+// loader does: sweeping with an empty protected set classifies the whole
+// table as fixtures. That is the shape of an unrecoverable mistake, and
+// "the file moved" must not be able to cause it.
+func loadSeedPostIDs(dir string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	var read int
+	for _, name := range []string{"studio-a.posts.json", "studio-b.posts.json"} {
+		path := filepath.Join(dir, name)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// One site's profile may legitimately be absent on a
+				// trimmed checkout; ALL of them absent is not.
+				continue
+			}
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+		read++
+		var entries []struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		for _, e := range entries {
+			if e.ID != "" && !seen[e.ID] {
+				seen[e.ID] = true
+				out = append(out, e.ID)
+			}
+		}
+	}
+	if read == 0 {
+		return nil, fmt.Errorf(
+			"no studio-*.posts.json under %s; refusing to sweep with an empty "+
+				"protected set (pass -catalogue if the seed profiles live elsewhere)", dir)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf(
+			"%s named no posts; refusing to sweep with an empty protected set", dir)
+	}
+	return out, nil
 }
 
 // loadSeedCollectionNames reads the real collection names from the seed

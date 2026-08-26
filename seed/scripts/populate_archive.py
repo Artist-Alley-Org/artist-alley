@@ -78,6 +78,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import manifest_guard as mg
+
 # Source roots whose bytes already sit at the destination. The copier
 # verifies these instead of copying them — there is no LOCAL source to
 # copy FROM. See the handling in the copy loop for what each means.
@@ -561,6 +563,86 @@ def resolve_model_companions(model_path: Path) -> list[str]:
     return [rel for rel in declared if (base / rel).is_file()]
 
 
+def check_destination(args, profile: list[dict]) -> bool:
+    """Compare the profile against what it is about to overwrite (#1275).
+
+    Returns True when the run may proceed. Prints the comparison either
+    way — the issue asks for the diff to be REPORTED before any write,
+    not only when it refuses, because "nothing would be lost" is the
+    fact an operator most needs and least often gets.
+
+    ⚠️ Both files are checked, not just the manifest. `--posts` is copied
+    over `<dest>/posts.json` by the same run, and a post that disappears
+    from the wall is exactly as published and exactly as silent as an
+    asset that disappears from the manifest.
+    """
+    print("\nchecking destination against the profile (#1275)", file=sys.stderr)
+    pairs = [("MANIFEST.json", profile, args.dest / "MANIFEST.json")]
+    if args.posts is not None:
+        try:
+            posts = json.loads(args.posts.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print(f"error: --posts {args.posts}: {e}", file=sys.stderr)
+            return False
+        pairs.append(("posts.json", posts, args.dest / "posts.json"))
+
+    verdicts = []
+    for label, source, dest_path in pairs:
+        try:
+            dest = mg.load_json_list(dest_path)
+        except ValueError as e:
+            # Unreadable is NOT empty. Treating a truncated destination
+            # as "nothing to lose" would wave through the one run that
+            # most needs stopping.
+            print(f"error: {e}\n"
+                  "  Refusing: a destination that cannot be read cannot be "
+                  "compared, and an uncomparable destination is not a safe "
+                  "one to overwrite.", file=sys.stderr)
+            return False
+        if dest is None:
+            print(f"  {label}: destination does not exist yet — first publish, "
+                  "nothing to lose", file=sys.stderr)
+            # Still worth reporting duplicates: a first publish can ship
+            # a coin toss just as easily as a re-publish can.
+            cmp = mg.compare(source, None, label)
+        else:
+            cmp = mg.compare(source, dest, label)
+            print(mg.format_report(cmp), file=sys.stderr)
+        verdicts.append(cmp)
+
+    dup = [c for c in verdicts if c.duplicates]
+    if dup:
+        for c in dup:
+            print(f"\nerror: {c.label} holds {len(c.duplicates)} id(s) used by more "
+                  f"than one record.", file=sys.stderr)
+            print(mg.format_report(c), file=sys.stderr)
+        print("\n⛔ REFUSING. A manifest cannot represent two records under one "
+              "id: `aa seed` keys on the stable id and silently takes whichever "
+              "it reads last. This is not overridable by --allow-regression, "
+              "because there is no version of it that is the intended change.\n"
+              "  Fix: python3 seed/scripts/apply_upgrade.py --site <site> "
+              "--profile <profile> --posts <posts>", file=sys.stderr)
+        return False
+
+    lost = [c for c in verdicts if c.losses]
+    if not lost:
+        return True
+    if args.allow_regression:
+        print("\n⚠️  --allow-regression given: publishing anyway, and the loss "
+              "above is real and unrecoverable.", file=sys.stderr)
+        return True
+    print("\n⛔ REFUSING: the destination holds content the profile does not, "
+          "and this run would overwrite it.\n"
+          "  The destination is an OUTPUT of this pipeline, so the fix is to "
+          "make the PROFILE correct — editing the destination is undone by the "
+          "next run (see apply_upgrade.py).\n"
+          "    python3 seed/scripts/apply_upgrade.py --site <site> "
+          "--profile <profile> --posts <posts>\n"
+          "  If the removal really is the intended change, say so with "
+          "--allow-regression.", file=sys.stderr)
+    return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--local-source", required=True, type=Path,
@@ -598,6 +680,14 @@ def main() -> int:
                              "missing at <dest>, even when they carry a "
                              "metadata.media_url (#602). Restores the old "
                              "verify-only behaviour.")
+    parser.add_argument("--allow-regression", action="store_true",
+                        help="Publish even though <dest> holds records or "
+                             "values the profile does not (#1275). The loss "
+                             "is still printed in full. Use this ONLY when "
+                             "the removal is the intended change — the "
+                             "default refusal exists because the destination "
+                             "is the PUBLISHED dataset and the loss is "
+                             "silent and unrecoverable.")
     args = parser.parse_args()
 
     sources: dict[str, Path] = {
@@ -622,6 +712,21 @@ def main() -> int:
     profile = json.loads(args.profile.read_text(encoding="utf-8"))
     if not isinstance(profile, list):
         print(f"error: profile root must be a list of assets", file=sys.stderr)
+        return 2
+
+    # ⛔ THE GUARD (#1275). Before anything is written — and in --dry-run
+    # too, because a dry run that passes while a real run would destroy
+    # data is worse than no dry run at all.
+    #
+    # This step copies the profile straight over <dest>/MANIFEST.json and
+    # <dest>/posts.json, and regenerates metadata.csv from the profile's
+    # path map. So whatever the profile says wins, INCLUDING when the
+    # profile says less. Measured 2026-08-26, the committed profile was
+    # behind the published site_a by one whole asset and 12,096 values
+    # across 1,947 records, and running this script would have deleted
+    # them without a word. `apply_upgrade.py` reconciles the profile;
+    # this refuses the run when it has not been.
+    if not check_destination(args, profile):
         return 2
 
     # Fail loudly and early rather than per-file. A profile that
