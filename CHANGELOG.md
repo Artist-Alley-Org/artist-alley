@@ -9,6 +9,12 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Work made with AI now says so.** An asset whose maker declared it AI-generated or AI-assisted
+  carries a small purple marker — in the asset viewer, and on cards in the browse feed. The two
+  declarations look different from each other, and an asset whose maker said nothing shows nothing
+  at all: silence is not a claim that no AI was involved. In the default grid view the marker
+  appears with the rest of the card's overlay, on hover or keyboard focus (#1243, PR #1289).
+
 - **Editing a collection is one place now.** Its name, description, who can see it, its custom
   fields and both of its cover pictures all live in a single dialog with a single Save — no more
   stepping between pages, and no separate "Set cover" menu item that opened the same dialog
@@ -106,7 +112,10 @@ where applicable, otherwise note "no-spec-impact."
   turned into posts — an automatically generated post is a publication nobody authored, with a
   title nobody wrote (#1161, PR #1232).
 
-### Fixed
+- **The viewer no longer comes up blank when a browser blocks site data.** Reading a saved
+  preference could throw rather than simply return nothing, which took out the whole viewer shell
+  before it drew. Preferences now fall back to their defaults: the controls work for the session
+  and just forget (#1255, PR #1289).
 
 - **Keyboard focus stays inside an open dialog.** Pressing Tab used to walk out of a dialog and
   into the page behind it, which was both disorienting and a false promise to screen readers.

@@ -342,8 +342,29 @@ evidence available: a market that built the missing state by hand.**
    The chrome lives in a real **`thumb-band-top`** — a 49px bar with a bottom border — not in
    absolute corner overlays. `card-kind` is the media-type badge, so we already match ArtStation's
    one-badge-and-it-is-media-type card. **An AI marker is the first non-media-type signal the card
-   has ever carried**, and it goes in the band's currently-empty middle, immediately left of the
-   Select control. It stays a single small icon for that reason.
+   has ever carried**, and it stays a single small icon for that reason.
+
+   ⚠️ **The band is ONE of five modes, and not the default** (`ViewMode = grid | masonry |
+   thumbnail | list | feed`, `DEFAULT_MODE = 'grid'`). Shipped in PR #1289 (`e5a53ad3`) as:
+
+   | mode | where the marker goes | at rest |
+   |---|---|---|
+   | `grid` (default), wide `masonry` | inside #1111's overlay | **hover/focus-revealed** |
+   | `thumbnail` | the band, beside the checkbox | persistent |
+   | `feed` | beside the kind badge | persistent |
+   | `list` | `PostListTable`'s title cell | persistent |
+   | compact `masonry` | no badge — hover tooltip only | — |
+
+   ⭐ **Decided: the default mode's marker is hover-revealed, and that is deliberate.** #1111's
+   ruling is that a grid card shows the artwork and nothing else at rest; making the AI badge the
+   single exception would re-litigate a shipped decision, and the owner's own concern on 2026-08-25
+   was that *"we might be adding too much on the cards and tiles"*. ArtStation shows **nothing**
+   about AI on a card at all, so hover-plus-viewer is already more disclosure than the incumbent.
+   The overlay reveals on hover **and** `:focus-visible`, so the keyboard path is not excluded.
+
+   ⛔ **A restricted cover withholds the AI badge too** (`PostCard.svelte:1079`) — the declaration
+   of something a reader may not look at is not theirs to know. That is the derived-copies rule
+   applied to this field.
 3. **Only `generated` and `assisted` are ever marked**, distinguishably from each other. `none` and
    `null` render nothing. ⛔ This ADR's core prohibition extends to the marker's *accessible name
    and tooltip*: neither may render absence as "no AI".
