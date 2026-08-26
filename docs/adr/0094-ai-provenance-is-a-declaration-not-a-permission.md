@@ -323,10 +323,27 @@ evidence available: a market that built the missing state by hand.**
 
 1. **The asset viewer carries the label.** A claim about the work belongs where the work is being
    looked at, not on a thumbnail in a wall of thumbnails.
-2. **Cards and tiles carry at most a small icon**, next to the multi-select checkbox. Our card
-   already holds a checkbox, a `⋮` menu and `CardKindBadge` — which is exactly ArtStation's
-   media-type badge — so an AI marker is the **first non-media-type badge the card has ever
-   carried**, and it stays minimal for that reason.
+2. **Cards and tiles carry at most a small icon, placed in the card's top band.**
+
+   ⚠️ **Corrected 2026-08-25, measured in the browser rather than read from comments.** An earlier
+   revision of this amendment described the card from `AssetCard.svelte`. **Browse does not mount
+   `AssetCard`** — the root route imports `PostCard`, and `PostCard`'s own comments disagree with
+   each other about placement (`:683` says the checkbox is top-right, `:707` says top-left). The
+   measured anatomy of a 160×317 browse tile, card-relative:
+
+   | control | position | where |
+   |---|---|---|
+   | `card-kind` badge | x=7, y=12, 27×27 | **top band, LEFT** |
+   | Select checkbox | x=125, y=3, 28×44 | **top band, RIGHT** |
+   | thumbnail | y=50, 158×158 | image |
+   | title / author / date | y=216…y=271 | metadata stack |
+   | `card-menu-trigger` (`⋮`) | x=123, y=278, 24×24 | **BOTTOM of the metadata stack** |
+
+   The chrome lives in a real **`thumb-band-top`** — a 49px bar with a bottom border — not in
+   absolute corner overlays. `card-kind` is the media-type badge, so we already match ArtStation's
+   one-badge-and-it-is-media-type card. **An AI marker is the first non-media-type signal the card
+   has ever carried**, and it goes in the band's currently-empty middle, immediately left of the
+   Select control. It stays a single small icon for that reason.
 3. **Only `generated` and `assisted` are ever marked**, distinguishably from each other. `none` and
    `null` render nothing. ⛔ This ADR's core prohibition extends to the marker's *accessible name
    and tooltip*: neither may render absence as "no AI".
