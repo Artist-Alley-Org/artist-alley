@@ -19,16 +19,58 @@ func quoteLiteral(v string) string {
 	return "'" + strings.ReplaceAll(v, "'", "''") + "'"
 }
 
-// argsFor returns the parameter list for a composed statement. Only the
-// collections rule references $1 (the seed catalogue names); sending a
-// parameter to a statement that does not use it makes Postgres reject
-// the bind outright ("bind message supplies 1 parameters, but prepared
-// statement requires 0"), so the arg list has to follow the SQL.
-func argsFor(sql string, seedCollections []string) []any {
-	if strings.Contains(sql, "$1") {
-		return []any{seedCollections}
+// CatalogueParam names which catalogue value a rule binds as $1.
+type CatalogueParam string
+
+const (
+	// ParamNone is a rule that takes no parameter — its predicates are
+	// pure SQL over the table's own columns.
+	ParamNone CatalogueParam = ""
+	// ParamCollectionNames binds dataset.collections.json's names.
+	ParamCollectionNames CatalogueParam = "collections"
+	// ParamPostIDs binds the ids in studio-*.posts.json.
+	ParamPostIDs CatalogueParam = "posts"
+)
+
+// Catalogue is what the seed profiles say is REAL, passed into the rules
+// as bind parameters so they track the dataset instead of drifting from
+// it.
+type Catalogue struct {
+	CollectionNames []string // dataset.collections.json
+	PostIDs         []string // studio-*.posts.json
+}
+
+// argsFor returns the parameter list for one composed statement.
+//
+// ⛔ EVERY parameterised rule uses $1, and $1 means whatever that rule
+// says it means. A global numbering — collections at $1, posts at $2 —
+// looks tidier and does not work: Postgres derives a statement's
+// parameter count from the highest $n it mentions, so a posts predicate
+// referencing only $2 makes the server expect two parameters and then
+// fail to infer a type for the $1 nothing references (42P18, "could not
+// determine data type of parameter $1").
+//
+// ⚠️ IT TAKES THE SQL AS WELL AS THE RULE, and both are load-bearing.
+// The rule says WHICH value $1 means; the statement says WHETHER it
+// mentions $1 at all. The sweep composes four different statements per
+// rule and they do not agree: the census uses Fixture AND Protected, the
+// parent DELETE uses both, but the SATELLITE delete composes only
+// Fixture — and the posts rule's parameter lives in Protected. Deciding
+// from the rule alone sends an argument to a statement with no
+// placeholder ("mismatched param and argument count") and breaks every
+// real -apply run.
+func argsFor(r Rule, sql string, cat Catalogue) []any {
+	if !strings.Contains(sql, "$1") {
+		return nil
 	}
-	return nil
+	switch r.Param {
+	case ParamCollectionNames:
+		return []any{cat.CollectionNames}
+	case ParamPostIDs:
+		return []any{cat.PostIDs}
+	default:
+		return nil
+	}
 }
 
 // TableReport is one rule's census.
@@ -40,6 +82,10 @@ type TableReport struct {
 	Contradiction int64 // rows matching BOTH — any non-zero aborts the sweep
 	Unclassified  int64 // rows matching NEITHER — reported, never deleted
 	Deleted       int64
+
+	// Overlap samples the contradicting rows so the abort can name them
+	// (#1276). Populated only when Contradiction > 0.
+	Overlap []ContradictionRow
 }
 
 // Report is the whole run.
@@ -49,27 +95,68 @@ type Report struct {
 	Applied   bool
 }
 
+// ContradictionRow identifies one row that matched both predicates, so
+// the abort can name it.
+type ContradictionRow struct {
+	ID    string
+	Label string
+}
+
+// TableContradiction is one table's overlap, with a sample of the rows.
+type TableContradiction struct {
+	Table  string
+	N      int64
+	Sample []ContradictionRow
+}
+
+// contradictionSample caps how many rows the abort prints per table.
+// Enough to see the pattern, few enough to read.
+const contradictionSample = 10
+
 // ErrContradiction is returned when a rule's Fixture and Protected
 // predicates both match the same row. It means a rule has drifted into
 // real data, and the sweep refuses to delete anything at all — not just
 // the overlapping rows. A rule that is wrong about one row has given up
 // its claim to be right about the rest.
+//
+// ⚠️ It carries EVERY contradicting table, not the first one. Reporting
+// only the first means an operator fixes one rule, re-runs, and is told
+// about the next — and each round trip on a persistent stack costs a
+// dogfood run to reproduce.
+//
+// It also names the ROWS. The abort used to say "posts: 6 rows", which is
+// true, actionable only by writing SQL, and the reason #1276 sat open
+// while the sweep was unusable after every dogfood run.
 type ErrContradiction struct {
-	Table string
-	N     int64
+	Tables []TableContradiction
 }
 
 func (e *ErrContradiction) Error() string {
-	return fmt.Sprintf(
-		"rule for %s matches %d row(s) as BOTH fixture and protected; refusing to delete "+
-			"anything. The rule has drifted from the data — re-derive it before sweeping.",
-		e.Table, e.N)
+	var b strings.Builder
+	var total int64
+	for _, t := range e.Tables {
+		total += t.N
+	}
+	fmt.Fprintf(&b, "%d row(s) across %d table(s) match BOTH fixture and protected; "+
+		"refusing to delete anything. A rule that is wrong about one row has given up "+
+		"its claim to be right about the rest — re-derive it before sweeping.",
+		total, len(e.Tables))
+	for _, t := range e.Tables {
+		fmt.Fprintf(&b, "\n\n  %s — %d row(s):", t.Table, t.N)
+		for _, r := range t.Sample {
+			fmt.Fprintf(&b, "\n    %s  %s", r.ID, r.Label)
+		}
+		if int64(len(t.Sample)) < t.N {
+			fmt.Fprintf(&b, "\n    … and %d more", t.N-int64(len(t.Sample)))
+		}
+	}
+	return b.String()
 }
 
 // Census counts every rule without modifying anything. It is what the
 // dry run prints, and it also runs before an --apply so the abort
 // happens before the first DELETE.
-func Census(ctx context.Context, q pgx.Tx, seedCollections []string) (*Report, error) {
+func Census(ctx context.Context, q pgx.Tx, cat Catalogue) (*Report, error) {
 	rep := &Report{Satellite: map[string]int64{}}
 	for _, r := range Rules {
 		tr := TableReport{Table: r.Table}
@@ -80,20 +167,56 @@ func Census(ctx context.Context, q pgx.Tx, seedCollections []string) (*Report, e
 			       count(*) FILTER (WHERE (%[1]s) AND (%[2]s)),
 			       count(*) FILTER (WHERE NOT ((%[1]s) OR (%[2]s)))
 			FROM %[3]s`, r.Fixture, r.Protected, r.Table)
-		row := q.QueryRow(ctx, sql, argsFor(sql, seedCollections)...)
+		row := q.QueryRow(ctx, sql, argsFor(r, sql, cat)...)
 		if err := row.Scan(&tr.Total, &tr.Fixture, &tr.Protected,
 			&tr.Contradiction, &tr.Unclassified); err != nil {
 			return nil, fmt.Errorf("census %s: %w", r.Table, err)
+		}
+		if tr.Contradiction > 0 {
+			sample, err := contradictingRows(ctx, q, r, cat)
+			if err != nil {
+				return nil, err
+			}
+			tr.Overlap = sample
 		}
 		rep.Tables = append(rep.Tables, tr)
 	}
 	return rep, nil
 }
 
+// contradictingRows fetches the rows the abort will name. Only ever runs
+// when the census has already counted a non-zero overlap, so the normal
+// path costs nothing.
+func contradictingRows(ctx context.Context, q pgx.Tx, r Rule, cat Catalogue) ([]ContradictionRow, error) {
+	label := r.LabelColumn
+	if label == "" {
+		label = r.IDColumn
+	}
+	sql := fmt.Sprintf(
+		`SELECT %[1]s::text, coalesce(%[2]s::text, '(no %[2]s)')
+		 FROM %[3]s WHERE (%[4]s) AND (%[5]s)
+		 ORDER BY %[1]s LIMIT %[6]d`,
+		r.IDColumn, label, r.Table, r.Fixture, r.Protected, contradictionSample)
+	rows, err := q.Query(ctx, sql, argsFor(r, sql, cat)...)
+	if err != nil {
+		return nil, fmt.Errorf("contradiction sample %s: %w", r.Table, err)
+	}
+	defer rows.Close()
+	var out []ContradictionRow
+	for rows.Next() {
+		var c ContradictionRow
+		if err := rows.Scan(&c.ID, &c.Label); err != nil {
+			return nil, fmt.Errorf("contradiction sample %s: %w", r.Table, err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // Run performs the sweep. With apply=false nothing is written and the
 // transaction is rolled back regardless, so a dry run cannot leave a
 // trace even if a predicate turns out to be expensive or wrong.
-func Run(ctx context.Context, pool *pgxpool.Pool, seedCollections []string, apply bool) (*Report, error) {
+func Run(ctx context.Context, pool *pgxpool.Pool, cat Catalogue, apply bool) (*Report, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -101,15 +224,22 @@ func Run(ctx context.Context, pool *pgxpool.Pool, seedCollections []string, appl
 	// Rolled back on every path that does not explicitly commit.
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	rep, err := Census(ctx, tx, seedCollections)
+	rep, err := Census(ctx, tx, cat)
 	if err != nil {
 		return nil, err
 	}
-	// Abort BEFORE any delete if a rule overlaps real data.
+	// Abort BEFORE any delete if a rule overlaps real data. EVERY
+	// contradicting table is collected, not the first — an operator who
+	// is told about one at a time pays a dogfood run per round trip.
+	var bad []TableContradiction
 	for _, tr := range rep.Tables {
 		if tr.Contradiction > 0 {
-			return rep, &ErrContradiction{Table: tr.Table, N: tr.Contradiction}
+			bad = append(bad, TableContradiction{
+				Table: tr.Table, N: tr.Contradiction, Sample: tr.Overlap})
 		}
+	}
+	if len(bad) > 0 {
+		return rep, &ErrContradiction{Tables: bad}
 	}
 	if !apply {
 		return rep, nil
@@ -137,7 +267,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, seedCollections []string, appl
 			sql := fmt.Sprintf(
 				`DELETE FROM %s WHERE %s = %s AND %s::text IN (SELECT %s::text FROM %s WHERE %s)`,
 				s.Table, s.KindColumn, quoteLiteral(r.Kind), s.Column, r.IDColumn, r.Table, r.Fixture)
-			tag, dErr := tx.Exec(ctx, sql, argsFor(sql, seedCollections)...)
+			tag, dErr := tx.Exec(ctx, sql, argsFor(r, sql, cat)...)
 			if dErr != nil {
 				return rep, fmt.Errorf("satellite %s <- %s: %w", s.Table, r.Table, dErr)
 			}
@@ -172,7 +302,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, seedCollections []string, appl
 		// them cannot turn into data loss.
 		sql := fmt.Sprintf(`DELETE FROM %s WHERE (%s) AND NOT (%s)`,
 			rule.Table, rule.Fixture, rule.Protected)
-		tag, dErr := tx.Exec(ctx, sql, argsFor(sql, seedCollections)...)
+		tag, dErr := tx.Exec(ctx, sql, argsFor(*rule, sql, cat)...)
 		if dErr != nil {
 			return rep, fmt.Errorf("delete %s: %w", rule.Table, dErr)
 		}
