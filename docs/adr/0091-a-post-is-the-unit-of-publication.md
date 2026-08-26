@@ -306,3 +306,34 @@ any future widening of this endpoint.
   removing that schema silently renamed the four constants to bare `Active` / `Any` / `Archived` /
   `Deprecated` at package scope. Pinned with `x-enum-varnames` at the spec, because a generated
   identifier should not depend on what other schemas happen to exist.
+
+---
+
+## Amendment, 2026-08-25 (#1264, PR #1286): a collection has ONE editing surface
+
+An owner ruling, recorded here because it is a decision about the model's *surface* and nothing
+else captured it — `reference_rs_collection_edit_baseline` holds the prior art, but prior art is
+not a decision.
+
+> *"I really think we shouldn't have more than one menu to edit collections. We can put all editing
+> of collection items, including all cover types, in that same modal."* — 2026-08-23
+
+**Decided: `EditCollectionModal` is the single collection-editing surface.** One entry point, one
+Save, every setting and every cover slot inside it. The "Set cover" menu entry is retired — it had
+deep-linked the *same* modal to a second page, so closing it appeared to reveal a different dialog.
+#1220's sizing requirement folded in rather than being fixed separately: the panel is sized by
+content, so a sparse picker shrinks it (`1536×593`) instead of leaving a dead band, and both cover
+slots render identically (`1536×816`).
+
+**What this does NOT decide.** ResourceSpace's `collection_edit.php` carries 14 controls including
+nested collections (`parent`), collaborative editing (`allow_changes`), deletion protection
+(`cant_delete`) and a cover chosen by *strategy* (most-popular / most-recent / manual). ⭐ The
+strategy idea is genuinely better than our binary of "an explicit cover, else a mosaic" — our
+mosaic already *is* "newest members", it simply is not a choice anyone can make. **None of that is
+adopted here.** The ruling is about one surface, not about new capabilities; each remains an
+unfiled decision.
+
+⚠️ **Creating stays separate.** `NewCollectionModal` was deliberately left alone: creating and
+editing are different acts, and #914 made create *smaller* on purpose by dropping its visibility
+fieldset (`CollectionCreate` defaults to `private`). If that is ever revisited, revisit it as a
+decision rather than as tidying.

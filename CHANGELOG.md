@@ -9,6 +9,12 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Editing a collection is one place now.** Its name, description, who can see it, its custom
+  fields and both of its cover pictures all live in a single dialog with a single Save — no more
+  stepping between pages, and no separate "Set cover" menu item that opened the same dialog
+  somewhere else. The dialog also sizes itself to what it is showing, so a collection with few
+  pictures to choose from no longer leaves a large empty area (#1264, #1220, PR #1286).
+
 - **The demo library now contains work that is honestly labelled as AI-made.** Forty-five images
   generated in-house — four for each team, in forty-five different styles — carry a maker's
   declaration saying so, which is what lets the "hide AI-made work" switch actually demonstrate the
@@ -101,6 +107,11 @@ where applicable, otherwise note "no-spec-impact."
   title nobody wrote (#1161, PR #1232).
 
 ### Fixed
+
+- **Keyboard focus stays inside an open dialog.** Pressing Tab used to walk out of a dialog and
+  into the page behind it, which was both disorienting and a false promise to screen readers.
+  Focus now cycles within the dialog, backwards as well as forwards, and follows the topmost one
+  when dialogs are stacked (#1269, PR #1286).
 
 - **Rebuilding the demo data no longer strips the administrator's access.** Resetting and
   re-seeding an instance left the admin account able to sign in but holding no permissions at all,
