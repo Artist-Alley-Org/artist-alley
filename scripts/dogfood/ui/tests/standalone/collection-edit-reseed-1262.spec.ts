@@ -51,13 +51,29 @@ interface CollectionRow {
   updated_at: string;
 }
 
-/** Open the edit dialog from the collection page's More menu. */
+/** Open the edit dialog from the collection page's More menu.
+ *
+ *  ⛔ THE MENU HAS ONE EDITING ENTRY (#1264). "Set cover" opened this
+ *  same dialog deep-linked to its cover page and is gone; so is the
+ *  disabled "Manage members" stub beside it. Asserted here rather than
+ *  in a test of its own because every test in this file walks past the
+ *  menu, so a second entry reappearing cannot go unnoticed — and on the
+ *  pre-#1264 build this fails immediately.
+ *
+ *  ONE SURFACE (#1264): the identity fields and both cover slots are on
+ *  screen together, so the visibility ladder this spec drives and the
+ *  cover editor share one dialog and one Save. */
 async function openEditModal(page: import('@playwright/test').Page, id: string) {
   await page.goto(`/collections/${id}`);
   await page.getByTestId('collection-detail-more-button').first().click();
+  await expect(page.getByTestId('collection-detail-set-cover-menuitem')).toHaveCount(0);
   await page.getByTestId('collection-detail-edit-menuitem').first().click();
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible();
+  // The cover editor is part of THIS surface, not a page behind a
+  // button — the seed below has to hold with it mounted and its own
+  // fetches in flight.
+  await expect(dialog.getByTestId('collection-cover-editor')).toBeVisible();
   return dialog;
 }
 

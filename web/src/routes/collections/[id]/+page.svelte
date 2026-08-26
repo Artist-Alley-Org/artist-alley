@@ -138,11 +138,6 @@
   // the same to a visitor.
   let notFound = $state(false);
   let editOpen = $state(false);
-  // #1027 — which part of the edit modal to land on. Reset on close
-  // rather than on open, so "Edit details" after "Set cover" starts at
-  // the top of the form again instead of inheriting the last entry
-  // point.
-  let editFocusCover = $state(false);
   let shareOpen = $state(false);
   let copyFeedback = $state(false);
 
@@ -544,34 +539,29 @@
             >
               {t('collections.edit')}
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              disabled
-              class="block w-full px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-              title={t('collections.manage_members_soon')}
-            >
-              {t('collections.manage_members')}
-            </button>
-            <!-- #1027 — live as of the cover picker. This entry was a
-                 disabled "coming soon" stub placed here in anticipation;
-                 leaving it disabled in the same release that ships the
-                 picker would tell a curator the feature does not exist
-                 while the working control sat behind "Edit details".
-                 It opens the SAME modal, focused on the cover section,
-                 so there is one edit surface and one save path. -->
-            <button
-              type="button"
-              role="menuitem"
-              onclick={() => {
-                editFocusCover = true;
-                editOpen = true;
-              }}
-              data-testid="collection-detail-set-cover-menuitem"
-              class="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface"
-            >
-              {t('collections.set_cover')}
-            </button>
+            <!-- ⛔ TWO ENTRIES ARE GONE FROM HERE (#1264), and the
+                 owner's ruling is the whole reason: "I really think we
+                 shouldn't have more than one menu to edit collections.
+                 We can put all editing of collection items, including
+                 all cover types, in that same modal."
+
+                 "Set cover" set `focusCover` and opened THIS dialog
+                 deep-linked to its cover page. It was added by #1027
+                 because leaving a disabled stub in the release that
+                 shipped the picker would have told a curator the
+                 feature did not exist while the working control sat
+                 behind "Edit details". That reason expired when the
+                 cover block became visible on the edit surface itself,
+                 and what the entry actually produced was the owner's
+                 report: "when I click set cover, it shows a limited
+                 view of what I can set… when I close it, I see the edit
+                 collection modal."
+
+                 "Manage members" was a disabled "coming soon" stub in
+                 the same menu — a second editing entry that could not
+                 be used. A menu item that refuses is not a feature
+                 announcement; the work it stands for is tracked in the
+                 issue that will ship it. -->
           {/if}
           {#if canDeleteCollection}
             {#if isOwner}
@@ -681,11 +671,7 @@
   <EditCollectionModal
     open={editOpen}
     collection={collection}
-    focusCover={editFocusCover}
-    onclose={() => {
-      editOpen = false;
-      editFocusCover = false;
-    }}
+    onclose={() => (editOpen = false)}
     onsaved={handleSaved}
   />
   <ShareEntityModal
