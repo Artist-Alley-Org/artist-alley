@@ -104,6 +104,36 @@ is the thing that has to be correct, which is what `apply_upgrade.py`
 fixes. `seed/scripts/test_dataset_upgrade.py` fails if the committed
 profiles ever drift back.
 
+### ⛔ The publish guard (#1275)
+
+That "the per-site files are OUTPUTS" property has a sharp edge, and it
+drew blood. The per-site `MANIFEST.json` kept being edited by hand, so by
+2026-08-26 the **published** site_a was ahead of the committed profile by
+one whole asset and **12,096 values across 1,947 records** — and the next
+ordinary `populate_archive.py` run would have deleted every one of them
+without printing a word.
+
+Two things now stand in the way:
+
+- **`manifest_guard.py`** compares the profile against `<dest>/MANIFEST.json`
+  and `<dest>/posts.json` **before any write, in `--dry-run` too**, and
+  refuses if the destination holds records or values the profile does not.
+  A missing key, an emptied value and a *different* value are three cases:
+  the first two are losses and refuse; the third is an edit and is allowed,
+  because a profile that cannot correct what it has published is useless.
+  `--allow-regression` overrides it when the removal really is the point.
+  Duplicate ids in the source are refused outright and are **not**
+  overridable — a manifest cannot hold two records under one id, and
+  `aa seed` silently takes whichever it reads last.
+- **`seed/upgrades/manifest-reconcile.site_a.json`** carries the published
+  site's content back into the profile so the guard can ever pass. The pass
+  that applies it (`apply_manifest_reconcile`) **can only add, never
+  replace**, which is what makes it safe to re-run over a later edit.
+
+⛔ **Do not hand-edit a per-site `MANIFEST.json` again.** It is an output.
+Put the change in `seed/upgrades/` and let `apply_upgrade.py` fold it into
+the profile, which is the only side the pipeline reads.
+
 Three rules are encoded in the tooling because each one already caused a
 silent data bug — see the module docstrings for the full story:
 

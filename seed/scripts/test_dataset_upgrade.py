@@ -36,12 +36,14 @@ import audit_uncatalogued as au     # noqa: E402
 import kenney_hq as hq              # noqa: E402
 import kenney_pack_sources as kps   # noqa: E402
 import pexels_gameplay as px        # noqa: E402
+import manifest_guard as mg         # noqa: E402
 import populate_archive as pa       # noqa: E402
 import resolve_media_urls as rmu    # noqa: E402
 import studio_balance as sb         # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 UPGRADES = SCRIPTS.parent / "upgrades"
+PROFILES = SCRIPTS.parent / "profiles"
 
 
 # ---------------------------------------------------------------------------
@@ -1668,6 +1670,226 @@ class TestPackPageSlugs(unittest.TestCase):
     def test_overrides_win(self):
         self.assertEqual(kps.page_for("2D assets/Platformer Characters 1"),
                          "https://kenney.nl/assets/platformer-characters")
+
+
+class TestManifestGuard(unittest.TestCase):
+    """#1275 — publishing must not be able to make the destination poorer.
+
+    The bug was silent by construction: `populate_archive.py` copies the
+    profile over the site's MANIFEST.json, so a profile that had fallen
+    behind the published dataset deleted the difference without a word.
+    """
+
+    @staticmethod
+    def _rec(rid, **kw):
+        base = {"id": rid, "title": f"asset {rid}", "field_values": {}}
+        base.update(kw)
+        return base
+
+    def test_identical_sides_lose_nothing(self):
+        recs = [self._rec("a", field_values={"k": "v"}), self._rec("b")]
+        cmp = mg.compare(recs, json.loads(json.dumps(recs)), "assets")
+        self.assertEqual(cmp.losses, [])
+        self.assertTrue(cmp.ok)
+
+    def test_a_record_only_at_the_destination_is_a_loss(self):
+        cmp = mg.compare([self._rec("a")], [self._rec("a"), self._rec("b")], "assets")
+        self.assertEqual([x.kind for x in cmp.losses], [mg.MISSING_RECORD])
+        self.assertEqual(cmp.losses[0].record_id, "b")
+        self.assertFalse(cmp.ok)
+
+    def test_the_source_being_ahead_is_not_a_loss(self):
+        """The normal direction. A profile with MORE than the site is what
+        publishing is FOR, and the guard must not stand in its way."""
+        cmp = mg.compare([self._rec("a"), self._rec("b")], [self._rec("a")], "assets")
+        self.assertEqual(cmp.losses, [])
+        self.assertEqual(cmp.added, ["b"])
+        self.assertTrue(cmp.ok)
+
+    def test_missing_key_emptied_value_and_changed_value_are_three_cases(self):
+        src = [self._rec("a", field_values={"kept": "x", "emptied": ""},
+                         license="CC0 1.0")]
+        dst = [self._rec("a", field_values={"kept": "y", "emptied": "was here",
+                                            "gone": "also here"},
+                         license="CC-BY 4.0")]
+        cmp = mg.compare(src, dst, "assets")
+        kinds = sorted((x.kind, x.key) for x in cmp.losses)
+        self.assertEqual(kinds, [(mg.EMPTIED_VALUE, "field_values.emptied"),
+                                 (mg.MISSING_KEY, "field_values.gone")])
+        # A different non-empty value on both sides is an EDIT. Refusing
+        # it would make the profile unable to correct anything it has
+        # already published, which is the opposite of the point.
+        self.assertEqual(sorted(x.key for x in cmp.changes),
+                         ["field_values.kept", "license"])
+        self.assertFalse(cmp.ok)
+
+    def test_false_is_a_value_not_an_absence(self):
+        """`mature: false` is a declaration. 1,947 of them were about to
+        be dropped, and an `if not value` check would have called that
+        nothing."""
+        cmp = mg.compare([self._rec("a")], [self._rec("a", mature=False)], "assets")
+        self.assertEqual([x.key for x in cmp.losses], ["mature"])
+        self.assertFalse(mg.is_empty(False))
+        self.assertFalse(mg.is_empty(0))
+        self.assertTrue(mg.is_empty(""))
+        self.assertTrue(mg.is_empty({}))
+
+    def test_duplicate_ids_in_the_source_are_refused(self):
+        cmp = mg.compare([self._rec("a"), self._rec("a")], [self._rec("a")], "posts")
+        self.assertEqual(cmp.duplicates, {"a": 2})
+        self.assertFalse(cmp.ok)
+
+    def test_a_destination_that_does_not_exist_yet_is_a_first_publish(self):
+        cmp = mg.compare([self._rec("a")], None, "assets")
+        self.assertEqual(cmp.losses, [])
+        self.assertTrue(cmp.ok)
+
+    def test_an_unreadable_destination_raises_rather_than_reading_empty(self):
+        """⛔ "Unreadable" must never collapse to "empty". That mistake
+        turns the guard into a rubber stamp on exactly the run that most
+        needs stopping."""
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "MANIFEST.json"
+            p.write_text('[{"id": "a"},')
+            with self.assertRaises(ValueError) as cm:
+                mg.load_json_list(p)
+            self.assertIn("MANIFEST.json", str(cm.exception))
+            self.assertIsNone(mg.load_json_list(Path(td) / "absent.json"))
+
+
+class TestManifestReconcile(unittest.TestCase):
+    """#1275 — the repair that lets the guard ever pass."""
+
+    def test_the_pass_can_only_add_never_replace(self):
+        """The safety property, stated as a test. A repair tool aimed at
+        published data must not be able to overwrite a later edit."""
+        profile = [_asset("a", "images/a.png", field_values={"keep": "mine"},
+                          license="CC-BY 4.0")]
+        doc = {"fill": [{"id": "a", "field_values": {"keep": "theirs",
+                                                     "add": "new"},
+                         "license": "CC0 1.0", "mature": False}]}
+        added, filled = up.apply_manifest_reconcile(profile, doc)
+        self.assertEqual((added, filled), (0, 2))
+        self.assertEqual(profile[0]["field_values"], {"keep": "mine", "add": "new"})
+        self.assertEqual(profile[0]["license"], "CC-BY 4.0")
+        self.assertIs(profile[0]["mature"], False)
+
+    def test_it_is_idempotent(self):
+        profile = [_asset("a", "images/a.png")]
+        doc = {"added": [_asset("b", "images/b.png")],
+               "fill": [{"id": "a", "field_values": {"k": "v"}}]}
+        first = up.apply_manifest_reconcile(profile, doc)
+        snapshot = json.loads(json.dumps(profile))
+        second = up.apply_manifest_reconcile(profile, doc)
+        self.assertEqual(first, (1, 1))
+        self.assertEqual(second, (0, 0))
+        self.assertEqual(profile, snapshot)
+
+    def test_an_empty_value_counts_as_absent(self):
+        profile = [_asset("a", "images/a.png", field_values={"blank": ""},
+                          description="")]
+        doc = {"fill": [{"id": "a", "field_values": {"blank": "filled"},
+                         "description": "written"}]}
+        _, filled = up.apply_manifest_reconcile(profile, doc)
+        self.assertEqual(filled, 2)
+        self.assertEqual(profile[0]["field_values"]["blank"], "filled")
+
+    def test_a_fill_naming_an_unknown_id_is_skipped_not_invented(self):
+        profile = [_asset("a", "images/a.png")]
+        _, filled = up.apply_manifest_reconcile(
+            profile, {"fill": [{"id": "ghost", "field_values": {"k": "v"}}]})
+        self.assertEqual((len(profile), filled), (1, 0))
+
+
+class TestPostDeduplication(unittest.TestCase):
+    """#1275 — two posts under one id is a coin toss, not a duplicate.
+
+    The assembler derives a roundup's id from (team, anchor asset), which
+    is not unique across the several roundups it emits per team. `aa seed`
+    keys on the stable id, so one of the two silently never exists.
+    """
+
+    def test_the_richest_row_survives(self):
+        posts = [{"id": "x", "title": "8 drops", "asset_ids": [1, 2, 3]},
+                 {"id": "x", "title": "10 drops", "asset_ids": [1, 2, 3, 4]},
+                 {"id": "y", "title": "other", "asset_ids": []}]
+        removed, ids = up.dedupe_posts(posts)
+        self.assertEqual((removed, ids), (1, ["x"]))
+        self.assertEqual([p["title"] for p in posts], ["10 drops", "other"])
+
+    def test_ties_break_on_first_appearance(self):
+        posts = [{"id": "x", "title": "first", "asset_ids": [1]},
+                 {"id": "x", "title": "second", "asset_ids": [1]}]
+        up.dedupe_posts(posts)
+        self.assertEqual([p["title"] for p in posts], ["first"])
+
+    def test_a_clean_list_is_untouched(self):
+        posts = [{"id": "a", "asset_ids": []}, {"id": "b", "asset_ids": []}]
+        self.assertEqual(up.dedupe_posts(posts), (0, []))
+        self.assertEqual([p["id"] for p in posts], ["a", "b"])
+
+    def test_the_committed_post_profiles_hold_no_duplicate_ids(self):
+        """On the real data, because that is where they were. Twelve rows
+        in studio-a and four in studio-b shared an id with a row that
+        disagreed with them."""
+        for name in ("studio-a", "studio-b"):
+            posts = json.loads((PROFILES / f"{name}.posts.json").read_text())
+            ids = [p["id"] for p in posts]
+            dupes = {i for i in ids if ids.count(i) > 1} if len(ids) != len(set(ids)) else set()
+            self.assertEqual(dupes, set(), f"{name}.posts.json")
+
+
+class TestSiteAProfileIsNotBehindItsPublishedSite(unittest.TestCase):
+    """#1275, on the committed data and WITHOUT the archive share.
+
+    The share is not reachable from CI, so the reconcile document is what
+    carries the published site's content into the repo. These assert the
+    outcome the guard needs in order to ever let a publish through.
+    """
+
+    def test_the_reconcile_document_is_committed(self):
+        doc = json.loads((UPGRADES / "manifest-reconcile.site_a.json").read_text())
+        self.assertTrue(doc.get("_why"), "the document must say why it exists")
+        self.assertEqual(len(doc["added"]), 1)
+        self.assertEqual(doc["added"][0]["id"],
+                         "0407bb0c-1d4d-58f9-a4a3-e9b0174956c7")
+        self.assertGreater(len(doc["fill"]), 1900)
+
+    def test_the_reconcile_document_never_replaces_a_committed_value(self):
+        """The add-only property, checked against the profile it targets
+        rather than against a fixture — a document that had drifted into
+        overwriting real values would pass a synthetic test."""
+        profile = {a["id"]: a
+                   for a in json.loads((PROFILES / "studio-a.assets.json").read_text())}
+        doc = json.loads((UPGRADES / "manifest-reconcile.site_a.json").read_text())
+        for entry in doc["fill"]:
+            target = profile.get(entry["id"])
+            self.assertIsNotNone(target, entry["id"])
+            for key, val in entry.items():
+                if key == "id":
+                    continue
+                if isinstance(val, dict):
+                    for k2, v2 in val.items():
+                        have = (target.get(key) or {}).get(k2)
+                        self.assertTrue(have == v2 or up._empty(have),
+                                        f"{entry['id']}.{key}.{k2} would be replaced")
+                else:
+                    have = target.get(key)
+                    self.assertTrue(have == val or up._empty(have),
+                                    f"{entry['id']}.{key} would be replaced")
+
+    def test_every_site_a_asset_carries_field_values(self):
+        """100 records had none at all, and a publish would have taken the
+        other 1,847's partial sets down with them."""
+        assets = json.loads((PROFILES / "studio-a.assets.json").read_text())
+        bare = [a["id"] for a in assets if not a.get("field_values")]
+        self.assertEqual(bare, [], f"{len(bare)} asset(s) carry no field values")
+        self.assertEqual(len(assets), 2005)
+
+    def test_the_extra_published_asset_is_in_the_profile(self):
+        assets = {a["id"] for a in
+                  json.loads((PROFILES / "studio-a.assets.json").read_text())}
+        self.assertIn("0407bb0c-1d4d-58f9-a4a3-e9b0174956c7", assets)
 
 
 if __name__ == "__main__":

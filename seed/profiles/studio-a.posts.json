@@ -249,39 +249,6 @@
   "layer": "A"
  },
  {
-  "id": "051a8c21-67f7-d678-a77c-c8ab169dd745",
-  "title": "VFX sprint roundup — 6 drops",
-  "description": "VFX team output across 1 project(s): Project Mirror. Mix of image.",
-  "author_username": "ahmed.khalil",
-  "collection_name": "Project Mirror",
-  "team_name": "VFX",
-  "brand_workspace": null,
-  "tags": [
-   "lighting",
-   "mask",
-   "vfx"
-  ],
-  "asset_ids": [
-   "553de2e8-23b4-2290-9707-7c2214842dc5",
-   "f1c2af73-9b82-2609-7644-413d602bf2d0",
-   "957c5ea4-14a4-1d6f-81b1-806713252017",
-   "4503969c-6374-fc04-1547-eab98e1e3a68",
-   "bf636935-6a74-fa29-4e4d-1e0ef74622b5",
-   "de643a05-fe9b-46a8-b677-921a372e7530"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "team_roundup",
-  "workflow_state": "approved",
-  "sensitivity_tier": "team",
-  "created_at": "2025-04-08T18:58:13Z",
-  "updated_at": "2026-05-08T19:25:00Z",
-  "studio": "a",
-  "layer": "A"
- },
- {
   "id": "548a3c17-85e1-733b-7031-9cb2c0ba93a3",
   "title": "Project Mirror milestone alpha — 10 assets across 1 team(s)",
   "description": "Milestone Alpha for Project Mirror. Pulls work from VFX — image.",
@@ -3905,43 +3872,6 @@
  },
  {
   "id": "7f82b9d9-ec90-48a2-de43-63ccbbe0593c",
-  "title": "Props sprint roundup — 8 drops",
-  "description": "Props team output across 1 project(s): Project Echo. Mix of 3d, image.",
-  "author_username": "diego.vasquez",
-  "collection_name": "Project Echo",
-  "team_name": "Props",
-  "brand_workspace": null,
-  "tags": [
-   "fantasy",
-   "kit",
-   "lowpoly",
-   "props"
-  ],
-  "asset_ids": [
-   "21577ef6-7b62-11ea-87d5-bf50880785b9",
-   "f893cb39-a237-c045-a943-2cb995bb34c7",
-   "f505acee-619a-98ea-a0f6-e45e62f4b6c1",
-   "a34d716a-8d60-c232-0bd4-1e438349866b",
-   "802e2df3-59ca-dd32-358a-f0fd9372db3f",
-   "08c73ffe-a497-5436-ee8e-713f49329fc1",
-   "57fdaaee-462f-7743-fa2f-a80f99eff811",
-   "f873ab95-3533-d85d-af82-7eb99cbf2b1f"
-  ],
-  "asset_types_in_post": [
-   "3d",
-   "image"
-  ],
-  "is_mixed_type": true,
-  "post_kind": "team_roundup",
-  "workflow_state": "approved",
-  "sensitivity_tier": "team",
-  "created_at": "2025-07-28T01:32:59Z",
-  "updated_at": "2026-04-25T12:03:08Z",
-  "studio": "a",
-  "layer": "A"
- },
- {
-  "id": "7f82b9d9-ec90-48a2-de43-63ccbbe0593c",
   "title": "Props sprint roundup — 10 drops",
   "description": "Props team output across 1 project(s): Project Echo. Mix of 3d, audio, image.",
   "author_username": "diego.vasquez",
@@ -7227,51 +7157,6 @@
    "f7c409e9-f363-3b23-3c6c-3f494700806e",
    "136da009-2300-d570-6a3c-ba2fdcdb10f8",
    "4b4a3022-7c20-f978-2017-e43dca00870a"
-  ],
-  "asset_types_in_post": [
-   "3d",
-   "audio",
-   "document",
-   "image"
-  ],
-  "is_mixed_type": true,
-  "post_kind": "team_roundup",
-  "workflow_state": "approved",
-  "sensitivity_tier": "team",
-  "created_at": "2025-11-03T08:32:12Z",
-  "updated_at": "2026-05-17T02:05:49Z",
-  "studio": "shared",
-  "layer": "A"
- },
- {
-  "id": "132996a1-e704-6f38-29f0-d1588b7915ed",
-  "title": "Reference sprint roundup — 9 drops",
-  "description": "Reference team output across 2 project(s): Internet Reference, Project Echo. Mix of 3d, audio, document, image.",
-  "author_username": "sam.obrien",
-  "collection_name": "Internet Reference",
-  "team_name": "Reference",
-  "brand_workspace": null,
-  "tags": [
-   "audio",
-   "public-domain",
-   "reference",
-   "rpg",
-   "sfx",
-   "source:khronos-sample-models",
-   "source:polyhaven",
-   "source:project-gutenberg",
-   "source:wikimedia-commons"
-  ],
-  "asset_ids": [
-   "2113e8d3-82df-7f88-0be7-59c67dac514f",
-   "1a0f7957-ad50-5f28-3e1f-61dbdcaf68bb",
-   "ab8d206c-b467-c52a-d73c-7917407c0df9",
-   "a3b49969-02e6-ed6e-1b0b-e39a89d77bc0",
-   "1c96b658-e73b-c4d1-e0df-f7d8378ebcc4",
-   "1d607e18-f27e-99ba-be0c-2ebdcc61aeac",
-   "28c20aaf-8888-3a72-ebfd-08aaeb1c22c1",
-   "d1c774ef-00ee-d345-f668-fdbfc54d734b",
-   "22f58f1f-60c4-8926-0b54-e60e6e936c0c"
   ],
   "asset_types_in_post": [
    "3d",
@@ -10647,45 +10532,6 @@
  },
  {
   "id": "ecb1e52c-2a0e-4a4b-cdb6-b98e7a53e066",
-  "title": "UI sprint roundup — 6 drops",
-  "description": "UI team output across 2 project(s): Engine Core, Project Echo. Mix of document, font, image.",
-  "author_username": "priya.sharma",
-  "collection_name": "Engine Core",
-  "team_name": "UI",
-  "brand_workspace": null,
-  "tags": [
-   "font",
-   "frames",
-   "franchise:engine",
-   "handwritten",
-   "rpg",
-   "typeface",
-   "ui"
-  ],
-  "asset_ids": [
-   "d760eae5-c0fe-8e96-e0d6-79ad56fb8f03",
-   "1137f12f-b16e-2fdf-8e9d-e8c80d2dde01",
-   "c9ef6d7f-1f59-87d4-f879-d63af0b2c019",
-   "8b3f35b8-88ec-66a8-4de7-85df38d42ee9",
-   "7b9e58e6-e7c8-7042-ddaa-519dc99a0546",
-   "df05bd13-2938-f214-67bf-e704b94924ed"
-  ],
-  "asset_types_in_post": [
-   "document",
-   "font",
-   "image"
-  ],
-  "is_mixed_type": true,
-  "post_kind": "team_roundup",
-  "workflow_state": "approved",
-  "sensitivity_tier": "team",
-  "created_at": "2026-02-08T04:05:49Z",
-  "updated_at": "2026-04-20T21:25:26Z",
-  "studio": "shared",
-  "layer": "A"
- },
- {
-  "id": "ecb1e52c-2a0e-4a4b-cdb6-b98e7a53e066",
   "title": "UI sprint roundup — 8 drops",
   "description": "UI team output across 2 project(s): Engine Core, Project Echo. Mix of document, font, image.",
   "author_username": "priya.sharma",
@@ -12368,143 +12214,6 @@
   ],
   "is_mixed_type": false,
   "post_kind": "solo_showcase",
-  "workflow_state": "approved",
-  "sensitivity_tier": "team",
-  "created_at": "2026-03-27T12:04:23Z",
-  "updated_at": "2026-05-16T04:11:23Z",
-  "studio": "a",
-  "layer": "A"
- },
- {
-  "id": "c5e2c06d-1f77-317a-a5fb-dff78f1ba4d1",
-  "title": "Textures sprint roundup — 7 drops",
-  "description": "Textures team output across 1 project(s): Project Echo. Mix of image.",
-  "author_username": "maja.novak",
-  "collection_name": "Project Echo",
-  "team_name": "Textures",
-  "brand_workspace": null,
-  "tags": [
-   "fantasy",
-   "texture",
-   "textures",
-   "tiling"
-  ],
-  "asset_ids": [
-   "adf55fa2-be50-6a3e-0b22-50fcd9d0f950",
-   "5dcd7237-c7f3-f8ac-a9a1-5cd3877b4f4c",
-   "e1ae4eba-6c15-f0e8-ef7d-795d8f8175bf",
-   "639f61a7-316b-f153-5958-4ae7389068ea",
-   "7c3375f8-a99f-ad6b-56ec-042a7da3f455",
-   "ef2849ca-bd2c-d4b6-27f5-dae362ece7f1",
-   "33ae5820-355a-d2ca-fc67-12fe05eda21f"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "team_roundup",
-  "workflow_state": "approved",
-  "sensitivity_tier": "team",
-  "created_at": "2026-03-27T12:04:23Z",
-  "updated_at": "2026-05-16T04:11:23Z",
-  "studio": "a",
-  "layer": "A"
- },
- {
-  "id": "c5e2c06d-1f77-317a-a5fb-dff78f1ba4d1",
-  "title": "Textures sprint roundup — 5 drops",
-  "description": "Textures team output across 1 project(s): Project Echo. Mix of image.",
-  "author_username": "maja.novak",
-  "collection_name": "Project Echo",
-  "team_name": "Textures",
-  "brand_workspace": null,
-  "tags": [
-   "fantasy",
-   "texture",
-   "textures",
-   "tiling"
-  ],
-  "asset_ids": [
-   "e1ae4eba-6c15-f0e8-ef7d-795d8f8175bf",
-   "ef2849ca-bd2c-d4b6-27f5-dae362ece7f1",
-   "7c3375f8-a99f-ad6b-56ec-042a7da3f455",
-   "33ae5820-355a-d2ca-fc67-12fe05eda21f",
-   "5dcd7237-c7f3-f8ac-a9a1-5cd3877b4f4c"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "team_roundup",
-  "workflow_state": "approved",
-  "sensitivity_tier": "team",
-  "created_at": "2026-03-27T12:04:23Z",
-  "updated_at": "2026-05-16T04:11:23Z",
-  "studio": "a",
-  "layer": "A"
- },
- {
-  "id": "c5e2c06d-1f77-317a-a5fb-dff78f1ba4d1",
-  "title": "Textures sprint roundup — 6 drops",
-  "description": "Textures team output across 1 project(s): Project Echo. Mix of image.",
-  "author_username": "maja.novak",
-  "collection_name": "Project Echo",
-  "team_name": "Textures",
-  "brand_workspace": null,
-  "tags": [
-   "fantasy",
-   "texture",
-   "textures",
-   "tiling"
-  ],
-  "asset_ids": [
-   "639f61a7-316b-f153-5958-4ae7389068ea",
-   "565f681b-5a40-529f-0290-f21d51649ae4",
-   "ef2849ca-bd2c-d4b6-27f5-dae362ece7f1",
-   "e1ae4eba-6c15-f0e8-ef7d-795d8f8175bf",
-   "33ae5820-355a-d2ca-fc67-12fe05eda21f",
-   "7c3375f8-a99f-ad6b-56ec-042a7da3f455"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "team_roundup",
-  "workflow_state": "approved",
-  "sensitivity_tier": "team",
-  "created_at": "2026-03-27T12:04:23Z",
-  "updated_at": "2026-05-16T04:11:23Z",
-  "studio": "a",
-  "layer": "A"
- },
- {
-  "id": "c5e2c06d-1f77-317a-a5fb-dff78f1ba4d1",
-  "title": "Textures sprint roundup — 7 drops",
-  "description": "Textures team output across 1 project(s): Project Echo. Mix of image.",
-  "author_username": "maja.novak",
-  "collection_name": "Project Echo",
-  "team_name": "Textures",
-  "brand_workspace": null,
-  "tags": [
-   "fantasy",
-   "texture",
-   "textures",
-   "tiling"
-  ],
-  "asset_ids": [
-   "e1ae4eba-6c15-f0e8-ef7d-795d8f8175bf",
-   "639f61a7-316b-f153-5958-4ae7389068ea",
-   "33ae5820-355a-d2ca-fc67-12fe05eda21f",
-   "5dcd7237-c7f3-f8ac-a9a1-5cd3877b4f4c",
-   "7c3375f8-a99f-ad6b-56ec-042a7da3f455",
-   "adf55fa2-be50-6a3e-0b22-50fcd9d0f950",
-   "565f681b-5a40-529f-0290-f21d51649ae4"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "team_roundup",
   "workflow_state": "approved",
   "sensitivity_tier": "team",
   "created_at": "2026-03-27T12:04:23Z",
@@ -15199,38 +14908,6 @@
   "layer": "A"
  },
  {
-  "id": "7d4a182e-13ab-0ca5-161e-b12de2c3b0ee",
-  "title": "VFX sprint roundup — 5 drops",
-  "description": "VFX team output across 1 project(s): Project Mirror. Mix of image.",
-  "author_username": "nikolai.petrov",
-  "collection_name": "Project Mirror",
-  "team_name": "VFX",
-  "brand_workspace": null,
-  "tags": [
-   "lighting",
-   "mask",
-   "vfx"
-  ],
-  "asset_ids": [
-   "c796a0df-15b1-f4bf-267a-137d353d1305",
-   "f3f795ff-0a51-d5d4-af53-cb8773621618",
-   "1224d8ea-c8d2-2587-9c1d-6bc96244b6e8",
-   "7e2888c2-9e3b-2712-7607-3367322ee89f",
-   "bf636935-6a74-fa29-4e4d-1e0ef74622b5"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "team_roundup",
-  "workflow_state": "in_review",
-  "sensitivity_tier": "team",
-  "created_at": "2026-05-07T03:25:37Z",
-  "updated_at": "2026-05-22T16:08:28Z",
-  "studio": "a",
-  "layer": "A"
- },
- {
   "id": "ea6fee88-5085-97aa-758e-f6a408966ff7",
   "title": "Structure Wall (3d) — 3-part set",
   "description": "3-piece 3d set from Project Echo, owned by Environment. Variants and siblings kept together as one delivery.",
@@ -16448,40 +16125,6 @@
   "layer": "A"
  },
  {
-  "id": "41074773-1090-a4b2-ea04-93a6a0c49cb8",
-  "title": "Project Compass sprint 14 — 6 assets across 1 team(s)",
-  "description": "Sprint 14 for Project Compass. Pulls work from Environment — image.",
-  "author_username": "priya.sharma",
-  "collection_name": "Project Compass",
-  "team_name": "Environment",
-  "brand_workspace": "Mirror",
-  "tags": [
-   "environment",
-   "icon",
-   "minimap",
-   "ui"
-  ],
-  "asset_ids": [
-   "f7720608-ff21-df5f-3fb7-a27f4e0f00d7",
-   "c0dc6bbd-d3b2-e4d5-9d32-53525fc8e66c",
-   "ccc00e1e-9412-b4d9-0d77-cd526d43e04a",
-   "c2b56d4d-4032-bd42-bb96-0e75159a2c7f",
-   "722ab2bd-dcc6-87f9-2688-6d53dc838ecd",
-   "30382779-644e-6903-b066-8c4a8daf8312"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "project_sprint",
-  "workflow_state": "in_review",
-  "sensitivity_tier": "team",
-  "created_at": "2026-05-20T17:04:40Z",
-  "updated_at": "2026-05-21T23:17:21Z",
-  "studio": "a",
-  "layer": "A"
- },
- {
   "id": "dc29bdbd-06e5-1a1f-de2f-8e27bbb6172a",
   "title": "Project Compass final review — 10 assets across 1 team(s)",
   "description": "Final Review for Project Compass. Pulls work from Environment — image.",
@@ -16654,41 +16297,6 @@
  },
  {
   "id": "3280ac75-5d49-1fc6-cb9d-740908dccf4d",
-  "title": "Tech Art sprint roundup — 5 drops",
-  "description": "Tech Art team output across 1 project(s): Engine Core. Mix of image.",
-  "author_username": "nikolai.petrov",
-  "collection_name": "Engine Core",
-  "team_name": "Tech Art",
-  "brand_workspace": null,
-  "tags": [
-   "checker",
-   "devart",
-   "franchise:engine",
-   "placeholder",
-   "prototype",
-   "tech-art"
-  ],
-  "asset_ids": [
-   "a8ee3241-cab1-c136-9b7d-65a8dcc2ab03",
-   "03ef36e5-8970-ccba-311c-0d0c835d2517",
-   "ad6c6e16-f8e6-b5c1-cd77-73322a9f52a3",
-   "5bfad577-e429-9ed3-81b3-c7c6b4cfcc19",
-   "66a5e57b-e7c3-7619-8c5d-dabd5e07c26a"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "team_roundup",
-  "workflow_state": "archived",
-  "sensitivity_tier": "team",
-  "created_at": "2026-05-21T03:26:15Z",
-  "updated_at": "2026-05-23T11:53:45Z",
-  "studio": "shared",
-  "layer": "A"
- },
- {
-  "id": "3280ac75-5d49-1fc6-cb9d-740908dccf4d",
   "title": "Tech Art sprint roundup — 10 drops",
   "description": "Tech Art team output across 1 project(s): Engine Core. Mix of image.",
   "author_username": "nikolai.petrov",
@@ -16714,43 +16322,6 @@
    "5b03f163-ba12-15d5-6fe4-c814449326d5",
    "0c00bb51-7388-ae28-bc39-0cf993d45479",
    "e17983a0-74e1-f666-9827-9c967cf21499"
-  ],
-  "asset_types_in_post": [
-   "image"
-  ],
-  "is_mixed_type": false,
-  "post_kind": "team_roundup",
-  "workflow_state": "archived",
-  "sensitivity_tier": "team",
-  "created_at": "2026-05-21T03:26:15Z",
-  "updated_at": "2026-05-23T11:53:45Z",
-  "studio": "shared",
-  "layer": "A"
- },
- {
-  "id": "3280ac75-5d49-1fc6-cb9d-740908dccf4d",
-  "title": "Tech Art sprint roundup — 7 drops",
-  "description": "Tech Art team output across 1 project(s): Engine Core. Mix of image.",
-  "author_username": "nikolai.petrov",
-  "collection_name": "Engine Core",
-  "team_name": "Tech Art",
-  "brand_workspace": null,
-  "tags": [
-   "checker",
-   "devart",
-   "franchise:engine",
-   "placeholder",
-   "prototype",
-   "tech-art"
-  ],
-  "asset_ids": [
-   "a8ee3241-cab1-c136-9b7d-65a8dcc2ab03",
-   "5bfad577-e429-9ed3-81b3-c7c6b4cfcc19",
-   "e17983a0-74e1-f666-9827-9c967cf21499",
-   "926d2dc0-cf31-0ebf-f8aa-daf5fb62650f",
-   "02e024df-ca98-41f3-bae4-f7b4270adad7",
-   "7eb23aea-31bc-0d05-1d1e-add39cbc0127",
-   "66a5e57b-e7c3-7619-8c5d-dabd5e07c26a"
   ],
   "asset_types_in_post": [
    "image"
