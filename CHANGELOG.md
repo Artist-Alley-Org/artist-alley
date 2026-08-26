@@ -9,6 +9,9 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The sample library now carries every kind of AI declaration**, including "assisted" and an
+  explicit "no AI", so each one can be seen rather than only tested (#1290, PR #1297).
+
 - **Work made with AI now says so.** An asset whose maker declared it AI-generated or AI-assisted
   carries a small purple marker — in the asset viewer, and on cards in the browse feed. The two
   declarations look different from each other, and an asset whose maker said nothing shows nothing
@@ -276,6 +279,17 @@ where applicable, otherwise note "no-spec-impact."
   (PR #1175, refining #1158/#1171).
 
 ### Fixed
+
+- **The dataset build can no longer quietly undo published work.** Rebuilding the archive used to
+  copy the repository's copy of the catalogue over the published one, with nothing comparing the
+  two first — which would have removed one asset outright and stripped catalogue details from
+  nearly two thousand more. The build now refuses to overwrite a published archive that holds
+  content the repository does not, and the repository's copy has been brought back up to date
+  (#1275, PR #1297).
+- **The fixture cleanup tool runs again.** It had been refusing to delete anything after any test
+  run, because one test attached test-shaped posts to a real contributor and the tool correctly
+  would not guess. The refusal was right and is unchanged — it now names the rows it is refusing
+  over, and the test no longer creates them (#1276, PR #1297).
 
 - **Every menu works from the keyboard.** The shared menu component's default styling made its
   buttons invisible to keyboard focus — on the browse page not one menu could be reached by Tab,
