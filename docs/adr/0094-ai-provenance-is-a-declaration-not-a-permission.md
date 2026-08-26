@@ -293,3 +293,45 @@ direction applies to the plumbing, not only to the semantics.
 member of many posts, so **declaring a single asset AI-generated re-derives every post it appears
 in**. That is correct — the declaration is about the file — but it means the blast radius of one
 checkbox is not one post, and #1243's per-asset labelling will meet the same fact.
+
+---
+
+## Amendment, 2026-08-25 (#1243): where the declaration is SHOWN
+
+The ADR decided what the declaration *is* and what it may not do. It never said where it appears.
+Deciding that needed prior art, so it was read rather than reasoned about.
+
+**ArtStation, read live from their JSON API 2026-08-25** (50 feed cards, 11 project details;
+baseline in `reference_artstation_ai_labelling_baseline`):
+
+- **No structured AI or provenance field exists** — not on the card's 22 fields, not on the
+  detail's 32.
+- **The AI signal is a free-text tag, and it is the platform's most common one**: `NoAI` on **8 of
+  11** sampled projects, outranking every craft tag. No *positive* AI tag appeared at all.
+- **Card badges are media-type only** — six booleans: `image`, `video`, `video_clip`, `model3d`,
+  `marmoset`, `pano`.
+- **Adult content is structured and still does not ride the card** (`adult_content`,
+  `admin_adult_content`, `hide_as_adult`, with no matching badge).
+
+⭐ **The prevalence is the finding.** `NoAI` beating every craft tag means artists overwhelmingly
+want to make this declaration and the incumbent gave them nowhere structured to put it, so they
+typed it into a keyword field. It is a **negative** declaration — precisely this ADR's `none`, the
+value IPTC declines to standardise. **Decision 1's four-state enum is validated by the strongest
+evidence available: a market that built the missing state by hand.**
+
+**Decided:**
+
+1. **The asset viewer carries the label.** A claim about the work belongs where the work is being
+   looked at, not on a thumbnail in a wall of thumbnails.
+2. **Cards and tiles carry at most a small icon**, next to the multi-select checkbox. Our card
+   already holds a checkbox, a `⋮` menu and `CardKindBadge` — which is exactly ArtStation's
+   media-type badge — so an AI marker is the **first non-media-type badge the card has ever
+   carried**, and it stays minimal for that reason.
+3. **Only `generated` and `assisted` are ever marked**, distinguishably from each other. `none` and
+   `null` render nothing. ⛔ This ADR's core prohibition extends to the marker's *accessible name
+   and tooltip*: neither may render absence as "no AI".
+
+⚠️ **What this does NOT decide.** ArtStation models how-a-thing-was-made as `software_items` — a
+tool list where an AI tool would sit beside Photoshop as equipment rather than as provenance. That
+is a genuinely different framing and it is **not adopted here**; we have no tool-list concept, and
+adding one is its own unfiled decision.
