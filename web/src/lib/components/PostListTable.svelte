@@ -17,6 +17,7 @@
   import { site } from '$stores/site.svelte';
   import { t } from '$stores/lang.svelte';
   import ColumnPicker from '$components/ColumnPicker.svelte';
+  import AiProvenanceBadge from '$components/AiProvenanceBadge.svelte';
 
   interface AssetSummary {
     id: string;
@@ -85,6 +86,12 @@
     members: PostMember[];
     created_at: string;
     updated_at: string;
+    /** The post's DERIVED AI declaration (#1243, ADR 0094) — the
+     *  LABELLING fact, positive on ANY contributor, so a marked row
+     *  may well be a MIXED post. Absent means UNDECLARED, never
+     *  `none`. Optional because it is absent on the wire for every
+     *  undeclared post. */
+    ai_provenance?: string | null;
   }
 
   interface Props {
@@ -613,7 +620,37 @@
                   {/if}
                 </div>
               {:else if col.id === 'title'}
-                <span class="truncate text-fg" title={post.title || ''}>{post.title || t('browse.list.untitled')}</span>
+                <!-- ═══ #1243 in LIST ═══════════════════════════════
+                     The fifth view mode renders no card at all — this
+                     table is a different component with different
+                     chrome — so "put the icon in the band" has no
+                     meaning here and the marker has to be placed on
+                     its own terms.
+
+                     IN THE TITLE CELL rather than as a new column, and
+                     that is a decision rather than the lazy option. A
+                     column would be `defaultVisible: false` (twelve are
+                     already declared and eight show), which is a marker
+                     nobody sees; making it visible by default would
+                     spend a whole track on a fact true of a small
+                     fraction of rows and push the columns people came
+                     for off a narrow screen. Beside the title it is
+                     with the post's identity, which is where the other
+                     four densities put it too.
+
+                     `shrink-0` + the title's `truncate`: a long title
+                     gives up pixels before the icon does, or the one
+                     row that carries a declaration is the one where it
+                     is clipped away. -->
+                <span class="flex min-w-0 items-center gap-1.5">
+                  <AiProvenanceBadge
+                    value={post.ai_provenance}
+                    variant="inline"
+                    tooltipKey={post.id}
+                    class="shrink-0"
+                  />
+                  <span class="truncate text-fg" title={post.title || ''}>{post.title || t('browse.list.untitled')}</span>
+                </span>
               {:else if col.id === 'author'}
                 <!-- The name, not the ref (#1099). `@14` was what this
                      rendered before, because the component's local Post

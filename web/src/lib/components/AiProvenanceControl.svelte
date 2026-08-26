@@ -41,7 +41,7 @@
    * the write.
    */
   import { t } from '$stores/lang.svelte';
-  import type { AiProvenance } from '$stores/upload.svelte';
+  import type { AiProvenance } from '$lib/aiProvenance';
 
   interface Props {
     value: AiProvenance;

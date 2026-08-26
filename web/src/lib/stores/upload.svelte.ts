@@ -27,6 +27,10 @@ import { t } from '$stores/lang.svelte';
 import type { components } from '$api/schema';
 import type { FieldDefault } from '$lib/fieldDefaults';
 import { putStorageObject } from '$lib/util/storageUpload';
+// #1243 — the declaration's type moved to the module that owns its
+// DISPLAY rule, so the write side and the read side cannot disagree
+// about what the four states are.
+import type { AiProvenance } from '$lib/aiProvenance';
 
 type AssetCreate = components['schemas']['AssetCreate'];
 
@@ -55,12 +59,6 @@ export interface PendingFieldValue {
 
 // ---- Types ----------------------------------------------------------------
 
-/**
- * The maker's AI declaration (#1167, ADR 0094). `null` is the fourth
- * state and the default: UNDECLARED. It is a different statement from
- * `'none'` and the difference is load-bearing — see UploadRow.
- */
-export type AiProvenance = 'none' | 'assisted' | 'generated' | null;
 
 /** What a stored model declares it needs, and what of that is missing (#754). */
 export interface CompanionRequirements {

@@ -22,6 +22,11 @@
 // duration (mirrored from controller every render frame), current
 // chapter index (derived), cover URL.
 
+// #1255 — the shared web-storage accessor. This module used to hold a
+// private `readLS`/`writeLS` pair, and four sibling sessions held
+// byte-identical copies of it; one implementation now, imported by name.
+import { readStoredJSON, writeStoredJSON } from '$lib/util/storage';
+
 export interface AudiobookChapter {
   id: number;
   /** Start time in seconds. */
@@ -209,18 +214,6 @@ const DEFAULTS = {
   autoAdvance: true,
 };
 
-function readLS<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    if (v == null) return fallback;
-    return JSON.parse(v) as T;
-  } catch {
-    return fallback;
-  }
-}
-function writeLS(key: string, value: unknown): void {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
-}
 
 /** Format seconds → H:MM:SS or M:SS for display. */
 export function fmtClock(s: number): string {
@@ -258,47 +251,47 @@ export function createAudiobookSession(opts: AudiobookSessionOpts): AudiobookSes
     album: null,
     siblings: [],
     currentSiblingIndex: -1,
-    autoAdvance: readLS<boolean>(G_AUTO_ADVANCE, DEFAULTS.autoAdvance),
+    autoAdvance: readStoredJSON<boolean>(G_AUTO_ADVANCE, DEFAULTS.autoAdvance),
 
     currentTime: 0,
     playing: false,
     loading: true,
     loadError: null,
 
-    speed: readLS<number>(G_SPEED, DEFAULTS.speed),
-    autoRewindS: readLS<number>(G_AUTO_REW, DEFAULTS.autoRewindS),
-    skipBackS: readLS<number>(G_SKIP_BACK, DEFAULTS.skipBackS),
-    skipFwdS: readLS<number>(G_SKIP_FWD, DEFAULTS.skipFwdS),
+    speed: readStoredJSON<number>(G_SPEED, DEFAULTS.speed),
+    autoRewindS: readStoredJSON<number>(G_AUTO_REW, DEFAULTS.autoRewindS),
+    skipBackS: readStoredJSON<number>(G_SKIP_BACK, DEFAULTS.skipBackS),
+    skipFwdS: readStoredJSON<number>(G_SKIP_FWD, DEFAULTS.skipFwdS),
     sleepTimer: 'off',
     sleepRemaining: null,
 
-    resumePos: readLS<number>(RESUME_KEY(opts.assetId), 0),
-    bookmarks: readLS<AudiobookBookmark[]>(BOOKMARKS_KEY(opts.assetId), []),
+    resumePos: readStoredJSON<number>(RESUME_KEY(opts.assetId), 0),
+    bookmarks: readStoredJSON<AudiobookBookmark[]>(BOOKMARKS_KEY(opts.assetId), []),
   });
 
   function setSpeed(v: number) {
     const c = Math.max(0.5, Math.min(4.0, Math.round(v * 100) / 100));
     state.speed = c;
-    writeLS(G_SPEED, c);
+    writeStoredJSON(G_SPEED, c);
   }
   function toggleAutoAdvance() {
     state.autoAdvance = !state.autoAdvance;
-    writeLS(G_AUTO_ADVANCE, state.autoAdvance);
+    writeStoredJSON(G_AUTO_ADVANCE, state.autoAdvance);
   }
   function setAutoRewindS(v: number) {
     const c = Math.max(0, Math.min(30, Math.round(v)));
     state.autoRewindS = c;
-    writeLS(G_AUTO_REW, c);
+    writeStoredJSON(G_AUTO_REW, c);
   }
   function setSkipBackS(v: number) {
     const c = Math.max(5, Math.min(60, Math.round(v)));
     state.skipBackS = c;
-    writeLS(G_SKIP_BACK, c);
+    writeStoredJSON(G_SKIP_BACK, c);
   }
   function setSkipFwdS(v: number) {
     const c = Math.max(5, Math.min(120, Math.round(v)));
     state.skipFwdS = c;
-    writeLS(G_SKIP_FWD, c);
+    writeStoredJSON(G_SKIP_FWD, c);
   }
   function setSleepTimer(m: SleepTimerMode) {
     state.sleepTimer = m;
@@ -331,19 +324,19 @@ export function createAudiobookSession(opts: AudiobookSessionOpts): AudiobookSes
       createdAt: new Date().toISOString(),
     };
     state.bookmarks = [...state.bookmarks, bm].sort((a, b) => a.time - b.time);
-    writeLS(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
+    writeStoredJSON(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
   }
   function removeBookmark(time: number, createdAt: string) {
     state.bookmarks = state.bookmarks.filter(
       (b) => !(b.time === time && b.createdAt === createdAt),
     );
-    writeLS(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
+    writeStoredJSON(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
   }
   function setCurrentBookmarkNote(time: number, createdAt: string, note: string) {
     state.bookmarks = state.bookmarks.map((b) =>
       (b.time === time && b.createdAt === createdAt) ? { ...b, note } : b,
     );
-    writeLS(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
+    writeStoredJSON(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
   }
 
   return Object.assign(state as AudiobookSessionInstance, {
@@ -358,5 +351,5 @@ export function createAudiobookSession(opts: AudiobookSessionOpts): AudiobookSes
  *  playback advances — keeps `resumePos` fresh without writing
  *  every frame. */
 export function persistAudiobookResume(assetId: string, seconds: number) {
-  writeLS(RESUME_KEY(assetId), Math.max(0, Math.round(seconds * 100) / 100));
+  writeStoredJSON(RESUME_KEY(assetId), Math.max(0, Math.round(seconds * 100) / 100));
 }

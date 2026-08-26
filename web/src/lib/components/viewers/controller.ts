@@ -93,6 +93,23 @@ export interface ViewAsset {
    *  not own. Nullable in the schema — an unowned asset matches
    *  nobody. */
   owner_user_ref?: number | null;
+  /** The maker's AI declaration for THIS asset (#1243, ADR 0094).
+   *
+   *  ⚠️ ABSENT/NULL MEANS UNDECLARED — nobody was asked — and it is NOT
+   *  `'none'`. Both draw nothing, and they are different facts; see
+   *  $lib/aiProvenance for why collapsing them lies for the artist.
+   *
+   *  ⭐ PER-ASSET, and that is what makes it belong on this type rather
+   *  than on the host. A post carries a DERIVED post-level value that
+   *  answers "does this contain AI?" over its whole contributor set, so
+   *  in a mixed post the post says `generated` while the member beside
+   *  the declared one says nothing. The viewer labels the file under the
+   *  cursor, so it reads this — never the post's.
+   *
+   *  Not a permission (ADR 0094 §4): nothing about this value changes
+   *  who receives the row, so unlike `restricted` it is present on every
+   *  readable payload and needs no withholding discipline. */
+  ai_provenance?: string | null;
 }
 
 // Per-kind review tools the shell renders in its right pane. Each
