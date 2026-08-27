@@ -2,35 +2,35 @@
  {
   "id": "6108fd34-7c84-e3a3-e633-d2b3318ea8b6",
   "new": "images/kenney-hq/2d-assets-brick-pack-extra-character-e-b8e20835-512.png",
-  "newSize": 10652,
+  "newSize": 24144,
   "old": "images/internet/bradley-trainer-screenshot.png",
   "oldSize": 7302
  },
  {
   "id": "cff5c497-36cc-9593-b8b6-e7ff28824cc5",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0024-10b5d09a-512.png",
-  "newSize": 3605,
+  "newSize": 10756,
   "old": "images/internet/tank-1974.png",
   "oldSize": 4730
  },
  {
   "id": "8ba683c4-b2cd-89b1-1ba3-de0501a25031",
   "new": "images/kenney-hq/2d-assets-platformer-assets-extra-animations-enemies-platformerextra-enemies-vector-8836b97f-512.png",
-  "newSize": 26215,
+  "newSize": 56548,
   "old": "images/kenney_development-essentials/1×1 Pixels/pixel-white.png",
   "oldSize": 68
  },
  {
   "id": "66a5e57b-e7c3-7619-8c5d-dabd5e07c26a",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-sand-ramp-long-c-328733c2-512.png",
-  "newSize": 18591,
+  "newSize": 47747,
   "old": "images/kenney_development-essentials/Checkerboard/checkerboard-transparent.png",
   "oldSize": 106
  },
  {
   "id": "cb6371a2-e5d1-a129-45d3-cd636797651e",
   "new": "images/kenney-hq/2d-assets-flag-pack-af-1409cbf3-512.png",
-  "newSize": 7723,
+  "newSize": 15521,
   "old": "images/kenney_light-masks-1.0/Default/cone_b_blur.png",
   "oldSize": 8722
  },
@@ -58,7 +58,7 @@
  {
   "id": "d8bc02e8-31b8-8ce7-cedc-f16a4bc7e178",
   "new": "images/kenney-hq/2d-assets-flag-pack-bz-ab318865-512.png",
-  "newSize": 13977,
+  "newSize": 32868,
   "old": "images/kenney_light-masks-1.0/Default/window_e.png",
   "oldSize": 249
  },
@@ -79,21 +79,21 @@
  {
   "id": "892cbce5-cd7b-bfcb-cf9e-be52c814a8d5",
   "new": "images/kenney-hq/2d-assets-flag-pack-ye-47b51ed7-512.png",
-  "newSize": 1852,
+  "newSize": 1909,
   "old": "images/kenney_light-masks-1.0/Inverted/cone_c.png",
   "oldSize": 4346
  },
  {
   "id": "f3f795ff-0a51-d5d4-af53-cb8773621618",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-snow-horizontal-left-b17e57cd-512.png",
-  "newSize": 18922,
+  "newSize": 41967,
   "old": "images/kenney_light-masks-1.0/Inverted/fan_c.png",
   "oldSize": 4971
  },
  {
   "id": "1224d8ea-c8d2-2587-9c1d-6bc96244b6e8",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-14-13aadb13-512.png",
-  "newSize": 2920,
+  "newSize": 3559,
   "old": "images/kenney_light-masks-1.0/Inverted/window_c.png",
   "oldSize": 242
  },
@@ -107,14 +107,14 @@
  {
   "id": "ef20da53-0702-47c2-ab74-2a7b55b3f4d9",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-high-slope-inverted-left-2-155e1ca0-512.png",
-  "newSize": 5322,
+  "newSize": 13759,
   "old": "images/kenney_light-masks-1.0/Inverted/window_g.png",
   "oldSize": 2553
  },
  {
   "id": "c731d285-2cde-4e11-8975-d2f3c0c2f4a6",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-stone-vertical-middle-b821af57-512.png",
-  "newSize": 12895,
+  "newSize": 26890,
   "old": "images/kenney_light-masks-1.0/Inverted/window_i.png",
   "oldSize": 2749
  },
@@ -128,7 +128,7 @@
  {
   "id": "36255f87-89ec-21e6-80bc-786e831aac06",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-rop-attached-fa583e28-512.png",
-  "newSize": 10097,
+  "newSize": 20538,
   "old": "images/kenney_light-masks-1.0/Transparent/window_b.png",
   "oldSize": 227
  },
@@ -142,21 +142,21 @@
  {
   "id": "01e3c9b7-0c04-726e-f224-9f0073b98a15",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-high-slope-right-2-0d56a6aa-512.png",
-  "newSize": 5810,
+  "newSize": 9770,
   "old": "images/kenney_light-masks-1.0/Transparent/window_g.png",
   "oldSize": 2581
  },
  {
   "id": "c2752a53-80d9-15f7-b79f-4a675ded778f",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-high-slope-left-2-70ef1adf-512.png",
-  "newSize": 6394,
+  "newSize": 12196,
   "old": "images/kenney_light-masks-1.0/Transparent/window_k.png",
   "oldSize": 803
  },
  {
   "id": "fd54e333-9cb7-3b44-4c09-1ba0bc5b3329",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-grass-block-82dad71c-512.png",
-  "newSize": 16796,
+  "newSize": 37517,
   "old": "images/kenney_minimap-pack/Tilemap/Style F/tilemap.png",
   "oldSize": 418
  },
@@ -177,28 +177,28 @@
  {
   "id": "790da249-be37-d1f7-018a-bab9bbf911a5",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-block-spikes-6db834bd-512.png",
-  "newSize": 25044,
+  "newSize": 52085,
   "old": "images/kenney_minimap-pack/Tiles/Style A/tile_0007.png",
   "oldSize": 103
  },
  {
   "id": "c0dc6bbd-d3b2-e4d5-9d32-53525fc8e66c",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-star-a0fca068-512.png",
-  "newSize": 15434,
+  "newSize": 32748,
   "old": "images/kenney_minimap-pack/Tiles/Style A/tile_0008.png",
   "oldSize": 116
  },
  {
   "id": "34a22a06-51c6-8106-20ae-f7664731e62f",
   "new": "images/kenney-hq/2d-assets-fish-pack-terrain-dirt-top-d-a0c259a2-512.png",
-  "newSize": 17313,
+  "newSize": 35433,
   "old": "images/kenney_minimap-pack/Tiles/Style A/tile_0010.png",
   "oldSize": 122
  },
  {
   "id": "d6f4b3ec-c430-d795-d980-e7cbee5a4fa2",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-heart-7b8b14a6-512.png",
-  "newSize": 13348,
+  "newSize": 29048,
   "old": "images/kenney_minimap-pack/Tiles/Style A/tile_0022.png",
   "oldSize": 113
  },
@@ -212,7 +212,7 @@
  {
   "id": "88cb394f-62f8-bcff-16b0-2d48fbefc873",
   "new": "images/kenney-hq/2d-assets-fish-pack-fish-orange-skeleton-outline-8f83f33b-512.png",
-  "newSize": 17508,
+  "newSize": 42483,
   "old": "images/kenney_minimap-pack/Tiles/Style B/tile_0004.png",
   "oldSize": 108
  },
@@ -233,7 +233,7 @@
  {
   "id": "372dc469-f8cb-2587-32f8-cd07be75738d",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-snow-vertical-middle-b4e55722-512.png",
-  "newSize": 16858,
+  "newSize": 41494,
   "old": "images/kenney_minimap-pack/Tiles/Style B/tile_0015.png",
   "oldSize": 101
  },
@@ -247,21 +247,21 @@
  {
   "id": "f21bfdaa-7c39-b748-e760-532e19303e8b",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-54-882db050-512.png",
-  "newSize": 21708,
+  "newSize": 43819,
   "old": "images/kenney_minimap-pack/Tiles/Style B/tile_0021.png",
   "oldSize": 112
  },
  {
   "id": "d2968693-2d3e-fcf7-47a7-fa4e8e0a0203",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-21-63014e61-512.png",
-  "newSize": 12838,
+  "newSize": 39182,
   "old": "images/kenney_minimap-pack/Tiles/Style B/tile_0024.png",
   "oldSize": 112
  },
  {
   "id": "72cbe591-4ef7-3128-5838-667b10295a84",
   "new": "images/kenney-hq/2d-assets-platformer-assets-ice-platformerice-vector-3b8a32aa-512.png",
-  "newSize": 16180,
+  "newSize": 56289,
   "old": "images/kenney_minimap-pack/Tiles/Style C/tile_0005.png",
   "oldSize": 102
  },
@@ -310,7 +310,7 @@
  {
   "id": "14b115fa-e3c1-2350-13a5-ed884ad1bb52",
   "new": "images/kenney-hq/2d-assets-platformer-assets-base-platformer-tiles-vector-587bccf9-512.png",
-  "newSize": 45815,
+  "newSize": 128944,
   "old": "images/kenney_minimap-pack/Tiles/Style E/tile_0003.png",
   "oldSize": 117
  },
@@ -324,7 +324,7 @@
  {
   "id": "03a34d7f-bc5b-a276-f422-beddc30cea2d",
   "new": "images/kenney-hq/2d-assets-flag-pack-nz-3c7d15a1-512.png",
-  "newSize": 9656,
+  "newSize": 25835,
   "old": "images/kenney_minimap-pack/Tiles/Style E/tile_0008.png",
   "oldSize": 120
  },
@@ -345,7 +345,7 @@
  {
   "id": "7c50a459-9cb2-c7b6-eaef-3f86f8a7ae2a",
   "new": "images/kenney-hq/2d-assets-flag-pack-tg-7f10ad13-512.png",
-  "newSize": 5279,
+  "newSize": 9861,
   "old": "images/kenney_minimap-pack/Tiles/Style E/tile_0017.png",
   "oldSize": 117
  },
@@ -359,7 +359,7 @@
  {
   "id": "bc5411d7-003e-ed01-d166-0d793d88ae63",
   "new": "images/kenney-hq/2d-assets-fish-pack-fish-grey-long-b-28084497-512.png",
-  "newSize": 5347,
+  "newSize": 12384,
   "old": "images/kenney_minimap-pack/Tiles/Style E/tile_0021.png",
   "oldSize": 121
  },
@@ -373,35 +373,35 @@
  {
   "id": "8f9aca6f-ee03-0f36-f114-d4a7122c7c10",
   "new": "images/kenney-hq/2d-assets-flag-pack-cl-e03143a9-512.png",
-  "newSize": 4900,
+  "newSize": 8964,
   "old": "images/kenney_minimap-pack/Tiles/Style F/tile_0021.png",
   "oldSize": 121
  },
  {
   "id": "a71ce13a-2d1a-05a5-7d8c-b2e60ed380ec",
   "new": "images/kenney-hq/2d-assets-fish-pack-fish-orange-outline-1de0d996-512.png",
-  "newSize": 17908,
+  "newSize": 41545,
   "old": "images/kenney_minimap-pack/Tiles/Style F/tile_0023.png",
   "oldSize": 125
  },
  {
   "id": "5bfad577-e429-9ed3-81b3-c7c6b4cfcc19",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-fish-yellow-rest-33d2a950-512.png",
-  "newSize": 27695,
+  "newSize": 54806,
   "old": "images/kenney_prototype-textures/PNG/Dark/texture_02.png",
   "oldSize": 1338
  },
  {
   "id": "97f6bad7-0bd6-a7ee-e6eb-a855e5024b3c",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-worm-ring-move-b-35ebe32b-512.png",
-  "newSize": 16903,
+  "newSize": 34233,
   "old": "images/kenney_prototype-textures/PNG/Dark/texture_11.png",
   "oldSize": 9048
  },
  {
   "id": "0c00bb51-7388-ae28-bc39-0cf993d45479",
   "new": "images/kenney-hq/2d-assets-fish-pack-terrain-dirt-top-h-outline-6e022dec-512.png",
-  "newSize": 17472,
+  "newSize": 36533,
   "old": "images/kenney_prototype-textures/PNG/Green/texture_11.png",
   "oldSize": 9200
  },
@@ -415,7 +415,7 @@
  {
   "id": "a8ee3241-cab1-c136-9b7d-65a8dcc2ab03",
   "new": "images/kenney-hq/2d-assets-fish-pack-terrain-dirt-b-398579d3-512.png",
-  "newSize": 13706,
+  "newSize": 27869,
   "old": "images/kenney_prototype-textures/PNG/Light/texture_05.png",
   "oldSize": 2739
  },
@@ -436,7 +436,7 @@
  {
   "id": "0a80eecb-59cb-37f3-b623-74ab7fb602c5",
   "new": "images/kenney-hq/2d-assets-flag-pack-km-b992ed0b-512.png",
-  "newSize": 8324,
+  "newSize": 19537,
   "old": "images/kenney_prototype-textures/PNG/Purple/texture_11.png",
   "oldSize": 9192
  },
@@ -450,7 +450,7 @@
  {
   "id": "7f99528b-6d06-2f99-006d-f838b52233cf",
   "new": "images/kenney-hq/2d-assets-flag-pack-mz-66a9b5e2-512.png",
-  "newSize": 5842,
+  "newSize": 11378,
   "old": "images/kenney_prototype-textures/PNG/Red/texture_09.png",
   "oldSize": 637
  },
@@ -464,7 +464,7 @@
  {
   "id": "5b03f163-ba12-15d5-6fe4-c814449326d5",
   "new": "images/kenney-hq/2d-assets-splat-pack-splat08-4c642c6b-512.png",
-  "newSize": 1588,
+  "newSize": 8955,
   "old": "images/kenney_prototype-textures/Vector/texture_04.svg",
   "oldSize": 2997
  },
@@ -478,7 +478,7 @@
  {
   "id": "7eb23aea-31bc-0d05-1d1e-add39cbc0127",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-door-open-top-33c176b4-512.png",
-  "newSize": 19675,
+  "newSize": 36199,
   "old": "images/kenney_prototype-textures/Vector/texture_10.svg",
   "oldSize": 2140
  },
@@ -499,14 +499,14 @@
  {
   "id": "c5d31d3d-332b-2722-0a98-0146b9230e05",
   "new": "images/kenney-hq/2d-assets-flag-pack-lt-779375bb-512.png",
-  "newSize": 1854,
+  "newSize": 1920,
   "old": "images/kenney_retro-fantasy-kit/Models/OBJ format/Textures/cobblestoneAlternative.png",
   "oldSize": 5013
  },
  {
   "id": "ffb912e8-7529-af43-9a29-5e4c835c3055",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-block-strong-exclamation-fa9cb312-512.png",
-  "newSize": 14050,
+  "newSize": 26535,
   "old": "images/kenney_retro-fantasy-kit/Models/OBJ format/Textures/cobblestonePainted.png",
   "oldSize": 4990
  },
@@ -520,21 +520,21 @@
  {
   "id": "c03a9b0f-ab50-dfab-19bc-74766ceaaab0",
   "new": "images/kenney-hq/2d-assets-brick-pack-extra-stone-detail-2e3b4d9f-512.png",
-  "newSize": 14589,
+  "newSize": 31237,
   "old": "images/kenney_retro-fantasy-kit/Previews/battlement-corner-inner.png",
   "oldSize": 1811
  },
  {
   "id": "9b97665e-0b61-05db-914e-c01c8ab0d0be",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-medium-slope-inverted-right-2-fb120043-512.png",
-  "newSize": 3499,
+  "newSize": 10306,
   "old": "images/kenney_retro-fantasy-kit/Previews/battlement-corner-outer.png",
   "oldSize": 1976
  },
  {
   "id": "53f5230a-a2c2-2716-832f-a2901230d864",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-53-1ebc732d-512.png",
-  "newSize": 20880,
+  "newSize": 42020,
   "old": "images/kenney_retro-fantasy-kit/Previews/battlement.png",
   "oldSize": 1848
  },
@@ -548,7 +548,7 @@
  {
   "id": "ebcce34b-3225-898d-c5d6-d926be62f359",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0026-5e2e3161-512.png",
-  "newSize": 2311,
+  "newSize": 7576,
   "old": "images/kenney_retro-fantasy-kit/Previews/dock-side.png",
   "oldSize": 2461
  },
@@ -569,7 +569,7 @@
  {
   "id": "1e24d01c-2f64-782f-94bb-ebe10cd1402e",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-purple-block-bottom-left-25d79897-512.png",
-  "newSize": 14059,
+  "newSize": 45620,
   "old": "images/kenney_retro-fantasy-kit/Previews/floor.png",
   "oldSize": 2042
  },
@@ -583,21 +583,21 @@
  {
   "id": "5ac2e90c-ae6c-33a8-65b5-d2ab51d00f33",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-30-920399d0-512.png",
-  "newSize": 9923,
+  "newSize": 20143,
   "old": "images/kenney_retro-fantasy-kit/Previews/roof-high-side-corner.png",
   "oldSize": 1754
  },
  {
   "id": "096ddb9e-5e53-bc4f-bd45-170749c6ae41",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0021-79d194ad-512.png",
-  "newSize": 8708,
+  "newSize": 32283,
   "old": "images/kenney_retro-fantasy-kit/Previews/structure-wall-cross.png",
   "oldSize": 1786
  },
  {
   "id": "9dd7da77-90b8-a97e-3b62-13e2ddb88532",
   "new": "images/kenney-hq/2d-assets-flag-pack-br-1c8461b8-512.png",
-  "newSize": 12492,
+  "newSize": 28255,
   "old": "images/kenney_retro-fantasy-kit/Previews/tower-edge.png",
   "oldSize": 2785
  },
@@ -625,14 +625,14 @@
  {
   "id": "ea595f07-1610-b223-a317-276474de49b0",
   "new": "images/kenney-hq/2d-assets-flag-pack-jm-5ab01f83-512.png",
-  "newSize": 4339,
+  "newSize": 10129,
   "old": "images/kenney_retro-fantasy-kit/Previews/wall-paint-flat.png",
   "oldSize": 1944
  },
  {
   "id": "5d6f0d87-5a21-3915-4784-a224dc5eae93",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-snow-block-right-6b9be8d6-512.png",
-  "newSize": 16280,
+  "newSize": 40554,
   "old": "images/kenney_retro-fantasy-kit/Previews/wall-pane-painted-wood-window.png",
   "oldSize": 2099
  },
@@ -674,28 +674,28 @@
  {
   "id": "35ab1034-ff15-3908-ea3e-d4a1f2dcad5c",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-slime-spike-flat-f588a4a8-512.png",
-  "newSize": 12466,
+  "newSize": 26375,
   "old": "images/kenney_retro-textures-fantasy/PNG/floor_stone_sand_grate.png",
   "oldSize": 4767
  },
  {
   "id": "ce77c257-436e-cfda-0fff-5025c936741d",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-saw-a-26f4ee91-512.png",
-  "newSize": 34173,
+  "newSize": 72899,
   "old": "images/kenney_retro-textures-fantasy/PNG/floor_stone_sand_random_depth.png",
   "oldSize": 4795
  },
  {
   "id": "38ff9292-ac28-38da-49b6-bedf6eae34b5",
   "new": "images/kenney-hq/2d-assets-flag-pack-ao-12df8d59-512.png",
-  "newSize": 10409,
+  "newSize": 23916,
   "old": "images/kenney_retro-textures-fantasy/PNG/floor_tiles_sand_small_damaged.png",
   "oldSize": 4594
  },
  {
   "id": "e539f9dc-b60f-1498-76c4-db2149823cc7",
   "new": "images/kenney-hq/2d-assets-flag-pack-fm-5867f4fc-512.png",
-  "newSize": 6868,
+  "newSize": 17237,
   "old": "images/kenney_retro-textures-fantasy/PNG/floor_tiles_tan_small_damaged.png",
   "oldSize": 4715
  },
@@ -709,35 +709,35 @@
  {
   "id": "38485cc2-6902-fe77-372f-184489635586",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-low-1-495e2676-512.png",
-  "newSize": 6533,
+  "newSize": 6548,
   "old": "images/kenney_retro-textures-fantasy/PNG/floor_wood_planks_wide.png",
   "oldSize": 4187
  },
  {
   "id": "42648318-fcc9-c0f4-3390-2a436370f01f",
   "new": "images/kenney-hq/2d-assets-fish-pack-terrain-sand-top-f-74667dce-512.png",
-  "newSize": 14966,
+  "newSize": 31682,
   "old": "images/kenney_retro-textures-fantasy/PNG/floor_wood_planks_wide_damaged.png",
   "oldSize": 4562
  },
  {
   "id": "adf55fa2-be50-6a3e-0b22-50fcd9d0f950",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0001-3734faa6-512.png",
-  "newSize": 2083,
+  "newSize": 7714,
   "old": "images/kenney_retro-textures-fantasy/PNG/timber_square_clay_diagonal.png",
   "oldSize": 4721
  },
  {
   "id": "600b0bef-5388-d713-f12d-fa9b5a6b1c11",
   "new": "images/kenney-hq/2d-assets-platformer-assets-buildings-platformerbuildings-vector-16a6324d-512.png",
-  "newSize": 5264,
+  "newSize": 36151,
   "old": "images/kenney_retro-textures-fantasy/PNG/timber_square_frame_diagonal.png",
   "oldSize": 3869
  },
  {
   "id": "33ae5820-355a-d2ca-fc67-12fe05eda21f",
   "new": "images/kenney-hq/2d-assets-fish-pack-terrain-dirt-top-b-outline-705b9172-512.png",
-  "newSize": 18759,
+  "newSize": 40061,
   "old": "images/kenney_retro-textures-fantasy/PNG/timber_square_planks.png",
   "oldSize": 4715
  },
@@ -758,14 +758,14 @@
  {
   "id": "c34edec8-5020-dd0f-95b0-f5fab91fe10a",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-dirt-ramp-short-b-614b82c1-512.png",
-  "newSize": 6323,
+  "newSize": 14845,
   "old": "images/kenney_retro-textures-fantasy/PNG/wall_brick_sand_right.png",
   "oldSize": 7571
  },
  {
   "id": "7e080878-cb47-005b-6bcf-985500fc5803",
   "new": "images/kenney-hq/2d-assets-flag-pack-jp-3c8bde65-512.png",
-  "newSize": 6369,
+  "newSize": 12433,
   "old": "images/kenney_retro-textures-fantasy/PNG/wall_brick_small_sand.png",
   "oldSize": 8123
  },
@@ -786,7 +786,7 @@
  {
   "id": "fdda0ed7-7c6e-aaf6-6996-363f82af751f",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-mushroom-red-f6657887-512.png",
-  "newSize": 9854,
+  "newSize": 20103,
   "old": "images/kenney_retro-textures-fantasy/PNG/wall_timber.png",
   "oldSize": 5522
  },
@@ -800,7 +800,7 @@
  {
   "id": "d0f0ad86-d1ac-194a-0940-4a36fec66238",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-gem-blue-6696f116-512.png",
-  "newSize": 8824,
+  "newSize": 20971,
   "old": "images/kenney_retro-textures-fantasy/PNG/wall_timber_structure_cross.png",
   "oldSize": 7885
  },
@@ -814,21 +814,21 @@
  {
   "id": "e1ae4eba-6c15-f0e8-ef7d-795d8f8175bf",
   "new": "images/kenney-hq/2d-assets-flag-pack-ua-9c10bc7a-512.png",
-  "newSize": 1847,
+  "newSize": 1880,
   "old": "images/kenney_retro-textures-fantasy/PNG/window_round_pane_boarded.png",
   "oldSize": 4129
  },
  {
   "id": "639f61a7-316b-f153-5958-4ae7389068ea",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-63-e445f8df-512.png",
-  "newSize": 5102,
+  "newSize": 11598,
   "old": "images/kenney_retro-textures-fantasy/PNG/window_square_closed.png",
   "oldSize": 4693
  },
  {
   "id": "565f681b-5a40-529f-0290-f21d51649ae4",
   "new": "images/kenney-hq/2d-assets-fish-pack-seaweed-grass-a-outline-bea9a461-512.png",
-  "newSize": 24742,
+  "newSize": 53682,
   "old": "images/kenney_retro-textures-fantasy/PNG/window_square_horizontal_boarded.png",
   "oldSize": 4555
  },
@@ -842,7 +842,7 @@
  {
   "id": "5dcd7237-c7f3-f8ac-a9a1-5cd3877b4f4c",
   "new": "images/kenney-hq/2d-assets-flag-pack-sy-c85dcc7a-512.png",
-  "newSize": 4601,
+  "newSize": 15870,
   "old": "images/kenney_retro-textures-fantasy/PNG/window_tall_divided_lit.png",
   "oldSize": 8094
  },
@@ -856,35 +856,35 @@
  {
   "id": "4e0ae1ca-3170-8047-03cd-8807f93a8348",
   "new": "images/kenney-hq/2d-assets-splat-pack-splat29-8bb7786e-512.png",
-  "newSize": 1538,
+  "newSize": 10257,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0008.png",
   "oldSize": 150
  },
  {
   "id": "7f5192fe-7060-e3bd-bda7-d152f70fb6c3",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-sand-block-left-0505b18d-512.png",
-  "newSize": 17468,
+  "newSize": 43930,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0011.png",
   "oldSize": 161
  },
  {
   "id": "31713969-fa49-111b-b317-b7f3b3e4108f",
   "new": "images/kenney-hq/2d-assets-fish-pack-terrain-sand-top-h-outline-7a12264e-512.png",
-  "newSize": 16949,
+  "newSize": 36481,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0014.png",
   "oldSize": 125
  },
  {
   "id": "05676089-504e-7a66-ac74-ee0847dbf8b0",
   "new": "images/kenney-hq/2d-assets-fish-pack-fish-grey-long-b-outline-47d9cb5c-512.png",
-  "newSize": 7926,
+  "newSize": 18597,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0028.png",
   "oldSize": 179
  },
  {
   "id": "35aaee4f-53dd-e982-08d9-60f0333a3371",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-snail-walk-b-ddb84940-512.png",
-  "newSize": 27674,
+  "newSize": 58170,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0030.png",
   "oldSize": 231
  },
@@ -912,14 +912,14 @@
  {
   "id": "b07d1792-dc56-c39b-d4de-bef86878a510",
   "new": "images/kenney-hq/2d-assets-splat-pack-splat16-f6d6df6c-512.png",
-  "newSize": 1668,
+  "newSize": 9391,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0048.png",
   "oldSize": 160
  },
  {
   "id": "2c9a2cec-e54e-a1c5-557a-c1e4950f5c24",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-stone-horizontal-overhang-right-99439d42-512.png",
-  "newSize": 17496,
+  "newSize": 34714,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0055.png",
   "oldSize": 194
  },
@@ -933,21 +933,21 @@
  {
   "id": "9c3b1df5-e5c0-faad-f35c-432ad3f62f8a",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-69-edd84c79-512.png",
-  "newSize": 21482,
+  "newSize": 40000,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0061.png",
   "oldSize": 238
  },
  {
   "id": "9caeea88-b717-0a89-463c-9c1a19ba0543",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-stone-cloud-background-4ce2eb38-512.png",
-  "newSize": 16089,
+  "newSize": 29428,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0062.png",
   "oldSize": 151
  },
  {
   "id": "85055aa2-33ca-1174-0a8e-8f094e6d8f57",
   "new": "images/kenney-hq/2d-assets-flag-pack-vc-c1b498f3-512.png",
-  "newSize": 7683,
+  "newSize": 16372,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0066.png",
   "oldSize": 144
  },
@@ -968,7 +968,7 @@
  {
   "id": "e7a8cef4-14cb-5902-a88d-ea870a22a5d0",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-79-50df6a48-512.png",
-  "newSize": 26691,
+  "newSize": 51328,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0070.png",
   "oldSize": 156
  },
@@ -982,7 +982,7 @@
  {
   "id": "9c87b928-42a6-8912-56cd-53e9e96162a3",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-high-slope-inverted-left-2-ac79578e-512.png",
-  "newSize": 5274,
+  "newSize": 13312,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0080.png",
   "oldSize": 234
  },
@@ -996,7 +996,7 @@
  {
   "id": "00bb95eb-f62c-0052-56cc-9f5a03c0d90a",
   "new": "images/kenney-hq/2d-assets-flag-pack-ve-40258031-512.png",
-  "newSize": 4192,
+  "newSize": 12845,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0086.png",
   "oldSize": 165
  },
@@ -1024,56 +1024,56 @@
  {
   "id": "2e1acfb8-f202-d187-a6ce-5373124c7ab4",
   "new": "images/kenney-hq/2d-assets-flag-pack-mc-6df42310-512.png",
-  "newSize": 1846,
+  "newSize": 1876,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0124.png",
   "oldSize": 185
  },
  {
   "id": "b1f11d44-d7f4-6193-b88a-912c1ce2c1f5",
   "new": "images/kenney-hq/2d-assets-flag-pack-mx-69821aa4-512.png",
-  "newSize": 7782,
+  "newSize": 17979,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0137.png",
   "oldSize": 177
  },
  {
   "id": "96350d3e-d331-0d1c-cc42-61e33f31f598",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-worm-ring-move-a-bc14261b-512.png",
-  "newSize": 17528,
+  "newSize": 35209,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0151.png",
   "oldSize": 165
  },
  {
   "id": "5133cd10-fd43-6e54-f98b-c436b9703e87",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-hud-character-9-5b652730-512.png",
-  "newSize": 12832,
+  "newSize": 26880,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0155.png",
   "oldSize": 158
  },
  {
   "id": "c639ef0b-85f6-0847-2494-4dd3e128e632",
   "new": "images/kenney-hq/2d-assets-flag-pack-sx-7babfb04-512.png",
-  "newSize": 8697,
+  "newSize": 19398,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0162.png",
   "oldSize": 186
  },
  {
   "id": "04d6c815-4c93-ada9-e0c0-b9432da3da5d",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0011-3b3507f1-512.png",
-  "newSize": 2389,
+  "newSize": 16825,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0165.png",
   "oldSize": 148
  },
  {
   "id": "67ba43eb-27d2-b394-3649-a9312278dbc4",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-73-9c6397b0-512.png",
-  "newSize": 4616,
+  "newSize": 10247,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0171.png",
   "oldSize": 189
  },
  {
   "id": "3f661015-a842-2d47-04ad-697c7c39661a",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-purple-ramp-short-a-902be2f2-512.png",
-  "newSize": 13256,
+  "newSize": 44776,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0174.png",
   "oldSize": 223
  },
@@ -1087,7 +1087,7 @@
  {
   "id": "482cea7a-761c-2c4b-920e-31eaaf16ce1e",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-83-a279b069-512.png",
-  "newSize": 41478,
+  "newSize": 80539,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0184.png",
   "oldSize": 130
  },
@@ -1101,21 +1101,21 @@
  {
   "id": "4195d877-9d31-a70a-c862-b86ea3a0a17e",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-snow-horizontal-overhang-left-1ca396e5-512.png",
-  "newSize": 22967,
+  "newSize": 49287,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0193.png",
   "oldSize": 144
  },
  {
   "id": "f81776a1-d95c-1839-eb5f-a386b38aff58",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0025-d9882d1c-512.png",
-  "newSize": 3769,
+  "newSize": 18401,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0194.png",
   "oldSize": 132
  },
  {
   "id": "aa4bcd37-f90c-51b8-5cc6-4dfc50f8a272",
   "new": "images/kenney-hq/2d-assets-boardgame-pack-piecesgreen-a32c8b30-512.png",
-  "newSize": 5035,
+  "newSize": 17346,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0195.png",
   "oldSize": 170
  },
@@ -1143,7 +1143,7 @@
  {
   "id": "acd5f9c3-cb57-0295-b15f-96514b96ecff",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-fish-purple-down-8bfff3b5-512.png",
-  "newSize": 27936,
+  "newSize": 53630,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0208.png",
   "oldSize": 165
  },
@@ -1164,21 +1164,21 @@
  {
   "id": "84613264-b16d-7982-ca8e-9b414c0300d0",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-lava-fa48493b-512.png",
-  "newSize": 14976,
+  "newSize": 35356,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0229.png",
   "oldSize": 220
  },
  {
   "id": "8950061c-f819-d690-ae92-acb529919ddf",
   "new": "images/kenney-hq/2d-assets-fish-pack-fish-pink-skeleton-cf31efe5-512.png",
-  "newSize": 9135,
+  "newSize": 23787,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0246.png",
   "oldSize": 202
  },
  {
   "id": "c12f3a50-5b79-5e45-2d96-a43dad948828",
   "new": "images/kenney-hq/2d-assets-brick-pack-extra-dirt-7c7c1e32-512.png",
-  "newSize": 3409,
+  "newSize": 5960,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0247.png",
   "oldSize": 150
  },
@@ -1192,7 +1192,7 @@
  {
   "id": "25f29ab5-ab8e-85ba-04ba-3b1e3e731ab1",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-high-1-36a68e65-512.png",
-  "newSize": 2590,
+  "newSize": 4309,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0256.png",
   "oldSize": 181
  },
@@ -1206,14 +1206,14 @@
  {
   "id": "a0caa014-904d-8956-9e0b-bed3b00cbea2",
   "new": "images/kenney-hq/2d-assets-fish-pack-background-rock-a-a67fcb63-512.png",
-  "newSize": 5565,
+  "newSize": 11178,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0266.png",
   "oldSize": 245
  },
  {
   "id": "03bacdff-e7ff-927f-1a83-cfeac5e08a0a",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-medium-slope-inverted-left-2-192b20bd-512.png",
-  "newSize": 3588,
+  "newSize": 9537,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0272.png",
   "oldSize": 175
  },
@@ -1227,21 +1227,21 @@
  {
   "id": "52e810a5-d214-e2d4-dadd-2f783e7eda65",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-80-0c68eaba-512.png",
-  "newSize": 20047,
+  "newSize": 37887,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0279.png",
   "oldSize": 168
  },
  {
   "id": "b624cd46-66f3-d7f6-7884-11f495a8ddaa",
   "new": "images/kenney-hq/2d-assets-puzzle-pack-2-tiles-blue-c544a97c-512.png",
-  "newSize": 8820,
+  "newSize": 56026,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0285.png",
   "oldSize": 169
  },
  {
   "id": "0133236e-03c6-3c24-ec65-ccc74f535b5c",
   "new": "images/kenney-hq/2d-assets-splat-pack-splat15-8df20e68-512.png",
-  "newSize": 1461,
+  "newSize": 8392,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0287.png",
   "oldSize": 228
  },
@@ -1269,14 +1269,14 @@
  {
   "id": "7ee1bffe-ffec-48fd-c1eb-436318017736",
   "new": "images/kenney-hq/2d-assets-flag-pack-rw-8e55f6c0-512.png",
-  "newSize": 5454,
+  "newSize": 11048,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0308.png",
   "oldSize": 204
  },
  {
   "id": "00460834-21d9-23e2-b815-e53fa978a2f6",
   "new": "images/kenney-hq/2d-assets-platformer-pack-remastered-vector-backgrounds-f5634263-512.png",
-  "newSize": 5397,
+  "newSize": 16454,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0309.png",
   "oldSize": 189
  },
@@ -1290,14 +1290,14 @@
  {
   "id": "7506ca74-55a5-1a12-6d44-5a0f2a450fa6",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0021-72bc5de0-512.png",
-  "newSize": 9224,
+  "newSize": 35029,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0311.png",
   "oldSize": 165
  },
  {
   "id": "2ed7efb1-8348-1d00-3e33-e257f87e2432",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-bomb-active-5cdd4630-512.png",
-  "newSize": 15947,
+  "newSize": 25163,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0312.png",
   "oldSize": 166
  },
@@ -1311,35 +1311,35 @@
  {
   "id": "4912da1f-2af7-0b6d-d1f0-2949864cf0a7",
   "new": "images/kenney-hq/2d-assets-fish-pack-fish-pink-1b147d91-512.png",
-  "newSize": 7999,
+  "newSize": 18833,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0316.png",
   "oldSize": 196
  },
  {
   "id": "543442c2-e4d4-8605-4e8e-7cdb751706a4",
   "new": "images/kenney-hq/2d-assets-flag-pack-mg-5dd314ed-512.png",
-  "newSize": 2560,
+  "newSize": 2835,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0325.png",
   "oldSize": 169
  },
  {
   "id": "17216fec-a878-af1a-a77d-bcc06acbddb1",
   "new": "images/kenney-hq/2d-assets-fish-pack-seaweed-grass-a-d063f8f6-512.png",
-  "newSize": 13427,
+  "newSize": 29855,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0332.png",
   "oldSize": 165
  },
  {
   "id": "1790e227-315f-182c-fef4-d40ea7a63fc4",
   "new": "images/kenney-hq/2d-assets-fish-pack-terrain-sand-top-c-84ef82cf-512.png",
-  "newSize": 14894,
+  "newSize": 30605,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0335.png",
   "oldSize": 163
  },
  {
   "id": "0f2355e9-3ddb-00d7-b5d4-fc85f2750c7e",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-high-slope-right-2-dfe503a7-512.png",
-  "newSize": 5915,
+  "newSize": 11964,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0337.png",
   "oldSize": 185
  },
@@ -1360,42 +1360,42 @@
  {
   "id": "cc17185a-e411-9e71-517c-dacd2c41bca2",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0013-6491cc1e-512.png",
-  "newSize": 2673,
+  "newSize": 14803,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0353.png",
   "oldSize": 189
  },
  {
   "id": "f1a42fca-a953-79e7-62c9-03210fec4cc1",
   "new": "images/kenney-hq/2d-assets-fish-pack-fish-pink-skeleton-outline-65c81618-512.png",
-  "newSize": 14434,
+  "newSize": 36562,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0354.png",
   "oldSize": 181
  },
  {
   "id": "aafb2bae-9ce9-9919-42a3-75ba94c5dccf",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0009-774e7444-512.png",
-  "newSize": 2375,
+  "newSize": 8569,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0356.png",
   "oldSize": 190
  },
  {
   "id": "bd1dc2ce-b9da-5723-0683-f69649488c3d",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-hud-player-purple-ef00343b-512.png",
-  "newSize": 29618,
+  "newSize": 65829,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0360.png",
   "oldSize": 133
  },
  {
   "id": "59bd4b9f-9c22-5af0-eb75-b655b7d43047",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-snow-1a5ec117-512.png",
-  "newSize": 7006,
+  "newSize": 12952,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0362.png",
   "oldSize": 170
  },
  {
   "id": "06fa8469-2320-bcf1-9cfe-03b39d28d6ad",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-51-16cd416b-512.png",
-  "newSize": 11631,
+  "newSize": 22205,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0364.png",
   "oldSize": 181
  },
@@ -1416,14 +1416,14 @@
  {
   "id": "4e89d798-1774-a518-c151-8046923bf13b",
   "new": "images/kenney-hq/2d-assets-flag-pack-cu-a9f9250f-512.png",
-  "newSize": 5676,
+  "newSize": 12159,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0372.png",
   "oldSize": 206
  },
  {
   "id": "f0c2c616-5eab-f464-f594-d9aeabd442d8",
   "new": "images/kenney-hq/2d-assets-fish-pack-hud-colon-5ac07173-512.png",
-  "newSize": 11131,
+  "newSize": 23734,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0374.png",
   "oldSize": 222
  },
@@ -1444,7 +1444,7 @@
  {
   "id": "b37f4e02-c5ad-10bc-57a0-412709023591",
   "new": "images/kenney-hq/2d-assets-splat-pack-splat02-44222538-512.png",
-  "newSize": 1616,
+  "newSize": 11622,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0388.png",
   "oldSize": 177
  },
@@ -1472,28 +1472,28 @@
  {
   "id": "efdbcc27-8731-826c-66d4-57d3f5d8551d",
   "new": "images/kenney-hq/2d-assets-puzzle-pack-2-tiles-black-91a93126-512.png",
-  "newSize": 8025,
+  "newSize": 47801,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0396.png",
   "oldSize": 151
  },
  {
   "id": "ae92c32d-586f-88cd-002c-52e7bbe52775",
   "new": "images/kenney-hq/2d-assets-fish-pack-terrain-dirt-top-f-2491f871-512.png",
-  "newSize": 15347,
+  "newSize": 31488,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0397.png",
   "oldSize": 154
  },
  {
   "id": "203141f4-fafd-bf33-be8c-e23409635c2b",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-39-ac5df58c-512.png",
-  "newSize": 20178,
+  "newSize": 37967,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0398.png",
   "oldSize": 162
  },
  {
   "id": "78d0cd9e-14be-11cf-c79a-cb387406ffdd",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-door-open-3fe2e1d8-512.png",
-  "newSize": 3971,
+  "newSize": 4182,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0400.png",
   "oldSize": 149
  },
@@ -1507,14 +1507,14 @@
  {
   "id": "a567e534-8f94-0ec0-e1ac-1b34afd0bb1d",
   "new": "images/kenney-hq/2d-assets-splat-pack-splat24-8dd6de91-512.png",
-  "newSize": 1502,
+  "newSize": 9496,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0403.png",
   "oldSize": 222
  },
  {
   "id": "97c80995-ba6e-b4ab-e25b-b91431fa0d1f",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-sand-block-center-0007789e-512.png",
-  "newSize": 17998,
+  "newSize": 45252,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0406.png",
   "oldSize": 156
  },
@@ -1535,7 +1535,7 @@
  {
   "id": "56c631c5-0473-c6da-383b-5eea405f1f18",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-spring-out-c39aae4b-512.png",
-  "newSize": 17607,
+  "newSize": 35460,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0411.png",
   "oldSize": 209
  },
@@ -1549,7 +1549,7 @@
  {
   "id": "1a9ca62a-ed9a-ba56-51e3-21699c20cbc6",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-medium-slope-right-2-c9a91c74-512.png",
-  "newSize": 3854,
+  "newSize": 12108,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0413.png",
   "oldSize": 158
  },
@@ -1570,28 +1570,28 @@
  {
   "id": "a08ee88e-838d-95f4-a22a-fd1d6fe57cba",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-block-green-b29842fe-512.png",
-  "newSize": 8961,
+  "newSize": 19788,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0424.png",
   "oldSize": 245
  },
  {
   "id": "80516d24-c023-0cd8-4a5f-10136531744a",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-stone-block-left-e965a1df-512.png",
-  "newSize": 12849,
+  "newSize": 27070,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0428.png",
   "oldSize": 230
  },
  {
   "id": "79d2da36-be0c-9f4a-1123-4771b0748704",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-torch-on-a-15b6be8c-512.png",
-  "newSize": 20620,
+  "newSize": 43113,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0450.png",
   "oldSize": 147
  },
  {
   "id": "6beba24a-48df-4aa4-6d2d-c18f8b32e1f1",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-72-aa13545b-512.png",
-  "newSize": 14461,
+  "newSize": 32372,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0459.png",
   "oldSize": 153
  },
@@ -1605,21 +1605,21 @@
  {
   "id": "70f94456-24fd-8847-3345-0d605ae160fe",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-mouse-walk-a-eeaddc70-512.png",
-  "newSize": 19415,
+  "newSize": 37895,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0462.png",
   "oldSize": 154
  },
  {
   "id": "6720ef0d-0763-428c-aff2-41857827e10a",
   "new": "images/kenney-hq/2d-assets-splat-pack-overview-6c3511bb-512.png",
-  "newSize": 8935,
+  "newSize": 25185,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0464.png",
   "oldSize": 159
  },
  {
   "id": "20301da2-b3a1-e31b-3821-f3f15e909b6e",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-slime-spike-rest-a42d80a5-512.png",
-  "newSize": 18538,
+  "newSize": 37213,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0468.png",
   "oldSize": 140
  },
@@ -1633,42 +1633,42 @@
  {
   "id": "85a30d03-9c31-212a-e8a3-1e5e413c8fad",
   "new": "images/kenney-hq/2d-assets-fish-pack-fish-grey-long-a-6eba36af-512.png",
-  "newSize": 4702,
+  "newSize": 10019,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0470.png",
   "oldSize": 136
  },
  {
   "id": "ef138237-22ff-eea4-07fa-3ad470af71a2",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-worm-normal-move-b-79e94dc6-512.png",
-  "newSize": 18137,
+  "newSize": 39269,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0471.png",
   "oldSize": 173
  },
  {
   "id": "f667afb9-09b6-2f5e-52d1-64ba92541863",
   "new": "images/kenney-hq/2d-assets-flag-pack-vg-b887ce77-512.png",
-  "newSize": 8749,
+  "newSize": 19936,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0474.png",
   "oldSize": 225
  },
  {
   "id": "8058fab8-2afb-3c19-2f5b-74648db2ae29",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-purple-block-bottom-f026dce1-512.png",
-  "newSize": 12403,
+  "newSize": 44340,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0475.png",
   "oldSize": 225
  },
  {
   "id": "fe35bc1d-59dc-7ed3-e7f9-afdb80b5fb3e",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-high-2-3947a2ed-512.png",
-  "newSize": 3206,
+  "newSize": 4751,
   "old": "images/kenney_rpg-urban-pack/Tiles/tile_0483.png",
   "oldSize": 247
  },
  {
   "id": "758bb9a0-49cb-d8c7-bb9a-2dd1283e8b36",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-block-empty-aa0217c8-512.png",
-  "newSize": 7632,
+  "newSize": 11678,
   "old": "images/kenney_ui-pack-rpg-expansion/PNG/arrowBlue_left.png",
   "oldSize": 539
  },
@@ -1689,35 +1689,35 @@
  {
   "id": "3929960b-4b11-5182-1a12-901c521e579a",
   "new": "images/kenney-hq/2d-assets-flag-pack-special-unavailable-f66fd419-512.png",
-  "newSize": 4162,
+  "newSize": 8608,
   "old": "images/kenney_ui-pack-rpg-expansion/PNG/barBack_horizontalMid.png",
   "oldSize": 145
  },
  {
   "id": "c9ef6d7f-1f59-87d4-f879-d63af0b2c019",
   "new": "images/kenney-hq/2d-assets-fish-pack-terrain-dirt-top-g-f59609ff-512.png",
-  "newSize": 15439,
+  "newSize": 32454,
   "old": "images/kenney_ui-pack-rpg-expansion/PNG/barBack_verticalBottom.png",
   "oldSize": 194
  },
  {
   "id": "cf235cb0-45e8-c8fd-b232-7748274413e3",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-snail-walk-a-994214c1-512.png",
-  "newSize": 27007,
+  "newSize": 56306,
   "old": "images/kenney_ui-pack-rpg-expansion/PNG/barBlue_verticalBottom.png",
   "oldSize": 323
  },
  {
   "id": "ca7a8147-3373-d467-4301-864f7f8266b5",
   "new": "images/kenney-hq/2d-assets-pattern-pack-pattern-48-2193fb87-512.png",
-  "newSize": 4595,
+  "newSize": 8596,
   "old": "images/kenney_ui-pack-rpg-expansion/PNG/barBlue_verticalMid.png",
   "oldSize": 157
  },
  {
   "id": "0a97b01a-9a9e-4710-59fc-082cf5049d4d",
   "new": "images/kenney-hq/2d-assets-flag-pack-lv-30803cab-512.png",
-  "newSize": 1850,
+  "newSize": 1906,
   "old": "images/kenney_ui-pack-rpg-expansion/PNG/barGreen_horizontalLeft.png",
   "oldSize": 341
  },
@@ -1731,7 +1731,7 @@
  {
   "id": "3f7846a2-a0ce-7605-f176-6899dff583c5",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-terrain-snow-block-bottom-left-6f14f464-512.png",
-  "newSize": 17963,
+  "newSize": 43375,
   "old": "images/kenney_ui-pack-rpg-expansion/PNG/barGreen_verticalTop.png",
   "oldSize": 339
  },
@@ -1773,14 +1773,14 @@
  {
   "id": "f42e2ee0-4115-92e6-d303-57c18187d0e1",
   "new": "images/kenney-hq/2d-assets-puzzle-pack-2-pipes-green-7df9476b-512.png",
-  "newSize": 4646,
+  "newSize": 29462,
   "old": "images/kenney_ui-pack-rpg-expansion/PNG/buttonSquare_blue.png",
   "oldSize": 499
  },
  {
   "id": "9d4d5f95-cbd0-14cb-8e64-5b93e0c59b87",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-fish-purple-up-1540ff55-512.png",
-  "newSize": 27011,
+  "newSize": 52296,
   "old": "images/kenney_ui-pack-rpg-expansion/PNG/cursorHand_beige.png",
   "oldSize": 751
  },
@@ -1815,7 +1815,7 @@
  {
   "id": "442e9520-d892-bc47-833e-2778ab9cb62b",
   "new": "images/kenney-hq/2d-assets-brick-pack-brick-medium-slope-left-2-2271f0f4-512.png",
-  "newSize": 3813,
+  "newSize": 11174,
   "old": "images/kenney_ui-pack-rpg-expansion/PNG/panel_blue.png",
   "oldSize": 785
  }

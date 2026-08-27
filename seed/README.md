@@ -104,6 +104,18 @@ is the thing that has to be correct, which is what `apply_upgrade.py`
 fixes. `seed/scripts/test_dataset_upgrade.py` fails if the committed
 profiles ever drift back.
 
+**`--check` is the pre-publish gate, and it now covers every pass (#1295).**
+It re-runs the whole upgrade in memory and exits non-zero if anything would
+change, naming only the passes that actually fired. ⚠️ The replacement pass
+was invisible to it until 2026-08-26, because `apply_replacements` returned
+records *processed* — `260/260 records repointed at the HQ pool` on every
+run, upgraded or not — and a number that is never zero cannot be a drift
+signal. It now returns processed **and** modified; the progress line prints
+both (`260/260 … (0 modified)`) and the gate reads the second. That gap is
+how studio-b carried 86 stale `file_size_bytes` past the gate for weeks
+while `file_path` — the only field the older test compared — was correct on
+every one of them.
+
 ### ⛔ The publish guard (#1275)
 
 That "the per-site files are OUTPUTS" property has a sharp edge, and it
@@ -133,6 +145,52 @@ Two things now stand in the way:
 ⛔ **Do not hand-edit a per-site `MANIFEST.json` again.** It is an output.
 Put the change in `seed/upgrades/` and let `apply_upgrade.py` fold it into
 the profile, which is the only side the pipeline reads.
+
+### ⚠️ A byte count is a MEASUREMENT, not content (#1294)
+
+The rule above is about *content* — which records exist and what values
+they carry. `file_size_bytes` on a pool record is a different kind of
+thing: it is the size of a file the pipeline **produces**, so there is
+only ever one right answer and the profile's job is to describe it.
+
+Nothing re-derived those numbers. `newSize` in
+`kenney-hq-replacements.<site>.json` was measured once, by hand, on
+whatever pool existed that day — and a pool file is a *render*, so every
+rasteriser fix invalidated a slice of them silently. #630 and #685 both
+changed what frame a vector is drawn into; #685 alone took
+`vector_backgrounds` from an 8.8%-of-the-artwork crop to the whole
+drawing, roughly tripling its bytes.
+
+Measured 2026-08-26 against a pool rebuilt from the committed manifest:
+**150 of site_a's 260 replacement rows and 472 of site_b's 656** named a
+size the file does not have. The repository was the stale side —
+site_a's published share agreed with the *rebuilt* pool on 776 of 777
+records, and `balance-assets.site_a.json` (emitted after the fixes) had
+been contradicting the replacements docs on **115 pool files** the whole
+time, entirely inside the repo.
+
+Re-measuring is a command, not a procedure:
+
+```bash
+python3 seed/scripts/kenney_hq.py build \
+    --pack "$DATASETS/Kenney Game Assets All-in-1 3.6.0" --out /tmp/kenney-hq
+python3 seed/scripts/kenney_hq.py sizes --pool /tmp/kenney-hq \
+    --replacements seed/upgrades/kenney-hq-replacements.site_a.json \
+    --replacements seed/upgrades/kenney-hq-replacements.site_b.json --write
+python3 seed/scripts/apply_upgrade.py --site site_a \
+    --profile seed/profiles/studio-a.assets.json \
+    --posts   seed/profiles/studio-a.posts.json      # then site_b
+```
+
+⚠️ **The pool is BUILT, not shipped.** There is no `hq` directory on the
+archive share; `--out` has no default and the build takes the CC0 pack
+plus `npm install sharp` in `seed/scripts/`. Without `--write`, `sizes`
+reports and exits non-zero, so it can stand as a gate.
+
+⛔ **Two committed documents describing the same pool file must agree**,
+and that is now a test (`TestPoolSizesAgreeAcrossDocuments`) which needs
+neither the pool nor the share. It was red on 115 files before this
+repair.
 
 ### The corpus carries every AI state (#1290)
 

@@ -75,6 +75,11 @@ Usage
     python3 kenney_hq.py verify \\
         --pack "/mnt/.../Kenney Game Assets All-in-1 3.6.0" \\
         --pool /mnt/.../site_b/images/kenney-hq
+
+    # re-measure the replacement docs' newSize against a built pool (#1294)
+    python3 kenney_hq.py sizes --pool /tmp/kenney-hq \\
+        --replacements seed/upgrades/kenney-hq-replacements.site_a.json \\
+        --replacements seed/upgrades/kenney-hq-replacements.site_b.json
 """
 
 from __future__ import annotations
@@ -522,6 +527,88 @@ def verify_pool(pool_dir: Path, expected_names: set[str] | None = None) -> int:
     return 0
 
 
+def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool) -> int:
+    """Re-measure `newSize` in a replacements document against a built pool.
+
+    ⛔ WHY THIS IS A COMMAND AND NOT A ONE-OFF SCRIPT (#1294).
+
+    `newSize` is the byte count of a pool file, and a pool file is a
+    RENDER — its size moves whenever the rasteriser changes. #630 and
+    #685 both changed what frame a vector is rendered into, and #685
+    alone took `vector_backgrounds` from an 8.8%-of-the-artwork crop to
+    the whole drawing. Every such fix silently invalidates a number
+    committed in this document, and nothing re-derived it: the value was
+    measured once, by hand, on whatever pool existed that day.
+
+    Measured 2026-08-26, against a pool rebuilt from the committed
+    manifest and the pack: **150 of site_a's 260 rows and 472 of
+    site_b's 656** disagreed with the file they name. site_a's published
+    share agreed with the REBUILT pool on 776 of 777 records, so the
+    stale side was the repository's, not the share's.
+
+    ⚠️ THE DIRECTION IS NOT AN OPINION AND IT IS NOT ADR 0097's SUBJECT.
+    0097 governs CONTENT — which records exist and what values they
+    carry — and there the profile is the source of truth. A byte count
+    is not content: it is a MEASUREMENT of a file the profile names, and
+    the pipeline can only ever produce one answer. The profile must
+    describe what `build` makes; anything else describes an artifact
+    that no longer exists.
+
+    Report-only by default, and non-zero when anything drifted, so it
+    can stand as a gate. `--write` re-measures in place.
+    """
+    total_drift = 0
+    for doc in docs:
+        rows = json.loads(doc.read_text(encoding="utf-8"))
+        drifted, absent = [], []
+        for r in rows:
+            name = r["new"].rsplit("/", 1)[-1]
+            f = pool_dir / name
+            # A row naming a file the pool cannot produce is a DIFFERENT
+            # problem from a row whose number is stale, and collapsing
+            # the two would let a deleted pool entry read as a size fix.
+            if not f.is_file():
+                absent.append(name)
+                continue
+            size = f.stat().st_size
+            if size != r.get("newSize"):
+                drifted.append((r["id"], name, r.get("newSize"), size))
+                if write:
+                    r["newSize"] = size
+        print(f"\n{doc.name}", file=sys.stderr)
+        print(f"  rows     : {len(rows):,}", file=sys.stderr)
+        print(f"  drifted  : {len(drifted):,}", file=sys.stderr)
+        print(f"  absent   : {len(absent):,} row(s) name a file the pool "
+              "does not hold", file=sys.stderr)
+        for name in absent[:5]:
+            print(f"     MISSING {name}", file=sys.stderr)
+        for _, name, was, now in drifted[:5]:
+            print(f"     {was!s:>9} -> {now:<9} {name}", file=sys.stderr)
+        if len(drifted) > 5:
+            print(f"     … and {len(drifted) - 5:,} more", file=sys.stderr)
+        if absent:
+            print("  FAIL     : a row naming a file the pool cannot produce "
+                  "cannot be re-measured. Re-run `build`, or drop the row.",
+                  file=sys.stderr)
+            return 1
+        if write and drifted:
+            doc.write_text(
+                json.dumps(rows, indent=1, sort_keys=True, ensure_ascii=False)
+                + "\n", encoding="utf-8")
+            print(f"  wrote {doc}", file=sys.stderr)
+        total_drift += len(drifted)
+
+    if total_drift and not write:
+        print(f"\nFAIL: {total_drift:,} newSize value(s) disagree with the "
+              "pool. Re-run with --write, then apply_upgrade.py to carry "
+              "them into the profiles.", file=sys.stderr)
+        return 1
+    print(f"\nOK: every newSize matches the pool ({total_drift:,} rewritten)."
+          if write else "\nOK: every newSize matches the pool.",
+          file=sys.stderr)
+    return 0
+
+
 def cmd_verify(pack_root: Path | None, pool_dir: Path) -> int:
     """Verify a pool, and if a pack is given, that every file traces back
     to a real source path through its hash."""
@@ -581,6 +668,18 @@ def main() -> int:
     v.add_argument("--pack", type=Path, default=None,
                    help="if given, also trace every pool file to a source path")
 
+    z = sub.add_parser(
+        "sizes",
+        help="re-measure a replacements doc's newSize against a built pool")
+    z.add_argument("--pool", required=True, type=Path,
+                   help="pool directory produced by `build`")
+    z.add_argument("--replacements", required=True, type=Path, action="append",
+                   metavar="DOC", help="kenney-hq-replacements.<site>.json "
+                                       "(repeatable)")
+    z.add_argument("--write", action="store_true",
+                   help="re-measure in place (default: report and exit "
+                        "non-zero if anything drifted)")
+
     args = ap.parse_args()
     if args.cmd in ("build", "select") and not args.pack.is_dir():
         print(f"error: --pack not a directory: {args.pack}\n"
@@ -594,6 +693,14 @@ def main() -> int:
                      args.rerender)
     if args.cmd == "select":
         return cmd_select(args.pack, args.limit, args.out)
+    if args.cmd == "sizes":
+        if not args.pool.is_dir():
+            print(f"error: --pool not a directory: {args.pool}\n"
+                  "The pool is BUILT, not shipped — there is none on the "
+                  "archive share. Run `kenney_hq.py build --pack <pack> "
+                  "--out <dir>` first.", file=sys.stderr)
+            return 2
+        return cmd_sizes(args.pool, args.replacements, args.write)
     return cmd_verify(args.pack, args.pool)
 
 
