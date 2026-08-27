@@ -608,6 +608,59 @@ def apply_manifest_reconcile(profile: list[dict], doc: dict) -> tuple[int, int]:
     return n_added, filled
 
 
+def apply_staged_measurements(profile: list[dict],
+                              doc: list[dict]) -> tuple[int, int]:
+    """Make every record describe the bytes the dataset SHIPS (#1301).
+
+    Returns (records_corrected, hashes_recorded).
+
+    THE FIELD THIS SETTLES. `file_size_bytes` had two meanings depending
+    on the root — the source file for a copied record, the origin
+    download for a pre-staged one — and eleven video records used the
+    second while the dataset shipped a deliberate two-minute cut. One of
+    them claimed 1,172,428,172 B for a 179,941,478 B file. After this
+    pass the field has ONE meaning everywhere: the shipped bytes. What
+    `metadata.media_url` serves moves to `metadata.origin_bytes`, so the
+    URL survives for attribution and re-fetch without doubling as a
+    description of the ship.
+
+    ⛔ WHY THIS IS SAFE WHERE `apply_manifest_reconcile` REFUSED. That
+    pass declines to take `file_size_bytes` from the share because the
+    share can be STALE against a reproducible source — measured
+    2026-08-27, 392 of site_b's 656 staged pool files disagree with a
+    freshly built pool while the profile agrees with that pool on all
+    656. `measure_staged.py` never measures a source-backed root for
+    exactly that reason. It measures only roots whose bytes are staged
+    AT the destination, where there is no source to be stale against.
+
+    ⛔ `metadata.sha256` IS NOT TOUCHED FOR AN `internet` RECORD. It is
+    the hash of the download (`fetch_gaps.py:1084`), and
+    `sanitize_and_assemble.py:1517` mints the record's id from it —
+    `stable_uuid("asset", "internet", sha256)` — with three timestamps
+    spread off the same value at `:1558-1560`. Re-measuring it against a
+    cut would move asset ids on the next assembly. The emitter records a
+    hash only for the pre-staged roots, where the destination IS the
+    source and no id derives from it.
+    """
+    by_id = {a["id"]: a for a in profile}
+    corrected = hashed = 0
+    for entry in doc:
+        target = by_id.get(entry["id"])
+        if target is None:
+            continue
+        meta = target.setdefault("metadata", {})
+        if target.get("file_size_bytes") != entry["bytes"]:
+            if "origin_bytes" in entry:
+                meta["origin_bytes"] = entry["origin_bytes"]
+            target["file_size_bytes"] = entry["bytes"]
+            corrected += 1
+        sha = entry.get("sha256")
+        if sha and meta.get("sha256") != sha:
+            meta["sha256"] = sha
+            hashed += 1
+    return corrected, hashed
+
+
 def _empty(v) -> bool:
     """`False` and `0` are values, not emptiness — losing `mature: false`
     loses a declaration."""
@@ -778,6 +831,8 @@ def main() -> int:
     declarations = load(declarations_doc) if declarations_doc.is_file() else []
     reconcile_doc = args.upgrades / f"manifest-reconcile.{args.site}.json"
     reconcile = load(reconcile_doc) if reconcile_doc.is_file() else {}
+    staged_doc = args.upgrades / f"staged-measurements.{args.site}.json"
+    staged = load(staged_doc) if staged_doc.is_file() else []
     profile = load(args.profile)
     posts = load(args.posts)
 
@@ -799,6 +854,12 @@ def main() -> int:
     # applying it before them would let a later pass overwrite the very
     # values it exists to restore.
     n_reconciled, n_filled = apply_manifest_reconcile(profile, reconcile)
+    # AFTER the reconcile, and last of all: the reconcile fills keys the
+    # profile lacks, and one of the keys it can fill is `metadata.sha256`
+    # on a pre-staged record. This pass is the one that knows whether
+    # that hash describes the file the site actually ships, so it has to
+    # be able to overwrite what the reconcile just put there.
+    n_staged, n_hashed = apply_staged_measurements(profile, staged)
     n_deduped, dup_ids = dedupe_posts(posts)
     problems += audit(profile, posts, reps, add_a, add_p)
     # A declaration naming an id this profile does not hold is a
@@ -824,6 +885,8 @@ def main() -> int:
           file=sys.stderr)
     print(f"media_url   : {n_repaired} existing record(s) backfilled (#602)",
           file=sys.stderr)
+    print(f"staged      : {n_staged} record(s) re-pointed at the bytes the "
+          f"site ships, {n_hashed} hash(es) recorded (#1301)", file=sys.stderr)
     if dup_ids:
         print(f"duplicate id(s) collapsed: {', '.join(dup_ids[:8])}"
               f"{' …' if len(dup_ids) > 8 else ''}", file=sys.stderr)
@@ -849,6 +912,14 @@ def main() -> int:
         # things that did not happen alongside the one that did is
         # training people to skim it.
         drifted = [
+            (n_staged,
+             f"{n_staged} record(s) describe bytes the site does not ship — "
+             f"staged-measurements.{args.site}.json disagrees with the "
+             "profile's file_size_bytes (#1301)"),
+            (n_hashed,
+             f"{n_hashed} pre-staged record(s) carry no hash of the file "
+             "they ship, or the wrong one — a re-fetch cannot refuse an "
+             "origin without it (#1301)"),
             (n_modified,
              f"{n_modified} replacement record(s) disagree with "
              f"kenney-hq-replacements.{args.site}.json — a file_path, byte "

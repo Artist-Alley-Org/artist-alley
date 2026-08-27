@@ -351,6 +351,20 @@ def internet_records(doc: list[dict]) -> list[dict]:
             and not (r.get("metadata") or {}).get("source_archive")]
 
 
+def origin_bytes(record: dict) -> int | None:
+    """What `metadata.media_url` serves, which is NOT always what ships.
+
+    `file_size_bytes` describes the bytes the dataset publishes (#1301).
+    For eleven video records that is a deliberate two-minute cut, and the
+    URL still serves the full original — so the byte count a HEAD must
+    agree with lives in `metadata.origin_bytes`, written beside the URL
+    by `measure_staged.py`. Where the two are the same the key is absent
+    and the shipped count is the right thing to check.
+    """
+    meta = record.get("metadata") or {}
+    return meta.get("origin_bytes", record.get("file_size_bytes"))
+
+
 def needs_media_url(record: dict) -> bool:
     """A record is short a media URL when it has none, or when the one it
     has is the same page URL we already know is not a file."""
@@ -451,7 +465,7 @@ def cmd_verify(paths: list[Path], jobs: int) -> int:
             results = list(ex.map(probe, recs))
         bad = unavailable = 0
         for r, (outcome, got) in zip(recs, results):
-            want = r.get("file_size_bytes")
+            want = origin_bytes(r)
             name = r["metadata"].get("filename")
             url = r["metadata"]["media_url"]
             if outcome == "unavailable":
@@ -511,9 +525,9 @@ def cmd_refetch(paths: list[Path], out: Path, against: Path | None,
                 print(f"    DOWNLOAD FAILED: {e}", file=sys.stderr)
                 continue
             size = dest.stat().st_size
-            want = r.get("file_size_bytes")
+            want = origin_bytes(r)
             digest = sha256_of(dest)
-            print(f"    {size:,} B (manifest {want:,} B) "
+            print(f"    {size:,} B (origin {want:,} B) "
                   f"{'MATCH' if size == want else 'SIZE MISMATCH'}", file=sys.stderr)
             print(f"    sha256 {digest}", file=sys.stderr)
             if size != want:
@@ -525,8 +539,24 @@ def cmd_refetch(paths: list[Path], out: Path, against: Path | None,
                     same = sdig == digest
                     print(f"    staged sha256 {sdig}  "
                           f"{'IDENTICAL' if same else 'DIFFERENT'}", file=sys.stderr)
-                    if not same:
+                    # ⚠️ DIFFERENT IS THE CORRECT ANSWER for a record that
+                    # ships a cut of its origin (#1301). `origin_bytes`
+                    # present IS the record saying so, and failing the run
+                    # on it would make this tool red on eleven records
+                    # that are behaving exactly as documented. The check
+                    # that still matters there is the SHIPPED one: the
+                    # staged file must be the size the manifest publishes.
+                    cut = "origin_bytes" in (r.get("metadata") or {})
+                    if not same and not cut:
                         rc = 1
+                    if cut:
+                        sships = staged.stat().st_size
+                        ships = r.get("file_size_bytes")
+                        print(f"    ships {sships:,} B (manifest {ships:,} B) "
+                              f"{'MATCH' if sships == ships else 'SHIPPED SIZE MISMATCH'}",
+                              file=sys.stderr)
+                        if sships != ships:
+                            rc = 1
                 else:
                     # Not a failure: the archive share may simply not be
                     # mounted here. Unavailable is not the same as absent

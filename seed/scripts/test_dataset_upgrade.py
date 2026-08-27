@@ -41,6 +41,7 @@ import kenney_hq as hq              # noqa: E402
 import kenney_pack_sources as kps   # noqa: E402
 import pexels_gameplay as px        # noqa: E402
 import manifest_guard as mg         # noqa: E402
+import measure_staged as ms        # noqa: E402
 import migrate_post_ids as mpi      # noqa: E402
 import populate_archive as pa       # noqa: E402
 import resolve_media_urls as rmu    # noqa: E402
@@ -718,6 +719,137 @@ class TestCommittedUpgradeData(unittest.TestCase):
                 self.assertTrue(p.is_file(), f"missing {p}")
                 self.assertGreater(len(json.loads(p.read_text())), 0, p)
 
+    # -- #1301: the manifest describes what it SHIPS -----------------
+
+    PROFILE_FOR = {"site_a": ("studio-a", "demo"),
+                   "site_b": ("studio-b", "dev")}
+
+    # The four cut records that DO carry a direct URL, and so are the
+    # four a re-fetch can actually reach. Named rather than derived: the
+    # point of the assertion is that this set does not shrink, and
+    # deriving it from the file under test would make it unable to fail.
+    HAD_A_MEDIA_URL = frozenset({
+        "videos/internet/red-eclipse-gameplay.webm",
+        "videos/internet/sintel-2010-1080p.mkv",
+        "videos/internet/tears-of-steel-720p.mov",
+        "videos/internet/xonotic-gameplay.webm",
+    })
+
+    def _staged(self, site):
+        doc = UPGRADES / f"staged-measurements.{site}.json"
+        self.assertTrue(doc.is_file(), f"missing {doc} — re-emit it with "
+                                       "measure_staged.py from a mounted share")
+        return {e["id"]: e for e in json.loads(doc.read_text())}
+
+    def test_no_record_describes_bytes_it_does_not_ship(self):
+        """⛔ THIS ASSERTION FAILED ON THE DATA IT SHIPPED WITH.
+
+        Before #1301, eleven video records per profile carried the
+        ORIGIN's byte count — `videos/internet/sintel-2010-1080p.mkv`
+        claimed 1,172,428,172 B for the 179,941,478 B cut the dataset
+        actually publishes — and 2,690,105,638 B of overstatement passed
+        every gate in this suite.
+
+        The oracle is `staged-measurements.<site>.json`, which is what a
+        mounted share measured. That indirection is deliberate: the
+        runners cannot see /mnt/blackbox_archives, and a test that can
+        only run where the share is mounted is a test CI cannot run.
+        `measure_staged.py verify` is the direct form for a machine that
+        does have it.
+        """
+        for site, profiles in self.PROFILE_FOR.items():
+            staged = self._staged(site)
+            for name in profiles:
+                recs = json.loads(
+                    (PROFILES / f"{name}.assets.json").read_text())
+                for r in recs:
+                    e = staged.get(r["id"])
+                    if e is None:
+                        continue
+                    self.assertEqual(
+                        r["file_size_bytes"], e["bytes"],
+                        f"{name}: {r['file_path']} says "
+                        f"{r['file_size_bytes']:,} B, {site} ships "
+                        f"{e['bytes']:,} B")
+
+    def test_a_prestaged_record_carries_the_hash_of_what_it_ships(self):
+        """Without it the re-fetch has only a length to go on, and a
+        length cannot tell two different cuts apart — site_a and site_b
+        hold byte-identical, hash-different copies of three of these."""
+        for site, profiles in self.PROFILE_FOR.items():
+            staged = self._staged(site)
+            for name in profiles:
+                recs = json.loads(
+                    (PROFILES / f"{name}.assets.json").read_text())
+                for r in recs:
+                    e = staged.get(r["id"])
+                    if e is None or "sha256" not in e:
+                        continue
+                    self.assertEqual(
+                        (r.get("metadata") or {}).get("sha256"), e["sha256"],
+                        f"{name}: {r['file_path']} does not carry the hash "
+                        f"of the bytes {site} ships")
+
+    def test_the_origin_survives_every_correction(self):
+        """⭐ ATTRIBUTION IS NOT OPTIONAL. Re-pointing `file_size_bytes`
+        at the cut must not cost the record its provenance: the URL stays,
+        and what that URL serves is preserved beside it so the two never
+        have to be guessed apart again."""
+        for site, profiles in self.PROFILE_FOR.items():
+            staged = self._staged(site)
+            cut = {i: e for i, e in staged.items() if "origin_bytes" in e}
+            self.assertEqual(len(cut), 11,
+                             f"{site}: expected the 11 known cut records")
+            for name in profiles:
+                recs = {r["id"]: r for r in json.loads(
+                    (PROFILES / f"{name}.assets.json").read_text())}
+                for rid, e in cut.items():
+                    meta = recs[rid].get("metadata") or {}
+                    self.assertEqual(meta.get("origin_bytes"),
+                                     e["origin_bytes"],
+                                     f"{name}: {e['file_path']} lost the "
+                                     "origin's byte count")
+                    # ⚠️ NOT "every record has a URL". Seven of the
+                    # eleven never had one — they carry
+                    # `acquisition_source` + `attribution` and nothing
+                    # machine-readable, which is a pre-existing #602 gap
+                    # and not this change's to invent. What must hold is
+                    # that the correction COSTS a record nothing: the
+                    # attribution stays, and a URL that was there is
+                    # still there.
+                    self.assertTrue(
+                        meta.get("attribution"),
+                        f"{name}: {e['file_path']} lost its attribution")
+                    if e["file_path"] in self.HAD_A_MEDIA_URL:
+                        self.assertTrue(
+                            meta.get("media_url"),
+                            f"{name}: {e['file_path']} lost the origin URL "
+                            "it shipped with")
+
+    def test_an_internet_records_hash_is_never_re_measured(self):
+        """⛔ `metadata.sha256` ON AN `internet` RECORD IS IDENTITY.
+
+        `sanitize_and_assemble.py` mints the id from it —
+        `stable_uuid("asset", "internet", sha256)` — and spreads three
+        timestamps off the same value. Re-pointing it at a staged cut
+        would move asset ids on the next assembly, which is why
+        `measure_staged.py` records a hash for the PRE-STAGED roots only.
+        This test is the tripwire on that rule.
+        """
+        for site in self.SITES:
+            staged = self._staged(site)
+            for name in self.PROFILE_FOR[site]:
+                recs = {r["id"]: r for r in json.loads(
+                    (PROFILES / f"{name}.assets.json").read_text())}
+                for rid, e in staged.items():
+                    if recs[rid].get("source_root") != "internet":
+                        continue
+                    self.assertNotIn(
+                        "sha256", e,
+                        f"{name}: {e['file_path']} is an internet record and "
+                        "the staged document carries a hash for it — that "
+                        "would move its id on re-assembly")
+
     def test_replacements_all_target_the_hq_pool(self):
         pool_names = {e["name"] for e in
                       hq.load_pool_manifest(UPGRADES / "kenney-hq-pool.json")}
@@ -1041,7 +1173,8 @@ class TestPopulateArchiveRefetch(unittest.TestCase):
         t.start()
         return httpd, f"http://127.0.0.1:{httpd.server_address[1]}"
 
-    def _run(self, tmp, media_url, size, extra_args=()):
+    def _run(self, tmp, media_url, size, extra_args=(), meta=None,
+             prestage=None):
         """Build a minimal dataset + profile and run populate_archive."""
         tmp = Path(tmp)
         local = tmp / "local"
@@ -1060,9 +1193,14 @@ class TestPopulateArchiveRefetch(unittest.TestCase):
                 "filename": "clip.mp4",
                 "fetched_from": "https://www.pexels.com/video/a-clip-1/",
                 **({"media_url": media_url} if media_url else {}),
+                **(meta or {}),
             },
         }
         profile.write_text(json.dumps([rec]), encoding="utf-8")
+        if prestage is not None:
+            staged = dest / "videos/internet/clip.mp4"
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            staged.write_bytes(prestage)
         proc = subprocess.run(
             [sys.executable, str(SCRIPTS / "populate_archive.py"),
              "--local-source", str(local), "--internet-source", str(internet),
@@ -1124,6 +1262,112 @@ class TestPopulateArchiveRefetch(unittest.TestCase):
             self.assertFalse(out.exists())
             self.assertIn("MISSING", proc.stderr)
 
+    # -- #1301 -------------------------------------------------------
+    #
+    # ⛔ EVERY TEST BELOW ASSERTS A REFUSAL. The hazard was never that
+    # the re-fetch failed; it was that it SUCCEEDED, printed REFETCHED,
+    # and staged a 1.1 GB original over a two-minute cut because the
+    # length it checked was the origin's own. A validator that has only
+    # ever been observed permitting is untested, so these drive the
+    # decline.
+
+    def test_the_origin_is_refused_when_the_dataset_ships_a_cut(self):
+        """THE BUG (#1301). The URL serves the ORIGINAL; the dataset
+        publishes a cut of it. The origin must not be staged."""
+        origin = b"ORIGINAL-" * 4096          # what media_url serves
+        ships = len(b"CUT-" * 64)             # what the manifest publishes
+        with tempfile.TemporaryDirectory() as d:
+            served = Path(d) / "served"
+            served.mkdir()
+            (served / "clip.mp4").write_bytes(origin)
+            httpd, base = self._serve(served)
+            try:
+                proc, out = self._run(
+                    d, f"{base}/clip.mp4", ships,
+                    meta={"origin_bytes": len(origin)})
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertFalse(out.exists(),
+                             "the ORIGIN was staged over a record that "
+                             "publishes a cut of it")
+            self.assertNotIn("REFETCHED", proc.stderr)
+            self.assertIn("size mismatch", proc.stderr)
+            # The message has to name both numbers, because the reader's
+            # first question is "which of these is my dataset?".
+            self.assertIn(f"ships {ships:,} B", proc.stderr)
+            self.assertIn(f"served {len(origin):,} B", proc.stderr)
+
+    def test_the_origin_is_refused_even_when_it_measures_the_same(self):
+        """A LENGTH IS A WEAK ORACLE. Three of our video records have
+        byte-identical staged copies in site_a and site_b with different
+        hashes, so "same size" genuinely does not mean "same bytes".
+        The recorded hash is what closes that gap."""
+        ships = b"THE-CUT-" * 512
+        impostor = b"NOT-CUT-" * 512          # same length, other bytes
+        self.assertEqual(len(ships), len(impostor))
+        with tempfile.TemporaryDirectory() as d:
+            served = Path(d) / "served"
+            served.mkdir()
+            (served / "clip.mp4").write_bytes(impostor)
+            httpd, base = self._serve(served)
+            try:
+                proc, out = self._run(
+                    d, f"{base}/clip.mp4", len(ships),
+                    meta={"sha256": hashlib.sha256(ships).hexdigest()})
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertFalse(out.exists(),
+                             "a same-length impostor was staged")
+            self.assertIn("sha256 mismatch", proc.stderr)
+
+    def test_the_real_cut_is_still_staged(self):
+        """The refusal must not be a blanket one: when the URL serves
+        exactly what the manifest publishes, the re-fetch still works.
+        A gate that refuses everything is as useless as one that refuses
+        nothing, and only this test tells the two apart."""
+        ships = b"THE-CUT-" * 512
+        with tempfile.TemporaryDirectory() as d:
+            served = Path(d) / "served"
+            served.mkdir()
+            (served / "clip.mp4").write_bytes(ships)
+            httpd, base = self._serve(served)
+            try:
+                proc, out = self._run(
+                    d, f"{base}/clip.mp4", len(ships),
+                    meta={"sha256": hashlib.sha256(ships).hexdigest()})
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(out.read_bytes(), ships)
+            self.assertIn("REFETCHED", proc.stderr)
+
+    def test_a_prestaged_file_of_the_wrong_size_fails_the_run(self):
+        """`st_size > 0` was the entire pre-staged check, which is how a
+        two-minute cut sat under a 1.1 GB claim for a whole release
+        without one line of output about it."""
+        with tempfile.TemporaryDirectory() as d:
+            proc, out = self._run(d, None, 999999, prestage=b"much shorter")
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertIn("WRONG SIZE", proc.stderr)
+            self.assertIn("wrong size:  1", proc.stderr)
+            # ⚠️ And it must NOT delete or re-fetch over it. The bytes on
+            # the share are the only copy; a guard that "repairs" them is
+            # the data loss it was meant to prevent.
+            self.assertEqual(out.read_bytes(), b"much shorter")
+
+    def test_a_correct_prestaged_file_is_still_silent(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = b"exactly this"
+            proc, out = self._run(d, None, len(body), prestage=body)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("WRONG SIZE", proc.stderr)
+            self.assertIn("preexisting: 1", proc.stderr)
+
     def test_a_record_with_no_media_url_says_so(self):
         """The message has to name the fix, because the person hitting it
         is on a machine that has never seen the archive share."""
@@ -1136,6 +1380,113 @@ class TestPopulateArchiveRefetch(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # #572 — per-team balance
 # ---------------------------------------------------------------------------
+
+class TestMeasureStagedRootPolicy(unittest.TestCase):
+    """⛔ WHICH ROOTS MAY BE MEASURED FROM THE SHARE, AND WHY IT MATTERS.
+
+    `apply_manifest_reconcile` refuses to take `file_size_bytes` from the
+    archive share, and its reasoning is right: for a root copied from a
+    reproducible source the share can simply be OLDER than the source.
+    Measured 2026-08-27, 392 of site_b's 656 staged pool files disagree
+    with a freshly built pool while the profile agrees with that pool on
+    all 656 — so adopting the share's number there would have "corrected"
+    a correct profile into one the next build refuses.
+
+    A pre-staged root has no source to be stale against: the destination
+    IS the artifact. That distinction is the whole licence for #1301's
+    pass, so it gets a test rather than a comment.
+    """
+
+    def _site(self, tmp, rel, body):
+        p = Path(tmp) / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(body)
+
+    def test_a_source_backed_root_is_never_measured(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._site(d, "images/kenney-hq/a-512.png", b"stale pool render")
+            profile = [{"id": "hq-1", "source_root": "hq",
+                        "file_path": "images/kenney-hq/a-512.png",
+                        "file_size_bytes": 999999}]
+            entries, notes = ms.measure(profile, Path(d))
+            self.assertEqual(entries, [],
+                             "the share was allowed to overrule a rebuildable "
+                             "source")
+            for root in ("local", "pack"):
+                profile[0]["source_root"] = root
+                self.assertEqual(ms.measure(profile, Path(d))[0], [], root)
+
+    def test_a_prestaged_root_is_measured_and_hashed(self):
+        body = b"the two-minute cut"
+        with tempfile.TemporaryDirectory() as d:
+            self._site(d, "videos/torrent/clip.avi", body)
+            profile = [{"id": "v-1", "source_root": "torrent_import",
+                        "file_path": "videos/torrent/clip.avi",
+                        "file_size_bytes": 999999}]
+            entries, _ = ms.measure(profile, Path(d))
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["bytes"], len(body))
+            self.assertEqual(entries[0]["origin_bytes"], 999999)
+            self.assertEqual(entries[0]["sha256"],
+                             hashlib.sha256(body).hexdigest())
+
+    def test_an_internet_root_is_measured_but_never_hashed(self):
+        """The hash is that record's IDENTITY (#1301). Recording a staged
+        one would move its id on the next assembly."""
+        with tempfile.TemporaryDirectory() as d:
+            self._site(d, "videos/internet/clip.webm", b"cut")
+            profile = [{"id": "i-1", "source_root": "internet",
+                        "file_path": "videos/internet/clip.webm",
+                        "file_size_bytes": 4242}]
+            entries, _ = ms.measure(profile, Path(d))
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["bytes"], 3)
+            self.assertNotIn("sha256", entries[0])
+
+    def test_an_absent_file_is_a_note_and_never_a_zero(self):
+        """⚠️ Unavailable is not absent and neither is zero. Emitting
+        `bytes: 0` for a dropped mount would publish a manifest that
+        describes nothing, and the re-fetch would then happily accept an
+        empty file as correct."""
+        with tempfile.TemporaryDirectory() as d:
+            profile = [{"id": "v-1", "source_root": "site",
+                        "file_path": "videos/internet/gone.webm",
+                        "file_size_bytes": 10}]
+            entries, notes = ms.measure(profile, Path(d))
+            self.assertEqual(entries, [])
+            self.assertEqual(len(notes), 1)
+            self.assertIn("ABSENT", notes[0])
+
+    def test_a_zero_byte_staged_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._site(d, "videos/internet/empty.webm", b"")
+            profile = [{"id": "v-1", "source_root": "site",
+                        "file_path": "videos/internet/empty.webm",
+                        "file_size_bytes": 10}]
+            entries, notes = ms.measure(profile, Path(d))
+            self.assertEqual(entries, [])
+            self.assertIn("EMPTY", notes[0])
+
+    def test_verify_reports_a_stale_share_without_failing(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._site(d, "images/kenney-hq/a-512.png", b"older render")
+            prof = Path(d) / "p.json"
+            prof.write_text(json.dumps([{
+                "id": "hq-1", "source_root": "hq",
+                "file_path": "images/kenney-hq/a-512.png",
+                "file_size_bytes": 999999}]), encoding="utf-8")
+            self.assertEqual(ms.cmd_verify(prof, Path(d)), 0)
+
+    def test_verify_fails_on_a_measurable_mismatch(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._site(d, "videos/torrent/clip.avi", b"short")
+            prof = Path(d) / "p.json"
+            prof.write_text(json.dumps([{
+                "id": "v-1", "source_root": "torrent_import",
+                "file_path": "videos/torrent/clip.avi",
+                "file_size_bytes": 999999}]), encoding="utf-8")
+            self.assertEqual(ms.cmd_verify(prof, Path(d)), 1)
+
 
 class TestStudioBalanceShape(unittest.TestCase):
     """The committed profile must keep the shape #572 gave it.

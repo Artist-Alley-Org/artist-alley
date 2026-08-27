@@ -139,14 +139,31 @@ def refetch_member(url: str, member: str, expect_sha256: str,
     return True, f"{len(data):,} B from {url.rsplit('/', 1)[-1]}"
 
 
-def refetch(url: str, dest: Path, expect_size: int | None) -> tuple[bool, str]:
+def refetch(url: str, dest: Path, expect_size: int | None,
+            expect_sha256: str | None = None) -> tuple[bool, str]:
     """Download `url` to `dest`. Returns (ok, note).
 
-    Written to a .part file and only moved into place once the length
-    agrees with the manifest. A short or substituted download that landed
-    at the real path would look pre-staged on the next run and never be
-    noticed — the whole point of recording a byte count alongside the URL
-    is to make that impossible.
+    Written to a .part file and only moved into place once it agrees with
+    the manifest. A short or substituted download that landed at the real
+    path would look pre-staged on the next run and never be noticed — the
+    whole point of recording a byte count alongside the URL is to make
+    that impossible.
+
+    ⛔ `expect_size` IS THE SHIPPED BYTE COUNT, NOT THE ORIGIN'S (#1301).
+    This is the check that let the hazard through. Eleven video records
+    carried the origin's length while the dataset shipped a two-minute
+    cut, so a re-fetch downloaded the 1.1 GB ORIGINAL, compared it
+    against the origin's own number, agreed with itself and staged it.
+    The dataset would have silently gained a file it does not publish and
+    the run would have printed REFETCHED. `file_size_bytes` now means the
+    shipped bytes everywhere (`measure_staged.py`), which turns this same
+    comparison from a rubber stamp into the refusal it was written to be.
+
+    `expect_sha256` is the stronger form and is used whenever the record
+    carries one. A length is a weak oracle — two different cuts of the
+    same film can share a byte count, and three of ours do across the two
+    sites — so a hash is what actually distinguishes the bytes we publish
+    from bytes that merely measure the same.
     """
     tmp = dest.with_suffix(dest.suffix + ".part")
     req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -161,10 +178,25 @@ def refetch(url: str, dest: Path, expect_size: int | None) -> tuple[bool, str]:
     got = tmp.stat().st_size
     if expect_size and got != expect_size:
         tmp.unlink(missing_ok=True)
-        return False, (f"size mismatch: manifest {expect_size:,} B, "
-                       f"served {got:,} B — refusing to stage it")
+        return False, (f"size mismatch: manifest ships {expect_size:,} B, "
+                       f"the URL served {got:,} B — refusing to stage it")
+    if expect_sha256:
+        digest = sha256_of(tmp)
+        if digest != expect_sha256:
+            tmp.unlink(missing_ok=True)
+            return False, (f"sha256 mismatch: manifest ships "
+                           f"{expect_sha256[:12]}…, the URL served "
+                           f"{digest[:12]}… — refusing to stage it")
     tmp.replace(dest)
     return True, f"{got:,} B"
+
+
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def safe_mkdir(path: Path, max_retries: int = 3) -> None:
@@ -862,6 +894,7 @@ def main() -> int:
     progress_every = max(1, len(path_map) // 20)
     items = sorted(path_map.items(), key=lambda x: x[1])  # sort by dest path
     preexisting = 0
+    wrong = 0
     for i, ((root, source_path), dest_rel) in enumerate(items):
         # PRE-STAGED roots: the bytes already live at the destination and
         # have no LOCAL source to copy from, so verify rather than copy.
@@ -882,14 +915,37 @@ def main() -> int:
         # from, which is what left this branch a dead end before.
         if root in PRESTAGED_ROOTS:
             dest_file = args.dest / dest_rel
-            if dest_file.is_file() and dest_file.stat().st_size > 0:
-                preexisting += 1
-                continue
             rec = by_dest.get(dest_rel) or {}
+            want = rec.get("file_size_bytes")
+            if dest_file.is_file() and dest_file.stat().st_size > 0:
+                # ⛔ `> 0` USED TO BE THE WHOLE CHECK (#1301), and it is
+                # the reason nothing ever noticed that eleven records
+                # described a 1.1 GB original while a two-minute cut sat
+                # here. A pre-staged root has no source to compare
+                # against, so this is the ONLY place the claim can be
+                # tested — and it was testing that the file was not
+                # empty. `file_size_bytes` now means the shipped bytes,
+                # so the manifest's own number is the oracle.
+                got = dest_file.stat().st_size
+                if want and got != want:
+                    wrong += 1
+                    if wrong <= 5:
+                        print(f"  WRONG SIZE [{root}]: {dest_rel} — manifest "
+                              f"says {want:,} B, staged file is {got:,} B. "
+                              "Re-emit seed/upgrades/staged-measurements."
+                              "<site>.json (measure_staged.py) rather than "
+                              "editing either by hand.", file=sys.stderr)
+                else:
+                    preexisting += 1
+                continue
             media_url = (rec.get("metadata") or {}).get("media_url")
             if media_url and not args.no_refetch and not args.dry_run:
-                ok, note = refetch(media_url, dest_file,
-                                   rec.get("file_size_bytes"))
+                # BOTH oracles, and both describe the SHIPPED file. The
+                # URL points at the origin, which for these records is
+                # not what the dataset publishes, so this is the call
+                # that has to decline it.
+                ok, note = refetch(media_url, dest_file, want,
+                                   (rec.get("metadata") or {}).get("sha256"))
                 if ok:
                     refetched += 1
                     bytes_copied += dest_file.stat().st_size
@@ -1037,12 +1093,21 @@ def main() -> int:
     print(f"  refetched:   {refetched:,} (downloaded from metadata.media_url #602 / source_archive #572)",
           file=sys.stderr)
     print(f"  missing:     {missing:,} (not found in source)", file=sys.stderr)
+    print(f"  wrong size:  {wrong:,} (pre-staged bytes disagree with the "
+          f"manifest #1301)", file=sys.stderr)
     if args.prune:
         print(f"  pruned:  {pruned:,} stale files removed", file=sys.stderr)
     if missing > 5:
         print(f"  (first 5 missing logged above)", file=sys.stderr)
+    if wrong > 5:
+        print(f"  (first 5 wrong-size logged above)", file=sys.stderr)
 
-    return 0 if missing == 0 else 1
+    # ⛔ A WRONG SIZE FAILS THE RUN, exactly as a missing file does. The
+    # two are the same defect seen from different ends: the dataset does
+    # not hold what its manifest says it holds. Exiting 0 on "the file is
+    # there, it is simply not the one we describe" is the silent-success
+    # shape this script has been bitten by twice (#604, #1301).
+    return 0 if (missing == 0 and wrong == 0) else 1
 
 
 if __name__ == "__main__":
