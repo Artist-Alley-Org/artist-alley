@@ -2768,6 +2768,161 @@ class TestManifestGuard(unittest.TestCase):
             self.assertIsNone(mg.load_json_list(Path(td) / "absent.json"))
 
 
+class TestGuardMeasurementVsEdit(unittest.TestCase):
+    """#1312 — the guard could not see a corrupted measurement.
+
+    ADR 0097 splits authority: the profile owns CONTENT, the produced
+    artifact owns MEASUREMENTS. The guard implemented neither half, so a
+    profile carrying a stale byte count published over a destination
+    carrying a true one and the report said "an edit, not a loss".
+    Sprint 14 shipped 86 wrongly-"corrected" byte counts that way.
+
+    ⭐ BOTH DIRECTIONS ARE TESTED HERE. A gate proven only to refuse is
+    as broken as one proven only to permit: refusing every changed value
+    would make the profile unable to correct anything it has published.
+    """
+
+    @staticmethod
+    def _rec(rid, root, **kw):
+        base = {"id": rid, "source_root": root, "title": f"asset {rid}",
+                "file_size_bytes": 100, "metadata": {}, "field_values": {}}
+        base.update(kw)
+        return base
+
+    # -- direction 1: a corrupted measurement must REFUSE -----------------
+
+    def test_a_stale_byte_count_on_a_staged_root_is_refused(self):
+        """The destination staged the bytes and is the only thing that
+        weighed them. A source that disagrees is stale, not editing."""
+        for root in sorted(mg.MEASURABLE_ROOTS):
+            with self.subTest(root=root):
+                cmp = mg.compare([self._rec("a", root, file_size_bytes=100)],
+                                 [self._rec("a", root, file_size_bytes=250)],
+                                 "assets")
+                self.assertEqual([x.kind for x in cmp.losses],
+                                 [mg.CORRUPTED_MEASUREMENT])
+                self.assertEqual(cmp.losses[0].key, "file_size_bytes")
+                self.assertEqual(cmp.losses[0].dest_value, 250)
+                self.assertEqual(cmp.changes, [])
+                self.assertFalse(cmp.ok)
+
+    def test_origin_bytes_is_measured_too(self):
+        cmp = mg.compare([self._rec("a", "site", metadata={"origin_bytes": 1})],
+                         [self._rec("a", "site", metadata={"origin_bytes": 2})],
+                         "assets")
+        self.assertEqual([(x.kind, x.key) for x in cmp.losses],
+                         [(mg.CORRUPTED_MEASUREMENT, "metadata.origin_bytes")])
+
+    def test_the_refusal_reaches_the_report_and_names_its_own_remedy(self):
+        """A corrupted measurement is not "stripped of a value" — the fix
+        is to RE-MEASURE, not to carry the old number back."""
+        cmp = mg.compare([self._rec("a", "site", file_size_bytes=100)],
+                         [self._rec("a", "site", file_size_bytes=250)],
+                         "assets")
+        report = mg.format_report(cmp)
+        self.assertIn("WOULD OVERWRITE A MEASUREMENT", report)
+        self.assertIn("measure_staged.py", report)
+        # It must NOT be counted as a stripped value: that number drives
+        # the "carry it back into the profile" repair, which is wrong here.
+        self.assertEqual(cmp.records_degraded, 0)
+        self.assertEqual(cmp.stripped, [])
+        self.assertNotIn("stripped of", report)
+
+    # -- direction 2: a legitimate edit must still PASS -------------------
+
+    def test_a_content_edit_still_passes(self):
+        """⛔ THE TRAP. Promoting every CHANGED_VALUE to a loss refuses
+        every legitimate edit and makes the guard unusable."""
+        cmp = mg.compare([self._rec("a", "site", title="corrected title",
+                                    field_values={"credit": "new"})],
+                         [self._rec("a", "site", title="old title",
+                                    field_values={"credit": "old"})],
+                         "assets")
+        self.assertEqual(cmp.losses, [])
+        self.assertEqual(sorted(x.kind for x in cmp.changes),
+                         [mg.CHANGED_VALUE, mg.CHANGED_VALUE])
+        self.assertTrue(cmp.ok)
+
+    def test_a_source_backed_root_may_disagree_and_still_publish(self):
+        """⛔ MEASURED, NOT ASSUMED. On 2026-08-27 a freshly built
+        kenney-hq pool matched studio-b's PROFILE on all 656 `hq` records
+        and site_b's published manifest on only 264. The share held an
+        older pool build. Refusing those 392 would have "corrected" a
+        correct profile into a broken one, and the very next build would
+        then have refused its own input."""
+        for root in sorted(mg.SOURCE_BACKED_ROOTS):
+            with self.subTest(root=root):
+                cmp = mg.compare([self._rec("a", root, file_size_bytes=35433)],
+                                 [self._rec("a", root, file_size_bytes=17313)],
+                                 "assets")
+                self.assertEqual(cmp.losses, [])
+                self.assertEqual([x.kind for x in cmp.changes],
+                                 [mg.CHANGED_VALUE])
+                self.assertTrue(cmp.ok)
+
+    # -- the rule of two -------------------------------------------------
+
+    def test_the_same_field_is_a_measurement_or_identity_by_RECORD_CLASS(self):
+        """⛔⛔ `metadata.sha256` is a measurement on an `hq`/`site`
+        record and IDENTITY on an `internet` one — the asset id is
+        `stable_uuid("asset", "internet", sha256)`. A single rule over the
+        field NAME gets one of the two wrong, and the wrong one moves
+        published asset ids."""
+        sha_src, sha_dst = "a" * 64, "b" * 64
+        internet = mg.compare(
+            [self._rec("a", "internet", metadata={"sha256": sha_src})],
+            [self._rec("a", "internet", metadata={"sha256": sha_dst})], "assets")
+        self.assertEqual(internet.losses, [])
+        self.assertEqual([x.kind for x in internet.changes], [mg.CHANGED_VALUE])
+        self.assertTrue(internet.ok)
+
+        staged = mg.compare(
+            [self._rec("a", "site", metadata={"sha256": sha_src})],
+            [self._rec("a", "site", metadata={"sha256": sha_dst})], "assets")
+        self.assertEqual([x.kind for x in staged.losses],
+                         [mg.CORRUPTED_MEASUREMENT])
+        self.assertFalse(staged.ok)
+
+        # …and the byte count of that same `internet` record IS measured.
+        # Only the hash is exempt, because only the hash is identity.
+        cmp = mg.compare([self._rec("a", "internet", file_size_bytes=100)],
+                         [self._rec("a", "internet", file_size_bytes=250)],
+                         "assets")
+        self.assertEqual([x.kind for x in cmp.losses],
+                         [mg.CORRUPTED_MEASUREMENT])
+
+    def test_one_record_can_carry_a_corruption_AND_an_edit(self):
+        """⭐ The verdict is per FIELD. All-or-nothing per record would
+        either publish the stale number or refuse the real edit."""
+        cmp = mg.compare(
+            [self._rec("a", "site", file_size_bytes=100, title="corrected")],
+            [self._rec("a", "site", file_size_bytes=250, title="old")],
+            "assets")
+        self.assertEqual([(x.kind, x.key) for x in cmp.losses],
+                         [(mg.CORRUPTED_MEASUREMENT, "file_size_bytes")])
+        self.assertEqual([(x.kind, x.key) for x in cmp.changes],
+                         [(mg.CHANGED_VALUE, "title")])
+
+    def test_a_disputed_root_refuses_rather_than_permits(self):
+        """`source_root` is content, so the two sides can disagree about
+        it. The union is taken: a disagreement can add a refusal but can
+        never hide one, and a refusal is the recoverable mistake."""
+        cmp = mg.compare([self._rec("a", "hq", file_size_bytes=100)],
+                         [self._rec("a", "site", file_size_bytes=250)],
+                         "assets")
+        self.assertEqual([x.kind for x in cmp.losses],
+                         [mg.CORRUPTED_MEASUREMENT])
+
+    def test_a_record_with_no_source_root_is_treated_as_local(self):
+        """Posts carry no `source_root`, and neither did the profiles
+        before #572. Defaulting to a measurable root would refuse every
+        post edit."""
+        cmp = mg.compare([{"id": "a", "title": "new"}],
+                         [{"id": "a", "title": "old"}], "posts")
+        self.assertEqual(cmp.losses, [])
+        self.assertTrue(cmp.ok)
+
+
 class TestManifestReconcile(unittest.TestCase):
     """#1275 — the repair that lets the guard ever pass."""
 

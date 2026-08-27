@@ -41,6 +41,60 @@ not one, and only the first two are losses:
     CHANGED_VALUE   both non-empty and different. NOT a loss — this is
                     what an edit looks like, and the profile is the
                     source of truth for edits. Reported, never refused.
+    CORRUPTED_MEASUREMENT
+                    both non-empty and different, the key is a
+                    MEASUREMENT of the bytes, and the destination is the
+                    only thing that measured them. LOSS. See below.
+
+MEASUREMENTS ARE NOT EDITS (#1312)
+----------------------------------
+ADR 0097 splits authority in two, and the guard used to implement only
+half of it:
+
+    the profile is authoritative for CONTENT
+    the produced artifact is authoritative for MEASUREMENTS
+
+A title, a licence, a field value are content: the profile decides, and a
+disagreement is an edit. `file_size_bytes` and `metadata.sha256` are not
+opinions — they describe bytes, and the side that actually weighed the
+bytes is right. A profile carrying a stale number publishes over a
+destination carrying a true one, the guard says "would change: 1 value",
+and nobody looks. Sprint 14 shipped 86 wrongly-"corrected" byte counts
+that way.
+
+⛔⛔ BUT THE VERDICT IS PER RECORD CLASS, NEVER PER FIELD NAME.
+`source_root` says where a record's bytes come from, and that decides
+which side did the weighing:
+
+  MEASURABLE_ROOTS ("site", "torrent_import", "internet")
+      The bytes are staged AT the destination. There is no reproducible
+      source to re-derive them from, so the destination IS the artifact
+      and a source that disagrees is stale. CORRUPTED_MEASUREMENT, LOSS.
+
+  SOURCE_BACKED_ROOTS ("local", "hq", "pack")
+      The bytes are copied from a source the profile is built against —
+      a kenney-hq pool render, a local file. The SHARE can lag that
+      source, so a disagreement means "the published copy is old", not
+      "the record is wrong". CHANGED_VALUE, reported, never refused.
+
+      Measured 2026-08-27 on a freshly built pool: all 656 of site_b's
+      `hq` records match the PROFILE, and the share matches on only 264.
+      Adopting the destination's number for the other 392 would have
+      corrupted a correct profile — which is what makes this per-class
+      rather than per-field.
+
+⛔ AND ONE FIELD CHANGES CLASS WITH THE RECORD.
+`metadata.sha256` is a measurement on an `hq` or `site` record and
+IDENTITY on an `internet` one: `sanitize_and_assemble.py:1828` mints the
+asset id as `stable_uuid("asset", "internet", sha256)` and derives three
+timestamps from it. It is the hash of the DOWNLOAD, not of the shipped
+cut, so it is not describing the destination's bytes at all. Treating it
+as a measurement there would refuse the edit that legitimately moves an
+id. A single rule over the field NAME gets one of the two wrong.
+
+⭐ THE VERDICT IS PER FIELD, NOT PER RECORD. A record may carry a
+corrupted measurement AND a legitimate edit at once; the measurement is
+refused and the edit still passes.
 
 ⛔ Absence of the whole comparison is not permission. A destination with
 no MANIFEST.json yet is a first publish and compares clean; a
@@ -73,6 +127,62 @@ NESTED_KEYS = ("field_values", "metadata")
 MISSING_RECORD = "MISSING_RECORD"
 MISSING_KEY = "MISSING_KEY"
 EMPTIED_VALUE = "EMPTIED_VALUE"
+CHANGED_VALUE = "CHANGED_VALUE"
+CORRUPTED_MEASUREMENT = "CORRUPTED_MEASUREMENT"
+
+# Roots whose bytes are staged at the destination with no reproducible
+# source to re-derive them from. Kept in step with
+# `measure_staged.MEASURABLE_ROOTS`, which is the tool that produces the
+# corrections this guard refuses to publish over.
+MEASURABLE_ROOTS = frozenset({"site", "torrent_import", "internet"})
+
+# Roots copied from a source the profile is built against. The published
+# copy may lag it, so the SOURCE is authoritative and a disagreement is a
+# stale publish rather than a wrong record.
+SOURCE_BACKED_ROOTS = frozenset({"local", "hq", "pack"})
+
+# Keys that describe bytes rather than state an opinion about them.
+# `metadata.origin_bytes` is what `metadata.media_url` serves; it too is
+# measured, not chosen.
+MEASUREMENT_KEYS = frozenset({"file_size_bytes", "metadata.sha256",
+                              "metadata.origin_bytes"})
+
+# ⛔ `metadata.sha256` on an `internet` record is the hash of the
+# DOWNLOAD, and the asset id is derived from it
+# (`sanitize_and_assemble.py:1828`). It describes neither the shipped
+# bytes nor an opinion about them: it is identity, and identity edits are
+# the profile's to make.
+IDENTITY_NOT_MEASUREMENT = frozenset({("internet", "metadata.sha256")})
+
+
+def _roots_of(src: dict, dst: dict) -> set[str]:
+    """The record's class, as either side declares it.
+
+    Both sides are consulted deliberately. `source_root` is content, so
+    the source may legitimately be correcting it — but a guard that
+    guessed wrong here would either refuse a real edit or wave through a
+    real corruption. Taking the union means a disagreement can only ever
+    ADD a refusal, never hide one, and a refusal is the recoverable
+    mistake.
+    """
+    return {str(r.get("source_root") or "local") for r in (src, dst)}
+
+
+def classify_change(key: str, src: dict, dst: dict) -> str:
+    """CHANGED_VALUE or CORRUPTED_MEASUREMENT for one differing key.
+
+    ⛔ Per record CLASS, not per field name — see the module docstring.
+    A key that is not a measurement at all is an edit whatever the root
+    says, which is why the cheap test comes first.
+    """
+    if key not in MEASUREMENT_KEYS:
+        return CHANGED_VALUE
+    roots = _roots_of(src, dst)
+    if any((root, key) in IDENTITY_NOT_MEASUREMENT for root in roots):
+        return CHANGED_VALUE
+    if roots & MEASURABLE_ROOTS:
+        return CORRUPTED_MEASUREMENT
+    return CHANGED_VALUE
 
 
 def is_empty(v: Any) -> bool:
@@ -117,7 +227,34 @@ class Comparison:
 
     @property
     def records_degraded(self) -> int:
-        return len({x.record_id for x in self.losses if x.kind != MISSING_RECORD})
+        return len({x.record_id for x in self.losses
+                    if x.kind not in (MISSING_RECORD, CORRUPTED_MEASUREMENT)})
+
+    @property
+    def stripped(self) -> list[Loss]:
+        """Losses that BLANK something: a dropped key or an emptied value."""
+        return [x for x in self.losses
+                if x.kind not in (MISSING_RECORD, CORRUPTED_MEASUREMENT)]
+
+    @property
+    def corruptions(self) -> list[Loss]:
+        """Losses that OVERWRITE a true measurement with a stale one."""
+        return [x for x in self.losses if x.kind == CORRUPTED_MEASUREMENT]
+
+
+def _record_change(rid: str, key: str, dval: Any, src: dict, dst: dict,
+                   out: Comparison) -> None:
+    """File one both-sides-non-empty disagreement as an edit or a loss.
+
+    ⭐ Called per KEY, so a record carrying a corrupted measurement AND a
+    legitimate edit has each judged on its own: the measurement lands in
+    `losses` and refuses the run, the edit lands in `changes` and passes.
+    """
+    kind = classify_change(key, src, dst)
+    if kind == CORRUPTED_MEASUREMENT:
+        out.losses.append(Loss(CORRUPTED_MEASUREMENT, rid, key, dval))
+    else:
+        out.changes.append(Loss(CHANGED_VALUE, rid, key, dval))
 
 
 def _compare_record(rid: str, src: dict, dst: dict, out: Comparison) -> None:
@@ -135,12 +272,12 @@ def _compare_record(rid: str, src: dict, dst: dict, out: Comparison) -> None:
                 elif is_empty(sval[k2]) and not is_empty(d2):
                     out.losses.append(Loss(EMPTIED_VALUE, rid, f"{key}.{k2}", d2))
                 elif sval[k2] != d2:
-                    out.changes.append(Loss("CHANGED_VALUE", rid, f"{key}.{k2}", d2))
+                    _record_change(rid, f"{key}.{k2}", d2, src, dst, out)
             continue
         if is_empty(sval) and not is_empty(dval):
             out.losses.append(Loss(EMPTIED_VALUE, rid, key, dval))
         elif sval != dval:
-            out.changes.append(Loss("CHANGED_VALUE", rid, key, dval))
+            _record_change(rid, key, dval, src, dst, out)
 
 
 def compare(source: Iterable[dict], dest: Iterable[dict] | None,
@@ -210,14 +347,31 @@ def format_report(cmp: Comparison, sample: int = 12) -> str:
             lines.append(f"       {rid} ×{n}")
         if len(cmp.duplicates) > sample:
             lines.append(f"       … and {len(cmp.duplicates) - sample} more")
-    if cmp.losses:
+    stripped = cmp.stripped
+    if cmp.records_lost or stripped:
         lines.append(f"    ⛔ WOULD LOSE: {cmp.records_lost} record(s) deleted, "
                      f"{cmp.records_degraded} record(s) stripped of "
-                     f"{len(cmp.losses) - cmp.records_lost} value(s)")
-        for x in cmp.losses[:sample]:
+                     f"{len(stripped)} value(s)")
+        shown = [x for x in cmp.losses if x.kind != CORRUPTED_MEASUREMENT]
+        for x in shown[:sample]:
             lines.append(f"       {x}")
-        if len(cmp.losses) > sample:
-            lines.append(f"       … and {len(cmp.losses) - sample} more")
+        if len(shown) > sample:
+            lines.append(f"       … and {len(shown) - sample} more")
+    corrupted = cmp.corruptions
+    if corrupted:
+        # Named separately because the remedy is different: a stripped
+        # value is carried back into the profile, a stale measurement is
+        # RE-MEASURED. Reporting them as one number invites the wrong fix.
+        lines.append(f"    ⛔ WOULD OVERWRITE A MEASUREMENT with a stale one: "
+                     f"{len(corrupted)} value(s) across "
+                     f"{len({x.record_id for x in corrupted})} record(s)")
+        for x in corrupted[:sample]:
+            lines.append(f"       {x} (destination measured {x.dest_value!r})")
+        if len(corrupted) > sample:
+            lines.append(f"       … and {len(corrupted) - sample} more")
+        lines.append("       Fix: python3 seed/scripts/measure_staged.py emit "
+                     "--profile <profile> --site <site> --out "
+                     "seed/upgrades/staged-measurements.<site>.json")
     if cmp.added:
         lines.append(f"    would add: {len(cmp.added)} record(s)")
     if cmp.changes:
