@@ -280,6 +280,25 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The hand-made edits to the sample library are now part of the build.** Someone had gone
+  through the published feed by hand and chosen better dates, better orderings and better titles
+  for it, and none of that lived anywhere the build could see: the next regeneration would have
+  thrown all of it away. Those 1,513 choices across 841 posts are now recorded as data the build
+  applies, so the feed keeps the shape a person gave it (#1309, PR #1318).
+
+- **The pre-publish check can now tell a wrong measurement from a deliberate edit.** It used to
+  treat every disagreement between the repository and the published archive as an edit and let it
+  through, which is right for a title someone changed and wrong for a file size that has simply
+  gone stale. It now decides by where the file came from: where the published copy is the only
+  record of the bytes, a disagreeing repository is refused; where the file was copied from a source
+  the repository is built against, the disagreement is reported as a publish that has fallen behind
+  (#1312, PR #1318).
+
+- **The second sample site was missing catalogue detail the published copy already had.** 6,806
+  values across all 1,306 of its records existed only in the published archive, and a rebuild would
+  have stripped every one. They are restored, and the check above is what would now stop it
+  (#1313, PR #1318).
+
 - **The sample library's post titles read like a person wrote them.** They used to end with a
   machine-written tally, "Project Heroes polish week, 9 assets across 1 team(s)", which was long,
   repeated a count already shown on the card, and left an unresolved "(s)" in plain sight. Titles
