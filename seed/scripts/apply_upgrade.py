@@ -221,10 +221,47 @@ def dump(path: Path, data) -> None:
                     encoding="utf-8")
 
 
-def apply_replacements(profile: list[dict], replacements: list[dict]) -> tuple[int, list[str]]:
-    """Point replaced records at their HQ file. Returns (changed, problems)."""
+def apply_replacements(profile: list[dict],
+                       replacements: list[dict]) -> tuple[int, int, list[str]]:
+    """Point replaced records at their HQ file.
+
+    Returns (processed, modified, problems).
+
+    ⛔ THE TWO COUNTS ARE NOT THE SAME NUMBER, AND CONFLATING THEM BLINDED
+    THE PRE-PUBLISH GATE (#1295). This function used to return one count
+    incremented once per record, unconditionally — so it reported
+    `260/260 records repointed at the HQ pool` whether the profile was
+    already upgraded or 86 byte counts out of date. `--check`'s drift
+    expression therefore could not use it: adding a number that is never
+    zero would have failed every run. The pass was left out of the
+    expression instead, and a profile with drifted replacements passed
+    the gate for as long as it took someone to notice by hand.
+
+    So:
+
+    - **processed** is progress — records this doc names that the profile
+      actually holds. An id the profile lacks is a `problem`, not a
+      processed record, which is why this is not simply `len(replacements)`.
+    - **modified** is drift — records whose CONTENT this pass changed. On
+      an upgraded profile it is 0, and that is what makes it usable in a
+      drift expression.
+
+    ⭐ MODIFIED IS MEASURED OVER THE WHOLE RECORD, not over the list of
+    keys written below. Enumerating the keys would put the drift check and
+    the writes in two places that must be kept in step by hand, and the
+    next key added to this loop would go unwatched exactly the way the
+    whole pass did. A record is modified if it is not byte-identical after
+    the pass, whatever this function grew a write for.
+
+    ⚠️ `_composition` is NOT that comparison and cannot stand in for it.
+    It snapshots the fields the swap must LEAVE ALONE (group, collection,
+    team, workflow …), so `before != after` on it is a violation of the
+    pass's contract, not evidence the record moved — it is 0 on a run that
+    rewrites every record and 0 on a run that rewrites none.
+    """
     by_id = {e["id"]: e for e in profile}
-    changed = 0
+    processed = 0
+    modified = 0
     problems: list[str] = []
     for r in replacements:
         entry = by_id.get(r["id"])
@@ -236,6 +273,8 @@ def apply_replacements(profile: list[dict], replacements: list[dict]) -> tuple[i
         # Snapshot the fields that define composition. Nothing below may
         # touch them; verified immediately after.
         before = _composition(entry)
+        # And the record entire, for the modified count above.
+        before_record = _fingerprint(entry)
 
         # Remember where this record came from BEFORE repointing it.
         # `source_path` has two consumers with different needs:
@@ -267,8 +306,19 @@ def apply_replacements(profile: list[dict], replacements: list[dict]) -> tuple[i
         if before != after:
             problems.append(
                 f"composition changed for {r['id']}: {before} -> {after}")
-        changed += 1
-    return changed, problems
+        processed += 1
+        if _fingerprint(entry) != before_record:
+            modified += 1
+    return processed, modified, problems
+
+
+def _fingerprint(entry: dict) -> str:
+    """A stable serialisation of a whole profile record.
+
+    Sorted keys so a re-ordered dict is not read as a change, and
+    `ensure_ascii=False` so a non-ASCII title compares as itself.
+    """
+    return json.dumps(entry, sort_keys=True, ensure_ascii=False)
 
 
 def _composition(entry: dict) -> tuple:
@@ -740,7 +790,7 @@ def main() -> int:
     # A declaration is part of the record, so writing it first means that
     # assertion covers it too.
     declared = apply_ai_declarations(profile, declarations)
-    changed, problems = apply_replacements(profile, reps)
+    n_processed, n_modified, problems = apply_replacements(profile, reps)
     n_assets, n_repaired = merge_added(profile, add_a)
     n_posts = merge_posts(posts, add_p)
     # LAST of the asset passes. The reconcile document is the archive
@@ -760,8 +810,8 @@ def main() -> int:
                  for aid, outcome in declared if outcome.startswith("MISSING")]
 
     print(f"site        : {args.site}", file=sys.stderr)
-    print(f"replacements: {changed}/{len(reps)} records repointed at the HQ pool",
-          file=sys.stderr)
+    print(f"replacements: {n_processed}/{len(reps)} records repointed at the "
+          f"HQ pool ({n_modified} modified)", file=sys.stderr)
     for desc, n in corrected:
         print(f"correction  : {n:5d}  {desc}", file=sys.stderr)
     for aid, outcome in declared:
@@ -787,17 +837,51 @@ def main() -> int:
         return 1
 
     if args.check:
-        # In --check mode nothing may have needed doing.
-        drift = (n_assets or n_posts or n_repaired or n_reconciled or n_filled
-                 or n_deduped or any(n for _, n in corrected))
-        if drift:
-            print("\nFAIL: profile is not upgraded — re-assembly would drop "
-                  f"{n_assets} assets and {n_posts} posts, {n_repaired} "
-                  "record(s) are missing the media_url that makes them "
-                  f"re-fetchable, the share's reconcile document is short by "
-                  f"{n_reconciled} asset(s)/{n_filled} value(s) "
-                  f"(#1275), and {n_deduped} post row(s) still share an id "
-                  "with another. Run without --check.", file=sys.stderr)
+        # In --check mode nothing may have needed doing. EVERY pass above
+        # is a term here — a pass missing from this list is a pass the
+        # pre-publish gate cannot see, which is what #1295 was.
+        #
+        # ⭐ AND EACH TERM CARRIES ITS OWN SENTENCE. The old message was
+        # one sentence naming all seven counts, so a run where a single
+        # pass had drifted still recited "would drop 0 assets and 0
+        # posts, 0 record(s) are missing the media_url …" and the reader
+        # had to find the non-zero number in it. A gate that reports six
+        # things that did not happen alongside the one that did is
+        # training people to skim it.
+        drifted = [
+            (n_modified,
+             f"{n_modified} replacement record(s) disagree with "
+             f"kenney-hq-replacements.{args.site}.json — a file_path, byte "
+             "count, title or licence in the profile is stale (#1295)"),
+            (n_assets,
+             f"{n_assets} added asset(s) are not in the profile — "
+             "re-assembly would drop them"),
+            (n_posts,
+             f"{n_posts} added post(s) are not in the posts profile — "
+             "their assets would be unreachable on browse"),
+            (n_repaired,
+             f"{n_repaired} record(s) are missing the metadata.media_url "
+             "that makes them re-fetchable (#602)"),
+            (n_reconciled,
+             f"the share's reconcile document holds {n_reconciled} asset(s) "
+             "the profile does not (#1275)"),
+            (n_filled,
+             f"{n_filled} value(s) present at the share are absent or empty "
+             "in the profile (#1275)"),
+            (n_deduped,
+             f"{n_deduped} post row(s) still share an id with another — "
+             "one of each pair would silently never exist"),
+            (sum(n for _, n in corrected),
+             f"{sum(n for _, n in corrected)} record(s) still sit on the "
+             "team the source CSV put them on (#572)"),
+        ]
+        fired = [msg for n, msg in drifted if n]
+        if fired:
+            print("\nFAIL: profile is not upgraded — "
+                  f"{len(fired)} pass(es) would change it:", file=sys.stderr)
+            for msg in fired:
+                print(f"  - {msg}", file=sys.stderr)
+            print("Run without --check.", file=sys.stderr)
             return 1
         print("\nOK: profile already reflects the upgrade.", file=sys.stderr)
         return 0

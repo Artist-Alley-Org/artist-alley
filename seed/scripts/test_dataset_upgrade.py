@@ -269,8 +269,9 @@ class TestApplyUpgrade(unittest.TestCase):
     def test_file_is_swapped_and_record_is_kept(self):
         """The property the whole upgrade rests on (#565 composition)."""
         before = {e["id"]: up._composition(e) for e in self.profile}
-        changed, problems = up.apply_replacements(self.profile, self.reps)
-        self.assertEqual(changed, 2)
+        processed, modified, problems = up.apply_replacements(
+            self.profile, self.reps)
+        self.assertEqual((processed, modified), (2, 2))
         self.assertEqual(problems, [])
         for e in self.profile:
             self.assertEqual(up._composition(e), before[e["id"]],
@@ -372,6 +373,67 @@ class TestApplyUpgrade(unittest.TestCase):
         self.assertTrue(any("cannot be re-fetched from provenance" in p
                             for p in problems), problems)
 
+    def test_processed_and_modified_are_different_numbers(self):
+        """#1295. The count `--check` needs is records CHANGED, and the
+        count the progress line reports is records SEEN. They diverge on
+        the second run, which is the only run that matters to a gate."""
+        first = up.apply_replacements(self.profile, self.reps)
+        self.assertEqual(first[:2], (2, 2), "a fresh profile modifies both")
+        second = up.apply_replacements(self.profile, self.reps)
+        self.assertEqual(second[:2], (2, 0),
+                         "an upgraded profile is still PROCESSED in full but "
+                         "must report zero modified — reporting 2/2 here is "
+                         "what made the pass unusable in the drift expression")
+
+    def test_a_stale_byte_count_alone_counts_as_modified(self):
+        """The exact shape #1295 hid: 86 records already pointing at the
+        right HQ file, with a `file_size_bytes` that no longer matched the
+        replacements doc. `file_path` — the only field the older
+        `test_profiles_are_upgraded` gate compares — was correct on every
+        one of them."""
+        up.apply_replacements(self.profile, self.reps)
+        self.profile[0]["file_size_bytes"] = 4242
+        processed, modified, problems = up.apply_replacements(
+            self.profile, self.reps)
+        self.assertEqual((processed, modified), (2, 1), problems)
+        self.assertEqual(self.profile[0]["file_size_bytes"], 8400)
+
+    def test_composition_cannot_stand_in_for_the_modified_count(self):
+        """⛔ The tempting shortcut, refused.
+
+        The loop already compares `_composition` before and after, so it
+        looks like it already knows whether a record moved. It does not:
+        `_composition` covers the fields the swap must LEAVE ALONE, so it
+        is equal on a run that rewrites every record. Using it as the
+        drift signal would have reproduced the bug with more code.
+        """
+        fresh = [_asset("id-1", "images/pack/PNG/Default/progress.png")]
+        before = up._composition(fresh[0])
+        processed, modified, _ = up.apply_replacements(fresh, self.reps[:1])
+        self.assertEqual((processed, modified), (1, 1))
+        self.assertEqual(up._composition(fresh[0]), before,
+                         "composition is unchanged by a full rewrite — which "
+                         "is exactly why it is not a modified-count")
+
+    def test_a_profile_with_no_replacements_is_zero_of_both(self):
+        """Zero-processed and zero-modified are distinguishable, and
+        neither is an error. site_b shipped no `balance` docs for a whole
+        release; a site with no replacements doc at all must report `no
+        drift`, not `no data`."""
+        processed, modified, problems = up.apply_replacements(self.profile, [])
+        self.assertEqual((processed, modified, problems), (0, 0, []))
+
+    def test_an_id_the_profile_lacks_is_a_problem_not_a_processed_record(self):
+        """`processed` is not `len(replacements)`. A doc naming a record
+        that is not there has done nothing, and counting it as done is how
+        a missing record reads as a healthy one."""
+        reps = self.reps + [{"id": "ghost", "old": "x", "oldSize": 1,
+                             "new": "images/kenney-hq/ghost.png", "newSize": 2}]
+        processed, modified, problems = up.apply_replacements(self.profile, reps)
+        self.assertEqual(processed, 2)
+        self.assertEqual(modified, 2)
+        self.assertTrue(any("ghost" in p for p in problems), problems)
+
     def test_audit_rejects_replacing_the_page_url_with_the_media_url(self):
         """Swapping fetched_from for the CDN path would close the re-fetch
         gap by opening an attribution one — the page is where the licence
@@ -383,6 +445,156 @@ class TestApplyUpgrade(unittest.TestCase):
         posts = [{"id": "p", "asset_ids": ["vid-1"]}]
         problems = up.audit(self.profile + added, posts, [], added, [])
         self.assertTrue(any("lost fetched_from" in p for p in problems), problems)
+
+
+# ---------------------------------------------------------------------------
+# The pre-publish gate, driven end to end (#1295)
+# ---------------------------------------------------------------------------
+
+class TestCheckSeesReplacementDrift(unittest.TestCase):
+    """⛔ A GATE THAT HAS ONLY EVER BEEN SEEN TO PASS IS UNTESTED.
+
+    That is ADR 0095's 2026-08-26 amendment and ADR 0097's second
+    consequence, and it is the whole of #1295: `--check` reported `OK:
+    profile already reflects the upgrade` while studio-b carried 86 stale
+    `file_size_bytes`, and nobody could tell, because nobody had ever seen
+    the sentence it prints when replacements drift — there wasn't one.
+
+    So these drive the real script, on a real drift, and assert the
+    FAILURE. The repaired-and-passing half is asserted too, because a gate
+    that fails on everything is no better.
+    """
+
+    HQ = "images/kenney-hq/2d-assets-brick-pack-brick-high-1-36a68e65-512.png"
+    HQ2 = "images/kenney-hq/2d-assets-fish-pack-fish-grey-long-a-6eba36af-512.png"
+
+    def _site(self, td: Path, *, stale_bytes=False, duplicate_post=False):
+        """A minimal but REAL site: an upgrades dir, a profile, posts."""
+        upgrades = td / "upgrades"
+        upgrades.mkdir(exist_ok=True)
+        reps = [
+            {"id": "id-1", "old": "images/pack/a.png", "oldSize": 605,
+             "new": self.HQ, "newSize": 8400},
+            {"id": "id-2", "old": "images/pack/b.png", "oldSize": 611,
+             "new": self.HQ2, "newSize": 9100},
+        ]
+        (upgrades / "kenney-hq-replacements.site_a.json").write_text(
+            json.dumps(reps), encoding="utf-8")
+
+        profile = [_asset("id-1", "images/pack/a.png"),
+                   _asset("id-2", "images/pack/b.png")]
+        # Bring it to the upgraded state the committed profiles are in,
+        # so the only difference below is the one being constructed.
+        up.apply_replacements(profile, reps)
+        if stale_bytes:
+            # The #1295 shape exactly: the file_path is RIGHT, so every
+            # pre-existing gate is satisfied; only the byte count is stale.
+            profile[0]["file_size_bytes"] = 8401
+
+        posts = [{"id": "post-1", "asset_ids": ["id-1", "id-2"]}]
+        if duplicate_post:
+            posts.append({"id": "post-1", "asset_ids": ["id-1"]})
+
+        (td / "assets.json").write_text(json.dumps(profile), encoding="utf-8")
+        (td / "posts.json").write_text(json.dumps(posts), encoding="utf-8")
+        return upgrades
+
+    def _check(self, td: Path, upgrades: Path):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "apply_upgrade.py"),
+             "--site", "site_a", "--upgrades", str(upgrades),
+             "--profile", str(td / "assets.json"),
+             "--posts", str(td / "posts.json"), "--check"],
+            capture_output=True, text=True)
+
+    def test_an_upgraded_profile_passes(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            r = self._check(td, self._site(td))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("OK: profile already reflects the upgrade", r.stderr)
+
+    def test_a_stale_byte_count_fails_the_gate_and_is_named(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            r = self._check(td, self._site(td, stale_bytes=True))
+            self.assertEqual(r.returncode, 1,
+                             "a profile with drifted replacements passed the "
+                             f"pre-publish gate:\n{r.stderr}")
+            self.assertIn("1 replacement record(s) disagree", r.stderr)
+            self.assertIn("kenney-hq-replacements.site_a.json", r.stderr)
+
+    def test_the_progress_line_distinguishes_processed_from_modified(self):
+        """`260/260 records repointed` was true on every run and told the
+        reader nothing. The modified count is the half that moves."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            clean = self._check(td, self._site(td))
+            self.assertIn("2/2 records repointed at the HQ pool (0 modified)",
+                          clean.stderr)
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            drifted = self._check(td, self._site(td, stale_bytes=True))
+            self.assertIn("2/2 records repointed at the HQ pool (1 modified)",
+                          drifted.stderr)
+
+    def test_the_failure_names_only_the_passes_that_actually_drifted(self):
+        """⭐ One boolean over seven counters printed all seven regardless
+        of which fired, so the reader had to hunt for the non-zero number
+        in a sentence of zeroes. Two drifting passes name two; one names
+        one; and the other six stay out of it."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            one = self._check(td, self._site(td, stale_bytes=True))
+            verdict = one.stderr.split("FAIL:", 1)[1]
+            self.assertIn("1 pass(es) would change it", verdict)
+            # The progress block above still reports every pass, as it
+            # should. It is the VERDICT that must name only what fired.
+            self.assertNotIn("media_url", verdict)
+            self.assertNotIn("share an id with another", verdict)
+            self.assertEqual(verdict.count("\n  - "), 1, verdict)
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            two = self._check(td, self._site(td, stale_bytes=True,
+                                             duplicate_post=True))
+            self.assertEqual(two.returncode, 1, two.stderr)
+            verdict = two.stderr.split("FAIL:", 1)[1]
+            self.assertIn("2 pass(es) would change it", verdict)
+            self.assertIn("replacement record(s) disagree", verdict)
+            self.assertIn("share an id with another", verdict)
+            self.assertEqual(verdict.count("\n  - "), 2, verdict)
+
+    def test_the_gate_passes_again_once_the_profile_is_repaired(self):
+        """The other half of "seen to refuse": running WITHOUT --check
+        must reach a fixed point. Sprint 14's backed-out attempt at #1294
+        failed exactly here — it rewrote 149 values on every run."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, stale_bytes=True)
+            self.assertEqual(self._check(td, upgrades).returncode, 1)
+            repair = subprocess.run(
+                [sys.executable, str(SCRIPTS / "apply_upgrade.py"),
+                 "--site", "site_a", "--upgrades", str(upgrades),
+                 "--profile", str(td / "assets.json"),
+                 "--posts", str(td / "posts.json")],
+                capture_output=True, text=True)
+            self.assertEqual(repair.returncode, 0, repair.stderr)
+            self.assertEqual(self._check(td, upgrades).returncode, 0)
+
+    def test_the_committed_profiles_pass_the_widened_gate(self):
+        """⚠️ The gate got STRICTER, and this is the assertion that the
+        committed data already satisfies it — i.e. that #1294 is settled
+        and stays settled. Before sprint 14 repaired them, studio-b's 86
+        stale byte counts would have reddened this."""
+        for site, stem in (("site_a", "studio-a"), ("site_b", "studio-b")):
+            r = subprocess.run(
+                [sys.executable, str(SCRIPTS / "apply_upgrade.py"),
+                 "--site", site, "--upgrades", str(UPGRADES),
+                 "--profile", str(PROFILES / f"{stem}.assets.json"),
+                 "--posts", str(PROFILES / f"{stem}.posts.json"), "--check"],
+                capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, f"{site}:\n{r.stderr}")
+            self.assertIn("(0 modified)", r.stderr, site)
 
 
 # ---------------------------------------------------------------------------

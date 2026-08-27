@@ -104,6 +104,18 @@ is the thing that has to be correct, which is what `apply_upgrade.py`
 fixes. `seed/scripts/test_dataset_upgrade.py` fails if the committed
 profiles ever drift back.
 
+**`--check` is the pre-publish gate, and it now covers every pass (#1295).**
+It re-runs the whole upgrade in memory and exits non-zero if anything would
+change, naming only the passes that actually fired. ⚠️ The replacement pass
+was invisible to it until 2026-08-26, because `apply_replacements` returned
+records *processed* — `260/260 records repointed at the HQ pool` on every
+run, upgraded or not — and a number that is never zero cannot be a drift
+signal. It now returns processed **and** modified; the progress line prints
+both (`260/260 … (0 modified)`) and the gate reads the second. That gap is
+how studio-b carried 86 stale `file_size_bytes` past the gate for weeks
+while `file_path` — the only field the older test compared — was correct on
+every one of them.
+
 ### ⛔ The publish guard (#1275)
 
 That "the per-site files are OUTPUTS" property has a sharp edge, and it
