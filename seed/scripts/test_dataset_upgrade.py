@@ -2181,6 +2181,29 @@ class TestAliasProfilesTrackTheirSource(unittest.TestCase):
             json.loads((p / "demo.assets.json").read_text(encoding="utf-8")),
             json.loads((p / "studio-a.assets.json").read_text(encoding="utf-8")))
 
+    def test_the_alias_is_refreshed_by_the_pass_that_invalidates_it(self):
+        """⛔ The re-copy used to live only in the assembler's
+        full-assembly path, so running `apply_upgrade.py` on its own —
+        which is what its own usage block tells you to do — left the
+        alias holding the pre-upgrade profile. Nothing but the two tests
+        above stood between that and a demo re-seed shipping the wrong
+        records, and they only fail AFTER the drift is committed."""
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            (d / "studio-a.assets.json").write_text('[{"id": "new"}]')
+            (d / "demo.assets.json").write_text('[{"id": "old"}]')
+            self.assertEqual(up.refresh_profile_alias(d / "studio-a.assets.json"),
+                             "demo.assets.json")
+            self.assertEqual((d / "demo.assets.json").read_text(), '[{"id": "new"}]')
+            # A profile with no alias, and an alias file that is not there.
+            self.assertIsNone(up.refresh_profile_alias(d / "studio-b.assets.json"))
+            self.assertIsNone(up.refresh_profile_alias(d / "unrelated.assets.json"))
+
+    def test_the_mapping_has_exactly_one_definition(self):
+        """Spelling it out in both modules is how the two drift, which is
+        the #572 bug the re-copy exists to prevent."""
+        self.assertIs(sa.apply_upgrade.PROFILE_ALIASES, up.PROFILE_ALIASES)
+
     def test_dev_matches_studio_b(self):
         p = SCRIPTS.parent / "profiles"
         self.assertEqual(
@@ -2921,6 +2944,162 @@ class TestGuardMeasurementVsEdit(unittest.TestCase):
                          [{"id": "a", "title": "old"}], "posts")
         self.assertEqual(cmp.losses, [])
         self.assertTrue(cmp.ok)
+
+
+class TestPostCuration(unittest.TestCase):
+    """#1309 — the hand-made feed ordering, reproduced by the build."""
+
+    @staticmethod
+    def _post(pid, **kw):
+        base = {"id": pid, "title": f"post {pid}", "post_kind": "team_roundup",
+                "asset_ids": ["a1", "a2"], "created_at": "2025-01-01T00:00:00Z",
+                "updated_at": "2025-01-01T00:00:00Z"}
+        base.update(kw)
+        return base
+
+    def test_merge_posts_SKIPS_an_existing_post(self):
+        """⛔ THE TRAP, STATED AS A TEST. `apply_upgrade` discovers
+        `{stem}-posts.{site}.json` documents and hands them to
+        `merge_posts`, so filing the curation under that convention is
+        the obvious move. Every curated post already exists, so all of
+        them would be skipped and the run would report success.
+
+        This test exists so that if anyone ever routes curation through
+        `merge_posts`, something goes red instead of quiet."""
+        posts = [self._post("p1", created_at="2025-01-01T00:00:00Z")]
+        n = up.merge_posts(posts, [self._post("p1", created_at="2026-06-06T00:00:00Z")])
+        self.assertEqual(n, 0)
+        self.assertEqual(posts[0]["created_at"], "2025-01-01T00:00:00Z")
+
+    def test_curation_amends_a_post_that_already_exists(self):
+        posts = [self._post("p1")]
+        n_posts, n_vals, warn = up.apply_post_curation(posts, {"curate": [
+            {"id": "p1", "created_at": "2026-06-06T00:00:00Z",
+             "asset_ids": ["a2", "a1"]}]})
+        self.assertEqual((n_posts, n_vals, warn), (1, 2, []))
+        self.assertEqual(posts[0]["created_at"], "2026-06-06T00:00:00Z")
+        self.assertEqual(posts[0]["asset_ids"], ["a2", "a1"])
+
+    def test_member_ORDER_is_the_thing_being_reproduced(self):
+        """383 of the 388 curated memberships hold the same assets in a
+        different order. Comparing them as SETS would call the entire
+        hero placement a no-op."""
+        posts = [self._post("p1", asset_ids=["a1", "a2", "a3"])]
+        up.apply_post_curation(posts, {"curate": [
+            {"id": "p1", "asset_ids": ["a3", "a1", "a2"]}]})
+        self.assertEqual(posts[0]["asset_ids"], ["a3", "a1", "a2"])
+
+    def test_only_the_fields_NAMED_in_an_entry_are_written(self):
+        posts = [self._post("p1", title="kept", description="kept too")]
+        up.apply_post_curation(posts, {"curate": [
+            {"id": "p1", "created_at": "2026-06-06T00:00:00Z"}]})
+        self.assertEqual(posts[0]["title"], "kept")
+        self.assertEqual(posts[0]["description"], "kept too")
+
+    def test_a_key_outside_the_closed_list_is_not_written(self):
+        """The document is hand-recovered from backups. A typo'd key that
+        silently created a new field on 841 posts would be invisible."""
+        posts = [self._post("p1")]
+        up.apply_post_curation(posts, {"curate": [
+            {"id": "p1", "titel": "typo", "post_kind": "solo_showcase"}]})
+        self.assertNotIn("titel", posts[0])
+        self.assertEqual(posts[0]["post_kind"], "team_roundup")
+
+    def test_a_curated_post_that_no_longer_exists_is_reported_not_created(self):
+        """⛔ The document carries values, not membership or kind. It
+        cannot build a post, so it must not pretend to."""
+        posts = [self._post("p1")]
+        n_posts, n_vals, warn = up.apply_post_curation(posts, {"curate": [
+            {"id": "gone", "created_at": "2026-06-06T00:00:00Z"}]})
+        self.assertEqual((n_posts, n_vals), (0, 0))
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(len(warn), 1)
+        self.assertIn("gone", warn[0])
+
+    def test_it_is_idempotent(self):
+        posts = [self._post("p1")]
+        doc = {"curate": [{"id": "p1", "created_at": "2026-06-06T00:00:00Z"}]}
+        first = up.apply_post_curation(posts, doc)
+        snapshot = json.loads(json.dumps(posts))
+        second = up.apply_post_curation(posts, doc)
+        self.assertEqual(first[:2], (1, 1))
+        self.assertEqual(second[:2], (0, 0))
+        self.assertEqual(posts, snapshot)
+
+    def test_it_never_creates_deletes_or_reorders_posts(self):
+        posts = [self._post("p1"), self._post("p2"), self._post("p3")]
+        up.apply_post_curation(posts, {"curate": [
+            {"id": "p3", "created_at": "2026-06-06T00:00:00Z"},
+            {"id": "p1", "created_at": "2026-06-06T00:00:00Z"}]})
+        self.assertEqual([p["id"] for p in posts], ["p1", "p2", "p3"])
+
+    def test_membership_drift_is_reported_rather_than_silently_applied(self):
+        """⚠️ The document holds values, not reasoning. If the assembler
+        later changes a post's membership, the curated order and date go
+        on being applied to something else and nothing would notice.
+        `pipeline_members` is what makes that visible."""
+        posts = [self._post("p1", asset_ids=["a1", "a9"])]
+        doc = {"curate": [{"id": "p1", "created_at": "2026-06-06T00:00:00Z",
+                           "pipeline_members": up._members_digest(["a1", "a2"])}]}
+        n_posts, n_vals, warn = up.apply_post_curation(posts, doc)
+        self.assertEqual(len(warn), 1)
+        self.assertIn("membership has moved", warn[0])
+        # It still applies. The curation is the owner's decision; this is
+        # a report, not a veto.
+        self.assertEqual((n_posts, n_vals), (1, 1))
+        self.assertEqual(posts[0]["created_at"], "2026-06-06T00:00:00Z")
+
+    def test_a_matching_membership_digest_is_silent(self):
+        posts = [self._post("p1", asset_ids=["a2", "a1"])]
+        doc = {"curate": [{"id": "p1", "created_at": "2026-06-06T00:00:00Z",
+                           "pipeline_members": up._members_digest(["a1", "a2"])}]}
+        _, _, warn = up.apply_post_curation(posts, doc)
+        self.assertEqual(warn, [])
+
+    def test_the_shipped_document_carries_no_title(self):
+        """⛔⛔ THE MEASUREMENT THAT DECIDED THIS DOCUMENT'S CONTENT.
+        The published posts.json disagrees with the pipeline on 780
+        titles and NOT ONE is a hand edit: 774 are #1306's rewrite and 6
+        are the #1293 collision dedupe. A plain published-vs-pipeline
+        diff would have codified all 780 and reverted #1306 on 774 posts,
+        and it would have looked like it worked."""
+        doc = json.loads((UPGRADES / "post-curation.site_a.json")
+                         .read_text(encoding="utf-8"))
+        keys = {k for e in doc["curate"] for k in e}
+        self.assertEqual(keys - {"id", "pipeline_members"},
+                         set(up.CURATABLE_FIELDS))
+        self.assertNotIn("title", keys)
+
+    def test_the_shipped_document_never_changes_a_MEMBERSHIP(self):
+        """⛔⛔ Curating `asset_ids` on a `team_roundup` or
+        `project_sprint` changes what its id should be, because those ids
+        derive from membership (ADR 0098). The curation is hero
+        PLACEMENT: every one of its 383 memberships is a reordering of
+        the assets the assembler already put there.
+
+        The five that changed the SET were excluded. They are not edits:
+        they go 10 members to 8, 8 to 6, 8 to 7, 9 to 6 and 10 to 5, and
+        they are the losing rows of the #1293 collision, which the
+        published feed kept under the winner's id."""
+        doc = json.loads((UPGRADES / "post-curation.site_a.json")
+                         .read_text(encoding="utf-8"))
+        posts = {p["id"]: p for p in json.loads(
+            (PROFILES / "studio-a.posts.json").read_text(encoding="utf-8"))}
+        for e in doc["curate"]:
+            if "asset_ids" not in e:
+                continue
+            self.assertEqual(
+                sorted(e["asset_ids"]),
+                sorted(posts[e["id"]].get("asset_ids") or ()),
+                f"{e['id']} curates a different membership, not an order")
+
+    def test_the_shipped_document_curates_only_posts_the_profile_holds(self):
+        doc = json.loads((UPGRADES / "post-curation.site_a.json")
+                         .read_text(encoding="utf-8"))
+        have = {p["id"] for p in json.loads(
+            (PROFILES / "studio-a.posts.json").read_text(encoding="utf-8"))}
+        missing = [e["id"] for e in doc["curate"] if e["id"] not in have]
+        self.assertEqual(missing, [])
 
 
 class TestManifestReconcile(unittest.TestCase):

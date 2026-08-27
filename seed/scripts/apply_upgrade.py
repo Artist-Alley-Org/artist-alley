@@ -81,8 +81,10 @@ Usage
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import shutil
 import sys
 from collections import Counter
 from pathlib import Path
@@ -520,6 +522,115 @@ def merge_posts(posts: list[dict], added: list[dict]) -> int:
     return n
 
 
+# `dev` and `demo` are aliases for studio-b and studio-a. The re-copy
+# used to live only in `sanitize_and_assemble`'s full-assembly path, so
+# running THIS script on its own — which is what its own usage block
+# tells you to do — left the alias holding the pre-upgrade profile. That
+# is the #572 drift a second time, by a different route, and only
+# `TestAliasProfilesTrackTheirSource` stood between it and a demo re-seed
+# shipping the wrong records. The mapping lives here, next to the pass
+# that invalidates it, and the assembler imports it.
+PROFILE_ALIASES = (("studio-a", "demo"), ("studio-b", "dev"))
+
+
+def refresh_profile_alias(profile_path: Path) -> str | None:
+    """Re-copy the alias beside a profile this run has just rewritten.
+
+    Returns the alias filename, or None when the profile has no alias.
+    """
+    for stem, alias in PROFILE_ALIASES:
+        if profile_path.name == f"{stem}.assets.json":
+            dst = profile_path.with_name(f"{alias}.assets.json")
+            if dst.is_file():
+                shutil.copyfile(profile_path, dst)
+                return dst.name
+    return None
+
+
+# Fields a curation entry may set. A closed list: the document is
+# hand-recovered from backups, and a typo'd key that silently created a
+# new field on 841 posts would be invisible until something read it.
+CURATABLE_FIELDS = ("created_at", "updated_at", "asset_ids")
+
+
+def _members_digest(asset_ids) -> str:
+    return hashlib.sha1(",".join(sorted(asset_ids or ())).encode()).hexdigest()
+
+
+def apply_post_curation(posts: list[dict],
+                        doc: dict) -> tuple[int, int, list[str]]:
+    """Reproduce the hand-made feed ordering and hero placement (#1309).
+
+    Returns (posts_curated, values_written, warnings).
+
+    ⛔ WHY THIS IS NOT `merge_posts`, WHICH IS THE TRAP THIS PASS EXISTS
+    TO AVOID. `apply_upgrade` already discovers `{stem}-posts.{site}.json`
+    documents and hands them to `merge_posts`, so adding the curation
+    under that convention is the obvious move. It does nothing:
+
+        have = {p["id"] for p in posts}
+        for p in added:
+            if p["id"] in have:
+                continue          # ← every curated post is EXISTING
+
+    Every curated post is one the assembler already emitted, so all 841
+    entries would be skipped and the run would report success. A pass
+    that amends in place is the only shape that can work here.
+
+    ⛔ AND IT OVERWRITES, WHICH `apply_manifest_reconcile` MUST NEVER DO.
+    Reproducing a chosen date means replacing a derived one, so the
+    only-add safety property is unavailable. The narrower one that
+    replaces it:
+
+      * only the fields NAMED in an entry are written, from a closed list;
+      * only onto a post that ALREADY EXISTS. A curated id the assembler
+        no longer emits is REPORTED, never created: the curation records
+        values, and a post needs membership and a kind that the document
+        does not carry.
+      * no post is created, deleted or reordered.
+
+    It is idempotent: applying it twice writes the same values.
+
+    ⚠️ THE STALENESS THIS CANNOT FIX, AND SO REPORTS INSTEAD. The
+    document holds values, not reasoning. Nobody recorded WHY a post was
+    dated where it was, so if the assembler later changes a post's
+    membership the curated date and member order go on being applied to
+    something else. Each entry therefore carries `pipeline_members`, the
+    digest of the membership the curation was authored against; a post
+    whose membership has since moved is named in the warnings. That does
+    not say the curation went bad, which nothing can say. It says where a
+    human has to look.
+    """
+    by_id = {p["id"]: p for p in posts}
+    warnings: list[str] = []
+    n_posts = n_values = 0
+    for entry in doc.get("curate", ()):
+        pid = entry["id"]
+        target = by_id.get(pid)
+        if target is None:
+            warnings.append(f"{pid}: curated post is not in the profile, skipped")
+            continue
+        # Compared BEFORE the write, against the membership as the
+        # assembler emits it today.
+        if entry.get("pipeline_members") and \
+                _members_digest(target.get("asset_ids")) != entry["pipeline_members"]:
+            warnings.append(
+                f"{pid}: membership has moved since the curation was "
+                f"recorded; its order and dates may no longer mean what "
+                f"they meant")
+        touched = 0
+        for key in CURATABLE_FIELDS:
+            if key not in entry:
+                continue
+            if target.get(key) != entry[key]:
+                target[key] = json.loads(json.dumps(entry[key]))
+                touched += 1
+        if touched:
+            n_posts += 1
+            n_values += touched
+    return n_posts, n_values, warnings
+
+
 def dedupe_posts(posts: list[dict]) -> tuple[int, list[str]]:
     """Collapse posts sharing one id. Returns (removed, ids).
 
@@ -849,6 +960,8 @@ def main() -> int:
     reconcile = load(reconcile_doc) if reconcile_doc.is_file() else {}
     staged_doc = args.upgrades / f"staged-measurements.{args.site}.json"
     staged = load(staged_doc) if staged_doc.is_file() else []
+    curation_doc = args.upgrades / f"post-curation.{args.site}.json"
+    curation = load(curation_doc) if curation_doc.is_file() else {}
     profile = load(args.profile)
     posts = load(args.posts)
 
@@ -877,6 +990,12 @@ def main() -> int:
     # be able to overwrite what the reconcile just put there.
     n_staged, n_hashed = apply_staged_measurements(profile, staged)
     n_deduped, dup_ids = dedupe_posts(posts)
+    # AFTER the dedupe, and after every pass that can add a post. The
+    # curation amends posts that already exist, so anything that creates
+    # or removes one has to have finished: curating a row the dedupe is
+    # about to drop writes into a post that never ships.
+    n_curated, n_curated_values, curation_warnings = apply_post_curation(
+        posts, curation)
     problems += audit(profile, posts, reps, add_a, add_p)
     # A declaration naming an id this profile does not hold is a
     # PROBLEM, not a shrug. The failure it guards against is silent by
@@ -903,6 +1022,13 @@ def main() -> int:
           file=sys.stderr)
     print(f"staged      : {n_staged} record(s) re-pointed at the bytes the "
           f"site ships, {n_hashed} hash(es) recorded (#1301)", file=sys.stderr)
+    print(f"curation    : {n_curated_values} hand-made value(s) reapplied to "
+          f"{n_curated} post(s) (#1309)", file=sys.stderr)
+    for w in curation_warnings[:8]:
+        print(f"  ⚠️  {w}", file=sys.stderr)
+    if len(curation_warnings) > 8:
+        print(f"  ⚠️  … and {len(curation_warnings) - 8} more",
+              file=sys.stderr)
     if dup_ids:
         print(f"duplicate id(s) collapsed: {', '.join(dup_ids[:8])}"
               f"{' …' if len(dup_ids) > 8 else ''}", file=sys.stderr)
@@ -980,6 +1106,9 @@ def main() -> int:
     dump(args.profile, profile)
     dump(args.posts, posts)
     print(f"\nwrote {args.profile}\nwrote {args.posts}", file=sys.stderr)
+    alias = refresh_profile_alias(args.profile)
+    if alias:
+        print(f"wrote {args.profile.with_name(alias)} (alias)", file=sys.stderr)
     return 0
 
 

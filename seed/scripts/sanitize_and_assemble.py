@@ -88,6 +88,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# For PROFILE_ALIASES only. The alias mapping belongs beside the pass that
+# invalidates it, and spelling it out a second time here is how the two
+# drift — which is the #572 bug this loop exists to prevent.
+import apply_upgrade  # noqa: E402
+
 # -----------------------------------------------------------------------------
 # Studio split — by project
 # -----------------------------------------------------------------------------
@@ -2219,7 +2226,7 @@ def apply_dataset_upgrade(out: Path) -> int:
     # and none of the checks would have noticed, because nothing compares
     # an alias to its source. Re-copy after the upgrade so an alias is an
     # alias (#572).
-    for stem, alias in (("studio-a", "demo"), ("studio-b", "dev")):
+    for stem, alias in apply_upgrade.PROFILE_ALIASES:
         src, dst = out / f"{stem}.assets.json", out / f"{alias}.assets.json"
         if src.is_file():
             shutil.copyfile(src, dst)
