@@ -13,11 +13,11 @@ zero tests, and a CI step that only checks the exit code cannot tell a
 
 So this runner adds three assertions the bare `unittest.main()` cannot:
 
-  1. **Every seed module imports.** The test module imports ten of them
-     at top level, so any one of them failing to import takes the whole
-     suite with it. Importing them here first, one at a time, turns
-     "the suite vanished" into "kenney_hq.py does not import, here is
-     the traceback" — the same failure, named.
+  1. **Every seed module imports.** The test module imports all of
+     `SEED_MODULES` at top level, so any one of them failing to import
+     takes the whole suite with it. Importing them here first, one at a
+     time, turns "the suite vanished" into "kenney_hq.py does not
+     import, here is the traceback" — the same failure, named.
   2. **The collected count is above a floor.** A renamed file, a broken
      `TestLoader` pattern or a deleted class drops the count silently.
      `MIN_TESTS` is the floor the gate refuses to go below.
@@ -51,6 +51,7 @@ SEED_MODULES = [
     "kenney_hq",
     "kenney_pack_sources",
     "manifest_guard",
+    "migrate_post_ids",
     "pexels_gameplay",
     "populate_archive",
     "resolve_media_urls",

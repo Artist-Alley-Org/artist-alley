@@ -41,6 +41,7 @@ import kenney_hq as hq              # noqa: E402
 import kenney_pack_sources as kps   # noqa: E402
 import pexels_gameplay as px        # noqa: E402
 import manifest_guard as mg         # noqa: E402
+import migrate_post_ids as mpi      # noqa: E402
 import populate_archive as pa       # noqa: E402
 import resolve_media_urls as rmu    # noqa: E402
 import sanitize_and_assemble as sa  # noqa: E402
@@ -2675,6 +2676,121 @@ class TestProfileReadBack(unittest.TestCase):
                 seen |= set(entry) - known
         self.assertEqual(seen, set(sa.POST_ASSEMBLY_KEYS) & seen)
         self.assertTrue(seen, "the profiles carry no annotations at all")
+
+
+class TestPostIdentity(unittest.TestCase):
+    """#1293 — a derived id is a function of what identifies the post.
+
+    team_roundup, project_sprint and cinematics_showreel keyed their id
+    on the sample's ANCHOR: the most-recent member. An anchor accompanies
+    a post, it does not identify one — a team's genuinely most-recent
+    asset lands in many samples, so several roundups with different
+    membership derived the same id.
+
+    ⛔ And a collision here is a DISAPPEARANCE, not a duplicate. `aa seed`
+    keys on the stable id, so of n colliding rows exactly one is ever
+    seeded: sixteen roundup posts existed in the catalogue and could
+    never reach a database.
+    """
+
+    def test_two_member_sets_sharing_an_anchor_get_different_ids(self):
+        """The exact case that collided. Two roundups for one team,
+        overlapping membership, the same most-recent asset in both."""
+        anchor = "a-newest"
+        first = [anchor, "a-002", "a-003", "a-004", "a-005"]
+        second = [anchor, "a-002", "a-003", "a-004", "a-005", "a-006"]
+        self.assertNotEqual(sa.roundup_post_id("Tech Art", first),
+                            sa.roundup_post_id("Tech Art", second),
+                            "two roundups with different membership share an id")
+
+    def test_the_same_membership_gives_the_same_id(self):
+        """The other half of identity: order must not matter, because
+        the same post read back from disk is the same post."""
+        members = ["a-003", "a-001", "a-002"]
+        self.assertEqual(sa.roundup_post_id("Tech Art", members),
+                         sa.roundup_post_id("Tech Art", reversed(members)))
+
+    def test_two_teams_with_one_membership_get_different_ids(self):
+        members = ["a-001", "a-002"]
+        self.assertNotEqual(sa.roundup_post_id("Tech Art", members),
+                            sa.roundup_post_id("VFX", members))
+
+    def test_the_sprint_label_still_separates_identical_samples(self):
+        """A project holding exactly five assets yields the same sample
+        on every sweep, so the label is the only thing left telling
+        those posts apart. Dropping it from the key would reintroduce
+        the collision in the one case it is guaranteed to happen."""
+        members = ["a-001", "a-002", "a-003", "a-004", "a-005"]
+        self.assertNotEqual(sa.sprint_post_id("Aurora", "sprint 12", members),
+                            sa.sprint_post_id("Aurora", "ship gate", members))
+
+    def test_a_real_assembly_emits_no_colliding_ids(self):
+        """End to end, on a pool big enough for several roundups per
+        team. Before the fix this assembly collides."""
+        pool = TestAssemblyDeterminism()._pool()
+        ids = [p["id"] for p in sa.derive_posts(pool)]
+        dupes = sorted({i for i in ids if ids.count(i) > 1})
+        self.assertEqual(dupes, [], f"{len(dupes)} colliding id(s)")
+
+    def test_the_committed_profiles_hold_only_derived_ids(self):
+        """⭐ The permanent invariant, on the real data. `plan()` returns
+        every row whose id does not equal the id its own content derives;
+        after the migration that list is empty, and it stays empty unless
+        someone edits a post's membership without re-deriving its id."""
+        for name in ("studio-a", "studio-b", "dataset"):
+            posts = json.loads((PROFILES / f"{name}.posts.json").read_text())
+            moves = mpi.plan(posts)
+            self.assertEqual(
+                [(m["post_kind"], m["title"]) for m in moves], [],
+                f"{name}.posts.json holds {len(moves)} id(s) that do not "
+                f"derive from the post they name — run "
+                f"seed/scripts/migrate_post_ids.py")
+
+    def test_the_migration_documents_match_the_profiles(self):
+        """The reconcile artifact. Every new id it names is in the
+        profile and every old id is gone, so a publish that finds the
+        destination holding ids the source no longer has can tell a
+        migration from a loss (ADR 0097)."""
+        for name in ("studio-a", "studio-b", "dataset"):
+            doc = json.loads((UPGRADES / f"post-id-migration.{name}.json").read_text())
+            self.assertTrue(doc.get("_why"), f"{name}: the document must say why")
+            self.assertEqual(doc["profile"], f"{name}.posts.json")
+            posts = json.loads((PROFILES / f"{name}.posts.json").read_text())
+            live = {p["id"] for p in posts}
+            moves = doc["moves"]
+            self.assertTrue(moves, f"{name}: an empty mapping documents nothing")
+            self.assertEqual(len({m["old_id"] for m in moves}), len(moves),
+                             f"{name}: an old id is listed twice")
+            self.assertEqual([m for m in moves if m["new_id"] not in live], [],
+                             f"{name}: the document names a new id the profile "
+                             f"does not hold")
+            self.assertEqual([m for m in moves if m["old_id"] in live], [],
+                             f"{name}: the document names an old id that is "
+                             f"still in the profile")
+
+    def test_an_unrecoverable_label_is_refused_rather_than_guessed(self):
+        """A row whose key cannot be recovered stops the migration. A
+        tool that skipped what it did not understand would leave the
+        profile in two id schemes at once."""
+        post = {"id": "x", "post_kind": "project_sprint", "asset_ids": ["a1"],
+                "collection_name": "Aurora",
+                "title": "Aurora quarterly wash-up — 1 assets across 1 team(s)"}
+        with self.assertRaises(mpi.Unresolvable):
+            mpi.derived_id(post)
+
+    def test_a_migration_that_would_still_collide_is_refused(self):
+        """`check_safe` is what stands between a migration and swapping
+        one collision for another."""
+        posts = [
+            {"id": "old-1", "post_kind": "team_roundup", "team_name": "T",
+             "asset_ids": ["a", "b"], "title": "T sprint roundup — 2 drops"},
+            {"id": "old-2", "post_kind": "team_roundup", "team_name": "T",
+             "asset_ids": ["b", "a"], "title": "T sprint roundup — 2 drops"},
+        ]
+        moves = mpi.plan(posts)
+        self.assertEqual(len(moves), 2)
+        self.assertTrue(mpi.check_safe(posts, moves),
+                        "two rows deriving one id must be refused")
 
 
 if __name__ == "__main__":

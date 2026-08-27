@@ -86,7 +86,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 # -----------------------------------------------------------------------------
 # Studio split — by project
@@ -357,6 +357,60 @@ def stable_uuid(*parts: str) -> str:
         h.update(str(p).encode())
     d = h.hexdigest()
     return f"{d[0:8]}-{d[8:12]}-{d[12:16]}-{d[16:20]}-{d[20:32]}"
+
+
+# -----------------------------------------------------------------------------
+# Post identity (#1293)
+# -----------------------------------------------------------------------------
+#
+# ADR 0098: "A derived id must be a function of what distinguishes the
+# thing it names. An input that merely ACCOMPANIES the thing — an anchor,
+# a sample's extremum, a dominant value — does not identify it and must
+# not be the whole key."
+#
+# The three narrative passes built their id from the sample's ANCHOR: the
+# most-recent member. A team's genuinely most-recent asset lands in many
+# samples, so several roundups — different membership, different titles —
+# derived the same id:
+#
+#     studio-a.posts.json   873 rows under 861 ids
+#     studio-b.posts.json   771 rows under 767 ids
+#
+# and every colliding pair disagreed: "— 7 drops" beside "— 5 drops"
+# beside "— 8 drops" under one id.
+#
+# ⛔ The consequence is a DISAPPEARANCE, not a duplicate. `aa seed` keys
+# on the stable id, so of n colliding rows exactly one survives and the
+# rest can never be seeded.
+#
+# What distinguishes one roundup from another is its MEMBERSHIP, so
+# membership is the key. `label` and `reel_label` stay in front of it
+# because they are not redundant: a project holding exactly five assets
+# yields the same five-member sample on every sweep, and only the label
+# tells those posts apart.
+#
+# ⭐ These live at module level so `migrate_post_ids.py` calls the SAME
+# function the assembler does. A migration that reimplements the key is a
+# second definition of identity, and the two drift.
+
+def roundup_post_id(team_name: str, asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "roundup", team_name, *sorted(asset_ids))
+
+
+def sprint_post_id(project_name: str, label: str, asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "sprint", project_name, label, *sorted(asset_ids))
+
+
+def showreel_post_id(studio_key: str, reel_label: str,
+                     asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "showreel", studio_key, reel_label,
+                       *sorted(asset_ids))
+
+
+SPRINT_LABELS = ("sprint 12", "sprint 13", "sprint 14", "milestone alpha",
+                 "milestone beta", "review session", "lock-in pass",
+                 "polish week", "final review", "ship gate")
+REEL_LABELS = ("Q3 reel", "Q4 reel")
 
 
 def stable_int(n: int, *parts: str) -> int:
@@ -1198,7 +1252,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
 
         posts.append(_post(
             members=sample,
-            id=stable_uuid("post", "roundup", team_name, anchor.id),
+            id=roundup_post_id(team_name, (a.id for a in sample)),
             title=title,
             description=desc,
             author_username=anchor.owner_username,
@@ -1224,9 +1278,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     project_target = 80
     PROJECT_SWEEPS = 6
     projects_pool = sorted(by_project)
-    sprint_labels = ["sprint 12", "sprint 13", "sprint 14", "milestone alpha",
-                     "milestone beta", "review session", "lock-in pass",
-                     "polish week", "final review", "ship gate"]
+    sprint_labels = SPRINT_LABELS
     for sweep, project_name in ((s, p) for s in range(PROJECT_SWEEPS) for p in projects_pool):
         if len([p for p in posts if p.get("post_kind") == "project_sprint"]) >= project_target:
             break
@@ -1257,7 +1309,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
 
         posts.append(_post(
             members=sample,
-            id=stable_uuid("post", "sprint", project_name, label, anchor.id),
+            id=sprint_post_id(project_name, label, (a.id for a in sample)),
             title=title,
             description=desc,
             author_username=anchor.owner_username,
@@ -1324,7 +1376,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         if len(studio_videos) < 2:
             continue
         # Two reels per studio (sample variations) so feeds feel populated
-        for reel_label in ("Q3 reel", "Q4 reel"):
+        for reel_label in REEL_LABELS:
             sample = _pick(studio_videos, 3, 5, "showreel", studio_key, reel_label)
             # Was `sample[0]` — the first DRAW, which is only meaningful
             # while the sample comes out of an RNG in draw order. The
@@ -1333,7 +1385,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
             anchor = _anchor(sample)
             posts.append(_post(
                 members=sample,
-                id=stable_uuid("post", "showreel", studio_key, reel_label, anchor.id),
+                id=showreel_post_id(studio_key, reel_label, (v.id for v in sample)),
                 title=f"Cinematics {reel_label} — {len(sample)} cuts",
                 description=(f"Studio cinematics roundup. {len(sample)} pieces bundled for "
                              f"the {reel_label.lower()} screening — see for pacing references "
