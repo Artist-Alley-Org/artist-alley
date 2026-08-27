@@ -280,6 +280,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The dataset's pre-publish check can no longer pass a stale catalogue.** One of its own steps was
+  invisible to it, because that step reported how many records it looked at rather than how many it
+  changed — so a catalogue with outdated file sizes was reported as ready to publish. The check now
+  sees every step, and names the ones that actually found something (#1295, PR #1299).
+- **The catalogue's recorded file sizes now match the files themselves.** They had drifted from the
+  images they describe across four profiles; all 1,244 were re-measured from the source rather than
+  copied from anywhere downstream (#1294, PR #1299).
+
 - **The dataset build can no longer quietly undo published work.** Rebuilding the archive used to
   copy the repository's copy of the catalogue over the published one, with nothing comparing the
   two first — which would have removed one asset outright and stripped catalogue details from
