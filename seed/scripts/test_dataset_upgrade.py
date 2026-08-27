@@ -903,6 +903,54 @@ class TestCommittedUpgradeData(unittest.TestCase):
                         f"{name}: {row['new']} lost metadata.sha256 — "
                         "publishing would be refused as a loss")
 
+    # -- #1303: the values no pass can reach -------------------------
+
+    def test_the_balance_docs_hq_sizes_match_the_profile(self):
+        """⛔ 517 BYTE COUNTS THAT NO PASS COULD REACH.
+
+        `merge_added` appends only records ABSENT from the profile, and
+        all 517 of `balance-assets.site_a.json`'s hq ids are already in
+        it — the pass touches an existing record solely to add
+        `metadata.media_url`. So the document's byte counts could drift
+        away from the profile's without one line of output.
+
+        The direct gate is `kenney_hq.py sizes --balance`, which measures
+        them against a built pool. That needs the pack, which CI does not
+        have. This is the half that runs anywhere: the two in-repo
+        statements of the same measurement must agree, so a drift in
+        either one fails here even when no pool is reachable.
+
+        ⚠️ NOT the same check as `TestPoolSizesAgreeAcrossDocuments`.
+        That one compares a balance row against a REPLACEMENTS row where
+        both name one pool file, and 517 of these rows are named by no
+        replacement at all. This compares the balance row against the
+        PROFILE RECORD it belongs to, which is the pairing #1303 is
+        about and the one nothing covered.
+        """
+        checked = 0
+        for site, profiles in self.PROFILE_FOR.items():
+            doc = UPGRADES / f"balance-assets.{site}.json"
+            if not doc.is_file():
+                continue
+            rows = [r for r in json.loads(doc.read_text())
+                    if r.get("source_root") == "hq"]
+            self.assertGreater(len(rows), 0, doc)
+            for name in profiles:
+                recs = {r["id"]: r for r in json.loads(
+                    (PROFILES / f"{name}.assets.json").read_text())}
+                for row in rows:
+                    rec = recs.get(row["id"])
+                    self.assertIsNotNone(
+                        rec, f"{name}: balance row {row['id']} is in no "
+                             "profile, so nothing can ever check it")
+                    self.assertEqual(
+                        rec["file_size_bytes"], row["file_size_bytes"],
+                        f"{name}: {row['file_path']} — the balance doc says "
+                        f"{row['file_size_bytes']:,} B and the profile says "
+                        f"{rec['file_size_bytes']:,} B")
+                    checked += 1
+        self.assertGreater(checked, 0, "this test checked nothing")
+
     def test_replacements_all_target_the_hq_pool(self):
         pool_names = {e["name"] for e in
                       hq.load_pool_manifest(UPGRADES / "kenney-hq-pool.json")}

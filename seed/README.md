@@ -176,7 +176,10 @@ python3 seed/scripts/kenney_hq.py build \
     --pack "$DATASETS/Kenney Game Assets All-in-1 3.6.0" --out /tmp/kenney-hq
 python3 seed/scripts/kenney_hq.py sizes --pool /tmp/kenney-hq \
     --replacements seed/upgrades/kenney-hq-replacements.site_a.json \
-    --replacements seed/upgrades/kenney-hq-replacements.site_b.json --write
+    --replacements seed/upgrades/kenney-hq-replacements.site_b.json \
+    --balance      seed/upgrades/balance-assets.site_a.json \
+    --profile      seed/profiles/studio-a.assets.json \
+    --profile      seed/profiles/studio-b.assets.json --write
 python3 seed/scripts/apply_upgrade.py --site site_a \
     --profile seed/profiles/studio-a.assets.json \
     --posts   seed/profiles/studio-a.posts.json      # then site_b
@@ -191,6 +194,18 @@ reports and exits non-zero, so it can stand as a gate.
 and that is now a test (`TestPoolSizesAgreeAcrossDocuments`) which needs
 neither the pool nor the share. It was red on 115 files before this
 repair.
+
+⛔ **`--balance` and `--profile` are not optional extras (#1303).**
+`balance-assets.site_a.json` carries **517** hq records with a
+`file_size_bytes` each, and until this flag existed no pass could reach
+them: `apply_upgrade.merge_added` appends only records ABSENT from the
+profile, and all 517 ids are already in it. They agreed with the pool by
+the accident of having been emitted after the rasteriser fixes, and a
+rasteriser change would have invalidated them exactly as #1294's 622
+`newSize` values were invalidated, with nothing to say so.
+`--profile` does the same for `newSha256`, which a replacement used to
+leave describing the file the record USED to be (#1302). A run that
+omits either re-measures less than it appears to.
 
 ### The corpus carries every AI state (#1290)
 

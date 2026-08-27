@@ -558,8 +558,66 @@ def rows_needing_a_hash(profiles: list[Path]) -> set[str]:
     return ids
 
 
+def _measure_balance(pool_dir: Path, doc: Path, write: bool) -> int:
+    """Re-measure a balance document's hq byte counts against the pool.
+
+    ⛔ WHY THESE NEED THEIR OWN GATE (#1303). `balance-assets.site_a.json`
+    carries 517 hq records with a `file_size_bytes` each, and NO PASS CAN
+    REACH THEM. `apply_upgrade.merge_added` appends only records ABSENT
+    from the profile, and all 517 ids are already in it — the pass
+    touches an existing record solely to add `metadata.media_url`. So the
+    numbers sat outside every gate: `kenney_hq.py sizes` covered only the
+    replacements documents, and nothing covered these.
+
+    They agree with the pool today, which is an accident of when they
+    were emitted (after the rasteriser fixes) rather than anything
+    keeping them there. A rasteriser change is exactly what invalidated
+    150 of site_a's 260 `newSize` values in #1294, and it would have
+    invalidated these in the same stroke with nothing to say so.
+    """
+    rows = json.loads(doc.read_text(encoding="utf-8"))
+    drifted, absent = [], []
+    for r in rows:
+        if r.get("source_root") != HQ_SOURCE_ROOT_NAME:
+            continue
+        name = str(r.get("file_path", "")).rsplit("/", 1)[-1]
+        f = pool_dir / name
+        if not f.is_file():
+            absent.append(name)
+            continue
+        size = f.stat().st_size
+        if size != r.get("file_size_bytes"):
+            drifted.append((name, r.get("file_size_bytes"), size))
+            if write:
+                r["file_size_bytes"] = size
+    n_hq = sum(1 for r in rows if r.get("source_root") == HQ_SOURCE_ROOT_NAME)
+    print(f"\n{doc.name}", file=sys.stderr)
+    print(f"  hq rows  : {n_hq:,} of {len(rows):,}", file=sys.stderr)
+    print(f"  drifted  : {len(drifted):,}", file=sys.stderr)
+    print(f"  absent   : {len(absent):,} row(s) name a file the pool does "
+          "not hold", file=sys.stderr)
+    for name, was, now in drifted[:5]:
+        print(f"     {was!s:>9} -> {now:<9} {name}", file=sys.stderr)
+    if absent:
+        print("  FAIL     : a row naming a file the pool cannot produce "
+              "cannot be re-measured.", file=sys.stderr)
+        return -1
+    if write and drifted:
+        doc.write_text(
+            json.dumps(rows, indent=1, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        print(f"  wrote {doc}", file=sys.stderr)
+    return len(drifted)
+
+
+# The balance documents spell the root out as a plain string; keep the
+# name in one place so a rename cannot silently empty this gate.
+HQ_SOURCE_ROOT_NAME = "hq"
+
+
 def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool,
-              profiles: list[Path] | None = None) -> int:
+              profiles: list[Path] | None = None,
+              balance: list[Path] | None = None) -> int:
     """Re-measure `newSize` in a replacements document against a built pool.
 
     ⛔ WHY THIS IS A COMMAND AND NOT A ONE-OFF SCRIPT (#1294).
@@ -654,6 +712,12 @@ def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool,
             print(f"  wrote {doc}", file=sys.stderr)
         total_drift += len(drifted) + len(hash_drift)
 
+    for doc in (balance or []):
+        n = _measure_balance(pool_dir, doc, write)
+        if n < 0:
+            return 1
+        total_drift += n
+
     if total_drift and not write:
         print(f"\nFAIL: {total_drift:,} measurement(s) disagree with the "
               "pool. Re-run with --write, then apply_upgrade.py to carry "
@@ -735,6 +799,11 @@ def main() -> int:
     z.add_argument("--write", action="store_true",
                    help="re-measure in place (default: report and exit "
                         "non-zero if anything drifted)")
+    z.add_argument("--balance", type=Path, action="append", default=[],
+                   metavar="DOC", help="balance-assets.<site>.json "
+                                       "(repeatable). Its hq records carry a "
+                                       "file_size_bytes no other pass can "
+                                       "reach (#1303).")
     z.add_argument("--profile", type=Path, action="append", default=[],
                    metavar="PROFILE", help="asset profile(s) the documents "
                                            "repoint (repeatable). Given, the "
@@ -763,7 +832,7 @@ def main() -> int:
                   "--out <dir>` first.", file=sys.stderr)
             return 2
         return cmd_sizes(args.pool, args.replacements, args.write,
-                         args.profile)
+                         args.profile, args.balance)
     return cmd_verify(args.pack, args.pool)
 
 
