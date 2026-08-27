@@ -2,6 +2,7 @@
  {
   "id": "6108fd34-7c84-e3a3-e633-d2b3318ea8b6",
   "new": "images/kenney-hq/2d-assets-brick-pack-extra-character-e-b8e20835-512.png",
+  "newSha256": "f4b4a8655aefd8824afe3eeccff7272ea56c2ffddcebf28524fb94f1302ae9fb",
   "newSize": 24144,
   "old": "images/internet/bradley-trainer-screenshot.png",
   "oldSize": 7302
@@ -9,6 +10,7 @@
  {
   "id": "cff5c497-36cc-9593-b8b6-e7ff28824cc5",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0024-10b5d09a-512.png",
+  "newSha256": "4008a9f50471983a33afc92db6f354c327a2241cc21d65f173a5c2983f761d35",
   "newSize": 10756,
   "old": "images/internet/tank-1974.png",
   "oldSize": 4730

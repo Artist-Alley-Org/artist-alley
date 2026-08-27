@@ -176,7 +176,10 @@ python3 seed/scripts/kenney_hq.py build \
     --pack "$DATASETS/Kenney Game Assets All-in-1 3.6.0" --out /tmp/kenney-hq
 python3 seed/scripts/kenney_hq.py sizes --pool /tmp/kenney-hq \
     --replacements seed/upgrades/kenney-hq-replacements.site_a.json \
-    --replacements seed/upgrades/kenney-hq-replacements.site_b.json --write
+    --replacements seed/upgrades/kenney-hq-replacements.site_b.json \
+    --balance      seed/upgrades/balance-assets.site_a.json \
+    --profile      seed/profiles/studio-a.assets.json \
+    --profile      seed/profiles/studio-b.assets.json --write
 python3 seed/scripts/apply_upgrade.py --site site_a \
     --profile seed/profiles/studio-a.assets.json \
     --posts   seed/profiles/studio-a.posts.json      # then site_b
@@ -187,10 +190,54 @@ archive share; `--out` has no default and the build takes the CC0 pack
 plus `npm install sharp` in `seed/scripts/`. Without `--write`, `sizes`
 reports and exits non-zero, so it can stand as a gate.
 
+⚠️ **A rebuilt pool is SIZE reproducible, not BYTE reproducible across
+`sharp` versions (#1304).** `kenney_hq.py`'s own header promises "same
+pack + same weights + same `--limit` produces the same pool, byte for
+byte", and on one machine with one `sharp` it does — a rebuild here
+against a pool built the day before came back byte-identical on all
+1,031 files. Across versions it does not, and the difference is not in
+the artwork:
+
+| | site_a's staged pool | rebuilt on `sharp` 0.35.3 |
+|---|---|---|
+| `IHDR`, `IDAT` | identical | identical |
+| file size | identical | identical |
+| `pHYs` | 23622 ppu (600 DPI) | 15118 ppu (384 DPI) |
+
+Measured 2026-08-27: **24** site_a files match on size and differ in
+exactly 8 bytes, every one of them inside the `pHYs` density chunk and
+its CRC. The pixels are the same pixels; libvips wrote a different
+default resolution into the metadata.
+
+So **compare sizes, never whole files.** A rebuild that "differs from
+the share" on bytes alone has not necessarily produced different art,
+and `kenney_hq.py sizes` is the check that answers the question that
+actually matters. ⛔ If a reproducibility test is ever wanted it must
+assert the file size and the `IDAT` chunk, and never the whole file: a
+byte-for-byte assertion would go red on the next `sharp` bump while the
+pool it is guarding is perfect.
+
+⚠️ This does **not** contradict the determinism note under *The corpus
+carries every AI state* below. That one is about `authored_plates.py`,
+which is stdlib only with no `sharp` anywhere in it — a different
+artifact with a stronger guarantee.
+
 ⛔ **Two committed documents describing the same pool file must agree**,
 and that is now a test (`TestPoolSizesAgreeAcrossDocuments`) which needs
 neither the pool nor the share. It was red on 115 files before this
 repair.
+
+⛔ **`--balance` and `--profile` are not optional extras (#1303).**
+`balance-assets.site_a.json` carries **517** hq records with a
+`file_size_bytes` each, and until this flag existed no pass could reach
+them: `apply_upgrade.merge_added` appends only records ABSENT from the
+profile, and all 517 ids are already in it. They agreed with the pool by
+the accident of having been emitted after the rasteriser fixes, and a
+rasteriser change would have invalidated them exactly as #1294's 622
+`newSize` values were invalidated, with nothing to say so.
+`--profile` does the same for `newSha256`, which a replacement used to
+leave describing the file the record USED to be (#1302). A run that
+omits either re-measures less than it appears to.
 
 ### The corpus carries every AI state (#1290)
 

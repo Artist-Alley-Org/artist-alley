@@ -20977,7 +20977,7 @@
  {
   "id": "6bb06439-d526-678d-29e9-e55a6f76602e",
   "asset_type": "image",
-  "title": "Pharah (Overwatch — Damage)",
+  "title": "Pharah (Overwatch , Damage)",
   "description": "Overwatch hero portrait: Pharah. Class: Damage. Difficulty: 1 star. Health: 200.",
   "file_path": "images/heroes/pharah/00000003.jpg",
   "source_path": "heroes/pharah/00000003.jpg",
@@ -30537,7 +30537,7 @@
  {
   "id": "f61ccbb9-bf6f-4e1f-a786-60b4829d47a1",
   "asset_type": "image",
-  "title": "Ana (Overwatch — Support)",
+  "title": "Ana (Overwatch , Support)",
   "description": "Overwatch hero portrait: Ana. Class: Support. Difficulty: 3 stars. Health: 200.",
   "file_path": "images/heroes/ana/00000000.png",
   "source_path": "heroes/ana/00000000.png",
@@ -30599,7 +30599,7 @@
  {
   "id": "1ecff4ad-8104-7d3a-1c85-3ccbcf575cfe",
   "asset_type": "image",
-  "title": "Zarya (Overwatch — Tank)",
+  "title": "Zarya (Overwatch , Tank)",
   "description": "Overwatch hero portrait: Zarya. Class: Tank. Difficulty: 3 stars. Health: 400.",
   "file_path": "images/heroes/zarya/00000000.png",
   "source_path": "heroes/zarya/00000000.png",
@@ -41870,7 +41870,7 @@
  {
   "id": "030cb300-a886-d6b1-5e4c-3023a3d5db8b",
   "asset_type": "image",
-  "title": "Baptiste (Overwatch — Support)",
+  "title": "Baptiste (Overwatch , Support)",
   "description": "Overwatch hero portrait: Baptiste. Class: Support. Difficulty: 3 stars. Health: 200.",
   "file_path": "images/heroes/baptiste/00000002.jpg",
   "source_path": "heroes/baptiste/00000002.jpg",
@@ -42968,7 +42968,7 @@
  {
   "id": "5a48d319-f51f-f58c-f9a0-c0bb7a511102",
   "asset_type": "image",
-  "title": "Tracer (Overwatch — Damage)",
+  "title": "Tracer (Overwatch , Damage)",
   "description": "Overwatch hero portrait: Tracer. Class: Damage. Difficulty: 2 stars. Health: 150.",
   "file_path": "images/heroes/tracer/00000001.jpg",
   "source_path": "heroes/tracer/00000001.jpg",
@@ -43029,7 +43029,7 @@
  {
   "id": "33c1b53f-c5b7-423f-e2a0-80e4c751a9c1",
   "asset_type": "image",
-  "title": "Torbjorn (Overwatch — Damage)",
+  "title": "Torbjorn (Overwatch , Damage)",
   "description": "Overwatch hero portrait: Torbjorn. Class: Damage. Difficulty: 2 stars. Health: 200.",
   "file_path": "images/heroes/torbjorn/00000001.png",
   "source_path": "heroes/torbjorn/00000001.png",
@@ -69174,13 +69174,13 @@
  {
   "id": "ef4c8813-5b81-0450-85a9-886abbd8d7d9",
   "asset_type": "video",
-  "title": "Big Buck Bunny — 720p surround",
+  "title": "Big Buck Bunny , 720p surround",
   "description": "Animated short — exercises 5.1 surround audio path",
   "file_path": "videos/internet/big-buck-bunny.mp4",
   "source_path": "video/big-buck-bunny.mp4",
   "source_root": "internet",
   "file_extension": "mp4",
-  "file_size_bytes": 61878609,
+  "file_size_bytes": 11845323,
   "sensitivity_tier": "public",
   "archive_state": "active",
   "owner_username": "seed.bot",
@@ -69201,7 +69201,8 @@
    "acquisition_source": "Blender Foundation",
    "attribution": "(c) Blender Foundation | peach.blender.org",
    "group_id": "",
-   "sha256": "46f62396c755e1ed0ab856a1521378d54196e125ef1a1643a199af087a15046b"
+   "sha256": "46f62396c755e1ed0ab856a1521378d54196e125ef1a1643a199af087a15046b",
+   "origin_bytes": 61878609
   },
   "field_values": {},
   "external_id": "",
@@ -69218,7 +69219,7 @@
  {
   "id": "2adf45b0-8dd0-9818-ffef-bb1c04a7e8f9",
   "asset_type": "video",
-  "title": "Sintel — 480p trailer",
+  "title": "Sintel , 480p trailer",
   "description": "Trailer for the animated short — small clip via Blender direct",
   "file_path": "videos/internet/sintel-trailer-480p.mp4",
   "source_path": "video/sintel-trailer-480p.mp4",
@@ -69262,7 +69263,7 @@
  {
   "id": "b4abdc3d-c82e-22e6-cd12-56e467ef1b79",
   "asset_type": "video",
-  "title": "Tux Racer gameplay — Ingo's Speedway",
+  "title": "Tux Racer gameplay , Ingo's Speedway",
   "description": "Open-source game gameplay footage",
   "file_path": "videos/internet/tux-racer-ingos-speedway.webm",
   "source_path": "video/tux-racer-ingos-speedway.webm",
@@ -69306,7 +69307,7 @@
  {
   "id": "106ef546-a908-ef81-7c73-a62bfa305d9f",
   "asset_type": "video",
-  "title": "Tux Racer gameplay — Path of Daggers",
+  "title": "Tux Racer gameplay , Path of Daggers",
   "description": "Tux Racer gameplay — Path of Daggers — public-safe reference content.",
   "file_path": "videos/internet/tux-racer-path-of-daggers.webm",
   "source_path": "video/tux-racer-path-of-daggers.webm",
@@ -69356,7 +69357,7 @@
   "source_path": "video/0ad-gameplay-test.webm",
   "source_root": "internet",
   "file_extension": "webm",
-  "file_size_bytes": 101241097,
+  "file_size_bytes": 85060760,
   "sensitivity_tier": "public",
   "archive_state": "active",
   "owner_username": "seed.bot",
@@ -69377,7 +69378,8 @@
    "acquisition_source": "Wikimedia Commons",
    "attribution": "0 A.D. — Empires Ascendant (open-source RTS)",
    "group_id": "",
-   "sha256": "420e0417bf7a6cb93af65fb515fdd4166863200d13d36fad59862d40d5ffc7f2"
+   "sha256": "420e0417bf7a6cb93af65fb515fdd4166863200d13d36fad59862d40d5ffc7f2",
+   "origin_bytes": 101241097
   },
   "field_values": {},
   "external_id": "",
@@ -69400,7 +69402,7 @@
   "source_path": "video/fantastic-contraption-gameplay.webm",
   "source_root": "internet",
   "file_extension": "webm",
-  "file_size_bytes": 82611631,
+  "file_size_bytes": 78223703,
   "sensitivity_tier": "public",
   "archive_state": "active",
   "owner_username": "seed.bot",
@@ -69421,7 +69423,8 @@
    "acquisition_source": "Wikimedia Commons",
    "attribution": "Fantastic Contraption (CC-licensed physics puzzle game)",
    "group_id": "",
-   "sha256": "a1b80c1c987487566cd4bbce83fa16456e8c799c964de5e93d406852ca905af3"
+   "sha256": "a1b80c1c987487566cd4bbce83fa16456e8c799c964de5e93d406852ca905af3",
+   "origin_bytes": 82611631
   },
   "field_values": {},
   "external_id": "",
@@ -69444,7 +69447,7 @@
   "source_path": "video/hedgewars-gameplay.webm",
   "source_root": "internet",
   "file_extension": "webm",
-  "file_size_bytes": 29955556,
+  "file_size_bytes": 14335069,
   "sensitivity_tier": "public",
   "archive_state": "active",
   "owner_username": "seed.bot",
@@ -69465,7 +69468,8 @@
    "acquisition_source": "Wikimedia Commons",
    "attribution": "Hedgewars — open-source artillery game",
    "group_id": "",
-   "sha256": "18ed02d048fafa3c07c1248d1ef4af93af856c7938678dc406231a61ab42841f"
+   "sha256": "18ed02d048fafa3c07c1248d1ef4af93af856c7938678dc406231a61ab42841f",
+   "origin_bytes": 29955556
   },
   "field_values": {},
   "external_id": "",
@@ -69526,7 +69530,7 @@
  {
   "id": "2d7d8fee-b300-8c51-7cbb-93d668e137f9",
   "asset_type": "3d",
-  "title": "DamagedHelmet — Khronos PBR test",
+  "title": "DamagedHelmet , Khronos PBR test",
   "description": "Canonical PBR material test asset",
   "file_path": "3d/internet/DamagedHelmet.glb",
   "source_path": "3d/DamagedHelmet.glb",
@@ -69570,7 +69574,7 @@
  {
   "id": "a843ee18-f9ee-c3a3-ed06-928a3210a5b4",
   "asset_type": "3d",
-  "title": "FlightHelmet — Khronos detailed scene",
+  "title": "FlightHelmet , Khronos detailed scene",
   "description": "High-detail multi-material asset",
   "file_path": "3d/internet/FlightHelmet.gltf",
   "source_path": "3d/FlightHelmet.gltf",
@@ -69614,7 +69618,7 @@
  {
   "id": "be6618e8-3d1c-e182-80f8-5c210fdb1b66",
   "asset_type": "3d",
-  "title": "BoxAnimated — Khronos animation test",
+  "title": "BoxAnimated , Khronos animation test",
   "description": "Exercises 3D viewer animation timeline",
   "file_path": "3d/internet/BoxAnimated.glb",
   "source_path": "3d/BoxAnimated.glb",
@@ -69658,7 +69662,7 @@
  {
   "id": "89fc34b8-1791-dc48-79c7-861861571469",
   "asset_type": "3d",
-  "title": "Avocado — Khronos PBR food asset",
+  "title": "Avocado , Khronos PBR food asset",
   "description": "Small PBR object",
   "file_path": "3d/internet/Avocado.glb",
   "source_path": "3d/Avocado.glb",
@@ -69702,7 +69706,7 @@
  {
   "id": "2113e8d3-82df-7f88-0be7-59c67dac514f",
   "asset_type": "3d",
-  "title": "BoomBox — Khronos PBR product",
+  "title": "BoomBox , Khronos PBR product",
   "description": "Product-vis PBR asset",
   "file_path": "3d/internet/BoomBox.glb",
   "source_path": "3d/BoomBox.glb",
@@ -69746,7 +69750,7 @@
  {
   "id": "18b9d9a9-ede9-cc47-59f2-b3d2dd9374c1",
   "asset_type": "3d",
-  "title": "Duck — Khronos classic test",
+  "title": "Duck , Khronos classic test",
   "description": "Reference duck used in graphics demos",
   "file_path": "3d/internet/Duck.glb",
   "source_path": "3d/Duck.glb",
@@ -69790,7 +69794,7 @@
  {
   "id": "aa374414-f08b-275d-c76c-8e63f4aa4f63",
   "asset_type": "3d",
-  "title": "Lantern — Khronos detailed asset",
+  "title": "Lantern , Khronos detailed asset",
   "description": "Detailed PBR architecture asset",
   "file_path": "3d/internet/Lantern.glb",
   "source_path": "3d/Lantern.glb",
@@ -69834,7 +69838,7 @@
  {
   "id": "4d30ea15-aec9-f53a-647c-3d4034b9f3a2",
   "asset_type": "3d",
-  "title": "Sponza — Khronos canonical scene",
+  "title": "Sponza , Khronos canonical scene",
   "description": "Architectural test scene — most-used graphics benchmark",
   "file_path": "3d/internet/Sponza.gltf",
   "source_path": "3d/Sponza.gltf",
@@ -69878,7 +69882,7 @@
  {
   "id": "f7c409e9-f363-3b23-3c6c-3f494700806e",
   "asset_type": "3d",
-  "title": "WaterBottle — Khronos PBR",
+  "title": "WaterBottle , Khronos PBR",
   "description": "Transparency / refraction test asset",
   "file_path": "3d/internet/WaterBottle.glb",
   "source_path": "3d/WaterBottle.glb",
@@ -69922,7 +69926,7 @@
  {
   "id": "5afc4da9-01ee-9f7b-029d-9b47e4942b41",
   "asset_type": "3d",
-  "title": "BrainStem — Khronos skinned animation",
+  "title": "BrainStem , Khronos skinned animation",
   "description": "Skinned-mesh animation test",
   "file_path": "3d/internet/BrainStem.glb",
   "source_path": "3d/BrainStem.glb",
@@ -69966,7 +69970,7 @@
  {
   "id": "f10729b6-9865-5077-fab1-7c3f76b0515c",
   "asset_type": "3d",
-  "title": "CesiumMan — Khronos character animation",
+  "title": "CesiumMan , Khronos character animation",
   "description": "Walking character animation",
   "file_path": "3d/internet/CesiumMan.glb",
   "source_path": "3d/CesiumMan.glb",
@@ -70010,7 +70014,7 @@
  {
   "id": "4b4a3022-7c20-f978-2017-e43dca00870a",
   "asset_type": "3d",
-  "title": "2CylinderEngine — Khronos mechanical",
+  "title": "2CylinderEngine , Khronos mechanical",
   "description": "Mechanical CAD-style asset",
   "file_path": "3d/internet/2CylinderEngine.glb",
   "source_path": "3d/2CylinderEngine.glb",
@@ -70054,7 +70058,7 @@
  {
   "id": "bf05361b-aa10-9b58-d6d0-9102b4742dcb",
   "asset_type": "3d",
-  "title": "ToyCar — Khronos PBR product",
+  "title": "ToyCar , Khronos PBR product",
   "description": "Toy product PBR asset",
   "file_path": "3d/internet/ToyCar.glb",
   "source_path": "3d/ToyCar.glb",
@@ -70098,7 +70102,7 @@
  {
   "id": "22f58f1f-60c4-8926-0b54-e60e6e936c0c",
   "asset_type": "document",
-  "title": "Frankenstein — Mary Shelley",
+  "title": "Frankenstein , Mary Shelley",
   "description": "Frankenstein — Mary Shelley — public-safe reference content.",
   "file_path": "documents/internet/frankenstein.epub",
   "source_path": "ebook/frankenstein.epub",
@@ -70142,7 +70146,7 @@
  {
   "id": "052e6603-0d37-abd4-7fe7-0d4872adbabd",
   "asset_type": "document",
-  "title": "Pride and Prejudice — Jane Austen",
+  "title": "Pride and Prejudice , Jane Austen",
   "description": "Pride and Prejudice — Jane Austen — public-safe reference content.",
   "file_path": "documents/internet/pride-and-prejudice.epub",
   "source_path": "ebook/pride-and-prejudice.epub",
@@ -70186,7 +70190,7 @@
  {
   "id": "996c328e-9fe6-ffc5-1130-65a207752e30",
   "asset_type": "document",
-  "title": "The Adventures of Sherlock Holmes — Conan Doyle",
+  "title": "The Adventures of Sherlock Holmes , Conan Doyle",
   "description": "The Adventures of Sherlock Holmes — Conan Doyle — public-safe reference content.",
   "file_path": "documents/internet/sherlock-holmes.epub",
   "source_path": "ebook/sherlock-holmes.epub",
@@ -70230,7 +70234,7 @@
  {
   "id": "d20f56f9-9161-7a73-2640-cc0d02f8a5b0",
   "asset_type": "document",
-  "title": "Alice's Adventures in Wonderland — Carroll",
+  "title": "Alice's Adventures in Wonderland , Carroll",
   "description": "Alice's Adventures in Wonderland — Carroll — public-safe reference content.",
   "file_path": "documents/internet/alice-in-wonderland.epub",
   "source_path": "ebook/alice-in-wonderland.epub",
@@ -70274,7 +70278,7 @@
  {
   "id": "cee27e99-1637-6834-4e8c-8ae4b6e09b98",
   "asset_type": "document",
-  "title": "Moby Dick — Herman Melville",
+  "title": "Moby Dick , Herman Melville",
   "description": "Moby Dick — Herman Melville — public-safe reference content.",
   "file_path": "documents/internet/moby-dick.epub",
   "source_path": "ebook/moby-dick.epub",
@@ -70318,7 +70322,7 @@
  {
   "id": "1a0f7957-ad50-5f28-3e1f-61dbdcaf68bb",
   "asset_type": "document",
-  "title": "The Time Machine — H.G. Wells",
+  "title": "The Time Machine , H.G. Wells",
   "description": "The Time Machine — H.G. Wells — public-safe reference content.",
   "file_path": "documents/internet/the-time-machine.epub",
   "source_path": "ebook/the-time-machine.epub",
@@ -70362,7 +70366,7 @@
  {
   "id": "0c46c219-a537-d5ab-0a30-3de93801bb8f",
   "asset_type": "document",
-  "title": "A Tale of Two Cities — Dickens",
+  "title": "A Tale of Two Cities , Dickens",
   "description": "A Tale of Two Cities — Dickens — public-safe reference content.",
   "file_path": "documents/internet/tale-of-two-cities.epub",
   "source_path": "ebook/tale-of-two-cities.epub",
@@ -70406,7 +70410,7 @@
  {
   "id": "d1c774ef-00ee-d345-f668-fdbfc54d734b",
   "asset_type": "document",
-  "title": "Around the World in Eighty Days — Verne",
+  "title": "Around the World in Eighty Days , Verne",
   "description": "Around the World in Eighty Days — Verne — public-safe reference content.",
   "file_path": "documents/internet/around-the-world-80-days.epub",
   "source_path": "ebook/around-the-world-80-days.epub",
@@ -70450,7 +70454,7 @@
  {
   "id": "28c20aaf-8888-3a72-ebfd-08aaeb1c22c1",
   "asset_type": "document",
-  "title": "The Picture of Dorian Gray — Wilde",
+  "title": "The Picture of Dorian Gray , Wilde",
   "description": "The Picture of Dorian Gray — Wilde — public-safe reference content.",
   "file_path": "documents/internet/picture-of-dorian-gray.epub",
   "source_path": "ebook/picture-of-dorian-gray.epub",
@@ -70494,7 +70498,7 @@
  {
   "id": "5b15cf33-58fe-6b2b-566f-f6b3db368dba",
   "asset_type": "document",
-  "title": "Treasure Island — Stevenson",
+  "title": "Treasure Island , Stevenson",
   "description": "Treasure Island — Stevenson — public-safe reference content.",
   "file_path": "documents/internet/treasure-island.epub",
   "source_path": "ebook/treasure-island.epub",
@@ -70538,7 +70542,7 @@
  {
   "id": "9bb0a1af-fe82-1fcf-1aae-31db7a7f4c21",
   "asset_type": "document",
-  "title": "The Iliad — Homer (trans. Pope)",
+  "title": "The Iliad , Homer (trans. Pope)",
   "description": "The Iliad — Homer (trans. Pope) — public-safe reference content.",
   "file_path": "documents/internet/the-iliad.epub",
   "source_path": "ebook/the-iliad.epub",
@@ -70582,7 +70586,7 @@
  {
   "id": "a84dad50-1637-78b2-cb97-2ace04f7c198",
   "asset_type": "document",
-  "title": "Walden — Thoreau",
+  "title": "Walden , Thoreau",
   "description": "Walden — Thoreau — public-safe reference content.",
   "file_path": "documents/internet/walden.epub",
   "source_path": "ebook/walden.epub",
@@ -70626,7 +70630,7 @@
  {
   "id": "bb189b50-5c2c-a34b-bfc8-3c5a65d5b47d",
   "asset_type": "document",
-  "title": "Vue.js README — markdown reference",
+  "title": "Vue.js README , markdown reference",
   "description": "Markdown viewer test — code blocks + tables + images",
   "file_path": "documents/internet/vue-README.md",
   "source_path": "docs/vue-README.md",
@@ -70758,7 +70762,7 @@
  {
   "id": "bf72cc9a-94e7-7a10-7beb-976702289528",
   "asset_type": "image",
-  "title": "Pale Blue Dot — Voyager 1",
+  "title": "Pale Blue Dot , Voyager 1",
   "description": "Pale Blue Dot — Voyager 1 — public-safe reference content.",
   "file_path": "images/internet/pale-blue-dot.png",
   "source_path": "nasa/pale-blue-dot.png",
@@ -70890,7 +70894,7 @@
  {
   "id": "8c03bea8-9475-0e7d-7c8e-433feec5d28a",
   "asset_type": "image",
-  "title": "Mars Curiosity Self-Portrait — Big Sky drilling site",
+  "title": "Mars Curiosity Self-Portrait , Big Sky drilling site",
   "description": "Mars Curiosity Self-Portrait — Big Sky drilling site — public-safe reference content.",
   "file_path": "images/internet/curiosity-self-portrait-big-sky.jpg",
   "source_path": "nasa/curiosity-self-portrait-big-sky.jpg",
@@ -71137,7 +71141,7 @@
    "acquisition_source": "Wikimedia Commons",
    "attribution": "Kenney (kenney.nl)",
    "group_id": "",
-   "sha256": "10f16040db9e4f041fdf96baaea8a65dacd008f86b3f466483b114e51a946c7f"
+   "sha256": "85aee341a1b7ca525a026662d0e51c41d43a98cf5f8d80d27b327f687ba87543"
   },
   "field_values": {},
   "external_id": "",
@@ -71181,7 +71185,7 @@
    "acquisition_source": "Wikimedia Commons",
    "attribution": "Kenney (kenney.nl)",
    "group_id": "",
-   "sha256": "dbf672a5b1ff090fa94f9b2386e2e7a4e8372b0ff5ae282eec7abcfe47ebdb12"
+   "sha256": "6ef1e7569548507aeca4f112029bf3bf3c8a0f5326e833a983d7e08030f6037b"
   },
   "field_values": {},
   "external_id": "",
@@ -71242,7 +71246,7 @@
  {
   "id": "2e1b2550-76d8-ef93-1409-b27ce578414e",
   "asset_type": "image",
-  "title": "Atari Pong arcade cabinet — front view",
+  "title": "Atari Pong arcade cabinet , front view",
   "description": "Atari Pong arcade cabinet — front view — public-safe reference content.",
   "file_path": "images/internet/atari-pong-front.jpg",
   "source_path": "games/atari-pong-front.jpg",
@@ -71858,13 +71862,13 @@
  {
   "id": "083f9159-1903-73c9-f0c1-52eef9884c24",
   "asset_type": "video",
-  "title": "Sintel — full film (512kb stereo, ~13 min)",
+  "title": "Sintel , full film (512kb stereo, ~13 min)",
   "description": "Full Sintel feature film — animated short by Blender Foundation. CC-BY 3.0.",
   "file_path": "videos/torrent/sintel-full-film-512kb.mp4",
   "source_path": "videos/torrent/sintel-full-film-512kb.mp4",
   "source_root": "torrent_import",
   "file_extension": "mp4",
-  "file_size_bytes": 77410288,
+  "file_size_bytes": 9397846,
   "sensitivity_tier": "public",
   "archive_state": "active",
   "owner_username": "seed.bot",
@@ -71887,7 +71891,9 @@
    "acquisition_source": "Blender Foundation",
    "attribution": "(c) Blender Foundation | durian.blender.org",
    "group_id": "",
-   "import_source": "torrent"
+   "import_source": "torrent",
+   "origin_bytes": 77410288,
+   "sha256": "473f78b039bc747733f472281fac27ae52de430e3e8de0bd0819a6ed0b68ae62"
   },
   "field_values": {},
   "external_id": "",
@@ -71904,13 +71910,13 @@
  {
   "id": "b260a4ba-8520-148c-406f-017daee61dc4",
   "asset_type": "video",
-  "title": "Sintel — making-of documentary",
+  "title": "Sintel , making-of documentary",
   "description": "Behind-the-scenes documentary for Sintel — production reference for the studio archive.",
   "file_path": "videos/torrent/sintel-documentary.avi",
   "source_path": "videos/torrent/sintel-documentary.avi",
   "source_root": "torrent_import",
   "file_extension": "avi",
-  "file_size_bytes": 961242162,
+  "file_size_bytes": 32638772,
   "sensitivity_tier": "public",
   "archive_state": "active",
   "owner_username": "seed.bot",
@@ -71933,7 +71939,9 @@
    "acquisition_source": "Blender Foundation",
    "attribution": "(c) Ali Boubred / Blender Foundation",
    "group_id": "",
-   "import_source": "torrent"
+   "import_source": "torrent",
+   "origin_bytes": 961242162,
+   "sha256": "2cb3c957ffbb0a6636ba17476b647466d7f3ab80b18561465ac6a522ae203ed4"
   },
   "field_values": {},
   "external_id": "",
@@ -71950,13 +71958,13 @@
  {
   "id": "f47b3fdc-71fa-0688-8253-c5e49e5f10bb",
   "asset_type": "video",
-  "title": "Big Buck Bunny — 720p surround (AVI)",
+  "title": "Big Buck Bunny , 720p surround (AVI)",
   "description": "BBB full film at 720p with 5.1 surround — higher-quality alternate to the MP4.",
   "file_path": "videos/torrent/big-buck-bunny-720p-surround.avi",
   "source_path": "videos/torrent/big-buck-bunny-720p-surround.avi",
   "source_root": "torrent_import",
   "file_extension": "avi",
-  "file_size_bytes": 332243668,
+  "file_size_bytes": 63889514,
   "sensitivity_tier": "public",
   "archive_state": "active",
   "owner_username": "seed.bot",
@@ -71979,7 +71987,9 @@
    "acquisition_source": "Blender Foundation",
    "attribution": "(c) Blender Foundation | peach.blender.org",
    "group_id": "",
-   "import_source": "torrent"
+   "import_source": "torrent",
+   "origin_bytes": 332243668,
+   "sha256": "7a1ec653de126037972b4061caa11eda6d703b8a359773eaf3c0359dd85b16fe"
   },
   "field_values": {},
   "external_id": "",
@@ -72031,7 +72041,8 @@
    "filename": "mineclone2-release.webm",
    "kind": "video",
    "license": "CC-BY-SA 4.0",
-   "media_url": "https://upload.wikimedia.org/wikipedia/commons/9/92/MineClone2_-_Release_0.84_-_The_Very_Nice_Release.webm"
+   "media_url": "https://upload.wikimedia.org/wikipedia/commons/9/92/MineClone2_-_Release_0.84_-_The_Very_Nice_Release.webm",
+   "sha256": "0bc335ebea20dacf3deb95cfa17be42281cf6e5ca72a14c6238d55faf8f211b1"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72088,7 +72099,8 @@
    "filename": "pexels-10161903-carlos.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/10161903/10161903-hd_1280_720_60fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/10161903/10161903-hd_1280_720_60fps.mp4",
+   "sha256": "f71406f3acb68e6eedce93bdef784b1603f8049f0f05797e329e2a13076292fe"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72145,7 +72157,8 @@
    "filename": "pexels-10225518-nikita-nikitin.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/10225518/10225518-hd_1080_1920_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/10225518/10225518-hd_1080_1920_30fps.mp4",
+   "sha256": "3043286f40c09f321de8daa79e0e37a705840f76eb98ea9af0790636dfb13362"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72202,7 +72215,8 @@
    "filename": "pexels-10444089-timo-volz.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/10444089/10444089-hd_1280_720_60fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/10444089/10444089-hd_1280_720_60fps.mp4",
+   "sha256": "559db414910b9c2a1bb20c1932e0f22121935151930fbdefceda60590403f433"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72259,7 +72273,8 @@
    "filename": "pexels-11265968--zg-r-s-rmeli.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/11265968/11265968-hd_1280_720_25fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/11265968/11265968-hd_1280_720_25fps.mp4",
+   "sha256": "c2b6b3926762e99df2c19fb07b351b69c5ab2236a1471a9112542efe42a4dc07"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72316,7 +72331,8 @@
    "filename": "pexels-1288012-zuzanna-musial.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/1288012/1288012-hd_1280_720_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/1288012/1288012-hd_1280_720_30fps.mp4",
+   "sha256": "84dd119ab527f9e703af82e3872439253df5463d358f87795c0176d771c2617c"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72373,7 +72389,8 @@
    "filename": "pexels-18138660-nasih-najim.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/18138660/18138660-uhd_1440_2560_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/18138660/18138660-uhd_1440_2560_30fps.mp4",
+   "sha256": "5a966fc3fdd3b54ee841d17c43fff7e713155071f05832e0e653f73b822e076d"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72430,7 +72447,8 @@
    "filename": "pexels-27580032-dmitry-ovsyannikov.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/27580032/12174126_1080_1920_50fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/27580032/12174126_1080_1920_50fps.mp4",
+   "sha256": "9b719d11058ab6a28c5cc7f15eceef9684c57845c18f0711008a051051d85e50"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72487,7 +72505,8 @@
    "filename": "pexels-27844618-nam-phong-b-i.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/27844618/12240587_1440_2560_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/27844618/12240587_1440_2560_30fps.mp4",
+   "sha256": "a65169d90e6f80bfa9df0aee856acc10a8a5530adae6da47d12b82e313d962c1"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72544,7 +72563,8 @@
    "filename": "pexels-27980029-nicola-narracci.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/27980029/12280042_1280_720_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/27980029/12280042_1280_720_30fps.mp4",
+   "sha256": "e26440101f203c3d34cad143935f1a59a4d2f8122277446bab71907398e4983c"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72601,7 +72621,8 @@
    "filename": "pexels-28570000-hakan-kayahan.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/28570000/12422735_1280_720_60fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/28570000/12422735_1280_720_60fps.mp4",
+   "sha256": "8f9da4c520601e1bfce04f79857e1500afcae417b8666fb2000207773f631574"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72658,7 +72679,8 @@
    "filename": "pexels-3116760-atakan-ozkan.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/3116760/3116760-hd_1280_720_25fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/3116760/3116760-hd_1280_720_25fps.mp4",
+   "sha256": "79a014c6018af82bca1d5b3cd1fd874ee5552a698436b74eea7c9994d9e337f1"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72715,7 +72737,8 @@
    "filename": "pexels-31590904-altaf-shah.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/31590904/13462038_1280_720_60fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/31590904/13462038_1280_720_60fps.mp4",
+   "sha256": "a9b1aea881aa02d3fe35269a896d55ca8a6cf373439d455ce4786c0f5795b1cb"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72772,7 +72795,8 @@
    "filename": "pexels-32093955-gera-cejas.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/32093955/13682021_1080_1920_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/32093955/13682021_1080_1920_30fps.mp4",
+   "sha256": "80db5a3cd549ea556b70657742685ab098fca3d851eaf307f1fd808f7485800f"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72829,7 +72853,8 @@
    "filename": "pexels-33704412-larkkid-dung.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/33704412/14315443_1280_720_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/33704412/14315443_1280_720_30fps.mp4",
+   "sha256": "b89cad07fd2aae735dc1bf1a29d5ad7bd339e67c30e52c512a66668d7c7f328f"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72886,7 +72911,8 @@
    "filename": "pexels-36774101-nicola-narracci.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/36774101/15583812_1280_720_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/36774101/15583812_1280_720_30fps.mp4",
+   "sha256": "ed3d3f510617991c1a4316918be0e2a4241aad6a242564e8f69a7baf1e95fcd4"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -72943,7 +72969,8 @@
    "filename": "pexels-38173106-dongsoo-yu.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/38173106/16206208_1280_720_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/38173106/16206208_1280_720_30fps.mp4",
+   "sha256": "c9468ceffcfa83d100f3137d574f0b6453442ea3f372de40f7d0d2cf137d2f90"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73000,7 +73027,8 @@
    "filename": "pexels-38500911-mytho-digital.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/38500911/16351085_1280_720_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/38500911/16351085_1280_720_30fps.mp4",
+   "sha256": "af60a7dbc34fd7dddd58c73efd8ac7a98c4e1ea0ac466ccc47b1739524be949a"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73057,7 +73085,8 @@
    "filename": "pexels-38572488-bibek-bohara.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/38572488/16383195_1280_720_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/38572488/16383195_1280_720_30fps.mp4",
+   "sha256": "27b8246f6849581a5c7fb90034981b4f202df3a467c1f23e3b2445c42e5b4a02"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73114,7 +73143,8 @@
    "filename": "pexels-3866849-steve-b.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/3866849/3866849-hd_1280_720_50fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/3866849/3866849-hd_1280_720_50fps.mp4",
+   "sha256": "9d9c92f4a30e563cf3f0d6a0b0a887310c73d104ffb201a666d9b7cebb7b8b0f"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73171,7 +73201,8 @@
    "filename": "pexels-5094475-cherisha-norman.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/5094475/5094475-hd_1280_720_24fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/5094475/5094475-hd_1280_720_24fps.mp4",
+   "sha256": "cefeb83ab79fcaf978cb4d82fe1310e289461257ff0abcc35d40c1b4e7122db4"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73228,7 +73259,8 @@
    "filename": "pexels-5386815-katrin-bolovtsova.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/5386815/5386815-hd_1366_720_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/5386815/5386815-hd_1366_720_30fps.mp4",
+   "sha256": "22eb1cd62ddaf2bce2e9a0a5b539067171a2b970777043ea48e1ef4516bf0f19"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73285,7 +73317,8 @@
    "filename": "pexels-6396111-pavel-danilyuk.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/6396111/6396111-hd_1080_1920_25fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/6396111/6396111-hd_1080_1920_25fps.mp4",
+   "sha256": "d620b63ad80f34d048fde99e9a97010509f1f1761606a9425dab5eaea0b856d1"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73342,7 +73375,8 @@
    "filename": "pexels-6754820-tima-miroshnichenko.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/6754820/6754820-hd_1280_720_25fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/6754820/6754820-hd_1280_720_25fps.mp4",
+   "sha256": "cfc0c526337974ec1f0cc18ad6acc3aef06b1f1cfb1a86bf4d75ed96e8573b27"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73399,7 +73433,8 @@
    "filename": "pexels-6755158-tima-miroshnichenko.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/6755158/6755158-hd_1280_720_25fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/6755158/6755158-hd_1280_720_25fps.mp4",
+   "sha256": "1eec619bc171d1fe48a18b47237dec3e5d9b1821d601bbaa182c40a98ae0907c"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73456,7 +73491,8 @@
    "filename": "pexels-7271824-mart-production.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/7271824/7271824-uhd_1440_2560_25fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/7271824/7271824-uhd_1440_2560_25fps.mp4",
+   "sha256": "4eb81604617bb0c19de26f5bf9b264cfbe6bf735211d351a35178c0a5a376866"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73513,7 +73549,8 @@
    "filename": "pexels-7480487-mart-production.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/7480487/7480487-uhd_1440_2560_25fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/7480487/7480487-uhd_1440_2560_25fps.mp4",
+   "sha256": "8b91be6b4806c5b779ee58f63847be6db7c661d2d9a2aca6824b76ce543a380e"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73570,7 +73607,8 @@
    "filename": "pexels-8037387-kampus-production.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/8037387/8037387-hd_1280_720_25fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/8037387/8037387-hd_1280_720_25fps.mp4",
+   "sha256": "70960d446160a876dd9ea522f0b0c5a93b5068a9eb0aa90c80ab8f998971f580"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73627,7 +73665,8 @@
    "filename": "pexels-8064422-ai25-studio-studio.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/8064422/8064422-hd_1280_720_30fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/8064422/8064422-hd_1280_720_30fps.mp4",
+   "sha256": "87ef9193b0caed992db386f069085fccea311713fe94584b4bb104254a1eb990"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73684,7 +73723,8 @@
    "filename": "pexels-8538614-ron-lach.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/8538614/8538614-hd_1366_720_25fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/8538614/8538614-hd_1366_720_25fps.mp4",
+   "sha256": "b3769d9107d890f6a7b175fe8d3fe4190b26ac0d96cfc613efe4386c8219c023"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73741,7 +73781,8 @@
    "filename": "pexels-853996-coverr.mp4",
    "kind": "video",
    "license": "Pexels License",
-   "media_url": "https://videos.pexels.com/video-files/853996/853996-hd_1280_720_24fps.mp4"
+   "media_url": "https://videos.pexels.com/video-files/853996/853996-hd_1280_720_24fps.mp4",
+   "sha256": "46449d274f617f96b5b9481139e5fe8d62b8d27ad147cb3ad1ece0c6f8e0a3a3"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73786,7 +73827,7 @@
   },
   "file_extension": "webm",
   "file_path": "videos/internet/red-eclipse-gameplay.webm",
-  "file_size_bytes": 156155138,
+  "file_size_bytes": 142444948,
   "id": "a2db3496-ce77-936b-2b0e-47df0daa9c3c",
   "last_reviewed_at": null,
   "layer": "B",
@@ -73798,7 +73839,9 @@
    "filename": "red-eclipse-gameplay.webm",
    "kind": "video",
    "license": "CC-BY-SA 4.0",
-   "media_url": "https://upload.wikimedia.org/wikipedia/commons/3/34/Red_Eclipse_1%2C5_Gameplay_1.webm"
+   "media_url": "https://upload.wikimedia.org/wikipedia/commons/3/34/Red_Eclipse_1%2C5_Gameplay_1.webm",
+   "origin_bytes": 156155138,
+   "sha256": "6fa775460e130093a30df84123a84172b24bb4622b58e0d671cc6ff697af9635"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73843,7 +73886,7 @@
   },
   "file_extension": "mkv",
   "file_path": "videos/internet/sintel-2010-1080p.mkv",
-  "file_size_bytes": 1172428172,
+  "file_size_bytes": 179941478,
   "id": "53d2f48e-6c0c-82c4-eaa9-d251a410a889",
   "last_reviewed_at": null,
   "layer": "B",
@@ -73855,7 +73898,9 @@
    "filename": "sintel-2010-1080p.mkv",
    "kind": "video",
    "license": "CC-BY 3.0",
-   "media_url": "https://download.blender.org/demo/movies/Sintel.2010.1080p.mkv"
+   "media_url": "https://download.blender.org/demo/movies/Sintel.2010.1080p.mkv",
+   "origin_bytes": 1172428172,
+   "sha256": "63039e25cf9474305b3782fbd03a15440457d7ac6739d3613644b6c634398aa1"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73912,7 +73957,8 @@
    "filename": "snake-game.webm",
    "kind": "video",
    "license": "CC-BY-SA 4.0",
-   "media_url": "https://upload.wikimedia.org/wikipedia/commons/f/f8/Snake.webm"
+   "media_url": "https://upload.wikimedia.org/wikipedia/commons/f/f8/Snake.webm",
+   "sha256": "5cf731ef6cdc0bd101a831074da7b7154d45647084fc7e83d3b9a815dd6ca5a8"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -73957,7 +74003,7 @@
   },
   "file_extension": "mov",
   "file_path": "videos/internet/tears-of-steel-720p.mov",
-  "file_size_bytes": 372178639,
+  "file_size_bytes": 56112210,
   "id": "0e52f2ae-c5d1-d89d-b366-985ad669ebbc",
   "last_reviewed_at": null,
   "layer": "B",
@@ -73969,7 +74015,9 @@
    "filename": "tears-of-steel-720p.mov",
    "kind": "video",
    "license": "CC-BY 3.0",
-   "media_url": "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov"
+   "media_url": "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov",
+   "origin_bytes": 372178639,
+   "sha256": "52ace8bb51e0e5c4e7198d87560f7861b535ad45f5abba5726010c2496589fc7"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,
@@ -74014,7 +74062,7 @@
   },
   "file_extension": "webm",
   "file_path": "videos/internet/xonotic-gameplay.webm",
-  "file_size_bytes": 48552136,
+  "file_size_bytes": 31901835,
   "id": "e4b6069b-f10b-0ff1-2ad2-e2f97ead542e",
   "last_reviewed_at": null,
   "layer": "B",
@@ -74026,7 +74074,9 @@
    "filename": "xonotic-gameplay.webm",
    "kind": "video",
    "license": "CC-BY-SA 4.0",
-   "media_url": "https://upload.wikimedia.org/wikipedia/commons/b/b9/Xonotic_0-8-2_gameplay.webm"
+   "media_url": "https://upload.wikimedia.org/wikipedia/commons/b/b9/Xonotic_0-8-2_gameplay.webm",
+   "origin_bytes": 48552136,
+   "sha256": "7ccd5a63c1d220acd9bb1f8130bda4169f6dbc61cc711c75a9551ef01cae557e"
   },
   "owner_username": "anya.volkov",
   "review_notes": null,

@@ -50,11 +50,22 @@ RULE 3 — WEIGHT THE SAMPLE, EXPLICITLY.
 
 Determinism
 -----------
-Same pack + same weights + same --limit produces the same pool, byte for
-byte. The walk is sorted, the sampler is seeded off the asset path (not
-a global RNG), and output names are pure functions of the source path.
-That is what lets re-assembly reproduce the upgraded dataset instead of
-regenerating the tiny originals.
+Same pack + same weights + same --limit produces the same pool. The walk
+is sorted, the sampler is seeded off the asset path (not a global RNG),
+and output names are pure functions of the source path. That is what
+lets re-assembly reproduce the upgraded dataset instead of regenerating
+the tiny originals.
+
+⚠️ SIZE reproducible; BYTE reproducible only for one `sharp` (#1304).
+On a fixed version it really is byte for byte — a rebuild against a pool
+built the day before came back identical on all 1,031 files. Across
+versions it is not, and the difference is metadata rather than art:
+measured 2026-08-27, 24 site_a files match on size and differ in exactly
+8 bytes, all inside the `pHYs` density chunk and its CRC (23622 ppu on
+the staged pool, 15118 on a `sharp` 0.35.3 rebuild) with `IHDR` and
+`IDAT` byte-identical. So `sizes` compares SIZES, and anything that ever
+wants to compare content should compare `IDAT` — never whole files,
+which would go red on the next libvips bump while the pool is perfect.
 
 Rasterisation
 -------------
@@ -527,7 +538,97 @@ def verify_pool(pool_dir: Path, expected_names: set[str] | None = None) -> int:
     return 0
 
 
-def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool) -> int:
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def rows_needing_a_hash(profiles: list[Path]) -> set[str]:
+    """Record ids that carry a `metadata.sha256` (#1302).
+
+    A replacement repoints a record at a pool file but used to leave
+    `metadata.sha256` describing the file it USED to be — so two records
+    per site published the hash of a screenshot they no longer contain.
+    The fix is not to give all 916 replacement rows a hash to serve two
+    of them, and it is not to drop the key either: the published
+    manifest HAS it, so dropping it reads as MISSING_KEY and refuses the
+    next publish (`manifest_guard.py:34-43`).
+
+    So the doc carries `newSha256` exactly where the record it repoints
+    already carries a hash — two rows per site today, and automatically
+    the right rows if a record ever gains or loses one.
+    """
+    ids = set()
+    for p in profiles:
+        for rec in json.loads(p.read_text(encoding="utf-8")):
+            if (rec.get("metadata") or {}).get("sha256"):
+                ids.add(rec["id"])
+    return ids
+
+
+def _measure_balance(pool_dir: Path, doc: Path, write: bool) -> int:
+    """Re-measure a balance document's hq byte counts against the pool.
+
+    ⛔ WHY THESE NEED THEIR OWN GATE (#1303). `balance-assets.site_a.json`
+    carries 517 hq records with a `file_size_bytes` each, and NO PASS CAN
+    REACH THEM. `apply_upgrade.merge_added` appends only records ABSENT
+    from the profile, and all 517 ids are already in it — the pass
+    touches an existing record solely to add `metadata.media_url`. So the
+    numbers sat outside every gate: `kenney_hq.py sizes` covered only the
+    replacements documents, and nothing covered these.
+
+    They agree with the pool today, which is an accident of when they
+    were emitted (after the rasteriser fixes) rather than anything
+    keeping them there. A rasteriser change is exactly what invalidated
+    150 of site_a's 260 `newSize` values in #1294, and it would have
+    invalidated these in the same stroke with nothing to say so.
+    """
+    rows = json.loads(doc.read_text(encoding="utf-8"))
+    drifted, absent = [], []
+    for r in rows:
+        if r.get("source_root") != HQ_SOURCE_ROOT_NAME:
+            continue
+        name = str(r.get("file_path", "")).rsplit("/", 1)[-1]
+        f = pool_dir / name
+        if not f.is_file():
+            absent.append(name)
+            continue
+        size = f.stat().st_size
+        if size != r.get("file_size_bytes"):
+            drifted.append((name, r.get("file_size_bytes"), size))
+            if write:
+                r["file_size_bytes"] = size
+    n_hq = sum(1 for r in rows if r.get("source_root") == HQ_SOURCE_ROOT_NAME)
+    print(f"\n{doc.name}", file=sys.stderr)
+    print(f"  hq rows  : {n_hq:,} of {len(rows):,}", file=sys.stderr)
+    print(f"  drifted  : {len(drifted):,}", file=sys.stderr)
+    print(f"  absent   : {len(absent):,} row(s) name a file the pool does "
+          "not hold", file=sys.stderr)
+    for name, was, now in drifted[:5]:
+        print(f"     {was!s:>9} -> {now:<9} {name}", file=sys.stderr)
+    if absent:
+        print("  FAIL     : a row naming a file the pool cannot produce "
+              "cannot be re-measured.", file=sys.stderr)
+        return -1
+    if write and drifted:
+        doc.write_text(
+            json.dumps(rows, indent=1, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        print(f"  wrote {doc}", file=sys.stderr)
+    return len(drifted)
+
+
+# The balance documents spell the root out as a plain string; keep the
+# name in one place so a rename cannot silently empty this gate.
+HQ_SOURCE_ROOT_NAME = "hq"
+
+
+def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool,
+              profiles: list[Path] | None = None,
+              balance: list[Path] | None = None) -> int:
     """Re-measure `newSize` in a replacements document against a built pool.
 
     ⛔ WHY THIS IS A COMMAND AND NOT A ONE-OFF SCRIPT (#1294).
@@ -558,9 +659,10 @@ def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool) -> int:
     can stand as a gate. `--write` re-measures in place.
     """
     total_drift = 0
+    hashed_ids = rows_needing_a_hash(profiles or [])
     for doc in docs:
         rows = json.loads(doc.read_text(encoding="utf-8"))
-        drifted, absent = [], []
+        drifted, absent, hash_drift = [], [], []
         for r in rows:
             name = r["new"].rsplit("/", 1)[-1]
             f = pool_dir / name
@@ -575,6 +677,22 @@ def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool) -> int:
                 drifted.append((r["id"], name, r.get("newSize"), size))
                 if write:
                     r["newSize"] = size
+            # The hash follows the same rule as the size and for the same
+            # reason: it is a MEASUREMENT of a file the pipeline produces,
+            # so the pool is the only thing entitled to state it.
+            wants_hash = r["id"] in hashed_ids or "newSha256" in r
+            if wants_hash:
+                digest = sha256_of(f)
+                if digest != r.get("newSha256"):
+                    hash_drift.append((name, r.get("newSha256"), digest))
+                    if write:
+                        r["newSha256"] = digest
+            elif profiles and "newSha256" in r:
+                # The record stopped carrying a hash, so the row's is
+                # now describing nothing.
+                hash_drift.append((name, r["newSha256"], None))
+                if write:
+                    del r["newSha256"]
         print(f"\n{doc.name}", file=sys.stderr)
         print(f"  rows     : {len(rows):,}", file=sys.stderr)
         print(f"  drifted  : {len(drifted):,}", file=sys.stderr)
@@ -586,26 +704,39 @@ def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool) -> int:
             print(f"     {was!s:>9} -> {now:<9} {name}", file=sys.stderr)
         if len(drifted) > 5:
             print(f"     … and {len(drifted) - 5:,} more", file=sys.stderr)
+        if profiles is not None:
+            print(f"  hashes   : {len(hash_drift):,} drifted of "
+                  f"{sum(1 for r in rows if r['id'] in hashed_ids):,} row(s) whose "
+                  "record carries one (#1302)", file=sys.stderr)
+            for name, was, now in hash_drift[:5]:
+                print(f"     {str(was)[:12]:>12} -> {str(now)[:12]:<12} {name}",
+                      file=sys.stderr)
         if absent:
             print("  FAIL     : a row naming a file the pool cannot produce "
                   "cannot be re-measured. Re-run `build`, or drop the row.",
                   file=sys.stderr)
             return 1
-        if write and drifted:
+        if write and (drifted or hash_drift):
             doc.write_text(
                 json.dumps(rows, indent=1, sort_keys=True, ensure_ascii=False)
                 + "\n", encoding="utf-8")
             print(f"  wrote {doc}", file=sys.stderr)
-        total_drift += len(drifted)
+        total_drift += len(drifted) + len(hash_drift)
+
+    for doc in (balance or []):
+        n = _measure_balance(pool_dir, doc, write)
+        if n < 0:
+            return 1
+        total_drift += n
 
     if total_drift and not write:
-        print(f"\nFAIL: {total_drift:,} newSize value(s) disagree with the "
+        print(f"\nFAIL: {total_drift:,} measurement(s) disagree with the "
               "pool. Re-run with --write, then apply_upgrade.py to carry "
               "them into the profiles.", file=sys.stderr)
         return 1
-    print(f"\nOK: every newSize matches the pool ({total_drift:,} rewritten)."
-          if write else "\nOK: every newSize matches the pool.",
-          file=sys.stderr)
+    print(f"\nOK: every measurement matches the pool ({total_drift:,} "
+          "rewritten)." if write else
+          "\nOK: every measurement matches the pool.", file=sys.stderr)
     return 0
 
 
@@ -679,6 +810,17 @@ def main() -> int:
     z.add_argument("--write", action="store_true",
                    help="re-measure in place (default: report and exit "
                         "non-zero if anything drifted)")
+    z.add_argument("--balance", type=Path, action="append", default=[],
+                   metavar="DOC", help="balance-assets.<site>.json "
+                                       "(repeatable). Its hq records carry a "
+                                       "file_size_bytes no other pass can "
+                                       "reach (#1303).")
+    z.add_argument("--profile", type=Path, action="append", default=[],
+                   metavar="PROFILE", help="asset profile(s) the documents "
+                                           "repoint (repeatable). Given, the "
+                                           "pool's sha256 is measured for "
+                                           "every row whose record carries "
+                                           "one (#1302).")
 
     args = ap.parse_args()
     if args.cmd in ("build", "select") and not args.pack.is_dir():
@@ -700,7 +842,8 @@ def main() -> int:
                   "archive share. Run `kenney_hq.py build --pack <pack> "
                   "--out <dir>` first.", file=sys.stderr)
             return 2
-        return cmd_sizes(args.pool, args.replacements, args.write)
+        return cmd_sizes(args.pool, args.replacements, args.write,
+                         args.profile, args.balance)
     return cmd_verify(args.pack, args.pool)
 
 

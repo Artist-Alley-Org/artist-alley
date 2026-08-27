@@ -99,24 +99,32 @@ def derived_id(post: dict) -> str:
     than guessing. Both label lists live in `sanitize_and_assemble` and
     are checked against, so a label that stopped existing is caught here
     instead of producing a plausible wrong id.
+
+    ⛔ THE PARSE IS THE FORMATTER'S INVERSE AND LIVES BESIDE IT.
+    `sa.sprint_label_from_title` / `sa.reel_label_from_title` are the
+    exact inverses of `sa.title_project_sprint` / `sa.title_showreel`,
+    so a title change cannot leave the two halves disagreeing quietly.
+    #1306 retired the em dash these used to split on and this function
+    went red the same minute, which is the behaviour worth keeping: the
+    recovered label is an INPUT to the derived id, so a parse that
+    silently half-matched would move ids rather than fail.
     """
     kind = post["post_kind"]
     asset_ids = post["asset_ids"]
 
     if kind == "team_roundup":
-        # title: f"{team_name} sprint roundup — {n} drops"
+        # title: title_team_roundup(team_name)
         return sa.roundup_post_id(post["team_name"], asset_ids)
 
     if kind == "project_sprint":
-        # title: f"{project} {label} — {n} assets across {m} team(s)"
+        # title: title_project_sprint(project, label)
         project = post["collection_name"]
-        head = post["title"].split(" — ", 1)[0]
-        if not project or not head.startswith(f"{project} "):
+        label = sa.sprint_label_from_title(project, post["title"])
+        if label is None:
             raise Unresolvable(
                 f"{post['id']}: title {post['title']!r} does not begin with "
                 f"collection_name {project!r}, so the sprint label cannot be "
                 f"recovered")
-        label = head[len(project) + 1:]
         if label not in sa.SPRINT_LABELS:
             raise Unresolvable(
                 f"{post['id']}: recovered sprint label {label!r} is not one of "
@@ -124,12 +132,11 @@ def derived_id(post: dict) -> str:
         return sa.sprint_post_id(project, label, asset_ids)
 
     if kind == "cinematics_showreel":
-        # title: f"Cinematics {reel_label} — {n} cuts"
-        head = post["title"].split(" — ", 1)[0]
-        if not head.startswith("Cinematics "):
+        # title: title_showreel(reel_label)
+        label = sa.reel_label_from_title(post["title"])
+        if label is None:
             raise Unresolvable(
                 f"{post['id']}: title {post['title']!r} is not a showreel title")
-        label = head[len("Cinematics "):]
         if label not in sa.REEL_LABELS:
             raise Unresolvable(
                 f"{post['id']}: recovered reel label {label!r} is not one of "
