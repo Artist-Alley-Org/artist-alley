@@ -50,11 +50,22 @@ RULE 3 — WEIGHT THE SAMPLE, EXPLICITLY.
 
 Determinism
 -----------
-Same pack + same weights + same --limit produces the same pool, byte for
-byte. The walk is sorted, the sampler is seeded off the asset path (not
-a global RNG), and output names are pure functions of the source path.
-That is what lets re-assembly reproduce the upgraded dataset instead of
-regenerating the tiny originals.
+Same pack + same weights + same --limit produces the same pool. The walk
+is sorted, the sampler is seeded off the asset path (not a global RNG),
+and output names are pure functions of the source path. That is what
+lets re-assembly reproduce the upgraded dataset instead of regenerating
+the tiny originals.
+
+⚠️ SIZE reproducible; BYTE reproducible only for one `sharp` (#1304).
+On a fixed version it really is byte for byte — a rebuild against a pool
+built the day before came back identical on all 1,031 files. Across
+versions it is not, and the difference is metadata rather than art:
+measured 2026-08-27, 24 site_a files match on size and differ in exactly
+8 bytes, all inside the `pHYs` density chunk and its CRC (23622 ppu on
+the staged pool, 15118 on a `sharp` 0.35.3 rebuild) with `IHDR` and
+`IDAT` byte-identical. So `sizes` compares SIZES, and anything that ever
+wants to compare content should compare `IDAT` — never whole files,
+which would go red on the next libvips bump while the pool is perfect.
 
 Rasterisation
 -------------
