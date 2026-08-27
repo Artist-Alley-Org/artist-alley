@@ -18,6 +18,7 @@ need tests rather than comments.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import struct
@@ -40,8 +41,10 @@ import kenney_hq as hq              # noqa: E402
 import kenney_pack_sources as kps   # noqa: E402
 import pexels_gameplay as px        # noqa: E402
 import manifest_guard as mg         # noqa: E402
+import migrate_post_ids as mpi      # noqa: E402
 import populate_archive as pa       # noqa: E402
 import resolve_media_urls as rmu    # noqa: E402
+import sanitize_and_assemble as sa  # noqa: E402
 import studio_balance as sb         # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -2459,6 +2462,335 @@ class TestAuthoredPlatesAreDeterministic(unittest.TestCase):
                           + chunk(b"IEND", b""))
             with self.assertRaises(ValueError):
                 ap.png_read_rgb(p)
+
+
+class TestAssemblyDeterminism(unittest.TestCase):
+    """#1296 — assembly must be a pure function of its inputs.
+
+    ADR 0098: "Re-running assembly over unchanged inputs produces an
+    unchanged profile." No test asserted that, which is why 840 posts
+    reached a published dataset carrying timestamps the profile does not
+    agree with.
+
+    ⛔ Read the four tests as a ladder. The first one passes on the buggy
+    code too: `derive_posts` seeded its RNG, so it always reproduced over
+    a byte-identical pool in a byte-identical ORDER. The bug lived one
+    rung up — the seeded stream made every draw depend on the position of
+    every draw before it, so re-ordering the pool, or changing one asset
+    in it, re-sequenced posts that had nothing to do with the change.
+    `test_input_order_does_not_change_the_output` and
+    `test_a_local_change_stays_local` are the two that fail on `dev`.
+    """
+
+    @staticmethod
+    def _asset(aid, *, team="Characters", project="Aurora",
+               atype="image", created="2025-06-01T00:00:00Z",
+               updated="2025-06-02T00:00:00Z", group=None, studio="a"):
+        return sa.AssetRecord(
+            id=aid, asset_type=atype, title=f"Asset {aid}",
+            description=f"Description for {aid}",
+            file_path=f"{atype}s/{aid}.bin", source_path=f"src/{aid}.bin",
+            source_root="local", file_extension="bin", file_size_bytes=1024,
+            sensitivity_tier="team", archive_state="active",
+            owner_username=f"owner-{team.lower().replace(' ', '-')}",
+            collection_name=project, team_name=team, brand_workspace=None,
+            tags=[atype, team.lower()], workflow_state="approved",
+            metadata=({"group_id": group} if group else {}),
+            field_values={"rating": 3}, external_id=f"ext-{aid}",
+            review_notes=None, reviewer_username=None,
+            created_at=created, updated_at=updated, last_reviewed_at=None,
+            license="CC0 1.0", attribution="synthetic", layer="A",
+            studio=studio,
+        )
+
+    def _pool(self):
+        """Three teams across two projects, big enough for every pass to
+        fire: group sets, loose bundles, solos, roundups and sprints."""
+        pool = []
+        n = 0
+        for team in ("Characters", "Environments", "Tech Art"):
+            for project in ("Aurora", "Borealis"):
+                for i in range(9):
+                    n += 1
+                    pool.append(self._asset(
+                        f"a{n:04d}", team=team, project=project,
+                        atype=("image" if i % 2 else "3d"),
+                        created=f"2025-0{1 + (i % 8)}-1{i % 9}T0{i % 9}:00:00Z",
+                        updated=f"2025-09-1{i % 9}T0{i % 9}:00:00Z",
+                        # Two of every nine are siblings, so pass 1 fires.
+                        group=(f"grp-{team}-{project}" if i < 2 else None),
+                    ))
+        return pool
+
+    @staticmethod
+    def _dump(posts):
+        return json.dumps(posts, sort_keys=True, ensure_ascii=False)
+
+    def test_two_assemblies_of_one_input_are_byte_identical(self):
+        """The rung that already passed. Kept because it is the property
+        being claimed, and because it is what fails first if someone
+        reaches for `datetime.now()` or an unseeded `random`."""
+        pool = self._pool()
+        self.assertEqual(self._dump(sa.derive_posts(pool)),
+                         self._dump(sa.derive_posts(pool)))
+
+    def test_assembly_does_not_mutate_its_input(self):
+        """A pass that sorted the caller's list in place, or edited a
+        record, would make the SECOND run see a different pool — the
+        first run's output would then be unreproducible from the file it
+        came from, which is the shape of a Heisenbug nobody enjoys."""
+        pool = self._pool()
+        before = [dataclasses.asdict(a) for a in pool]
+        sa.derive_posts(pool)
+        self.assertEqual([dataclasses.asdict(a) for a in pool], before)
+
+    def test_input_order_does_not_change_the_output(self):
+        """⛔ THE ONE THAT FAILS ON dev.
+
+        `by_team` / `by_project` are insertion-ordered by the asset list,
+        and the old code fed those orders into `rng.shuffle` and
+        `rng.sample`. So the same assets, listed in a different order,
+        produced different posts — a profile whose content depended on
+        the order rows happened to sit in on disk.
+        """
+        pool = self._pool()
+        reordered = list(reversed(pool))
+        self.assertEqual(self._dump(sa.derive_posts(pool)),
+                         self._dump(sa.derive_posts(reordered)))
+
+    def test_a_local_change_stays_local(self):
+        """⛔ THE OTHER ONE THAT FAILS ON dev, and the real defect.
+
+        Drop one asset from one team. Every post that neither contained
+        it nor belongs to that team must come through untouched — id,
+        membership and timestamp.
+
+        Measured on site_a before the fix, dropping a single audio asset
+        moved 65 post ids of which ONE contained the dropped asset: 26
+        team roundups, 28 project sprints and 4 showreels belonging to
+        other teams and other projects moved because a seeded RNG had
+        re-sequenced.
+        """
+        pool = self._pool()
+        victim = next(a for a in pool if a.team_name == "Tech Art")
+        reduced = [a for a in pool if a.id != victim.id]
+
+        before = {p["id"]: p for p in sa.derive_posts(pool)}
+        after = {p["id"]: p for p in sa.derive_posts(reduced)}
+
+        def untouchable(post):
+            return (victim.id not in post["asset_ids"]
+                    and post["team_name"] != victim.team_name
+                    and post["collection_name"] != victim.collection_name)
+
+        for pid, post in before.items():
+            if not untouchable(post):
+                continue
+            self.assertIn(pid, after,
+                          f"{post['post_kind']} {post['title']!r} vanished, "
+                          f"and it has nothing to do with the dropped asset")
+            self.assertEqual(post, after[pid],
+                             f"{post['post_kind']} {post['title']!r} changed, "
+                             f"and it has nothing to do with the dropped asset")
+
+    def test_a_team_with_fewer_than_five_assets_gets_no_roundup(self):
+        """The empty case. Whatever replaces the sampling must keep
+        refusing to build a roundup out of four assets."""
+        pool = [a for a in self._pool() if a.team_name != "Tech Art"]
+        pool += [self._asset(f"tiny{i}", team="Tiny", project="Aurora")
+                 for i in range(4)]
+        posts = sa.derive_posts(pool)
+        self.assertEqual(
+            [p for p in posts
+             if p["post_kind"] == "team_roundup" and p["team_name"] == "Tiny"],
+            [], "a four-asset team produced a roundup")
+
+    def test_every_post_carries_the_canonical_key_set(self):
+        """`_post`'s docstring claims every post is assembled in one
+        place with exactly these keys. Three passes used to build their
+        dict inline and bypass it, so the claim was only true of the
+        passes that happened to call it."""
+        posts = sa.derive_posts(self._pool())
+        self.assertTrue(posts)
+        expected = set(posts[0])
+        self.assertEqual(len(expected), 18, sorted(expected))
+        for p in posts:
+            self.assertEqual(set(p), expected, p.get("post_kind"))
+
+    def test_member_lists_are_in_a_stable_order(self):
+        """`rng.sample` returned DRAW order. 388 of the 861 posts shared
+        between the repo profile and the published site differ in
+        `asset_ids` while only 5 differ in membership as a set — that gap
+        is pure ordering churn."""
+        for p in sa.derive_posts(self._pool()):
+            if p["post_kind"] in ("team_roundup", "project_sprint",
+                                  "cinematics_showreel"):
+                self.assertEqual(p["asset_ids"], sorted(p["asset_ids"]),
+                                 p["title"])
+
+
+class TestProfileReadBack(unittest.TestCase):
+    """#1296 — the assembler could not read the profiles it writes.
+
+    `--recompose-posts` is the only path that re-derives posts without
+    the 12,871-row source CSV, and it did this on every current profile:
+
+        TypeError: AssetRecord.__init__() got an unexpected keyword
+                   argument 'replaced_source_path'
+
+    because `apply_upgrade` and `studio_balance` annotate the profile
+    after assembly. So post composition could not be regenerated at all,
+    and every repair since had to be made to the DATA by hand.
+    """
+
+    def test_the_committed_profiles_load(self):
+        for name in ("studio-a", "studio-b"):
+            raw = json.loads((PROFILES / f"{name}.assets.json").read_text())
+            records = sa.asset_records_from_profile(raw, f"{name}.assets.json")
+            self.assertEqual(len(records), len(raw), name)
+
+    def test_a_post_assembly_annotation_is_accepted(self):
+        raw = [{**dataclasses.asdict(TestAssemblyDeterminism._asset("a1")),
+                "replaced_source_path": "old/path.png",
+                "ai_provenance": "none",
+                "balance_source": "kenney"}]
+        records = sa.asset_records_from_profile(raw, "synthetic")
+        self.assertEqual(records[0].id, "a1")
+
+    def test_a_key_nobody_declared_is_refused_by_name(self):
+        """Not silently dropped. A filter would swallow a typo — and a
+        genuinely new field — with the same shrug."""
+        raw = [{**dataclasses.asdict(TestAssemblyDeterminism._asset("a1")),
+                "raplaced_source_path": "typo"}]
+        with self.assertRaises(ValueError) as ctx:
+            sa.asset_records_from_profile(raw, "synthetic")
+        self.assertIn("raplaced_source_path", str(ctx.exception))
+
+    def test_the_annotations_named_in_the_allow_list_are_the_ones_on_disk(self):
+        """Guards the guard: if a tool starts writing a fourth
+        annotation, this is where it gets noticed."""
+        known = {f.name for f in dataclasses.fields(sa.AssetRecord)}
+        seen = set()
+        for name in ("studio-a", "studio-b"):
+            for entry in json.loads((PROFILES / f"{name}.assets.json").read_text()):
+                seen |= set(entry) - known
+        self.assertEqual(seen, set(sa.POST_ASSEMBLY_KEYS) & seen)
+        self.assertTrue(seen, "the profiles carry no annotations at all")
+
+
+class TestPostIdentity(unittest.TestCase):
+    """#1293 — a derived id is a function of what identifies the post.
+
+    team_roundup, project_sprint and cinematics_showreel keyed their id
+    on the sample's ANCHOR: the most-recent member. An anchor accompanies
+    a post, it does not identify one — a team's genuinely most-recent
+    asset lands in many samples, so several roundups with different
+    membership derived the same id.
+
+    ⛔ And a collision here is a DISAPPEARANCE, not a duplicate. `aa seed`
+    keys on the stable id, so of n colliding rows exactly one is ever
+    seeded: sixteen roundup posts existed in the catalogue and could
+    never reach a database.
+    """
+
+    def test_two_member_sets_sharing_an_anchor_get_different_ids(self):
+        """The exact case that collided. Two roundups for one team,
+        overlapping membership, the same most-recent asset in both."""
+        anchor = "a-newest"
+        first = [anchor, "a-002", "a-003", "a-004", "a-005"]
+        second = [anchor, "a-002", "a-003", "a-004", "a-005", "a-006"]
+        self.assertNotEqual(sa.roundup_post_id("Tech Art", first),
+                            sa.roundup_post_id("Tech Art", second),
+                            "two roundups with different membership share an id")
+
+    def test_the_same_membership_gives_the_same_id(self):
+        """The other half of identity: order must not matter, because
+        the same post read back from disk is the same post."""
+        members = ["a-003", "a-001", "a-002"]
+        self.assertEqual(sa.roundup_post_id("Tech Art", members),
+                         sa.roundup_post_id("Tech Art", reversed(members)))
+
+    def test_two_teams_with_one_membership_get_different_ids(self):
+        members = ["a-001", "a-002"]
+        self.assertNotEqual(sa.roundup_post_id("Tech Art", members),
+                            sa.roundup_post_id("VFX", members))
+
+    def test_the_sprint_label_still_separates_identical_samples(self):
+        """A project holding exactly five assets yields the same sample
+        on every sweep, so the label is the only thing left telling
+        those posts apart. Dropping it from the key would reintroduce
+        the collision in the one case it is guaranteed to happen."""
+        members = ["a-001", "a-002", "a-003", "a-004", "a-005"]
+        self.assertNotEqual(sa.sprint_post_id("Aurora", "sprint 12", members),
+                            sa.sprint_post_id("Aurora", "ship gate", members))
+
+    def test_a_real_assembly_emits_no_colliding_ids(self):
+        """End to end, on a pool big enough for several roundups per
+        team. Before the fix this assembly collides."""
+        pool = TestAssemblyDeterminism()._pool()
+        ids = [p["id"] for p in sa.derive_posts(pool)]
+        dupes = sorted({i for i in ids if ids.count(i) > 1})
+        self.assertEqual(dupes, [], f"{len(dupes)} colliding id(s)")
+
+    def test_the_committed_profiles_hold_only_derived_ids(self):
+        """⭐ The permanent invariant, on the real data. `plan()` returns
+        every row whose id does not equal the id its own content derives;
+        after the migration that list is empty, and it stays empty unless
+        someone edits a post's membership without re-deriving its id."""
+        for name in ("studio-a", "studio-b", "dataset"):
+            posts = json.loads((PROFILES / f"{name}.posts.json").read_text())
+            moves = mpi.plan(posts)
+            self.assertEqual(
+                [(m["post_kind"], m["title"]) for m in moves], [],
+                f"{name}.posts.json holds {len(moves)} id(s) that do not "
+                f"derive from the post they name — run "
+                f"seed/scripts/migrate_post_ids.py")
+
+    def test_the_migration_documents_match_the_profiles(self):
+        """The reconcile artifact. Every new id it names is in the
+        profile and every old id is gone, so a publish that finds the
+        destination holding ids the source no longer has can tell a
+        migration from a loss (ADR 0097)."""
+        for name in ("studio-a", "studio-b", "dataset"):
+            doc = json.loads((UPGRADES / f"post-id-migration.{name}.json").read_text())
+            self.assertTrue(doc.get("_why"), f"{name}: the document must say why")
+            self.assertEqual(doc["profile"], f"{name}.posts.json")
+            posts = json.loads((PROFILES / f"{name}.posts.json").read_text())
+            live = {p["id"] for p in posts}
+            moves = doc["moves"]
+            self.assertTrue(moves, f"{name}: an empty mapping documents nothing")
+            self.assertEqual(len({m["old_id"] for m in moves}), len(moves),
+                             f"{name}: an old id is listed twice")
+            self.assertEqual([m for m in moves if m["new_id"] not in live], [],
+                             f"{name}: the document names a new id the profile "
+                             f"does not hold")
+            self.assertEqual([m for m in moves if m["old_id"] in live], [],
+                             f"{name}: the document names an old id that is "
+                             f"still in the profile")
+
+    def test_an_unrecoverable_label_is_refused_rather_than_guessed(self):
+        """A row whose key cannot be recovered stops the migration. A
+        tool that skipped what it did not understand would leave the
+        profile in two id schemes at once."""
+        post = {"id": "x", "post_kind": "project_sprint", "asset_ids": ["a1"],
+                "collection_name": "Aurora",
+                "title": "Aurora quarterly wash-up — 1 assets across 1 team(s)"}
+        with self.assertRaises(mpi.Unresolvable):
+            mpi.derived_id(post)
+
+    def test_a_migration_that_would_still_collide_is_refused(self):
+        """`check_safe` is what stands between a migration and swapping
+        one collision for another."""
+        posts = [
+            {"id": "old-1", "post_kind": "team_roundup", "team_name": "T",
+             "asset_ids": ["a", "b"], "title": "T sprint roundup — 2 drops"},
+            {"id": "old-2", "post_kind": "team_roundup", "team_name": "T",
+             "asset_ids": ["b", "a"], "title": "T sprint roundup — 2 drops"},
+        ]
+        moves = mpi.plan(posts)
+        self.assertEqual(len(moves), 2)
+        self.assertTrue(mpi.check_safe(posts, moves),
+                        "two rows deriving one id must be refused")
 
 
 if __name__ == "__main__":

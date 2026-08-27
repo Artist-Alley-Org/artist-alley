@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import hashlib
 import json
 import os
@@ -85,7 +86,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 # -----------------------------------------------------------------------------
 # Studio split — by project
@@ -358,6 +359,60 @@ def stable_uuid(*parts: str) -> str:
     return f"{d[0:8]}-{d[8:12]}-{d[12:16]}-{d[16:20]}-{d[20:32]}"
 
 
+# -----------------------------------------------------------------------------
+# Post identity (#1293)
+# -----------------------------------------------------------------------------
+#
+# ADR 0098: "A derived id must be a function of what distinguishes the
+# thing it names. An input that merely ACCOMPANIES the thing — an anchor,
+# a sample's extremum, a dominant value — does not identify it and must
+# not be the whole key."
+#
+# The three narrative passes built their id from the sample's ANCHOR: the
+# most-recent member. A team's genuinely most-recent asset lands in many
+# samples, so several roundups — different membership, different titles —
+# derived the same id:
+#
+#     studio-a.posts.json   873 rows under 861 ids
+#     studio-b.posts.json   771 rows under 767 ids
+#
+# and every colliding pair disagreed: "— 7 drops" beside "— 5 drops"
+# beside "— 8 drops" under one id.
+#
+# ⛔ The consequence is a DISAPPEARANCE, not a duplicate. `aa seed` keys
+# on the stable id, so of n colliding rows exactly one survives and the
+# rest can never be seeded.
+#
+# What distinguishes one roundup from another is its MEMBERSHIP, so
+# membership is the key. `label` and `reel_label` stay in front of it
+# because they are not redundant: a project holding exactly five assets
+# yields the same five-member sample on every sweep, and only the label
+# tells those posts apart.
+#
+# ⭐ These live at module level so `migrate_post_ids.py` calls the SAME
+# function the assembler does. A migration that reimplements the key is a
+# second definition of identity, and the two drift.
+
+def roundup_post_id(team_name: str, asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "roundup", team_name, *sorted(asset_ids))
+
+
+def sprint_post_id(project_name: str, label: str, asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "sprint", project_name, label, *sorted(asset_ids))
+
+
+def showreel_post_id(studio_key: str, reel_label: str,
+                     asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "showreel", studio_key, reel_label,
+                       *sorted(asset_ids))
+
+
+SPRINT_LABELS = ("sprint 12", "sprint 13", "sprint 14", "milestone alpha",
+                 "milestone beta", "review session", "lock-in pass",
+                 "polish week", "final review", "ship gate")
+REEL_LABELS = ("Q3 reel", "Q4 reel")
+
+
 def stable_int(n: int, *parts: str) -> int:
     """Deterministic int in [0, n) from the same namespace as stable_uuid.
     Used for per-item flavour picks so composition never depends on RNG
@@ -426,6 +481,64 @@ class AssetRecord:
     # special", when the truth is that every asset carries a label and
     # almost all of them are false.
     mature: bool = False
+
+
+# Keys that downstream tooling ANNOTATES onto an already-assembled
+# profile. They are not part of the assembly schema — nothing in
+# `derive_posts` reads them — but they are part of the file on disk, so
+# reading a profile back has to know they are legitimate:
+#
+#   replaced_source_path  apply_upgrade.py, on every HQ replacement
+#   ai_provenance         apply_upgrade.py, on the twelve declared rows
+#   balance_source        studio_balance.py, on every rebalanced record
+#
+# Before this list existed, `AssetRecord(**entry)` raised
+#
+#     TypeError: AssetRecord.__init__() got an unexpected keyword
+#                argument 'replaced_source_path'
+#
+# on the FIRST record carrying one, which meant `--recompose-posts`
+# could not read the very profiles this script writes. The assembler had
+# been unable to re-derive posts from its own output for as long as the
+# annotations have existed.
+#
+# ⛔ The fix is a named allow-list, not `{k: v for k, v in entry.items()
+# if k in FIELDS}`. Silently dropping unknown keys would swallow a typo
+# and a genuinely new field alike; naming them means the next tool that
+# adds one gets told to come here and say so.
+POST_ASSEMBLY_KEYS = frozenset({
+    "replaced_source_path",
+    "ai_provenance",
+    "balance_source",
+})
+
+
+def asset_records_from_profile(raw: list[dict[str, Any]],
+                               source: Path | str) -> list[AssetRecord]:
+    """Rebuild AssetRecords from a serialised profile.
+
+    Raises ValueError naming the offending key if the profile carries a
+    field that is neither part of AssetRecord nor a known post-assembly
+    annotation — a profile shape nothing understands is a bug to report,
+    not a record to guess at.
+    """
+    known = {f.name for f in dataclasses.fields(AssetRecord)}
+    unknown: dict[str, int] = defaultdict(int)
+    records: list[AssetRecord] = []
+    for entry in raw:
+        for key in entry:
+            if key not in known and key not in POST_ASSEMBLY_KEYS:
+                unknown[key] += 1
+        records.append(AssetRecord(**{k: v for k, v in entry.items() if k in known}))
+    if unknown:
+        listed = ", ".join(f"{k} ({n} record(s))" for k, n in sorted(unknown.items()))
+        raise ValueError(
+            f"{source}: profile carries key(s) the assembler does not know: "
+            f"{listed}. Add the field to AssetRecord if assembly should read "
+            f"it, or to POST_ASSEMBLY_KEYS if it is an annotation applied "
+            f"after assembly."
+        )
+    return records
 
 
 def parse_int(s: str) -> int | None:
@@ -758,13 +871,37 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     into single-asset posts — 73% of site_a's feed. There is no
     post-count target any more: the shape follows the data.
 
-    Deterministic: passes 1-3 derive every choice from stable_uuid /
-    stable_int over asset ids, so composition does not depend on
-    iteration or RNG call order.
-    """
-    import random
-    rng = random.Random("artist-alley.posts.v2")
+    ⭐ Deterministic, and LOCALLY so (#1296). Every choice is derived
+    from stable_uuid / stable_int over asset ids, so composition depends
+    on neither iteration order nor RNG call order.
 
+    Passes 3-5 used to draw from a shared `random.Random("artist-alley.
+    posts.v2")`. Seeding it made the function reproducible over an
+    IDENTICAL pool, which is what a naive determinism test would check
+    and pass. It did not make it stable under a local edit, because a
+    seeded stream is a SEQUENCE: change how many draws an earlier
+    iteration takes — by adding one asset to one team — and every draw
+    after it re-sequences. Measured on site_a before this change,
+    dropping a single audio asset:
+
+        65 post ids disappeared and 67 appeared.
+        ONE of the 65 actually contained the dropped asset.
+        The other 64 were collateral: unrelated teams, unrelated
+        projects, plus 38 surviving posts whose membership changed and
+        19 whose titles changed.
+
+    `stable_int`'s own docstring had already named this ("a seeded
+    Random() re-sequences every downstream draw when an earlier pass
+    changes, which silently rewrites unrelated posts") and passes 1-2
+    were converted for exactly that reason; passes 3-5 were not. They
+    are now, so a change confined to one team moves that team's posts
+    and nothing else.
+
+    ⛔ Do not reintroduce a shared RNG here. If a pass needs a pick,
+    derive it with `stable_int` from the identity of what is being
+    picked FOR — team name, project name, sweep index — never from a
+    stream whose position depends on everything that ran before it.
+    """
     # Group assets by (team, project) for related-asset lookup
     by_team_project: dict[tuple[str, str], list[AssetRecord]] = defaultdict(list)
     by_team: dict[str, list[AssetRecord]] = defaultdict(list)
@@ -833,6 +970,40 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
             return next(iter(studios))
         return "shared"
 
+    def _pick(pool: list[AssetRecord], lo: int, hi: int,
+              *key: str) -> list[AssetRecord]:
+        """A subset of `pool` of size in [lo, hi], chosen without an RNG.
+
+        Replaces `rng.sample(pool, rng.randint(lo, hi))`. Both the size
+        and the membership come from `stable_int` over `key` plus each
+        candidate's own id, so the result is a pure function of (this
+        pool, this key) — nothing about what else the caller assembled
+        before or after can move it.
+
+        Returned in id order, so `asset_ids` is stable too: the old
+        `rng.sample` returned draw order, which is why 388 posts in the
+        published dataset differ from the profile in `asset_ids` while
+        only 5 differ in membership as a SET.
+        """
+        hi = min(hi, len(pool))
+        lo = min(lo, hi)
+        size = lo + stable_int(hi - lo + 1, "pick-size", *key)
+        ranked = sorted(pool, key=lambda a: (stable_int(1 << 32, "pick", *key, a.id), a.id))
+        return sorted(ranked[:size], key=lambda a: a.id)
+
+    def _anchor(members: list[AssetRecord]) -> AssetRecord:
+        """The member a post is dated and attributed by: the most recent,
+        ties broken by id.
+
+        The `, x.id` is not decoration. `max(members, key=updated_at)`
+        alone resolves a tie by position in the list, so two members
+        sharing a timestamp made the post's `created_at`, author and
+        workflow state depend on member ORDER — and `created_at` sets
+        `posted_at` and is read by the fixture sweep's deletion
+        predicate (ADR 0098).
+        """
+        return max(members, key=lambda x: (x.updated_at, x.id))
+
     # ---------------------------------------------------------------------
     # Pass 1: group_id sibling sets — the authoritative composition (#565)
     # ---------------------------------------------------------------------
@@ -865,7 +1036,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         if len(members) < 2:
             loose.extend(members)
             continue
-        anchor = max(members, key=lambda x: (x.updated_at, x.id))
+        anchor = _anchor(members)
         types_in_post = sorted({a.asset_type for a in members})
         collection = _dominant(members, "collection_name")
         team = _dominant(members, "team_name")
@@ -918,13 +1089,19 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         loose_clusters[(a.collection_name, a.team_name, a.asset_type)].append(a)
 
     solo_pool: list[AssetRecord] = []
-    size_idx = 0
     for key in sorted(loose_clusters):
         cluster = sorted(loose_clusters[key], key=lambda x: (x.created_at, x.id))
         n_bundle = int(len(cluster) * LOOSE_BUNDLE_SHARE)
         to_bundle, rest = cluster[:n_bundle], cluster[n_bundle:]
         solo_pool.extend(rest)
 
+        # The 3/4/5 size cycle restarts for every cluster. It used to be
+        # a counter shared across ALL clusters, which coupled them: one
+        # asset added to the first cluster shifted its chunk count by
+        # one, and every later cluster then re-chunked at different
+        # boundaries. Per-cluster, a change stays inside the cluster it
+        # was made in (#1296).
+        size_idx = 0
         i = 0
         while i < len(to_bundle):
             size = BUNDLE_SIZES[size_idx % len(BUNDLE_SIZES)]
@@ -935,7 +1112,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
                 # A trailing single is a solo post, not a "bundle of one".
                 solo_pool.extend(chunk)
                 continue
-            anchor = max(chunk, key=lambda x: (x.updated_at, x.id))
+            anchor = _anchor(chunk)
             collection, team, atype = key
             types_in_post = sorted({a.asset_type for a in chunk})
             theme = theme_by_type.get(atype, atype)
@@ -1046,18 +1223,24 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     # Periodic "this sprint's <team> output" posts. ~3-4 per team per
     # studio. Pulls assets across projects within the team.
     roundup_target = 60
-    teams_pool = list(by_team.keys())
-    rng.shuffle(teams_pool)
-    for team_name in teams_pool * 5:  # multiple sweeps for variety
+    ROUNDUP_SWEEPS = 5
+    # Sorted, not shuffled. The shuffle drew from the shared RNG and its
+    # result depended on `by_team`'s insertion order, which is the order
+    # of the asset list — so the pool order, and with it every roundup,
+    # moved whenever the caller's list did. Sorted team names are a
+    # property of the teams, not of how the assets happened to arrive.
+    teams_pool = sorted(by_team)
+    # Flat sweep order, so the target check below still breaks out of the
+    # whole pass the way it did when the pool was `teams_pool * 5`.
+    for sweep, team_name in ((s, t) for s in range(ROUNDUP_SWEEPS) for t in teams_pool):
         if len([p for p in posts if p.get("post_kind") == "team_roundup"]) >= roundup_target:
             break
-        team_assets = [a for a in by_team[team_name] if a.id]
+        team_assets = sorted((a for a in by_team[team_name] if a.id),
+                             key=lambda x: x.id)
         if len(team_assets) < 5:
             continue
-        sample_size = rng.randint(5, min(10, len(team_assets)))
-        sample = rng.sample(team_assets, sample_size)
-        # Anchor = the most-recent asset for the team
-        anchor = max(sample, key=lambda x: x.updated_at)
+        sample = _pick(team_assets, 5, 10, "roundup", team_name, str(sweep))
+        anchor = _anchor(sample)
         types_in_post = sorted({a.asset_type for a in sample})
         projects_in_post = sorted({a.collection_name for a in sample})
 
@@ -1067,85 +1250,82 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
                 f"{'...' if len(projects_in_post) > 3 else ''}. "
                 f"Mix of {', '.join(types_in_post)}.")
 
-        posts.append({
-            "id": stable_uuid("post", "roundup", team_name, anchor.id),
-            "title": title,
-            "description": desc,
-            "author_username": anchor.owner_username,
+        posts.append(_post(
+            members=sample,
+            id=roundup_post_id(team_name, (a.id for a in sample)),
+            title=title,
+            description=desc,
+            author_username=anchor.owner_username,
             # A roundup spans projects, but leaving collection_name NULL
             # meant the post landed in no collection at all and made the
             # collection pages look emptier than the data is (#565). File
             # it under the project it draws from most.
-            "collection_name": _dominant(sample, "collection_name"),
-            "team_name": team_name,
-            "brand_workspace": None,
-            "tags": sorted({t for a in sample for t in (a.tags or [])}),
-            "asset_ids": [a.id for a in sample],
-            "asset_types_in_post": types_in_post,
-            "is_mixed_type": len(types_in_post) > 1,
-            "post_kind": "team_roundup",
-            "workflow_state": anchor.workflow_state,
-            "sensitivity_tier": "team",
-            "created_at": anchor.created_at,
-            "updated_at": max(a.updated_at for a in sample),
-            "studio": anchor.studio,
-            "layer": "A" if all(a.layer == "A" for a in sample) else "B",
-        })
+            collection_name=_dominant(sample, "collection_name"),
+            team_name=team_name,
+            brand_workspace=None,
+            tags=sorted({t for a in sample for t in (a.tags or [])}),
+            post_kind="team_roundup",
+            workflow_state=anchor.workflow_state,
+            sensitivity_tier="team",
+            created_at=anchor.created_at,
+            studio=anchor.studio,
+        ))
 
     # ---------------------------------------------------------------------
     # Pass 4: Project sprint / milestone posts (5-10 assets, same project,
     #         varied teams)
     # ---------------------------------------------------------------------
     project_target = 80
-    projects_pool = list(by_project.keys())
-    rng.shuffle(projects_pool)
-    sprint_labels = ["sprint 12", "sprint 13", "sprint 14", "milestone alpha",
-                     "milestone beta", "review session", "lock-in pass",
-                     "polish week", "final review", "ship gate"]
-    sprint_idx = 0
-    for project_name in projects_pool * 6:
+    PROJECT_SWEEPS = 6
+    projects_pool = sorted(by_project)
+    sprint_labels = SPRINT_LABELS
+    for sweep, project_name in ((s, p) for s in range(PROJECT_SWEEPS) for p in projects_pool):
         if len([p for p in posts if p.get("post_kind") == "project_sprint"]) >= project_target:
             break
-        proj_assets = by_project[project_name]
+        proj_assets = sorted(by_project[project_name], key=lambda x: x.id)
         if len(proj_assets) < 5:
             continue
-        sample_size = rng.randint(5, min(10, len(proj_assets)))
-        sample = rng.sample(proj_assets, sample_size)
-        anchor = max(sample, key=lambda x: x.updated_at)
+        sample = _pick(proj_assets, 5, 10, "sprint", project_name, str(sweep))
+        anchor = _anchor(sample)
         types_in_post = sorted({a.asset_type for a in sample})
         teams_in_post = sorted({a.team_name for a in sample})
 
-        label = sprint_labels[sprint_idx % len(sprint_labels)]
-        sprint_idx += 1
+        # The label used to come from a counter incremented once per
+        # EMITTED post, shared across every project — so a project that
+        # stopped qualifying re-labelled every sprint post after it. It
+        # is now a function of the project and the sweep: each project
+        # starts the label list at its own offset (so the ten labels are
+        # all used across the dataset rather than only the first six)
+        # and walks it one step per sweep.
+        label = sprint_labels[
+            (stable_int(len(sprint_labels), "sprint-label", project_name) + sweep)
+            % len(sprint_labels)
+        ]
         title = f"{project_name} {label} — {len(sample)} assets across {len(teams_in_post)} team(s)"
         desc = (f"{label.title()} for {project_name}. "
                 f"Pulls work from {', '.join(teams_in_post[:3])}"
                 f"{'...' if len(teams_in_post) > 3 else ''} — "
                 f"{', '.join(types_in_post)}.")
 
-        posts.append({
-            "id": stable_uuid("post", "sprint", project_name, label, anchor.id),
-            "title": title,
-            "description": desc,
-            "author_username": anchor.owner_username,
-            "collection_name": project_name,
+        posts.append(_post(
+            members=sample,
+            id=sprint_post_id(project_name, label, (a.id for a in sample)),
+            title=title,
+            description=desc,
+            author_username=anchor.owner_username,
+            collection_name=project_name,
             # A sprint spans teams, but a NULL team_name left these posts
             # unattributable in team views (#565 — 24 such posts on
             # site_a). Credit the team that contributed most of the sample.
-            "team_name": _dominant(sample, "team_name"),
-            "brand_workspace": anchor.brand_workspace,
-            "tags": sorted({t for a in sample for t in (a.tags or [])}),
-            "asset_ids": [a.id for a in sample],
-            "asset_types_in_post": types_in_post,
-            "is_mixed_type": len(types_in_post) > 1,
-            "post_kind": "project_sprint",
-            "workflow_state": "in_review",
-            "sensitivity_tier": "team",
-            "created_at": anchor.created_at,
-            "updated_at": max(a.updated_at for a in sample),
-            "studio": anchor.studio,
-            "layer": "A" if all(a.layer == "A" for a in sample) else "B",
-        })
+            team_name=_dominant(sample, "team_name"),
+            brand_workspace=anchor.brand_workspace,
+            tags=sorted({t for a in sample for t in (a.tags or [])}),
+            post_kind="project_sprint",
+            workflow_state="in_review",
+            sensitivity_tier="team",
+            created_at=anchor.created_at,
+            studio=anchor.studio,
+        ))
 
     # ---------------------------------------------------------------------
     # Pass 5: Video boost — videos are scarce in the dataset, so give each
@@ -1157,7 +1337,8 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     # padding-with-singles that buried the real multi-asset work, so it is
     # cut to two framings (#565).
     # ---------------------------------------------------------------------
-    videos = [a for a in assets if a.asset_type == "video"]
+    videos = sorted((a for a in assets if a.asset_type == "video"),
+                    key=lambda x: x.id)
     video_post_templates = [
         ("dailies",      "Dailies — {title}",
          "Today's video pass on {project}. Reviewing pacing, color, and continuity."),
@@ -1195,35 +1376,38 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         if len(studio_videos) < 2:
             continue
         # Two reels per studio (sample variations) so feeds feel populated
-        for reel_idx, reel_label in enumerate(["Q3 reel", "Q4 reel"]):
-            sample_size = min(len(studio_videos), rng.randint(3, 5))
-            sample = rng.sample(studio_videos, sample_size)
-            anchor = sample[0]
-            posts.append({
-                "id": stable_uuid("post", "showreel", studio_key, reel_label, anchor.id),
-                "title": f"Cinematics {reel_label} — {sample_size} cuts",
-                "description": (f"Studio cinematics roundup. {sample_size} pieces bundled for "
-                               f"the {reel_label.lower()} screening — see for pacing references "
-                               f"and stylistic consistency across active projects."),
-                "author_username": anchor.owner_username,
-                "collection_name": _dominant(sample, "collection_name"),
-                "team_name": "Marketing Art",
-                "brand_workspace": None,
-                "tags": sorted({t for v in sample for t in (v.tags or [])}) + ["cinematic", "showreel"],
-                "asset_ids": [v.id for v in sample],
-                "asset_types_in_post": ["video"],
-                "is_mixed_type": False,
-                "post_kind": "cinematics_showreel",
-                "workflow_state": "approved",
-                "sensitivity_tier": "team",
-                "created_at": anchor.created_at,
-                "updated_at": max(v.updated_at for v in sample),
-                "studio": studio_key,
-                "layer": "A" if all(v.layer == "A" for v in sample) else "B",
-            })
+        for reel_label in REEL_LABELS:
+            sample = _pick(studio_videos, 3, 5, "showreel", studio_key, reel_label)
+            # Was `sample[0]` — the first DRAW, which is only meaningful
+            # while the sample comes out of an RNG in draw order. The
+            # post is dated by its most recent member like every other
+            # multi-asset post.
+            anchor = _anchor(sample)
+            posts.append(_post(
+                members=sample,
+                id=showreel_post_id(studio_key, reel_label, (v.id for v in sample)),
+                title=f"Cinematics {reel_label} — {len(sample)} cuts",
+                description=(f"Studio cinematics roundup. {len(sample)} pieces bundled for "
+                             f"the {reel_label.lower()} screening — see for pacing references "
+                             f"and stylistic consistency across active projects."),
+                author_username=anchor.owner_username,
+                collection_name=_dominant(sample, "collection_name"),
+                team_name="Marketing Art",
+                brand_workspace=None,
+                tags=sorted({t for v in sample for t in (v.tags or [])}) + ["cinematic", "showreel"],
+                post_kind="cinematics_showreel",
+                workflow_state="approved",
+                sensitivity_tier="team",
+                created_at=anchor.created_at,
+                studio=studio_key,
+            ))
 
-    # Sort by created_at for interlaced feed appearance
-    posts.sort(key=lambda p: p["created_at"])
+    # Sort by created_at for interlaced feed appearance. `, p["id"]` makes
+    # it a TOTAL order: `created_at` alone leaves ties resolved by the
+    # order the passes happened to append in, so two posts sharing a
+    # timestamp could swap places between runs without a single input
+    # changing.
+    posts.sort(key=lambda p: (p["created_at"], p["id"]))
     return posts
 
 
@@ -1416,7 +1600,11 @@ def recompose_posts(profiles: Path, sites: list[Path], dry_run: bool = False) ->
             print(f"error: {src} not found", file=sys.stderr)
             return 2
         raw = json.loads(src.read_text(encoding="utf-8"))
-        assets = [AssetRecord(**a) for a in raw]
+        try:
+            assets = asset_records_from_profile(raw, src)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
         posts = derive_posts(assets)
         combined.update({p["id"]: p for p in posts})
 
