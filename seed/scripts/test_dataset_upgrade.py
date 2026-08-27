@@ -2946,6 +2946,101 @@ class TestGuardMeasurementVsEdit(unittest.TestCase):
         self.assertTrue(cmp.ok)
 
 
+class TestBundleIdentity(unittest.TestCase):
+    """#1310 — a bundle's id named ONE MEMBER, not the bundle.
+
+    ⛔ NOT THE COLLISION #1293 WAS. Measured on the committed profile,
+    863 rows under 863 distinct ids and zero collisions, because the
+    bundle loop partitions its cluster into DISJOINT chunks so two
+    bundles cannot share an anchor. The defect is that the key names an
+    accompanying value rather than an identifying one (ADR 0098).
+    """
+
+    def test_the_key_is_the_membership_and_nothing_else(self):
+        self.assertEqual(sa.bundle_post_id(["a", "b", "c"]),
+                         sa.stable_uuid("post", "bundle", "a", "b", "c"))
+
+    def test_member_ORDER_does_not_change_the_id(self):
+        """A bundle is a set of assets. Reordering them is a
+        presentation change, and the curation reorders 383 posts."""
+        self.assertEqual(sa.bundle_post_id(["c", "a", "b"]),
+                         sa.bundle_post_id(["a", "b", "c"]))
+
+    def test_a_different_membership_is_a_different_bundle(self):
+        self.assertNotEqual(sa.bundle_post_id(["a", "b"]),
+                            sa.bundle_post_id(["a", "b", "c"]))
+
+    def test_it_does_not_depend_on_anything_outside_the_membership(self):
+        """⭐ THE POINT, AND IT IS MEASURABLE. The old key was the
+        chunk's most-recent member by `updated_at`, while the cluster
+        sorts by `created_at` — two independent fields. So editing one
+        asset's `updated_at`, which changes no membership at all, moved a
+        bundle id: measured on studio-a, 1 of 340 bundle ids moved under
+        the anchor key and 0 under this one."""
+        ids = ["a", "b", "c"]
+        self.assertEqual(sa.bundle_post_id(ids), sa.bundle_post_id(list(ids)))
+        # A generator is accepted, and consumed once.
+        self.assertEqual(sa.bundle_post_id(i for i in ids),
+                         sa.bundle_post_id(ids))
+
+    def test_multi_asset_is_a_migrated_kind_and_needs_no_title_parse(self):
+        """The other three kinds recover a label from the title, so a
+        wording change can move an id. A bundle's key is its membership,
+        so there is nothing to parse and nothing to break."""
+        self.assertIn("multi_asset", mpi.MIGRATED_KINDS)
+        post = {"id": "x", "post_kind": "multi_asset",
+                "asset_ids": ["a", "b"], "title": "anything at all"}
+        self.assertEqual(mpi.derived_id(post), sa.bundle_post_id(["a", "b"]))
+        post["title"] = "something completely different"
+        self.assertEqual(mpi.derived_id(post), sa.bundle_post_id(["a", "b"]))
+
+
+class TestMigrationDocumentAccumulates(unittest.TestCase):
+    """#1310 — the mapping document is how a publish tells a MIGRATION
+    from a LOSS (ADR 0097), and a second migration replaced it."""
+
+    def test_a_second_migration_keeps_the_first_ones_moves(self):
+        prior = [{"old_id": "A", "new_id": "B", "post_kind": "team_roundup",
+                  "title": "t", "members": 2}]
+        fresh = [{"old_id": "X", "new_id": "Y", "post_kind": "multi_asset",
+                  "title": "u", "members": 3}]
+        out = mpi.accumulate_moves(prior, fresh)
+        self.assertEqual(sorted((m["old_id"], m["new_id"]) for m in out),
+                         [("A", "B"), ("X", "Y")])
+
+    def test_a_chained_move_is_COMPOSED_to_its_destination(self):
+        """⭐ The published site holds A. Recording A->B and B->C leaves
+        the reader to compose them; what it can look up is A->C."""
+        prior = [{"old_id": "A", "new_id": "B", "post_kind": "team_roundup",
+                  "title": "t", "members": 2}]
+        fresh = [{"old_id": "B", "new_id": "C", "post_kind": "team_roundup",
+                  "title": "t", "members": 2}]
+        out = mpi.accumulate_moves(prior, fresh)
+        self.assertEqual([(m["old_id"], m["new_id"]) for m in out], [("A", "C")])
+
+    def test_the_shipped_document_still_holds_the_1293_moves(self):
+        doc = json.loads((UPGRADES / "post-id-migration.studio-a.json")
+                         .read_text(encoding="utf-8"))
+        kinds = collections.Counter(m["post_kind"] for m in doc["moves"])
+        self.assertEqual(kinds["team_roundup"], 29)
+        self.assertEqual(kinds["project_sprint"], 35)
+        self.assertEqual(kinds["cinematics_showreel"], 4)
+        self.assertEqual(kinds["multi_asset"], 107)
+
+    def test_no_upgrade_document_holds_a_stale_post_id(self):
+        """⛔ `mature-posts.site_a.json` held two `multi_asset` ids under
+        the old key. `merge_posts` keys on the id, so the profile no
+        longer having them meant the next run MERGED THEM BACK IN and
+        site_a went 863 -> 865 with two duplicated posts."""
+        for path in sorted(UPGRADES.glob("*-posts.site_*.json")):
+            rows = json.loads(path.read_text(encoding="utf-8"))
+            for row in rows:
+                if row.get("post_kind") not in mpi.MIGRATED_KINDS:
+                    continue
+                self.assertEqual(row["id"], mpi.derived_id(row),
+                                 f"{path.name}: {row['id']} does not derive")
+
+
 class TestPostCuration(unittest.TestCase):
     """#1309 — the hand-made feed ordering, reproduced by the build."""
 

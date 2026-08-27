@@ -414,6 +414,27 @@ def showreel_post_id(studio_key: str, reel_label: str,
                        *sorted(asset_ids))
 
 
+# A bundle keyed on its anchor is the same defect one step removed, and
+# #1310 is the correctness half rather than the live-hazard half:
+# measured on the committed profile, 863 rows under 863 distinct ids and
+# ZERO collisions, because the bundle loop partitions its cluster into
+# DISJOINT chunks and two bundles therefore cannot share an anchor.
+#
+# ⭐ What it is instead is UNSTABLE. The anchor is the chunk's most
+# recent member, so it says nothing about the other members: re-chunk the
+# cluster and a bundle keeps its id while its membership changes under
+# it, or loses it to a neighbour. One asset added to a cluster re-cut
+# every chunk boundary after it and moved every id that followed.
+#
+# Membership alone is the key here, with no cluster name in front of it:
+# clusters partition the asset pool and chunks partition a cluster, so no
+# two bundles can share a member and no two can collide. Adding
+# `(collection, team, asset_type)` would only make the id move when a
+# member's collection was renamed, which is not a change of identity.
+def bundle_post_id(asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "bundle", *sorted(asset_ids))
+
+
 SPRINT_LABELS = ("sprint 12", "sprint 13", "sprint 14", "milestone alpha",
                  "milestone beta", "review session", "lock-in pass",
                  "polish week", "final review", "ship gate")
@@ -1438,7 +1459,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
                     f"{len(chunk)} {atype} assets pulled together for review.")
             posts.append(_post(
                 members=chunk,
-                id=stable_uuid("post", "bundle", anchor.id),
+                id=bundle_post_id(a.id for a in chunk),
                 title=title,
                 description=desc,
                 author_username=anchor.owner_username,
