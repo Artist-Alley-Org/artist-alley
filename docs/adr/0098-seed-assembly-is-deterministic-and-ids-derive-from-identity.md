@@ -83,9 +83,15 @@ That is not cosmetic, because `created_at` is consumed:
 
 ## Consequences
 
-- ⚠️ **Correcting an id derivation MOVES ids** — 64 posts (29 roundups, 35 project sprints) in
-  site_a. Under ADR 0097 the publish guard will see a destination holding content the source does
-  not and **refuse**, which is the guard working. The migration is therefore deliberate work with a
+- ⚠️ **Correcting an id derivation MOVES ids** — **68** posts in site_a. ⛔ **Corrected 2026-08-26
+  (PR #1305): this ADR first said 64** (29 roundups + 35 project sprints). The missing four are
+  `cinematics_showreel`, which carries the same derivation three lines further down and was simply
+  not counted. Measured: `{team_roundup: 29, project_sprint: 35, cinematics_showreel: 4}`.
+  ⚠️ And the defect is wider still — `multi_asset` (**107** more site_a posts) shares it, which
+  would take a migration from 68 to 175. That is scoped separately (#1310), deliberately: **a
+  measurement in an accepted ADR should not quietly grow into a different decision.**
+  Under ADR 0097 the publish guard will see a destination holding content the source does not and
+  **refuse**, which is the guard working. The migration is therefore deliberate work with a
   reconcile step, not a quiet regeneration.
 - The repair already applied to the *data* (sprint 14, PR #1297) does not fix this: the assembler
   was not touched, so the next assembly reintroduces the collisions. **Data repair without generator
@@ -95,3 +101,58 @@ That is not cosmetic, because `created_at` is consumed:
 - ⭐ This is the same family as ADR 0095's rejection of naming heuristics: **an identifier must
   carry identity, not resemblance.** There, appearance was a bad proxy for provenance; here, an
   anchor is a bad proxy for a post.
+
+
+---
+
+## Amendment, 2026-08-26 (PR #1305): Context §2 was wrong, and so was the danger it named
+
+Two claims in this ADR's Context were false when written. Both were mine, and the sprint that
+implemented the ADR found them.
+
+**1. ⛔ The generator was never drifting. The published output was HAND-EDITED.**
+
+Context §2 attributes 840 differing `created_at` values to unstable assembly. It is not. The post
+`created_at` is byte-identical to its anchor asset's, and the assets agree with the archive on
+`created_at` across all 2,005 shared rows — **zero differences**. The archive itself holds the
+evidence:
+
+| backup on the share | fields differing from the live `posts.json` |
+|---|---|
+| `posts.json.pre-1217.bak`, `.pre-1260.bak` | **none** |
+| `.pre-feedcurate.bak` | `created_at` **833** |
+| `.pre-feedcurate2.bak` | `created_at` **794** |
+| `.pre-hero.bak` | `created_at` **840**, `asset_ids` **390**, `updated_at` **297**, `title` 6 |
+| `.pre-hero2`, `2b`, `2c` | progressively fewer |
+
+**Eight backups across two editing campaigns.** They account for every figure §2 cites. The
+published dataset carries deliberate editorial curation that **no pass can reproduce** — the same
+class as #1275, and larger, because this is authored work rather than a stale measurement. Tracked
+as #1309.
+
+⭐ **Decision 3 survives this and is arguably strengthened**: assembly *should* be reproducible, and
+the reason to care is exactly that someone hand-curating the output is invisible until a
+regeneration destroys it. But it was justified here with the wrong evidence.
+
+**2. ⛔ The deletion predicate it names no longer exists.**
+
+Context §2 says the sweep protects a post when `author_user_ref <> 1 OR created_at < '2026-08-17'`,
+and calls a drifting timestamp a route to deletion. On `dev` that rule is now
+`rules.go:187` — **`Protected: id = ANY($1::uuid[])`** — protecting exactly the seed catalogue's
+ids, and its own comment documents replacing the claim this ADR relied on.
+
+⚠️ **The danger did not go away; it moved to the id** — which is what Decision 1 changes. So an
+id migration is the thing that can drop a real post out of protection. Measured with both
+catalogues against one database: **68 posts move REAL → UNCLASSIFIED**, FIXTURE stayed 178,
+CONTRADICT stayed 0. Unclassified is reported and never deleted, so the sweep does not consume
+them — but that had to be *measured*, not assumed, and this ADR pointed at the wrong predicate.
+
+**3. `--recompose-posts` did not run at all** when this ADR was written — `TypeError:
+AssetRecord.__init__() got an unexpected keyword argument 'replaced_source_path'`. Post composition
+had been unregenerable for as long as the profiles had been annotated, so none of §2 was testable
+until PR #1305 fixed it.
+
+⭐ **The lesson worth carrying**: I reasoned about the generator's code and offered two hypotheses
+for the drift. Both were wrong, and the filesystem held the answer the whole time in files named
+`pre-feedcurate` and `pre-hero`. **When an output disagrees with its generator, look at the output's
+neighbours before theorising about the generator.**
