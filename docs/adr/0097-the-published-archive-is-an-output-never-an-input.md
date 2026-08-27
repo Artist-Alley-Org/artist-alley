@@ -85,3 +85,56 @@ by refusing to produce a run it cannot justify.**
 - ⛔ **This does not make the archive backed up.** It makes one specific destruction impossible. The
   published dataset still has no backup, and every other path that writes to that share is still
   unguarded.
+
+## Amendment, 2026-08-26 (#1294, #1295): a MEASUREMENT is not content, and this ADR does not govern it
+
+The `CHANGED_VALUE` case above was left "tracked separately", and the separate tracking found that
+the two issues were not the same kind of question at all.
+
+**#1294 — 160 site_a `file_size_bytes` where the profile and the share disagreed.** The instinct
+this ADR creates is "the profile is the source of truth, so the share is wrong." That instinct is
+**not applicable**, and following it was how sprint 14 nearly shipped a profile that would have made
+the next build refuse its own input.
+
+> ⭐ **A byte count is a MEASUREMENT of a file the pipeline produces, not a value the profile is
+> free to assert.** There is exactly one right answer — what `kenney_hq.py build` makes from the
+> committed manifest and the pack — and the profile's job is to *describe* it. This ADR governs
+> which records exist and what values they carry. It has nothing to say about arithmetic.
+
+Measured against a rebuilt pool: **150 of site_a's 260 replacement rows and 472 of site_b's 656**
+named a size the file does not have, and site_a's published share agreed with the *rebuilt* pool on
+776 of 777 records. The repository was the stale side. `newSize` is the size of a **render**, #630
+and #685 both changed what frame a vector is drawn into, and nothing ever re-derived the numbers —
+they were measured once, by hand. Re-measurement is now a command (`kenney_hq.py sizes`), report-only
+and non-zero on drift by default so it can stand as a gate.
+
+⭐ **And it was visible without the share or the pool.** `balance-assets.site_a.json` was emitted
+after those fixes and had been contradicting the replacements docs about **115 pool files** inside
+the repository the whole time. Two committed documents naming one pool file must agree about its
+size; that is a test now.
+
+**#1295 — the gate could not see the pass.** `apply_upgrade.py --check` had a term for every pass
+except `apply_replacements`, because that pass returned records *processed*, not records *modified*
+— `260/260` on every run, upgraded or not. A number that is never zero cannot be a drift signal, so
+the pass was left out rather than fixed, and a profile with drifted replacements passed the
+pre-publish gate for as long as it took someone to notice by hand.
+
+⚠️ This is the second consequence above, arriving from the other direction: **a gate only ever
+observed permitting a run is untested.** The refusal now has a constructed-drift test that drives
+the real script, watches it fail, repairs the profile and watches it pass.
+
+**What a future reader should take from this.** When the profile and the archive disagree, ask first
+what *kind* of value it is:
+
+| the value is… | who is authoritative | example |
+|---|---|---|
+| content — a record, a field value, a flag | the **profile** (this ADR) | `field_values`, `mature`, which assets exist |
+| a measurement of a file the pipeline produces | the **artifact** the pipeline makes | `file_size_bytes` on a pool render |
+| a claim about bytes staged from elsewhere | **neither, until the bytes are checked** | the 11 video records — see below |
+
+⛔ **The third row is unresolved and is not a byte count.** Eleven site_a video records claim a size
+their staged file does not have, and probing the origins each record names returns *exactly the
+profile's number* — while four of them carry a `metadata.sha256` that matches the smaller staged
+file. Those records describe **two different artifacts at once**, and no rule in this ADR picks
+between them: it is a decision about what the published dataset ships. `populate_archive.py`'s
+pre-staged branch only checks `size > 0`, so nothing will surface it on its own.

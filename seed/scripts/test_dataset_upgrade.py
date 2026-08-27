@@ -1885,6 +1885,159 @@ class TestSiteAHasNoUncataloguedAssets(unittest.TestCase):
                              "replacement(s) do not say what they replaced")
 
 
+class TestPoolSizesAgreeAcrossDocuments(unittest.TestCase):
+    """⭐ #1294, CATCHABLE WITHOUT THE POOL AND WITHOUT THE SHARE.
+
+    `newSize` in a replacements doc and `file_size_bytes` on a
+    balance-doc record are both the byte count of ONE file in the pool.
+    Where two committed documents name the same pool filename they are
+    making the same claim about the same bytes, and they cannot both be
+    right when they differ.
+
+    Measured on `dev` at b3374cba, before the repair: **115 pool
+    filenames carried two different sizes**, because `balance-assets.*`
+    was emitted after #630/#685 changed what frame a vector renders into
+    and `kenney-hq-replacements.*` was not. That contradiction sat in the
+    repository for months, needing neither the archive share nor a built
+    pool to see — which is the point of this test. #1294 was filed as
+    "someone with the pool mounted should compare"; the repo was
+    disagreeing with itself the whole time.
+    """
+
+    def _claims(self):
+        claims: dict[str, set] = {}
+        for site in ("site_a", "site_b"):
+            for r in json.loads(
+                    (UPGRADES / f"kenney-hq-replacements.{site}.json").read_text()):
+                claims.setdefault(r["new"].rsplit("/", 1)[-1], set()).add(
+                    (f"kenney-hq-replacements.{site}.json", r["newSize"]))
+            bal = UPGRADES / f"balance-assets.{site}.json"
+            if not bal.is_file():
+                continue
+            for e in json.loads(bal.read_text()):
+                if e.get("source_root") == "hq":
+                    claims.setdefault(e["source_path"], set()).add(
+                        (f"balance-assets.{site}.json", e["file_size_bytes"]))
+        return claims
+
+    def test_one_pool_file_has_one_size(self):
+        claims = self._claims()
+        disagree = {k: sorted(v) for k, v in claims.items()
+                    if len({size for _, size in v}) > 1}
+        self.assertEqual(
+            disagree, {},
+            f"{len(disagree)} pool file(s) are given two different byte "
+            "counts by two committed documents. Rebuild the pool and re-run: "
+            "python3 seed/scripts/kenney_hq.py sizes --pool <dir> "
+            "--replacements seed/upgrades/kenney-hq-replacements.site_a.json "
+            "--replacements seed/upgrades/kenney-hq-replacements.site_b.json "
+            "--write")
+
+    def test_the_check_is_not_vacuous(self):
+        """⚠️ It only means something while the documents actually overlap.
+        If a later selection pass stopped sharing pool files between the
+        replacement and balance docs, the assertion above would pass by
+        describing nothing."""
+        claims = self._claims()
+        overlapping = [k for k, v in claims.items()
+                       if len({src.split(".")[0] for src, _ in v}) > 1]
+        self.assertGreater(
+            len(overlapping), 50,
+            "the replacement and balance documents no longer describe the "
+            "same pool files, so cross-checking them proves nothing")
+
+
+class TestPoolSizeReMeasurement(unittest.TestCase):
+    """`kenney_hq.py sizes` — the command that keeps #1294 from recurring.
+
+    A `newSize` is a measurement of a RENDER, and a rasteriser fix moves
+    it. Nothing re-derived these values: they were measured once by hand,
+    so #630 and #685 each silently invalidated a slice of them. The
+    command makes re-measurement a command instead of a procedure.
+    """
+
+    def _pool(self, td: Path, sizes: dict[str, int]) -> Path:
+        pool = td / "pool"
+        pool.mkdir()
+        for name, n in sizes.items():
+            (pool / name).write_bytes(b"\0" * n)
+        return pool
+
+    def _doc(self, td: Path, rows) -> Path:
+        doc = td / "kenney-hq-replacements.site_a.json"
+        doc.write_text(json.dumps(rows), encoding="utf-8")
+        return doc
+
+    def test_a_matching_doc_passes_and_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            pool = self._pool(td, {"a-11111111-512.png": 500})
+            doc = self._doc(td, [{"id": "x", "old": "o", "oldSize": 9,
+                                  "new": "images/kenney-hq/a-11111111-512.png",
+                                  "newSize": 500}])
+            before = doc.read_text()
+            self.assertEqual(hq.cmd_sizes(pool, [doc], write=False), 0)
+            self.assertEqual(doc.read_text(), before)
+
+    def test_a_stale_size_is_reported_and_the_command_refuses(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            pool = self._pool(td, {"a-11111111-512.png": 500})
+            doc = self._doc(td, [{"id": "x", "old": "o", "oldSize": 9,
+                                  "new": "images/kenney-hq/a-11111111-512.png",
+                                  "newSize": 250}])
+            self.assertEqual(hq.cmd_sizes(pool, [doc], write=False), 1,
+                             "report-only mode must exit non-zero so it can "
+                             "stand as a gate")
+            self.assertEqual(json.loads(doc.read_text())[0]["newSize"], 250,
+                             "report-only mode wrote to the document")
+
+    def test_write_re_measures_and_then_reaches_a_fixed_point(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            pool = self._pool(td, {"a-11111111-512.png": 500})
+            doc = self._doc(td, [{"id": "x", "old": "o", "oldSize": 9,
+                                  "new": "images/kenney-hq/a-11111111-512.png",
+                                  "newSize": 250}])
+            self.assertEqual(hq.cmd_sizes(pool, [doc], write=True), 0)
+            self.assertEqual(json.loads(doc.read_text())[0]["newSize"], 500)
+            self.assertEqual(hq.cmd_sizes(pool, [doc], write=False), 0)
+
+    def test_an_absent_pool_file_is_a_different_problem_from_a_stale_size(self):
+        """⛔ The empty case. A row naming a file the pool cannot produce
+        has nothing to measure, and silently 'fixing' it — or counting it
+        among the stale sizes — would let a dropped pool entry read as a
+        successful repair."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            pool = self._pool(td, {"a-11111111-512.png": 500})
+            doc = self._doc(td, [{"id": "x", "old": "o", "oldSize": 9,
+                                  "new": "images/kenney-hq/gone-22222222-512.png",
+                                  "newSize": 250}])
+            self.assertEqual(hq.cmd_sizes(pool, [doc], write=True), 1)
+            self.assertEqual(json.loads(doc.read_text())[0]["newSize"], 250,
+                             "a row with no pool file must not be rewritten")
+
+    def test_write_preserves_the_committed_serialisation(self):
+        """The docs are diffed by humans. A re-measure that reflowed the
+        whole file would bury 622 changed integers in 4,000 moved lines."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            pool = self._pool(td, {"a-11111111-512.png": 500})
+            rows = [{"id": "x", "new": "images/kenney-hq/a-11111111-512.png",
+                     "newSize": 250, "old": "o", "oldSize": 9}]
+            doc = td / "kenney-hq-replacements.site_a.json"
+            doc.write_text(json.dumps(rows, indent=1, sort_keys=True,
+                                      ensure_ascii=False) + "\n",
+                           encoding="utf-8")
+            hq.cmd_sizes(pool, [doc], write=True)
+            rows[0]["newSize"] = 500
+            self.assertEqual(
+                doc.read_text(),
+                json.dumps(rows, indent=1, sort_keys=True,
+                           ensure_ascii=False) + "\n")
+
+
 class TestPackPageSlugs(unittest.TestCase):
     def test_slug_comes_off_the_pack_directory_name(self):
         self.assertEqual(kps.page_for("UI assets/UI Pack"),
