@@ -280,6 +280,16 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The sample library's post titles read like a person wrote them.** They used to end with a
+  machine-written tally, "Project Heroes polish week, 9 assets across 1 team(s)", which was long,
+  repeated a count already shown on the card, and left an unresolved "(s)" in plain sight. Titles
+  that would otherwise have become identical are now numbered instead (#1306, PR #1311).
+- **The catalogue no longer overstates what the dataset contains.** Twelve records claimed sizes
+  their files do not have, 2.7 GB of overstatement in total, and a rebuild would have copied those
+  claims over the accurate published copy. The claims are re-measured from the files themselves, and
+  a re-download can no longer quietly substitute a full-length original for the short clip the
+  dataset actually ships (#1301, #1302, #1303, PR #1311).
+
 - **The dataset's pre-publish check can no longer pass a stale catalogue.** One of its own steps was
   invisible to it, because that step reported how many records it looked at rather than how many it
   changed — so a catalogue with outdated file sizes was reported as ready to publish. The check now

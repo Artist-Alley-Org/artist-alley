@@ -138,3 +138,38 @@ profile's number* — while four of them carry a `metadata.sha256` that matches 
 file. Those records describe **two different artifacts at once**, and no rule in this ADR picks
 between them: it is a decision about what the published dataset ships. `populate_archive.py`'s
 pre-staged branch only checks `size > 0`, so nothing will surface it on its own.
+
+---
+
+## Amendment, 2026-08-27 (#1311, #1312): the guard cannot see a corrupted measurement
+
+The amendment above split **content** from **measurement** and said the artifact is authoritative
+for the second. `manifest_guard` does not implement that split, and sprint 14d found the gap.
+
+`manifest_guard.py:34-43` refuses `MISSING_RECORD`, `MISSING_KEY` and `EMPTIED_VALUE`, and reports
+`CHANGED_VALUE` as *"NOT a loss ... Reported, never refused"* on the reasoning that an edit is what
+a change looks like and the profile is the source of truth for edits.
+
+⛔ **That reasoning is correct for content and wrong for measurements.** Measured on `dev` before
+PR #1311: **twelve records** where the profile and the published manifest disagreed on
+`file_size_bytes`, and in **all twelve** the manifest matched the bytes on disk while the profile
+claimed larger, totalling **2,690,105,638 bytes**. `populate_archive.py:841` copies the profile over
+`MANIFEST.json`, so the next publish would have replaced correct measurements with wrong ones, and
+the guard would have reported it and proceeded.
+
+⭐ **The same property that makes a correction safe makes a corruption invisible.** The sprint-14d
+brief cited `CHANGED_VALUE` approvingly as proof that re-measuring four hashes was safe. That was
+true, and its inverse was equally true and unstated.
+
+⚠️ **And the split is per record class, not global.** `metadata.sha256` is a measurement for hq
+records and **identity** for `internet`-root ones: `sanitize_and_assemble.py:1517` mints the asset
+id from it and `:1558-1560` derive three timestamps from it. A brief that ruled "re-measure the
+four hashes" and closed the question would have moved ids on the next assembly, and only the
+implementing agent's refusal to follow a closed instruction stopped it.
+
+**So this ADR's category is a property of the FIELD IN A RECORD CLASS, not of the field.** Deciding
+"is this content, a measurement, or identity" has to be asked per class, and a rule that answers it
+once for a field name is wrong.
+
+Tracked as #1312. Not fixed here: naively promoting `CHANGED_VALUE` to a loss would refuse every
+legitimate edit and make the guard unusable, which is the failure mode of over-correcting a gate.
