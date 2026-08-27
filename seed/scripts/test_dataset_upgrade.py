@@ -2946,6 +2946,109 @@ class TestGuardMeasurementVsEdit(unittest.TestCase):
         self.assertTrue(cmp.ok)
 
 
+class TestKindMatchesItsTitleTemplate(unittest.TestCase):
+    """#1314 — `post_kind` is claimed to disagree with the title template
+    that produced the post, on 228 site_a posts.
+
+    ⛔ THE FIGURE DID NOT REPRODUCE, AND THE PREMISE BEHIND IT IS WRONG.
+    Re-running each kind's OWN formatter over each post's own fields, a
+    FRESH ASSEMBLY of site_a (1,103 posts, 11 kinds) disagrees on ZERO.
+    The generator is self-consistent, so "the assembler assigns
+    `post_kind` inconsistently with the template it then applies" is
+    refuted, and no id is being fed by a wrong kind.
+
+    The committed `studio-a.posts.json` does disagree, on 374 rather than
+    228, and none of the three causes is a generator defect:
+
+      244 `asset_group` posts carry a collection-chunk title (230 of them
+          exactly `{collection}: {team} {theme}`). The group pass emits
+          only `title_group_set` / `title_group_bundle`, so these are
+          from an older generator.
+       83 `solo_showcase` and `multi_asset` posts carry titles AUTHORED
+          BY UPGRADE DOCUMENTS (`added-posts`, `mature-posts`), which no
+          template produced and none should.
+       47 `revision_*` and `video_*` posts embed a member asset's title
+          as it was BEFORE the HQ replacement renamed the asset.
+
+    All three are the same underlying fact: the committed posts profile
+    is a frozen historical composition of 863 posts where the assembler
+    now emits 1,103, which `retitle_posts` already records. This test
+    pins the half that is checkable and permanent.
+    """
+
+    KINDS = 11
+
+    @classmethod
+    def setUpClass(cls):
+        raw = json.loads((PROFILES / "studio-a.assets.json")
+                         .read_text(encoding="utf-8"))
+        cls.assets = {a["id"]: a for a in raw}
+        records = sa.asset_records_from_profile(raw, PROFILES / "studio-a.assets.json")
+        cls.posts = sa.derive_posts(records)
+        cls.flavours = {f[:1].upper() + f[1:] for f in sa.ALL_SOLO_FLAVORS}
+
+    def _agrees(self, post):
+        """True when the post's title is what its kind's formatter makes.
+
+        ⚠️ Returns None for a kind this test does not know, so a NEW kind
+        fails `test_every_kind_is_covered` instead of passing silently.
+        """
+        kind = post.get("post_kind")
+        title = sa.strip_part_suffix(post.get("title") or "")
+        members = [self.assets[i] for i in (post.get("asset_ids") or ())
+                   if i in self.assets]
+        if kind == "asset_group":
+            anchors = {sa.title_group_set(m["title"]) for m in members}
+            anchors |= {sa.title_group_bundle(m["title"]) for m in members}
+            return title in {sa.clean_dashes(a) for a in anchors}
+        if kind == "multi_asset":
+            return title.startswith(
+                f"{post.get('collection_name')}: {post.get('team_name')} ")
+        if kind == "solo_showcase":
+            return ": " in title and title.split(": ", 1)[0] in self.flavours
+        if kind == "team_roundup":
+            return title == sa.title_team_roundup(post.get("team_name") or "")
+        if kind == "project_sprint":
+            return sa.sprint_label_from_title(
+                post.get("collection_name") or "", title) in sa.SPRINT_LABELS
+        if kind == "cinematics_showreel":
+            return sa.reel_label_from_title(title) in sa.REEL_LABELS
+        for prefix, table in (("revision_", sa.REVISION_TITLES),
+                              ("video_", sa.VIDEO_TITLES)):
+            if kind and kind.startswith(prefix):
+                tmpl = table.get(kind[len(prefix):])
+                return bool(tmpl) and any(
+                    title == sa.clean_dashes(tmpl.format(title=m["title"]))
+                    for m in members)
+        return None
+
+    def test_a_fresh_assembly_has_ZERO_disagreements(self):
+        """⭐ #1314's acceptance, as a permanent invariant rather than a
+        one-off audit. It passes today; what it is here for is the next
+        title edit, which is exactly how #1306 broke the sprint-label
+        parse."""
+        bad = [(p["post_kind"], p["title"]) for p in self.posts
+               if self._agrees(p) is False]
+        self.assertEqual(bad, [], f"{len(bad)} post(s) disagree")
+
+    def test_every_kind_is_covered(self):
+        """⛔ A kind this test does not recognise reads as "no
+        disagreement", which is the shape of a gate that cannot fail. The
+        count is asserted so a new kind has to come here first."""
+        kinds = {p["post_kind"] for p in self.posts}
+        self.assertEqual(len(kinds), self.KINDS, sorted(kinds))
+        unknown = {p["post_kind"] for p in self.posts
+                   if self._agrees(p) is None}
+        self.assertEqual(unknown, set())
+
+    def test_the_check_can_actually_fail(self):
+        """The denominator. A test that only ever sees agreement proves
+        nothing about its own ability to see disagreement."""
+        good = dict(self.posts[0])
+        self.assertIsNot(self._agrees(good), False)
+        self.assertFalse(self._agrees({**good, "title": "not a template"}))
+
+
 class TestBundleIdentity(unittest.TestCase):
     """#1310 — a bundle's id named ONE MEMBER, not the bundle.
 
