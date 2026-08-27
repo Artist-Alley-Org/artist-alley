@@ -54,6 +54,7 @@ SEED_MODULES = [
     "pexels_gameplay",
     "populate_archive",
     "resolve_media_urls",
+    "sanitize_and_assemble",
     "studio_balance",
 ]
 
