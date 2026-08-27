@@ -2181,6 +2181,29 @@ class TestAliasProfilesTrackTheirSource(unittest.TestCase):
             json.loads((p / "demo.assets.json").read_text(encoding="utf-8")),
             json.loads((p / "studio-a.assets.json").read_text(encoding="utf-8")))
 
+    def test_the_alias_is_refreshed_by_the_pass_that_invalidates_it(self):
+        """⛔ The re-copy used to live only in the assembler's
+        full-assembly path, so running `apply_upgrade.py` on its own —
+        which is what its own usage block tells you to do — left the
+        alias holding the pre-upgrade profile. Nothing but the two tests
+        above stood between that and a demo re-seed shipping the wrong
+        records, and they only fail AFTER the drift is committed."""
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            (d / "studio-a.assets.json").write_text('[{"id": "new"}]')
+            (d / "demo.assets.json").write_text('[{"id": "old"}]')
+            self.assertEqual(up.refresh_profile_alias(d / "studio-a.assets.json"),
+                             "demo.assets.json")
+            self.assertEqual((d / "demo.assets.json").read_text(), '[{"id": "new"}]')
+            # A profile with no alias, and an alias file that is not there.
+            self.assertIsNone(up.refresh_profile_alias(d / "studio-b.assets.json"))
+            self.assertIsNone(up.refresh_profile_alias(d / "unrelated.assets.json"))
+
+    def test_the_mapping_has_exactly_one_definition(self):
+        """Spelling it out in both modules is how the two drift, which is
+        the #572 bug the re-copy exists to prevent."""
+        self.assertIs(sa.apply_upgrade.PROFILE_ALIASES, up.PROFILE_ALIASES)
+
     def test_dev_matches_studio_b(self):
         p = SCRIPTS.parent / "profiles"
         self.assertEqual(
@@ -2766,6 +2789,515 @@ class TestManifestGuard(unittest.TestCase):
                 mg.load_json_list(p)
             self.assertIn("MANIFEST.json", str(cm.exception))
             self.assertIsNone(mg.load_json_list(Path(td) / "absent.json"))
+
+
+class TestGuardMeasurementVsEdit(unittest.TestCase):
+    """#1312 — the guard could not see a corrupted measurement.
+
+    ADR 0097 splits authority: the profile owns CONTENT, the produced
+    artifact owns MEASUREMENTS. The guard implemented neither half, so a
+    profile carrying a stale byte count published over a destination
+    carrying a true one and the report said "an edit, not a loss".
+    Sprint 14 shipped 86 wrongly-"corrected" byte counts that way.
+
+    ⭐ BOTH DIRECTIONS ARE TESTED HERE. A gate proven only to refuse is
+    as broken as one proven only to permit: refusing every changed value
+    would make the profile unable to correct anything it has published.
+    """
+
+    @staticmethod
+    def _rec(rid, root, **kw):
+        base = {"id": rid, "source_root": root, "title": f"asset {rid}",
+                "file_size_bytes": 100, "metadata": {}, "field_values": {}}
+        base.update(kw)
+        return base
+
+    # -- direction 1: a corrupted measurement must REFUSE -----------------
+
+    def test_a_stale_byte_count_on_a_staged_root_is_refused(self):
+        """The destination staged the bytes and is the only thing that
+        weighed them. A source that disagrees is stale, not editing."""
+        for root in sorted(mg.MEASURABLE_ROOTS):
+            with self.subTest(root=root):
+                cmp = mg.compare([self._rec("a", root, file_size_bytes=100)],
+                                 [self._rec("a", root, file_size_bytes=250)],
+                                 "assets")
+                self.assertEqual([x.kind for x in cmp.losses],
+                                 [mg.CORRUPTED_MEASUREMENT])
+                self.assertEqual(cmp.losses[0].key, "file_size_bytes")
+                self.assertEqual(cmp.losses[0].dest_value, 250)
+                self.assertEqual(cmp.changes, [])
+                self.assertFalse(cmp.ok)
+
+    def test_origin_bytes_is_measured_too(self):
+        cmp = mg.compare([self._rec("a", "site", metadata={"origin_bytes": 1})],
+                         [self._rec("a", "site", metadata={"origin_bytes": 2})],
+                         "assets")
+        self.assertEqual([(x.kind, x.key) for x in cmp.losses],
+                         [(mg.CORRUPTED_MEASUREMENT, "metadata.origin_bytes")])
+
+    def test_the_refusal_reaches_the_report_and_names_its_own_remedy(self):
+        """A corrupted measurement is not "stripped of a value" — the fix
+        is to RE-MEASURE, not to carry the old number back."""
+        cmp = mg.compare([self._rec("a", "site", file_size_bytes=100)],
+                         [self._rec("a", "site", file_size_bytes=250)],
+                         "assets")
+        report = mg.format_report(cmp)
+        self.assertIn("WOULD OVERWRITE A MEASUREMENT", report)
+        self.assertIn("measure_staged.py", report)
+        # It must NOT be counted as a stripped value: that number drives
+        # the "carry it back into the profile" repair, which is wrong here.
+        self.assertEqual(cmp.records_degraded, 0)
+        self.assertEqual(cmp.stripped, [])
+        self.assertNotIn("stripped of", report)
+
+    # -- direction 2: a legitimate edit must still PASS -------------------
+
+    def test_a_content_edit_still_passes(self):
+        """⛔ THE TRAP. Promoting every CHANGED_VALUE to a loss refuses
+        every legitimate edit and makes the guard unusable."""
+        cmp = mg.compare([self._rec("a", "site", title="corrected title",
+                                    field_values={"credit": "new"})],
+                         [self._rec("a", "site", title="old title",
+                                    field_values={"credit": "old"})],
+                         "assets")
+        self.assertEqual(cmp.losses, [])
+        self.assertEqual(sorted(x.kind for x in cmp.changes),
+                         [mg.CHANGED_VALUE, mg.CHANGED_VALUE])
+        self.assertTrue(cmp.ok)
+
+    def test_a_source_backed_root_may_disagree_and_still_publish(self):
+        """⛔ MEASURED, NOT ASSUMED. On 2026-08-27 a freshly built
+        kenney-hq pool matched studio-b's PROFILE on all 656 `hq` records
+        and site_b's published manifest on only 264. The share held an
+        older pool build. Refusing those 392 would have "corrected" a
+        correct profile into a broken one, and the very next build would
+        then have refused its own input."""
+        for root in sorted(mg.SOURCE_BACKED_ROOTS):
+            with self.subTest(root=root):
+                cmp = mg.compare([self._rec("a", root, file_size_bytes=35433)],
+                                 [self._rec("a", root, file_size_bytes=17313)],
+                                 "assets")
+                self.assertEqual(cmp.losses, [])
+                self.assertEqual([x.kind for x in cmp.changes],
+                                 [mg.CHANGED_VALUE])
+                self.assertTrue(cmp.ok)
+
+    # -- the rule of two -------------------------------------------------
+
+    def test_the_same_field_is_a_measurement_or_identity_by_RECORD_CLASS(self):
+        """⛔⛔ `metadata.sha256` is a measurement on an `hq`/`site`
+        record and IDENTITY on an `internet` one — the asset id is
+        `stable_uuid("asset", "internet", sha256)`. A single rule over the
+        field NAME gets one of the two wrong, and the wrong one moves
+        published asset ids."""
+        sha_src, sha_dst = "a" * 64, "b" * 64
+        internet = mg.compare(
+            [self._rec("a", "internet", metadata={"sha256": sha_src})],
+            [self._rec("a", "internet", metadata={"sha256": sha_dst})], "assets")
+        self.assertEqual(internet.losses, [])
+        self.assertEqual([x.kind for x in internet.changes], [mg.CHANGED_VALUE])
+        self.assertTrue(internet.ok)
+
+        staged = mg.compare(
+            [self._rec("a", "site", metadata={"sha256": sha_src})],
+            [self._rec("a", "site", metadata={"sha256": sha_dst})], "assets")
+        self.assertEqual([x.kind for x in staged.losses],
+                         [mg.CORRUPTED_MEASUREMENT])
+        self.assertFalse(staged.ok)
+
+        # …and the byte count of that same `internet` record IS measured.
+        # Only the hash is exempt, because only the hash is identity.
+        cmp = mg.compare([self._rec("a", "internet", file_size_bytes=100)],
+                         [self._rec("a", "internet", file_size_bytes=250)],
+                         "assets")
+        self.assertEqual([x.kind for x in cmp.losses],
+                         [mg.CORRUPTED_MEASUREMENT])
+
+    def test_one_record_can_carry_a_corruption_AND_an_edit(self):
+        """⭐ The verdict is per FIELD. All-or-nothing per record would
+        either publish the stale number or refuse the real edit."""
+        cmp = mg.compare(
+            [self._rec("a", "site", file_size_bytes=100, title="corrected")],
+            [self._rec("a", "site", file_size_bytes=250, title="old")],
+            "assets")
+        self.assertEqual([(x.kind, x.key) for x in cmp.losses],
+                         [(mg.CORRUPTED_MEASUREMENT, "file_size_bytes")])
+        self.assertEqual([(x.kind, x.key) for x in cmp.changes],
+                         [(mg.CHANGED_VALUE, "title")])
+
+    def test_a_disputed_root_refuses_rather_than_permits(self):
+        """`source_root` is content, so the two sides can disagree about
+        it. The union is taken: a disagreement can add a refusal but can
+        never hide one, and a refusal is the recoverable mistake."""
+        cmp = mg.compare([self._rec("a", "hq", file_size_bytes=100)],
+                         [self._rec("a", "site", file_size_bytes=250)],
+                         "assets")
+        self.assertEqual([x.kind for x in cmp.losses],
+                         [mg.CORRUPTED_MEASUREMENT])
+
+    def test_a_record_with_no_source_root_is_treated_as_local(self):
+        """Posts carry no `source_root`, and neither did the profiles
+        before #572. Defaulting to a measurable root would refuse every
+        post edit."""
+        cmp = mg.compare([{"id": "a", "title": "new"}],
+                         [{"id": "a", "title": "old"}], "posts")
+        self.assertEqual(cmp.losses, [])
+        self.assertTrue(cmp.ok)
+
+
+class TestKindMatchesItsTitleTemplate(unittest.TestCase):
+    """#1314 — `post_kind` is claimed to disagree with the title template
+    that produced the post, on 228 site_a posts.
+
+    ⛔ THE FIGURE DID NOT REPRODUCE, AND THE PREMISE BEHIND IT IS WRONG.
+    Re-running each kind's OWN formatter over each post's own fields, a
+    FRESH ASSEMBLY of site_a (1,103 posts, 11 kinds) disagrees on ZERO.
+    The generator is self-consistent, so "the assembler assigns
+    `post_kind` inconsistently with the template it then applies" is
+    refuted, and no id is being fed by a wrong kind.
+
+    The committed `studio-a.posts.json` does disagree, on 374 rather than
+    228, and none of the three causes is a generator defect:
+
+      244 `asset_group` posts carry a collection-chunk title (230 of them
+          exactly `{collection}: {team} {theme}`). The group pass emits
+          only `title_group_set` / `title_group_bundle`, so these are
+          from an older generator.
+       83 `solo_showcase` and `multi_asset` posts carry titles AUTHORED
+          BY UPGRADE DOCUMENTS (`added-posts`, `mature-posts`), which no
+          template produced and none should.
+       47 `revision_*` and `video_*` posts embed a member asset's title
+          as it was BEFORE the HQ replacement renamed the asset.
+
+    All three are the same underlying fact: the committed posts profile
+    is a frozen historical composition of 863 posts where the assembler
+    now emits 1,103, which `retitle_posts` already records. This test
+    pins the half that is checkable and permanent.
+    """
+
+    KINDS = 11
+
+    @classmethod
+    def setUpClass(cls):
+        raw = json.loads((PROFILES / "studio-a.assets.json")
+                         .read_text(encoding="utf-8"))
+        cls.assets = {a["id"]: a for a in raw}
+        records = sa.asset_records_from_profile(raw, PROFILES / "studio-a.assets.json")
+        cls.posts = sa.derive_posts(records)
+        cls.flavours = {f[:1].upper() + f[1:] for f in sa.ALL_SOLO_FLAVORS}
+
+    def _agrees(self, post):
+        """True when the post's title is what its kind's formatter makes.
+
+        ⚠️ Returns None for a kind this test does not know, so a NEW kind
+        fails `test_every_kind_is_covered` instead of passing silently.
+        """
+        kind = post.get("post_kind")
+        title = sa.strip_part_suffix(post.get("title") or "")
+        members = [self.assets[i] for i in (post.get("asset_ids") or ())
+                   if i in self.assets]
+        if kind == "asset_group":
+            anchors = {sa.title_group_set(m["title"]) for m in members}
+            anchors |= {sa.title_group_bundle(m["title"]) for m in members}
+            return title in {sa.clean_dashes(a) for a in anchors}
+        if kind == "multi_asset":
+            return title.startswith(
+                f"{post.get('collection_name')}: {post.get('team_name')} ")
+        if kind == "solo_showcase":
+            return ": " in title and title.split(": ", 1)[0] in self.flavours
+        if kind == "team_roundup":
+            return title == sa.title_team_roundup(post.get("team_name") or "")
+        if kind == "project_sprint":
+            return sa.sprint_label_from_title(
+                post.get("collection_name") or "", title) in sa.SPRINT_LABELS
+        if kind == "cinematics_showreel":
+            return sa.reel_label_from_title(title) in sa.REEL_LABELS
+        for prefix, table in (("revision_", sa.REVISION_TITLES),
+                              ("video_", sa.VIDEO_TITLES)):
+            if kind and kind.startswith(prefix):
+                tmpl = table.get(kind[len(prefix):])
+                return bool(tmpl) and any(
+                    title == sa.clean_dashes(tmpl.format(title=m["title"]))
+                    for m in members)
+        return None
+
+    def test_a_fresh_assembly_has_ZERO_disagreements(self):
+        """⭐ #1314's acceptance, as a permanent invariant rather than a
+        one-off audit. It passes today; what it is here for is the next
+        title edit, which is exactly how #1306 broke the sprint-label
+        parse."""
+        bad = [(p["post_kind"], p["title"]) for p in self.posts
+               if self._agrees(p) is False]
+        self.assertEqual(bad, [], f"{len(bad)} post(s) disagree")
+
+    def test_every_kind_is_covered(self):
+        """⛔ A kind this test does not recognise reads as "no
+        disagreement", which is the shape of a gate that cannot fail. The
+        count is asserted so a new kind has to come here first."""
+        kinds = {p["post_kind"] for p in self.posts}
+        self.assertEqual(len(kinds), self.KINDS, sorted(kinds))
+        unknown = {p["post_kind"] for p in self.posts
+                   if self._agrees(p) is None}
+        self.assertEqual(unknown, set())
+
+    def test_the_check_can_actually_fail(self):
+        """The denominator. A test that only ever sees agreement proves
+        nothing about its own ability to see disagreement."""
+        good = dict(self.posts[0])
+        self.assertIsNot(self._agrees(good), False)
+        self.assertFalse(self._agrees({**good, "title": "not a template"}))
+
+
+class TestBundleIdentity(unittest.TestCase):
+    """#1310 — a bundle's id named ONE MEMBER, not the bundle.
+
+    ⛔ NOT THE COLLISION #1293 WAS. Measured on the committed profile,
+    863 rows under 863 distinct ids and zero collisions, because the
+    bundle loop partitions its cluster into DISJOINT chunks so two
+    bundles cannot share an anchor. The defect is that the key names an
+    accompanying value rather than an identifying one (ADR 0098).
+    """
+
+    def test_the_key_is_the_membership_and_nothing_else(self):
+        self.assertEqual(sa.bundle_post_id(["a", "b", "c"]),
+                         sa.stable_uuid("post", "bundle", "a", "b", "c"))
+
+    def test_member_ORDER_does_not_change_the_id(self):
+        """A bundle is a set of assets. Reordering them is a
+        presentation change, and the curation reorders 383 posts."""
+        self.assertEqual(sa.bundle_post_id(["c", "a", "b"]),
+                         sa.bundle_post_id(["a", "b", "c"]))
+
+    def test_a_different_membership_is_a_different_bundle(self):
+        self.assertNotEqual(sa.bundle_post_id(["a", "b"]),
+                            sa.bundle_post_id(["a", "b", "c"]))
+
+    def test_it_does_not_depend_on_anything_outside_the_membership(self):
+        """⭐ THE POINT, AND IT IS MEASURABLE. The old key was the
+        chunk's most-recent member by `updated_at`, while the cluster
+        sorts by `created_at` — two independent fields. So editing one
+        asset's `updated_at`, which changes no membership at all, moved a
+        bundle id: measured on studio-a, 1 of 340 bundle ids moved under
+        the anchor key and 0 under this one."""
+        ids = ["a", "b", "c"]
+        self.assertEqual(sa.bundle_post_id(ids), sa.bundle_post_id(list(ids)))
+        # A generator is accepted, and consumed once.
+        self.assertEqual(sa.bundle_post_id(i for i in ids),
+                         sa.bundle_post_id(ids))
+
+    def test_multi_asset_is_a_migrated_kind_and_needs_no_title_parse(self):
+        """The other three kinds recover a label from the title, so a
+        wording change can move an id. A bundle's key is its membership,
+        so there is nothing to parse and nothing to break."""
+        self.assertIn("multi_asset", mpi.MIGRATED_KINDS)
+        post = {"id": "x", "post_kind": "multi_asset",
+                "asset_ids": ["a", "b"], "title": "anything at all"}
+        self.assertEqual(mpi.derived_id(post), sa.bundle_post_id(["a", "b"]))
+        post["title"] = "something completely different"
+        self.assertEqual(mpi.derived_id(post), sa.bundle_post_id(["a", "b"]))
+
+
+class TestMigrationDocumentAccumulates(unittest.TestCase):
+    """#1310 — the mapping document is how a publish tells a MIGRATION
+    from a LOSS (ADR 0097), and a second migration replaced it."""
+
+    def test_a_second_migration_keeps_the_first_ones_moves(self):
+        prior = [{"old_id": "A", "new_id": "B", "post_kind": "team_roundup",
+                  "title": "t", "members": 2}]
+        fresh = [{"old_id": "X", "new_id": "Y", "post_kind": "multi_asset",
+                  "title": "u", "members": 3}]
+        out = mpi.accumulate_moves(prior, fresh)
+        self.assertEqual(sorted((m["old_id"], m["new_id"]) for m in out),
+                         [("A", "B"), ("X", "Y")])
+
+    def test_a_chained_move_is_COMPOSED_to_its_destination(self):
+        """⭐ The published site holds A. Recording A->B and B->C leaves
+        the reader to compose them; what it can look up is A->C."""
+        prior = [{"old_id": "A", "new_id": "B", "post_kind": "team_roundup",
+                  "title": "t", "members": 2}]
+        fresh = [{"old_id": "B", "new_id": "C", "post_kind": "team_roundup",
+                  "title": "t", "members": 2}]
+        out = mpi.accumulate_moves(prior, fresh)
+        self.assertEqual([(m["old_id"], m["new_id"]) for m in out], [("A", "C")])
+
+    def test_the_shipped_document_still_holds_the_1293_moves(self):
+        doc = json.loads((UPGRADES / "post-id-migration.studio-a.json")
+                         .read_text(encoding="utf-8"))
+        kinds = collections.Counter(m["post_kind"] for m in doc["moves"])
+        self.assertEqual(kinds["team_roundup"], 29)
+        self.assertEqual(kinds["project_sprint"], 35)
+        self.assertEqual(kinds["cinematics_showreel"], 4)
+        self.assertEqual(kinds["multi_asset"], 107)
+
+    def test_no_upgrade_document_holds_a_stale_post_id(self):
+        """⛔ `mature-posts.site_a.json` held two `multi_asset` ids under
+        the old key. `merge_posts` keys on the id, so the profile no
+        longer having them meant the next run MERGED THEM BACK IN and
+        site_a went 863 -> 865 with two duplicated posts."""
+        for path in sorted(UPGRADES.glob("*-posts.site_*.json")):
+            rows = json.loads(path.read_text(encoding="utf-8"))
+            for row in rows:
+                if row.get("post_kind") not in mpi.MIGRATED_KINDS:
+                    continue
+                self.assertEqual(row["id"], mpi.derived_id(row),
+                                 f"{path.name}: {row['id']} does not derive")
+
+
+class TestPostCuration(unittest.TestCase):
+    """#1309 — the hand-made feed ordering, reproduced by the build."""
+
+    @staticmethod
+    def _post(pid, **kw):
+        base = {"id": pid, "title": f"post {pid}", "post_kind": "team_roundup",
+                "asset_ids": ["a1", "a2"], "created_at": "2025-01-01T00:00:00Z",
+                "updated_at": "2025-01-01T00:00:00Z"}
+        base.update(kw)
+        return base
+
+    def test_merge_posts_SKIPS_an_existing_post(self):
+        """⛔ THE TRAP, STATED AS A TEST. `apply_upgrade` discovers
+        `{stem}-posts.{site}.json` documents and hands them to
+        `merge_posts`, so filing the curation under that convention is
+        the obvious move. Every curated post already exists, so all of
+        them would be skipped and the run would report success.
+
+        This test exists so that if anyone ever routes curation through
+        `merge_posts`, something goes red instead of quiet."""
+        posts = [self._post("p1", created_at="2025-01-01T00:00:00Z")]
+        n = up.merge_posts(posts, [self._post("p1", created_at="2026-06-06T00:00:00Z")])
+        self.assertEqual(n, 0)
+        self.assertEqual(posts[0]["created_at"], "2025-01-01T00:00:00Z")
+
+    def test_curation_amends_a_post_that_already_exists(self):
+        posts = [self._post("p1")]
+        n_posts, n_vals, warn = up.apply_post_curation(posts, {"curate": [
+            {"id": "p1", "created_at": "2026-06-06T00:00:00Z",
+             "asset_ids": ["a2", "a1"]}]})
+        self.assertEqual((n_posts, n_vals, warn), (1, 2, []))
+        self.assertEqual(posts[0]["created_at"], "2026-06-06T00:00:00Z")
+        self.assertEqual(posts[0]["asset_ids"], ["a2", "a1"])
+
+    def test_member_ORDER_is_the_thing_being_reproduced(self):
+        """383 of the 388 curated memberships hold the same assets in a
+        different order. Comparing them as SETS would call the entire
+        hero placement a no-op."""
+        posts = [self._post("p1", asset_ids=["a1", "a2", "a3"])]
+        up.apply_post_curation(posts, {"curate": [
+            {"id": "p1", "asset_ids": ["a3", "a1", "a2"]}]})
+        self.assertEqual(posts[0]["asset_ids"], ["a3", "a1", "a2"])
+
+    def test_only_the_fields_NAMED_in_an_entry_are_written(self):
+        posts = [self._post("p1", title="kept", description="kept too")]
+        up.apply_post_curation(posts, {"curate": [
+            {"id": "p1", "created_at": "2026-06-06T00:00:00Z"}]})
+        self.assertEqual(posts[0]["title"], "kept")
+        self.assertEqual(posts[0]["description"], "kept too")
+
+    def test_a_key_outside_the_closed_list_is_not_written(self):
+        """The document is hand-recovered from backups. A typo'd key that
+        silently created a new field on 841 posts would be invisible."""
+        posts = [self._post("p1")]
+        up.apply_post_curation(posts, {"curate": [
+            {"id": "p1", "titel": "typo", "post_kind": "solo_showcase"}]})
+        self.assertNotIn("titel", posts[0])
+        self.assertEqual(posts[0]["post_kind"], "team_roundup")
+
+    def test_a_curated_post_that_no_longer_exists_is_reported_not_created(self):
+        """⛔ The document carries values, not membership or kind. It
+        cannot build a post, so it must not pretend to."""
+        posts = [self._post("p1")]
+        n_posts, n_vals, warn = up.apply_post_curation(posts, {"curate": [
+            {"id": "gone", "created_at": "2026-06-06T00:00:00Z"}]})
+        self.assertEqual((n_posts, n_vals), (0, 0))
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(len(warn), 1)
+        self.assertIn("gone", warn[0])
+
+    def test_it_is_idempotent(self):
+        posts = [self._post("p1")]
+        doc = {"curate": [{"id": "p1", "created_at": "2026-06-06T00:00:00Z"}]}
+        first = up.apply_post_curation(posts, doc)
+        snapshot = json.loads(json.dumps(posts))
+        second = up.apply_post_curation(posts, doc)
+        self.assertEqual(first[:2], (1, 1))
+        self.assertEqual(second[:2], (0, 0))
+        self.assertEqual(posts, snapshot)
+
+    def test_it_never_creates_deletes_or_reorders_posts(self):
+        posts = [self._post("p1"), self._post("p2"), self._post("p3")]
+        up.apply_post_curation(posts, {"curate": [
+            {"id": "p3", "created_at": "2026-06-06T00:00:00Z"},
+            {"id": "p1", "created_at": "2026-06-06T00:00:00Z"}]})
+        self.assertEqual([p["id"] for p in posts], ["p1", "p2", "p3"])
+
+    def test_membership_drift_is_reported_rather_than_silently_applied(self):
+        """⚠️ The document holds values, not reasoning. If the assembler
+        later changes a post's membership, the curated order and date go
+        on being applied to something else and nothing would notice.
+        `pipeline_members` is what makes that visible."""
+        posts = [self._post("p1", asset_ids=["a1", "a9"])]
+        doc = {"curate": [{"id": "p1", "created_at": "2026-06-06T00:00:00Z",
+                           "pipeline_members": up._members_digest(["a1", "a2"])}]}
+        n_posts, n_vals, warn = up.apply_post_curation(posts, doc)
+        self.assertEqual(len(warn), 1)
+        self.assertIn("membership has moved", warn[0])
+        # It still applies. The curation is the owner's decision; this is
+        # a report, not a veto.
+        self.assertEqual((n_posts, n_vals), (1, 1))
+        self.assertEqual(posts[0]["created_at"], "2026-06-06T00:00:00Z")
+
+    def test_a_matching_membership_digest_is_silent(self):
+        posts = [self._post("p1", asset_ids=["a2", "a1"])]
+        doc = {"curate": [{"id": "p1", "created_at": "2026-06-06T00:00:00Z",
+                           "pipeline_members": up._members_digest(["a1", "a2"])}]}
+        _, _, warn = up.apply_post_curation(posts, doc)
+        self.assertEqual(warn, [])
+
+    def test_the_shipped_document_carries_no_title(self):
+        """⛔⛔ THE MEASUREMENT THAT DECIDED THIS DOCUMENT'S CONTENT.
+        The published posts.json disagrees with the pipeline on 780
+        titles and NOT ONE is a hand edit: 774 are #1306's rewrite and 6
+        are the #1293 collision dedupe. A plain published-vs-pipeline
+        diff would have codified all 780 and reverted #1306 on 774 posts,
+        and it would have looked like it worked."""
+        doc = json.loads((UPGRADES / "post-curation.site_a.json")
+                         .read_text(encoding="utf-8"))
+        keys = {k for e in doc["curate"] for k in e}
+        self.assertEqual(keys - {"id", "pipeline_members"},
+                         set(up.CURATABLE_FIELDS))
+        self.assertNotIn("title", keys)
+
+    def test_the_shipped_document_never_changes_a_MEMBERSHIP(self):
+        """⛔⛔ Curating `asset_ids` on a `team_roundup` or
+        `project_sprint` changes what its id should be, because those ids
+        derive from membership (ADR 0098). The curation is hero
+        PLACEMENT: every one of its 383 memberships is a reordering of
+        the assets the assembler already put there.
+
+        The five that changed the SET were excluded. They are not edits:
+        they go 10 members to 8, 8 to 6, 8 to 7, 9 to 6 and 10 to 5, and
+        they are the losing rows of the #1293 collision, which the
+        published feed kept under the winner's id."""
+        doc = json.loads((UPGRADES / "post-curation.site_a.json")
+                         .read_text(encoding="utf-8"))
+        posts = {p["id"]: p for p in json.loads(
+            (PROFILES / "studio-a.posts.json").read_text(encoding="utf-8"))}
+        for e in doc["curate"]:
+            if "asset_ids" not in e:
+                continue
+            self.assertEqual(
+                sorted(e["asset_ids"]),
+                sorted(posts[e["id"]].get("asset_ids") or ()),
+                f"{e['id']} curates a different membership, not an order")
+
+    def test_the_shipped_document_curates_only_posts_the_profile_holds(self):
+        doc = json.loads((UPGRADES / "post-curation.site_a.json")
+                         .read_text(encoding="utf-8"))
+        have = {p["id"] for p in json.loads(
+            (PROFILES / "studio-a.posts.json").read_text(encoding="utf-8"))}
+        missing = [e["id"] for e in doc["curate"] if e["id"] not in have]
+        self.assertEqual(missing, [])
 
 
 class TestManifestReconcile(unittest.TestCase):

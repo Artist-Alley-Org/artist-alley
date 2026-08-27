@@ -63,11 +63,11 @@ SEED_MODULES = [
 TEST_MODULE = "test_dataset_upgrade"
 
 # Floor, not a target. The suite held 150 tests when this gate landed,
-# 170 after sprint 14c and 179 after #1301's refusal tests.
-# Raise it when a batch of tests lands; never lower it to make a red
-# run go green — a dropped test is the thing this number exists to
-# catch.
-MIN_TESTS = 175
+# 170 after sprint 14c, 179 after #1301's refusal tests and 241 after
+# sprint 14e. Raise it when a batch of tests lands; never lower it to
+# make a red run go green — a dropped test is the thing this number
+# exists to catch.
+MIN_TESTS = 235
 
 
 def _summary(line: str) -> None:

@@ -61,7 +61,12 @@ UPGRADES = Path(__file__).resolve().parents[1] / "upgrades"
 DEFAULT_PROFILES = ("studio-a.posts.json", "studio-b.posts.json",
                     "dataset.posts.json")
 
-MIGRATED_KINDS = ("team_roundup", "project_sprint", "cinematics_showreel")
+# `multi_asset` joins the three narrative kinds (#1310). It is the
+# easiest of the four and the only one that needs no title parse: a
+# bundle's key is its membership and nothing else, so there is no label
+# to recover and no way for a wording change to move an id.
+MIGRATED_KINDS = ("team_roundup", "project_sprint", "cinematics_showreel",
+                  "multi_asset")
 
 
 def detect_format(text: str, default: int = 1) -> tuple[int, str]:
@@ -130,6 +135,10 @@ def derived_id(post: dict) -> str:
                 f"{post['id']}: recovered sprint label {label!r} is not one of "
                 f"{list(sa.SPRINT_LABELS)}")
         return sa.sprint_post_id(project, label, asset_ids)
+
+    if kind == "multi_asset":
+        # No title parse: membership is the whole key.
+        return sa.bundle_post_id(asset_ids)
 
     if kind == "cinematics_showreel":
         # title: title_showreel(reel_label)
@@ -212,6 +221,120 @@ def apply(posts: list[dict], moves: list[dict]) -> int:
             post["id"] = derived_id(post)
             changed += 1
     return changed
+
+
+# The curation document (#1309) is keyed on post id, so a migration
+# invalidates it silently: every curated post would simply stop being
+# found and 1,513 hand-made values would vanish with one warning line per
+# post. The mapping is right here, so carry it rather than detect it.
+PROFILE_SITE = {"studio-a": "site_a", "studio-b": "site_b"}
+
+
+def accumulate_moves(existing: list[dict], fresh: list[dict]) -> list[dict]:
+    """Fold a new migration into the mapping a previous one recorded.
+
+    ⛔ THE DOCUMENT MUST NOT BE REPLACED, AND IT WAS. Its whole job is to
+    let a publish tell a MIGRATION from a LOSS (ADR 0097): the published
+    site still holds the ids from every earlier migration, so a document
+    that only describes the latest one makes all the earlier ones look
+    like deleted records. #1293 moved 68 ids and #1310 moves 107; a
+    straight overwrite drops the 68 and the published site_a can no
+    longer be reconciled at all.
+
+    ⭐ CHAINS ARE COMPOSED, NOT LISTED. If an id moved A -> B before and
+    now moves B -> C, the reader needs A -> C, because A is what the
+    published site holds. Recording both hops would leave the reader to
+    do the composition, and the one that matters is the one the site can
+    actually look up.
+    """
+    fresh_by_old = {m["old_id"]: m for m in fresh}
+    out: list[dict] = []
+    chained: set[str] = set()
+    for prior in existing:
+        hop = fresh_by_old.get(prior["new_id"])
+        if hop is None:
+            out.append(prior)
+            continue
+        chained.add(hop["old_id"])
+        out.append({**hop, "old_id": prior["old_id"]})
+    out.extend(m for m in fresh if m["old_id"] not in chained)
+    return sorted(out, key=lambda m: m["old_id"])
+
+
+def migrate_added_posts(profile_stem: str, upgrades: Path) -> list[tuple[Path, int]]:
+    """Re-derive ids in the `{stem}-posts.<site>.json` upgrade documents.
+
+    ⛔ THESE DOCUMENTS CARRY POST IDS TOO, and `merge_posts` keys on them.
+    A migration that moved only the profile left `mature-posts.site_a.json`
+    holding two `multi_asset` ids under the old key: the profile no longer
+    had them, so the next `apply_upgrade` MERGED THEM BACK IN as new posts
+    and site_a went from 863 posts to 865, two of them duplicates of posts
+    already there under their derived ids. `--check` caught it, which is
+    the gate working.
+
+    ⭐ The id is RE-DERIVED from each record rather than looked up in the
+    move list. These documents hold whole posts, so the content that
+    defines the id is right there, and a lookup would silently skip a row
+    the profile happens not to hold.
+    """
+    site = PROFILE_SITE.get(profile_stem)
+    if site is None:
+        return []
+    out: list[tuple[Path, int]] = []
+    for path in sorted(upgrades.glob(f"*-posts.{site}.json")):
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(rows, list):
+            continue
+        moved = 0
+        for row in rows:
+            if row.get("post_kind") not in MIGRATED_KINDS:
+                continue
+            new_id = derived_id(row)
+            if new_id != row["id"]:
+                row["id"] = new_id
+                moved += 1
+        if moved:
+            path.write_text(json.dumps(rows, indent=1, ensure_ascii=False) + "\n",
+                            encoding="utf-8")
+            out.append((path, moved))
+    return out
+
+
+def migrate_curation(moves: list[dict], profile_stem: str,
+                     upgrades: Path) -> tuple[Path, int] | None:
+    """Re-key `post-curation.<site>.json` onto the moved ids.
+
+    Returns (path, entries_rekeyed), or None when there is no document.
+
+    ⛔ A curated id that does NOT move is left alone, and an entry whose
+    new id is already used by another entry is refused rather than
+    merged: two curations under one id is the same coin toss the id
+    migration exists to remove.
+    """
+    site = PROFILE_SITE.get(profile_stem)
+    if site is None:
+        return None
+    path = upgrades / f"post-curation.{site}.json"
+    if not path.is_file():
+        return None
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    by_old = {m["old_id"]: m["new_id"] for m in moves}
+    rekeyed = 0
+    for entry in doc.get("curate", ()):
+        new_id = by_old.get(entry["id"])
+        if new_id is None:
+            continue
+        entry["id"] = new_id
+        rekeyed += 1
+    ids = [e["id"] for e in doc.get("curate", ())]
+    if len(set(ids)) != len(ids):
+        raise Unresolvable(
+            f"{path.name}: re-keying would put two curation entries under one "
+            f"id; refusing to write")
+    doc["curate"] = sorted(doc.get("curate", ()), key=lambda e: e["id"])
+    path.write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+    return path, rekeyed
 
 
 def reconcile(moves: list[dict], published: Path) -> int:
@@ -324,7 +447,15 @@ def main() -> int:
                 "id on the sample's ANCHOR — the most-recent member — which does "
                 "not identify the post. Different roundups derived one id, and "
                 "`aa seed` keys on the stable id, so all but one of a colliding "
-                "set could never be seeded.",
+                "set could never be seeded. multi_asset joined them in #1310: no "
+                "bundle ever collided, because the loop partitions its cluster "
+                "into disjoint chunks, but its id still named one member rather "
+                "than the post.",
+                "⛔ THIS DOCUMENT ACCUMULATES. The published site holds the ids "
+                "from every earlier migration, so a run that replaced this file "
+                "would make all the previous moves look like deleted records. A "
+                "chained id is composed to its final destination, because the "
+                "old id is what the site can actually look up.",
                 "The new key is the post's MEMBERSHIP. This document is the "
                 "old->new mapping, so a publish that finds the destination "
                 "holding ids the source no longer has can tell a migration from "
@@ -333,7 +464,10 @@ def main() -> int:
                 "changed.",
             ],
             "profile": path.name,
-            "moves": sorted(moves, key=lambda m: m["old_id"]),
+            "moves": accumulate_moves(
+                (json.loads(doc_path.read_text(encoding="utf-8")).get("moves", [])
+                 if doc_path.is_file() else []),
+                moves),
         }
         doc_path.parent.mkdir(parents=True, exist_ok=True)
         doc_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n",
@@ -344,6 +478,15 @@ def main() -> int:
                         encoding="utf-8")
         print(f"  wrote {path} ({changed} ids moved)", file=sys.stderr)
         print(f"  wrote {doc_path}", file=sys.stderr)
+
+        for apath, n_moved in migrate_added_posts(path.stem.split(".")[0], UPGRADES):
+            print(f"  wrote {apath} ({n_moved} id(s) re-derived)", file=sys.stderr)
+
+        curated = migrate_curation(moves, path.stem.split(".")[0], UPGRADES)
+        if curated:
+            cpath, n_rekeyed = curated
+            print(f"  wrote {cpath} ({n_rekeyed} curation entr(ies) re-keyed)",
+                  file=sys.stderr)
 
     if args.check and total_moves:
         print(f"\nFAILED: {total_moves} post id(s) do not derive from the "

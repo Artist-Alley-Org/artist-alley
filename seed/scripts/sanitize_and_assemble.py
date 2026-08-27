@@ -88,6 +88,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# For PROFILE_ALIASES only. The alias mapping belongs beside the pass that
+# invalidates it, and spelling it out a second time here is how the two
+# drift — which is the #572 bug this loop exists to prevent.
+import apply_upgrade  # noqa: E402
+
 # -----------------------------------------------------------------------------
 # Studio split — by project
 # -----------------------------------------------------------------------------
@@ -405,6 +412,27 @@ def showreel_post_id(studio_key: str, reel_label: str,
                      asset_ids: Iterable[str]) -> str:
     return stable_uuid("post", "showreel", studio_key, reel_label,
                        *sorted(asset_ids))
+
+
+# A bundle keyed on its anchor is the same defect one step removed, and
+# #1310 is the correctness half rather than the live-hazard half:
+# measured on the committed profile, 863 rows under 863 distinct ids and
+# ZERO collisions, because the bundle loop partitions its cluster into
+# DISJOINT chunks and two bundles therefore cannot share an anchor.
+#
+# ⭐ What it is instead is UNSTABLE. The anchor is the chunk's most
+# recent member, so it says nothing about the other members: re-chunk the
+# cluster and a bundle keeps its id while its membership changes under
+# it, or loses it to a neighbour. One asset added to a cluster re-cut
+# every chunk boundary after it and moved every id that followed.
+#
+# Membership alone is the key here, with no cluster name in front of it:
+# clusters partition the asset pool and chunks partition a cluster, so no
+# two bundles can share a member and no two can collide. Adding
+# `(collection, team, asset_type)` would only make the id move when a
+# member's collection was renamed, which is not a change of identity.
+def bundle_post_id(asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "bundle", *sorted(asset_ids))
 
 
 SPRINT_LABELS = ("sprint 12", "sprint 13", "sprint 14", "milestone alpha",
@@ -1431,7 +1459,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
                     f"{len(chunk)} {atype} assets pulled together for review.")
             posts.append(_post(
                 members=chunk,
-                id=stable_uuid("post", "bundle", anchor.id),
+                id=bundle_post_id(a.id for a in chunk),
                 title=title,
                 description=desc,
                 author_username=anchor.owner_username,
@@ -2219,7 +2247,7 @@ def apply_dataset_upgrade(out: Path) -> int:
     # and none of the checks would have noticed, because nothing compares
     # an alias to its source. Re-copy after the upgrade so an alias is an
     # alias (#572).
-    for stem, alias in (("studio-a", "demo"), ("studio-b", "dev")):
+    for stem, alias in apply_upgrade.PROFILE_ALIASES:
         src, dst = out / f"{stem}.assets.json", out / f"{alias}.assets.json"
         if src.is_file():
             shutil.copyfile(src, dst)
