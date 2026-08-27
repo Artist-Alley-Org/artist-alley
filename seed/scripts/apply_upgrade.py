@@ -301,6 +301,22 @@ def apply_replacements(profile: list[dict],
         meta["filename"] = new_name
         meta["license"] = HQ_LICENSE
         meta["attribution"] = HQ_ATTRIBUTION
+        # ⛔ THE HASH HAS TO MOVE WITH THE FILE (#1302). This swapped
+        # every other field that describes the bytes — path, size,
+        # extension, title, licence, filename — and left
+        # `metadata.sha256` describing the file the record USED to be, so
+        # two records per site published the hash of a screenshot they no
+        # longer contain.
+        #
+        # ⚠️ AND IT IS SET, NEVER DROPPED. Dropping it would be honest
+        # about no longer knowing the value and would also block the next
+        # publish: the published manifest HAS the key, so its absence
+        # here reads as MISSING_KEY, which `manifest_guard` classifies as
+        # a LOSS and refuses. `kenney_hq.py sizes --profile` measures
+        # `newSha256` off the built pool for exactly the rows whose
+        # record carries a hash — two per site, not all 916.
+        if r.get("newSha256"):
+            meta["sha256"] = r["newSha256"]
 
         after = _composition(entry)
         if before != after:

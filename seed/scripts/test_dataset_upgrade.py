@@ -850,6 +850,59 @@ class TestCommittedUpgradeData(unittest.TestCase):
                         "the staged document carries a hash for it — that "
                         "would move its id on re-assembly")
 
+    # -- #1302: the hash moves with the file -------------------------
+
+    def test_a_repointed_record_carries_the_hash_of_its_pool_file(self):
+        """⛔ FAILED ON THE DATA IT SHIPPED WITH.
+
+        `apply_replacements` swapped every other field that describes the
+        bytes — path, size, extension, title, licence, filename — and left
+        `metadata.sha256` describing the file the record used to be. Two
+        records per site therefore published the hash of a screenshot they
+        no longer contain.
+
+        The oracle is `newSha256`, measured off a built pool by
+        `kenney_hq.py sizes --profile`. It exists on exactly the rows
+        whose record carries a hash, so the document did not have to grow
+        916 values to serve four.
+        """
+        for site, profiles in self.PROFILE_FOR.items():
+            reps = {r["id"]: r for r in json.loads(
+                (UPGRADES / f"kenney-hq-replacements.{site}.json").read_text())}
+            hashed = {i: r for i, r in reps.items() if "newSha256" in r}
+            self.assertEqual(len(hashed), 2,
+                             f"{site}: expected the two known repointed "
+                             "records that carry a hash")
+            for name in profiles:
+                recs = {r["id"]: r for r in json.loads(
+                    (PROFILES / f"{name}.assets.json").read_text())}
+                for rid, row in hashed.items():
+                    rec = recs[rid]
+                    self.assertEqual(rec["file_path"], row["new"])
+                    self.assertEqual(
+                        (rec.get("metadata") or {}).get("sha256"),
+                        row["newSha256"],
+                        f"{name}: {row['new']} carries the hash of the file "
+                        "it used to be")
+
+    def test_the_hash_is_corrected_and_never_dropped(self):
+        """Dropping the key would be honest about no longer knowing the
+        value, and would also refuse the next publish: the destination
+        HAS it, so its absence is MISSING_KEY, which manifest_guard
+        classifies as a LOSS."""
+        for site, profiles in self.PROFILE_FOR.items():
+            reps = [r for r in json.loads(
+                (UPGRADES / f"kenney-hq-replacements.{site}.json").read_text())
+                if "newSha256" in r]
+            for name in profiles:
+                recs = {r["id"]: r for r in json.loads(
+                    (PROFILES / f"{name}.assets.json").read_text())}
+                for row in reps:
+                    self.assertIn(
+                        "sha256", recs[row["id"]].get("metadata") or {},
+                        f"{name}: {row['new']} lost metadata.sha256 — "
+                        "publishing would be refused as a loss")
+
     def test_replacements_all_target_the_hq_pool(self):
         pool_names = {e["name"] for e in
                       hq.load_pool_manifest(UPGRADES / "kenney-hq-pool.json")}

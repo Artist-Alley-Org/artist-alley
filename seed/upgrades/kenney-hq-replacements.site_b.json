@@ -3320,6 +3320,7 @@
  {
   "id": "6108fd34-7c84-e3a3-e633-d2b3318ea8b6",
   "new": "images/kenney-hq/2d-assets-new-platformer-pack-character-purple-walk-a-39d6e2cf-512.png",
+  "newSha256": "6ef1e7569548507aeca4f112029bf3bf3c8a0f5326e833a983d7e08030f6037b",
   "newSize": 28809,
   "old": "images/internet/bradley-trainer-screenshot.png",
   "oldSize": 7302
@@ -3327,6 +3328,7 @@
  {
   "id": "cff5c497-36cc-9593-b8b6-e7ff28824cc5",
   "new": "images/kenney-hq/2d-assets-pattern-pack-lines-pattern-0007-90efc755-512.png",
+  "newSha256": "85aee341a1b7ca525a026662d0e51c41d43a98cf5f8d80d27b327f687ba87543",
   "newSize": 13245,
   "old": "images/internet/tank-1974.png",
   "oldSize": 4730

@@ -527,7 +527,39 @@ def verify_pool(pool_dir: Path, expected_names: set[str] | None = None) -> int:
     return 0
 
 
-def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool) -> int:
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def rows_needing_a_hash(profiles: list[Path]) -> set[str]:
+    """Record ids that carry a `metadata.sha256` (#1302).
+
+    A replacement repoints a record at a pool file but used to leave
+    `metadata.sha256` describing the file it USED to be — so two records
+    per site published the hash of a screenshot they no longer contain.
+    The fix is not to give all 916 replacement rows a hash to serve two
+    of them, and it is not to drop the key either: the published
+    manifest HAS it, so dropping it reads as MISSING_KEY and refuses the
+    next publish (`manifest_guard.py:34-43`).
+
+    So the doc carries `newSha256` exactly where the record it repoints
+    already carries a hash — two rows per site today, and automatically
+    the right rows if a record ever gains or loses one.
+    """
+    ids = set()
+    for p in profiles:
+        for rec in json.loads(p.read_text(encoding="utf-8")):
+            if (rec.get("metadata") or {}).get("sha256"):
+                ids.add(rec["id"])
+    return ids
+
+
+def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool,
+              profiles: list[Path] | None = None) -> int:
     """Re-measure `newSize` in a replacements document against a built pool.
 
     ⛔ WHY THIS IS A COMMAND AND NOT A ONE-OFF SCRIPT (#1294).
@@ -558,9 +590,10 @@ def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool) -> int:
     can stand as a gate. `--write` re-measures in place.
     """
     total_drift = 0
+    hashed_ids = rows_needing_a_hash(profiles or [])
     for doc in docs:
         rows = json.loads(doc.read_text(encoding="utf-8"))
-        drifted, absent = [], []
+        drifted, absent, hash_drift = [], [], []
         for r in rows:
             name = r["new"].rsplit("/", 1)[-1]
             f = pool_dir / name
@@ -575,6 +608,22 @@ def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool) -> int:
                 drifted.append((r["id"], name, r.get("newSize"), size))
                 if write:
                     r["newSize"] = size
+            # The hash follows the same rule as the size and for the same
+            # reason: it is a MEASUREMENT of a file the pipeline produces,
+            # so the pool is the only thing entitled to state it.
+            wants_hash = r["id"] in hashed_ids or "newSha256" in r
+            if wants_hash:
+                digest = sha256_of(f)
+                if digest != r.get("newSha256"):
+                    hash_drift.append((name, r.get("newSha256"), digest))
+                    if write:
+                        r["newSha256"] = digest
+            elif profiles and "newSha256" in r:
+                # The record stopped carrying a hash, so the row's is
+                # now describing nothing.
+                hash_drift.append((name, r["newSha256"], None))
+                if write:
+                    del r["newSha256"]
         print(f"\n{doc.name}", file=sys.stderr)
         print(f"  rows     : {len(rows):,}", file=sys.stderr)
         print(f"  drifted  : {len(drifted):,}", file=sys.stderr)
@@ -586,26 +635,33 @@ def cmd_sizes(pool_dir: Path, docs: list[Path], write: bool) -> int:
             print(f"     {was!s:>9} -> {now:<9} {name}", file=sys.stderr)
         if len(drifted) > 5:
             print(f"     … and {len(drifted) - 5:,} more", file=sys.stderr)
+        if profiles is not None:
+            print(f"  hashes   : {len(hash_drift):,} drifted of "
+                  f"{sum(1 for r in rows if r['id'] in hashed_ids):,} row(s) whose "
+                  "record carries one (#1302)", file=sys.stderr)
+            for name, was, now in hash_drift[:5]:
+                print(f"     {str(was)[:12]:>12} -> {str(now)[:12]:<12} {name}",
+                      file=sys.stderr)
         if absent:
             print("  FAIL     : a row naming a file the pool cannot produce "
                   "cannot be re-measured. Re-run `build`, or drop the row.",
                   file=sys.stderr)
             return 1
-        if write and drifted:
+        if write and (drifted or hash_drift):
             doc.write_text(
                 json.dumps(rows, indent=1, sort_keys=True, ensure_ascii=False)
                 + "\n", encoding="utf-8")
             print(f"  wrote {doc}", file=sys.stderr)
-        total_drift += len(drifted)
+        total_drift += len(drifted) + len(hash_drift)
 
     if total_drift and not write:
-        print(f"\nFAIL: {total_drift:,} newSize value(s) disagree with the "
+        print(f"\nFAIL: {total_drift:,} measurement(s) disagree with the "
               "pool. Re-run with --write, then apply_upgrade.py to carry "
               "them into the profiles.", file=sys.stderr)
         return 1
-    print(f"\nOK: every newSize matches the pool ({total_drift:,} rewritten)."
-          if write else "\nOK: every newSize matches the pool.",
-          file=sys.stderr)
+    print(f"\nOK: every measurement matches the pool ({total_drift:,} "
+          "rewritten)." if write else
+          "\nOK: every measurement matches the pool.", file=sys.stderr)
     return 0
 
 
@@ -679,6 +735,12 @@ def main() -> int:
     z.add_argument("--write", action="store_true",
                    help="re-measure in place (default: report and exit "
                         "non-zero if anything drifted)")
+    z.add_argument("--profile", type=Path, action="append", default=[],
+                   metavar="PROFILE", help="asset profile(s) the documents "
+                                           "repoint (repeatable). Given, the "
+                                           "pool's sha256 is measured for "
+                                           "every row whose record carries "
+                                           "one (#1302).")
 
     args = ap.parse_args()
     if args.cmd in ("build", "select") and not args.pack.is_dir():
@@ -700,7 +762,8 @@ def main() -> int:
                   "archive share. Run `kenney_hq.py build --pack <pack> "
                   "--out <dir>` first.", file=sys.stderr)
             return 2
-        return cmd_sizes(args.pool, args.replacements, args.write)
+        return cmd_sizes(args.pool, args.replacements, args.write,
+                         args.profile)
     return cmd_verify(args.pack, args.pool)
 
 
