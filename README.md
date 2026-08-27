@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Artist-Alley-Org/artist-alley?include_prereleases&sort=semver)](https://github.com/Artist-Alley-Org/artist-alley/releases)
 [![Docs](https://img.shields.io/badge/docs-artist--alley.org-7c3aed)](https://artist-alley.org)
+[![Try it with DropLive](https://droplive.io/badge/artist-alley.svg)](https://droplive.io/projects/artist-alley)
 
 A self-hosted **art review and archival tool for game studios**. Artist-first UX, reviewer-grade workflow, single-binary deploy.
 
