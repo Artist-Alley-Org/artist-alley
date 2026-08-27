@@ -645,11 +645,21 @@ before concluding the data is gone.
 Verify without changing anything:
 
 ```bash
-python3 seed/scripts/test_dataset_upgrade.py          # 31 tests, no share needed
+python3 seed/scripts/run_guard_suite.py               # the CI gate: imports + count + run
+python3 seed/scripts/test_dataset_upgrade.py          # the same suite, bare (no share needed)
 python3 seed/scripts/apply_upgrade.py --site site_a \
     --profile seed/profiles/studio-a.assets.json \
     --posts   seed/profiles/studio-a.posts.json --check
 ```
+
+`run_guard_suite.py` is what `.github/workflows/seed-guard.yml` runs on
+every push and every PR (#1300). It is the same suite either way — the
+wrapper adds the three things a bare `unittest.main()` cannot assert:
+that all ten seed modules import (any one of them failing takes the
+whole suite with it), that the collected count is above a floor, and
+that the number of tests that ran is printed rather than implied. Run
+the bare module when you want `-k` and test selection; run the wrapper
+when you want to know what CI will say.
 
 ## What's not in here yet
 
