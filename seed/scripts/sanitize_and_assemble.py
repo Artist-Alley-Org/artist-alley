@@ -429,6 +429,316 @@ def stable_int(n: int, *parts: str) -> int:
 
 
 # -----------------------------------------------------------------------------
+# Post titles (#1306)
+# -----------------------------------------------------------------------------
+#
+# ⛔ NO EM DASHES, AND NO GENERATED COUNTS.
+#
+# Measured on the shipped `studio-a.posts.json`: 863 posts, 781 of them
+# (90%) containing an em dash and 580 (67%) ending in a count the
+# generator produced — "— 4 assets", "— 6 drops", "— 2-part set". Nobody
+# writes a title that way, and the count is already on the card:
+# `PostCard.svelte` renders `CardKindBadge count={memberCount}` right
+# beside it, so the suffix repeated chrome sitting an inch away.
+#
+# ⛔ THE COUNT WAS ALSO LOAD-BEARING, WHICH IS WHY THIS IS NOT A DELETION.
+# Removing it outright collapses 128 studio-a titles into 44 groups and
+# 111 studio-b titles into 44 — three separate "Project Echo: Audio audio
+# bundle" posts, three "VFX sprint roundup" posts, and so on, because the
+# number was the only thing telling one chunk from the next. Each of
+# those templates therefore gains the LEAD ASSET instead, which is both
+# what a person would actually name the post after and a stronger
+# discriminator than a count: chunks are disjoint, so their leads differ
+# even when their sizes collide.
+#
+# Every function here is shared by the generator and by the in-place
+# retitle pass, so there is one definition of each title rather than a
+# template and a migration that can drift apart.
+
+# ⚠️ NEITHER OF THESE CLAIMS COMPLETENESS, deliberately. "…, the full
+# set" reads as a contradiction the moment `disambiguate_titles` has to
+# append "part 2" to it, and it did: two site_b groups share an anchor
+# title. The generator's own descriptions already call these "variants
+# and siblings kept together" and "assets across N types, delivered
+# together", so the titles say that instead.
+def title_group_set(anchor_title: str) -> str:
+    return f"{anchor_title} and variants"
+
+
+def title_group_bundle(anchor_title: str) -> str:
+    return f"{anchor_title} and siblings"
+
+
+def title_collection_chunk(collection: str, team: str, theme: str) -> str:
+    return f"{collection}: {team} {theme}"
+
+
+def title_solo(flavor: str, asset_title: str) -> str:
+    return f"{flavor[:1].upper()}{flavor[1:]}: {asset_title}"
+
+
+def title_team_roundup(team_name: str) -> str:
+    return f"{team_name} sprint roundup"
+
+
+def title_project_sprint(project_name: str, label: str) -> str:
+    return f"{project_name} {label}"
+
+
+def title_showreel(reel_label: str) -> str:
+    return f"Cinematics {reel_label}"
+
+
+# ⛔ THE INVERSES BELONG BESIDE THE FORMATTERS (#1306).
+#
+# `migrate_post_ids.derived_id` recovers a sprint `label` and a
+# `reel_label` FROM THE TITLE, because neither is stored anywhere else on
+# the post, and feeds them straight into `sprint_post_id` /
+# `showreel_post_id`. So a title format change is an identity concern for
+# exactly two post kinds, and #1306 broke the parse the moment it
+# retired the em dash — caught by `migrate_post_ids.py --check`, which
+# the guard suite runs.
+#
+# ⚠️ The ids do NOT move: the label recovered is the same label, so the
+# derivation's inputs are unchanged. What moved was the parser's ability
+# to find it. Keeping the inverse next to the formatter is what stops the
+# next title edit from being a silent id migration instead of a loud
+# parse failure.
+
+SOLO_FLAVORS = {
+    "image": ["new render", "color study", "lighting pass", "reference plate", "concept sketch"],
+    "3d": ["model drop", "topology pass", "PBR test", "WIP turntable", "asset ship"],
+    "audio": ["audio drop", "sfx test", "ambient bed", "score sketch", "VO take"],
+    "video": ["cinematic test", "edit pass", "previs sweep", "playblast", "shot reference"],
+    "document": ["briefing", "style guide", "pipeline note", "research doc", "spec draft"],
+    "font": ["type sample", "kerning check", "char set test", "weight comparison"],
+    "comic": ["storyboard panel", "page rough", "layout pass"],
+}
+
+# Flat, for the inverse: a solo title is "{asset} \u2014 {flavor}" and the
+# asset title can hold a dash of its own, so the only safe way to find
+# the split is to know what the flavours ARE.
+ALL_SOLO_FLAVORS = frozenset(
+    f for flavors in SOLO_FLAVORS.values() for f in flavors) | {"asset drop"}
+
+# The generated suffixes every retired template ended in. A closed
+# vocabulary: anything outside it is REPORTED rather than guessed at.
+_SUFFIX_RE = re.compile(
+    r" \u2014 \d+[- ](?P<what>part set|asset bundle|assets|drops|cuts)$")
+_SPRINT_SUFFIX_RE = re.compile(r" \u2014 \d+ assets across \d+ team\(s\)$")
+
+_PART_SUFFIX = re.compile(r", part \d+$")
+
+
+def strip_part_suffix(title: str) -> str:
+    """Remove the `, part N` a title may have gained from
+    `disambiguate_titles`. Idempotent, and a no-op on a title that never
+    collided."""
+    return _PART_SUFFIX.sub("", title)
+
+
+def sprint_label_from_title(project_name: str, title: str) -> str | None:
+    """Inverse of `title_project_sprint`. None when it does not match."""
+    head = strip_part_suffix(title)
+    prefix = f"{project_name} "
+    if not project_name or not head.startswith(prefix):
+        return None
+    return head[len(prefix):]
+
+
+def reel_label_from_title(title: str) -> str | None:
+    """Inverse of `title_showreel`. None when it does not match."""
+    head = strip_part_suffix(title)
+    prefix = "Cinematics "
+    if not head.startswith(prefix):
+        return None
+    return head[len(prefix):]
+
+
+# Keyed by the post_kind the generator writes, so the retitle pass and
+# the generator cannot disagree about which wording belongs to which post.
+VIDEO_TITLES = {
+    "dailies": "Dailies on {title}",
+    "cinematic_cut": "Cinematic cut of {title}",
+}
+
+REVISION_TITLES = {
+    "draft": "First draft of {title}",
+    "review": "Review pass on {title}",
+    "ship": "Signing off on {title}",
+}
+
+
+def clean_dashes(text: str) -> str:
+    """Drop the em dash from a title without dropping what it separated.
+
+    43 ASSET titles carry one — "Moby Dick — Herman Melville",
+    "DamagedHelmet — Khronos PBR test" — and they flow straight into the
+    solo, revision and video post titles, so a post-template fix alone
+    still leaves 37 site_a titles with a dash in them. In every one of
+    the 43 the dash separates a name from a qualifier, which is what a
+    comma does in a catalogue: the meaning survives and the tell does not.
+    """
+    # ⚠️ THE SURROUNDING SPACES COME OFF FIRST. Replacing the character
+    # before the spaces leaves "Big Buck Bunny , 720p surround", which is
+    # a worse tell than the dash was.
+    return (text.replace(" \u2014 ", ", ")
+                .replace("\u2014 ", ", ")
+                .replace(" \u2014", ", ")
+                .replace("\u2014", ", "))
+
+
+def disambiguate_titles(posts: list[dict]) -> int:
+    """Number the posts that would otherwise share a title.
+
+    ⛔ THIS IS WHAT MAKES DROPPING THE COUNTS SAFE. The generated count
+    was load-bearing: 128 studio-a titles and 111 studio-b titles
+    collapse into 44 groups each without it, because a chunk's size was
+    the only thing telling it from the next chunk of the same collection
+    and team.
+
+    So the count is replaced rather than deleted, by the thing a person
+    reaches for instead: "part two". It is shorter than a byte count, it
+    does not repeat the `CardKindBadge count={memberCount}` sitting
+    beside it on the card, and it is applied to the FINISHED document —
+    the same function on the generator's output and on the committed one,
+    so the two cannot disagree about which post is part two.
+
+    Ordering is by post id, which is derived from membership and is
+    therefore stable across a re-assembly; iteration order is not.
+    """
+    by_title: dict[str, list[dict]] = {}
+    for p in posts:
+        by_title.setdefault(p.get("title") or "", []).append(p)
+    renamed = 0
+    for title, group in by_title.items():
+        if len(group) < 2:
+            continue
+        # ⚠️ EVERY member is numbered, including the first. Leaving one
+        # bare reads as an oversight beside fourteen numbered siblings,
+        # and site_a really does have a fifteen-chunk family.
+        for n, post in enumerate(sorted(group, key=lambda x: x["id"]), start=1):
+            post["title"] = f"{title}, part {n}"
+            renamed += 1
+    return renamed
+
+
+def retitle_posts(posts: list[dict]) -> tuple[int, list[str]]:
+    """Re-title an ALREADY COMPOSED posts document in place (#1306).
+
+    Returns (changed, problems).
+
+    ⚠️ WHY THIS EXISTS RATHER THAN A RECOMPOSE. The shipped
+    `studio-a.posts.json` is not this module's output: a recompose emits
+    1,103 posts where the committed file holds 863, and `apply_upgrade`
+    already records that the two disagree on `created_at` for 840 of 861
+    shared ids. That divergence is its own issue (#1309); resolving it
+    here would hide a 240-post change inside a copy edit. So the
+    generator's wording is fixed above and applied to the existing
+    composition here, leaving membership, ids and timestamps untouched.
+
+    Every wording comes from the same helper the generator calls, so the
+    two cannot drift.
+    """
+    changed = 0
+    problems: list[str] = []
+    for post in posts:
+        kind = post.get("post_kind") or ""
+        old = post.get("title") or ""
+        coll = post.get("collection_name") or ""
+        team = post.get("team_name") or ""
+        new = None
+
+        # ⛔ DISPATCH ON THE TITLE'S OWN SHAPE, NOT ON `post_kind`.
+        # The two disagree in the committed data: 228 posts carry
+        # `post_kind: "asset_group"` while their title was written by the
+        # collection-chunk template ("Project Echo: Animation art drop
+        # — 4 assets"). Trusting the kind turned those into "..., the
+        # full set, part 15", which is both wrong about the post and
+        # nonsense to read. The suffix is what the generator actually
+        # produced, so it is what the inverse reads.
+        m = _SUFFIX_RE.search(old)
+        sprint = _SPRINT_SUFFIX_RE.search(old)
+        if m:
+            head = old[:m.start()]
+            what = m.group("what")
+            if what == "part set":
+                new = title_group_set(head)
+            elif what == "asset bundle":
+                new = title_group_bundle(head)
+            elif what == "drops":
+                new = title_team_roundup(
+                    head[:-len(" sprint roundup")]
+                    if head.endswith(" sprint roundup") else head)
+            elif what == "cuts":
+                label = reel_label_from_title(head)
+                new = title_showreel(label) if label is not None else head
+            elif what == "assets":
+                prefix = f"{coll}: {team} "
+                if coll and team and head.startswith(prefix):
+                    new = title_collection_chunk(coll, team,
+                                                 head[len(prefix):])
+                else:
+                    new = head
+        elif sprint:
+            head = old[:sprint.start()]
+            label = sprint_label_from_title(coll, head)
+            new = (title_project_sprint(coll, label)
+                   if label is not None else head)
+        elif kind == "solo_showcase":
+            # The flavour is a SUFFIX, so this splits on the LAST dash:
+            # an asset title carrying a dash of its own would otherwise
+            # be cut in half. Matched against the known flavours rather
+            # than "whatever follows the dash", so an asset title that
+            # merely looks like one cannot be mistaken for it.
+            head, sep, tail = old.rpartition(" — ")
+            if sep and tail in ALL_SOLO_FLAVORS:
+                new = title_solo(tail, head)
+        else:
+            # The prefix templates: their fixed wording comes FIRST, so
+            # they split on the first dash rather than the last.
+            pre_head, pre_sep, pre_tail = old.partition(" — ")
+            if pre_sep and kind.startswith("video_"):
+                tmpl = VIDEO_TITLES.get(kind[len("video_"):])
+                if tmpl:
+                    new = tmpl.format(title=pre_tail)
+            elif pre_sep and kind.startswith("revision_"):
+                tmpl = REVISION_TITLES.get(kind[len("revision_"):])
+                if tmpl:
+                    new = tmpl.format(title=pre_tail)
+
+        if new is None:
+            # ⛔ A post this pass cannot name is REPORTED, never left
+            # to be noticed later on the wall. Silently keeping the old
+            # title is how "zero em dashes" becomes a claim about the
+            # posts the pass happened to understand.
+            if "—" in old:
+                problems.append(
+                    f"{kind or '(no kind)'}: no template matched {old!r}; "
+                    "it falls through to the dash clean below, which is "
+                    "correct for a hand-written title but would hide a "
+                    "template this pass has stopped recognising")
+            continue
+        if new != old:
+            post["title"] = new
+            changed += 1
+
+    # The asset titles the templates embed carried 43 em dashes of their
+    # own, so a template-only fix still leaves 37 site_a post titles with
+    # one. Applied after the per-kind pass, and to EVERY title, so a post
+    # this pass could not name still comes out clean.
+    for post in posts:
+        cleaned = clean_dashes(post.get("title") or "")
+        if cleaned != post.get("title"):
+            post["title"] = cleaned
+            changed += 1
+
+    # LAST, on the finished document (see disambiguate_titles).
+    disambiguate_titles(posts)
+    return changed, problems
+
+
+# -----------------------------------------------------------------------------
 # Row transform — CSV → AA-shaped dict
 # -----------------------------------------------------------------------------
 
@@ -1041,12 +1351,12 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         collection = _dominant(members, "collection_name")
         team = _dominant(members, "team_name")
         if len(types_in_post) == 1:
-            title = f"{anchor.title} — {len(members)}-part set"
+            title = title_group_set(anchor.title)
             desc = (f"{len(members)}-piece {types_in_post[0]} set from "
                     f"{collection}, owned by {team}. Variants and siblings "
                     f"kept together as one delivery.")
         else:
-            title = f"{anchor.title} — {len(members)}-asset bundle"
+            title = title_group_bundle(anchor.title)
             desc = (f"{team} bundle for {collection}: {len(members)} assets "
                     f"across {', '.join(types_in_post)}, delivered together.")
         posts.append(_post(
@@ -1116,7 +1426,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
             collection, team, atype = key
             types_in_post = sorted({a.asset_type for a in chunk})
             theme = theme_by_type.get(atype, atype)
-            title = f"{collection}: {team} {theme} — {len(chunk)} assets"
+            title = title_collection_chunk(collection, team, theme)
             desc = (f"{team} working set for {collection}. "
                     f"{len(chunk)} {atype} assets pulled together for review.")
             posts.append(_post(
@@ -1139,15 +1449,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     # ---------------------------------------------------------------------
     # Pass 3: solo showcase posts for the genuinely standalone remainder
     # ---------------------------------------------------------------------
-    showcase_solo_titles = {
-        "image": ["new render", "color study", "lighting pass", "reference plate", "concept sketch"],
-        "3d": ["model drop", "topology pass", "PBR test", "WIP turntable", "asset ship"],
-        "audio": ["audio drop", "sfx test", "ambient bed", "score sketch", "VO take"],
-        "video": ["cinematic test", "edit pass", "previs sweep", "playblast", "shot reference"],
-        "document": ["briefing", "style guide", "pipeline note", "research doc", "spec draft"],
-        "font": ["type sample", "kerning check", "char set test", "weight comparison"],
-        "comic": ["storyboard panel", "page rough", "layout pass"],
-    }
+    showcase_solo_titles = SOLO_FLAVORS
 
     for asset in sorted(solo_pool, key=lambda x: x.id):
         title_options = showcase_solo_titles.get(asset.asset_type, ["asset drop"])
@@ -1158,7 +1460,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         posts.append(_post(
             members=[asset],
             id=stable_uuid("post", "solo", asset.id),
-            title=f"{asset.title} — {flavor}",
+            title=title_solo(flavor, asset.title),
             description=desc_lead,
             author_username=asset.owner_username,
             collection_name=asset.collection_name,
@@ -1178,11 +1480,11 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     # target (this used to be 350) manufactures single-asset posts and is
     # exactly what buried the real multi-asset work.
     revision_stages = [
-        ("draft", "Draft drop — {title}",
+        ("draft", REVISION_TITLES["draft"],
          "First-pass draft of {title}. Open for early feedback."),
-        ("review", "Review pass — {title}",
+        ("review", REVISION_TITLES["review"],
          "Review pass on {title}. Notes from {owner} attached in the thread."),
-        ("ship", "Ship gate — {title}",
+        ("ship", REVISION_TITLES["ship"],
          "Locking in {title}. Sign-off from approver: {reviewer}."),
     ]
     high_rated = sorted(
@@ -1244,7 +1546,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         types_in_post = sorted({a.asset_type for a in sample})
         projects_in_post = sorted({a.collection_name for a in sample})
 
-        title = f"{team_name} sprint roundup — {len(sample)} drops"
+        title = title_team_roundup(team_name)
         desc = (f"{team_name} team output across {len(projects_in_post)} project(s): "
                 f"{', '.join(projects_in_post[:3])}"
                 f"{'...' if len(projects_in_post) > 3 else ''}. "
@@ -1301,7 +1603,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
             (stable_int(len(sprint_labels), "sprint-label", project_name) + sweep)
             % len(sprint_labels)
         ]
-        title = f"{project_name} {label} — {len(sample)} assets across {len(teams_in_post)} team(s)"
+        title = title_project_sprint(project_name, label)
         desc = (f"{label.title()} for {project_name}. "
                 f"Pulls work from {', '.join(teams_in_post[:3])}"
                 f"{'...' if len(teams_in_post) > 3 else ''} — "
@@ -1340,9 +1642,9 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     videos = sorted((a for a in assets if a.asset_type == "video"),
                     key=lambda x: x.id)
     video_post_templates = [
-        ("dailies",      "Dailies — {title}",
+        ("dailies",      VIDEO_TITLES["dailies"],
          "Today's video pass on {project}. Reviewing pacing, color, and continuity."),
-        ("cinematic_cut", "Cinematic cut — {title}",
+        ("cinematic_cut", VIDEO_TITLES["cinematic_cut"],
          "Latest cinematic cut for {project}. Compositing and grade approaching final."),
     ]
     for video in videos:
@@ -1386,7 +1688,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
             posts.append(_post(
                 members=sample,
                 id=showreel_post_id(studio_key, reel_label, (v.id for v in sample)),
-                title=f"Cinematics {reel_label} — {len(sample)} cuts",
+                title=title_showreel(reel_label),
                 description=(f"Studio cinematics roundup. {len(sample)} pieces bundled for "
                              f"the {reel_label.lower()} screening — see for pacing references "
                              f"and stylistic consistency across active projects."),
@@ -1408,6 +1710,15 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     # timestamp could swap places between runs without a single input
     # changing.
     posts.sort(key=lambda p: (p["created_at"], p["id"]))
+
+    # ⭐ THE SAME TWO PASSES THE COMMITTED DOCUMENT GETS (#1306), on the
+    # finished list rather than inside each template — which is the only
+    # way "part two" can mean the same post in both. `clean_dashes`
+    # catches the em dashes that arrive inside an embedded ASSET title
+    # rather than from a template here.
+    for post in posts:
+        post["title"] = clean_dashes(post["title"])
+    disambiguate_titles(posts)
     return posts
 
 

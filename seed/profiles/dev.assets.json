@@ -20977,7 +20977,7 @@
  {
   "id": "6bb06439-d526-678d-29e9-e55a6f76602e",
   "asset_type": "image",
-  "title": "Pharah (Overwatch — Damage)",
+  "title": "Pharah (Overwatch , Damage)",
   "description": "Overwatch hero portrait: Pharah. Class: Damage. Difficulty: 1 star. Health: 200.",
   "file_path": "images/heroes/pharah/00000003.jpg",
   "source_path": "heroes/pharah/00000003.jpg",
@@ -30537,7 +30537,7 @@
  {
   "id": "f61ccbb9-bf6f-4e1f-a786-60b4829d47a1",
   "asset_type": "image",
-  "title": "Ana (Overwatch — Support)",
+  "title": "Ana (Overwatch , Support)",
   "description": "Overwatch hero portrait: Ana. Class: Support. Difficulty: 3 stars. Health: 200.",
   "file_path": "images/heroes/ana/00000000.png",
   "source_path": "heroes/ana/00000000.png",
@@ -30599,7 +30599,7 @@
  {
   "id": "1ecff4ad-8104-7d3a-1c85-3ccbcf575cfe",
   "asset_type": "image",
-  "title": "Zarya (Overwatch — Tank)",
+  "title": "Zarya (Overwatch , Tank)",
   "description": "Overwatch hero portrait: Zarya. Class: Tank. Difficulty: 3 stars. Health: 400.",
   "file_path": "images/heroes/zarya/00000000.png",
   "source_path": "heroes/zarya/00000000.png",
@@ -41870,7 +41870,7 @@
  {
   "id": "030cb300-a886-d6b1-5e4c-3023a3d5db8b",
   "asset_type": "image",
-  "title": "Baptiste (Overwatch — Support)",
+  "title": "Baptiste (Overwatch , Support)",
   "description": "Overwatch hero portrait: Baptiste. Class: Support. Difficulty: 3 stars. Health: 200.",
   "file_path": "images/heroes/baptiste/00000002.jpg",
   "source_path": "heroes/baptiste/00000002.jpg",
@@ -42968,7 +42968,7 @@
  {
   "id": "5a48d319-f51f-f58c-f9a0-c0bb7a511102",
   "asset_type": "image",
-  "title": "Tracer (Overwatch — Damage)",
+  "title": "Tracer (Overwatch , Damage)",
   "description": "Overwatch hero portrait: Tracer. Class: Damage. Difficulty: 2 stars. Health: 150.",
   "file_path": "images/heroes/tracer/00000001.jpg",
   "source_path": "heroes/tracer/00000001.jpg",
@@ -43029,7 +43029,7 @@
  {
   "id": "33c1b53f-c5b7-423f-e2a0-80e4c751a9c1",
   "asset_type": "image",
-  "title": "Torbjorn (Overwatch — Damage)",
+  "title": "Torbjorn (Overwatch , Damage)",
   "description": "Overwatch hero portrait: Torbjorn. Class: Damage. Difficulty: 2 stars. Health: 200.",
   "file_path": "images/heroes/torbjorn/00000001.png",
   "source_path": "heroes/torbjorn/00000001.png",
@@ -69174,7 +69174,7 @@
  {
   "id": "ef4c8813-5b81-0450-85a9-886abbd8d7d9",
   "asset_type": "video",
-  "title": "Big Buck Bunny — 720p surround",
+  "title": "Big Buck Bunny , 720p surround",
   "description": "Animated short — exercises 5.1 surround audio path",
   "file_path": "videos/internet/big-buck-bunny.mp4",
   "source_path": "video/big-buck-bunny.mp4",
@@ -69219,7 +69219,7 @@
  {
   "id": "2adf45b0-8dd0-9818-ffef-bb1c04a7e8f9",
   "asset_type": "video",
-  "title": "Sintel — 480p trailer",
+  "title": "Sintel , 480p trailer",
   "description": "Trailer for the animated short — small clip via Blender direct",
   "file_path": "videos/internet/sintel-trailer-480p.mp4",
   "source_path": "video/sintel-trailer-480p.mp4",
@@ -69263,7 +69263,7 @@
  {
   "id": "b4abdc3d-c82e-22e6-cd12-56e467ef1b79",
   "asset_type": "video",
-  "title": "Tux Racer gameplay — Ingo's Speedway",
+  "title": "Tux Racer gameplay , Ingo's Speedway",
   "description": "Open-source game gameplay footage",
   "file_path": "videos/internet/tux-racer-ingos-speedway.webm",
   "source_path": "video/tux-racer-ingos-speedway.webm",
@@ -69307,7 +69307,7 @@
  {
   "id": "106ef546-a908-ef81-7c73-a62bfa305d9f",
   "asset_type": "video",
-  "title": "Tux Racer gameplay — Path of Daggers",
+  "title": "Tux Racer gameplay , Path of Daggers",
   "description": "Tux Racer gameplay — Path of Daggers — public-safe reference content.",
   "file_path": "videos/internet/tux-racer-path-of-daggers.webm",
   "source_path": "video/tux-racer-path-of-daggers.webm",
@@ -69530,7 +69530,7 @@
  {
   "id": "2d7d8fee-b300-8c51-7cbb-93d668e137f9",
   "asset_type": "3d",
-  "title": "DamagedHelmet — Khronos PBR test",
+  "title": "DamagedHelmet , Khronos PBR test",
   "description": "Canonical PBR material test asset",
   "file_path": "3d/internet/DamagedHelmet.glb",
   "source_path": "3d/DamagedHelmet.glb",
@@ -69574,7 +69574,7 @@
  {
   "id": "a843ee18-f9ee-c3a3-ed06-928a3210a5b4",
   "asset_type": "3d",
-  "title": "FlightHelmet — Khronos detailed scene",
+  "title": "FlightHelmet , Khronos detailed scene",
   "description": "High-detail multi-material asset",
   "file_path": "3d/internet/FlightHelmet.gltf",
   "source_path": "3d/FlightHelmet.gltf",
@@ -69618,7 +69618,7 @@
  {
   "id": "be6618e8-3d1c-e182-80f8-5c210fdb1b66",
   "asset_type": "3d",
-  "title": "BoxAnimated — Khronos animation test",
+  "title": "BoxAnimated , Khronos animation test",
   "description": "Exercises 3D viewer animation timeline",
   "file_path": "3d/internet/BoxAnimated.glb",
   "source_path": "3d/BoxAnimated.glb",
@@ -69662,7 +69662,7 @@
  {
   "id": "89fc34b8-1791-dc48-79c7-861861571469",
   "asset_type": "3d",
-  "title": "Avocado — Khronos PBR food asset",
+  "title": "Avocado , Khronos PBR food asset",
   "description": "Small PBR object",
   "file_path": "3d/internet/Avocado.glb",
   "source_path": "3d/Avocado.glb",
@@ -69706,7 +69706,7 @@
  {
   "id": "2113e8d3-82df-7f88-0be7-59c67dac514f",
   "asset_type": "3d",
-  "title": "BoomBox — Khronos PBR product",
+  "title": "BoomBox , Khronos PBR product",
   "description": "Product-vis PBR asset",
   "file_path": "3d/internet/BoomBox.glb",
   "source_path": "3d/BoomBox.glb",
@@ -69750,7 +69750,7 @@
  {
   "id": "18b9d9a9-ede9-cc47-59f2-b3d2dd9374c1",
   "asset_type": "3d",
-  "title": "Duck — Khronos classic test",
+  "title": "Duck , Khronos classic test",
   "description": "Reference duck used in graphics demos",
   "file_path": "3d/internet/Duck.glb",
   "source_path": "3d/Duck.glb",
@@ -69794,7 +69794,7 @@
  {
   "id": "aa374414-f08b-275d-c76c-8e63f4aa4f63",
   "asset_type": "3d",
-  "title": "Lantern — Khronos detailed asset",
+  "title": "Lantern , Khronos detailed asset",
   "description": "Detailed PBR architecture asset",
   "file_path": "3d/internet/Lantern.glb",
   "source_path": "3d/Lantern.glb",
@@ -69838,7 +69838,7 @@
  {
   "id": "4d30ea15-aec9-f53a-647c-3d4034b9f3a2",
   "asset_type": "3d",
-  "title": "Sponza — Khronos canonical scene",
+  "title": "Sponza , Khronos canonical scene",
   "description": "Architectural test scene — most-used graphics benchmark",
   "file_path": "3d/internet/Sponza.gltf",
   "source_path": "3d/Sponza.gltf",
@@ -69882,7 +69882,7 @@
  {
   "id": "f7c409e9-f363-3b23-3c6c-3f494700806e",
   "asset_type": "3d",
-  "title": "WaterBottle — Khronos PBR",
+  "title": "WaterBottle , Khronos PBR",
   "description": "Transparency / refraction test asset",
   "file_path": "3d/internet/WaterBottle.glb",
   "source_path": "3d/WaterBottle.glb",
@@ -69926,7 +69926,7 @@
  {
   "id": "5afc4da9-01ee-9f7b-029d-9b47e4942b41",
   "asset_type": "3d",
-  "title": "BrainStem — Khronos skinned animation",
+  "title": "BrainStem , Khronos skinned animation",
   "description": "Skinned-mesh animation test",
   "file_path": "3d/internet/BrainStem.glb",
   "source_path": "3d/BrainStem.glb",
@@ -69970,7 +69970,7 @@
  {
   "id": "f10729b6-9865-5077-fab1-7c3f76b0515c",
   "asset_type": "3d",
-  "title": "CesiumMan — Khronos character animation",
+  "title": "CesiumMan , Khronos character animation",
   "description": "Walking character animation",
   "file_path": "3d/internet/CesiumMan.glb",
   "source_path": "3d/CesiumMan.glb",
@@ -70014,7 +70014,7 @@
  {
   "id": "4b4a3022-7c20-f978-2017-e43dca00870a",
   "asset_type": "3d",
-  "title": "2CylinderEngine — Khronos mechanical",
+  "title": "2CylinderEngine , Khronos mechanical",
   "description": "Mechanical CAD-style asset",
   "file_path": "3d/internet/2CylinderEngine.glb",
   "source_path": "3d/2CylinderEngine.glb",
@@ -70058,7 +70058,7 @@
  {
   "id": "bf05361b-aa10-9b58-d6d0-9102b4742dcb",
   "asset_type": "3d",
-  "title": "ToyCar — Khronos PBR product",
+  "title": "ToyCar , Khronos PBR product",
   "description": "Toy product PBR asset",
   "file_path": "3d/internet/ToyCar.glb",
   "source_path": "3d/ToyCar.glb",
@@ -70102,7 +70102,7 @@
  {
   "id": "22f58f1f-60c4-8926-0b54-e60e6e936c0c",
   "asset_type": "document",
-  "title": "Frankenstein — Mary Shelley",
+  "title": "Frankenstein , Mary Shelley",
   "description": "Frankenstein — Mary Shelley — public-safe reference content.",
   "file_path": "documents/internet/frankenstein.epub",
   "source_path": "ebook/frankenstein.epub",
@@ -70146,7 +70146,7 @@
  {
   "id": "052e6603-0d37-abd4-7fe7-0d4872adbabd",
   "asset_type": "document",
-  "title": "Pride and Prejudice — Jane Austen",
+  "title": "Pride and Prejudice , Jane Austen",
   "description": "Pride and Prejudice — Jane Austen — public-safe reference content.",
   "file_path": "documents/internet/pride-and-prejudice.epub",
   "source_path": "ebook/pride-and-prejudice.epub",
@@ -70190,7 +70190,7 @@
  {
   "id": "996c328e-9fe6-ffc5-1130-65a207752e30",
   "asset_type": "document",
-  "title": "The Adventures of Sherlock Holmes — Conan Doyle",
+  "title": "The Adventures of Sherlock Holmes , Conan Doyle",
   "description": "The Adventures of Sherlock Holmes — Conan Doyle — public-safe reference content.",
   "file_path": "documents/internet/sherlock-holmes.epub",
   "source_path": "ebook/sherlock-holmes.epub",
@@ -70234,7 +70234,7 @@
  {
   "id": "d20f56f9-9161-7a73-2640-cc0d02f8a5b0",
   "asset_type": "document",
-  "title": "Alice's Adventures in Wonderland — Carroll",
+  "title": "Alice's Adventures in Wonderland , Carroll",
   "description": "Alice's Adventures in Wonderland — Carroll — public-safe reference content.",
   "file_path": "documents/internet/alice-in-wonderland.epub",
   "source_path": "ebook/alice-in-wonderland.epub",
@@ -70278,7 +70278,7 @@
  {
   "id": "cee27e99-1637-6834-4e8c-8ae4b6e09b98",
   "asset_type": "document",
-  "title": "Moby Dick — Herman Melville",
+  "title": "Moby Dick , Herman Melville",
   "description": "Moby Dick — Herman Melville — public-safe reference content.",
   "file_path": "documents/internet/moby-dick.epub",
   "source_path": "ebook/moby-dick.epub",
@@ -70322,7 +70322,7 @@
  {
   "id": "1a0f7957-ad50-5f28-3e1f-61dbdcaf68bb",
   "asset_type": "document",
-  "title": "The Time Machine — H.G. Wells",
+  "title": "The Time Machine , H.G. Wells",
   "description": "The Time Machine — H.G. Wells — public-safe reference content.",
   "file_path": "documents/internet/the-time-machine.epub",
   "source_path": "ebook/the-time-machine.epub",
@@ -70366,7 +70366,7 @@
  {
   "id": "0c46c219-a537-d5ab-0a30-3de93801bb8f",
   "asset_type": "document",
-  "title": "A Tale of Two Cities — Dickens",
+  "title": "A Tale of Two Cities , Dickens",
   "description": "A Tale of Two Cities — Dickens — public-safe reference content.",
   "file_path": "documents/internet/tale-of-two-cities.epub",
   "source_path": "ebook/tale-of-two-cities.epub",
@@ -70410,7 +70410,7 @@
  {
   "id": "d1c774ef-00ee-d345-f668-fdbfc54d734b",
   "asset_type": "document",
-  "title": "Around the World in Eighty Days — Verne",
+  "title": "Around the World in Eighty Days , Verne",
   "description": "Around the World in Eighty Days — Verne — public-safe reference content.",
   "file_path": "documents/internet/around-the-world-80-days.epub",
   "source_path": "ebook/around-the-world-80-days.epub",
@@ -70454,7 +70454,7 @@
  {
   "id": "28c20aaf-8888-3a72-ebfd-08aaeb1c22c1",
   "asset_type": "document",
-  "title": "The Picture of Dorian Gray — Wilde",
+  "title": "The Picture of Dorian Gray , Wilde",
   "description": "The Picture of Dorian Gray — Wilde — public-safe reference content.",
   "file_path": "documents/internet/picture-of-dorian-gray.epub",
   "source_path": "ebook/picture-of-dorian-gray.epub",
@@ -70498,7 +70498,7 @@
  {
   "id": "5b15cf33-58fe-6b2b-566f-f6b3db368dba",
   "asset_type": "document",
-  "title": "Treasure Island — Stevenson",
+  "title": "Treasure Island , Stevenson",
   "description": "Treasure Island — Stevenson — public-safe reference content.",
   "file_path": "documents/internet/treasure-island.epub",
   "source_path": "ebook/treasure-island.epub",
@@ -70542,7 +70542,7 @@
  {
   "id": "9bb0a1af-fe82-1fcf-1aae-31db7a7f4c21",
   "asset_type": "document",
-  "title": "The Iliad — Homer (trans. Pope)",
+  "title": "The Iliad , Homer (trans. Pope)",
   "description": "The Iliad — Homer (trans. Pope) — public-safe reference content.",
   "file_path": "documents/internet/the-iliad.epub",
   "source_path": "ebook/the-iliad.epub",
@@ -70586,7 +70586,7 @@
  {
   "id": "a84dad50-1637-78b2-cb97-2ace04f7c198",
   "asset_type": "document",
-  "title": "Walden — Thoreau",
+  "title": "Walden , Thoreau",
   "description": "Walden — Thoreau — public-safe reference content.",
   "file_path": "documents/internet/walden.epub",
   "source_path": "ebook/walden.epub",
@@ -70630,7 +70630,7 @@
  {
   "id": "bb189b50-5c2c-a34b-bfc8-3c5a65d5b47d",
   "asset_type": "document",
-  "title": "Vue.js README — markdown reference",
+  "title": "Vue.js README , markdown reference",
   "description": "Markdown viewer test — code blocks + tables + images",
   "file_path": "documents/internet/vue-README.md",
   "source_path": "docs/vue-README.md",
@@ -70762,7 +70762,7 @@
  {
   "id": "bf72cc9a-94e7-7a10-7beb-976702289528",
   "asset_type": "image",
-  "title": "Pale Blue Dot — Voyager 1",
+  "title": "Pale Blue Dot , Voyager 1",
   "description": "Pale Blue Dot — Voyager 1 — public-safe reference content.",
   "file_path": "images/internet/pale-blue-dot.png",
   "source_path": "nasa/pale-blue-dot.png",
@@ -70894,7 +70894,7 @@
  {
   "id": "8c03bea8-9475-0e7d-7c8e-433feec5d28a",
   "asset_type": "image",
-  "title": "Mars Curiosity Self-Portrait — Big Sky drilling site",
+  "title": "Mars Curiosity Self-Portrait , Big Sky drilling site",
   "description": "Mars Curiosity Self-Portrait — Big Sky drilling site — public-safe reference content.",
   "file_path": "images/internet/curiosity-self-portrait-big-sky.jpg",
   "source_path": "nasa/curiosity-self-portrait-big-sky.jpg",
@@ -71246,7 +71246,7 @@
  {
   "id": "2e1b2550-76d8-ef93-1409-b27ce578414e",
   "asset_type": "image",
-  "title": "Atari Pong arcade cabinet — front view",
+  "title": "Atari Pong arcade cabinet , front view",
   "description": "Atari Pong arcade cabinet — front view — public-safe reference content.",
   "file_path": "images/internet/atari-pong-front.jpg",
   "source_path": "games/atari-pong-front.jpg",
@@ -71862,7 +71862,7 @@
  {
   "id": "083f9159-1903-73c9-f0c1-52eef9884c24",
   "asset_type": "video",
-  "title": "Sintel — full film (512kb stereo, ~13 min)",
+  "title": "Sintel , full film (512kb stereo, ~13 min)",
   "description": "Full Sintel feature film — animated short by Blender Foundation. CC-BY 3.0.",
   "file_path": "videos/torrent/sintel-full-film-512kb.mp4",
   "source_path": "videos/torrent/sintel-full-film-512kb.mp4",
@@ -71910,7 +71910,7 @@
  {
   "id": "b260a4ba-8520-148c-406f-017daee61dc4",
   "asset_type": "video",
-  "title": "Sintel — making-of documentary",
+  "title": "Sintel , making-of documentary",
   "description": "Behind-the-scenes documentary for Sintel — production reference for the studio archive.",
   "file_path": "videos/torrent/sintel-documentary.avi",
   "source_path": "videos/torrent/sintel-documentary.avi",
@@ -71958,7 +71958,7 @@
  {
   "id": "f47b3fdc-71fa-0688-8253-c5e49e5f10bb",
   "asset_type": "video",
-  "title": "Big Buck Bunny — 720p surround (AVI)",
+  "title": "Big Buck Bunny , 720p surround (AVI)",
   "description": "BBB full film at 720p with 5.1 surround — higher-quality alternate to the MP4.",
   "file_path": "videos/torrent/big-buck-bunny-720p-surround.avi",
   "source_path": "videos/torrent/big-buck-bunny-720p-surround.avi",

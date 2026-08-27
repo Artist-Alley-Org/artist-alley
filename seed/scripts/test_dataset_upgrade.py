@@ -18,9 +18,11 @@ need tests rather than comments.
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import hashlib
 import json
+import re
 import struct
 import subprocess
 import sys
@@ -1481,6 +1483,184 @@ class TestPopulateArchiveRefetch(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # #572 — per-team balance
 # ---------------------------------------------------------------------------
+
+class TestSeededTitlesReadAsWritten(unittest.TestCase):
+    """#1306 — the shipped titles, and the functions that produce them.
+
+    Measured on the file this replaces: 863 studio-a posts, 781 of them
+    (90%) containing an em dash, 580 (67%) ending in a count the
+    generator produced, 35 containing the literal "team(s)".
+    """
+
+    POSTS = ("studio-a", "studio-b", "dataset")
+
+    def _titles(self, name):
+        return [p["title"] for p in json.loads(
+            (PROFILES / f"{name}.posts.json").read_text())]
+
+    def test_no_shipped_title_contains_an_em_dash(self):
+        for name in self.POSTS:
+            bad = [t for t in self._titles(name) if "\u2014" in t]
+            self.assertEqual(bad, [], f"{name}.posts.json: {len(bad)} title(s)")
+
+    def test_no_shipped_asset_title_contains_an_em_dash(self):
+        """⛔ THE TEMPLATES WERE NOT THE ONLY SOURCE. 43 ASSET titles
+        carried one, and the solo, revision and video templates embed an
+        asset title verbatim — so fixing the templates alone still left
+        37 site_a post titles with a dash arriving from the other end."""
+        for name in ("studio-a", "studio-b", "demo", "dev"):
+            bad = [a["title"] for a in json.loads(
+                (PROFILES / f"{name}.assets.json").read_text())
+                if "\u2014" in (a.get("title") or "")]
+            self.assertEqual(bad, [], f"{name}.assets.json: {len(bad)}")
+
+    def test_no_shipped_title_says_team_s(self):
+        for name in self.POSTS:
+            bad = [t for t in self._titles(name) if "team(s)" in t]
+            self.assertEqual(bad, [], f"{name}: {bad[:3]}")
+
+    def test_no_shipped_title_ends_in_a_generated_count(self):
+        """The count is already on the card — `PostCard.svelte` renders
+        `CardKindBadge count={memberCount}` beside the title — so the
+        suffix repeated chrome an inch away."""
+        pat = re.compile(r"\d+[- ](?:part set|asset bundle|assets|drops|cuts)$")
+        for name in self.POSTS:
+            bad = [t for t in self._titles(name) if pat.search(t)]
+            self.assertEqual(bad, [], f"{name}: {bad[:3]}")
+
+    def test_the_titles_are_all_distinct(self):
+        """⛔ THE COUNT WAS LOAD-BEARING, which is why it is replaced and
+        not deleted. Dropping it outright collapses 128 studio-a titles
+        into 44 groups. The shipped file was worse than that even WITH
+        the counts: 313 studio-a titles were duplicates of another."""
+        for name in self.POSTS:
+            titles = self._titles(name)
+            dupes = [t for t, n in collections.Counter(titles).items() if n > 1]
+            self.assertEqual(dupes, [], f"{name}: {len(dupes)} repeated")
+
+    def test_titles_did_not_run_away_in_length(self):
+        """The shipped studio-a median was 39 and its p90 51. A title
+        that fixes the voice by becoming a sentence has not fixed it."""
+        for name in self.POSTS:
+            lengths = sorted(len(t) for t in self._titles(name))
+            median = lengths[len(lengths) // 2]
+            p90 = lengths[int(len(lengths) * 0.9)]
+            self.assertLessEqual(median, 45, f"{name}: median {median}")
+            self.assertLessEqual(p90, 70, f"{name}: p90 {p90}")
+
+    # -- the functions, not just the data ----------------------------
+
+    def test_the_dash_clean_takes_the_spaces_with_it(self):
+        """⚠️ Replacing the character and leaving the spaces gives
+        "Big Buck Bunny , 720p surround", which is a worse tell than the
+        dash was. This caught exactly that."""
+        self.assertEqual(sa.clean_dashes("Big Buck Bunny \u2014 720p surround"),
+                         "Big Buck Bunny, 720p surround")
+        self.assertEqual(sa.clean_dashes("Ana (Overwatch \u2014 Support)"),
+                         "Ana (Overwatch, Support)")
+        self.assertNotIn(" ,", sa.clean_dashes("a \u2014 b \u2014 c"))
+
+    def test_disambiguation_numbers_every_member_of_a_family(self):
+        posts = [{"id": "c", "title": "Same"}, {"id": "a", "title": "Same"},
+                 {"id": "b", "title": "Same"}, {"id": "d", "title": "Alone"}]
+        sa.disambiguate_titles(posts)
+        got = {p["id"]: p["title"] for p in posts}
+        self.assertEqual(got["a"], "Same, part 1")
+        self.assertEqual(got["b"], "Same, part 2")
+        self.assertEqual(got["c"], "Same, part 3")
+        self.assertEqual(got["d"], "Alone",
+                         "a title nothing collides with must be left alone")
+
+    def test_disambiguation_orders_by_id_not_by_position(self):
+        """Iteration order is not stable across a re-assembly; the post
+        id is derived from membership and is."""
+        a = [{"id": "z", "title": "T"}, {"id": "y", "title": "T"}]
+        b = [{"id": "y", "title": "T"}, {"id": "z", "title": "T"}]
+        sa.disambiguate_titles(a)
+        sa.disambiguate_titles(b)
+        self.assertEqual({p["id"]: p["title"] for p in a},
+                         {p["id"]: p["title"] for p in b})
+
+    def test_a_solo_title_splits_on_the_LAST_dash(self):
+        """The flavour is a suffix, so an asset title carrying a dash of
+        its own must not be cut in half — that produced
+        "720p surround, cinematic test: Big Buck Bunny"."""
+        posts = [{"id": "1", "post_kind": "solo_showcase",
+                  "title": "Big Buck Bunny \u2014 720p surround "
+                           "\u2014 cinematic test",
+                  "asset_ids": []}]
+        sa.retitle_posts(posts)
+        self.assertEqual(posts[0]["title"],
+                         "Cinematic test: Big Buck Bunny, 720p surround")
+
+    def test_a_video_title_splits_on_the_FIRST_dash(self):
+        """Its fixed wording is a PREFIX, so the opposite rule applies."""
+        posts = [{"id": "1", "post_kind": "video_dailies",
+                  "title": "Dailies \u2014 Sintel \u2014 480p trailer",
+                  "asset_ids": []}]
+        sa.retitle_posts(posts)
+        self.assertEqual(posts[0]["title"], "Dailies on Sintel, 480p trailer")
+
+
+class TestTitleParsersAreTheFormattersInverse(unittest.TestCase):
+    """⛔ TWO POST KINDS DERIVE THEIR ID THROUGH THE TITLE (#1306/#1293).
+
+    `migrate_post_ids.derived_id` recovers a sprint `label` and a
+    `reel_label` from the title — neither is stored anywhere else on the
+    post — and feeds them into `sprint_post_id` / `showreel_post_id`. So
+    the title format is an identity concern for those two kinds, and
+    retiring the em dash broke the parse the moment it landed.
+
+    The ids did not move: the recovered label is the same label. But a
+    parse that HALF matched would have moved them silently, which is why
+    the inverse now lives beside the formatter and why this pins them
+    together.
+    """
+
+    def test_sprint_label_round_trips(self):
+        for project, label in (("Project Mirror", "milestone alpha"),
+                               ("Project Echo", "sprint 14"),
+                               ("Art Research", "ship gate")):
+            title = sa.title_project_sprint(project, label)
+            self.assertEqual(sa.sprint_label_from_title(project, title), label)
+
+    def test_sprint_label_round_trips_through_disambiguation(self):
+        """A colliding title gains `, part N`, and the parse has to see
+        through it — this is exactly what went red."""
+        title = sa.title_project_sprint("Project Mirror", "milestone alpha")
+        posts = [{"id": "a", "title": title}, {"id": "b", "title": title}]
+        sa.disambiguate_titles(posts)
+        for post in posts:
+            self.assertIn(", part ", post["title"])
+            self.assertEqual(
+                sa.sprint_label_from_title("Project Mirror", post["title"]),
+                "milestone alpha")
+
+    def test_reel_label_round_trips(self):
+        for label in sa.REEL_LABELS:
+            title = sa.title_showreel(label)
+            self.assertEqual(sa.reel_label_from_title(title), label)
+            posts = [{"id": "a", "title": title}, {"id": "b", "title": title}]
+            sa.disambiguate_titles(posts)
+            for post in posts:
+                self.assertEqual(sa.reel_label_from_title(post["title"]), label)
+
+    def test_a_title_that_does_not_match_returns_None_not_a_guess(self):
+        self.assertIsNone(
+            sa.sprint_label_from_title("Project Mirror", "Something else"))
+        self.assertIsNone(sa.reel_label_from_title("Not a showreel"))
+        self.assertIsNone(sa.sprint_label_from_title("", "anything"))
+
+    def test_stripping_the_part_suffix_is_idempotent(self):
+        self.assertEqual(sa.strip_part_suffix("A title, part 12"), "A title")
+        self.assertEqual(
+            sa.strip_part_suffix(sa.strip_part_suffix("A title, part 12")),
+            "A title")
+        self.assertEqual(sa.strip_part_suffix("A title"), "A title")
+        # ⚠️ Not a blanket "drop everything after the last comma".
+        self.assertEqual(sa.strip_part_suffix("Moby Dick, Herman Melville"),
+                         "Moby Dick, Herman Melville")
+
 
 class TestMeasureStagedRootPolicy(unittest.TestCase):
     """⛔ WHICH ROOTS MAY BE MEASURED FROM THE SHARE, AND WHY IT MATTERS.

@@ -623,8 +623,11 @@ func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 			ID:           cid,
 			OwnerUserRef: r.adminRef,
 			Name:         c.Name,
-			Description:  c.Name + " — seeded collection",
-			Visibility:   vis,
+			// No em dash (#1306): this string is rendered on the
+			// browse wall under every collection tile, so it is
+			// seeded COPY, not an internal label.
+			Description: "Seeded collection: " + c.Name,
+			Visibility:  vis,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -1488,7 +1491,13 @@ func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogue
 		title := orDefault(first.Title, "Untitled")
 		description := first.Description
 		if len(b.members) > 1 {
-			title = fmt.Sprintf("%s — %d assets", title, len(b.members))
+			// ⛔ A SECOND TITLE GENERATOR (#1306). This backfill mints
+			// post titles in Go, so the Python assembler's wording fix
+			// left it producing exactly the shape the issue is about:
+			// an em dash and a count that CardKindBadge already prints
+			// beside it. Kept in step with
+			// sanitize_and_assemble.title_group_set.
+			title += " and variants"
 			description = fmt.Sprintf("%s working set for %s. %d assets pulled together for review.",
 				orDefault(first.TeamName, "Reference"), b.collection, len(b.members))
 		}
