@@ -173,3 +173,57 @@ once for a field name is wrong.
 
 Tracked as #1312. Not fixed here: naively promoting `CHANGED_VALUE` to a loss would refuse every
 legitimate edit and make the guard unusable, which is the failure mode of over-correcting a gate.
+
+---
+
+## Amendment, 2026-08-27 (#1318, #1312, #1313): the split is implemented, and its axis is `source_root`
+
+The amendment above named the gap and left it open, because promoting `CHANGED_VALUE` to a loss
+would refuse every legitimate edit. Sprint 14e closed it without that cost.
+
+`CHANGED_VALUE` is unchanged. A new `CORRUPTED_MEASUREMENT` verdict sits beside it, and the axis
+that selects between them is the record's **`source_root`**, never the field name:
+
+| `source_root` | why | verdict on a disagreement |
+|---|---|---|
+| `site`, `torrent_import`, `internet` | the bytes are staged at the destination with no reproducible source, so the destination **is** the artifact | **refused** |
+| `local`, `hq`, `pack` | copied from a source the profile is built against, so the share can lag it | reported, permitted |
+
+This is the previous amendment's "per record class, not per field" rule given a mechanism. It is
+measured rather than asserted: against a kenney-hq pool built fresh on 2026-08-27 (945 vectors
+rendered, 86 bitmaps copied), all **656** of studio-b's `hq` records match the profile and only
+**264** match the published manifest.
+
+### ⛔ The direction error this ADR's own author then made
+
+That 656-versus-264 measurement exists because the sprint brief asked for the opposite of the
+correct thing. Site_b's published manifest disagreed with the profile on 392 `file_size_bytes`; the
+manifest matched the bytes on disk on all 392 and the profile on none; the brief concluded the
+profile was stale and asked for it to be reconciled to its files. **Doing so would have overwritten
+392 correct values with stale ones, and the next build would then have refused its own input.**
+
+⭐ **Matching its own bytes proves only that a copy is SELF-CONSISTENT.** A stale copy agrees with
+itself perfectly. All 392 records are `hq`, copied *from* the pool, so the authority is the pool.
+
+**So this ADR's rule needs its sharper form: the artifact is what the pipeline PRODUCES, not where
+the pipeline WRITES.** A destination is downstream of the artifact and inherits its staleness
+silently. The record's `source_root` is what points at the artifact, which is why the verdict above
+keys on it.
+
+⚠️ Worth recording that this ADR's measurement-versus-content rule was written one day earlier by
+the same author who then applied it to the wrong noun. A rule stated at the level of "which side is
+authoritative" is not usable until it also says **how to find the side**.
+
+### The larger site_b defect, which no issue had named
+
+While the 392 were being disputed, **6,806 `field_values` across all 1,306 site_b records** existed
+at the share and not in the profile, in the same eleven keys as #1275's. Since
+`populate_archive.py:736` copies the profile over `MANIFEST.json`, an ordinary run would have
+stripped every one. The new guard reported 6,806 losses; `manifest-reconcile.site_b.json` carries
+them back (6,806 filled, 0 overwritten, 1,306 ids unchanged in both directions) and the guard now
+reports 0.
+
+⚠️ **The generalisable miss: a sibling artifact's known defect was not tested for.** Site_a's defect
+was missing `field_values`; site_b was measured for `file_size_bytes` instead, one field was
+checked, and the finding was generalised from it. When two artifacts come off one pipeline, test the
+second for the **first one's** defect before reporting whatever the first probe happened to find.

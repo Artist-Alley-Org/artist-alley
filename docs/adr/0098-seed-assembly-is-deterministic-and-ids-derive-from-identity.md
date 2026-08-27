@@ -156,3 +156,66 @@ until PR #1305 fixed it.
 for the drift. Both were wrong, and the filesystem held the answer the whole time in files named
 `pre-feedcurate` and `pre-hero`. **When an output disagrees with its generator, look at the output's
 neighbours before theorising about the generator.**
+
+---
+
+## Amendment, 2026-08-27 (#1318, #1310, #1309, #1314): what landed, and the one thing that did not
+
+**Decision 1 is now complete for bundles.** `bundle_post_id` takes the post's membership and
+nothing else. The old key named the anchor member, which is a value that merely *accompanies* the
+post, and this ADR's whole argument is that identity must not derive from an accident of ordering.
+No cluster name sits in front of the membership: chunks partition a cluster and clusters partition
+the pool, so membership alone cannot collide, while adding `(collection, team, asset_type)` would
+only move the id when a member's collection was renamed. Migrated: **107** ids in studio-a, **216**
+in studio-b, **295** in dataset, and `migrate_post_ids --check` now covers **618** more posts.
+
+⚠️ **The improvement claimed for this change is smaller than predicted, and the real one is
+elsewhere.** Dropping one asset moves **15 of 340** bundle ids under both the old key and the new
+one, because #1296 made the chunk cycle per-cluster, so a removal re-partitions its cluster and
+every later chunk changes membership and anchor alike. There is no gain there. The gain is a case
+the two keys genuinely disagree on: the anchor key read `updated_at` while the cluster sorts by
+`created_at`, two independent fields, so editing one asset's `updated_at` moved a bundle id while
+changing no membership at all. Measured on studio-a: **1 of 340** under the anchor key, **0** under
+the new one.
+
+⭐ Recording this because the predicted benefit and the actual benefit were different benefits. An
+identity rule justified by a collision argument was validated by a **stability** argument instead,
+and reporting the predicted number would have been wrong in a way nothing downstream would catch.
+
+**The hand curation is now data.** The previous amendment established that the published
+`posts.json` carried editorial work no pass could reproduce, and left it as a finding. Owner ruling,
+2026-08-27: *"I like the handmade edits. Codify them."* `post-curation.site_a.json` holds **1,513
+values across 841 posts**, recovered from the eight `posts.json.pre-*.bak` backups walked in mtime
+order. Nothing changed after `pre-1217`, so a post touched by several passes needs no conflict rule
+and there is none. The backup chain says which `(post, field)` pairs a human touched; the live file
+says what the last pass left there.
+
+⛔ **A silent no-op was one filename away.** Filing this under the existing
+`{stem}-posts.{site}.json` convention would have routed it through `merge_posts`, which skips a post
+whose id it already holds. Every curated post already exists, so all 841 would have been skipped and
+the run would have **reported success**. `apply_post_curation` amends in place instead, and a test
+now pins `merge_posts`'s skip so nobody re-routes it there quietly. This is the same shape as the
+guard-suite failures from #1300: a pass that covers nothing reads exactly like a pass that covers
+everything.
+
+### ⛔ The claim this ADR should now be careful about: the profile is NOT assembler output
+
+#1314 alleged that `post_kind` disagreed with the title template on 228 posts, which would have made
+a wrong kind feed an id. It does not reproduce: re-running the generator's own title formatter over
+each post's own fields, a fresh assembly disagrees on **zero** across all 1,103 site_a posts.
+
+But the **committed** profile disagrees on 374, and the reason is more interesting than the issue
+was. None of the three causes is a generator defect:
+
+| count | cause |
+|---|---|
+| 244 | `asset_group` posts carrying a collection-chunk title from an **older generator** |
+| 83 | `solo_showcase` and `multi_asset` titles **authored by upgrade documents**, which no template produced |
+| 47 | `revision_*` and `video_*` titles embedding a member asset's name as it stood **before** the HQ replacement renamed it |
+
+⚠️ **So the committed profile is a historical accumulation, not the current assembler's output**, and
+it holds **863** posts where a fresh assembly produces 1,103. Decision 3 says assembly is
+deterministic, and it is; what this ADR did not say is that **the committed artifact is not the thing
+that determinism is a property of.** Every guard that compares the profile against a fresh assembly
+is therefore comparing two different kinds of object, and will keep finding differences that are
+history rather than defects. Tracked separately.
