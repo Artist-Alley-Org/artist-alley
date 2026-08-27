@@ -192,3 +192,42 @@ and ADR 0083's test applies to it.
 - Turning the toggle back on restores every previously-set flag, because
   nothing clears them. The toggle governs enforcement and publication, not
   storage.
+
+---
+
+## Amendment, 2026-08-26 (#1292): the reader gets a VIEW-level control, and it can only narrow
+
+The three conjuncts above decide **whether a viewer may be shown a mature row**. They do not give a
+reader who has opted in any way to say *"not in this feed, right now"*. Owner ruling, 2026-08-26,
+adding that as a third gating surface:
+
+| # | layer | where | what it decides |
+|---|---|---|---|
+| 1 | **instance** | `/admin/system/mature-content`, tiled under Community & moderation (#1179) | does this install carry adult work at all |
+| 2 | **account** | `/account/preferences` → `user_preferences.mature_content.show` | this reader opts in to being shown it |
+| 3 | **view** | the browse filter menu (#1292) | include it in *these* results, right now |
+
+**The cascade, and both rungs are ABSENCE rather than disablement:**
+
+- **1 off ⇒ 2 is hidden.** Already true — `account/preferences/+page.svelte:508` wraps the whole
+  mature block in `{#if auth.user?.matureContentAllowed}`.
+- **2 off ⇒ 3 does not appear.** A control meaning "include mature in these results" is meaningless
+  to a reader who has not consented; it could never do anything. It renders only when the instance
+  allows **and** the account has opted in.
+
+⛔ **Layer 3 NARROWS and never consents.** Layer 2 is the consent. Layer 3 therefore **defaults to
+included**, so shipping it changes nothing for a reader who already opted in, and there is no path
+by which the view control grants something the account control withheld. It is a filter over rows
+the three conjuncts have *already* allowed — never a fourth conjunct, and never a widening.
+
+⚠️ **The mechanisms behind layers 2 and 3 differ and the code must not pretend otherwise.** Layer 2
+is a server-resolved account preference that roams between devices and gates rows before they are
+returned. Its neighbour in the same menu — the AI filter — is device-local, client-side, and by
+ADR 0094 §4 never gates. Presenting them as one category is right for the reader, who is answering
+one question; building them on one mechanism is not.
+
+⛔ **Writing the layer-2 preference is hazardous and any new writer must re-GET and merge.**
+`UserPreferencesRequest` treats an absent member as a **reset**, so a partial write silently wipes
+what it omits — the failure `account/preferences/+page.svelte:210-230` documents as *"a reader opts
+in, changes a notification channel an hour later, and is silently opted back out of content they
+had consented to see."*
