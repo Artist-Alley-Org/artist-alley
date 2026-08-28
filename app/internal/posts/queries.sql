@@ -48,6 +48,28 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- back to NULL", so clearing a crop is an explicit flag. Both axes read
 -- the SAME flag, because a focal point is a point and clearing half of
 -- one is not a state the column CHECK admits.
+--
+-- #1333: AND a focal point does not outlive the picture it was chosen
+-- against. A fraction of the way across one photograph means nothing on
+-- the next one, so a cover swap that left the old pair in place framed
+-- the new picture on a point nobody picked, silently and forever. The
+-- third CASE arm below is that rule: the cover changed and the caller
+-- said nothing about framing, so the framing goes.
+--
+-- Arm ORDER is the whole correctness argument, because the arms overlap.
+--   1. the explicit clear flag wins outright;
+--   2. a SUPPLIED value wins over the swap rule. This is the case both
+--      editors actually take, since they save the new cover and its new
+--      focal point in one PATCH, and a rule that cleared on any cover
+--      change would throw that value away while still passing a
+--      single-field test;
+--   3. only then, a cover that genuinely CHANGED clears the pair.
+--      `IS DISTINCT FROM` rather than `IS NOT NULL`, so a client that
+--      round-trips the whole object and re-sends the SAME cover id is
+--      not a swap and keeps its framing;
+--   4. otherwise the stored value stands.
+-- Both axes read the same arms, so the pair can never half-clear into a
+-- posts_cover_focal_check violation.
 UPDATE posts SET
     title                    = COALESCE(sqlc.narg('title'),                    title),
     description              = COALESCE(sqlc.narg('description'),              description),
@@ -56,9 +78,19 @@ UPDATE posts SET
     cover_thumbnail_asset_id = COALESCE(sqlc.narg('cover_thumbnail_asset_id'), cover_thumbnail_asset_id),
     state_id                 = COALESCE(sqlc.narg('state_id'),                 state_id),
     cover_focal_x            = CASE WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
-                                    ELSE COALESCE(sqlc.narg('cover_focal_x'), cover_focal_x) END,
+                                    WHEN sqlc.narg('cover_focal_x')::DOUBLE PRECISION IS NOT NULL
+                                         THEN sqlc.narg('cover_focal_x')::DOUBLE PRECISION
+                                    WHEN sqlc.narg('cover_asset_id')::UUID IS NOT NULL
+                                         AND sqlc.narg('cover_asset_id')::UUID IS DISTINCT FROM cover_asset_id
+                                         THEN NULL
+                                    ELSE cover_focal_x END,
     cover_focal_y            = CASE WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
-                                    ELSE COALESCE(sqlc.narg('cover_focal_y'), cover_focal_y) END,
+                                    WHEN sqlc.narg('cover_focal_y')::DOUBLE PRECISION IS NOT NULL
+                                         THEN sqlc.narg('cover_focal_y')::DOUBLE PRECISION
+                                    WHEN sqlc.narg('cover_asset_id')::UUID IS NOT NULL
+                                         AND sqlc.narg('cover_asset_id')::UUID IS DISTINCT FROM cover_asset_id
+                                         THEN NULL
+                                    ELSE cover_focal_y END,
     updated_at               = NOW()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,

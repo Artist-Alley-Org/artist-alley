@@ -140,9 +140,30 @@
   const selectedId = $derived(isFeatured ? featuredCoverAssetId : coverAssetId);
   /** The id actually SHOWN, after the featured slot's fallback. */
   const shownId = $derived(isFeatured ? featuredEffectiveId : coverAssetId);
+  // ⚠️ CHANGING THE PICTURE CLEARS THIS SLOT'S FRAMING (#1333). A focal
+  // pair is a fraction of ONE picture's width and height and a zoom is a
+  // multiple of the window IT fits into; carried onto a different
+  // picture they land wherever those numbers happen to fall on the new
+  // subject, which is nowhere anybody chose. Clearing is the honest
+  // answer and it is recoverable in one drag.
+  //
+  // It has to happen HERE and not only at the server. The save body
+  // composes an explicit `cover_focal_x` whenever this state holds a
+  // number, and an explicitly supplied value beats the query's swap arm
+  // by design (that arm is what lets "new picture plus new framing in
+  // one PATCH" work at all). So a stale value left in this state would
+  // be sent as a deliberate choice and honoured as one.
+  //
+  // ONLY THIS SLOT. The two covers are separate pictures on separate
+  // destinations, and repositioning the rail must not reset the tile.
+  // PostCoverEditor's `choose` is the same rule on the post surface.
   function assign(id: string | null) {
+    if (id === selectedId) return;
     if (isFeatured) featuredCoverAssetId = id;
     else coverAssetId = id;
+    framing[isFeatured ? 'featured' : 'collection'].x = null;
+    framing[isFeatured ? 'featured' : 'collection'].y = null;
+    framing[isFeatured ? 'featured' : 'collection'].zoom = null;
   }
 
   function choiceFor(assetId: string | null): CoverChoice | null {
@@ -930,7 +951,7 @@
           {#if isFeatured && featuredCoverAssetId !== null}
             <button
               type="button"
-              onclick={() => (featuredCoverAssetId = null)}
+              onclick={() => assign(null)}
               data-testid="cover-editor-clear-featured"
               class="rounded border border-border px-2 py-1 text-xs hover:bg-surface"
             >
