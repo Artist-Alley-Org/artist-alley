@@ -317,6 +317,45 @@ func TestApplyPosts_AMigratedIdLeavesAnOrphanAndSaysSo(t *testing.T) {
 	}
 }
 
+// ⛔⛔ THE FALSE POSITIVE THAT WOULD HAVE MADE THE WARNING USELESS.
+// Measured 2026-08-27 on the published site_a wall: 861 posts hold only
+// 785 distinct member sets, so 76 legitimately frame the same assets as
+// a sibling. A solo showcase and a team roundup over one asset are not
+// duplicates of each other, and reporting them would fire on EVERY
+// FRESH SEED.
+func TestApplyPosts_TwoCatalogueSiblingsOverOneMemberSetAreNotOrphans(t *testing.T) {
+	f := newPostDriftFixture(t)
+	a := f.post(t, uuid.New().String(), 0, 1)
+	b := f.post(t, uuid.New().String(), 0, 1)
+	b.Title = "the roundup that frames the same two assets"
+
+	got := f.run(t, a, b)
+	if len(got.orphans) != 0 {
+		t.Fatalf("two catalogue posts over one member set reported %d orphan(s). "+
+			"76 of the published wall's 861 posts are this shape, so it would fire "+
+			"on every fresh seed", len(got.orphans))
+	}
+}
+
+// ⛔ AND THE SAME SHAPE ARRIVING LATER IS STILL NOT AN ORPHAN. A new
+// post framing assets an older post already frames is ordinary. What
+// separates a migrated id is that the row left behind is one NOTHING IN
+// THE CATALOGUE WILL EVER TOUCH AGAIN.
+func TestApplyPosts_ANewPostOverAlreadyFramedAssetsIsNotAnOrphan(t *testing.T) {
+	f := newPostDriftFixture(t)
+	existing := f.post(t, uuid.New().String(), 0, 1)
+	f.run(t, existing)
+
+	// Second seed: the older post is STILL in the catalogue, and a new
+	// one arrives over the same assets.
+	arriving := f.post(t, uuid.New().String(), 0, 1)
+	got := f.run(t, existing, arriving)
+	if len(got.orphans) != 0 {
+		t.Fatalf("a new post over already-framed assets reported %d orphan(s); the "+
+			"post it matched is still named by the catalogue", len(got.orphans))
+	}
+}
+
 // Two posts over DIFFERENT assets are not orphans of each other, or
 // every ordinary seed would report the whole wall.
 func TestApplyPosts_DistinctMembershipsAreNotOrphans(t *testing.T) {

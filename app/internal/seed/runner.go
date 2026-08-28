@@ -1279,6 +1279,13 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		return err
 	}
 	drift := newPostDrift()
+	// Every id THIS catalogue names, canonicalised. A pre-existing row
+	// in here is one a later pass may still touch; one that is not is
+	// abandoned. See noteOrphan.
+	named := make(map[string]struct{}, len(cat.Posts))
+	for _, p := range cat.Posts {
+		named[uuidString(parseUUID(p.ID))] = struct{}{}
+	}
 
 	inserted, skipped, madePublic := 0, 0, 0
 	for _, p := range cat.Posts {
@@ -1367,13 +1374,17 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		}
 		// A CLEAN insert, and the wall may already carry this content
 		// under a different id (#1310 moved 618 post ids across the
-		// three catalogues). See noteOrphan.
+		// three catalogues). Only a pre-existing row this catalogue no
+		// longer names is an orphan; a sibling it still names is an
+		// ordinary post that happens to frame the same assets, and 76
+		// of the published wall's 861 posts are exactly that. See
+		// noteOrphan.
 		if digest := memberDigest(members); digest != "" {
 			mine := uuidString(rowID)
 			if other, ok := index.byMembers[digest]; ok && other != mine {
-				drift.noteOrphan(mine, other)
-			} else if !ok {
-				index.byMembers[digest] = mine
+				if _, stillNamed := named[other]; !stillNamed {
+					drift.noteOrphan(mine, other)
+				}
 			}
 		}
 		r.posts[p.ID] = id

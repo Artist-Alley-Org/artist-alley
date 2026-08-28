@@ -134,11 +134,19 @@ type postIndex struct {
 // loadPostIndex reads every live post back before the phase writes
 // anything.
 //
-// ⚠️ IT IS READ ONCE, BEFORE THE LOOP, AND DELIBERATELY NOT REFRESHED.
-// The point of comparison is the database as the run FOUND it. Rows this
-// run inserts are added to the member index as they go (so a catalogue
-// that carries the same membership twice is caught), but nothing this
-// run writes is ever compared against the catalogue that wrote it.
+// ⚠️ IT IS READ ONCE, BEFORE THE LOOP, AND DELIBERATELY NOT REFRESHED
+// OR ADDED TO. The point of comparison is the database as the run
+// FOUND it. Nothing this run writes is ever compared against the
+// catalogue that wrote it.
+//
+// ⛔ THAT IS NOT A TIDINESS RULE, IT IS THE DIFFERENCE BETWEEN A
+// WARNING AND A NUISANCE. Registering each insert in the member index
+// looks like it would catch a catalogue that carries one membership
+// twice. Measured 2026-08-27 on the published site_a wall: 861 posts
+// hold only 785 distinct member sets, so 76 of them would report
+// themselves as duplicates of a sibling on EVERY FRESH SEED. They are
+// not duplicates. A solo showcase and a team roundup legitimately frame
+// the same asset.
 func (r *Runner) loadPostIndex(ctx context.Context) (*postIndex, error) {
 	rows, err := r.q.SeedListPostFingerprints(ctx)
 	if err != nil {
@@ -292,7 +300,23 @@ func (d *postDrift) note(postID string, fields []string) {
 }
 
 // noteOrphan records a catalogue post that inserted cleanly while a row
-// framing exactly the same assets sits under a different id.
+// framing exactly the same assets sits under a different id THAT THE
+// CATALOGUE NO LONGER NAMES.
+//
+// ⛔ ALL THREE CONDITIONS ARE LOAD-BEARING AND THE THIRD IS THE ONE
+// THAT MAKES THIS USABLE. Sharing a member set is far too weak on its
+// own: the published wall holds 861 posts over 785 distinct member
+// sets. What separates a migrated id from a sibling is that the row
+// left behind is one NOTHING IN THE CATALOGUE WILL EVER TOUCH AGAIN.
+// A new catalogue post framing assets an older post already frames is
+// ordinary and is not reported, because that older post is still named.
+//
+// The seeder cannot consult `post-id-migration.*.json` to be certain:
+// that document lives in seed/upgrades and catalogues.go reads
+// MANIFEST.json and posts.json from the SITE ROOT. Nor can it key on
+// the title, because #1306 rewrote 774 of them in the same arc that
+// moved the ids. Membership plus abandonment is what the data actually
+// supports.
 //
 // ⛔ THIS IS NOT HYPOTHETICAL AND IT IS NOT YET REACHABLE, WHICH IS WHY
 // IT IS BUILT NOW. runner.go's own comment says post ids are
