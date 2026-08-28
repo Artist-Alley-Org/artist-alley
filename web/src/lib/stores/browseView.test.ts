@@ -26,6 +26,7 @@ import {
   LIST_COLUMNS,
   columnMinPx,
 } from './browseView.svelte';
+import { auth } from './auth.svelte';
 
 /** The store hydrates once per page load; tests need many. */
 function rehydrate(defaults?: Parameters<typeof browseView.init>[0]) {
@@ -472,5 +473,178 @@ describe('the AI toggle', () => {
       rehydrate(null);
       expect(browseView.hideAI, `stored ${JSON.stringify(junk)}`).toBe(false);
     }
+  });
+});
+
+// #1292: the CONTENT category's Mature row, ADR 0090's LAYER 3.
+//
+// ⭐ THE CASCADE IS PART OF THE MAPPING, and that is the half these
+// cases exist for. The flag is stored per DEVICE and the two rungs
+// above it are answered per SESSION, so the interesting states are the
+// ones where they disagree: a reader who narrowed their feed and then
+// opted out, signed out, or moved to an install with the feature off.
+// A `matureParam` that read only the flag would go on filtering for all
+// three, with no row left in the menu to turn it off: invisible state,
+// and a wall that stays narrow for a reason nothing on screen explains.
+//
+// ⛔ AND IT CANNOT WIDEN. There is no value of the control that adds a
+// row: `matureParam` returns `'not_mature'` or nothing, so the only
+// thing a reader can express is a subtraction from what the three
+// conjuncts already allowed.
+describe('the mature view filter', () => {
+  /** A signed-in reader with the two cascade rungs set. Nothing else on
+   *  AuthUser matters here, and the two required mature fields are
+   *  spelled out at every call so a case cannot lean on a default. */
+  function signIn(allowed: boolean, optedIn: boolean) {
+    auth.user = {
+      ref: 1,
+      username: 'reader',
+      matureContentAllowed: allowed,
+      matureOptedIn: optedIn,
+    };
+  }
+
+  beforeEach(() => {
+    auth.user = null;
+  });
+
+  it('is not offered to a signed-out reader, and sends nothing', () => {
+    // An anonymous viewer can never opt in, because there is nowhere to
+    // store the answer (ADR 0090 §2), so there is no consent for a view
+    // filter to narrow. It fails both rungs by construction rather than
+    // by a third check.
+    rehydrate(null);
+    browseView.setHideMature(true);
+    expect(browseView.matureFilterAvailable).toBe(false);
+    expect(browseView.matureParam).toBeNull();
+  });
+
+  it('is not offered when the INSTANCE forbids mature content', () => {
+    signIn(false, true);
+    rehydrate(null);
+    browseView.setHideMature(true);
+    expect(browseView.matureFilterAvailable).toBe(false);
+    expect(browseView.matureParam).toBeNull();
+  });
+
+  it('is not offered when the ACCOUNT has not opted in', () => {
+    // Rung 2. A control meaning "leave mature out of these results" is
+    // meaningless to a reader who was never going to be shown any.
+    signIn(true, false);
+    rehydrate(null);
+    browseView.setHideMature(true);
+    expect(browseView.matureFilterAvailable).toBe(false);
+    expect(browseView.matureParam).toBeNull();
+  });
+
+  it('⭐ defaults to INCLUDED for a reader who has opted in', () => {
+    // ADR 0090's amendment states this as a requirement: layer 3
+    // defaults to included, so shipping it changed nothing for a reader
+    // who had already consented.
+    signIn(true, true);
+    rehydrate(null);
+    expect(browseView.matureFilterAvailable).toBe(true);
+    expect(browseView.hideMature).toBe(false);
+    expect(browseView.matureParam).toBeNull();
+  });
+
+  it('sends `not_mature` once narrowed, and nothing again once cleared', () => {
+    signIn(true, true);
+    rehydrate(null);
+
+    browseView.setHideMature(true);
+    expect(browseView.matureParam).toBe('not_mature');
+
+    browseView.setHideMature(false);
+    expect(browseView.matureParam).toBeNull();
+  });
+
+  it('survives a reload', () => {
+    signIn(true, true);
+    rehydrate(null);
+    browseView.setHideMature(true);
+
+    rehydrate(null);
+    expect(browseView.hideMature).toBe(true);
+    expect(browseView.matureParam).toBe('not_mature');
+  });
+
+  it('⭐ stops sending the moment the reader stops qualifying', () => {
+    // The device keeps its flag; the request must not keep the filter.
+    // This is the case a `matureParam` reading only the flag passes
+    // every other test in this block and fails here.
+    signIn(true, true);
+    rehydrate(null);
+    browseView.setHideMature(true);
+    expect(browseView.matureParam).toBe('not_mature');
+
+    signIn(true, false);
+    expect(browseView.hideMature, 'the device keeps its answer').toBe(true);
+    expect(browseView.matureParam, 'but the request must stop carrying it').toBeNull();
+
+    auth.user = null;
+    expect(browseView.matureParam).toBeNull();
+  });
+
+  it('⛔ NEVER writes the account preference', () => {
+    // Layer 2 is the consent and lives on `user_preferences`. Layer 3
+    // may only narrow what that consent allowed, so this setter touches
+    // one localStorage key and nothing else.
+    signIn(true, true);
+    rehydrate(null);
+    browseView.setHideMature(true);
+    expect(auth.user?.matureOptedIn, 'the consent must be untouched').toBe(true);
+    expect(localStorage.getItem('aa_browse_hide_mature')).toBe('1');
+
+    browseView.setHideMature(false);
+    // "Included" is the default, so a stored false is a key that says
+    // nothing (readHideAI's argument, same axis of reasoning).
+    expect(localStorage.getItem('aa_browse_hide_mature')).toBeNull();
+  });
+
+  it('ignores a stored value that is not the one it writes', () => {
+    signIn(true, true);
+    for (const junk of ['true', 'yes', '0', 'not_mature', '']) {
+      localStorage.setItem('aa_browse_hide_mature', junk);
+      rehydrate(null);
+      expect(browseView.hideMature, `stored ${JSON.stringify(junk)}`).toBe(false);
+      expect(browseView.matureParam).toBeNull();
+    }
+  });
+
+  it('renders INCLUDED, not broken, when localStorage throws', () => {
+    signIn(true, true);
+    const real = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    const boom = () => { throw new DOMException('denied', 'SecurityError'); };
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() { return { getItem: boom, setItem: boom, removeItem: boom }; },
+    });
+    try {
+      browseView.hydrated = false;
+      expect(() => browseView.init(null)).not.toThrow();
+      expect(browseView.hideMature).toBe(false);
+      expect(browseView.matureParam).toBeNull();
+      expect(() => browseView.setHideMature(true)).not.toThrow();
+      expect(browseView.hideMature).toBe(true);
+    } finally {
+      if (real) Object.defineProperty(window, 'localStorage', real);
+      else delete (window as unknown as Record<string, unknown>).localStorage;
+    }
+  });
+
+  it('does not disturb the AI flag beside it', () => {
+    // Ten separate localStorage keys, one per setting: writing one
+    // cannot touch another, and this is the pair a reader is most
+    // likely to set together.
+    signIn(true, true);
+    rehydrate(null);
+    browseView.setHideAI(true);
+    browseView.setHideMature(true);
+    rehydrate(null);
+    expect(browseView.hideAI).toBe(true);
+    expect(browseView.hideMature).toBe(true);
+    expect(browseView.aiParam).toBe('not_pure');
+    expect(browseView.matureParam).toBe('not_mature');
   });
 });

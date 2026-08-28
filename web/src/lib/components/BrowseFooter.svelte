@@ -35,7 +35,9 @@
   // page's narrowing controls read out of one place.
   //
   // ⭐ #1251 slice 3 adds "Hide AI-made work" INSIDE that same panel
-  // (ADR 0094 fourth amendment) rather than as a control of its own.
+  // (ADR 0094 fourth amendment) rather than as a control of its own,
+  // and #1292 turns that lone row into a CONTENT category holding it
+  // and a Mature row, with every tick in the menu meaning SHOW.
   // The right cluster therefore still carries exactly two things — the
   // type-filter button and the sort toggle — which is the owner's
   // ruling: "should be mixed in the asset type filter", after "that
@@ -48,12 +50,22 @@
   //   `?kind=` goes UP to the page, which writes the URL — a
   //   type-filtered wall is a thing you send someone.
   //
-  //   `hideAI` goes SIDEWAYS to the browseView store, which writes
-  //   localStorage — "I would rather not look at AI work" describes the
-  //   READER, so it must survive every navigation, and pasting it into
-  //   somebody else's browser would impose your preference on them under
-  //   cover of sharing a link. See readHideAI for why it is a device
-  //   preference and not an account one.
+  //   `hideAI` and `hideMature` go SIDEWAYS to the browseView store,
+  //   which writes localStorage. "I would rather not look at AI work"
+  //   describes the READER, so it must survive every navigation, and
+  //   pasting it into somebody else's browser would impose your
+  //   preference on them under cover of sharing a link. See readHideAI
+  //   and readHideMature for why they are device preferences and not
+  //   account ones. The second is the sharper case: an account rung for
+  //   mature EXISTS (`user_preferences.mature_content.show`) and is a
+  //   DIFFERENT LAYER rather than this one's default, so writing it
+  //   from here would turn a view filter into a consent.
+  //
+  // ⛔ `matureAvailable` GOES THE OTHER WAY, and it is not a filter at
+  // all: it is the answer to whether the row exists, resolved on the
+  // store from ADR 0090's two-rung cascade. Both rungs are ABSENCE
+  // rather than disablement, so the row is simply not rendered for a
+  // reader the instance or their own account has not opted in.
   //
   // Both are signed off. A future reader tempted to "unify" them should
   // read FeedKindFilter's two-axes note first.
@@ -115,6 +127,9 @@
       onapply={(next) => onkinds?.(next)}
       hideAI={browseView.hideAI}
       onhide={(next) => browseView.setHideAI(next)}
+      hideMature={browseView.hideMature}
+      onhidemature={(next) => browseView.setHideMature(next)}
+      matureAvailable={browseView.matureFilterAvailable}
     />
   {/snippet}
 </ViewControls>

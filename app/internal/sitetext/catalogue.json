@@ -172,12 +172,16 @@
         "apply": "Apply",
         "solo_hint": "Double-click to pick only this one"
       },
-      "hide": {
-        "label": "Hide"
+      "content": {
+        "label": "Content"
       },
       "ai": {
-        "label": "Hide AI-made work",
-        "hint": "Hide posts that are entirely AI-made. Work that mixes AI and human effort stays on the wall."
+        "label": "AI-generated",
+        "hint": "Show work that is entirely AI-made. Work that mixes AI and human effort is never hidden either way."
+      },
+      "mature": {
+        "label": "Mature",
+        "hint": "Show mature content in these results. This is just for this device; your account setting stays as it is."
       }
     },
     "sort": {

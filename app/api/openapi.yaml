@@ -6238,6 +6238,62 @@ paths:
           schema:
             type: string
             enum: [pure, not_pure]
+        - name: mature
+          in: query
+          required: false
+          description: |
+            The VIEW-level mature filter, which is the browse footer's
+            Mature row (#1292, ADR 0090's 2026-08-26 amendment). One
+            value:
+
+            - `not_mature`: everything that is not flagged mature.
+
+            ⭐ THE VOCABULARY HAS ONE VALUE ON PURPOSE. Mature is
+            gated by three conjuncts (ADR 0090 §2) and this parameter is
+            a fourth thing entirely: a reader who has ALREADY qualified
+            saying "not in these results, right now". Layer 3 narrows
+            and never consents, so there is deliberately no spelling of
+            this parameter that asks for mature work. "Only the mature
+            ones" would be a positive selection over a gated axis, and
+            the property that this filter can never widen is worth more
+            as a fact about the wire than as a promise in prose. `?ai=`
+            offers both directions because its axis gates nothing; this
+            one does not, for the same reason in reverse.
+
+            ⛔ IT IS NOT THE GATE, AND IT DOES NOT REPLACE IT. The
+            three conjuncts still decide which mature rows this caller
+            could have received at all; this subtracts from what
+            survives them. A caller who does not send it gets exactly
+            what they got before this parameter existed, and a caller
+            who does can never receive a row the conjuncts withheld.
+
+            ⚠️ IT APPLIES TO THE CALLER'S OWN MATURE POSTS TOO, unlike
+            the gate, whose owner exemption exists so that an operator's
+            switch cannot take an artist's work away from them. Nothing
+            is taken away here: the reader asked, and one untick gives
+            it straight back. "Not in this feed" means not in this feed.
+
+            NARROWING, like every other filter on this operation: a
+            plain conjunct beside the post read rule, never a disjunct
+            with it.
+
+            ⚠️ AN UNKNOWN VALUE IS A 400, for the reason `?ai=`
+            gives: this is an EXCLUSION over a closed vocabulary, so a
+            tolerated `?mature=yes` would render a predicate matching
+            nothing and hand the reader an EMPTY WALL where they asked
+            for a slightly smaller one.
+          schema:
+            type: string
+            enum: [not_mature]
+            # PINNED, per the note on searchFieldValues' `status`: an
+            # unpinned single-value enum generates the bare identifier
+            # `NotMature` at package scope, which is both meaningless
+            # at its use site and unstable, since the next schema
+            # anywhere in this file with a `not_mature` value would
+            # rename it. A generated identifier should not depend on
+            # what OTHER schemas happen to exist.
+            x-enum-varnames:
+              - ListPostsParamsMatureNotMature
         - name: feed
           in: query
           required: false
