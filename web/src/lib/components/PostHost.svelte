@@ -25,6 +25,7 @@
   import CommentsThread from './CommentsThread.svelte';
   import FollowButton from './FollowButton.svelte';
   import Menu from './Menu.svelte';
+  import PostCoverEditor from './PostCoverEditor.svelte';
   import ShareEntityModal from './ShareEntityModal.svelte';
   import WhiteboardCanvas from './whiteboard/WhiteboardCanvas.svelte';
   import BrushCanvas from './whiteboard/BrushCanvas.svelte';
@@ -555,6 +556,32 @@
     stubAction('Edit post');
   }
 
+  // ── The cover, and where its grid crop is centred (#1210) ─────────
+  //
+  // A SEPARATE ITEM FROM "Edit post", which is still a stub. Folding
+  // this into it would put the post editor's name on a dialog that
+  // edits one thing, and an author who opened it looking for the title
+  // would find a crop marquee. The item says what it does; when the
+  // real editor lands this becomes a section of it, the way
+  // CollectionCoverEditor is a section of EditCollectionModal.
+  let coverOpen = $state(false);
+
+  function editCover() {
+    coverOpen = true;
+  }
+
+  /** Re-read the post after a cover save, from the server rather than
+   *  by patching the local copy: the write may have moved more than the
+   *  two columns this dialog sent (`updated_at` at minimum, and the
+   *  derived AI provenance whenever the cover changes), and a client
+   *  that stitched its own answer would show a post that never existed.
+   *  Same reasoning as the publish toggle above. */
+  async function reloadPost() {
+    if (!post) return;
+    const { data } = await api.GET('/posts/{id}', { params: { path: { id: post.id } } });
+    if (data) pl.aux.post = data as typeof pl.aux.post;
+  }
+
   // ── Publish / unpublish (#1161, ADR 0091 decisions 6 + 7) ────────────
   // A post is a draft or it is published, and moving between the two is
   // a deliberate act with its own control. Before this the only way a
@@ -945,6 +972,9 @@
                 {t('playlist_actions.bulk_tag')}
               </button>
             {/if}
+            <button type="button" role="menuitem" onclick={editCover} data-testid="post-edit-cover" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('post_menu.edit_cover')}
+            </button>
             <button type="button" role="menuitem" onclick={editPost} data-testid="post-edit" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
               {t('post_menu.edit_post')}
             </button>
@@ -1255,6 +1285,16 @@
       kind="post"
       id={post.id}
       onclose={() => (shareOpen = false)}
+    />
+
+    <!-- Same placement rule as the two dialogs around it (#1210): raised
+         from a menu that lives inside the viewer dialog, so it has to be
+         declared where Modal's portal can find that dialog. -->
+    <PostCoverEditor
+      {post}
+      open={coverOpen}
+      onclose={() => (coverOpen = false)}
+      onsaved={reloadPost}
     />
 
     <!-- Same placement rule, same reason (#981): the delete confirm is

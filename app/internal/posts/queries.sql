@@ -10,12 +10,17 @@
 -- a post member) used by the upload modal's "use a different image
 -- as the cover" UX. state_id is the workflow state in the 'post'
 -- domain — NULL means no workflow tracking.
+-- cover_focal_x / cover_focal_y are the crop the author framed for the
+-- browse grid's square tile (#1210), as fractions of the ORIGINAL
+-- picture. Both NULL means centred, which is what every post rendered
+-- before the columns existed; the column CHECK refuses half a pair.
 INSERT INTO posts (
     author_user_ref, title, description, visibility, cover_asset_id,
-    cover_thumbnail_asset_id, team_id, state_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    cover_thumbnail_asset_id, team_id, state_id, cover_focal_x, cover_focal_y
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+          cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
+          posted_at, like_count, comment_count,
           origin_server_id, team_id, state_id, created_at, updated_at;
 
 -- name: GetPost :one
@@ -29,7 +34,8 @@ RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
 -- report is the pre-membership one: null on every create. fetchFullPost
 -- re-reads after members are inserted, which is where the truth is.
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+       cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
+       posted_at, like_count, comment_count,
        origin_server_id, team_id, state_id, created_at, updated_at,
        ai_provenance
 FROM posts
@@ -37,6 +43,11 @@ WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: UpdatePost :one
 -- COALESCE-based partial update — NULL args keep current values.
+-- The focal pair needs a CASE rather than a bare COALESCE, for the
+-- reason UpdateCollection's pairs do: COALESCE cannot express "set this
+-- back to NULL", so clearing a crop is an explicit flag. Both axes read
+-- the SAME flag, because a focal point is a point and clearing half of
+-- one is not a state the column CHECK admits.
 UPDATE posts SET
     title                    = COALESCE(sqlc.narg('title'),                    title),
     description              = COALESCE(sqlc.narg('description'),              description),
@@ -44,10 +55,15 @@ UPDATE posts SET
     cover_asset_id           = COALESCE(sqlc.narg('cover_asset_id'),           cover_asset_id),
     cover_thumbnail_asset_id = COALESCE(sqlc.narg('cover_thumbnail_asset_id'), cover_thumbnail_asset_id),
     state_id                 = COALESCE(sqlc.narg('state_id'),                 state_id),
+    cover_focal_x            = CASE WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
+                                    ELSE COALESCE(sqlc.narg('cover_focal_x'), cover_focal_x) END,
+    cover_focal_y            = CASE WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
+                                    ELSE COALESCE(sqlc.narg('cover_focal_y'), cover_focal_y) END,
     updated_at               = NOW()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+          cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
+          posted_at, like_count, comment_count,
           origin_server_id, team_id, state_id, created_at, updated_at;
 
 -- name: SoftDeletePost :exec

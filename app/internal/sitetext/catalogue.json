@@ -3008,7 +3008,8 @@
     "cover_editor_uploading": "Uploading…",
     "cover_editor_upload_failed": "Couldn't upload that picture.",
     "cover_editor_stage_pending": "This picture is still being prepared. It'll show here — and on the strip — in a moment.",
-    "cover_editor_narrow_warning": "This picture is still a draft, so visitors who aren't signed in will see the fallback cover instead. Publish it, or pick another picture."
+    "cover_editor_narrow_warning": "This picture is still a draft, so visitors who aren't signed in will see the fallback cover instead. Publish it, or pick another picture.",
+    "cover_editor_hidden_warning": "Visitors who aren't signed in are not shown this picture, so they will see the fallback cover instead. Pick another picture if you want everyone to see this one."
   },
   "errors": {
     "save_failed": "Couldn't save changes."
@@ -3115,7 +3116,19 @@
     "draft_badge": "Draft",
     "delete_post": "Delete post…",
     "actions_button": "Post actions",
-    "add_to_collection": "Save to collection…"
+    "add_to_collection": "Save to collection…",
+    "edit_cover": "Cover and framing…"
+  },
+  "post_cover": {
+    "title": "Cover and framing",
+    "pick_label": "Cover picture",
+    "stage_alt": "The cover picture, with a draggable crop marquee over the part the grid tile shows",
+    "card_alt": "How the cover will look on a grid tile",
+    "card_label": "Grid tile",
+    "no_members": "This post has no pictures you can use as a cover.",
+    "no_contain_rung": "This picture has no full-size preview yet, so its grid tile is centred. Come back once processing finishes, or pick another picture.",
+    "narrow_screen": "Positioning the crop needs a wider screen. You can still change which picture the cover uses, and any framing already set is kept.",
+    "save_error": "The cover could not be saved. Try again."
   },
   "shortcuts": {
     "title": "Keyboard shortcuts",

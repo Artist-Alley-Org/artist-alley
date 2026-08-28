@@ -284,6 +284,11 @@
     id: string;
     title?: string;
     status?: string;
+    /** #1209: would an ANONYMOUS visitor's read rule return this
+     *  asset. The whole conjunction, decided by the server; `status`
+     *  above is one third of it and is kept only as the fallback for a
+     *  row that does not carry this. */
+    anonymously_visible?: boolean;
     /** Carried through from GET /assets so a picked non-member gets the
      *  SAME source the rail will load — see ladderFor. */
     ladder_available?: boolean;
@@ -465,33 +470,65 @@
     if (file) void uploadAndChoose(pick, file, choose);
   }
 
+  /** Which sentence the warning shows, or null for no warning at all. */
+  type WarningKind = 'draft' | 'hidden' | null;
+
   /** Would a picked asset be invisible to some of the collection's
    *  audience?
    *
-   *  ⚠️ PARTIAL, AND SAID SO RATHER THAN OVERSTATED. A public
-   *  collection is read by anonymous visitors, whose asset predicate
-   *  requires `status = 'active'` AND `sensitivity = 'public'` AND
-   *  `processing_status = 'ready'`. This can only check the first: the
-   *  Asset schema carries `status` and deliberately carries no
-   *  `sensitivity`, so a team-tier asset picked as a public
-   *  collection's cover still falls back on the rail with no warning
-   *  here. Answering that exactly needs a derived
-   *  "anonymously picturable" flag from the server; it is NOT inferred
-   *  client-side, because inferring it is how a warning starts lying in
-   *  the reassuring direction.
+   *  ⭐ IT NOW ASKS THE WHOLE QUESTION (#1209). This used to check
+   *  `status` alone and say so: a public collection is read by anonymous
+   *  visitors, whose asset rule requires `status = 'active'` AND
+   *  `sensitivity = 'public'` AND `processing_status = 'ready'`, and
+   *  the Asset schema carries `status` and deliberately carries no
+   *  `sensitivity`. So a team-tier pick fell back on the rail unwarned.
+   *  It was left partial rather than guessed at, because inferring the
+   *  missing conjuncts client-side is how a warning starts lying in the
+   *  reassuring direction.
+   *
+   *  `anonymously_visible` is that answer, DERIVED ON THE SERVER from
+   *  the same predicate the rail executes rather than re-stated here.
+   *  One rule, not a parallel one: a second copy of a security rule is
+   *  a rule that will disagree with itself.
+   *
+   *  ⚠️ UNDEFINED IS NOT FALSE. A row that never carried the flag (a
+   *  member row from the first grid, or a payload from a server that
+   *  predates it) has nothing to read, and the honest answer there is
+   *  no warning rather than an invented one. That is the same rule the
+   *  `status` check followed and the reason this is not written as
+   *  `!found.anonymously_visible`.
    *
    *  Nothing is BLOCKED by this. The rail's per-rung fallback is the
    *  safety property and it is unchanged — this only makes the fallback
    *  explicable instead of mysterious. */
-  function narrowerThanCollection(assetId: string | null, pick: SlotPicker): boolean {
-    if (assetId === null || collectionVisibility !== 'public') return false;
+  function narrowerThanCollection(assetId: string | null, pick: SlotPicker): WarningKind {
+    if (assetId === null || collectionVisibility !== 'public') return null;
     const found =
       pick.results.find((r) => r.id === assetId) ??
-      // A member row carries no status, so a member picked from the
-      // first grid produces no warning either way. That is the honest
-      // answer, not a silent pass: the check has nothing to read.
+      // A member row carries neither status nor the derived flag, so a
+      // member picked from the first grid produces no warning either
+      // way. That is the honest answer, not a silent pass: the check
+      // has nothing to read.
       null;
-    return found !== null && found.status !== undefined && found.status !== 'active';
+    if (found === null) return null;
+    const hidden =
+      found.anonymously_visible !== undefined
+        ? !found.anonymously_visible
+        : found.status !== undefined && found.status !== 'active';
+    if (!hidden) return null;
+    // WHICH SENTENCE, and it is not cosmetic (#1209). The old copy said
+    // "this picture is still a draft", which was the whole truth while
+    // `status` was the only thing the check could read. It is now one of
+    // four conjuncts, and saying it about an ACTIVE team-tier picture
+    // would be the warning lying in a new direction: the curator would
+    // go looking for a Publish button that is already pressed.
+    //
+    // So the specific sentence is kept for the case it is true of, and
+    // the general one states the OUTCOME for everything else. The
+    // general one does not name the cause, because the payload
+    // deliberately does not carry the tier and inventing a reason is the
+    // thing this whole change exists to stop.
+    return found.status !== undefined && found.status !== 'active' ? 'draft' : 'hidden';
   }
 
   /** The picker state for THIS visit. Declared here rather than beside
@@ -590,7 +627,7 @@
   choose: (id: string | null) => void,
   testidPrefix: string,
   noneLabel: string,
-  warn: boolean,
+  warn: WarningKind,
   /** GROW, or step aside (#1218). True is "no picture is chosen, so
    *  this is the whole page"; false is "the stage has it, keep a rail".
    *  The two states differ in the CHOICE GRID only — the source tabs,
@@ -661,8 +698,11 @@
            prevents is the curator wondering why the strip is showing
            something else. -->
       <p class="mb-2 rounded border border-warning/40 bg-warning/10 px-2 py-1 text-xs text-warning"
-         data-testid="{testidPrefix}-narrow-warning">
-        {t('collections.cover_editor_narrow_warning')}
+         data-testid="{testidPrefix}-narrow-warning"
+         data-warning-kind={warn}>
+        {warn === 'draft'
+          ? t('collections.cover_editor_narrow_warning')
+          : t('collections.cover_editor_hidden_warning')}
       </p>
     {/if}
 

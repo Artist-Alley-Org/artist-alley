@@ -87,6 +87,20 @@
      *  there is no path from the image's rendered size back to the
      *  budget that produced it. */
     fill?: boolean;
+    /** Offer the zoom slider (#1210). ON for the collection slots, whose
+     *  entity stores `cover_zoom` / `featured_cover_zoom`; OFF for a
+     *  post, which stores a focal pair and no zoom.
+     *
+     *  A prop rather than "just don't bind the value", because a slider
+     *  whose value is thrown away on save is a control the product
+     *  cannot keep: the curator moves it, the preview answers, and the
+     *  card comes back at the fit. Off, the wheel, the pinch and the
+     *  slider are all absent, so there is no path to a non-null zoom to
+     *  discard in the first place.
+     *
+     *  Reset stays under both, because clearing the FOCAL point is what
+     *  it is for and that exists either way. */
+    zoomOffered?: boolean;
     /** Extra controls beside Reset — the featured slot puts its "go back
      *  to the collection cover" button here. */
     extraActions?: import('svelte').Snippet;
@@ -106,6 +120,7 @@
     cardLabel,
     maxHeightVh = 52,
     fill = false,
+    zoomOffered = true,
     extraActions,
   }: Props = $props();
 
@@ -277,6 +292,11 @@
    *  deliberate "back to the fit" and is not the same as the null a
    *  Reset writes. */
   function setZoom(v: number) {
+    // The ONE write, so `zoomOffered` is enforced once rather than at
+    // each of the three gestures that reach here (#1210). A caller that
+    // cannot store a zoom must not be able to produce one, and a guard
+    // per gesture is a guard the fourth gesture will not have.
+    if (!zoomOffered) return;
     zoom = clampZoom(v);
   }
 
@@ -617,7 +637,7 @@
            because it changes what the stage's marquee shows, and a
            control placed away from the thing it moves is the surface
            complaint #1207 already fixed once. -->
-      {#if win}
+      {#if win && zoomOffered}
         <div class="mt-3 flex items-center gap-3">
           <label
             class="text-[10px] uppercase tracking-wide text-fg-muted"

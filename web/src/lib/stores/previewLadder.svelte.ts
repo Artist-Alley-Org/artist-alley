@@ -138,6 +138,11 @@ class PreviewLadderState {
    *  the 4096 `hires` rung is 400px, and claiming 4096 would park every
    *  large tile on a file that cannot fill it.
    *
+   *  `containOnly` is the FOCAL POINT's requirement (#1210): see the
+   *  comment at the loop it gates for why a positioned tile must never
+   *  be handed a pre-cropped rung, and what the null it can return
+   *  means for the caller.
+   *
    *  ⚠️ The slot is assumed SQUARE, which `fill` is: grid's frame is
    *  `aspect-square` and `variableAspect` is masonry-only. A future
    *  non-square cropping tile needs the tile ratio passed in — the
@@ -146,6 +151,7 @@ class PreviewLadderState {
     assetId: string,
     pixelWidth?: number | null,
     pixelHeight?: number | null,
+    containOnly: boolean = false,
   ): string | null {
     const w = pixelWidth ?? 0;
     const h = pixelHeight ?? 0;
@@ -155,7 +161,21 @@ class PreviewLadderState {
     // width the square crop is the smaller file, so a tie should not
     // cost bytes.
     const cands: Array<{ key: string; width: number; cover: boolean }> = [];
-    for (const r of this.coverRungs) {
+    // `containOnly` DROPS the pre-cropped rungs, and it is not an
+    // optimisation (#1210). A cover rung is a square the SERVER already
+    // took at the centre of the picture, so `object-position` applied to
+    // one moves a crop of a crop and lands where nobody chose. A tile
+    // honouring a focal point therefore must not be offered one as a
+    // srcset candidate. The browser picks per viewport, so leaving them
+    // in would make the framing correct at some tile sizes and wrong at
+    // others, which is worse than either.
+    //
+    // With no source dimensions there are no contain candidates to
+    // offer, so this returns null and the caller falls back to `col`
+    // CENTRED, dropping the focal point rather than misapplying it. That
+    // is CollectionCard's rule for the same situation, and it is the
+    // behaviour every card had before focal points existed.
+    for (const r of containOnly ? [] : this.coverRungs) {
       // A cover rung is cropped to a square, then scaled to max_dim
       // unless that would upscale — so its edge is capped by the
       // source's SHORT side.
