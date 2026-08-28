@@ -252,3 +252,42 @@ in the sprint-14 brief) as settled.
 
 ⚠️ Recorded because an accepted ADR is what people trust *instead of* reading the code. This one
 asserted a safety property in the present tense for two weeks while nothing was checking it.
+
+---
+
+## Amendment, 2026-08-27 (#1320, PR #1327): a fourth axis, and this one is invisible by construction
+
+The 2026-08-25 amendment named three axes and asked that the next one be recognisable. Here it is,
+and it is not a difference in the corpus's *shape*.
+
+Sprint 14f gave `aa seed` the ability to report what it declined to touch. Its first run against the
+persistent development database said:
+
+```
+resumed=861  drifted=779
+```
+
+**712 titles, 693 dates, 326 memberships, 29 visibilities**, deterministic across consecutive runs.
+
+| axis | mechanism |
+|---|---|
+| fresh vs persistent | one-time costs never amortise in CI (#1263) |
+| deep vs shallow | a constant measured on the dev corpus (#1223's 400px park) |
+| subset vs full | `--profile ci` omits *depth* by design (#1285) |
+| **stale vs current** | the loader could add a row and never correct one, so a persistent database never converges on its catalogue (#1320) |
+
+⛔ **The three earlier axes are differences you could in principle notice by looking. This one was
+not.** The loader reported the same clean result whether it had applied the catalogue or ignored it,
+so the divergence had no surface at all. It was found by building the report, not by observing a
+symptom, and the number was larger than anyone had guessed.
+
+⭐ **The rule this adds to the family: an environment can differ from its source not only in shape
+but in AGE, and age has no shape.** A corpus that is the right size, the right depth and the right
+breadth can still be answering with values from months ago. Ask what makes a test environment
+*converge* on its inputs, and if the answer is nothing, the environment is a snapshot wearing a
+pipeline's clothes.
+
+⚠️ The remedy is deliberately not automatic. The loader reports and points at the destructive full
+reset rather than updating rows itself, for the reason ADR 0081 gives about shipped content: an
+override is data resolved over the shipped value, not silently replaced by it. Closing the gap for
+the published corpus is #1319.

@@ -219,3 +219,43 @@ deterministic, and it is; what this ADR did not say is that **the committed arti
 that determinism is a property of.** Every guard that compares the profile against a fresh assembly
 is therefore comparing two different kinds of object, and will keep finding differences that are
 history rather than defects. Tracked separately.
+
+---
+
+## Amendment, 2026-08-27 (#1322): the divergence has a cause, and it removes an option
+
+The amendment above recorded that the committed profile holds **863** posts where a fresh assembly
+produces **1,103**, and called it a historical accumulation. That was the symptom. The cause was
+found while planning the next sprint, and it is more consequential than the symptom.
+
+**`group_id` is absent from the committed asset profiles.** Zero non-null values in both
+`studio-a.assets.json` and `studio-b.assets.json`, and the key is not present at all. It is absent
+from the published `MANIFEST.json` too.
+
+`derive_posts` pass 1 is the authoritative pass and keys on exactly that field
+(`sanitize_and_assemble.py:1196`, minting the id at `:1400`). So a recompose emits **zero
+`asset_group` posts**, and every asset that would have been grouped falls through into passes 2 and
+3. Measured against the committed studio-a profile: 244 `asset_group` posts exist only in the
+committed document, against 314 `multi_asset` and 163 `solo_showcase` that exist only in a fresh
+one. Only **336 of 863** ids survive a recompose at all.
+
+⛔ **So regeneration is not an available remedy.** `recompose_posts`'s docstring calls the profiles
+*"the exact asset set each site ships"*, and they are, for assets. They are **not a sufficient input
+for composition**, because the field the first pass depends on only ever existed in the source
+catalogue, which is not checked in. Of the three ways to resolve the divergence, one is simply off
+the table.
+
+⭐ **This sharpens what Decision 3 actually claims.** Assembly *is* deterministic, and #1296 made it
+locally so. What is false is the unstated implication that a **recompose has the same inputs the
+original assembly had**. Determinism is a property of a function over its inputs; it says nothing
+when an input has been dropped from the artifact you kept. **The ADR should be read as: assembly is
+reproducible GIVEN the source catalogue, and the checked-in profiles are not that catalogue.**
+
+⚠️ And the practical hazard is not theoretical. Running the full chain today produces 1,430 posts
+and silently drops **200 of the 841** hand-curated posts, because their ids do not exist in a
+regenerated document. That silence was fixed separately in #1324, which is what makes leaving this
+question open safe rather than merely tolerable.
+
+Recovering group *membership* from the 244 committed `asset_group` posts is possible, but the group
+post id derives from the `group_id` string, so it would move 244 more ids on site_a and 110 on
+site_b. Tracked as #1322, which is a ruling to be made rather than work to be scheduled.
