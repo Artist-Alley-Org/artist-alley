@@ -4,8 +4,9 @@
 // The instance's anonymous-browsing switch, borrowed and given back
 // under a cross-file lock (#1248).
 //
-// Four specs need `public_mode` to be a particular value while they
-// assert, and the instance has exactly one of it. Each one used to do
+// FIVE specs need `public_mode` to be a particular value while they
+// assert (1166, 1195, 1207, 1251 and advanced-operators), and the
+// instance has exactly one of it. Each one used to do
 // its own read-prior / set / restore-prior, which is the right contract
 // for a single writer and a LOST UPDATE for two:
 //

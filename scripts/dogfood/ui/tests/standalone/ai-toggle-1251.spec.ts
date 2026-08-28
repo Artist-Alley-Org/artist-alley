@@ -644,8 +644,9 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
     await gotoFixtureWall(page);
     expect(await feedIds(page, '')).toContain(pureId);
 
-    // ⚠️ `public_mode` IS SHARED INSTANCE CONFIG, and there are FOUR
-    // writers of it — 1195, 1207 and advanced-operators are the others.
+    // ⚠️ `public_mode` IS SHARED INSTANCE CONFIG, and there are FIVE
+    // writers of it: 1166, 1195, 1207 and advanced-operators are the
+    // others.
     // #1248 named exactly that contention as the thing to rule in or out
     // before calling a rotating failure a timing flake; it was real, and
     // the answer is the cross-file lock rather than a narrower window.
