@@ -116,17 +116,30 @@ export const testIds = {
     kindFilterAll:       'kind-filter-all',
     kindFilterOption:    'kind-filter-option',
     kindFilterApply:     'kind-filter-apply',
-    // The "Hide AI-made work" switch (#1251 slice 3, ADR 0094 fourth
-    // amendment). ⚠️ IT LIVES INSIDE `kindFilterPanel`, not beside
-    // `kindFilterToggle` — the owner's ruling is one menu, so the
-    // footer's right cluster still holds exactly the type-filter button
-    // and the sort toggle. A spec must OPEN the panel to reach this,
-    // which is what makes the placement itself checkable.
-    // `aiFilterActive` is the glyph the closed button draws when the
-    // switch is on, so "the button carries the state" holds for this
-    // axis as well as for the type count.
+    // The CONTENT category's two rows (#1251 slice 3 → #1292). ⚠️ THEY
+    // LIVE INSIDE `kindFilterPanel`, not beside `kindFilterToggle`.
+    // The owner's ruling is one menu, so the footer's right cluster
+    // still holds exactly the type-filter button and the sort toggle. A
+    // spec must OPEN the panel to reach either, which is what makes the
+    // placement itself checkable. The `*Active` ids are the glyphs the
+    // CLOSED button draws, so "the button carries the state" holds for
+    // both axes as well as for the type count.
+    //
+    // ⭐ SINCE #1292 A TICK MEANS SHOW ON BOTH, like every row above
+    // them. `aiFilterToggle` used to be a `role="switch"` whose tick
+    // meant HIDE; the id survived the change and its MEANING did not,
+    // so a spec written against the old polarity type-checks and reads
+    // backwards.
+    //
+    // ⛔ `matureFilterToggle` IS ABSENT rather than disabled for a
+    // reader ADR 0090's layer-3 cascade does not offer it to: the
+    // instance has to allow mature content and the account has to have
+    // opted in. `toHaveCount(0)` is the correct assertion for a
+    // signed-out reader, not `toBeDisabled`.
     aiFilterToggle:      'ai-filter-toggle',
     aiFilterActive:      'ai-filter-active',
+    matureFilterToggle:  'mature-filter-toggle',
+    matureFilterActive:  'mature-filter-active',
     // The card's kind badge, which is what a type-filtered wall has to
     // agree with. `cardKind` is the single-asset glyph; `cardKindMulti`
     // is the count-plus-Shapes badge a multi-asset post draws instead.

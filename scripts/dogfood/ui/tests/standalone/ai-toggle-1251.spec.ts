@@ -1,16 +1,39 @@
 // ai-toggle-1251.spec.ts
 //
-// "Hide AI-made work" (#1251 slice 3, ADR 0094 fourth amendment) — the
-// switch INSIDE #1166's asset-type filter menu that sends
-// `?ai=not_pure`.
+// The AI-generated row (#1251 slice 3, ADR 0094 fourth amendment;
+// re-shaped by #1292): the checkbox INSIDE #1166's asset-type filter
+// menu that sends `?ai=not_pure` when it is UNTICKED.
+//
+// # ⭐ THE POLARITY INVERTED IN #1292, AND THAT IS WHY THIS FILE MOVED
+//
+// It shipped as a `role="switch"` under a dim `HIDE` heading, whose tick
+// meant HIDE while the eleven type rows above it meant SHOW. The owner:
+//
+//   > I don't like how Hide AI-made work is a different section in the
+//   > filter menu. It should be like the others, but just in a different
+//   > category. "AI-Content" with a checkbox. Not in hide, but content.
+//   > Should include mature in there too.
+//
+// So the heading is now `CONTENT`, the control is a plain checkbox, and
+// TICKED MEANS SHOW on every row in the menu top to bottom.
+// `the row means SHOW, and the HIDE section is gone` is the guard, and
+// it fails on the shipped behaviour in both directions: the resting
+// state must be TICKED, and the panel must carry no `Hide` heading.
+//
+// ⚠️ THE STORED VALUE DID NOT MOVE, which is the case a reader upgrading
+// would otherwise feel. `aa_browse_hide_ai` still means HIDE and the
+// flip happens at the component's edge, so a browser carrying that key
+// gets the wall it had, drawn as an unticked row.
+// `a device that already hid AI work keeps its wall` drives exactly that
+// from a pre-set key.
 //
 // # Where it lives is part of what is being tested
 //
 // It shipped for review as its own footer button and the owner sent it
 // back twice: "that shouldn't be its own footer item", then "should be
 // mixed in the asset type filter". So the footer's right cluster carries
-// the same two controls it carried before this sprint, and the switch is
-// the last row of the type menu, under a divider and a `Hide` heading.
+// the same two controls it carried before that sprint, and the row is in
+// the type menu's CONTENT category.
 //
 // `it lives INSIDE the type filter menu, not beside it` is the guard,
 // and it fails on the earlier placement in both directions: the switch
@@ -21,7 +44,7 @@
 //
 // # One menu is not one persistence model
 //
-// The types go to the URL and the switch goes to localStorage, and that
+// The types go to the URL and this row goes to localStorage, and that
 // split is signed off rather than pending cleanup — see
 // `the two axes narrow each other and persist in different places`,
 // which pins both halves so a future "unification" has to delete an
@@ -29,12 +52,11 @@
 //
 // # And one menu IS one commit
 //
-// The switch is drafted and committed by the panel's own Apply, like
-// every checkbox above it. `dismissing the menu throws the hide draft
-// away` and the mid-case assertion in the ruling test are what hold
-// that: a control that committed live inside a panel with an Apply
-// button would break that button's only promise for everything beside
-// it.
+// The row is drafted and committed by the panel's own Apply, like every
+// checkbox above it. `dismissing the menu throws the hide draft away`
+// and the mid-case assertion in the ruling test are what hold that: a
+// control that committed live inside a panel with an Apply button would
+// break that button's only promise for everything beside it.
 //
 // # The one assertion that actually proves the feature
 //
@@ -187,10 +209,14 @@ async function wallIds(page: Page): Promise<string[]> {
   );
 }
 
-/** The hide switch — INSIDE the type-filter panel, which is the whole
- *  point of the placement and the reason every case has to open the menu
- *  first. Scoped to the panel rather than located globally so a stray
- *  copy of this id anywhere else on the page cannot satisfy it. */
+/** The AI-generated row, INSIDE the type-filter panel, which is the
+ *  whole point of the placement and the reason every case has to open
+ *  the menu first. Scoped to the panel rather than located globally so a
+ *  stray copy of this id anywhere else on the page cannot satisfy it.
+ *
+ *  ⚠️ TICKED MEANS SHOW since #1292. Every `isChecked` below reads
+ *  "AI work is on the wall", which is the OPPOSITE of what the same
+ *  expression meant when this file was written. */
 function aiToggle(page: Page) {
   return page.locator(`${tid('kind-filter-panel')} ${tid('ai-filter-toggle')}`);
 }
@@ -209,17 +235,23 @@ async function openPanel(page: Page) {
   await expect(page.locator(tid('kind-filter-panel'))).toBeVisible();
 }
 
-/** Open the menu, set the switch, Apply.
+/** Open the menu, set the AI row to HIDE or SHOW, Apply.
  *
- *  ⚠️ APPLY IS WHAT COMMITS, for this switch exactly as for the type
- *  checkboxes — one panel, one commit. A test that flipped the switch
- *  and then asserted on the wall without applying would be asserting
- *  that the panel BROKE its own contract. */
-async function setHide(page: Page, on: boolean) {
+ *  ⚠️ THE ARGUMENT IS "HIDE", THE TICK IS ITS INVERSE, and the
+ *  translation lives here so every case below still reads in the
+ *  vocabulary of the feature rather than the vocabulary of the
+ *  checkbox. `setHide(page, true)` means "hide AI work", which is an
+ *  UNTICKED box since #1292.
+ *
+ *  ⚠️ APPLY IS WHAT COMMITS, for this row exactly as for the type
+ *  checkboxes: one panel, one commit. A test that flipped it and then
+ *  asserted on the wall without applying would be asserting that the
+ *  panel BROKE its own contract. */
+async function setHide(page: Page, hide: boolean) {
   await openPanel(page);
   const sw = aiToggle(page);
-  if ((await sw.isChecked()) !== on) await sw.click();
-  await expect(sw).toBeChecked({ checked: on });
+  if ((await sw.isChecked()) === hide) await sw.click();
+  await expect(sw).toBeChecked({ checked: !hide });
   await page.locator(tid('kind-filter-apply')).click();
   await expect(page.locator(tid('kind-filter-panel'))).toBeHidden();
 }
@@ -346,7 +378,7 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
     await gotoFixtureWall(page);
     await revealBar(page);
 
-    // Closed menu: the switch is nowhere on the page.
+    // Closed menu: the row is nowhere on the page.
     await expect(page.locator(tid('ai-filter-toggle'))).toHaveCount(0);
 
     // And the footer's right cluster is the type button + the sort
@@ -365,11 +397,95 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
         'nothing else — the AI control belongs in the menu, not beside it',
     ).toBe(2);
 
-    // Open it and the switch is there, under the type checkboxes.
+    // Open it and the row is there, under the type checkboxes.
     await page.locator(tid('kind-filter-toggle')).click();
     await expect(page.locator(tid('kind-filter-panel'))).toBeVisible();
     await expect(aiToggle(page)).toBeVisible();
-    await expect(aiToggle(page)).toHaveAttribute('role', 'switch');
+  });
+
+  // ⭐ #1292's guard, and it fails on the SHIPPED behaviour in both
+  // directions: the row used to rest UNTICKED (its tick meant hide) and
+  // the panel used to carry a `HIDE` heading. Either half alone would
+  // pass on a half-done change.
+  test('the row means SHOW, and the HIDE section is gone', async ({ page }) => {
+    await gotoFixtureWall(page);
+    await openPanel(page);
+
+    // Nothing is hidden, so EVERY box in the panel is ticked: the
+    // eleven types, the all-types control, and the content rows. That
+    // is the whole of the owner's complaint answered in one read.
+    const boxes = page.locator(`${tid('kind-filter-panel')} input[type="checkbox"]`);
+    const total = await boxes.count();
+    for (let i = 0; i < total; i++) {
+      await expect(boxes.nth(i), `box ${i} must rest TICKED`).toBeChecked();
+    }
+
+    // A plain checkbox, not the `role="switch"` that made it look like
+    // an exception among eleven checkboxes.
+    await expect(aiToggle(page)).not.toHaveAttribute('role', 'switch');
+
+    // The category replaced the section: no `HIDE` heading survives.
+    const headings = await page.locator(`${tid('kind-filter-panel')} p`).allTextContents();
+    expect(headings.map((h) => h.trim())).toEqual(['Content']);
+
+    // And the row says what it filters rather than what it hides.
+    const label = await aiToggle(page).evaluate(
+      (el) => el.closest('label')?.textContent?.trim() ?? '',
+    );
+    expect(label).toBe('AI-generated');
+    expect(label).not.toMatch(/hide/i);
+  });
+
+  // ⭐ THE UPGRADE CASE, DRIVEN FROM A REAL STORED KEY.
+  //
+  // `aa_browse_hide_ai=1` is what a reader who used this control before
+  // #1292 has in their browser. The meaning of the TICK inverted; the
+  // meaning of the KEY did not, because the flip is at the component's
+  // edge. So they must get the same wall they had, now drawn as an
+  // unticked row.
+  //
+  // A key rename or a read-time inversion both fail here, and both pass
+  // every other case in this file.
+  test('a device that already hid AI work keeps its wall', async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem('aa_browse_hide_ai', '1');
+      } catch {
+        /* a browser blocking site data is not this case */
+      }
+    });
+    await gotoFixtureWall(page);
+    await revealBar(page);
+
+    // The wall, first: this is a statement about what the reader sees,
+    // not about a stored string.
+    await expect
+      .poll(async () => (await wallIds(page)).sort().join(','), {
+        message: 'the stored preference did not reach the request',
+      })
+      .toBe([mixedId, plainId].sort().join(','));
+
+    // The closed button still says a filter is on.
+    await expect(page.locator(tid('ai-filter-active'))).toHaveCount(1);
+
+    // And the row draws it as UNTICKED, which is the new spelling of
+    // the same state. A build that read the old key as "show" would
+    // render this ticked and serve the pure post above.
+    await openPanel(page);
+    await expect(aiToggle(page), 'a stored hide must not come back as SHOW').not.toBeChecked();
+
+    // ⚠️ DISMISS BEFORE HANDING BACK TO `setHide`, which opens the
+    // panel itself. The toggle button is a TOGGLE: called with the
+    // panel already up it closes it, and the helper then waits for a
+    // panel that will never appear. Escape is the panel's own light
+    // dismiss and throws the untouched draft away, so the stored state
+    // is still "hide" when the cleanup below flips it.
+    await page.keyboard.press('Escape');
+    await expect(page.locator(tid('kind-filter-panel'))).toBeHidden();
+
+    // Leave the device clean: this is stored state, and a spec that
+    // changes what the next one sees is not isolated.
+    await setHide(page, false);
   });
 
   test('flipping it removes the PURE post and leaves the MIXED one', async ({ page }) => {
@@ -382,16 +498,17 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
     await expect(page.locator(tid('ai-filter-active'))).toHaveCount(0);
     expect((await wallIds(page)).sort()).toEqual([pureId, mixedId, plainId].sort());
 
-    // ⚠️ DRAFTED, NOT COMMITTED. Ticking the switch must change
-    // NOTHING until Apply — the panel's one promise is that nothing you
-    // have touched has happened yet, and a control that committed live
-    // would break it for every checkbox beside it.
+    // ⚠️ DRAFTED, NOT COMMITTED. UN-ticking the row must change NOTHING
+    // until Apply. The panel's one promise is that nothing you have
+    // touched has happened yet, and a control that committed live would
+    // break it for every checkbox beside it.
     await openPanel(page);
+    await expect(aiToggle(page), 'it rests TICKED, meaning AI work is shown').toBeChecked();
     await aiToggle(page).click();
-    await expect(aiToggle(page)).toBeChecked();
+    await expect(aiToggle(page)).not.toBeChecked();
     expect(
       (await wallIds(page)).sort(),
-      'the switch committed without Apply — that breaks the panel\'s contract',
+      "the row committed without Apply, which breaks the panel's contract",
     ).toEqual([pureId, mixedId, plainId].sort());
 
     await page.locator(tid('kind-filter-apply')).click();
@@ -431,7 +548,7 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
     await gotoFixtureWall(page);
     await openPanel(page);
     await aiToggle(page).click();
-    await expect(aiToggle(page)).toBeChecked();
+    await expect(aiToggle(page), 'unticked is the DRAFT to hide').not.toBeChecked();
 
     // Escape is the panel's own light dismiss.
     await page.keyboard.press('Escape');
@@ -444,7 +561,7 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
 
     // Re-opening shows the APPLIED state, not the abandoned draft.
     await openPanel(page);
-    await expect(aiToggle(page)).not.toBeChecked();
+    await expect(aiToggle(page)).toBeChecked();
     await page.keyboard.press('Escape');
   });
 
@@ -504,11 +621,11 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
       .toHaveCount(1);
     await expect
       .poll(async () => (await wallIds(page)).sort().join(','), {
-        message: 'the switch came back ON but the wall is unfiltered',
+        message: 'the row came back filtering but the wall is unfiltered',
       })
       .toBe([mixedId, plainId].sort().join(','));
     await openPanel(page);
-    await expect(aiToggle(page), 'the menu lost the state').toBeChecked();
+    await expect(aiToggle(page), 'the menu lost the state').not.toBeChecked();
     await page.keyboard.press('Escape');
 
     // Leave the device clean for the next case — this is stored state,
@@ -563,7 +680,7 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
         await setHide(anonPage, true);
         await expect
           .poll(async () => (await wallIds(anonPage)).sort().join(','), {
-            message: 'the switch did not filter for an anonymous reader',
+            message: 'the row did not filter for an anonymous reader',
           })
           .toBe([mixedId, plainId].sort().join(','));
       } finally {
@@ -578,7 +695,7 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
   // Mobile
   // -------------------------------------------------------------------
 
-  test('the switch is reachable and works at 390px', async ({ page }) => {
+  test('the row is reachable and works at 390px', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await gotoFixtureWall(page);
     await openPanel(page);
@@ -595,7 +712,7 @@ test.describe('#1251 browse footer — hide AI-made work', () => {
     await expect(page.locator(tid('kind-filter-toggle'))).toHaveAttribute('aria-label', /.+/);
 
     await aiToggle(page).click();
-    await expect(aiToggle(page)).toBeChecked();
+    await expect(aiToggle(page)).not.toBeChecked();
     await page.locator(tid('kind-filter-apply')).click();
 
     await expect

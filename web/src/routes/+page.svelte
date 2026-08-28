@@ -255,6 +255,20 @@
       // so "this studio's videos, minus the AI ones" is one request.
       const ai = browseView.aiParam;
       if (ai) params.ai = ai;
+      // #1292: the CONTENT category's Mature row, ADR 0090's layer 3.
+      // UNTICKED sends `mature=not_mature`; ticked sends NOTHING, which
+      // is what `matureParam` returning null means. Resolved on the
+      // store for the same reason `ai` is, and with a stronger one:
+      // that getter also holds the availability cascade, so a device
+      // carrying the flag from a session that offered the row cannot
+      // keep filtering on one that does not.
+      //
+      // ⛔ IT NARROWS AND NEVER CONSENTS. The three conjuncts still
+      // decide whether this reader may be shown mature rows at all;
+      // this can only subtract from what survives them, and there is no
+      // value of it that asks for more.
+      const mature = browseView.matureParam;
+      if (mature) params.mature = mature;
 
       const { data, error: apiErr } = await api.GET('/posts', {
         params: { query: params as never },
@@ -323,8 +337,9 @@
   // control byte back in here.
   //
   // ⚠️ EVERY INPUT `fetchPage` READS MUST BE IN HERE. The AI toggle
-  // (#1251 slice 3) is the newest one and the first that is neither in
-  // the URL nor already keyed for some other reason: flipping it changes
+  // (#1251 slice 3) was the first that is neither in the URL nor
+  // already keyed for some other reason, and #1292's mature row is the
+  // second; both are in the key for the same argument: flipping it changes
   // which posts the request returns, so a key that ignored it would
   // leave the previous wall on screen — a control that visibly does
   // nothing, which is #691's defect in a different costume. It also has
@@ -334,7 +349,8 @@
   // hidden posts come straight back on a back-navigation.
   const feedKey = () =>
     `${query}\u001f${browseView.filter}\u001f${browseView.feedDir}\u001f${activeTeamId ?? ''}` +
-    `\u001f${activeTag ?? ''}\u001f${activeKinds}\u001f${browseView.aiParam ?? ''}`;
+    `\u001f${activeTag ?? ''}\u001f${activeKinds}\u001f${browseView.aiParam ?? ''}` +
+    `\u001f${browseView.matureParam ?? ''}`;
 
   /** The feedKey whose first page we've already loaded (or restored).
    *  Guards the effect against re-fetching a set we already hold —

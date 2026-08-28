@@ -243,6 +243,25 @@ type ListPostsPageParams struct {
 	// applies in full, so this is not an `IncludeDeleted`-style
 	// superuser flag and must not grow into one.
 	MatureAdmin bool
+	// ExcludeMature is the browse footer's Mature row (#1292, ADR 0090's
+	// 2026-08-26 amendment), off `?mature=not_mature`. It is layer 3,
+	// the VIEW: "I have consented, but not in these results, right now".
+	//
+	// ⛔ IT IS NOT A FOURTH CONJUNCT OF THE GATE, and reading it as one
+	// is the way this ships wrong. The gate above decides whether the
+	// caller may be shown mature rows at all. This subtracts from what
+	// survives that decision, so it is only ever reachable for a caller
+	// the gate already said yes to, it can only remove rows, and there
+	// is no value of it that adds one. False means no filter, which is
+	// what every caller from before this parameter existed sends.
+	//
+	// ⚠️ IT IS NOT WAIVED FOR AN ADMIN, and `MatureAdmin` beside it is.
+	// That waiver exists so an operator's switch cannot hide what a
+	// moderator has to look at; this is the moderator's own request
+	// about their own feed, and honouring the gate's exemption here
+	// would mean a control that visibly refuses to do the one thing it
+	// says it does.
+	ExcludeMature bool
 }
 
 // feedOrder is the (posted_at, id) keyset in one direction, expressed
@@ -475,6 +494,19 @@ func (h *Handler) ListPostsPageGated(
 	matureFrag := visibility.MatureFilterSQL(
 		"", visibility.MatureOwnerColPost, "$10", p.Mature, p.MatureAdmin)
 
+	// ⭐ The VIEW-level mature filter (#1292), which is a SECOND and
+	// separate conjunct on the same column. Rendered next to the gate
+	// rather than merged with it because they answer different
+	// questions and the merge would hide that: see
+	// visibility.MatureExcludeSQL, and ExcludeMature's own note above.
+	//
+	// It takes no placeholder, so it is safe to render conditionally
+	// where matureFrag is not (an unreferenced parameter is a 42P18).
+	var matureViewFrag string
+	if p.ExcludeMature {
+		matureViewFrag = visibility.MatureExcludeSQL("")
+	}
+
 	// ⭐ THE FEED'S FILTERS, COMPOSED THROUGH THE SHARED GRAMMAR — ADR
 	// 0093 decision 1, "filtered browse does not get a parallel filter
 	// implementation", and decision 3, "a filter is defined once".
@@ -590,6 +622,7 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
 	b.WriteString(draftFrag)
 	b.WriteString(filterFrag)
 	b.WriteString(matureFrag)
+	b.WriteString(matureViewFrag)
 	b.WriteString(ruleFrag)
 	b.WriteString(`
 ` + order.orderBySQL("posted_at", "id") + `

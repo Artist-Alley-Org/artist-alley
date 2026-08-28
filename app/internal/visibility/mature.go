@@ -180,6 +180,40 @@ func MatureFilterSQL(alias, ownerCol, ownerArg string, v MatureViewer, isSystemA
 	return ` AND (NOT ` + p + `mature OR ` + p + ownerCol + ` = NULLIF(` + ownerArg + `::BIGINT, 0))`
 }
 
+// MatureExcludeSQL is the VIEW-level mature filter (#1292, ADR 0090's
+// 2026-08-26 amendment), as a WHERE-clause conjunct.
+//
+// # It is a different question from [MatureFilterSQL], not a stronger one
+//
+// [MatureFilterSQL] answers "may this viewer be shown mature rows at
+// all", which is the three-conjunct qualification plus its two
+// exemptions. This one answers "does this viewer want them in the
+// results they just asked for", and it is only ever reached for a
+// viewer the first one has already said yes to. Layer 2 is the consent;
+// this is layer 3, and layer 3 NARROWS and never consents. There is no
+// argument value meaning "include", because including is what the
+// absence of this conjunct already does.
+//
+// So the two live in one file rather than one function. Folding this
+// into MatureFilterSQL as a fourth input would put a reader preference
+// inside the predicate that TestMatureFilterSQL_MatchesGo holds to
+// [MatureItemVisible], and the twin test would then be checking a
+// gate against something that is not one.
+//
+// ⚠️ IT DOES NOT CARRY THE OWNER EXEMPTION, and that asymmetry with
+// the gate is deliberate rather than an omission. The gate exempts an
+// asset's owner because an operator's switch must not take an artist's
+// own work away from them; nothing is taken away here, because the
+// reader asked for this themselves and one untick gives it back. "Not
+// in this feed" would be a strange promise to keep for everybody's
+// mature work except your own.
+//
+// A plain column test, so it composes by AND with everything else on
+// the query and can only ever remove rows.
+func MatureExcludeSQL(alias string) string {
+	return ` AND NOT ` + columnPrefix(alias) + `mature`
+}
+
 // The owner columns the two mature-bearing tables use. Named constants
 // rather than string literals at the call sites, because "which column
 // holds the owner" is exactly the kind of fact that gets transcribed

@@ -66,6 +66,7 @@ const STORAGE_SORT = 'aa_browse_list_sort';
 const STORAGE_FILTER = 'aa_browse_filter';
 const STORAGE_FEED_DIR = 'aa_browse_feed_dir';
 const STORAGE_HIDE_AI = 'aa_browse_hide_ai';
+const STORAGE_HIDE_MATURE = 'aa_browse_hide_mature';
 
 // ── The tile-size ladder, in rem. The stepper walks these rungs; the
 //    value lands in `--tile-min` and the grid does the rest.
@@ -649,6 +650,72 @@ function writeHideAI(v: boolean): void {
   } catch { /* quota / disabled */ }
 }
 
+/** "Leave mature content out of these results" (#1292), the browse
+ *  filter menu's Mature row.
+ *
+ *  # ⭐ IT IS LAYER 3, AND THE NAME IS RESTRICTIVE ON PURPOSE
+ *
+ *  ADR 0090 names three layers: the INSTANCE switch, the ACCOUNT opt-in
+ *  (`user_preferences.mature_content.show`), and this, the VIEW. Its
+ *  2026-08-26 amendment is explicit that layer 3 NARROWS and never
+ *  consents: layer 2 is the consent, so this may only ever subtract
+ *  from rows the three conjuncts have already allowed, and it defaults
+ *  to INCLUDED so that shipping it changed nothing for a reader who had
+ *  already opted in.
+ *
+ *  ⚠️ WHICH IS WHY IT IS `hide_mature` AND NOT `show_mature`, even
+ *  though ADR 0090 names the ACCOUNT field for the permissive direction.
+ *  The rule that ADR states is "the zero value must be the safe
+ *  answer", not "always name it permissively", and the safe answer is
+ *  the opposite on the two layers because the layers are opposite in
+ *  kind. Layer 2 is a consent, so its unknown is "has not consented".
+ *  Layer 3 is a narrowing, so its unknown is "not narrowing". A
+ *  permissively-named key here would make an absent value read as
+ *  "do not show", which is a filter nobody asked for applied to a
+ *  reader who has already consented, and there would be no rung above
+ *  it to correct the guess.
+ *
+ *  Absent, unparseable and unreadable storage therefore all mean
+ *  INCLUDED, which is the same failure direction readHideAI takes for
+ *  its own axis and reaches by the same reasoning: an unknown resolves
+ *  toward the wall the reader would have had anyway.
+ *
+ *  # It is a DEVICE preference, and that is decided here rather than
+ *  # inherited from its neighbour
+ *
+ *  FeedKindFilter's header says a third toggle in that menu gets asked
+ *  where it belongs rather than assuming it belongs where its neighbour
+ *  does, so: not the URL, because "not mature, right now" describes the
+ *  READER and pasting it into somebody else's browser would impose it
+ *  on them under cover of sharing a link, which is the same argument
+ *  the AI toggle turns on. And not the ACCOUNT, which is a stronger
+ *  claim: `user_preferences.mature_content.show` is layer 2, writing it
+ *  from here would make the menu row a place to REVOKE and re-give
+ *  consent, and re-ticking would then be consenting from a browse
+ *  popover. That is the conflation ADR 0090 exists to prevent, and it
+ *  would additionally have to solve the re-GET-and-merge hazard
+ *  `account/preferences/+page.svelte:210-230` documents. Layer 3 never
+ *  touches layer 2's row.
+ *
+ *  So: localStorage, beside the AI flag, reached by a different route. */
+function readHideMature(): boolean {
+  if (!browser) return false;
+  try {
+    return localStorage.getItem(STORAGE_HIDE_MATURE) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeHideMature(v: boolean): void {
+  if (!browser) return;
+  try {
+    // Removed rather than written `0`, for readHideAI's reason: the
+    // default is a key that says nothing.
+    if (v) localStorage.setItem(STORAGE_HIDE_MATURE, '1');
+    else localStorage.removeItem(STORAGE_HIDE_MATURE);
+  } catch { /* quota / disabled */ }
+}
+
 /** The persisted feed direction, or null when unset — same null-means-
  *  no-local-choice contract as readMode / readFilter / readSort. */
 function readFeedDir(): SortDir | null {
@@ -745,6 +812,17 @@ class BrowseViewState {
    *  vocabulary has a `pure` value for symmetry with `filter=ai:` on
    *  /search, and no control on this site emits it. */
   hideAI = $state(false);
+  /** "Leave mature content out of these results" (#1292), ADR 0090's
+   *  layer 3. TRUE means NARROW; the default is included. See
+   *  readHideMature for why the flag is named restrictively while the
+   *  ACCOUNT opt-in beside it is named permissively.
+   *
+   *  ⛔ IT IS NOT A CONSENT AND CANNOT BECOME ONE. Turning it off adds
+   *  back only rows the server was already willing to return to this
+   *  reader; there is no value of it that reaches content the three
+   *  conjuncts withheld, and `matureParam` has no "include" spelling to
+   *  send. */
+  hideMature = $state(false);
   hydrated = $state(false);
 
   /** The active rung in rem, after the thumbnail density offset. */
@@ -909,6 +987,13 @@ class BrowseViewState {
     // readHideAI), so `local ?? built-in` is the whole ladder and there
     // is nothing for a re-seed on sign-in to reconsider.
     this.hideAI = readHideAI();
+    // Read here for the same reason, and it is a STRONGER reason: this
+    // one has an account rung, but the account rung is a DIFFERENT
+    // LAYER rather than a default for this one. `mature_content.show`
+    // is the consent; this is the view filter over what that consent
+    // already allowed, so there is nothing for applyAccountDefaults to
+    // seed and seeding it would silently turn a consent into a filter.
+    this.hideMature = readHideMature();
     this.applyAccountDefaults(defaults);
     this.hydrated = true;
   }
@@ -1057,6 +1142,72 @@ class BrowseViewState {
    *  type filter spells "all types". */
   get aiParam(): 'not_pure' | null {
     return this.hideAI ? 'not_pure' : null;
+  }
+
+  /** Flip "leave mature content out of these results" and remember it on
+   *  this device (#1292).
+   *
+   *  ⛔ IT WRITES NOTHING BUT localStorage, and specifically not
+   *  `user_preferences.mature_content.show`. That row is layer 2, the
+   *  CONSENT; this is layer 3, the view. See readHideMature. */
+  setHideMature(v: boolean): void {
+    this.hideMature = v;
+    writeHideMature(v);
+  }
+
+  /** Whether the Mature row is offered in the filter menu at all, which
+   *  is ADR 0090's layer-3 cascade (2026-08-26 amendment).
+   *
+   *  Two rungs, and BOTH are ABSENCE rather than disablement:
+   *
+   *    the INSTANCE has to allow mature content, or the whole feature is
+   *    off and a row claiming to filter it would be a control that lies;
+   *    the ACCOUNT has to have opted in, because a control meaning
+   *    "leave mature out of these results" is meaningless to a reader
+   *    who was never going to be shown any. It could only ever do
+   *    nothing, and a tickable box that does nothing is the specific
+   *    failure this row has to avoid.
+   *
+   *  ⚠️ A SIGNED-OUT READER FAILS BOTH, by construction rather than by a
+   *  third check: `auth.user` is null, so neither conjunct can be true.
+   *  An anonymous viewer can never opt in, because there is nowhere to
+   *  store the answer (ADR 0090 §2), so there is no consent for a view
+   *  filter to narrow.
+   *
+   *  ⚠️ AN ADMIN WHO HAS NOT OPTED IN IS ALSO OFFERED NO ROW, and that
+   *  is the amendment's rule taken literally rather than an oversight
+   *  here. The gate exempts `system.admin` from disqualification so a
+   *  moderator can see what the instance switch hid, which does mean an
+   *  admin can be shown mature rows with no way to filter them from
+   *  this menu. Widening the row to them would be a product decision
+   *  about a fourth case the amendment does not name, so it is filed
+   *  rather than invented. */
+  get matureFilterAvailable(): boolean {
+    return auth.user?.matureContentAllowed === true && auth.user?.matureOptedIn === true;
+  }
+
+  /** The `?mature=` value the feed request should carry, or null for
+   *  "send nothing".
+   *
+   *  ⭐ RESOLVED HERE, for aiParam's reason: a page spelling the mapping
+   *  inline would be the second copy, and the second copy is where the
+   *  availability check gets forgotten.
+   *
+   *  ⭐ AND THE AVAILABILITY CHECK IS PART OF THE MAPPING, which is the
+   *  half that is easy to leave out. The flag is stored per device and
+   *  the cascade is per session, so a reader who narrows their feed and
+   *  then loses the row (the operator switches the feature off, they
+   *  opt out on /account/preferences, they sign out) would otherwise go
+   *  on sending a filter with no control left to turn it off: invisible
+   *  state, and the wall stays narrowed for a reason nothing on screen
+   *  explains. Gating the VALUE on the same predicate that gates the
+   *  ROW means the two can never disagree.
+   *
+   *  ⚠️ OFF IS `null`. There is no "include" value on the wire, because
+   *  including is what the absence of the parameter already does, and a
+   *  layer that narrows has nothing to say in the other direction. */
+  get matureParam(): 'not_mature' | null {
+    return this.matureFilterAvailable && this.hideMature ? 'not_mature' : null;
   }
 
   /** Resolve visible column defs in the user's chosen order.

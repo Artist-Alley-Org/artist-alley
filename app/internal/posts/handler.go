@@ -1394,6 +1394,34 @@ func (h *Handler) ListPosts(
 		aiTerm = v
 	}
 
+	// ?mature=not_mature is the browse footer's Mature row (#1292, ADR
+	// 0090's 2026-08-26 amendment). Layer 3: a reader the three
+	// conjuncts have ALREADY qualified saying "not in these results,
+	// right now".
+	//
+	// ⛔ IT NEVER WIDENS, AND THE WIRE IS WHAT GUARANTEES THAT rather
+	// than this code. The parameter's vocabulary holds one value, so
+	// there is no spelling of it that asks for mature work; the only
+	// thing a caller can express is a subtraction. Compare `?ai=`,
+	// which offers both directions because its axis gates nothing.
+	//
+	// ⚠️ VALIDATED POSITIVELY, and refused rather than ignored. Nothing
+	// in this stack enforces a query-parameter enum at bind time, so a
+	// tolerated `?mature=yes` would fall through as "no filter" and
+	// hand a reader who asked to drop mature work a wall that still
+	// carries it. Silently doing the opposite of what was asked is
+	// worse on this axis than an error, so an unrecognised value is a
+	// 400 for the same reason `?ai=junk` is.
+	var excludeMature bool
+	if req.Params.Mature != nil {
+		if *req.Params.Mature != openapi.ListPostsParamsMatureNotMature {
+			return openapi.ListPosts400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid_mature"},
+			}, nil
+		}
+		excludeMature = true
+	}
+
 	// ?team_id= scopes the feed to one team's posts — the team page's
 	// content (#684).
 	//
@@ -1513,6 +1541,12 @@ func (h *Handler) ListPosts(
 		// the answer is a property of the request, not of a post.
 		Mature:      h.resolveMature(ctx, caller),
 		MatureAdmin: caller != nil && caller.Can(CapSystemAdmin),
+		// The VIEW filter (#1292), which is a different axis from the
+		// two lines above it despite reading the same column. Those
+		// decide what this caller MAY be shown; this one is what they
+		// ASKED to be shown, and it is applied after the gate has had
+		// its say. See ListPostsPageParams.ExcludeMature.
+		ExcludeMature: excludeMature,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("posts: list: %w", err)

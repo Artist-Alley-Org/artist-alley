@@ -27,15 +27,51 @@
   //   broken. The button is highlighted and captioned with the count
   //   whenever a real subset is applied.
   //
-  // # ⭐ TWO AXES, ONE MENU (#1251 slice 3, owner ruling)
+  // # ⭐ TWO CATEGORIES, ONE MENU (#1251 slice 3 → #1292, owner rulings)
   //
-  // The "Hide AI-made work" toggle lives at the bottom of this panel,
-  // under a divider. It shipped for review as its own footer button and
-  // the owner sent it back twice: "that shouldn't be its own footer
-  // item", then "should be mixed in the asset type filter". So the right
-  // cluster carries the same two controls it did before the sprint —
-  // this button and the sort toggle — and this menu carries both
-  // filters.
+  // Under the type rows sits a CONTENT category holding two more rows.
+  // It shipped as a `HIDE` section carrying one switch, and the owner
+  // sent that back: "I don't like how Hide AI-made work is a different
+  // section in the filter menu. It should be like the others, but just
+  // in a different category. 'AI-Content' with a checkbox. Not in hide,
+  // but content. Should include mature in there too."
+  //
+  // ⭐ SO EVERY TICK IN THIS MENU MEANS SHOW, TOP TO BOTTOM. That is
+  // the whole of #1292 and it is a behaviour change, not a restyle. A
+  // `HIDE` heading was the only thing telling a reader that one row's
+  // tick meant the opposite of the eleven above it, so moving the row
+  // into the same visual grammar WITHOUT flipping it would have been
+  // strictly worse than leaving it alone: identical rows that disagree
+  // about what a tick does, and nothing on screen saying so.
+  //
+  // ⚠️ THE FLIP IS AT THE BOUNDARY, AND THE STORED VALUES DID NOT MOVE.
+  // `hideAI` and `hideMature` still mean HIDE, on the props, in the
+  // store and in localStorage; this component renders `!hide` and
+  // reports `!checked` back. It is presentation, so there is nothing to
+  // migrate and no device to catch up: a browser carrying
+  // `aa_browse_hide_ai=1` from before this change gets the same wall it
+  // had, now drawn as an unticked row. The alternative, renaming the
+  // key to a permissive `show_ai`, would have made an ABSENT key read
+  // as "do not show" and inverted the default for every reader who has
+  // never touched the control. See readHideAI and readHideMature for
+  // why the zero value is the safe answer only under the restrictive
+  // name on these two axes.
+  //
+  // ⭐ THE TWO CONTENT ROWS ARE NOT ONE MECHANISM, and the code must
+  // not pretend they are just because the reader is answering one
+  // question. AI is device-local, client-resolved, and by ADR 0094 §4
+  // NEVER gates: everyone gets that row, signed in or not. Mature is
+  // ADR 0090's layer 3, a VIEW filter over rows a three-conjunct gate
+  // has already allowed, so its row appears only when the instance
+  // allows mature content AND this account has opted in, and both rungs
+  // are ABSENCE rather than disablement. A ticked box that silently
+  // does nothing because the instance forbids it is the failure the
+  // cascade exists to make unreachable.
+  //
+  // ⛔ AND THE MATURE ROW NEVER CONSENTS. Consent is layer 2, on
+  // /account/preferences. This row can only subtract from what that
+  // consent already allowed, which is why it defaults to INCLUDED and
+  // why `matureParam` has no "include" value to send.
   //
   // ⛔ THE TWO AXES PERSIST IN DIFFERENT PLACES, ON PURPOSE, AND SHARING
   // A MENU DOES NOT MERGE THEM. This is signed off, not an oversight
@@ -44,18 +80,28 @@
   //   TYPES  → the URL (`?kind=`), owned by the page. A type-filtered
   //            wall is a thing you SEND someone, so the back button has
   //            to walk it and a direct load has to reproduce it.
-  //   HIDE   → `browseView` → localStorage, owned by the footer. "I
+  //   CONTENT → `browseView` → localStorage, owned by the footer. "I
   //            would rather not look at AI work" describes the READER,
   //            not the page: it should survive every navigation, and
   //            pasting it into somebody else's browser would impose your
   //            preference on them under cover of sharing a link.
   //
-  // Which is why this component takes them as two props and two
-  // callbacks rather than one bag of filter state. It owns neither; it
-  // renders a draft of each and hands both back on Apply, and the HOST
-  // decides where each one lands. A future third toggle in this menu
-  // gets the same treatment — ask where it belongs, do not assume it
-  // belongs where its neighbour does.
+  // Which is why this component takes them as separate props and
+  // separate callbacks rather than one bag of filter state. It owns
+  // none of them; it renders a draft of each and hands them back on
+  // Apply, and the HOST decides where each one lands.
+  //
+  // ⭐ THE THIRD TOGGLE WAS ASKED THE SAME QUESTION, which is what the
+  // note here used to promise. Mature is NOT the URL, for the reason
+  // above: it describes the reader, and a shared link that narrowed
+  // somebody else's wall would be imposing a preference under cover of
+  // sharing. It is NOT the account either, and that is the stronger
+  // half of the answer rather than an inherited one:
+  // `user_preferences.mature_content.show` is ADR 0090's layer 2, the
+  // CONSENT, and writing it from this popover would make unticking a
+  // row a revocation and re-ticking it a consent. Layer 3 narrows and
+  // never consents, so it lands beside the AI flag on the device, by a
+  // different route. readHideMature carries the argument in full.
   //
   // # ⭐ ONE Apply COMMITS BOTH
   //
@@ -93,7 +139,21 @@
 
   import type { ViewKind } from './viewers/controller';
   import { FILTERABLE_KINDS, iconForKind, MultiAssetIcon } from './kindIcon';
-  import Sparkles from '@lucide/svelte/icons/sparkles';
+  // ⭐ `Bot` is the AI-generated glyph the card badge and the viewer
+  // already draw (#1243, AiProvenanceBadge). Reused rather than picked
+  // so the menu row and the badge cannot disagree about what "AI" looks
+  // like. `Sparkles` was the HIDE switch's glyph and went with it.
+  import Bot from '@lucide/svelte/icons/bot';
+  // The mature glyph, and two candidates were rejected before it.
+  // `ShieldAlert` loses on ADR 0090's own thesis: a shield is a
+  // CLEARANCE metaphor, and "rating ⊥ clearance" is the one
+  // conflation this axis exists to prevent. A crossed-out eye loses on
+  // the row's polarity, which is the whole sprint: it would sit on a
+  // row whose tick means SHOW and draw the reader toward the opposite
+  // reading, then have to un-cross itself to stay honest. A warning
+  // triangle is a CONTENT ADVISORY, which is what a rating is, and it
+  // says the same thing ticked or not.
+  import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import { t } from '$stores/lang.svelte';
 
   let {
@@ -101,6 +161,9 @@
     onapply,
     hideAI = false,
     onhide,
+    hideMature = false,
+    onhidemature,
+    matureAvailable = false,
     open = $bindable(false),
   }: {
     /** The APPLIED selection, owned by the page and mirrored in the URL.
@@ -110,12 +173,33 @@
      *  the caller drops the query parameter entirely. */
     onapply: (kinds: string[]) => void;
     /** The APPLIED "hide AI-made work" state (#1251 slice 3), owned by
-     *  the host and persisted in `browseView` → localStorage. */
+     *  the host and persisted in `browseView` → localStorage.
+     *
+     *  ⚠️ IT STILL MEANS HIDE. The row draws `!hideAI` and reports
+     *  `!checked` back; the flip is presentation and stops at this
+     *  component's edge, so no stored value moved when #1292 changed
+     *  what the tick looks like. */
     hideAI?: boolean;
-    /** Commit for the hide toggle. Separate callback from `onapply`
-     *  because the two axes persist in DIFFERENT PLACES — see the
-     *  two-owners note in the header. */
+    /** Commit for the AI row. Separate callback from `onapply` because
+     *  the two axes persist in DIFFERENT PLACES; see the two-owners
+     *  note in the header. Receives the HIDE value, not the tick. */
     onhide?: (next: boolean) => void;
+    /** The APPLIED "leave mature content out of these results" state
+     *  (#1292), ADR 0090's layer 3. Means HIDE, like `hideAI`. */
+    hideMature?: boolean;
+    /** Commit for the mature row. Receives the HIDE value. */
+    onhidemature?: (next: boolean) => void;
+    /** Whether the mature row is offered AT ALL, resolved by the host
+     *  from ADR 0090's layer-3 cascade: the instance allows mature
+     *  content AND this account has opted in.
+     *
+     *  ⛔ ABSENCE, NEVER DISABLEMENT, and it defaults to false so a
+     *  host that forgets to answer offers nothing. A disabled row would
+     *  advertise a filter this reader can never use and name a class of
+     *  content the instance may have switched off entirely; a missing
+     *  row says nothing at all, which is the honest rendering of "this
+     *  does not apply to you". */
+    matureAvailable?: boolean;
     /** Bound out so the footer bar can hold itself on screen while the
      *  panel is up — the bar auto-hides on scroll and yanking it away
      *  mid-interaction would be hostile. */
@@ -138,20 +222,36 @@
    *  bites HARDER on the AI axis: on most instances a wall with the
    *  purely-AI work removed IS the wall you would have got anyway, so
    *  the button is the only place the state can show. */
-  const isFiltered = $derived(kindsFiltered || hideAI);
+  /** The mature filter only narrows anything while the row is offered.
+   *  A device carrying the flag from a session that HAD the row must
+   *  not light the button up on one that does not, or the button states
+   *  a filter the menu cannot show and nothing can turn off. It is the
+   *  same predicate `matureParam` gates the request on, for the same
+   *  reason, and it is read from the props so this component still owns
+   *  no state. */
+  const matureNarrowing = $derived(matureAvailable && hideMature);
+
+  const isFiltered = $derived(kindsFiltered || hideAI || matureNarrowing);
 
   /** The DRAFT — what the boxes show right now. Separate from `selected`
    *  because Apply is what commits; closing without applying throws the
    *  draft away, which is the only reading of a Cancel-less panel that
    *  does not silently commit a half-made choice. */
   let draft = $state<Set<ViewKind>>(new Set());
-  /** The hide toggle's draft. It goes through Apply like everything else
-   *  in this panel — see the commit note in the header. */
+  /** The AI row's draft. It goes through Apply like everything else in
+   *  this panel; see the commit note in the header.
+   *
+   *  ⚠️ IT HOLDS THE HIDE VALUE, not the tick. The row renders
+   *  `!hideDraft`; keeping the draft in the prop's own polarity is what
+   *  makes `hideDraft !== hideAI` a correct change test. */
   let hideDraft = $state(false);
+  /** The mature row's draft, in the same polarity. */
+  let matureDraft = $state(false);
 
   function resetDraft() {
     draft = new Set(appliedSet.size === 0 ? ALL : ALL.filter((k) => appliedSet.has(k)));
     hideDraft = hideAI;
+    matureDraft = hideMature;
   }
 
   const allChecked = $derived(draft.size === ALL.length);
@@ -229,6 +329,11 @@
     // Fired only on a real change so an untouched hide toggle does not
     // rewrite localStorage every time somebody applies a type filter.
     if (hideDraft !== hideAI) onhide?.(hideDraft);
+    // Same rule for the mature row, and it is ALSO guarded on
+    // availability: a panel that never drew the row has no draft the
+    // reader touched, so committing one would write a filter nobody
+    // asked for from a control they never saw.
+    if (matureAvailable && matureDraft !== hideMature) onhidemature?.(matureDraft);
     open = false;
     toggleEl?.focus();
   }
@@ -333,18 +438,28 @@
           </label>
         {/each}
 
-        <!-- ⭐ The HIDE section (#1251 slice 3). Inside the same scroll
-             box as the types, under its own divider and heading, because
-             the owner's ruling is one menu and not two — but it is a
-             DIFFERENT AXIS and the heading is what says so. Without it
-             the toggle reads as a thirteenth type.
+        <!-- ⭐ The CONTENT category (#1292). Inside the same scroll box
+             as the types, under its own divider and heading, because
+             the owner's ruling is one menu and not two. The heading is
+             what says these rows are a different axis from the types
+             above; without it the first of them reads as a thirteenth
+             type.
 
-             A `switch`, not a checkbox: the rows above it are members of
-             a set and this is a mode. It still commits on Apply with
-             everything else. -->
+             ⭐ PLAIN CHECKBOXES, and TICKED MEANS SHOW, exactly like
+             every row above. The AI row was a `role="switch"` whose
+             tick meant HIDE, under a `HIDE` heading that was the only
+             thing saying so. Both went: a menu where one row's tick
+             means the opposite of the others is the complaint this
+             category answers, and a switch beside eleven checkboxes was
+             half of what made the row look like an exception.
+
+             The polarity flip is here and nowhere else. `hideAI` and
+             `hideMature` still mean HIDE; these rows render `!hide` and
+             report `!checked` back, so nothing stored had to move and a
+             device carrying the old key gets the wall it had. -->
         <div class="my-1 border-t border-border"></div>
         <p class="px-2.5 pb-1 pt-1.5 text-xs font-semibold uppercase tracking-wide text-fg-muted">
-          {t('browse.filter.hide.label')}
+          {t('browse.filter.content.label')}
         </p>
         <label
           title={t('browse.filter.ai.hint')}
@@ -353,16 +468,45 @@
         >
           <input
             type="checkbox"
-            role="switch"
             data-testid="ai-filter-toggle"
-            checked={hideDraft}
-            aria-checked={hideDraft}
+            checked={!hideDraft}
             onchange={() => (hideDraft = !hideDraft)}
             class="h-4 w-4 shrink-0 accent-accent"
           />
-          <Sparkles size={15} strokeWidth={2} aria-hidden="true" />
+          <Bot size={15} strokeWidth={2} aria-hidden="true" />
           <span>{t('browse.filter.ai.label')}</span>
         </label>
+
+        <!-- ⭐ The mature row is ABSENT, not disabled, for a reader the
+             cascade does not offer it to (ADR 0090's 2026-08-26
+             amendment). The host answers `matureAvailable` from the two
+             rungs: the instance allows mature content, and this account
+             has opted in. A signed-out reader fails both, because an
+             anonymous viewer has nowhere to store a consent for this
+             row to narrow.
+
+             So a ticked mature row on an install with the feature off
+             is not reachable: there is no row. Rendering it disabled
+             would advertise a filter this reader can never use and name
+             a class of content the operator may have switched off
+             entirely. -->
+        {#if matureAvailable}
+          <label
+            title={t('browse.filter.mature.hint')}
+            class="flex min-h-11 cursor-pointer select-none items-center gap-2.5 rounded-xl px-2.5
+                   text-sm text-fg hover:bg-surface-hover"
+          >
+            <input
+              type="checkbox"
+              data-testid="mature-filter-toggle"
+              checked={!matureDraft}
+              onchange={() => (matureDraft = !matureDraft)}
+              class="h-4 w-4 shrink-0 accent-accent"
+            />
+            <TriangleAlert size={15} strokeWidth={2} aria-hidden="true" />
+            <span>{t('browse.filter.mature.label')}</span>
+          </label>
+        {/if}
       </div>
 
       <div class="mt-1 border-t border-border pt-2">
@@ -385,13 +529,19 @@
        applied count is the one thing that earns text beside the glyph,
        and only when there IS one.
 
-       Since #1251 slice 3 it states BOTH axes: the accent fill means
-       "something in here is narrowing the wall", the count means types,
-       and the sparkles glyph means the AI toggle is on. Two independent
-       signals rather than one, because a reader who has hidden AI work
-       and filtered to video needs to be able to tell which of the two is
-       responsible for a thin wall — a single "active" dot would send
-       them into the menu to find out. -->
+       Since #1251 slice 3 it states EVERY axis at once: the accent fill
+       means "something in here is narrowing the wall", the count means
+       types, the bot glyph means AI work is hidden, and the warning
+       glyph means mature work is. Independent signals rather than one,
+       because a reader who has hidden AI work and filtered to video
+       needs to be able to tell which of them is responsible for a thin
+       wall; a single "active" dot would send them into the menu to find
+       out.
+
+       ⚠️ THE MATURE GLYPH FOLLOWS THE ROW'S AVAILABILITY, not the
+       stored flag. A device that narrowed on an install which offers
+       the row must not light this up on one that does not, or the
+       button states a filter the menu has no control for. -->
   <!-- svelte-ignore a11y_no_redundant_roles -->
   <button
     bind:this={toggleEl}
@@ -415,7 +565,10 @@
       <span class="tabular-nums font-semibold">{selected.length}</span>
     {/if}
     {#if hideAI}
-      <Sparkles size={14} strokeWidth={2.5} data-testid="ai-filter-active" aria-hidden="true" />
+      <Bot size={14} strokeWidth={2.5} data-testid="ai-filter-active" aria-hidden="true" />
+    {/if}
+    {#if matureNarrowing}
+      <TriangleAlert size={14} strokeWidth={2.5} data-testid="mature-filter-active" aria-hidden="true" />
     {/if}
   </button>
 </div>
