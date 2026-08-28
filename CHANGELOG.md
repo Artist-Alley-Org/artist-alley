@@ -280,6 +280,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Rebuilding the sample library can no longer throw away hand-made edits without saying so.**
+  A regeneration used to skip any curated post it could not find, print a truncated list of
+  warnings, and report success. On a full rebuild that quietly discarded 200 of 841 edited posts.
+  It now stops before writing anything and says how many it could not place. The separate warning
+  about a post whose contents have shifted since it was edited stays a warning, because that one
+  needs a person to look rather than a run to fail (#1324, PR #1327).
+
+- **Re-running the sample data loader now says what it left alone.** It could always add new
+  records and never correct an existing one, and it reported the same clean result either way, so
+  reloading to pick up a corrected catalogue looked like it had worked when it had not. It now
+  counts and names the records whose stored values disagree with the catalogue, and points at the
+  full reset that actually applies them. It still changes nothing on its own and an interrupted
+  load can still be resumed safely, which is what the old behaviour was protecting (#1320,
+  PR #1327).
+
 - **The hand-made edits to the sample library are now part of the build.** Someone had gone
   through the published feed by hand and chosen better dates, better orderings and better titles
   for it, and none of that lived anywhere the build could see: the next regeneration would have
