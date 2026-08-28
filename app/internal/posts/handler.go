@@ -52,6 +52,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/coverfocal"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
@@ -319,6 +320,19 @@ func (h *Handler) CreatePost(
 		}, nil
 	}
 
+	// #1210: the cover's focal point is a PAIR and is validated as
+	// one, by the same rule the collection slots use. `false` for the
+	// clear flag because there is nothing to clear on a create: a post
+	// that has never been framed is centred already.
+	if msg := coverfocal.Validate(
+		"cover_focal_x", "cover_focal_y", "clear_cover_focal",
+		in.CoverFocalX, in.CoverFocalY, false,
+	); msg != "" {
+		return openapi.CreatePost400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+		}, nil
+	}
+
 	// Draft or published (ADR 0091 decision 7). Omitted means published,
 	// which is what every caller did before the flag existed.
 	//
@@ -459,6 +473,8 @@ func (h *Handler) CreatePost(
 		CoverThumbnailAssetID: coverThumbnailID,
 		TeamID:                teamID,
 		StateID:               stateID,
+		CoverFocalX:           in.CoverFocalX,
+		CoverFocalY:           in.CoverFocalY,
 	})
 	if err != nil {
 		if isFKError(err, "posts_team_id_fkey") {
@@ -704,6 +720,21 @@ func (h *Handler) UpdatePost(
 
 	in := req.Body
 
+	// #1210: the cover's focal point, validated before anything is
+	// written. See [coverfocal.Validate] for the three states it
+	// refuses; each would otherwise reach posts_cover_focal_check as a
+	// constraint error, which surfaces as a 500 rather than as a 400
+	// the client can act on.
+	clearCoverFocal := in.ClearCoverFocal != nil && *in.ClearCoverFocal
+	if msg := coverfocal.Validate(
+		"cover_focal_x", "cover_focal_y", "clear_cover_focal",
+		in.CoverFocalX, in.CoverFocalY, clearCoverFocal,
+	); msg != "" {
+		return openapi.UpdatePost400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+		}, nil
+	}
+
 	// Phase 1.16 optimistic-concurrency check. Compared against
 	// the row loaded inside the tx (one consistent snapshot).
 	// Truncate both sides to µs (Postgres stores at µs; Go marshals
@@ -814,6 +845,12 @@ func (h *Handler) UpdatePost(
 		Visibility:            visPtr,
 		CoverAssetID:          coverPtr,
 		CoverThumbnailAssetID: thumbPtr,
+		// #1210: the pair validated above, plus its clear flag. Both
+		// axes read the one flag: a focal point is a point, and the
+		// column CHECK does not admit half of one being cleared.
+		CoverFocalX:     in.CoverFocalX,
+		CoverFocalY:     in.CoverFocalY,
+		ClearCoverFocal: clearCoverFocal,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.UpdatePost404JSONResponse{
@@ -2498,6 +2535,14 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string, publ
 		v := openapi_types.UUID(p.CoverThumbnailAssetID.Bytes)
 		out.CoverThumbnailAssetId = &v
 	}
+	// #1210: the crop the author framed for the browse grid's square
+	// tile. Copied as-is rather than defaulted to 0.5: null is "never
+	// framed" and an explicit 0.5 is "framed, and the answer was the
+	// centre", and a client's Reset has to be able to say the first.
+	// The column CHECK guarantees the pair, so a caller never has to
+	// re-validate that it got both.
+	out.CoverFocalX = p.CoverFocalX
+	out.CoverFocalY = p.CoverFocalY
 	if p.OriginServerID.Valid {
 		v := openapi_types.UUID(p.OriginServerID.Bytes)
 		out.OriginServerId = &v

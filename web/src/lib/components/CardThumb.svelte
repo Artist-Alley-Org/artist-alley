@@ -38,6 +38,7 @@
   import { previewLadder } from '$stores/previewLadder.svelte';
   import { DEFAULT_TILE_SIZES } from '$stores/browseView.svelte';
   import { clampRatio, MASONRY_MIN_TILE_REM } from './cardAsset';
+  import { coverPlacement } from '$lib/util/featuredCrop';
   import { isDocExt } from './viewers/controller';
   import {
     loadSpriteCues,
@@ -172,6 +173,30 @@
      *  photograph it is not. Null / undefined ⇒ the neutral, which is
      *  every other mode and every asset with no thumbhash. */
     matteColor?: string | null;
+    /** The crop the author framed, as fractions of the ORIGINAL picture
+     *  (#1210). Null on either axis means CENTRED, which is what every
+     *  tile rendered before focal points existed.
+     *
+     *  ⚠️ ONLY READ WHEN `fill` IS ON, and that is the whole rule rather
+     *  than an optimisation. `fill` is the one posture that CROPS: it is
+     *  `object-fit: cover` against a square frame, so there is a choice
+     *  about which part of the picture survives. Everywhere else the
+     *  picture is letterboxed whole onto the matte or the tile takes the
+     *  picture's own shape, nothing is cut off, and there is nothing for
+     *  a focal point to say. A masonry or feed tile therefore renders
+     *  BYTE-IDENTICALLY with these set and unset.
+     *
+     *  ⚠️ HONOURED FROM A CONTAIN RUNG OR NOT AT ALL. The fractions are
+     *  measured against the original, and `col` is a 320x320 square the
+     *  server already cropped at the centre, so positioning inside it
+     *  moves a crop of a crop. When no contain rung can be offered
+     *  (no ladder for this asset, or no recorded source dimensions to
+     *  build the descriptors from) the tile falls back to `col` CENTRED and
+     *  drops the framing rather than misapplying it. See
+     *  `focalPlacement` below and CollectionCard, which reaches the same
+     *  fallback by the same argument. */
+    focalX?: number | null;
+    focalY?: number | null;
     /** Recorded SOURCE dimensions for this asset, or null (#640). These
      *  are what let `variableAspect` reserve the tile's height before a
      *  single byte is requested — the difference between a wall that is
@@ -223,6 +248,8 @@
     fill = false,
     variableAspect = false,
     ratioFloor = null,
+    focalX = null,
+    focalY = null,
     compact = false,
     matteColor = null,
     pixelWidth = null,
@@ -271,9 +298,66 @@
   const containSrcset = $derived(
     ladderUsable && !fill ? (previewLadder.srcsetFor(assetId!) ?? '') : '',
   );
+  // ── The framed crop, and what it costs the srcset (#1210) ────────
+  //
+  // A focal point is a fraction of the ORIGINAL picture, so it can only
+  // be honoured over a source that still IS the original shape. `col` is
+  // not: it is `fit: cover` at 320px, a square the server took at the
+  // centre before this value could act, and `object-position` on it
+  // moves a crop of a crop.
+  //
+  // So a framed tile asks for the CONTAIN rungs only. The width
+  // descriptors are still the corrected ones #1169 introduced, because
+  // that correction is about the slot's SHAPE and framing does not
+  // change the shape: a contain rung fills a square slot on its short
+  // axis, so its usable width is not its `max_dim`.
+  //
+  // `wantsFocal` is the ASK; `focalHonoured` is whether it could be
+  // answered. They differ exactly when there is no contain rung to
+  // offer, and there the tile renders `col` centred: the framing is
+  // dropped whole rather than applied to the wrong picture, which is
+  // what every card did before focal points existed.
+  const wantsFocal = $derived(fill && focalX != null && focalY != null);
   const coverSrcset = $derived(
     ladderUsable && fill
-      ? (previewLadder.coverSrcsetFor(assetId!, pixelWidth, pixelHeight) ?? '')
+      ? (previewLadder.coverSrcsetFor(assetId!, pixelWidth, pixelHeight, wantsFocal) ?? '')
+      : '',
+  );
+  const focalHonoured = $derived(wantsFocal && coverSrcset !== '');
+  // The same helper CollectionCard and FeaturedRail paint with, so "null
+  // means centre" is decided in one place and every cropping surface
+  // renders the identical rectangle. Zoom is null: posts store no zoom,
+  // and at z = 1 the helper emits the box the tile already occupied.
+  const focalPlacement = $derived(
+    focalHonoured ? coverPlacement(focalX, focalY, null) : '',
+  );
+
+  // ── The scrub follows the still, framing included (#1210 / #834) ──
+  //
+  // #834's rule is that the hover scrub uses the same fit as the still
+  // it replaces, because a hover that reframes the picture is the jump
+  // that bug was. A framed still moves; if this layer stayed centred the
+  // two would disagree again, on exactly the covers a curator cared
+  // enough about to frame.
+  //
+  // The still gets there with `object-position`, which this layer cannot
+  // use: the cue is a BACKGROUND on an oversized element, not an
+  // <img>. The equivalent is positional, and it needs no measurement:
+  // place the cell's `left` at f of the CONTAINER's width and pull it
+  // back by f of its OWN width. A percentage `left` resolves against the
+  // container and a percentage `translate` against the element, so the
+  // cell's left edge lands at f × (W - C), which is negative by exactly
+  // the overflow this crop is allowed to spend. At f = 0.5 that is the
+  // centre, which is what `items-center justify-center` already does, so
+  // an unframed tile keeps the flex centring untouched rather than
+  // taking a new code path to the same place.
+  //
+  // Only reachable under `focalHonoured`, which requires `fill`, so the
+  // letterboxed branch is unaffected: it has no overflow to distribute.
+  const scrubFocalStyle = $derived(
+    focalHonoured
+      ? ` left: ${(focalX ?? 0.5) * 100}%; top: ${(focalY ?? 0.5) * 100}%;` +
+        ` transform: translate(${-(focalX ?? 0.5) * 100}%, ${-(focalY ?? 0.5) * 100}%);`
       : '',
   );
   const srcset = $derived(containSrcset || coverSrcset);
@@ -285,8 +369,12 @@
   //     swapping.
   //   cover slot — `col`, which is both the smallest candidate in that
   //     srcset and already the square the tile wants.
+  //   framed cover slot: the smallest CONTAIN rung too (#1210), for
+  //     the same reason: `col` is the square this tile is deliberately
+  //     not painting, and a browser that ignores srcset would otherwise
+  //     apply the object-position to it.
   const imgSrc = $derived.by(() => {
-    if (!containSrcset) return colUrl;
+    if (!containSrcset && !focalHonoured) return colUrl;
     const smallest = previewLadder.smallestKey();
     return smallest ? `/api/v1/assets/${assetId}/variants/${smallest}` : colUrl;
   });
@@ -783,6 +871,8 @@
              {fill ? 'object-cover' : variableAspect ? 'object-contain' : 'object-contain p-1.5'}"
       class:opacity-0={!imgLoaded}
       class:opacity-100={imgLoaded}
+      style={focalPlacement || undefined}
+      data-focal={focalHonoured ? 'on' : 'off'}
       onload={onLoad}
       onerror={onError}
     />
@@ -839,14 +929,14 @@
                transition-opacity duration-150 {fill ? '' : 'bg-thumb-matte'}"
       >
         <div
-          class="bg-no-repeat shrink-0 {fill
+          class="bg-no-repeat shrink-0 {focalHonoured ? 'absolute' : ''} {fill
             ? spriteCellRatio >= 1
               ? 'h-full'
               : 'w-full'
             : spriteCellRatio >= 1
               ? 'w-full'
               : 'h-full'}"
-          style="aspect-ratio: {spriteCellRatio}; background-image: url({spriteUrl}); background-size: {spriteStyle.size}; background-position: {spriteStyle.position};"
+          style="aspect-ratio: {spriteCellRatio}; background-image: url({spriteUrl}); background-size: {spriteStyle.size}; background-position: {spriteStyle.position};{scrubFocalStyle}"
         ></div>
       </div>
     {/if}

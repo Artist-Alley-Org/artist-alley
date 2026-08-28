@@ -2490,7 +2490,10 @@ CREATE TABLE public.posts (
     mature boolean DEFAULT false NOT NULL,
     ai_provenance text,
     ai_pure boolean DEFAULT false NOT NULL,
+    cover_focal_x double precision,
+    cover_focal_y double precision,
     CONSTRAINT posts_ai_provenance_check CHECK (((ai_provenance IS NULL) OR (ai_provenance = ANY (ARRAY['none'::text, 'assisted'::text, 'generated'::text])))),
+    CONSTRAINT posts_cover_focal_check CHECK ((((cover_focal_x IS NULL) AND (cover_focal_y IS NULL)) OR (((cover_focal_x >= (0)::double precision) AND (cover_focal_x <= (1)::double precision)) AND ((cover_focal_y >= (0)::double precision) AND (cover_focal_y <= (1)::double precision))))),
     CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
 
@@ -2521,6 +2524,20 @@ COMMENT ON COLUMN public.posts.ai_provenance IS 'DERIVED from the post''s live C
 --
 
 COMMENT ON COLUMN public.posts.ai_pure IS 'DERIVED — TRUE when this post has at least one live CONTRIBUTOR and EVERY one of them declares `generated` (#1242, ADR 0094 fourth amendment). Contributors are the member assets UNION the two cover pictures, exactly as `ai_provenance` counts them. ⚠️ THIS IS THE FILTERING FACT AND `ai_provenance` IS THE LABELLING FACT; they are not interchangeable. `ai_provenance` propagates a positive claim on ANY member, so `{generated, none}`, `{generated, undeclared}` and `{generated, assisted}` all read `generated` — a "hide AI work" filter keyed on it would exclude exactly the MIXED posts the owner''s ruling protects, because excluding a post for one member''s declaration punishes the honest declaration the design depends on. `assisted` NEVER contributes to purity: an all-`assisted` post is human work made with AI help. An UNDECLARED contributor makes the post NOT pure, because not-knowing must never hide an artist''s work. A post with no live contributors is not pure. NOT NULL is correct here where `assets.ai_provenance` is nullable: `false` is a statement about OUR KNOWLEDGE ("we cannot say this post is purely AI"), not a disclaimer written on a maker''s behalf. ⛔ A FILTER, NEVER A GATE (ADR 0094 §4): nothing withholds on this column, nothing is subtracted from counts, facets or suggest, and it carries no derived-copies obligation for exactly that reason.';
+
+
+--
+-- Name: COLUMN posts.cover_focal_x; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.cover_focal_x IS 'Horizontal focal point for the post cover''s SQUARE crop, as a FRACTION of the picture''s width (0 = left edge, 1 = right edge, #1210). The square is the destination shape because the browse GRID tile is the only post surface that crops: PostCard sets CardThumb''s `fill` in grid alone, and that is `object-fit: cover` on an `aspect-square` frame. Masonry takes the picture''s own shape and feed, thumbnail, band and list letterbox it whole, so none of them can act on this. Maps directly to CSS object-position, and is a fraction rather than a pixel offset so it stays correct across preview rungs and viewport sizes. NULL means centre (the CSS default), distinct from an explicit 0.5 so the editor''s reset is a clear rather than a re-set. Paired with cover_focal_y by posts_cover_focal_check: both NULL or both in 0..1. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and lands somewhere nobody picked.';
+
+
+--
+-- Name: COLUMN posts.cover_focal_y; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.cover_focal_y IS 'Vertical focal point for the post cover''s square crop, as a FRACTION of the picture''s height (0 = top edge, 1 = bottom edge, #1210). See cover_focal_x for the destination shape, why it is a fraction, why NULL means centre, why the two are constrained together, and why it must be painted from a contain rung.';
 
 
 --

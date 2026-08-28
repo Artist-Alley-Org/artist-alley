@@ -158,6 +158,17 @@ type ListAssetsPageGatedRow struct {
 	// on a restricted asset. False means the handler must replace every
 	// asset column with the placeholder.
 	Readable bool
+	// AnonymouslyVisible: would an ANONYMOUS visitor's read rule return
+	// this row (#1209). Derived from visibility.AnonymouslyVisible over
+	// the SAME FieldsRow the readability decision below uses, so the
+	// browse list and the detail endpoint answer from one rule rather
+	// than from two transcriptions of it.
+	//
+	// ⚠️ NOT a decision about this caller, unlike the three flags above.
+	// It has one answer per row whoever asks, which is the point: the
+	// question is "what does a stranger see".
+	AnonymouslyVisible bool
+
 	// OwnerDisplayName is the asset owner's display name per
 	// visibility.OwnerDisplayNameSQL — the SQL twin of
 	// users.PlaceholderOwnerName (#1023). Empty when unresolvable AND
@@ -382,6 +393,11 @@ LIMIT $7::INTEGER`)
 			ScrubAvailable:    hasScrubVariant && picture,
 			Readable:          readable,
 			OwnerDisplayName:  ownerName,
+			// #1209: from the same scanned row, and NOT ANDed with
+			// `picture`: the three flags above promise something about
+			// bytes THIS caller may fetch, while this one reports a
+			// property of the row that is the same for everyone.
+			AnonymouslyVisible: visibility.AnonymouslyVisible(fr, i.DeletedAt.Valid),
 		}
 		// A pair or neither — never a half-populated one the client has
 		// to re-validate before dividing.

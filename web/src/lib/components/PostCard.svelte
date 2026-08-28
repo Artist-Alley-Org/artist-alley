@@ -89,6 +89,10 @@
      *  answer the post's own header gives for a withheld author. */
     comments_preview?: PostCommentPreview[];
     cover_asset_id?: string | null;
+    /** #1210: where the author framed the browse grid's square crop,
+     *  as fractions of the original picture. Null means centred. */
+    cover_focal_x?: number | null;
+    cover_focal_y?: number | null;
     created_at: string;
     like_count: number;
     comment_count: number;
@@ -1101,6 +1105,8 @@
     framed={framed && !social}
     fill={mode === 'grid'}
     variableAspect={mode === 'masonry'}
+    focalX={post.cover_focal_x ?? null}
+    focalY={post.cover_focal_y ?? null}
     {compact}
     pixelWidth={coverPixelWidth}
     pixelHeight={coverPixelHeight}

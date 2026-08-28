@@ -160,10 +160,11 @@ const createPost = `-- name: CreatePost :one
 
 INSERT INTO posts (
     author_user_ref, title, description, visibility, cover_asset_id,
-    cover_thumbnail_asset_id, team_id, state_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    cover_thumbnail_asset_id, team_id, state_id, cover_focal_x, cover_focal_y
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+          cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
+          posted_at, like_count, comment_count,
           origin_server_id, team_id, state_id, created_at, updated_at
 `
 
@@ -176,6 +177,8 @@ type CreatePostParams struct {
 	CoverThumbnailAssetID pgtype.UUID
 	TeamID                pgtype.UUID
 	StateID               pgtype.UUID
+	CoverFocalX           *float64
+	CoverFocalY           *float64
 }
 
 type CreatePostRow struct {
@@ -186,6 +189,8 @@ type CreatePostRow struct {
 	Visibility            string
 	CoverAssetID          pgtype.UUID
 	CoverThumbnailAssetID pgtype.UUID
+	CoverFocalX           *float64
+	CoverFocalY           *float64
 	PostedAt              pgtype.Timestamptz
 	LikeCount             int64
 	CommentCount          int64
@@ -206,6 +211,10 @@ type CreatePostRow struct {
 // a post member) used by the upload modal's "use a different image
 // as the cover" UX. state_id is the workflow state in the 'post'
 // domain — NULL means no workflow tracking.
+// cover_focal_x / cover_focal_y are the crop the author framed for the
+// browse grid's square tile (#1210), as fractions of the ORIGINAL
+// picture. Both NULL means centred, which is what every post rendered
+// before the columns existed; the column CHECK refuses half a pair.
 func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreatePostRow, error) {
 	row := q.db.QueryRow(ctx, createPost,
 		arg.AuthorUserRef,
@@ -216,6 +225,8 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		arg.CoverThumbnailAssetID,
 		arg.TeamID,
 		arg.StateID,
+		arg.CoverFocalX,
+		arg.CoverFocalY,
 	)
 	var i CreatePostRow
 	err := row.Scan(
@@ -226,6 +237,8 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		&i.Visibility,
 		&i.CoverAssetID,
 		&i.CoverThumbnailAssetID,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 		&i.PostedAt,
 		&i.LikeCount,
 		&i.CommentCount,
@@ -254,7 +267,8 @@ func (q *Queries) GetAssetOwnerRef(ctx context.Context, id pgtype.UUID) (*int64,
 
 const getPost = `-- name: GetPost :one
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+       cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
+       posted_at, like_count, comment_count,
        origin_server_id, team_id, state_id, created_at, updated_at,
        ai_provenance
 FROM posts
@@ -269,6 +283,8 @@ type GetPostRow struct {
 	Visibility            string
 	CoverAssetID          pgtype.UUID
 	CoverThumbnailAssetID pgtype.UUID
+	CoverFocalX           *float64
+	CoverFocalY           *float64
 	PostedAt              pgtype.Timestamptz
 	LikeCount             int64
 	CommentCount          int64
@@ -300,6 +316,8 @@ func (q *Queries) GetPost(ctx context.Context, id pgtype.UUID) (GetPostRow, erro
 		&i.Visibility,
 		&i.CoverAssetID,
 		&i.CoverThumbnailAssetID,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 		&i.PostedAt,
 		&i.LikeCount,
 		&i.CommentCount,
@@ -676,10 +694,15 @@ UPDATE posts SET
     cover_asset_id           = COALESCE($4,           cover_asset_id),
     cover_thumbnail_asset_id = COALESCE($5, cover_thumbnail_asset_id),
     state_id                 = COALESCE($6,                 state_id),
+    cover_focal_x            = CASE WHEN $7::BOOLEAN THEN NULL
+                                    ELSE COALESCE($8, cover_focal_x) END,
+    cover_focal_y            = CASE WHEN $7::BOOLEAN THEN NULL
+                                    ELSE COALESCE($9, cover_focal_y) END,
     updated_at               = NOW()
-WHERE id = $7 AND deleted_at IS NULL
+WHERE id = $10 AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+          cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
+          posted_at, like_count, comment_count,
           origin_server_id, team_id, state_id, created_at, updated_at
 `
 
@@ -690,6 +713,9 @@ type UpdatePostParams struct {
 	CoverAssetID          pgtype.UUID
 	CoverThumbnailAssetID pgtype.UUID
 	StateID               pgtype.UUID
+	ClearCoverFocal       bool
+	CoverFocalX           *float64
+	CoverFocalY           *float64
 	ID                    pgtype.UUID
 }
 
@@ -701,6 +727,8 @@ type UpdatePostRow struct {
 	Visibility            string
 	CoverAssetID          pgtype.UUID
 	CoverThumbnailAssetID pgtype.UUID
+	CoverFocalX           *float64
+	CoverFocalY           *float64
 	PostedAt              pgtype.Timestamptz
 	LikeCount             int64
 	CommentCount          int64
@@ -712,6 +740,11 @@ type UpdatePostRow struct {
 }
 
 // COALESCE-based partial update — NULL args keep current values.
+// The focal pair needs a CASE rather than a bare COALESCE, for the
+// reason UpdateCollection's pairs do: COALESCE cannot express "set this
+// back to NULL", so clearing a crop is an explicit flag. Both axes read
+// the SAME flag, because a focal point is a point and clearing half of
+// one is not a state the column CHECK admits.
 func (q *Queries) UpdatePost(ctx context.Context, arg UpdatePostParams) (UpdatePostRow, error) {
 	row := q.db.QueryRow(ctx, updatePost,
 		arg.Title,
@@ -720,6 +753,9 @@ func (q *Queries) UpdatePost(ctx context.Context, arg UpdatePostParams) (UpdateP
 		arg.CoverAssetID,
 		arg.CoverThumbnailAssetID,
 		arg.StateID,
+		arg.ClearCoverFocal,
+		arg.CoverFocalX,
+		arg.CoverFocalY,
 		arg.ID,
 	)
 	var i UpdatePostRow
@@ -731,6 +767,8 @@ func (q *Queries) UpdatePost(ctx context.Context, arg UpdatePostParams) (UpdateP
 		&i.Visibility,
 		&i.CoverAssetID,
 		&i.CoverThumbnailAssetID,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 		&i.PostedAt,
 		&i.LikeCount,
 		&i.CommentCount,

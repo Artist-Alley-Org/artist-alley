@@ -36,6 +36,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/coverfocal"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
@@ -1501,48 +1502,28 @@ func rowToAPI(r Collection) openapi.Collection {
 	return c
 }
 
-// validateFocalPair refuses the three shapes a focal pair must never
-// reach the database in, and it is ONE function because #1207 has two
-// pairs — the featured card's 890:500 crop and the collection cover's
-// square one — with identical rules.
+// validateFocalPair wraps [coverfocal.Validate] in this endpoint's own
+// 400 envelope.
 //
-// Each refusal is a state the column CHECK would otherwise reject as a
-// constraint error, which surfaces as a 500 rather than as the 400 the
-// caller can act on:
-//
-//   - one coordinate without the other. Half a point is not a weaker
-//     positioning, it is an unanswerable one, and the only way to
-//     complete it is to invent an axis the curator did not choose.
-//   - either coordinate alongside the clear flag — the exclusivity rule
-//     every clear flag on this endpoint carries, refused rather than
-//     resolved because the server has no basis for preferring one.
-//   - out of 0..1. A fraction outside the picture is a bug in the
-//     client, and rejecting it here is what stops it becoming an
-//     object-position of -240% on a surface nobody is looking at.
-//
-// Returns nil when the pair is acceptable, including when it is absent
-// entirely — "leave alone" is always valid.
+// #1207 wrote the refusals here because collections had the only two
+// focal pairs. #1210 gave posts a third, so the rule moved to
+// internal/coverfocal and this became the envelope alone. The comment
+// that used to sit here said why one function served two pairs: "three
+// copies of a range check is how one of them ends up admitting 1.5".
+// That argument did not stop applying at two.
 func validateFocalPair(
 	xName, yName, clearName string,
 	x, y *float64,
 	clear bool,
 ) *openapi.UpdateCollection400JSONResponse {
-	bad := func(msg string) *openapi.UpdateCollection400JSONResponse {
-		r := openapi.UpdateCollection400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
-		}
-		return &r
+	msg := coverfocal.Validate(xName, yName, clearName, x, y, clear)
+	if msg == "" {
+		return nil
 	}
-	if (x == nil) != (y == nil) {
-		return bad(xName + " and " + yName + " must be sent together")
+	r := openapi.UpdateCollection400JSONResponse{
+		BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
 	}
-	if clear && x != nil {
-		return bad("send either the " + xName + "/" + yName + " pair or " + clearName + ", not both")
-	}
-	if x != nil && (*x < 0 || *x > 1 || *y < 0 || *y > 1) {
-		return bad(xName + " and " + yName + " must be fractions between 0 and 1")
-	}
-	return nil
+	return &r
 }
 
 // MinCoverZoom / MaxCoverZoom bound a cover crop's zoom (#1212), and

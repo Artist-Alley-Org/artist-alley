@@ -887,25 +887,29 @@ func (h *Handler) dedupResponse(ctx context.Context, behavior sysconfig.DedupBeh
 			return nil, err
 		}
 		out := openapi.AssetWithDedup{
-			AssetType:        full.AssetType,
-			CreatedAt:        full.CreatedAt,
-			Description:      full.Description,
-			FileExtension:    full.FileExtension,
-			FileHash:         full.FileHash,
-			FileSizeBytes:    full.FileSizeBytes,
-			Id:               full.Id,
-			LadderAvailable:  full.LadderAvailable,
-			Metadata:         full.Metadata,
-			OwnerUserRef:     full.OwnerUserRef,
-			PixelHeight:      full.PixelHeight,
-			PixelWidth:       full.PixelWidth,
-			PreviewAvailable: full.PreviewAvailable,
-			ScrubAvailable:   full.ScrubAvailable,
-			ProcessingStatus: ptr(openapi.AssetWithDedupProcessingStatus(strDefault((*string)(full.ProcessingStatus), ""))),
-			Status:           ptr(openapi.AssetWithDedupStatus(strDefault((*string)(full.Status), ""))),
-			Thumbhash:        full.Thumbhash,
-			Title:            full.Title,
-			UpdatedAt:        full.UpdatedAt,
+			// #1209: AssetWithDedup is `allOf: [Asset, ...]`, so it
+			// declares this field and must state it rather than leave a
+			// declared boolean silently absent on one response shape.
+			AnonymouslyVisible: full.AnonymouslyVisible,
+			AssetType:          full.AssetType,
+			CreatedAt:          full.CreatedAt,
+			Description:        full.Description,
+			FileExtension:      full.FileExtension,
+			FileHash:           full.FileHash,
+			FileSizeBytes:      full.FileSizeBytes,
+			Id:                 full.Id,
+			LadderAvailable:    full.LadderAvailable,
+			Metadata:           full.Metadata,
+			OwnerUserRef:       full.OwnerUserRef,
+			PixelHeight:        full.PixelHeight,
+			PixelWidth:         full.PixelWidth,
+			PreviewAvailable:   full.PreviewAvailable,
+			ScrubAvailable:     full.ScrubAvailable,
+			ProcessingStatus:   ptr(openapi.AssetWithDedupProcessingStatus(strDefault((*string)(full.ProcessingStatus), ""))),
+			Status:             ptr(openapi.AssetWithDedupStatus(strDefault((*string)(full.Status), ""))),
+			Thumbhash:          full.Thumbhash,
+			Title:              full.Title,
+			UpdatedAt:          full.UpdatedAt,
 		}
 		out.DuplicateWarning.ExistingAssetId = existingID
 		out.DuplicateWarning.Message = "this file was already uploaded — returning the existing asset"
@@ -1203,15 +1207,29 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 	// a file, and #899 retired the earlier reasoning that dimensions ride
 	// the same plane as the row rather than the same plane as the bytes.
 	var detW, detH *int32
+	// `live` is the soft-delete half of the anonymous read rule (#1209),
+	// read on THIS round trip rather than off `out.DeletedAt`: that
+	// field is populated only on the surfaces that show trash, so
+	// deriving from it would report a soft-deleted asset as
+	// anonymously visible on every other path. Wrong in the reassuring
+	// direction is the one direction this flag must never be wrong in.
+	var live bool
 	if err := h.Pool.QueryRow(ctx,
-		`SELECT `+pixeldims.SelectColumnsSQL("assets.id")+` FROM assets WHERE assets.id = $1::uuid`,
+		`SELECT `+pixeldims.SelectColumnsSQL("assets.id")+`, assets.deleted_at IS NULL FROM assets WHERE assets.id = $1::uuid`,
 		assetID.String(),
-	).Scan(&detW, &detH); err != nil {
+	).Scan(&detW, &detH, &live); err != nil {
 		return fmt.Errorf("assets: pixel dimensions: %w", err)
 	}
 	if pixeldims.Sane(detW, detH) {
 		out.PixelWidth, out.PixelHeight = detW, detH
 	}
+	// #1209: "would a stranger be shown this picture", derived from the
+	// anonymous arm of the read rule rather than re-stated here. Below
+	// the `readable` return above, so a withheld row keeps the
+	// placeholder's three permitted keys and says nothing about its own
+	// tier. Not a decision about THIS caller: see the schema note.
+	anonVisible := visibility.AnonymouslyVisible(fieldsRow, !live)
+	out.AnonymouslyVisible = &anonVisible
 	// preview_available (#471): a servable `col` exists AND the caller
 	// passes the content plane — the same `readable` decided above.
 	if out.FileHash != nil && *out.FileHash != "" {
@@ -2160,6 +2178,10 @@ func (h *Handler) ListAssets(
 		a.PreviewAvailable = &r.PreviewAvailable
 		a.LadderAvailable = &r.LadderAvailable
 		a.ScrubAvailable = &r.ScrubAvailable
+		// #1209: the cover picker's warning reads this off the browse
+		// list, which is the surface it searches. Below the `readable`
+		// continue above, so a withheld row keeps its placeholder.
+		a.AnonymouslyVisible = &r.AnonymouslyVisible
 		// #640 — the tile's aspect ratio, joined by the same pass.
 		// The gated row already applied the pair-or-neither rule.
 		a.PixelWidth = r.PixelWidth

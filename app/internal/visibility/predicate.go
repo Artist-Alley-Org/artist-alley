@@ -94,11 +94,14 @@ func (p Predicate) ToSQL(alias string, argOffset int) (fragment string, args []a
 			}
 			// These three always apply. IncludeSoftDeleted must never
 			// reach them — that narrowness is the point (see the option).
-			conds = append(conds,
-				a+"status = 'active'",
-				a+"sensitivity = 'public'",
-				a+"processing_status = 'ready'",
-			)
+			//
+			// Rendered from `anonymousAssetConditions` (#1209) rather
+			// than written out here, because Go code now has to answer
+			// the same question about a scanned row
+			// (visibility.AnonymouslyVisible) and two transcriptions of
+			// one security rule is the defect ADR 0070's amendment
+			// exists to stop.
+			conds = append(conds, anonymousAssetSQL(a)...)
 			return " AND (" + strings.Join(conds, " AND ") + ")", nil
 		}
 		// Authenticated: unchanged. Do not tighten here without

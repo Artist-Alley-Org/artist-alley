@@ -15728,6 +15728,44 @@ components:
             every producer (`preview.video`, `preview.3d`,
             `preview.gif`), so either would answer "is there a sheet",
             but only one answers "can I drive from it".
+        anonymously_visible:
+          type: boolean
+          description: |
+            True iff an ANONYMOUS visitor's read rule would return this
+            asset (#1209). Derived from the anonymous arm of
+            `visibility.Predicate` for `EntityAsset`, which is
+            soft-delete plus `status = 'active'` plus
+            `sensitivity = 'public'` plus `processing_status = 'ready'`
+            (ADR 0063; ADR 0020 governs the tiers).
+
+            NOT A STATEMENT ABOUT THIS CALLER, unlike every other flag
+            beside it. `preview_available`, `ladder_available` and
+            `scrub_available` answer "may YOU render this"; this answers
+            "would a STRANGER be shown it", and it has one answer per
+            row regardless of who asks. A surface that reached for it as
+            a readability decision would be asking the wrong question,
+            and would be wrong for every signed-in caller.
+
+            WHAT IT IS FOR. A curator choosing a cover for a public
+            collection or post is choosing a picture strangers will be
+            shown, and a pick that fails this rule falls back on every
+            anonymous surface with no explanation. The picker could
+            previously check only `status`, because this schema
+            deliberately carries no `sensitivity`, so a team-tier pick
+            fell back unwarned. It said so rather than guessing, since a
+            warning that guesses in the reassuring direction is worse
+            than none.
+
+            IT DISCLOSES NOTHING NEW. The fact is derived from the GATE
+            rather than from content, and it is exactly what any visitor
+            can establish by opening the same URL with no session. It
+            rides only on payloads that already passed the field plane:
+            the withheld-asset placeholder is a complete literal
+            carrying `id`, `restricted` and `owner_display_name`, and
+            does not carry this, so a withheld row states nothing about
+            its own tier.
+
+            Absent on a withheld row, present everywhere else.
         thumbhash:
           type: string
           nullable: true
@@ -16840,8 +16878,59 @@ components:
             post. Used when the uploader wants a different image as
             the feed thumbnail than any of the post's assets (e.g. a
             cropped detail or an entirely separate cover image). When
-            set, the feed card prefers this asset's variants over
-            `cover_asset_id`.
+            set, the collection cover mosaic prefers this asset over
+            `cover_asset_id` (`cover_thumbnail_asset_id ?? cover_asset_id`,
+            collections.ComposeCovers).
+
+            ⚠️ NO FEED OR GRID CARD READS IT. This description used to
+            say the feed card preferred it, and that was never true of
+            any shipped card: PostCard, PostListTable and cardAsset all
+            resolve `cover_asset_id`, falling back to the first member,
+            and none of the three mentions this column (#1210).
+            `cover_focal_*` below therefore attaches to the resolved
+            card cover and not to this.
+        cover_focal_x:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Where the post cover's SQUARE crop is centred horizontally,
+            as a fraction of the picture's width (#1210). Null means
+            centre, which is what every card rendered before this
+            existed.
+
+            THE DESTINATION SHAPE IS A SQUARE because the browse GRID
+            tile is the only post surface that crops. PostCard turns on
+            CardThumb's `fill` in grid alone, and `fill` is
+            `object-fit: cover` on an `aspect-square` frame. Masonry
+            takes the picture's own shape, and feed, thumbnail, band and
+            list letterbox it whole onto the matte, so none of them can
+            act on this and all of them are byte-identical with it set
+            and unset.
+
+            ONE PAIR, unlike `Collection`, which carries two: the
+            featured rail's 890:500 card and the collection tile are
+            different shapes and one fraction cannot be right for both,
+            while a post has a single cropping destination.
+
+            ⚠️ IT IS CHOSEN AGAINST THE ORIGINAL PICTURE. A consumer
+            honours it by rendering a `contain` rung with
+            `object-position`; applying it to `col` crops a crop, since
+            `col`'s square was already taken at the centre before this
+            value could act. A cover with no contain rung available
+            falls back to `col` centred, which is the behaviour every
+            card had before focal points existed.
+
+            Always null or set TOGETHER with `cover_focal_y`; a half
+            focal point is unanswerable rather than weaker, and the
+            column CHECK refuses it.
+        cover_focal_y:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            The vertical half of the post cover's focal point (#1210).
+            See `cover_focal_x`.
         draft:
           type: boolean
           description: |
@@ -17213,6 +17302,48 @@ components:
           description: |
             Optional standalone thumbnail asset (not a post member).
             Useful for "upload a custom cover" UX in the upload modal.
+        cover_focal_x:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Where the post cover's SQUARE crop is centred horizontally,
+            as a fraction of the picture's width (#1210). Null means
+            centre, which is what every card rendered before this
+            existed.
+
+            THE DESTINATION SHAPE IS A SQUARE because the browse GRID
+            tile is the only post surface that crops. PostCard turns on
+            CardThumb's `fill` in grid alone, and `fill` is
+            `object-fit: cover` on an `aspect-square` frame. Masonry
+            takes the picture's own shape, and feed, thumbnail, band and
+            list letterbox it whole onto the matte, so none of them can
+            act on this and all of them are byte-identical with it set
+            and unset.
+
+            ONE PAIR, unlike `Collection`, which carries two: the
+            featured rail's 890:500 card and the collection tile are
+            different shapes and one fraction cannot be right for both,
+            while a post has a single cropping destination.
+
+            ⚠️ IT IS CHOSEN AGAINST THE ORIGINAL PICTURE. A consumer
+            honours it by rendering a `contain` rung with
+            `object-position`; applying it to `col` crops a crop, since
+            `col`'s square was already taken at the centre before this
+            value could act. A cover with no contain rung available
+            falls back to `col` centred, which is the behaviour every
+            card had before focal points existed.
+
+            Always null or set TOGETHER with `cover_focal_y`; a half
+            focal point is unanswerable rather than weaker, and the
+            column CHECK refuses it.
+        cover_focal_y:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            The vertical half of the post cover's focal point (#1210).
+            See `cover_focal_x`.
         draft:
           type: boolean
           default: false
@@ -17288,6 +17419,61 @@ components:
             Before #946 this property was declared here and silently
             dropped by the handler — the request answered 200 and the
             column was unchanged.
+        cover_focal_x:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Where the post cover's SQUARE crop is centred horizontally,
+            as a fraction of the picture's width (#1210). Null means
+            centre, which is what every card rendered before this
+            existed.
+
+            THE DESTINATION SHAPE IS A SQUARE because the browse GRID
+            tile is the only post surface that crops. PostCard turns on
+            CardThumb's `fill` in grid alone, and `fill` is
+            `object-fit: cover` on an `aspect-square` frame. Masonry
+            takes the picture's own shape, and feed, thumbnail, band and
+            list letterbox it whole onto the matte, so none of them can
+            act on this and all of them are byte-identical with it set
+            and unset.
+
+            ONE PAIR, unlike `Collection`, which carries two: the
+            featured rail's 890:500 card and the collection tile are
+            different shapes and one fraction cannot be right for both,
+            while a post has a single cropping destination.
+
+            ⚠️ IT IS CHOSEN AGAINST THE ORIGINAL PICTURE. A consumer
+            honours it by rendering a `contain` rung with
+            `object-position`; applying it to `col` crops a crop, since
+            `col`'s square was already taken at the centre before this
+            value could act. A cover with no contain rung available
+            falls back to `col` centred, which is the behaviour every
+            card had before focal points existed.
+
+            Always null or set TOGETHER with `cover_focal_y`; a half
+            focal point is unanswerable rather than weaker, and the
+            column CHECK refuses it.
+        cover_focal_y:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            The vertical half of the post cover's focal point (#1210).
+            See `cover_focal_x`.
+        clear_cover_focal:
+          type: boolean
+          description: |
+            Clear the cover focal point, returning the card to a centred
+            crop (#1210).
+
+            An explicit flag rather than `cover_focal_x: null`, matching
+            `clear_cover_focal` on `CollectionUpdate` and the rest of
+            this API's clear verbs: a PATCH body distinguishes absent
+            from null only if every reader agrees on the encoding, and
+            this one does not have to. Setting it alongside
+            `cover_focal_x` / `cover_focal_y` is a 400 rather than a
+            silent precedence rule.
         tags:
           type: array
           items: { type: string, minLength: 1, maxLength: 64 }

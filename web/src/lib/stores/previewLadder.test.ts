@@ -114,3 +114,53 @@ describe('previewLadder.coverSrcsetFor (#1169)', () => {
     });
   });
 });
+
+// #1210: a FRAMED cropping tile, which cannot be offered a rung the
+// server already cropped.
+//
+// The defect this pins is not a 404 and not a wasted byte: it is a crop
+// landing somewhere nobody chose. A focal fraction is measured against
+// the ORIGINAL picture, and `col` is a square taken at that picture's
+// centre before the fraction could act, so `object-position` over it
+// moves a crop of a crop. Leaving `col` in the srcset would make the
+// framing correct at some tile widths and wrong at others, decided by
+// the viewport, which is worse than either answer on its own.
+describe('previewLadder.coverSrcsetFor with containOnly (#1210)', () => {
+  beforeEach(() => {
+    previewLadder.rungs = [];
+    previewLadder.coverRungs = [];
+  });
+
+  it('drops the pre-cropped rungs and keeps the corrected descriptors', () => {
+    defaultLadder();
+    const got = parse(previewLadder.coverSrcsetFor(ID, 5120, 2880, true));
+    // The same widths #1169 computes, minus `col`. The correction is
+    // about the SLOT's shape, which framing does not change.
+    expect(got).toEqual({ preview: 576, screen: 1080, hires: 2304 });
+    expect(got.col).toBeUndefined();
+  });
+
+  it('never names an operator-renamed cover rung either', () => {
+    previewLadder.coverRungs = [{ key: 'square', maxDim: 480 }];
+    previewLadder.rungs = [{ key: 'big', maxDim: 2400 }];
+    const got = parse(previewLadder.coverSrcsetFor(ID, 2000, 1000, true));
+    expect(got).toEqual({ big: 1000 });
+  });
+
+  it('returns null without source dimensions, so the caller drops the framing', () => {
+    defaultLadder();
+    // No dimensions means no describable contain candidate, and the
+    // only thing left would be the square the framing must not use.
+    // Null is what makes the caller fall back to `col` CENTRED rather
+    // than to `col` positioned.
+    expect(previewLadder.coverSrcsetFor(ID, null, null, true)).toBeNull();
+  });
+
+  it('returns null with no contain rungs at all', () => {
+    previewLadder.coverRungs = [{ key: 'col', maxDim: 320 }];
+    previewLadder.rungs = [];
+    expect(previewLadder.coverSrcsetFor(ID, 1600, 900, true)).toBeNull();
+    // ...where the same call WITHOUT framing still has somewhere to go.
+    expect(previewLadder.coverSrcsetFor(ID, 1600, 900, false)).not.toBeNull();
+  });
+});
