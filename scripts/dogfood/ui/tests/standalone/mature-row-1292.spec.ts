@@ -59,6 +59,7 @@ import type { APIRequestContext } from '@playwright/test';
 import { loginAsAdminViaAPI, LOGGED_OUT } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
 import { matureContentHold } from '../../helpers/mature-content';
+import { publicModeHold } from '../../helpers/public-mode';
 
 /** A token in every fixture title and nowhere in the seed, so
  *  `/?q=<TOKEN>` renders a wall of exactly these two posts. */
@@ -69,6 +70,26 @@ let plainId = '';
 const assetIds: string[] = [];
 
 const matureSwitch = matureContentHold('mature-row-1292');
+
+/** ⚠️ THE SIGNED-OUT CASE NEEDS ANONYMOUS BROWSING TURNED ON, and that
+ *  is a precondition rather than a detail of the assertion.
+ *
+ *  `system.public_mode`'s ZERO VALUE IS DISABLED (sysconfig/publicmode.go:
+ *  "or the zero value (disabled) when the key is absent"), so a fresh
+ *  install refuses anonymous callers and renders the LOGIN CARD instead
+ *  of a feed. There is then no browse footer, no filter menu, and
+ *  nothing for "the mature row is absent" to be a statement about: the
+ *  case would be vacuously true against a page that has no rows of any
+ *  kind. The first version of this file assumed a wall and passed only
+ *  because the developer stack happened to have the switch on.
+ *
+ *  ⛔ LOCK ORDER: `system.mature_content` FIRST (taken for the whole
+ *  file in beforeAll), then `system.public_mode` INSIDE the one case
+ *  that needs it. Both are held at once here, so the order is the thing
+ *  that keeps it deadlock-free, and it is written down because no
+ *  other spec wants the mature switch today. A future file that takes
+ *  these two in the opposite order deadlocks against this one. */
+const publicMode = publicModeHold('mature-row-1292');
 
 /** The account's opt-in as it was before this file ran, so the restore
  *  puts back a value rather than a guess. */
@@ -277,8 +298,10 @@ test.describe('#1292 browse filter menu: the Mature row', () => {
     for (const id of assetIds) {
       await request.delete(`/api/v1/assets/${id}`).catch(() => undefined);
     }
-    // Backstop behind the per-test release: idempotent, so it writes
-    // nothing when the switch was already given back.
+    // Backstops behind the per-test releases: both are idempotent, so
+    // they write nothing when the switch was already given back, and
+    // they cover a crash inside either window.
+    await publicMode.release(request);
     await matureSwitch.release(request);
   });
 
@@ -286,21 +309,49 @@ test.describe('#1292 browse filter menu: the Mature row', () => {
   // The cascade, both rungs, as ABSENCE
   // -------------------------------------------------------------------
 
-  test('⛔ no row for a SIGNED-OUT reader, and the AI row is unaffected', async ({ browser }) => {
+  test('⛔ no row for a SIGNED-OUT reader, and the AI row is unaffected', async ({
+    browser,
+    request,
+  }) => {
     // An anonymous viewer can never opt in, because there is nowhere to
     // store the answer (ADR 0090 §2), so there is no consent for a view
     // filter to narrow. The AI row beside it is a filter that never
     // gates (ADR 0094 §4), so everybody gets that one.
-    const ctx = await browser.newContext({ storageState: LOGGED_OUT });
+    //
+    // ⚠️ ANONYMOUS BROWSING HAS TO BE ON FOR THIS TO ASSERT ANYTHING.
+    // See the note on `publicMode` above: with the switch off there is
+    // no wall, no footer and no menu, so "the mature row is absent"
+    // holds against a login card and proves nothing. Borrowed through
+    // the cross-file lock and given straight back, so the window is as
+    // narrow as the assertion allows.
+    await publicMode.acquire(request);
     try {
-      const page = await ctx.newPage();
-      await page.goto('/');
-      await expect(page.locator(tid('browse-wall'))).toBeVisible();
-      await openPanel(page);
-      await expect(matureRow(page), 'absent, never disabled').toHaveCount(0);
-      await expect(aiRow(page), 'the AI row has no cascade').toBeVisible();
+      await publicMode.set(request, true);
+
+      const ctx = await browser.newContext({ storageState: LOGGED_OUT });
+      try {
+        const page = await ctx.newPage();
+        await page.goto('/');
+
+        // ⭐ THE WALL IS ASSERTED AS THE PRECONDITION IT IS, with a
+        // message that names the switch. A future run on an instance
+        // that refuses anonymous callers should read as "the
+        // precondition did not hold", not as "the mature row is
+        // broken".
+        await expect(
+          page.locator(tid('browse-wall')),
+          'no anonymous wall to inspect: public mode is off, so this instance served ' +
+            'the login card and the case below would be vacuous',
+        ).toBeVisible();
+
+        await openPanel(page);
+        await expect(matureRow(page), 'absent, never disabled').toHaveCount(0);
+        await expect(aiRow(page), 'the AI row has no cascade').toBeVisible();
+      } finally {
+        await ctx.close();
+      }
     } finally {
-      await ctx.close();
+      await publicMode.release(request);
     }
   });
 
