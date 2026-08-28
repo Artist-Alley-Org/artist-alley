@@ -14940,10 +14940,10 @@ components:
             The curator's cover for the FEATURED RAIL specifically
             (#1207), or null for "no separate choice".
 
-            The rail's card is locked to 890:500 while a collection card
-            is roughly square, so the picture that reads well on one is
-            often not the one that reads well on the other. This is the
-            second pointer that lets them differ.
+            The rail's card is locked to 890:500 while a collection
+            card is 4:3, so the picture that reads well on one is often
+            not the one that reads well on the other. This is the second
+            pointer that lets them differ.
 
             NULL IS A FALLBACK, NOT A BLANK. The rail's preference order
             is this cover, then `cover_asset_id`, then the derived
@@ -14994,17 +14994,25 @@ components:
           format: double
           nullable: true
           description: |
-            Where the COLLECTION cover's square crop is centred
+            Where the COLLECTION cover's 4:3 crop is centred
             horizontally, as a fraction of the picture's width (#1207).
 
-            THE DESTINATION SHAPE IS A SQUARE, and that is not a
-            preference — the `col` rendition is `fit: cover` at 320px, a
-            320x320 centre-crop, and it is what every small collection
-            thumbnail is made of. A separate pair from
-            `featured_cover_focal_x` because the featured card is
-            890:500: the point that centres a face in a wide band is not
-            the point that centres it in a square, so one fraction
-            cannot be right for both destinations.
+            THE DESTINATION SHAPE IS 4:3, NOT A SQUARE (#1334).
+            CollectionCard paints a chosen cover inside an
+            `aspect-[4/3]` tile on the hub, on a profile and in search,
+            and that tile is the only collection surface that crops this
+            picture. The square is the tempting wrong answer because the
+            `col` rendition IS one (`fit: cover` at 320px, a 320x320
+            centre-crop, what every small collection thumbnail is made
+            of), but `col` is a SOURCE and not a destination: a client
+            that positioned against it would show a region the card
+            never displays. A crop locks to the dimensions of the thing
+            that renders it.
+
+            A separate pair from `featured_cover_focal_x` because the
+            featured card is 890:500: the point that centres a face in a
+            wide band is not the point that centres it in a 4:3 tile, so
+            one fraction cannot be right for both destinations.
 
             ⚠️ IT IS CHOSEN AGAINST THE ORIGINAL PICTURE. A consumer
             honours it by rendering a `contain` rung with
@@ -15012,7 +15020,10 @@ components:
             `col`'s square was already taken at the centre before this
             value could act.
 
-            Null means centre.
+            Null means centre. Swapping or removing the cover picture
+            without supplying new framing clears it (#1333), because a
+            fraction chosen against one photograph means nothing on the
+            next.
         cover_focal_y:
           type: number
           format: double
@@ -15247,6 +15258,15 @@ components:
             two apart would make this endpoint an existence oracle for
             assets you cannot see.
 
+            CHANGING IT DISCARDS THE OLD FRAMING (#1333). A focal
+            point and a zoom are chosen against one particular picture,
+            so they mean nothing on the next one; swap the cover without
+            saying anything about framing and `cover_focal_x`,
+            `cover_focal_y` and `cover_zoom` all go back to null. Send
+            the new framing in the SAME request to keep it, which is
+            what the cover editor does. Re-sending the id already
+            stored is not a change and disturbs nothing.
+
             Send `clear_cover: true` to go back to the derived mosaic —
             a partial update cannot express "remove" by sending null,
             because null is already "leave alone" for every other
@@ -15273,6 +15293,13 @@ components:
             asset you may PICTURE, on exactly the terms `cover_asset_id`
             states — including the same deliberately-indistinct 400 for
             "no such asset" and "not yours to look at".
+
+            Changing it discards the FEATURED slot's framing on the
+            same terms `cover_asset_id` describes (#1333):
+            `featured_cover_focal_x`, `featured_cover_focal_y` and
+            `featured_cover_zoom` go back to null unless the request
+            supplies new ones. The two slots are independent, so this
+            never disturbs how the collection card is framed.
 
             Send `clear_featured_cover: true` to go back to "no separate
             choice", which puts the rail back on `cover_asset_id` and
@@ -15332,11 +15359,16 @@ components:
           minimum: 0
           maximum: 1
           description: |
-            Centre the COLLECTION cover's square crop horizontally, as a
-            fraction of the picture's width (#1207). Same rules as the
-            featured pair: must be sent with `cover_focal_y`, must be in
-            0..1, and out-of-range is a 400 rather than a silently
-            clamped value.
+            Centre the COLLECTION cover's 4:3 crop horizontally, as a
+            fraction of the picture's width (#1207; the destination is
+            4:3 and not a square, see the read schema and #1334). Same
+            rules as the featured pair: must be sent with
+            `cover_focal_y`, must be in 0..1, and out-of-range is a 400
+            rather than a silently clamped value.
+
+            Send it in the SAME PATCH as a new `cover_asset_id` to keep
+            it: a cover swap with no framing supplied clears the pair
+            (#1333).
         cover_focal_y:
           type: number
           format: double
@@ -15348,8 +15380,8 @@ components:
         clear_cover_focal:
           type: boolean
           description: |
-            Put the collection cover's square crop back to centred
-            (#1207) — one flag for the PAIR, for the reason
+            Put the collection cover's 4:3 crop back to centred
+            (#1207), one flag for the PAIR, for the reason
             `clear_featured_cover_focal` is one flag for its pair.
 
             Mutually exclusive with either coordinate. Independent of
@@ -17405,6 +17437,17 @@ components:
           type: string
           format: uuid
           nullable: true
+          description: |
+            Choose this post's cover picture.
+
+            CHANGING IT DISCARDS THE OLD FRAMING (#1333). The focal pair
+            is a fraction of one particular picture's width and height,
+            so it means nothing on the next one; swap the cover without
+            saying anything about framing and `cover_focal_x` /
+            `cover_focal_y` go back to null. Send the new pair in the
+            SAME request to keep it, which is what the cover editor
+            does. Re-sending the id already stored is not a change and
+            disturbs nothing.
         cover_thumbnail_asset_id:
           type: string
           format: uuid

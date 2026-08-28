@@ -5,7 +5,7 @@
   //
   // #1207 shipped this for the featured rail's 890:500 card. The owner
   // then asked for the same control on the regular collection cover,
-  // locked to a square. The two differ in exactly one number, so this is
+  // locked to 4:3. The two differ in exactly one number, so this is
   // one component rendered twice rather than a second marquee to keep in
   // step — and "in step" is not a tidiness argument here: the marquee,
   // the dimming, the drag arithmetic and the live preview all have to
@@ -16,12 +16,21 @@
   // WHY THE SHAPE IS LOCKED AND THERE IS NO FREE-CROP TOGGLE. A crop is
   // only meaningful against a destination that renders it, and both
   // destinations are fixed by something other than preference: the rail
-  // card is locked to 890:500 (#1110/#1098), and the collection cover's
-  // square is the `col` rendition itself — `fit: cover` at 320px, a
-  // 320x320 centre-crop (sysconfig/previews.go), which every small
-  // collection thumbnail is made of. An arbitrary rectangle has no
-  // surface that would honour it, so a toggle would offer a choice the
-  // product cannot keep.
+  // card is locked to 890:500 (#1110/#1098), and the collection cover
+  // is painted inside CollectionCard's `aspect-[4/3]` tile. An
+  // arbitrary rectangle has no surface that would honour it, so a
+  // toggle would offer a choice the product cannot keep.
+  //
+  // ⚠️ THE COLLECTION SHAPE IS 4:3, NOT A SQUARE (#1334). The square
+  // looks right because the `col` rendition IS one: `fit: cover` at
+  // 320px, a 320x320 centre-crop (sysconfig/previews.go), and what
+  // every small collection thumbnail is made of. But `col` is a SOURCE,
+  // not a destination. A marquee locks to the dimensions of the thing
+  // that RENDERS the crop, and for a collection cover that thing is the
+  // 4:3 tile; drag against a square and the curator positions a region
+  // the card never displays. `COVER_SLOT_ASPECT` in
+  // $lib/util/featuredCrop is where that pairing of slot to shape
+  // lives, and it is what this component is handed.
 
   import { t } from '$stores/lang.svelte';
   import {
@@ -41,8 +50,9 @@
     src: string | null;
     srcset?: string;
     sizes?: string;
-    /** The DESTINATION aspect: 890/500 for the rail card, 1 for the
-     *  collection cover's square. */
+    /** The DESTINATION aspect: 890/500 for the rail card, 4/3 for the
+     *  collection card's tile (#1334, and NOT 1). Callers read it off
+     *  `COVER_SLOT_ASPECT` rather than writing a number here. */
     aspect: number;
     /** The stored focal pair, null for centre. Bound both ways. */
     focalX: number | null;

@@ -67,6 +67,28 @@ WHERE id = $1;
 -- statement that was supposed to cover it was never called by anything
 -- and is now gone. Two mechanisms for one job is how the working one
 -- ends up being the one nobody wired.
+--
+-- #1333 adds a FOURTH state to every crop column: "the picture you were
+-- describing is gone". A focal fraction and a zoom multiplier are both
+-- chosen against one specific photograph, so they mean nothing on the
+-- next one; left alone across a cover swap they framed the new picture
+-- on a point nobody picked, and did it silently. Each crop column
+-- therefore reads its own cover column, and the arms are ordered:
+--   1. the column's explicit clear flag wins outright;
+--   2. a SUPPLIED value wins over the swap rule. This is the case both
+--      cover editors actually take, because they save the new picture
+--      and its new framing in ONE PATCH, so a rule that cleared on any
+--      change would discard the value the curator just chose while
+--      still passing a single-field test;
+--   3. the cover being removed, or genuinely CHANGED, clears the crop.
+--      `IS DISTINCT FROM` rather than `IS NOT NULL`, so a client that
+--      round-trips the whole object and re-sends the SAME cover id is
+--      not a swap and keeps its framing;
+--   4. otherwise the stored value stands, exactly as before.
+-- Both axes of a focal pair read identical arms, so the pair can never
+-- half-clear into a collections_cover_focal_check violation. The two
+-- SLOTS stay independent: swapping the featured picture must not
+-- disturb how the collection card is framed, and vice versa.
 UPDATE collections SET
     name        = COALESCE(sqlc.narg('name'),        name),
     description = COALESCE(sqlc.narg('description'), description),
@@ -91,17 +113,52 @@ UPDATE collections SET
     -- distinction, and the CHECK is what stops it being lost silently.
     featured_cover_asset_id = CASE WHEN sqlc.arg('clear_featured_cover')::BOOLEAN THEN NULL
                           ELSE COALESCE(sqlc.narg('featured_cover_asset_id'), featured_cover_asset_id) END,
-    featured_cover_focal_x = CASE WHEN sqlc.arg('clear_featured_cover_focal')::BOOLEAN THEN NULL
-                          ELSE COALESCE(sqlc.narg('featured_cover_focal_x'), featured_cover_focal_x) END,
-    featured_cover_focal_y = CASE WHEN sqlc.arg('clear_featured_cover_focal')::BOOLEAN THEN NULL
-                          ELSE COALESCE(sqlc.narg('featured_cover_focal_y'), featured_cover_focal_y) END,
-    -- The regular cover's own focal pair, on the SQUARE destination. Its
-    -- own clear flag, for the reason the featured pair has one: two
-    -- columns, one intention.
-    cover_focal_x = CASE WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
-                          ELSE COALESCE(sqlc.narg('cover_focal_x'), cover_focal_x) END,
-    cover_focal_y = CASE WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
-                          ELSE COALESCE(sqlc.narg('cover_focal_y'), cover_focal_y) END,
+    -- #1333: the swap arm. See the note above UpdateCollection for why
+    -- the arms are in this order; the short version is that arm 2 is
+    -- what keeps the editor's "new picture AND its new framing in one
+    -- PATCH" working, and arm 3 is what stops a framing outliving the
+    -- picture it was chosen against.
+    featured_cover_focal_x = CASE
+        WHEN sqlc.arg('clear_featured_cover_focal')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('featured_cover_focal_x')::DOUBLE PRECISION IS NOT NULL
+             THEN sqlc.narg('featured_cover_focal_x')::DOUBLE PRECISION
+        WHEN sqlc.arg('clear_featured_cover')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('featured_cover_asset_id')::UUID IS NOT NULL
+             AND sqlc.narg('featured_cover_asset_id')::UUID IS DISTINCT FROM featured_cover_asset_id
+             THEN NULL
+        ELSE featured_cover_focal_x END,
+    featured_cover_focal_y = CASE
+        WHEN sqlc.arg('clear_featured_cover_focal')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('featured_cover_focal_y')::DOUBLE PRECISION IS NOT NULL
+             THEN sqlc.narg('featured_cover_focal_y')::DOUBLE PRECISION
+        WHEN sqlc.arg('clear_featured_cover')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('featured_cover_asset_id')::UUID IS NOT NULL
+             AND sqlc.narg('featured_cover_asset_id')::UUID IS DISTINCT FROM featured_cover_asset_id
+             THEN NULL
+        ELSE featured_cover_focal_y END,
+    -- The regular cover's own focal pair, on the 4:3 collection-card
+    -- destination (#1334: NOT a square; `col` is a square SOURCE and
+    -- CollectionCard's tile is what actually crops). Its own clear flag,
+    -- for the reason the featured pair has one: two columns, one
+    -- intention. And its own #1333 swap arms, keyed on ITS cover column.
+    cover_focal_x = CASE
+        WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('cover_focal_x')::DOUBLE PRECISION IS NOT NULL
+             THEN sqlc.narg('cover_focal_x')::DOUBLE PRECISION
+        WHEN sqlc.arg('clear_cover')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('cover_asset_id')::UUID IS NOT NULL
+             AND sqlc.narg('cover_asset_id')::UUID IS DISTINCT FROM cover_asset_id
+             THEN NULL
+        ELSE cover_focal_x END,
+    cover_focal_y = CASE
+        WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('cover_focal_y')::DOUBLE PRECISION IS NOT NULL
+             THEN sqlc.narg('cover_focal_y')::DOUBLE PRECISION
+        WHEN sqlc.arg('clear_cover')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('cover_asset_id')::UUID IS NOT NULL
+             AND sqlc.narg('cover_asset_id')::UUID IS DISTINCT FROM cover_asset_id
+             THEN NULL
+        ELSE cover_focal_y END,
     -- #1212 — how far each crop is tightened. One column per slot and
     -- one clear flag per column, and the flag is NOT optional dressing
     -- on a numeric field: NULL means "leave alone" here exactly as it
@@ -111,10 +168,30 @@ UPDATE collections SET
     -- the focal pair's because zoom and position are independent
     -- settings: "back to fit, still positioned left" is an ordinary
     -- thing to want, and one shared flag could not say it.
-    featured_cover_zoom = CASE WHEN sqlc.arg('clear_featured_cover_zoom')::BOOLEAN THEN NULL
-                          ELSE COALESCE(sqlc.narg('featured_cover_zoom'), featured_cover_zoom) END,
-    cover_zoom = CASE WHEN sqlc.arg('clear_cover_zoom')::BOOLEAN THEN NULL
-                          ELSE COALESCE(sqlc.narg('cover_zoom'), cover_zoom) END,
+    --
+    -- The swap arms are here too (#1333), and they are not optional
+    -- tidiness: zoom and focal together ARE the crop. Clearing only the
+    -- focal on a cover swap would leave the new picture centred but
+    -- still tightened to 3x by a decision taken about a different
+    -- photograph, which is the same silent wrongness one column over.
+    featured_cover_zoom = CASE
+        WHEN sqlc.arg('clear_featured_cover_zoom')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('featured_cover_zoom')::DOUBLE PRECISION IS NOT NULL
+             THEN sqlc.narg('featured_cover_zoom')::DOUBLE PRECISION
+        WHEN sqlc.arg('clear_featured_cover')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('featured_cover_asset_id')::UUID IS NOT NULL
+             AND sqlc.narg('featured_cover_asset_id')::UUID IS DISTINCT FROM featured_cover_asset_id
+             THEN NULL
+        ELSE featured_cover_zoom END,
+    cover_zoom = CASE
+        WHEN sqlc.arg('clear_cover_zoom')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('cover_zoom')::DOUBLE PRECISION IS NOT NULL
+             THEN sqlc.narg('cover_zoom')::DOUBLE PRECISION
+        WHEN sqlc.arg('clear_cover')::BOOLEAN THEN NULL
+        WHEN sqlc.narg('cover_asset_id')::UUID IS NOT NULL
+             AND sqlc.narg('cover_asset_id')::UUID IS DISTINCT FROM cover_asset_id
+             THEN NULL
+        ELSE cover_zoom END,
     updated_at  = NOW()
 WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,

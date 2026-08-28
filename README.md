@@ -1,4 +1,4 @@
-# artist-alley
+# Artist Alley
 
 [![Go version](https://img.shields.io/github/go-mod/go-version/Artist-Alley-Org/artist-alley?filename=app/go.mod)](app/go.mod)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
@@ -14,15 +14,15 @@ A self-hosted **art review and archival tool for game studios**. Artist-first UX
 
 ## Why this exists
 
-Game studios review art and archive it across chat apps, whiteboards, and shared drives. Knowledge fragments across tools, review is inconsistent, and assets become hard to find a few years later. No good self-hosted tool fills the gap — and no DAM at all, open-source or commercial, federates between independently-operated instances. artist-alley is the first that does.
+Game studios review art and archive it across chat apps, whiteboards, and shared drives. Knowledge fragments across tools, review is inconsistent, and assets become hard to find a few years later. No good self-hosted tool fills the gap, and no DAM at all, open-source or commercial, federates between independently-operated instances. Artist Alley is the first that does.
 
-artist-alley is built around three pillars:
+Artist Alley is built around three pillars:
 
 1. **Artist-first, not archive-first.** Artists upload-and-forget; metadata happens automatically wherever possible. The UX target is dead-simple — as easy as posting to a gallery, never filing into an archive.
 2. **Review mode.** Async review works today — threaded comments on posts and assets, and annotations that respect who can see the work. The rest of the arc is what the next two releases build: a frame-accurate player, frame-scoped annotation, and live presenter sessions over SSE.
 3. **Three-click rule.** Any common action reachable in three clicks or fewer.
 
-Supporting all three: artist-alley implements [**ArchivePub**](docs/protocol/archivepub.md), an open federation protocol built on the ActivityPub data model with DAM-shaped extensions for asset sharing, workflow state, and brand workspaces. Studios share work with partners without paying SaaS rent; the protocol is open to any DAM that wants to implement it.
+Supporting all three: Artist Alley implements [**ArchivePub**](docs/protocol/archivepub.md), an open federation protocol built on the ActivityPub data model with DAM-shaped extensions for asset sharing, workflow state, and brand workspaces. Studios share work with partners without paying SaaS rent; the protocol is open to any DAM that wants to implement it.
 
 ---
 
@@ -164,4 +164,4 @@ Architectural changes need an ADR per the convention in [ADR 0035](docs/adr/0035
 
 ## License
 
-artist-alley is **dual-licensed**: **AGPL-3.0-only** for open-source use (see [LICENSE](LICENSE)) **or** a separate **commercial license** for use without the AGPL copyleft obligations — see [LICENSING.md](LICENSING.md). This is the license direction set in [ADR 0016](docs/adr/0016-license-direction.md); the monetization model is [ADR 0017](docs/adr/0017-monetization-and-licensing.md); premium add-ons under a separate EULA per [ADR 0038](docs/adr/0038-premium-add-on-layer.md).
+Artist Alley is **dual-licensed**: **AGPL-3.0-only** for open-source use (see [LICENSE](LICENSE)) **or** a separate **commercial license** for use without the AGPL copyleft obligations. See [LICENSING.md](LICENSING.md). This is the license direction set in [ADR 0016](docs/adr/0016-license-direction.md); the monetization model is [ADR 0017](docs/adr/0017-monetization-and-licensing.md); premium add-ons under a separate EULA per [ADR 0038](docs/adr/0038-premium-add-on-layer.md).

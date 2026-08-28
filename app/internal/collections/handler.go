@@ -614,11 +614,14 @@ func (h *Handler) UpdateCollection(
 		return *resp, nil
 	}
 
-	// #1207 — the COLLECTION cover's own focal pair, on the square
-	// destination. Validated by the same three refusals as the featured
-	// pair; a shared helper rather than a third copy of them, because
-	// three copies of a range check is how one of them ends up admitting
-	// 1.5.
+	// #1207: the COLLECTION cover's own focal pair, on the 4:3
+	// destination. NOT a square (#1334): `col` is a square SOURCE, but
+	// what renders a chosen collection cover is CollectionCard's
+	// `aspect-[4/3]` tile, and a crop locks to the dimensions of the
+	// thing that paints it. Validated by the same three refusals as the
+	// featured pair; a shared helper rather than a third copy of them,
+	// because three copies of a range check is how one of them ends up
+	// admitting 1.5.
 	clearCoverFocal := in.ClearCoverFocal != nil && *in.ClearCoverFocal
 	if resp := validateFocalPair(
 		"cover_focal_x", "cover_focal_y", "clear_cover_focal",
