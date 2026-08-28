@@ -372,6 +372,49 @@ VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10, $9)
 ON CONFLICT (id) DO NOTHING
 RETURNING id;
 
+-- name: SeedListPostFingerprints :many
+-- Everything the posts phase writes, read back for every post row the
+-- database already holds (#1320).
+--
+-- ⛔ WHY THIS EXISTS AT ALL. `SeedInsertPost` ends in `ON CONFLICT (id)
+-- DO NOTHING`, which is the resume contract stated at the top of this
+-- block and must survive. What it cannot do is TELL you: a second seed
+-- carrying a corrected title, a new member, a moved collection or a
+-- reordered wall lands on that clause and the run reports a clean
+-- success over data it did not write. `aa seed --reset` is the only
+-- thing that can apply the change, and nothing said so.
+--
+-- Reading the rows back is the honest half. The seeder compares this
+-- against the catalogue and REPORTS the disagreement; it never writes
+-- over it. `DO UPDATE` was rejected deliberately: this runs against
+-- development databases that people edit, and an override is data
+-- resolved OVER the shipped value, never in place of it (ADR 0081).
+--
+-- The three subqueries are the post's SUBTREE, which is the half the
+-- old skip lost silently: the conflict path used to `continue` past
+-- the member, tag and collection loops together, so an existing post
+-- could not gain the member the catalogue had just given it. That is
+-- the same shape as #1290 one table over.
+SELECT
+    p.id,
+    p.title,
+    p.description,
+    p.visibility,
+    p.cover_asset_id,
+    p.created_at,
+    p.updated_at,
+    COALESCE((SELECT array_agg(pa.asset_id ORDER BY pa.sort_order, pa.asset_id)
+              FROM post_assets pa WHERE pa.post_id = p.id), '{}')::uuid[]
+        AS member_ids,
+    COALESCE((SELECT array_agg(pt.tag ORDER BY pt.tag)
+              FROM post_tags pt WHERE pt.post_id = p.id), '{}')::text[]
+        AS tags,
+    COALESCE((SELECT array_agg(cp.collection_id ORDER BY cp.collection_id)
+              FROM collection_posts cp WHERE cp.post_id = p.id), '{}')::uuid[]
+        AS collection_ids
+FROM posts p
+WHERE p.deleted_at IS NULL;
+
 -- name: SeedInsertPostAsset :exec
 INSERT INTO post_assets (post_id, asset_id, sort_order)
 VALUES ($1, $2, $3)

@@ -3171,10 +3171,11 @@ class TestPostCuration(unittest.TestCase):
 
     def test_curation_amends_a_post_that_already_exists(self):
         posts = [self._post("p1")]
-        n_posts, n_vals, warn = up.apply_post_curation(posts, {"curate": [
-            {"id": "p1", "created_at": "2026-06-06T00:00:00Z",
-             "asset_ids": ["a2", "a1"]}]})
-        self.assertEqual((n_posts, n_vals, warn), (1, 2, []))
+        n_posts, n_vals, missing, advisories = up.apply_post_curation(
+            posts, {"curate": [
+                {"id": "p1", "created_at": "2026-06-06T00:00:00Z",
+                 "asset_ids": ["a2", "a1"]}]})
+        self.assertEqual((n_posts, n_vals, missing, advisories), (1, 2, [], []))
         self.assertEqual(posts[0]["created_at"], "2026-06-06T00:00:00Z")
         self.assertEqual(posts[0]["asset_ids"], ["a2", "a1"])
 
@@ -3207,12 +3208,17 @@ class TestPostCuration(unittest.TestCase):
         """⛔ The document carries values, not membership or kind. It
         cannot build a post, so it must not pretend to."""
         posts = [self._post("p1")]
-        n_posts, n_vals, warn = up.apply_post_curation(posts, {"curate": [
-            {"id": "gone", "created_at": "2026-06-06T00:00:00Z"}]})
+        n_posts, n_vals, missing, advisories = up.apply_post_curation(
+            posts, {"curate": [{"id": "gone",
+                                "created_at": "2026-06-06T00:00:00Z"}]})
         self.assertEqual((n_posts, n_vals), (0, 0))
         self.assertEqual(len(posts), 1)
-        self.assertEqual(len(warn), 1)
-        self.assertIn("gone", warn[0])
+        self.assertEqual(len(missing), 1)
+        self.assertIn("gone", missing[0])
+        # ⛔ #1324. The loss must NOT arrive on the advisory channel, or
+        # a caller that refuses on losses has to refuse on advisories
+        # too, which makes a documented "look here" fatal.
+        self.assertEqual(advisories, [])
 
     def test_it_is_idempotent(self):
         posts = [self._post("p1")]
@@ -3222,6 +3228,8 @@ class TestPostCuration(unittest.TestCase):
         second = up.apply_post_curation(posts, doc)
         self.assertEqual(first[:2], (1, 1))
         self.assertEqual(second[:2], (0, 0))
+        self.assertEqual((first[2], first[3], second[2], second[3]),
+                         ([], [], [], []))
         self.assertEqual(posts, snapshot)
 
     def test_it_never_creates_deletes_or_reorders_posts(self):
@@ -3239,9 +3247,11 @@ class TestPostCuration(unittest.TestCase):
         posts = [self._post("p1", asset_ids=["a1", "a9"])]
         doc = {"curate": [{"id": "p1", "created_at": "2026-06-06T00:00:00Z",
                            "pipeline_members": up._members_digest(["a1", "a2"])}]}
-        n_posts, n_vals, warn = up.apply_post_curation(posts, doc)
-        self.assertEqual(len(warn), 1)
-        self.assertIn("membership has moved", warn[0])
+        n_posts, n_vals, missing, advisories = up.apply_post_curation(posts, doc)
+        self.assertEqual(len(advisories), 1)
+        self.assertIn("membership has moved", advisories[0])
+        # ⛔ #1324. And the advisory must NOT arrive on the loss channel.
+        self.assertEqual(missing, [])
         # It still applies. The curation is the owner's decision; this is
         # a report, not a veto.
         self.assertEqual((n_posts, n_vals), (1, 1))
@@ -3251,8 +3261,8 @@ class TestPostCuration(unittest.TestCase):
         posts = [self._post("p1", asset_ids=["a2", "a1"])]
         doc = {"curate": [{"id": "p1", "created_at": "2026-06-06T00:00:00Z",
                            "pipeline_members": up._members_digest(["a1", "a2"])}]}
-        _, _, warn = up.apply_post_curation(posts, doc)
-        self.assertEqual(warn, [])
+        _, _, missing, advisories = up.apply_post_curation(posts, doc)
+        self.assertEqual((missing, advisories), ([], []))
 
     def test_the_shipped_document_carries_no_title(self):
         """⛔⛔ THE MEASUREMENT THAT DECIDED THIS DOCUMENT'S CONTENT.
@@ -3298,6 +3308,187 @@ class TestPostCuration(unittest.TestCase):
             (PROFILES / "studio-a.posts.json").read_text(encoding="utf-8"))}
         missing = [e["id"] for e in doc["curate"] if e["id"] not in have]
         self.assertEqual(missing, [])
+
+
+class TestCurationLossStopsTheRun(unittest.TestCase):
+    """#1324. The pipeline drops hand curation and exits 0.
+
+    ⛔ A PASS THAT CANNOT DO ITS JOB MUST NOT REPORT SUCCESS. Measured
+    on 2026-08-27: a fresh assembly emits no `asset_group` posts (#1322),
+    so 200 of the 841 curated posts are not in the document the curation
+    is applied to. Their values are discarded. `apply_upgrade` printed
+    "1135 hand-made value(s) reapplied to 641 post(s)", listed eight of
+    the 200 losses under "… and 192 more", wrote all three profiles and
+    exited 0. The curation document is the ONLY copy of that work.
+
+    ⚠️ AND THE FIX MUST NOT OVERSHOOT. The pass reports two different
+    things and one of them is deliberate: a curated post whose
+    membership has moved is applied and flagged, because nothing can
+    say whether the curation went bad. Making the whole warning list
+    fatal would turn that documented advisory into a failure, so the
+    two are separated at the source and only losses reach `problems`.
+
+    Both halves are driven through the real script, end to end.
+    """
+
+    HQ = "images/kenney-hq/2d-assets-brick-pack-brick-high-1-36a68e65-512.png"
+
+    def _site(self, td: Path, *, curate: list[dict]):
+        upgrades = td / "upgrades"
+        upgrades.mkdir(exist_ok=True)
+        reps = [{"id": "id-1", "old": "images/pack/a.png", "oldSize": 605,
+                 "new": self.HQ, "newSize": 8400}]
+        (upgrades / "kenney-hq-replacements.site_a.json").write_text(
+            json.dumps(reps), encoding="utf-8")
+        (upgrades / "post-curation.site_a.json").write_text(
+            json.dumps({"curate": curate}), encoding="utf-8")
+
+        profile = [_asset("id-1", "images/pack/a.png")]
+        up.apply_replacements(profile, reps)
+        posts = [{"id": "post-1", "asset_ids": ["id-1"],
+                  "created_at": "2025-01-01T00:00:00Z",
+                  "updated_at": "2025-01-01T00:00:00Z"}]
+        (td / "assets.json").write_text(json.dumps(profile), encoding="utf-8")
+        (td / "posts.json").write_text(json.dumps(posts), encoding="utf-8")
+        return upgrades
+
+    def _run(self, td: Path, upgrades: Path, *extra: str):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "apply_upgrade.py"),
+             "--site", "site_a", "--upgrades", str(upgrades),
+             "--profile", str(td / "assets.json"),
+             "--posts", str(td / "posts.json"), *extra],
+            capture_output=True, text=True)
+
+    # -- the loss half -------------------------------------------------
+
+    def test_a_curated_post_absent_from_the_profile_fails_the_run(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, curate=[
+                {"id": "post-1", "created_at": "2026-06-06T00:00:00Z"},
+                {"id": "post-gone", "created_at": "2026-06-06T00:00:00Z"},
+            ])
+            r = self._run(td, upgrades)
+            self.assertEqual(
+                r.returncode, 1,
+                "a run that discarded hand curation reported success:\n"
+                + r.stderr)
+            self.assertIn("PROBLEM(S)", r.stderr)
+            self.assertIn("post-gone", r.stderr)
+
+    def test_the_loss_count_is_on_a_summary_line_not_only_in_the_tail(self):
+        """⭐ The warning tail is capped at eight and ends in "… and N
+        more", which is a shape a reader skims and a caller cannot see.
+        The count belongs beside the count of what worked."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, curate=[
+                {"id": f"post-gone-{i}", "created_at": "2026-06-06T00:00:00Z"}
+                for i in range(12)])
+            r = self._run(td, upgrades)
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("curation    : 12 curated post(s) are ABSENT",
+                          r.stderr)
+
+    def test_the_profiles_are_NOT_written_when_curation_is_lost(self):
+        """The refusal has to happen before the write, or the run has
+        already published the reverted feed by the time it complains."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, curate=[
+                {"id": "post-1", "created_at": "2026-06-06T00:00:00Z"},
+                {"id": "post-gone", "created_at": "2026-06-06T00:00:00Z"}])
+            before = (td / "posts.json").read_text(encoding="utf-8")
+            self.assertEqual(self._run(td, upgrades).returncode, 1)
+            self.assertEqual((td / "posts.json").read_text(encoding="utf-8"),
+                             before)
+
+    def test_a_lossless_curation_still_applies_and_exits_zero(self):
+        """The other half of "seen to refuse": a gate that fails on
+        everything is no better than one that never fails."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, curate=[
+                {"id": "post-1", "created_at": "2026-06-06T00:00:00Z"}])
+            r = self._run(td, upgrades)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("1 hand-made value(s) reapplied to 1 post(s)",
+                          r.stderr)
+            self.assertNotIn("ABSENT", r.stderr)
+            written = json.loads((td / "posts.json").read_text(encoding="utf-8"))
+            self.assertEqual(written[0]["created_at"], "2026-06-06T00:00:00Z")
+
+    # -- the advisory half ---------------------------------------------
+
+    def test_a_MOVED_membership_is_advisory_and_the_run_still_succeeds(self):
+        """⚠️ THE BRANCH REAL DATA DOES NOT CURRENTLY EXERCISE. Measured
+        2026-08-27, the shipped document produces 200 MISSING and ZERO
+        MOVED, so a fix that made the whole warning list fatal would
+        have looked correct and stayed latent until the assembler next
+        moved a membership. This fixture produces the MOVED case
+        directly."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, curate=[
+                {"id": "post-1", "created_at": "2026-06-06T00:00:00Z",
+                 "pipeline_members": up._members_digest(["id-1", "id-9"])}])
+            r = self._run(td, upgrades)
+            self.assertEqual(
+                r.returncode, 0,
+                "a documented advisory was made fatal:\n" + r.stderr)
+            self.assertIn("membership has moved", r.stderr)
+            self.assertNotIn("PROBLEM(S)", r.stderr)
+            # It still applied. The curation is the owner's decision;
+            # the advisory is a report, not a veto.
+            written = json.loads((td / "posts.json").read_text(encoding="utf-8"))
+            self.assertEqual(written[0]["created_at"], "2026-06-06T00:00:00Z")
+
+    def test_both_kinds_at_once_refuse_on_the_loss_and_report_the_move(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, curate=[
+                {"id": "post-1", "created_at": "2026-06-06T00:00:00Z",
+                 "pipeline_members": up._members_digest(["id-1", "id-9"])},
+                {"id": "post-gone", "created_at": "2026-06-06T00:00:00Z"}])
+            r = self._run(td, upgrades)
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("membership has moved", r.stderr)
+            self.assertIn("post-gone", r.stderr)
+            # Exactly one PROBLEM: the loss. The advisory is not one.
+            verdict = r.stderr.split("PROBLEM(S):", 1)[1]
+            self.assertEqual(verdict.count("\n  - "), 1, verdict)
+
+    # -- the pre-publish gate ------------------------------------------
+
+    def test_check_mode_sees_curation_that_has_not_been_applied(self):
+        """⚠️ "A pass missing from this list is a pass the pre-publish
+        gate cannot see, which is what #1295 was." Curation was missing
+        from it, so a rebuild that reverted the owner's feed ordering to
+        the assembler's derived dates passed the gate."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, curate=[
+                {"id": "post-1", "created_at": "2026-06-06T00:00:00Z"}])
+            r = self._run(td, upgrades, "--check")
+            self.assertEqual(
+                r.returncode, 1,
+                "the gate passed a profile the curation would change:\n"
+                + r.stderr)
+            verdict = r.stderr.split("FAIL:", 1)[1]
+            self.assertIn("hand curation", verdict)
+            self.assertIn("post-curation.site_a.json", verdict)
+
+    def test_check_mode_passes_once_the_curation_has_been_applied(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, curate=[
+                {"id": "post-1", "created_at": "2026-06-06T00:00:00Z"}])
+            self.assertEqual(self._run(td, upgrades, "--check").returncode, 1)
+            self.assertEqual(self._run(td, upgrades).returncode, 0)
+            r = self._run(td, upgrades, "--check")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("OK: profile already reflects the upgrade", r.stderr)
 
 
 class TestManifestReconcile(unittest.TestCase):

@@ -249,9 +249,23 @@ func runSeed(args []string) error {
 	logger.Info("seed.complete",
 		"users", counts.Users, "teams", counts.Teams,
 		"collections", counts.Collections, "assets", counts.Assets,
-		"posts", counts.Posts, "comments", counts.Comments)
+		"posts", counts.Posts, "comments", counts.Comments,
+		"posts_drifted", counts.PostsDrifted,
+		"posts_orphaned", counts.PostsOrphaned)
 	fmt.Printf("seed complete: users=%d teams=%d collections=%d assets=%d posts=%d comments=%d\n",
 		counts.Users, counts.Teams, counts.Collections, counts.Assets, counts.Posts, counts.Comments)
+	// ⛔ THE LAST LINE IS THE ONE PEOPLE READ, so it does not get to say
+	// "complete" and stop there when the run knowingly left the
+	// catalogue unapplied (#1320). Row counts cannot carry this: the
+	// rows are all present, and it is the values inside them that are
+	// stale. The exit code stays 0 on purpose; see postdrift.go.
+	if counts.PostsDrifted > 0 || counts.PostsOrphaned > 0 {
+		fmt.Printf("  NOT a clean reseed: %d post(s) still disagree with the "+
+			"catalogue, %d duplicated under an older id.\n"+
+			"  See the warning above. `aa seed --reset` is the only thing "+
+			"that rebuilds them.\n",
+			counts.PostsDrifted, counts.PostsOrphaned)
+	}
 	return nil
 }
 
