@@ -259,3 +259,57 @@ question open safe rather than merely tolerable.
 Recovering group *membership* from the 244 committed `asset_group` posts is possible, but the group
 post id derives from the `group_id` string, so it would move 244 more ids on site_a and 110 on
 site_b. Tracked as #1322, which is a ruling to be made rather than work to be scheduled.
+
+---
+
+## Amendment, 2026-08-27 (#1322): RULING. The committed profile is the source of truth
+
+Owner ruling, 2026-08-27, closing the question the two amendments above opened.
+
+**The deciding fact was not about the data. `--recompose-posts` has no automated callers.** Not CI,
+not the Makefile, not any script. A repository-wide search finds its own definition, one test that
+names it in a docstring, and nothing else. It is a command a person types, and nobody types it.
+
+So "the corpus should be rebuildable from scratch" was being treated as a requirement while nothing
+depended on it. That aspiration is what made four sprints of guard output confusing, because every
+comparison of the shipped file against a rebuild was comparing two different kinds of object and
+reporting the difference as a finding.
+
+### Decision
+
+**`seed/profiles/*.posts.json` is authoritative.** It is the corpus the project ships, seeds from
+and tests against. It is maintained by upgrade documents, which is how it already grows, and it is
+not expected to be reproducible by re-running the composer.
+
+**Verification compares the profile against itself and against what is published.** Those are the
+comparisons that decide whether a publish is safe. Comparing it against a fresh composition is not
+a check, because the composer no longer has the input that produced it.
+
+⛔ **And the rebuild path must stop being a silent trap.** `recompose_posts` writes straight over
+`profiles/{stem}.posts.json`, so a person typing the command today replaces the authoritative
+corpus with a materially different one: 1,103 posts against 863, only 336 shared ids, and 200
+hand-curated posts that no longer have a row to land on. #1324's guard now refuses that at the
+point the curation is applied, which is why this is a trap rather than an active wound, but the
+command should decline to overwrite rather than depend on a downstream pass to catch it.
+
+### What this gives up, stated plainly
+
+**A composition bug can no longer be fixed across the existing corpus**, only for posts added
+afterwards. That is a real loss and it is accepted. It has also been the de facto situation for
+months, since `--recompose-posts` did not execute at all until PR #1305 repaired it.
+
+### The option deliberately not taken, and how to buy it back
+
+Group membership *is* recoverable, from the 244 `asset_group` posts the committed profile already
+holds, and `group_id` could be written back onto the asset records. The obstacle is that the group
+post id derives from the `group_id` string, which is gone. The same fix #1310 applied to bundles
+would resolve it: derive the group post id from **membership** instead. That is available if
+regeneration ever becomes something we need.
+
+It is not taken now because it would move **354 more post ids** (244 on site_a, 110 on site_b),
+immediately after moving 618, to restore a capability with no callers.
+
+⭐ **The generalisable point: a property is only worth maintaining if something depends on it.**
+Determinism here was real, and the artifact it was a property of was not the artifact we ship. The
+question to ask of an invariant is not "is it true?" but "what breaks if it stops being true?" The
+answer here was nothing, and it took four sprints to ask.
