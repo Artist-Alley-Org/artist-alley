@@ -146,6 +146,14 @@ type Counts struct {
 	Follows     int
 	Likes       int
 	Featured    int
+
+	// What the posts phase found it could NOT apply (#1320). Row counts
+	// alone cannot carry this: a reseed over a changed catalogue reports
+	// the same post count as a reseed over an unchanged one, because the
+	// rows are all there. It is the values inside them that are stale.
+	// Zero on a first seed and on a clean resume, which is the contract.
+	PostsDrifted  int
+	PostsOrphaned int
 }
 
 // Runner executes the seed phases against a live pool + storage.
@@ -183,6 +191,10 @@ type Runner struct {
 	// asset field values applyAssetFields threw away, per reason per
 	// code (#807). Summarised at the end of the asset phase.
 	fieldDrops *fieldDropTally
+
+	// what the posts phase found it could not correct (#1320). Set by
+	// applyPosts; nil before that phase runs.
+	postDrift *postDrift
 }
 
 type fieldMeta struct {
@@ -313,7 +325,25 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 		}
 		r.log.Info("seed.phase.done", "phase", p.name, "elapsed", time.Since(start).String())
 	}
-	return r.verify(ctx)
+	counts, err := r.verify(ctx)
+	if err != nil {
+		return counts, err
+	}
+	return r.withDriftCounts(counts), nil
+}
+
+// withDriftCounts carries the posts phase's report onto the run's own
+// summary, because the summary is the last thing printed and the last
+// thing read. A warning that scrolled past ten thousand log lines,
+// followed by a final line reporting nothing but success, is still a run
+// that reads as clean (#1320).
+func (r *Runner) withDriftCounts(c Counts) Counts {
+	if r.postDrift == nil {
+		return c
+	}
+	c.PostsDrifted = r.postDrift.drifted
+	c.PostsOrphaned = len(r.postDrift.orphans)
+	return c
 }
 
 // --- phase: resolve lookups -------------------------------------------
@@ -1240,6 +1270,23 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 	for _, a := range cat.Assets {
 		assetTiers[a.ID] = sensitivity(a.SensitivityTier)
 	}
+	// Read the wall back BEFORE writing anything (#1320). Everything
+	// this phase would write is `ON CONFLICT DO NOTHING`, so a post the
+	// database already holds is one this run cannot correct; the index
+	// is what lets it say which ones and on what. See postdrift.go.
+	index, err := r.loadPostIndex(ctx)
+	if err != nil {
+		return err
+	}
+	drift := newPostDrift()
+	// Every id THIS catalogue names, canonicalised. A pre-existing row
+	// in here is one a later pass may still touch; one that is not is
+	// abandoned. See noteOrphan.
+	named := make(map[string]struct{}, len(cat.Posts))
+	for _, p := range cat.Posts {
+		named[uuidString(parseUUID(p.ID))] = struct{}{}
+	}
+
 	inserted, skipped, madePublic := 0, 0, 0
 	for _, p := range cat.Posts {
 		// Resolve members from inserted assets (apply.py "any member" rule).
@@ -1267,11 +1314,29 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		if vis == "public" {
 			madePublic++
 		}
+		collectionID := r.collections[p.CollectionName]
+		tags := dedupStrings(p.Tags)
+		// Captured HERE, from the values the insert is about to use, so
+		// the comparison below can never drift from the write it
+		// describes (#1320).
+		subject := postSubject{
+			title:           orDefault(p.Title, "Untitled"),
+			description:     p.Description,
+			visibility:      vis,
+			cover:           cover,
+			created:         created,
+			updated:         updated,
+			members:         members,
+			tags:            tags,
+			collection:      collectionID,
+			datesComparable: r.datesSurviveTheClamp(p.CreatedAt, p.UpdatedAt),
+		}
+		rowID := parseUUID(p.ID)
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
-			ID:            parseUUID(p.ID),
+			ID:            rowID,
 			AuthorUserRef: authorRef,
-			Title:         orDefault(p.Title, "Untitled"),
-			Description:   p.Description,
+			Title:         subject.title,
+			Description:   subject.description,
 			Visibility:    vis,
 			CoverAssetID:  cover,
 			StateID:       r.postStates["published"],
@@ -1281,11 +1346,46 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				// Already inserted in a prior run.
-				r.posts[p.ID] = parseUUID(p.ID)
+				// A row already stands under this id. `ON CONFLICT (id)`
+				// names exactly one constraint, so unlike the asset path
+				// there is only ONE cause to tell apart here and the id
+				// is knowable without a recovery query.
+				//
+				// Registering it is load-bearing and always was: every
+				// later phase resolves posts out of this map. What was
+				// missing is the rest of this sentence, which is that
+				// the run just declined to apply the catalogue to that
+				// post and used to say nothing at all about it.
+				r.posts[p.ID] = rowID
+				drift.resumed++
+				// Keyed on the CANONICAL form, not the catalogue's
+				// spelling. `uuid.Parse` accepts braces, a urn: prefix
+				// and upper case; the index is built from
+				// `uuidString`, which only ever emits one of them. A
+				// raw string lookup would miss and report nothing,
+				// which is this whole issue's failure mode in
+				// miniature.
+				if have, ok := index.byID[uuidString(rowID)]; ok {
+					drift.note(uuidString(rowID), subject.compare(have))
+				}
 				continue
 			}
 			return fmt.Errorf("insert post %s: %w", p.ID, err)
+		}
+		// A CLEAN insert, and the wall may already carry this content
+		// under a different id (#1310 moved 618 post ids across the
+		// three catalogues). Only a pre-existing row this catalogue no
+		// longer names is an orphan; a sibling it still names is an
+		// ordinary post that happens to frame the same assets, and 76
+		// of the published wall's 861 posts are exactly that. See
+		// noteOrphan.
+		if digest := memberDigest(members); digest != "" {
+			mine := uuidString(rowID)
+			if other, ok := index.byMembers[digest]; ok && other != mine {
+				if _, stillNamed := named[other]; !stillNamed {
+					drift.noteOrphan(mine, other)
+				}
+			}
 		}
 		r.posts[p.ID] = id
 		for i, m := range members {
@@ -1295,7 +1395,10 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 				return fmt.Errorf("post asset %s: %w", p.ID, err)
 			}
 		}
-		for _, tag := range dedupStrings(p.Tags) {
+		// The SAME slice the comparison above captured, not a second
+		// call to dedupStrings. Two computations of "the tags this post
+		// gets" is one of them going stale.
+		for _, tag := range tags {
 			if err := r.q.SeedInsertPostTag(ctx, SeedInsertPostTagParams{PostID: id, Tag: tag}); err != nil {
 				return fmt.Errorf("post tag %s: %w", p.ID, err)
 			}
@@ -1311,7 +1414,14 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		}
 		inserted++
 	}
-	r.log.Info("seed.posts", "inserted", inserted, "skipped_no_members", skipped, "public", madePublic)
+	r.log.Info("seed.posts", "inserted", inserted,
+		"resumed", drift.resumed, "drifted", drift.drifted,
+		"orphaned", len(drift.orphans),
+		"skipped_no_members", skipped, "public", madePublic)
+	r.postDrift = drift
+	if msg := drift.summary(); msg != "" {
+		fmt.Print(msg)
+	}
 	return nil
 }
 
@@ -1820,6 +1930,24 @@ func (r *Runner) rowTimes(createdAt, updatedAt string) (created, updated pgtype.
 		updated = created
 	}
 	return created, updated
+}
+
+// datesSurviveTheClamp reports whether this run would write a post's
+// catalogue timestamps VERBATIM, which is the only case in which they
+// can be compared against a row an earlier run wrote (#1320).
+//
+// clampToPast REFLECTS a future-dated timestamp around the instant the
+// run started, so a catalogue date still in the future produces a
+// different stored value on every run, by design. Comparing it would
+// report drift on two correct seeds. The site_a catalogue carries dates
+// out to 2026-12-14, so this is dozens of posts, not a corner.
+func (r *Runner) datesSurviveTheClamp(createdAt, updatedAt string) bool {
+	for _, s := range [2]string{createdAt, updatedAt} {
+		if ts := parseTime(s); ts.Valid && ts.Time.After(r.genTime) {
+			return false
+		}
+	}
+	return true
 }
 
 // dateOnlyLayout is the calendar date a `date`-typed field accepts in

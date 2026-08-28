@@ -558,10 +558,27 @@ def _members_digest(asset_ids) -> str:
 
 
 def apply_post_curation(posts: list[dict],
-                        doc: dict) -> tuple[int, int, list[str]]:
+                        doc: dict) -> tuple[int, int, list[str], list[str]]:
     """Reproduce the hand-made feed ordering and hero placement (#1309).
 
-    Returns (posts_curated, values_written, warnings).
+    Returns (posts_curated, values_written, missing, advisories).
+
+    ⛔ THE TWO REPORTS ARE SEPARATED HERE, AT THE SOURCE, BECAUSE THEY
+    NEED OPPOSITE HANDLING AND ONLY THIS FUNCTION CAN TELL THEM APART
+    (#1324). They used to share one `warnings` list, and a caller
+    holding that list has exactly two options: treat every entry as
+    fatal, which makes the documented advisory below stop the run, or
+    treat none of them as fatal, which is what the caller did. That is
+    how 200 hand-made posts were dropped by a run that printed a
+    success line and exited 0.
+
+      `missing`     a curated id the assembler no longer emits. Its
+                    values are LOST, and no later pass can recover
+                    them, so this is a PROBLEM the caller must refuse
+                    on.
+      `advisories`  the membership moved since the curation was
+                    recorded. The curation WAS applied; what it means
+                    may have shifted. Reported, never fatal.
 
     ⛔ WHY THIS IS NOT `merge_posts`, WHICH IS THE TRAP THIS PASS EXISTS
     TO AVOID. `apply_upgrade` already discovers `{stem}-posts.{site}.json`
@@ -602,19 +619,22 @@ def apply_post_curation(posts: list[dict],
     human has to look.
     """
     by_id = {p["id"]: p for p in posts}
-    warnings: list[str] = []
+    missing: list[str] = []
+    advisories: list[str] = []
     n_posts = n_values = 0
     for entry in doc.get("curate", ()):
         pid = entry["id"]
         target = by_id.get(pid)
         if target is None:
-            warnings.append(f"{pid}: curated post is not in the profile, skipped")
+            missing.append(
+                f"{pid}: curated post is not in the assembled profile, so "
+                f"its hand-made values are lost")
             continue
         # Compared BEFORE the write, against the membership as the
         # assembler emits it today.
         if entry.get("pipeline_members") and \
                 _members_digest(target.get("asset_ids")) != entry["pipeline_members"]:
-            warnings.append(
+            advisories.append(
                 f"{pid}: membership has moved since the curation was "
                 f"recorded; its order and dates may no longer mean what "
                 f"they meant")
@@ -628,7 +648,7 @@ def apply_post_curation(posts: list[dict],
         if touched:
             n_posts += 1
             n_values += touched
-    return n_posts, n_values, warnings
+    return n_posts, n_values, missing, advisories
 
 
 def dedupe_posts(posts: list[dict]) -> tuple[int, list[str]]:
@@ -994,8 +1014,8 @@ def main() -> int:
     # curation amends posts that already exist, so anything that creates
     # or removes one has to have finished: curating a row the dedupe is
     # about to drop writes into a post that never ships.
-    n_curated, n_curated_values, curation_warnings = apply_post_curation(
-        posts, curation)
+    n_curated, n_curated_values, curation_missing, curation_advisories = \
+        apply_post_curation(posts, curation)
     problems += audit(profile, posts, reps, add_a, add_p)
     # A declaration naming an id this profile does not hold is a
     # PROBLEM, not a shrug. The failure it guards against is silent by
@@ -1004,6 +1024,20 @@ def main() -> int:
     # to stop the run rather than be passed over in the log.
     problems += [f"ai declaration {aid}: {outcome}"
                  for aid, outcome in declared if outcome.startswith("MISSING")]
+    # ⛔ AND SO IS A CURATED POST THE ASSEMBLER NO LONGER EMITS (#1324).
+    # Same argument, one document over, and it had the same hole: the
+    # curation is the ONLY copy of the owner's hand-made feed ordering
+    # and hero placement, so a value this pass cannot place is a value
+    # that no longer exists anywhere. Measured 2026-08-27, a rebuild on
+    # top of #1322 drops 200 of the 841 curated posts, and before this
+    # line the run wrote all three profiles and exited 0.
+    #
+    # ⚠️ ONLY THE `missing` HALF. The `advisories` half says a curated
+    # post's membership has moved, which is a place for a human to look
+    # and NOT a fault: the curation was applied, and the pass documents
+    # that nothing can say whether it went bad. Joining the whole list
+    # would make that documented advisory fatal.
+    problems += [f"curation {m}" for m in curation_missing]
 
     print(f"site        : {args.site}", file=sys.stderr)
     print(f"replacements: {n_processed}/{len(reps)} records repointed at the "
@@ -1024,10 +1058,18 @@ def main() -> int:
           f"site ships, {n_hashed} hash(es) recorded (#1301)", file=sys.stderr)
     print(f"curation    : {n_curated_values} hand-made value(s) reapplied to "
           f"{n_curated} post(s) (#1309)", file=sys.stderr)
-    for w in curation_warnings[:8]:
+    # The loss count goes on its own summary line, beside the count of
+    # what worked. It used to appear only as the first eight entries of
+    # a warning tail that ended in "… and 192 more", which is a shape a
+    # reader skims past and an automated caller cannot see at all.
+    if curation_missing:
+        print(f"curation    : {len(curation_missing)} curated post(s) are "
+              f"ABSENT from the assembled profile; their hand-made values "
+              f"are lost", file=sys.stderr)
+    for w in curation_advisories[:8]:
         print(f"  ⚠️  {w}", file=sys.stderr)
-    if len(curation_warnings) > 8:
-        print(f"  ⚠️  … and {len(curation_warnings) - 8} more",
+    if len(curation_advisories) > 8:
+        print(f"  ⚠️  … and {len(curation_advisories) - 8} more",
               file=sys.stderr)
     if dup_ids:
         print(f"duplicate id(s) collapsed: {', '.join(dup_ids[:8])}"
@@ -1087,6 +1129,14 @@ def main() -> int:
             (sum(n for _, n in corrected),
              f"{sum(n for _, n in corrected)} record(s) still sit on the "
              "team the source CSV put them on (#572)"),
+            # #1324. Curation was the one pass missing from this list,
+            # which is precisely the hole the comment above describes:
+            # a rebuild that reverted the owner's feed ordering to the
+            # assembler's derived dates passed the pre-publish gate.
+            (n_curated,
+             f"{n_curated} post(s) still carry pipeline-derived dates or "
+             f"member order rather than the hand curation recorded in "
+             f"post-curation.{args.site}.json (#1309)"),
         ]
         fired = [msg for n, msg in drifted if n]
         if fired:
