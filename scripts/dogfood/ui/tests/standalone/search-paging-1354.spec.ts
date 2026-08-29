@@ -33,16 +33,21 @@
 // # ⚠️ THE ASSERTION IS "MORE THAN ONE PAGE ARRIVES", NEVER "PAGING
 // # REACHES total_count"
 //
-// #1356: `/api/v1/search` stops handing out cursors long before the
-// total it reports, on large result sets. Measured: `q=icon&types=asset`
-// yields 75 of a reported 524 and then returns an empty cursor. It
-// predates this work and is not caused by it, but it decides how this
-// file may be written — a guard that walked to `total_count` would go
-// red for a reason that has nothing to do with the paging rig.
+// It was written that way because the server could not do the second
+// thing: #1356 stopped handing out cursors long before the total it
+// reported, so a guard that walked to `total_count` would have gone red
+// for a reason with nothing to do with the paging rig. The fixture was
+// sized to sit far below that boundary — 26 rows against the ~70 where
+// it began to bite.
 //
-// The fixture is deliberately small enough to sit far below that
-// boundary (26 against the ~70 where it starts to bite), and this file
-// asserts only that the SECOND page arrives.
+// ⭐ #1356 IS FIXED AND THIS FILE STILL ASSERTS THE SAME THING, because
+// the division of labour is the point. Exhaustion is a property of the
+// ENGINE and is guarded where the engine can be driven exactly, in
+// app/internal/search/cursor_exhaustion_test.go, at two page sizes and
+// over the boundary sizes a browser fixture cannot reach cheaply. What
+// only a browser can prove is that a page which arrives also REACHES THE
+// GRID, without a click and without a scroll. That is this file, and the
+// 26-row fixture is still exactly the right size for it.
 //
 // # ⭐ WHAT ACTUALLY DISCRIMINATES, AND IT IS NOT THE BUFFER SIZE
 //
