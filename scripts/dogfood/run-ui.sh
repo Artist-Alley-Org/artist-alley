@@ -102,14 +102,25 @@ fi
 # Run here rather than only in a workflow, so it holds wherever the suite
 # is driven from, and BEFORE the census so the accounting is trusted
 # before it is used. It is sub-second and needs no stack.
+#
+# `--test-reporter=tap` is pinned rather than left to default. Node picks
+# its reporter from whether stdout is a TTY, and the first CI run of this
+# step printed the header, passed, and showed NOTHING underneath it — a
+# green step backed by no visible evidence, which is the shape this whole
+# sprint is about. The tail fallback covers any reporter that still does
+# not produce the counted lines.
+selftest_log="$(mktemp -t aa-ledger-selftest.XXXXXX)"
 step "Fixture-accounting self-test (#1351)"
-if ! node --test "${UI_DIR}/fixture-ledger.test.mjs" > /tmp/aa-ledger-selftest.$$ 2>&1; then
-    cat /tmp/aa-ledger-selftest.$$
-    rm -f /tmp/aa-ledger-selftest.$$
+if ! node --test --test-reporter=tap "${UI_DIR}/fixture-ledger.test.mjs" \
+        > "$selftest_log" 2>&1; then
+    cat "$selftest_log"
+    rm -f "$selftest_log"
     fail "the fixture ledger's own accounting is broken — its report and the corpus census cannot be trusted to mean what they say."
 fi
-grep -E '^# (tests|pass|fail)' /tmp/aa-ledger-selftest.$$ | sed 's/^/  /'
-rm -f /tmp/aa-ledger-selftest.$$
+if ! grep -E '^# (tests|pass|fail) ' "$selftest_log" | sed 's/^/  /'; then
+    tail -n 5 "$selftest_log" | sed 's/^/  /'
+fi
+rm -f "$selftest_log"
 
 # --- 1b. corpus census, before ------------------------------------------
 #
