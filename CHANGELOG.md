@@ -120,6 +120,14 @@ where applicable, otherwise note "no-spec-impact."
   moved the ceiling rather than removing it. The full set is now reachable, in the same order, with
   no repeated or skipped results (#1356, PR #1366).
 
+- **A saved search now keeps the filters you had on screen.** Narrowing a search by file type,
+  tag, owner, sensitivity, kind or a metadata field and then saving it used to store only the words
+  you typed, so the saved copy quietly matched more than the search you saved and the digest it
+  emailed you contained work your own search had excluded. The whole query is now stored, including
+  every active filter. Selecting two values of one filter keeps both rather than only the last, and
+  a filter on a metadata field survives too, which was not previously possible at all (#1368,
+  PR #1370).
+
 ### Changed
 
 - **Collections hold posts, not loose files.** Dropping a file into a collection used to publish
