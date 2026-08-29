@@ -234,7 +234,7 @@ test.describe('#1354 /search pages itself', () => {
     // ⭐ AND THE READER NEVER MOVED. This is the half that makes the
     // above a statement about the LOOKAHEAD rather than about an
     // observer that happened to see a sentinel in the viewport.
-    const geometry = await page.locator('main').evaluate((el) => {
+    const geometry = await page.locator('main').evaluate((el, pageSize) => {
       const box = el.getBoundingClientRect();
       const links = [
         ...document.querySelectorAll(
@@ -245,12 +245,14 @@ test.describe('#1354 /search pages itself', () => {
         scrollTop: el.scrollTop,
         clientHeight: el.clientHeight,
         scrollHeight: el.scrollHeight,
-        // How far below the fold the tail of page ONE sits.
+        // How far below the fold the tail of page ONE sits. The index is
+        // derived from the page size rather than written as a literal,
+        // so it cannot drift away from the constant asserted above.
         pageOneTailBelowFold: Math.round(
-          (links[24]?.getBoundingClientRect().bottom ?? 0) - box.bottom,
+          (links[pageSize - 1]?.getBoundingClientRect().bottom ?? 0) - box.bottom,
         ),
       };
-    });
+    }, SEARCH_PAGE);
 
     expect(
       geometry.scrollTop,
