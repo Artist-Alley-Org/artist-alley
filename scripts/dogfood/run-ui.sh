@@ -36,6 +36,8 @@
 #   5  NO TESTS RAN — the selection matched nothing (#1272)
 #   6  the denominator audit: a test that was declared did not run, or
 #      skipped itself without being in skip-manifest.txt (#1348, #1344)
+#   7  the ledger/census reconciliation — the two instruments below
+#      disagree about how many rows the run left behind (#1351)
 
 set -uo pipefail
 
@@ -54,7 +56,7 @@ case "${1:-}" in
     federation) mode="federation"; shift ;;
     all)        mode="all"; shift ;;
     -h|--help)
-        sed -n '2,38p' "$SCRIPT_PATH"
+        sed -n '2,40p' "$SCRIPT_PATH"
         exit 0
         ;;
     "" )        ;;  # no arg → default standalone
@@ -86,6 +88,28 @@ if [ ! -d node_modules/@playwright/test/.local-browsers ] && \
     step "Installing Playwright Chromium browser"
     npx playwright install chromium
 fi
+
+# --- 1a. the accounting checks itself first (#1351) ----------------------
+#
+# ⛔ AN INSTRUMENT THAT HAS NEVER BEEN TESTED IS NOT EVIDENCE. #1351 was
+# a bug in the reporter, not in the suite: `created - deleted` counted
+# API CALLS and was read as if it counted ROWS, so a deduplicating create
+# and an idempotent delete both made it disagree with the census — and
+# for weeks the disagreement was printed and nobody's tooling compared
+# the two. These cases pin every shape that was found, and they fail
+# against the pre-#1351 arithmetic.
+#
+# Run here rather than only in a workflow, so it holds wherever the suite
+# is driven from, and BEFORE the census so the accounting is trusted
+# before it is used. It is sub-second and needs no stack.
+step "Fixture-accounting self-test (#1351)"
+if ! node --test "${UI_DIR}/fixture-ledger.test.mjs" > /tmp/aa-ledger-selftest.$$ 2>&1; then
+    cat /tmp/aa-ledger-selftest.$$
+    rm -f /tmp/aa-ledger-selftest.$$
+    fail "the fixture ledger's own accounting is broken — its report and the corpus census cannot be trusted to mean what they say."
+fi
+grep -E '^# (tests|pass|fail)' /tmp/aa-ledger-selftest.$$ | sed 's/^/  /'
+rm -f /tmp/aa-ledger-selftest.$$
 
 # --- 1b. corpus census, before ------------------------------------------
 #
@@ -441,7 +465,15 @@ fi
 # inferred from names afterwards, because a naming rule is safe for a
 # report and is the exact rule that nearly deleted five real assets when
 # it was used for deletion (fixturesweep/rules.go).
-node "${UI_DIR}/fixture-ledger-report.mjs" "$AA_FIXTURE_LEDGER"
+#
+# ⛔ AND IT IS NOW COMPARED WITH THE CENSUS RATHER THAN PRINTED BESIDE IT
+# (#1351). The two ran over the same rows and contradicted each other in
+# the same output for weeks — `assets LEFT 1` here, "invariant holds"
+# below — because nothing but a reader ever put the two numbers side by
+# side. The summary written here is what step 4 reconciles against.
+AA_LEDGER_SUMMARY="${UI_DIR}/.pw-artifacts/fixture-ledger-summary.json"
+rm -f "$AA_LEDGER_SUMMARY"
+node "${UI_DIR}/fixture-ledger-report.mjs" "$AA_FIXTURE_LEDGER" --json "$AA_LEDGER_SUMMARY"
 
 # --- 4. corpus census, after --------------------------------------------
 
@@ -505,6 +537,17 @@ if [ "$census_enabled" = "yes" ]; then
                 "$total_before" "$total_after"
             printf 'delete leaves the row behind. `aa sweep-fixtures` reclaims those.\n'
         fi
+    fi
+
+    # --- 4b. do the two instruments agree? (#1351) -----------------------
+    #
+    # Only where the census actually ran and both tuples are readable —
+    # a comparison against a census that was skipped is not a comparison.
+    if [ -n "$corpus_before" ] && [ -n "$corpus_after" ]; then
+        node "${UI_DIR}/fixture-ledger-reconcile.mjs" \
+            "$AA_LEDGER_SUMMARY" "$corpus_before" "$corpus_after"
+        reconcile_rc=$?
+        if [ "$reconcile_rc" -ne 0 ] && [ "$rc" -eq 0 ]; then rc=$reconcile_rc; fi
     fi
 else
     # ⛔ SAID AGAIN, WHERE THE VERDICT IS (#1263). The skip is announced at
