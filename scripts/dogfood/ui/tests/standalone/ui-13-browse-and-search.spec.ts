@@ -500,107 +500,20 @@ test.describe('UI-13 browse + search', () => {
       .toBe(0);
   });
 
-  test('⭐ #1354: /search pages itself, with the lookahead measured off the scrollport', async ({
-    page,
-  }) => {
-    // /search had no infinite scroll: the reader clicked "Load more" for
-    // every page while the browse wall beside it, on the same grid with
-    // the same cards, paged itself. This drives the gap closed.
-    //
-    // ⛔ NOTHING IN THIS TEST CLICKS ANYTHING. That is the assertion.
-    const requests: string[] = [];
-    page.on('request', (r) => {
-      if (r.url().includes('/api/v1/search?')) requests.push(r.url());
-    });
-
-    // Short viewport so the first page overflows it whatever the seed
-    // holds.
-    await page.setViewportSize({ width: 1280, height: 400 });
-    await page.goto('/');
-    const [term] = await seededTerms(page);
-    await page.goto(`/search?q=${encodeURIComponent(term)}`);
-
-    const tiles = page.locator(
-      'main a[href^="/assets/"], main a[href^="/posts/"], main a[href^="/collections/"]',
-    );
-    await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
-
-    // ⭐ THE AFFORDANCE IS GONE, and that is asserted rather than
-    // assumed. A version of this suite that still found a button would
-    // be passing against the surface #1354 replaces.
-    await expect(
-      page.getByRole('button', { name: /load more/i }),
-      '/search still offers a manual pager; the browse wall it now matches has none',
-    ).toHaveCount(0);
-
-    // ⚠️ THE PRECONDITION IS THAT THERE IS A SECOND PAGE AT ALL.
-    // Otherwise "it paged without a click" is vacuously false and this
-    // test cannot fail. Read off the corpus rather than assumed about
-    // the seed.
-    const total = await page.evaluate(async (q: string) => {
-      const r = await fetch(`/api/v1/search?q=${encodeURIComponent(q)}&limit=1`, {
-        credentials: 'include',
-      });
-      return ((await r.json()) as { total_count: number }).total_count;
-    }, term);
-    test.skip(
-      total <= 25,
-      `the seeded term "${term}" returned ${total} hits, one page, so paging is unreachable`,
-    );
-
-    // ⭐ IT PAGED WITH NO CLICK. The loader keeps a lookahead ahead of
-    // the reader, so on a 400px scrollport it chases several pages on
-    // landing — the same bounded sequential chase the browse wall makes,
-    // gated by `busy` so at most one request is ever in flight.
-    //
-    // ⛔ AND THIS IS WHY THE ASSERTION IS "MORE THAN ONE REQUEST"
-    // RATHER THAN "SCROLLING FIRED ONE". A term whose whole result set
-    // fits inside the lookahead is fully loaded before the reader
-    // touches anything, so a scroll-then-expect-a-fetch test reports a
-    // stranded reader on a surface that had already fetched everything
-    // for them. The first version of this test did that, against a seed
-    // that answers with two pages.
-    await expect
-      .poll(() => requests.length, {
-        timeout: 15_000,
-        message:
-          'exactly one search ran and no more: /search fetched a page and stopped, so the ' +
-          'reader is still stranded without a pager',
-      })
-      .toBeGreaterThan(1);
-
-    const settled = await settledCount(tiles);
-    expect(settled, 'pages were fetched but never reached the grid').toBeGreaterThan(25);
-
-    // ⭐ THE LOOKAHEAD IS DERIVED FROM THE SCROLLPORT'S MEASURED HEIGHT,
-    // not from a constant, and this is the half #1159 exists to protect.
-    // An observer rooted on the document viewport keeps its `rootMargin`
-    // and loses the entire lookahead to `<main>`'s own clip rect — it
-    // then fires only once the sentinel genuinely enters the visible
-    // box, which is a lookahead of approximately zero and reads as "the
-    // results load too late" rather than as a broken root.
-    //
-    // Asserted as GEOMETRY at rest, IN UNITS OF THE SCROLLPORT: the tail
-    // sits at least a screenful below the fold. A loader with no reach
-    // leaves it AT the fold, and one whose reach were a pixel constant
-    // would not scale with `clientHeight` — which is what makes this an
-    // assertion about the derivation rather than about the number.
-    //
-    // ⚠️ ONLY WHILE THERE IS MORE TO FETCH. `hasMore` goes false at the
-    // end of a finite result set, the sentinel unmounts, and a buffer of
-    // zero is then CORRECT rather than a bug. Skipping that case is the
-    // difference between this and a test that fails on a small corpus.
-    const sentinel = page.locator('main div[aria-hidden="true"].h-px');
-    if ((await sentinel.count()) > 0) {
-      const port = await page
-        .locator('main')
-        .evaluate((el) => ({ h: el.clientHeight, top: el.scrollTop, sh: el.scrollHeight }));
-      expect(
-        port.sh - port.top - port.h,
-        'the list ends at the fold while more remains, so the loader has no lookahead',
-      ).toBeGreaterThanOrEqual(port.h);
-    }
-  });
+  // ⭐ #1354's paging guard lives in search-paging-1354.spec.ts, not here.
+  //
+  // ⛔ IT WAS HERE, AND IT SKIPPED ON CI. It picked its query the way
+  // this file's other cases do, off the browse wall, and then declined
+  // to run whenever that term returned a single page: true on the
+  // development stack's 2,008 assets, false on CI's 162, so the one
+  // guard covering the feature stood itself down on the only machine
+  // that gates a merge. The denominator audit failed the run (exit 6)
+  // and was right to.
+  //
+  // A corpus-derived term cannot be the precondition for a paging test,
+  // so that file MANUFACTURES the second page instead of hoping for it.
+  // Nothing about paging is asserted in this file any more; what stays
+  // here is the refine behaviour (#1298), which needs no such depth.
 
   test('refining the query keeps the kind chips and the facet filter', async ({ page }) => {
     await page.goto('/');
