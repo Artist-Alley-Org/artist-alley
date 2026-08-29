@@ -198,10 +198,16 @@ const VIEWPORT = { width: 1920, height: 540 };
  *  `limit` parameter. The route asks for 36. */
 const FEED_PAGE = 12;
 
-/** Must match `LOOKAHEAD_VIEWPORTS` in web/src/routes/+page.svelte, plus
- *  the scrollport itself: together they are how much feed the loader is
- *  entitled to hold ahead of the reader, and therefore how much of a
- *  seeded feed it consumes before the walk begins. */
+/** Must match `LOOKAHEAD_VIEWPORTS` in
+ *  `web/src/lib/util/infiniteScroll.svelte.ts`, plus the scrollport
+ *  itself: together they are how much feed the loader is entitled to
+ *  hold ahead of the reader, and therefore how much of a seeded feed it
+ *  consumes before the walk begins.
+ *
+ *  ⚠️ THE DEFINITION MOVED in #1354. It used to be inline in
+ *  `web/src/routes/+page.svelte`; the rig is now one module both the
+ *  browse wall and /search mount, so this number governs two surfaces
+ *  rather than one. */
 const LOOKAHEAD_PORTS = 2.5;
 const REACH_PORTS = 1 + LOOKAHEAD_PORTS;
 
