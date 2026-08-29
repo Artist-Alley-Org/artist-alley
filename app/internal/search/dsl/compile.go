@@ -40,6 +40,40 @@ type CompiledQuery struct {
 	// also passed to pgx via $-parameter, never string-interpolated.
 	Filters Filters
 
+	// FreeText is the TEXT INTENT of the query, reconstructed from the
+	// nodes that contribute one: bare words, phrases, and the values of
+	// `title:` / `description:` / `body:`. Joined with spaces, in source
+	// order.
+	//
+	// # ⛔ WHY THIS EXISTS, AND WHY THE RAW DSL STRING CANNOT DO ITS JOB
+	//
+	// Nothing executes [CompiledQuery.TSQuery] — verified: its only
+	// readers test it for emptiness. What actually runs is
+	// `plainto_tsquery('english', $1)` over [search.Query.Text], and both
+	// DSL callers used to set that to the WHOLE DSL STRING: search's
+	// applyDSL when no `q=` accompanied it, and the saved-search executor
+	// unconditionally. That was survivable while the only DSL anybody
+	// stored was a bare phrase, because English stop-wording eats `and`,
+	// `or` and `not` and Postgres's parser eats the punctuation, so
+	// `cat OR dog` and `cat dog` produce the same lexemes.
+	//
+	// It stops being survivable the moment a saved query carries its
+	// filters (#1368). `(cat) AND extension:png` fed to plainto_tsquery
+	// yields `'cat' & 'extens' & 'png'` — the FILTER TERM BECOMES A TEXT
+	// REQUIREMENT — so a replay would return near-nothing and the count
+	// equality this issue is measured by could not hold in either
+	// direction. The text half of the query has to be recovered from the
+	// AST for the same reason the filter half is: the stored DSL is the
+	// canonical form, and reconstructing the query from it means
+	// reconstructing all of it.
+	//
+	// ⚠️ For a DSL made only of text this is byte-equivalent in EFFECT to
+	// the old behaviour (the lexemes are identical). Where it differs is
+	// a DSL that also carries filter terms, and there it is strictly more
+	// faithful: `tag:sketch` now narrows by tag alone instead of also
+	// demanding the words "tag" and "sketch" appear in the text.
+	FreeText string
+
 	// SimilarToAssetID is the asset UUID the caller wrote as
 	// similar_to:<uuid>. Empty when no similar_to node appeared.
 	// The search Service resolves this to the actual embedding
@@ -66,6 +100,23 @@ type CompiledQuery struct {
 // `filter=tag:foo` ticked on the rail become the same predicate set and
 // cannot mean two different things.
 //
+// ⛔ EVERY DIMENSION IS A SLICE, AND #1368 IS WHY. Four of them were
+// plain strings written by a plain assignment in [compiler.walkFieldMatch],
+// so `extension:png AND extension:jpg` compiled to `Extension = "jpg"`
+// and the first term vanished with no error and no log line. The rail
+// lets a reader tick both values, and the facet layer ORs them, so the
+// collapse was reachable from a click — and once a saved search carries
+// its selection as DSL it is reachable from every saved search too. Only
+// `Tags` was already a slice, which is exactly why `tag:` was the one
+// dimension that never lost a term.
+//
+// ⚠️ THE SLICE'S MEANING IS THE DIMENSION'S, NOT THIS TYPE'S: `Tags` is
+// an AND (an asset carries every tag asked for) and the other four are
+// ORs (an asset has exactly one extension, one sensitivity, one type and
+// one owner, so an AND over two of them returns nothing forever). That
+// asymmetry is decided once, in [facet.FacetType.conjunctive], and this
+// type only has to avoid destroying the terms before it gets there.
+//
 // Every field is a STRING (or a slice of them), including the ones that
 // name a numeric row. The bucket a caller ticks carries an opaque
 // value — `asset_type` is a ref, `owner` is a user ref — and a human
@@ -75,8 +126,8 @@ type Filters struct {
 	// Tags requires the entity carry EVERY tag in the slice (AND).
 	// Empty slice = no tag filter.
 	Tags []string
-	// Owner is the owner's numeric user_ref or their username. Empty =
-	// no owner filter.
+	// Owners are the owners' numeric user_refs or usernames. Any of
+	// them matches (OR). Empty = no owner filter.
 	//
 	// It used to be a *int64 parsed with fmt.Sscanf("%d"), which meant
 	// `owner:alice` silently produced NO filter (the username was
@@ -85,16 +136,19 @@ type Filters struct {
 	// at the first non-digit and reports success. Neither mattered while
 	// the Engine ignored Filters entirely; both are wrong the moment it
 	// does not.
-	Owner string
-	// Sensitivity is the sensitivity enum value (public / team /
-	// restricted / embargo). Empty = no filter.
-	Sensitivity string
-	// AssetType is the asset_type name or numeric ref. Empty = no
-	// filter.
-	AssetType string
-	// Extension is the file extension WITHOUT leading dot. Empty =
-	// no filter.
-	Extension string
+	Owners []string
+	// Sensitivities are the sensitivity enum values (public / team /
+	// restricted / embargo). Any of them matches (OR). Empty = no filter.
+	Sensitivities []string
+	// AssetTypes are asset_type names or numeric refs. Any of them
+	// matches (OR). Empty = no filter.
+	AssetTypes []string
+	// Extensions are file extensions WITHOUT a leading dot. Any of them
+	// matches (OR). Empty = no filter.
+	Extensions []string
+	// Fields are `field:` terms, carried WHOLE as `code<op>value`
+	// (#1368). Opaque here on purpose — see [FieldField].
+	Fields []string
 
 	// Below are compiler-internal buckets consumed by the Engine's
 	// SQL renderer. Kept exported-lowercase so tests in this
@@ -131,6 +185,7 @@ func Compile(q Query) (CompiledQuery, error) {
 	return CompiledQuery{
 		TSQuery:                tsQ,
 		TSQueryArgs:            c.args,
+		FreeText:               strings.Join(c.freeText, " "),
 		Filters:                c.filters,
 		SimilarToAssetID:       c.similarToAssetID,
 		HybridWeightSuggestion: weightHint,
@@ -142,6 +197,10 @@ func Compile(q Query) (CompiledQuery, error) {
 type compiler struct {
 	args    []any
 	filters Filters
+	// freeText accumulates the source text of every node that
+	// contributes a tsquery fragment, in walk order. See
+	// [CompiledQuery.FreeText].
+	freeText []string
 	// paramIndex is the 1-based index the next placeholder will
 	// take. Bumped every time a user text value is appended to args.
 	paramIndex int
@@ -217,11 +276,13 @@ func (c *compiler) walk(n Node) (string, error) {
 		if strings.TrimSpace(x.Text) == "" {
 			return "", nil
 		}
+		c.freeText = append(c.freeText, x.Text)
 		return "plainto_tsquery('english', " + c.nextPlaceholder(x.Text) + ")", nil
 	case PhraseNode:
 		if strings.TrimSpace(x.Text) == "" {
 			return "", nil
 		}
+		c.freeText = append(c.freeText, x.Text)
 		return "phraseto_tsquery('english', " + c.nextPlaceholder(x.Text) + ")", nil
 	case FieldMatchNode:
 		return c.walkFieldMatch(x)
@@ -263,9 +324,11 @@ func (c *compiler) walkFieldMatch(m FieldMatchNode) (string, error) {
 		// today's rendering matches AT LEAST what the operator
 		// wanted (title contains value) without any injection risk.
 		c.filters.titleMatches = append(c.filters.titleMatches, m.Value)
+		c.freeText = append(c.freeText, m.Value)
 		return "plainto_tsquery('english', " + c.nextPlaceholder(m.Value) + ")", nil
 	case FieldDescription, FieldBody:
 		c.filters.descriptionMatches = append(c.filters.descriptionMatches, m.Value)
+		c.freeText = append(c.freeText, m.Value)
 		return "plainto_tsquery('english', " + c.nextPlaceholder(m.Value) + ")", nil
 	case FieldTag:
 		c.filters.Tags = append(c.filters.Tags, m.Value)
@@ -274,16 +337,20 @@ func (c *compiler) walkFieldMatch(m FieldMatchNode) (string, error) {
 		// owner:<ref-or-username>, verbatim. The renderer accepts both
 		// forms in one expression, so there is nothing to classify here
 		// and no half-parsed number to get wrong.
-		c.filters.Owner = m.Value
+		c.filters.Owners = append(c.filters.Owners, m.Value)
 		return "", nil
 	case FieldSensitivity:
-		c.filters.Sensitivity = m.Value
+		c.filters.Sensitivities = append(c.filters.Sensitivities, m.Value)
 		return "", nil
 	case FieldType:
-		c.filters.AssetType = m.Value
+		c.filters.AssetTypes = append(c.filters.AssetTypes, m.Value)
 		return "", nil
 	case FieldExtension:
-		c.filters.Extension = m.Value
+		c.filters.Extensions = append(c.filters.Extensions, m.Value)
+		return "", nil
+	case FieldField:
+		// Opaque `code<op>value`, straight through. See [FieldField].
+		c.filters.Fields = append(c.filters.Fields, m.Value)
 		return "", nil
 	}
 	// Unreachable — parser's whitelist gate ensures every Field is
