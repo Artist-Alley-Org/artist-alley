@@ -60,14 +60,36 @@
 // The census is what caught it, and that is the point of having both:
 // this file answers WHOSE, the census answers WHETHER. When the two
 // disagree, the census is right and the disagreement is itself the
-// finding — a spec that ends with writes outstanding.
+// finding.
+//
+// ⛔ AND THE FINDING IS NOT ALWAYS A SPEC WITH WRITES OUTSTANDING
+// (#1351). That was the only cause this file knew about when it was
+// written, and it was stated here as if it were the only one. Measured
+// on a real run, a second cause is ordinary and reproducible: a WRITE
+// CALL is not a ROW. `POST /api/v1/assets` answers 200 with an EXISTING
+// row's id when its per-user dedup pre-check fires, a repeated `DELETE`
+// answers 204 on a row already removed, and a field revived by PATCH is
+// archived by a DELETE that has no create to match. Each is one row and
+// two records here, and the census — correctly — sees neither.
+//
+// Nothing about that is fixed by recording less. The ledger keeps every
+// 2xx write exactly as the API answered it, including the dedup 200
+// (which is how the disagreement was traced at all), and
+// fixture-ledger-report.mjs nets the leak BY ROW ID rather than by
+// subtracting call counts.
 
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, basename, join } from 'node:path';
 import { test as pwTest } from '@playwright/test';
 import type { APIResponse, Browser, BrowserContext, Page, TestInfo } from '@playwright/test';
 
-/** The tables the corpus census counts, keyed by the route that fills them. */
+/** The routes that fill the tables the corpus census counts.
+ *
+ *  ⚠️ NOT one-to-one with the census, and saying so mattered once: the
+ *  census counts five TABLES and this maps six ROUTES onto them (`user`
+ *  has two). Nor is it one-to-one with rows — see the header. A row that
+ *  arrives by any other route (a revive, a seed, a storage POST) is
+ *  invisible here whether or not the census can see it. */
 const CREATE_ROUTES: ReadonlyArray<{ re: RegExp; table: string }> = [
   { re: /^\/api\/v1\/assets$/, table: 'assets' },
   { re: /^\/api\/v1\/posts$/, table: 'posts' },
@@ -137,6 +159,23 @@ function identNow(fallback: LedgerIdent): LedgerIdent {
   } catch {
     return fallback;
   }
+}
+
+/** Which worker PROCESS made the write.
+ *
+ *  Playwright sets `TEST_WORKER_INDEX` in every worker process
+ *  (worker/workerProcessEntry.js), so it is available inside hooks and
+ *  fixtures alike — `test.info()` is not. It is recorded because
+ *  mechanism 1 of #1351 is only legible with it: at `workers=2` a
+ *  file-level `beforeAll` runs once per worker, and when both uploads
+ *  dedupe to the same row the ledger holds two creates of ONE id from
+ *  TWO workers. At `workers=1` (what CI pins) that shape cannot occur,
+ *  which is why four CI runs looked clean while a workstation did not. */
+function workerIndex(): number | null {
+  const raw = process.env.TEST_WORKER_INDEX;
+  if (raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
 }
 
 function write(file: string, row: Record<string, unknown>): void {
@@ -215,6 +254,7 @@ async function record(
     ts: new Date().toISOString(),
     spec: ident.spec,
     test: ident.title,
+    worker: workerIndex(),
     via,
     op: what.op,
     table: what.table,
