@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -135,9 +136,43 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 	// so the cross-entity merge has enough headroom to sort. A 3x
 	// multiplier keeps a single entity from monopolising the page
 	// while still bounding the work.
+	//
+	// #1356 — THE MULTIPLIER IS HEADROOM FOR THE MERGE, AND IT USED TO BE
+	// THE CEILING ON PAGE DEPTH AS WELL.
+	//
+	// The window was anchored at the top of the ranking on every request
+	// and the cursor was applied to the fetched slice in Go, so a walk
+	// could never reach past `Σ min(perEntityLimit, matches_of_that_type)`
+	// — 75 of a truthfully-reported 523 at the default page size. The
+	// window now MOVES with the cursor (see [keysetFragment]), so this
+	// number is once again only what it says it is: how much each arm
+	// over-fetches so the cross-entity merge has something to sort.
 	perEntityLimit := limit * 3
 	if perEntityLimit > MaxLimit*3 {
 		perEntityLimit = MaxLimit * 3
+	}
+
+	// #1356 — the cursor reaches SQL on the TEXT path only.
+	//
+	// A hybrid query's ordering key is not the one the arms produce:
+	// applyHybrid overwrites NormalisedScore with the weighted sum
+	// (`hybrid = (1-w)*bm25 + w*cosine`) after the arms have returned,
+	// and appends vector-only rows the arms never saw. A keyset built
+	// from the BM25 half would therefore be positioned on a quantity the
+	// page is not ordered by. That path keeps exactly the fetch-from-top
+	// behaviour it has always had, including its own count contract
+	// (#1364), until the embedding/CLIP arc can exercise it.
+	//
+	// ⚠️ The condition is the HINT, not the condition applyHybrid itself
+	// runs under (`hint AND assets requested`). A similarity query that
+	// excludes assets never reaches the merge and could be positioned
+	// safely, but both embedding tables are empty on every stack this
+	// runs on, so that arm cannot be exercised and the narrower gate
+	// would be an untested distinction. Widening it is a one-line change
+	// once #1364's arc can measure it.
+	armCursor := q.Cursor
+	if q.SimilarityHint != "" {
+		armCursor = nil
 	}
 
 	rawHits := make([]Hit, 0, perEntityLimit*len(types))
@@ -145,18 +180,12 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 	maxScoreByType := make(map[HitType]float64, len(types))
 
 	for _, t := range types {
-		hits, total, err := e.runOne(ctx, t, q, perEntityLimit)
+		hits, total, maxScore, err := e.runOne(ctx, t, q, perEntityLimit, armCursor)
 		if err != nil {
 			return QueryResult{}, fmt.Errorf("search: run %s: %w", t, err)
 		}
 		perTypeCount[t] = total
-		var max float64
-		for i := range hits {
-			if hits[i].RawScore > max {
-				max = hits[i].RawScore
-			}
-		}
-		maxScoreByType[t] = max
+		maxScoreByType[t] = maxScore
 		rawHits = append(rawHits, hits...)
 	}
 
@@ -164,6 +193,17 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 	// is on the same [0,1] scale. If an entity had zero hits we
 	// leave the max at 0 and skip normalisation for that (empty)
 	// group — no divide-by-zero.
+	//
+	// #1356 — THE DENOMINATOR IS THE ARM'S ANSWER NOW, NOT THE WINDOW'S.
+	//
+	// It used to be `max(RawScore)` over the rows this loop was handed,
+	// which was the true per-query per-type maximum only because every
+	// arm started at the top of `score DESC`. Once the window follows the
+	// cursor that stops being true — page two's window does not contain
+	// the maximum — so the arm reports the maximum over the whole
+	// eligible set instead. ADR 0056 §1's "per-query per-entity max
+	// score" is unchanged; what changed is that preserving it no longer
+	// requires re-fetching the top of the ranking on every request.
 	for i := range rawHits {
 		mx := maxScoreByType[rawHits[i].Type]
 		if mx > 0 {
@@ -200,6 +240,15 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 	// Apply the cursor cut — drop everything at-or-above the
 	// last-page position. The cursor was emitted from the prior
 	// call so the comparison is strict-less-than on the tuple.
+	//
+	// #1356 — this stays, and it is DELIBERATELY REDUNDANT on the text
+	// path. [keysetFragment] renders the same predicate in SQL from the
+	// same two float64 values, so for a text query every row that arrives
+	// here already satisfies it and this loop copies the slice unchanged.
+	// It is kept for two reasons: the hybrid path is still cut here and
+	// only here, and a Go-side cut that agrees with the SQL one is what
+	// makes a disagreement show up as a missing row in the walk guard
+	// rather than as a duplicate in a reader's page.
 	if q.Cursor != nil {
 		cut := *q.Cursor
 		filtered := rawHits[:0]
@@ -572,18 +621,96 @@ func cursorLess(h Hit, cut Cursor) bool {
 }
 
 // runOne executes the per-entity ranked query + a count-with-cap
-// query, returning the top `limit` hits plus the (capped) total
-// count.
-func (e *Engine) runOne(ctx context.Context, t HitType, q Query, limit int) ([]Hit, int, error) {
+// query, returning up to `limit` hits from the window that begins at
+// `cur`, the (capped) total count of the whole eligible set, and the
+// per-query maximum raw score for this entity type.
+//
+// `cur` is nil for the first page and for the hybrid path; see the
+// [keysetFragment] contract for what a non-nil cursor does to the
+// window, and Run for why hybrid does not use one.
+func (e *Engine) runOne(ctx context.Context, t HitType, q Query, limit int, cur *Cursor) ([]Hit, int, float64, error) {
 	switch t {
 	case HitTypeAsset:
-		return e.runAssets(ctx, q, limit)
+		return e.runAssets(ctx, q, limit, cur)
 	case HitTypeCollection:
-		return e.runCollections(ctx, q, limit)
+		return e.runCollections(ctx, q, limit, cur)
 	case HitTypePost:
-		return e.runPosts(ctx, q, limit)
+		return e.runPosts(ctx, q, limit, cur)
 	}
-	return nil, 0, fmt.Errorf("search: unknown hit type %q", t)
+	return nil, 0, 0, fmt.Errorf("search: unknown hit type %q", t)
+}
+
+// keysetFragment renders the SQL that positions ONE entity arm after the
+// page cursor, and returns the arguments it binds. Empty fragment and no
+// arguments for the first page.
+//
+// # Why the arm has to be positioned in SQL at all (#1356)
+//
+// Every arm used to start at the top of its ranking and the cursor was
+// applied to the merged slice in Go, so a walk could reach at most
+// `perEntityLimit` rows of each type no matter how many matched. The
+// count statement had no such truncation, which is how `/search` came to
+// report 523 results and hand over 75 of them.
+//
+// # Why the ordering key survives the move, exactly
+//
+// The page is ordered on `NormalisedScore = RawScore / maxScoreByType`,
+// which does not exist as a column: the arms rank on raw `score DESC`.
+// The two are ordering-equivalent WITHIN a type — dividing by a positive
+// per-type constant is monotonic — so an arm could be positioned on raw
+// score alone if the cursor carried one. It does not: ADR 0056 §1 fixes
+// the payload at `{last_score, last_id, last_type}` and `last_score` is
+// the NORMALISED value, which is the only form that means the same thing
+// to all three arms in a mixed-type merge.
+//
+// So this renders the normalisation into SQL rather than inverting it in
+// Go. `(score::FLOAT8 / $max::FLOAT8)` is the same IEEE-754 division on
+// the same two doubles that [Engine.Run] performs, so the two agree
+// bit-for-bit and the boundary row cannot be delivered twice or skipped.
+// ⛔ Do not "simplify" this to `score < last_score * max`: multiplying
+// back is a DIFFERENT rounding and would put the boundary row on either
+// side of the cut depending on the values.
+//
+// `maxScore` is the per-query per-type maximum over the whole eligible
+// set, which the caller obtains from its own statement precisely because
+// the window no longer starts at the maximum.
+//
+// # The tuple
+//
+// Ordering is `(NormalisedScore DESC, ID DESC, Type DESC)`, so "after
+// the cursor" is strictly-less-than on that tuple, and a row comparison
+// says that in one expression — which also means the score expression is
+// mentioned ONCE rather than three times.
+//
+// The third component is constant within an arm: every row here has type
+// `t`. When `t` sorts after the cursor's type, the arm's rows at the
+// cursor's exact (score, id) are on the far side of the cut, and `<=` is
+// how a row comparison spells that. This mirrors [cursorLess] term for
+// term; the two must keep agreeing, and the walk guard is what notices
+// if they stop.
+func keysetFragment(t HitType, cur *Cursor, maxScore float64, scoreExpr, idCol string, base int) (string, []any) {
+	if cur == nil {
+		return "", nil
+	}
+	args := []any{cur.LastScore, cur.LastID}
+	// A type whose whole eligible set scores zero — a filter-only search
+	// ranks `plainto_tsquery('english', '')` at 0 for every row — is left
+	// unnormalised by Run rather than divided by zero, and its rows order
+	// on the id tie-break alone. Rendering the constant keeps this
+	// fragment agreeing with that branch instead of inventing a
+	// denominator for it.
+	norm := `0::FLOAT8`
+	if maxScore > 0 {
+		norm = `((` + scoreExpr + `)::FLOAT8 / $` + strconv.Itoa(base+3) + `::FLOAT8)`
+		args = append(args, maxScore)
+	}
+	op := `<`
+	if string(t) < string(cur.LastType) {
+		op = `<=`
+	}
+	frag := "\n\t\t   AND ROW(" + norm + ", " + idCol + ") " + op +
+		" ROW($" + strconv.Itoa(base+1) + "::FLOAT8, $" + strconv.Itoa(base+2) + "::UUID)"
+	return frag, args
 }
 
 // ErrEmptyQuery is returned by Run when q.Text is empty. HTTP
@@ -606,12 +733,12 @@ var ErrEmptyQuery = errors.New("search: query text is required")
 // visibility.Predicate — see the shared package (Phase 1.16.B-2).
 // The base search_text @@ predicate stays inline; the visibility
 // AND clause is appended by the shared helper.
-func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
+func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor) ([]Hit, int, float64, error) {
 	caller, caps := callerOf(q)
 	mut := mutCapsOf(q)
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	// $1=query, $2=limit, $3=caller ref, $4=configured ladder,
 	// predicate args start at $5, and the facet selection's args
@@ -620,7 +747,7 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	selFrag, selArgs, satisfiable := q.Filters.SQL(
 		visibility.EntityAsset, "assets", 4+len(visArgs), renderContextOf(q, "$3"))
 	if !satisfiable {
-		return nil, 0, nil
+		return nil, 0, 0, nil
 	}
 	// #907 — THE FILTER READABILITY CONJUNCT, and it applies ONLY under
 	// an active filter.
@@ -761,14 +888,54 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 		"assets", visibility.MatureOwnerColAsset, "$3",
 		q.Mature, q.Caps.SystemAdmin)
 
+	const assetScoreExpr = `ts_rank_cd(search_text, plainto_tsquery('english', $1))`
+
+	// #1356 — the per-query maximum, and why a paged request pays for its
+	// own statement.
+	//
+	// On the first page the window starts at the top of `score DESC`, so
+	// the maximum is the first row back and the caller reads it off the
+	// hits for free. From the second page on the window has moved past
+	// it, and the denominator ADR 0056 §1 mandates is no longer anywhere
+	// in the result — so it is measured over the whole eligible set, from
+	// the SAME fragments the hits and the count splice.
+	//
+	// ⚠️ `$2` is the row limit and this statement must not apply one: a
+	// MAX under a LIMIT is the maximum of an arbitrary subset. It is
+	// referenced as a tautology instead, for the reason the count's
+	// tautologies below spell out — pgx rejects a statement bound with an
+	// argument it never names, and renumbering the shared fragments per
+	// statement is the off-by-one ADR 0063's placeholder discipline
+	// exists to avoid.
+	ladder := e.ladder(ctx)
+	predArgs := append(append([]any{}, visArgs...), selArgs...)
+	baseArgs := append([]any{q.Text, limit, callerRefOf(q), ladder}, predArgs...)
+	var maxScore float64
+	if cur != nil {
+		sqlMax := `
+		SELECT COALESCE(MAX(` + assetScoreExpr + `), 0)::FLOAT8
+		  FROM assets
+		 WHERE ` + matchFrag + `
+		   AND ($2::BIGINT IS NULL OR TRUE)
+		   AND ($3::BIGINT IS NULL OR TRUE)
+		   AND ($4::TEXT[] IS NULL OR TRUE)` + visFrag + matureFrag + selFrag
+		var err error
+		maxScore, err = e.scalarFloat(ctx, sqlMax, baseArgs...)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+	}
+	keysetFrag, keysetArgs := keysetFragment(HitTypeAsset, cur, maxScore,
+		assetScoreExpr, "id", 4+len(predArgs))
+
 	sqlHits := `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
 		       thumbhash, created_at, updated_at,
-		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score,
+		       ` + assetScoreExpr + ` AS score,
 		       ` + visibility.FieldsColumnsSQL("assets", "$3", caller) + `,
 		       ` + assetCardColumnsSQL("assets", "$4") + `
 		  FROM assets
-		 WHERE ` + matchFrag + visFrag + matureFrag + selFrag + `
+		 WHERE ` + matchFrag + visFrag + matureFrag + selFrag + keysetFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
@@ -812,13 +979,16 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	// the SAME order, which is what keeps the indexes aligned across
 	// them; the tautologies above are load-bearing for exactly that
 	// reason and must not be "cleaned up".
-	ladder := e.ladder(ctx)
-	predArgs := append(append([]any{}, visArgs...), selArgs...)
-	hitsArgs := append([]any{q.Text, limit, callerRefOf(q), ladder}, predArgs...)
+	//
+	// #1356 — the keyset's args ride on the very end of the HITS list and
+	// on no other, because the cursor positions the window and must never
+	// touch the count. That is what keeps `total_count` the size of the
+	// whole eligible set while the array walks it a page at a time.
+	hitsArgs := append(append([]any{}, baseArgs...), keysetArgs...)
 	countArgs := append([]any{q.Text, TotalCountCap + 1, callerRefOf(q), ladder}, predArgs...)
 	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	defer rows.Close()
 	hits := make([]Hit, 0, limit)
@@ -843,7 +1013,7 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 			&fr.TeamID, &fr.IsTeamMember, &ownerName,
 		}, card.scanDest()...)
 		if err := rows.Scan(dest...); err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		fr.ApplyMutationCaps(mut)
 		// #899 — the row STAYS (ADR 0064 gates content, not rows), but
@@ -877,13 +1047,24 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	total, err := e.scalarInt(ctx, sqlCount, countArgs...)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	return hits, total, nil
+	// The first page's window BEGINS at the maximum — `ORDER BY score
+	// DESC` — so the denominator is the top row's raw score and needs no
+	// statement of its own. ⛔ That equality is a property of the ORDER
+	// BY directly above; a change to it has to move this too.
+	if cur == nil {
+		for i := range hits {
+			if hits[i].RawScore > maxScore {
+				maxScore = hits[i].RawScore
+			}
+		}
+	}
+	return hits, total, maxScore, nil
 }
 
 // runCollections queries collections. The visibility gate is
@@ -911,7 +1092,7 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 // correct shape is a scoped placement lookup — the pattern
 // ListCollectionsPage already uses for its ?featured= filter — added
 // then, against a real consumer.
-func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
+func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cursor) ([]Hit, int, float64, error) {
 	// #1164 — the WHOLE collection read rule, not the row plane alone.
 	//
 	// This used to compose `Filter(EntityCollection)`, which has no
@@ -942,7 +1123,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 		2, // $1=query text, $2=limit
 	)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	// #907 — a collection carries almost none of the facet dimensions:
 	// no file extension, no asset type, no sensitivity tier, and its
@@ -981,7 +1162,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	selFrag, selArgs, satisfiable := q.Filters.SQL(
 		visibility.EntityCollection, "c", 2+len(visArgs), renderContextOf(q, ""))
 	if !satisfiable {
-		return nil, 0, nil
+		return nil, 0, 0, nil
 	}
 	// ⚠️ THE SOFT-DELETE CONJUNCT IS LOAD-BEARING AND IS NOT A DUPLICATE
 	// OF THE PREDICATE (#1164). CollectionReadableSQL's admin arm is the
@@ -995,12 +1176,38 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	// beside it handles the same hole.
 	const notDeleted = ` AND c.deleted_at IS NULL`
 
+	const collectionScoreExpr = `ts_rank_cd(c.search_text, plainto_tsquery('english', $1))`
+
+	// #1356 — the per-query maximum for this arm; see the long note in
+	// runAssets for why a paged request measures it and a first page
+	// reads it off the window. `$2` is the row limit and is referenced as
+	// a tautology so this statement names every argument it is bound
+	// with, without a LIMIT that would make the MAX a maximum over an
+	// arbitrary subset.
+	predArgs := append(append([]any{}, visArgs...), selArgs...)
+	baseArgs := append([]any{q.Text, limit}, predArgs...)
+	var maxScore float64
+	if cur != nil {
+		sqlMax := `
+		SELECT COALESCE(MAX(` + collectionScoreExpr + `), 0)::FLOAT8
+		  FROM collections c
+		 WHERE c.search_text @@ plainto_tsquery('english', $1)
+		   AND ($2::BIGINT IS NULL OR TRUE)` + notDeleted + visFrag + selFrag
+		var err error
+		maxScore, err = e.scalarFloat(ctx, sqlMax, baseArgs...)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+	}
+	keysetFrag, keysetArgs := keysetFragment(HitTypeCollection, cur, maxScore,
+		collectionScoreExpr, "c.id", 2+len(predArgs))
+
 	sqlHits := `
 		SELECT c.id, c.name, c.description, c.owner_user_ref, c.origin_server_id,
 		       c.created_at, c.updated_at, c.visibility,
-		       ts_rank_cd(c.search_text, plainto_tsquery('english', $1)) AS score
+		       ` + collectionScoreExpr + ` AS score
 		  FROM collections c
-		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + selFrag + `
+		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + selFrag + keysetFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
@@ -1011,11 +1218,13 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 			 LIMIT $2
 		) x
 	`
-	hitsArgs := append(append([]any{q.Text, limit}, visArgs...), selArgs...)
-	countArgs := append(append([]any{q.Text, TotalCountCap + 1}, visArgs...), selArgs...)
+	// The keyset's args ride on the end of the HITS list alone — the
+	// count stays the size of the whole eligible set (#1356).
+	hitsArgs := append(append([]any{}, baseArgs...), keysetArgs...)
+	countArgs := append([]any{q.Text, TotalCountCap + 1}, predArgs...)
 	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	defer rows.Close()
 	hits := make([]Hit, 0, limit)
@@ -1033,7 +1242,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 			score   float64
 		)
 		if err := rows.Scan(&id, &name, &descr, &owner, &origin, &created, &updated, &vis, &score); err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		hits = append(hits, Hit{
 			Type:           HitTypeCollection,
@@ -1055,7 +1264,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 		visByID[id] = vis
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	// The mosaic covers for the whole page in ONE query (#1026), after
 	// the row loop rather than inside it: composing per hit would be a
@@ -1079,7 +1288,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 		covers, err := collections.ComposeCovers(ctx, e.Pool,
 			visibility.NewCaller(q.CallerUserRef), q.Caps, q.PostCaps, q.Mature, ids)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		for i := range hits {
 			// #850's visibility tier is safe to ship unconditionally:
@@ -1090,9 +1299,18 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	}
 	total, err := e.scalarInt(ctx, sqlCount, countArgs...)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	return hits, total, nil
+	// See runAssets: the first page's window starts at the maximum, so
+	// the denominator is free there and measured on every page after it.
+	if cur == nil {
+		for i := range hits {
+			if hits[i].RawScore > maxScore {
+				maxScore = hits[i].RawScore
+			}
+		}
+	}
+	return hits, total, maxScore, nil
 }
 
 // runPosts queries posts. Visibility gate composed via
@@ -1102,11 +1320,11 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 // runs. Without it the predicate renders its `private` disjunct as
 // FALSE, and a moderator searching for a private post they can open from
 // the feed gets nothing back.
-func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
+func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor) ([]Hit, int, float64, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityPost,
 		visibility.NewCaller(q.CallerUserRef), visibility.WithPostCaps(q.PostCaps))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	// $1=query text, $2=limit, $3=caller ref (bound for the mature
 	// conjunct below), predicate args from $4.
@@ -1125,7 +1343,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 	selFrag, selArgs, satisfiable := q.Filters.SQL(
 		visibility.EntityPost, "posts", 3+len(visArgs), renderContextOf(q, "$3"))
 	if !satisfiable {
-		return nil, 0, nil
+		return nil, 0, 0, nil
 	}
 	// #1117 — the mature axis on the post row plane (ADR 0090 §3). The
 	// column is `posts.mature`, DERIVED by trigger from the members (a
@@ -1197,6 +1415,43 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		     WHERE pa.post_id = posts.id
 		     ORDER BY pa.sort_order ASC, pa.added_at ASC
 		     LIMIT 1))`
+	const postScoreExpr = `ts_rank_cd(search_text, plainto_tsquery('english', $1))`
+
+	predArgs := append(append([]any{}, visArgs...), selArgs...)
+	// The caller ref, or 0 for anonymous. ZERO IS THE SENTINEL AND IT IS
+	// LOAD-BEARING: MatureFilterSQL wraps it in NULLIF(…, 0) so an
+	// anonymous caller cannot match a row whose author column happens to
+	// hold 0 as its owner.
+	var matureOwner int64
+	if q.CallerUserRef != nil {
+		matureOwner = *q.CallerUserRef
+	}
+	baseArgs := append([]any{q.Text, limit, matureOwner}, predArgs...)
+
+	// #1356 — the per-query maximum for this arm; see the long note in
+	// runAssets for why a paged request measures it and a first page
+	// reads it off the window. `$2` is the row limit, and this statement
+	// must not apply one — a MAX under a LIMIT is the maximum of an
+	// arbitrary subset — so it is referenced as a tautology instead,
+	// because pgx rejects a statement bound with an argument it never
+	// names.
+	var maxScore float64
+	if cur != nil {
+		sqlMax := `
+		SELECT COALESCE(MAX(` + postScoreExpr + `), 0)::FLOAT8
+		  FROM posts
+		 WHERE (search_text @@ plainto_tsquery('english', $1) OR ` + postTextless + `)
+		   AND ($2::BIGINT IS NULL OR TRUE)
+		   AND ($3::BIGINT IS NULL OR TRUE)` + visFrag + matureFrag + selFrag
+		var err error
+		maxScore, err = e.scalarFloat(ctx, sqlMax, baseArgs...)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+	}
+	keysetFrag, keysetArgs := keysetFragment(HitTypePost, cur, maxScore,
+		postScoreExpr, "id", 3+len(predArgs))
+
 	sqlHits := `
 		SELECT id, title, description, author_user_ref, origin_server_id,
 		       ` + coverAssetExpr + ` AS cover_asset_id, created_at, updated_at,
@@ -1204,7 +1459,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		       (SELECT COUNT(*) FROM post_assets pa
 		          JOIN assets pm ON pm.id = pa.asset_id AND pm.deleted_at IS NULL
 		         WHERE pa.post_id = posts.id) AS member_count,
-		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score
+		       ` + postScoreExpr + ` AS score
 		  FROM posts
 		 WHERE (search_text @@ plainto_tsquery('english', $1) OR ` + postTextless + `)
 		   -- $3 is the caller ref, read ONLY by the mature conjunct, and
@@ -1214,7 +1469,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		   -- alternative, and renumbering the shared predicate fragment
 		   -- per statement is the off-by-one ADR 0063's placeholder
 		   -- discipline exists to avoid.
-		   AND ($3::BIGINT IS NULL OR TRUE)` + visFrag + matureFrag + selFrag + `
+		   AND ($3::BIGINT IS NULL OR TRUE)` + visFrag + matureFrag + selFrag + keysetFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
@@ -1226,20 +1481,13 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 			 LIMIT $2
 		) x
 	`
-	predArgs := append(append([]any{}, visArgs...), selArgs...)
-	// The caller ref, or 0 for anonymous. ZERO IS THE SENTINEL AND IT IS
-	// LOAD-BEARING: MatureFilterSQL wraps it in NULLIF(…, 0) so an
-	// anonymous caller cannot match a row whose author column happens to
-	// hold 0 as its owner.
-	var matureOwner int64
-	if q.CallerUserRef != nil {
-		matureOwner = *q.CallerUserRef
-	}
-	hitsArgs := append([]any{q.Text, limit, matureOwner}, predArgs...)
+	// The keyset's args ride on the end of the HITS list alone — the
+	// count stays the size of the whole eligible set (#1356).
+	hitsArgs := append(append([]any{}, baseArgs...), keysetArgs...)
 	countArgs := append([]any{q.Text, TotalCountCap + 1, matureOwner}, predArgs...)
 	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	defer rows.Close()
 	hits := make([]Hit, 0, limit)
@@ -1264,7 +1512,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		)
 		if err := rows.Scan(&id, &title, &descr, &author, &origin, &cover, &created, &updated,
 			&likes, &comments, &members, &score); err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		covers = append(covers, cover)
 		counts = append(counts, [3]int64{likes, comments, members})
@@ -1281,7 +1529,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	// The cover assets, per caller (#850). A post the caller may read can
 	// still bundle an asset they may not — the cover then arrives as the
@@ -1301,7 +1549,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 	}
 	coverCards, err := e.loadPostCovers(ctx, q, coverIDs)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	for i := range hits {
 		var member *postCardMember
@@ -1320,9 +1568,18 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 	}
 	total, err := e.scalarInt(ctx, sqlCount, countArgs...)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	return hits, total, nil
+	// See runAssets: the first page's window starts at the maximum, so
+	// the denominator is free there and measured on every page after it.
+	if cur == nil {
+		for i := range hits {
+			if hits[i].RawScore > maxScore {
+				maxScore = hits[i].RawScore
+			}
+		}
+	}
+	return hits, total, maxScore, nil
 }
 
 // scalarInt runs a `SELECT COUNT(*)::BIGINT` and returns the value
@@ -1337,6 +1594,21 @@ func (e *Engine) scalarInt(ctx context.Context, sql string, args ...any) (int, e
 		return 0, err
 	}
 	return int(v), nil
+}
+
+// scalarFloat runs a one-column aggregate and returns the value. Same
+// shape as [Engine.scalarInt]; it exists for the #1356 per-query maximum,
+// whose statement returns FLOAT8 and whose "no rows" answer is 0 for the
+// same reason an empty count is.
+func (e *Engine) scalarFloat(ctx context.Context, sql string, args ...any) (float64, error) {
+	var v float64
+	if err := e.Pool.QueryRow(ctx, sql, args...).Scan(&v); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return v, nil
 }
 
 func truncate(s string, n int) string {
