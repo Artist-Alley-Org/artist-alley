@@ -231,3 +231,85 @@ one question; building them on one mechanism is not.
 what it omits — the failure `account/preferences/+page.svelte:210-230` documents as *"a reader opts
 in, changes a notification channel an hour later, and is silently opted back out of content they
 had consented to see."*
+
+## Amendment, 2026-08-28 (#1345): the view control renders on CAPABILITY TO RECEIVE, not on consent
+
+The #1292 amendment above states rung 2 as *"2 off ⇒ 3 does not appear"*, and gives the reason:
+a control meaning "leave mature out of these results" is *"meaningless to a reader who has not
+consented; it could never do anything"*.
+
+⭐ **Both rules are right, and together they left a hole.** §2 exempts owner and `system.admin`
+from the mature disqualification, *"a deliberate asymmetry rather than a convenience"*, so a
+moderator can see what the instance switch hid. **That means rows reach an exempt account
+regardless of consent, so the stated reason for hiding the control does not hold for them.** The
+one class of reader shown mature content without opting in was the one class offered no way to stop
+seeing it. Found by sprint 16b (#1343) when its own test failed against the real exemption.
+
+**The rule now: rung 2 asks whether this reader can RECEIVE mature rows, which is `opted in OR
+holds the §2 exemption`.** Consent still answers it for every reader who has given one; the
+exemption answers it for the reader the old spelling could not see.
+
+### Three reader classes, three layer-3 defaults
+
+The #1292 amendment's *"defaults to included"* was written when the only readers who could see the
+row were readers who had consented. Extending the row to a new population is a new case, and a rule
+settled on one class does not close the question for another:
+
+| reader | row | layer-3 default |
+| --- | --- | --- |
+| instance forbids mature content | absent | n/a |
+| allowed, opted in | present | **included** (unchanged, per #1292) |
+| allowed, exempt for moderation, never opted in | **present (new)** | **excluded** |
+
+The third defaults to **excluded** because that reader has never said yes to anything, and because
+minimising a reviewer's exposure to distressing material is the standard for exactly this
+population: trust-and-safety guidance treats it as a cost to be reduced, not a privilege of the
+role, and no surveyed platform makes *"you are permitted to review this"* imply *"you will be shown
+this by default"*. Personal moderation is modelled elsewhere as a layer separate from platform-wide
+moderation that only ever narrows what the viewer receives (Jhaver et al., *Personalizing Content
+Moderation on Social Media*, CSCW 2023, `10.1145/3610080`), which is what layer 3 already is.
+
+It is a **per-view default, not a refusal**. One click gets an exempt reader the unfiltered wall
+when they are actually moderating.
+
+⛔ **Layer 3 still NARROWS and never consents, in every respect #1292 fixed.** An exempt reader
+turning the row on has not granted themselves anything; turning it off has not revoked their
+exemption. There is still no "include" value on the wire, and nothing here writes
+`user_preferences`.
+
+### ⚠️ The default varies by class, so the stored flag had to become TRI-STATE
+
+`aa_browse_hide_mature` used to store `1` for "exclude" and remove the key otherwise, on the
+reasoning that "included" is the one default and a stored false is a key that says nothing. With
+two defaults that reasoning fails in both directions: an absent key can no longer mean one thing,
+and removing the key on an explicit *include* would erase an exempt moderator's deliberate choice
+and re-narrow their wall on the next load: a control that visibly forgets.
+
+So the key now stores `1` for an explicit exclude, `0` for an explicit include, and **no key** is
+the only spelling of "this device has not answered", which is the `local ?? class default` contract
+the layout, tab and sort preferences already use. A device carrying a pre-#1345 `1` still reads as
+exclude, so nothing stored had to move.
+
+### What the client reads the exemption from
+
+`auth.can('system.admin')`, which mirrors ONE server predicate: `posts.Handler.ListPosts` passes
+`MatureAdmin: caller.Can(auth.SuperAdminCapability)` and `visibility.MatureItemVisible` waives the
+qualification on exactly that flag. Not `canSeeAdmin`, which is the wider "may open some admin
+surface" set and would offer the row to read-cap operators the gate does not exempt: a control that
+could never do anything, which is the failure this cascade exists to prevent.
+
+⚠️ **The OWNER half of the §2 exemption is deliberately not part of this.** It is per ROW (an
+artist sees their own work), so it cannot be a property of the reader, and a browse wall is not a
+question about one item. `MatureFilterSQL` evaluates it per row for the same reason.
+
+⭐ **No server change was needed, and that is a property of the existing design rather than luck.**
+`ListPostsPageParams.ExcludeMature` is documented as *not* waived for an admin, precisely because
+"this is the moderator's own request about their own feed, and honouring the gate's exemption here
+would mean a control that visibly refuses to do the one thing it says it does". The server was
+already willing to honour `?mature=not_mature` from an exempt caller; only the client's decision to
+offer the control was wrong.
+
+### Out of scope
+
+Whether a moderator wants a dedicated review surface rather than a filtered browse wall. Bigger
+design, and not what #1345 reports.

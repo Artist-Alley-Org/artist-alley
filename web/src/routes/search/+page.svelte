@@ -50,7 +50,7 @@
   // /search and /search/facets, which is why the counts re-narrow as you
   // pick: the rail describes the page beside it rather than the corpus.
 
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { site } from '$stores/site.svelte';
   import { page, navigating } from '$app/state';
   import { goto } from '$app/navigation';
@@ -66,6 +66,8 @@
   import PostParamHost from '$components/PostParamHost.svelte';
   import ViewControls from '$components/ViewControls.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
+  import { createInfiniteScroll } from '$lib/util/infiniteScroll.svelte';
+  import { resetResultsScroll } from '$lib/util/resultsScroll';
   import {
     hitAsCardAsset,
     hitAsCollection,
@@ -96,6 +98,14 @@
   let loadingMore = $state(false);
   let error = $state('');
   let facets = $state<Record<string, FacetResult>>({});
+  /** The results region. Only ever used to FIND the scrollport (#1298);
+   *  see resultsScroll.ts for why the app cannot address `window`. */
+  let resultsEl: HTMLElement | undefined = $state();
+  /** The paging sentinel at the list's tail (#1354). */
+  let sentinel: HTMLElement | undefined = $state();
+  /** Is there another page to ask for? The cursor is the whole answer,
+   *  and it is `''` rather than null when there is not. */
+  const hasMore = $derived(cursor !== '');
   // The kind filter. Empty = everything, which is what /search does when
   // `types=` is absent.
   let kinds = $state<HitType[]>([]);
@@ -298,8 +308,43 @@
     filters: [],
   };
 
+  /** Infinite scroll (#1354), the browse wall's rig rather than a
+   *  second one. See `$lib/util/infiniteScroll.svelte` for why the
+   *  observer is rooted on the scrollport and why the observer alone is
+   *  not the whole trigger. */
+  const searchScroll = createInfiniteScroll({
+    sentinel: () => sentinel,
+    more: () => cursor !== '',
+    // BOTH flags. `loading` is a fresh query and `loadingMore` is an
+    // append, and a pump that only watched the second would fire a
+    // second page against a first page that has not landed.
+    busy: () => loading || loadingMore,
+    load: () => void runSearch(q, { append: true }),
+  });
+
   async function runSearch(query: string, opts: { append?: boolean } = {}) {
     const gen = ++searchGen;
+    // ⭐ REFINING IS A NEW ADDRESS (#1298, ADR 0056 §3c's 2026-08-28
+    // amendment): the results region goes back to its first row, and
+    // the page chrome does not move. An append is not a refine — it is
+    // the reader continuing down the list they are already reading — so
+    // the reset is on this arm only.
+    //
+    // MEASURED before it was written. Six accumulated pages at
+    // `main.scrollTop` 4511 of 6088, refined to a 25-hit query: the
+    // offset landed on 330, which is exactly `scrollHeight -
+    // clientHeight`. The reader was at the BOTTOM of the new list,
+    // looking at its last part-filled row, with every hit they had just
+    // asked for above the fold.
+    //
+    // Ordered BEFORE the fetch rather than after the hits land, for two
+    // reasons. It is immediate feedback that the refine registered,
+    // instead of a jump arriving 100ms later. And at offset 0 Chrome's
+    // scroll anchoring has nothing to compensate, so the swap cannot
+    // re-resolve the offset against reflowed content — which is the
+    // mechanism #1298 measured landing on 0 here, 184 on a second run
+    // and 279 on the CI runner, none of them decided by this page.
+    if (!opts.append) resetResultsScroll(resultsEl);
     // #1157 — a filter selection is a runnable query with no text. The
     // clear-and-return below is for a genuinely EMPTY address only.
     if (!query && filters.length === 0) {
@@ -318,6 +363,9 @@
       loading = true;
     }
     error = '';
+    /** How many hits this call actually added. The pump's anti-runaway
+     *  guard reads it; see the tail of this function. */
+    let appended = 0;
     try {
       const params = new URLSearchParams({ limit: '25' });
       if (dslMode) params.set('dsl', query);
@@ -349,6 +397,7 @@
       totalCount = data.total_count;
       totalCountCapped = data.total_count_capped;
       hits = opts.append ? [...hits, ...data.hits] : data.hits;
+      appended = data.hits.length;
       // Recorded beside the hits it describes, never before them: an
       // aborted or superseded fetch (both return above) must leave the
       // previous result set and its parameters matching each other.
@@ -365,6 +414,20 @@
         loadingMore = false;
       }
     }
+    // #1354 — top the buffer back up. The IntersectionObserver alone
+    // cannot do this once the lookahead is deeper than one page is
+    // tall: the sentinel is still inside the margin after an append, so
+    // the intersection state never changes and no callback is queued.
+    // See createInfiniteScroll.
+    //
+    // `appended === 0` is the anti-runaway guard and it is load-bearing
+    // in the same way the wall's is: a search that answers with an
+    // empty page and a non-empty cursor would otherwise leave the
+    // buffer permanently short and pump forever. One empty page stops
+    // the chase; the observer still re-arms it when the reader scrolls.
+    if (gen !== searchGen || appended === 0) return;
+    await tick();
+    requestAnimationFrame(() => searchScroll.pump());
   }
 
   function submit(e: Event) {
@@ -760,7 +823,7 @@
 <!-- Full viewport width + the same px-4/sm:px-6 padding as the browse
      feed and the profile grids, so the shared TileGrid resolves the SAME
      column count and search reads as one grid system with them. -->
-<div class="w-full px-4 py-6 sm:px-6">
+<div bind:this={resultsEl} class="w-full px-4 py-6 sm:px-6">
   <form onsubmit={submit} class="mb-4 flex flex-wrap gap-2">
     <input
       bind:value={q}
@@ -967,15 +1030,34 @@
     {/snippet}
   </ContentGrid>
 
-  {#if cursor}
-    <div class="mt-4 flex justify-center">
-      <button
-        type="button"
-        onclick={() => runSearch(q, { append: true })}
-        disabled={loadingMore}
-        class="min-h-11 rounded-md border border-border bg-surface px-4 py-1.5 text-sm hover:border-border-strong disabled:opacity-50"
-      >{loadingMore ? t('common.loading') : t('common.load_more')}</button>
-    </div>
+  <!-- ⭐ THE PAGING SENTINEL (#1354), and it REPLACES the "Load more"
+       button rather than sitting beside it.
+
+       There used to be a button here and the browse wall beside it had
+       none, on the same grid, with the same cards. The comment at the
+       URL watcher does say results are "paged behind a manual load
+       more", but it says that to explain a snapshot-restore
+       interaction — it is a description of the state, not a decision
+       that search should page differently from browse.
+
+       ⚠️ NO MANUAL AFFORDANCE SURVIVES, and that is matching the wall
+       rather than dropping a feature. #1354's rule is "keep one if the
+       browse wall keeps one"; it keeps none (+page.svelte renders the
+       same bare sentinel under the same `hasMore` guard), so inventing
+       a different answer here is the thing to avoid. Both surfaces now
+       end a finished list the same way, with nothing to click.
+
+       Gated on `hasMore` so the observer has nothing to watch once the
+       list is complete — the same guard, for the same reason, as the
+       wall's. -->
+  {#if hasMore}
+    <div bind:this={sentinel} class="h-px w-full" aria-hidden="true"></div>
+  {/if}
+
+  {#if loadingMore}
+    <p class="py-4 text-center text-xs text-fg-muted" data-testid="search-loading-more">
+      {t('common.loading')}
+    </p>
   {/if}
 </div>
 

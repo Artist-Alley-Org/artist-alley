@@ -24,7 +24,8 @@
   import { t } from '$stores/lang.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import { createMarquee } from '$lib/util/marquee.svelte';
-  import { scrollportOf } from '$lib/util/scrollport';
+  import { createInfiniteScroll } from '$lib/util/infiniteScroll.svelte';
+  import { resetResultsScroll } from '$lib/util/resultsScroll';
   import type { components } from '$api/schema';
 
   onMount(() => { browseView.init(); });
@@ -360,14 +361,40 @@
 
   // Reset and refetch every time the query, feed filter, or feed
   // direction changes.
+  //
+  // ⭐ AND PUT THE READER AT THE FIRST ROW (#1298, ADR 0056 §3c's
+  // 2026-08-28 amendment). Refining is a NEW address, so the offset
+  // measured against the old wall describes posts that are not coming
+  // back.
+  //
+  // ⚠️ THIS WALL LOOKED CORRECT WITHOUT IT, AND THAT IS THE ARGUMENT
+  // FOR ADDING IT RATHER THAN AGAINST. Measured on a 900-card wall at
+  // 29457px refined by kind: the offset went to 0, at 1080p and at
+  // 390px. But nothing here decided that. `items = []` collapses the
+  // wall to zero height in the same frame, `<main>` briefly has nothing
+  // to scroll, and the BROWSER clamps — so the landing is correct only
+  // while the chrome above the wall stays shorter than the viewport,
+  // which is a coincidence of the featured rail's height and one this
+  // route must not go on depending on. `/search` is the same shape with
+  // the coincidence absent: it swaps its hits in place, and the same
+  // refine lands the reader at the bottom of a 25-hit list.
+  //
+  // Ordered before the fetch, not after it: at offset 0 Chrome's scroll
+  // anchoring has nothing to compensate, so the reset survives the
+  // content growing back underneath it without being re-asserted.
   $effect(() => {
     const key = feedKey();
     untrack(() => {
       if (key === loadedKey) return;
+      const refine = loadedKey !== null;
       loadedKey = key;
       items = [];
       nextCursor = null;
       initialLoaded = false;
+      // Only on a REFINE. The first key of a page load is not one, and
+      // a route that scrolled itself on mount would fight the snapshot
+      // restore that back-navigation is about to run.
+      if (refine) resetResultsScroll(wallEl);
       void fetchPage(query, activeTeamId, activeTag, activeKinds, null, true);
     });
   });
@@ -409,132 +436,19 @@
 
   // ── Infinite scroll: stay ahead of the reader (#1159) ─────────────
   //
-  // # The bug was not that 600px is too small. The 600px never applied.
-  //
-  // This observer was built with the DEFAULT root — `null`, meaning the
-  // document viewport — and `rootMargin: '600px 0px'`. But this app
-  // never scrolls the window: the shell is `overflow-hidden` with
-  // `<main class="flex-1 overflow-y-auto">` as the real scrollport
-  // (+layout.svelte, #1122). `rootMargin` inflates the ROOT's rect and
-  // nothing else, while the intersection is still clipped by every
-  // scrolling ancestor in between — so `<main>`'s own unexpanded clip
-  // rect cut the 600px straight back off. The sentinel was reported as
-  // intersecting only once it genuinely entered `<main>`'s visible box:
-  // a lookahead of approximately ZERO, which is exactly what "the feed
-  // loads too late" feels like.
-  //
-  // MEASURED, not deduced. With the margin raised to 2700px and the
-  // trigger left on the implicit root, an in-page rAF sampler recorded
-  // the unread-feed buffer sawtoothing 3893px → 52px → 3893px: the
-  // refills were firing at a buffer of ~50-300px, not at 2700px. Raising
-  // the number could never have worked; the root had to change. The
-  // marquee already knew this about the same wall (its autoscroll walks
-  // up for the scrollport) — this observer just never asked.
-  //
-  // # What replaces it
-  //
-  // `root` is the sentinel's actual scrollport, so `rootMargin` inflates
-  // the box that is really doing the clipping, and the margin is
-  // `LOOKAHEAD_VIEWPORTS × the scrollport's own height` — a head-start
-  // measured in screenfuls of reading, which scales across a 390px phone
-  // and a 4k display without either being written down. Both are
-  // recomputed on resize (rAF-coalesced, and only when the height
-  // actually moved), rebuilding rather than mutating because `root` and
-  // `rootMargin` are fixed at construction.
-  //
-  // The depth has to cover RENDER, not the wire: the wire is 21ms p50 on
-  // this stack, while painting 36 fresh cards on a main thread already
-  // busy scrolling is what costs the hundreds of milliseconds the reader
-  // was waiting on. 2.5 screenfuls buys ~1.6s at a 1.6k px/s wheel and
-  // ~1s at 2.7k px/s, which measurement says is enough and 1.5 is not.
-  //
-  // # Why the observer alone is not the whole trigger
-  //
-  // An IntersectionObserver notifies on threshold CROSSINGS. A lookahead
-  // deeper than one page is tall (a page is ~1.3 screenfuls of tiles at
-  // 1920px) means the sentinel is STILL inside the margin after an
-  // append: the intersection state never changes, no callback is queued,
-  // and the feed stalls one page in — a strictly worse bug than the one
-  // being fixed. So the trigger is a predicate over the sentinel's own
-  // geometry and both edges call it: the observer when the reader moves,
-  // and the tail of a successful fetch when the buffer moves.
-  //
-  // That makes filling a deep buffer a bounded SEQUENTIAL chase. At most
-  // one request is ever in flight (`loading` is still the gate, as it
-  // was), and the chase stops the moment the buffer is covered, so the
-  // steady-state cost is a fixed depth of prefetched pages rather than
-  // anything that scales with how far the reader goes.
-  const LOOKAHEAD_VIEWPORTS = 2.5;
-
-  /** The box that actually clips the sentinel. `null` before mount, and
-   *  on any surface where nothing above the wall scrolls — in which case
-   *  the viewport IS the scrollport and the observer's default root is
-   *  already correct. */
-  const scrollport = () => scrollportOf(sentinel);
-  const portHeight = () => scrollport()?.clientHeight ?? window.innerHeight;
-  const lookaheadPx = () => Math.round(portHeight() * LOOKAHEAD_VIEWPORTS);
-
-  /** Is there less than a lookahead's worth of unread feed below the
-   *  fold? Read off the sentinel, which sits at the wall's tail, so it
-   *  answers for whatever the wall's real height turned out to be —
-   *  masonry's variable tiles included. Measured against the scrollport's
-   *  bottom edge for the same reason the observer is rooted there. */
-  function wantsMore(): boolean {
-    const node = sentinel;
-    if (!node) return false;
-    const port = scrollport();
-    const bottom = port ? port.getBoundingClientRect().bottom : window.innerHeight;
-    return node.getBoundingClientRect().top <= bottom + lookaheadPx();
-  }
-
-  function pumpFeed() {
-    untrack(() => {
-      if (!nextCursor || loading) return;
-      if (!wantsMore()) return;
-      void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, false);
-    });
-  }
-
-  $effect(() => {
-    const node = sentinel;
-    if (!node) return;
-    let observer: IntersectionObserver | undefined;
-    let raf = 0;
-    let armedFor = -1;
-
-    const arm = () => {
-      armedFor = portHeight();
-      observer?.disconnect();
-      observer = new IntersectionObserver(
-        (entries) => {
-          if (entries.some((e) => e.isIntersecting)) pumpFeed();
-        },
-        { root: scrollport(), rootMargin: `${lookaheadPx()}px 0px` },
-      );
-      observer.observe(node);
-    };
-
-    // rAF-coalesced, and only when the HEIGHT moved: a drag-resize fires
-    // a resize event per frame, and rebuilding an observer per frame
-    // would be the same churn MasonryColumns' width guard exists to
-    // avoid. A width-only change (the column count moving) cannot alter
-    // a vertical lookahead.
-    const onResize = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        if (portHeight() !== armedFor) arm();
-      });
-    };
-
-    arm();
-    window.addEventListener('resize', onResize);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', onResize);
-      if (raf) cancelAnimationFrame(raf);
-    };
+  // The rig moved to `$lib/util/infiniteScroll.svelte` in #1354, so
+  // /search inherits it CORRECT rather than growing a second observer
+  // with the default root. Everything this route used to spell inline —
+  // the scrollport-rooted observer, the geometry predicate the observer
+  // alone cannot replace, and the resize re-arm — is there, with the
+  // measurements that produced it.
+  const feedScroll = createInfiniteScroll({
+    sentinel: () => sentinel,
+    more: () => nextCursor !== null,
+    busy: () => loading,
+    load: () => void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, false),
   });
+  const pumpFeed = () => feedScroll.pump();
 
   // ── Marquee drag-select (#1127) ───────────────────────────────────
   //

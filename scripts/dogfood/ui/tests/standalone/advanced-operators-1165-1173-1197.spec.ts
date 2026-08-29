@@ -367,11 +367,45 @@ test.describe('advanced search — operators, sections, live count', () => {
     await page.waitForURL(/\/search\?/, { timeout: 15_000 });
 
     // Read the number the RESULTS page reports for the same address.
+    //
+    // ⛔ WAITED FOR, NOT PROBED. `count()` is a point-in-time read with
+    // no waiting, and /search renders its counter only once the query
+    // has landed (`{#if !loading && hits.length > 0}`) — so its
+    // PRESENCE was a race, not a property of the surface. Losing that
+    // race dropped this into the body-text fallback below, which then
+    // failed too because the body has no "N results" in it yet either,
+    // and the error read "the results page reported no count" as though
+    // the page were broken.
+    //
+    // ⚠️ IT SURFACED WHEN #1354 GAVE /search INFINITE SCROLL. The page
+    // now issues a landing chase of page-2-onwards fetches and re-renders
+    // through them, which is enough extra work to lose a race it used to
+    // win. The race was always there; the paging rig only made it likely
+    // under full-suite load.
     const reported = page.locator(tid('search-total-count'));
+    const appeared = await reported
+      .waitFor({ state: 'visible', timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
     let actual: number;
-    if ((await reported.count()) > 0) {
-      await expect(reported).toBeVisible();
-      actual = Number(((await reported.textContent()) ?? '').replace(/[^\d]/g, ''));
+    if (appeared) {
+      // ⛔ THE TOTAL, NOT EVERY DIGIT IN THE STRING. The counter reads
+      // "Showing {n} of {total} results", so the old
+      // `replace(/[^\d]/g, '')` CONCATENATED the two numbers: a page
+      // showing 25 of 488 was read as 25488.
+      //
+      // ⚠️ THAT ARM HAD NEVER RUN. It was reachable only when the
+      // counter was already on screen at probe time, which the
+      // unwaited `count()` above never was, so every green run took the
+      // body-text fallback instead. Making the wait honest is what
+      // exposed it — a dead arm reads exactly like a passing one.
+      //
+      // Same shape as the fallback below: the number immediately before
+      // "results" is the total, whichever surface reports it.
+      const text = ((await reported.textContent()) ?? '').replace(/,/g, '');
+      const m = text.match(/(\d+)\s+results?/i);
+      expect(m, `the counter did not report a total: ${JSON.stringify(text)}`).toBeTruthy();
+      actual = Number(m![1]);
     } else {
       // No dedicated testid on this surface — fall back to the body
       // text, which is what a person reads anyway.

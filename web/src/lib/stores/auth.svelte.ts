@@ -161,7 +161,14 @@ export interface AuthUser {
 
 // Capability the backend wildcards over all other capability checks.
 // Mirrors `Identity.SuperAdminCapability` in app/internal/auth.
-const SYSTEM_ADMIN = 'system.admin';
+//
+// EXPORTED since #1345, so a caller that has to mirror a SERVER-SIDE
+// exemption keyed on this exact capability names it rather than
+// re-spelling the string. `posts.Handler.ListPosts` sets
+// `MatureAdmin: caller.Can(auth.SuperAdminCapability)`, and
+// `browseView.matureExempt` is the client's read of the same fact; two
+// spellings of one capability code is the defect ADR 0063 is about.
+export const SYSTEM_ADMIN = 'system.admin';
 
 /**
  * Mirrors `CurrentUser.capabilities_status` (#956). `resolved` means

@@ -495,17 +495,28 @@ describe('the mature view filter', () => {
   /** A signed-in reader with the two cascade rungs set. Nothing else on
    *  AuthUser matters here, and the two required mature fields are
    *  spelled out at every call so a case cannot lean on a default. */
-  function signIn(allowed: boolean, optedIn: boolean) {
+  function signIn(allowed: boolean, optedIn: boolean, exempt = false) {
     auth.user = {
       ref: 1,
       username: 'reader',
       matureContentAllowed: allowed,
       matureOptedIn: optedIn,
     };
+    // The MODERATION EXEMPTION (ADR 0090 §2), spelled the way the store
+    // reads it: `auth.can('system.admin')`. It mirrors the server's
+    // `MatureAdmin: caller.Can(auth.SuperAdminCapability)`, so a case
+    // that set some other capability would not be testing the
+    // exemption at all.
+    auth.caps = exempt ? ['system.admin'] : [];
+    auth.capsStatus = 'resolved';
   }
 
   beforeEach(() => {
     auth.user = null;
+    // The store is a singleton and `caps` is not cleared by signing
+    // out, so an exempt case would leak into every test after it.
+    auth.caps = [];
+    auth.capsStatus = 'resolved';
   });
 
   it('is not offered to a signed-out reader, and sends nothing', () => {
@@ -527,9 +538,15 @@ describe('the mature view filter', () => {
     expect(browseView.matureParam).toBeNull();
   });
 
-  it('is not offered when the ACCOUNT has not opted in', () => {
-    // Rung 2. A control meaning "leave mature out of these results" is
+  it('is not offered to an UNEXEMPT reader who has not opted in', () => {
+    // Rung 2, still absence for the reader it was written about: a
+    // control meaning "leave mature out of these results" is
     // meaningless to a reader who was never going to be shown any.
+    //
+    // ⚠️ THE QUALIFIER IS THE WHOLE POINT SINCE #1345. This case is
+    // about a reader who can neither consent-in nor receive rows by
+    // exemption; the class below it differs on exactly one of those
+    // and gets the opposite answer.
     signIn(true, false);
     rehydrate(null);
     browseView.setHideMature(true);
@@ -597,14 +614,21 @@ describe('the mature view filter', () => {
     expect(localStorage.getItem('aa_browse_hide_mature')).toBe('1');
 
     browseView.setHideMature(false);
-    // "Included" is the default, so a stored false is a key that says
-    // nothing (readHideAI's argument, same axis of reasoning).
-    expect(localStorage.getItem('aa_browse_hide_mature')).toBeNull();
+    // ⚠️ IT STORES `0` RATHER THAN REMOVING THE KEY, since #1345.
+    // readHideAI's "a stored false is a key that says nothing" argument
+    // holds only while the axis has ONE default. This one has two, so a
+    // removed key would erase an exempt reader's deliberate include and
+    // let their class default re-narrow the wall on reload.
+    expect(localStorage.getItem('aa_browse_hide_mature')).toBe('0');
+    expect(auth.user?.matureOptedIn, 'and the consent is still untouched').toBe(true);
   });
 
-  it('ignores a stored value that is not the one it writes', () => {
+  it('ignores a stored value that is not one of the two it writes', () => {
+    // ⚠️ `'0'` IS NO LONGER JUNK. Since #1345 the key is tri-state and
+    // `0` is an explicit include, so it is asserted as a value in the
+    // nine-case block below rather than discarded here.
     signIn(true, true);
-    for (const junk of ['true', 'yes', '0', 'not_mature', '']) {
+    for (const junk of ['true', 'yes', 'not_mature', '']) {
       localStorage.setItem('aa_browse_hide_mature', junk);
       rehydrate(null);
       expect(browseView.hideMature, `stored ${JSON.stringify(junk)}`).toBe(false);
@@ -645,6 +669,215 @@ describe('the mature view filter', () => {
     expect(browseView.hideAI).toBe(true);
     expect(browseView.hideMature).toBe(true);
     expect(browseView.aiParam).toBe('not_pure');
+    expect(browseView.matureParam).toBe('not_mature');
+  });
+});
+
+// ⛔ #1345: THE ROW RENDERS ON CAPABILITY TO RECEIVE, NOT ON CONSENT.
+//
+// ADR 0090 §2 exempts `system.admin` from the mature disqualification so
+// a moderator can see what the instance switch hid. The #1292 cascade
+// asked about CONSENT, so an exempt account that never opted in was
+// shown mature rows and offered no control over them: the one class of
+// reader who sees mature content without opting in was the one class
+// with no way to stop.
+//
+// # ⭐ IT IS NINE CASES, NOT TWO, AND THE INTERESTING THREE ARE THE
+// # ONES WHERE THE KEY IS ABSENT
+//
+// Three reader classes crossed with three storage states. The classes
+// differ in what the DEFAULT is, so a matrix that only drove the two
+// states where the device HAS an answer would pass on an implementation
+// with no class default at all — which is exactly the implementation
+// this replaces.
+//
+//   class                                     key absent   key '1'   key '0'
+//   instance forbids                          no row       no row    no row
+//   allowed, opted in                         included     excluded  included
+//   allowed, exempt, never opted in           EXCLUDED     excluded  included
+//
+// The third row's first cell is the amendment's new decision and the
+// only cell that distinguishes the two classes that HAVE a row.
+describe('#1345 the mature row is offered on CAPABILITY, and defaults by reader class', () => {
+  /** The three storage states, spelled once. `null` means the device
+   *  has never answered, which is a THIRD state and not a synonym for
+   *  either boolean. */
+  const STORAGE = [null, '1', '0'] as const;
+
+  function reader(opts: { allowed: boolean; optedIn: boolean; exempt: boolean }) {
+    auth.user = {
+      ref: 1,
+      username: 'reader',
+      matureContentAllowed: opts.allowed,
+      matureOptedIn: opts.optedIn,
+    };
+    auth.caps = opts.exempt ? ['system.admin'] : [];
+    auth.capsStatus = 'resolved';
+  }
+
+  function withStorage(v: string | null) {
+    localStorage.clear();
+    if (v !== null) localStorage.setItem('aa_browse_hide_mature', v);
+    browseView.hydrated = false;
+    browseView.init(null);
+  }
+
+  beforeEach(() => {
+    auth.user = null;
+    auth.caps = [];
+    auth.capsStatus = 'resolved';
+  });
+
+  // ── Class 1: the instance forbids mature content ────────────────────
+  it('offers no row on an install with the feature off, whatever the device stored', () => {
+    // Rung 1 outranks everything below it, INCLUDING the exemption: the
+    // operator's answer is about the install. Driven with the exemption
+    // HELD, so the only thing that can withhold the row is the switch.
+    for (const v of STORAGE) {
+      reader({ allowed: false, optedIn: true, exempt: true });
+      withStorage(v);
+      expect(browseView.matureFilterAvailable, `stored ${v}`).toBe(false);
+      expect(browseView.matureParam, `stored ${v}`).toBeNull();
+    }
+  });
+
+  // ── Class 2: allowed and opted in (unchanged by #1345) ──────────────
+  it('⭐ a reader who opted in still defaults to INCLUDED', () => {
+    // The upgrade property from #1292, and this widening must not move
+    // it: shipping the row changed no wall for a reader who had already
+    // consented.
+    reader({ allowed: true, optedIn: true, exempt: false });
+    withStorage(null);
+    expect(browseView.matureFilterAvailable).toBe(true);
+    expect(browseView.hideMature).toBe(false);
+    expect(browseView.matureParam).toBeNull();
+  });
+
+  it('a reader who opted in honours either stored answer', () => {
+    reader({ allowed: true, optedIn: true, exempt: false });
+    withStorage('1');
+    expect(browseView.hideMature).toBe(true);
+    expect(browseView.matureParam).toBe('not_mature');
+
+    reader({ allowed: true, optedIn: true, exempt: false });
+    withStorage('0');
+    expect(browseView.hideMature).toBe(false);
+    expect(browseView.matureParam).toBeNull();
+  });
+
+  // ── Class 3: allowed, exempt, never opted in (the new class) ────────
+  it('⛔ THE REGRESSION GUARD: an exempt reader who never opted in IS offered the row', () => {
+    // This is the case that fails against the old getter, which read
+    // `matureContentAllowed === true && matureOptedIn === true` and
+    // returned false here — no row, on the one reader the gate sends
+    // mature rows to without a consent.
+    reader({ allowed: true, optedIn: false, exempt: true });
+    withStorage(null);
+    expect(
+      browseView.matureFilterAvailable,
+      'the exemption means rows reach this reader, so a control over them can do something',
+    ).toBe(true);
+  });
+
+  it('⛔ THE REGRESSION GUARD: and it defaults to EXCLUDED for them', () => {
+    // The second half, and it fails against the old getter too — for a
+    // different reason, which is why it is a separate case. A widening
+    // that only flipped `matureFilterAvailable` would leave the default
+    // at INCLUDED and hand a moderator who never consented exactly the
+    // wall they already had, with a tick box that starts on.
+    reader({ allowed: true, optedIn: false, exempt: true });
+    withStorage(null);
+    expect(browseView.hideMature, 'never said yes to anything').toBe(true);
+    expect(browseView.matureParam).toBe('not_mature');
+  });
+
+  it('an exempt reader can turn it off, and that choice SURVIVES A RELOAD', () => {
+    // ⛔ THE HALF A REMOVE-ON-FALSE STORE CANNOT DO. Writing `0` is
+    // what separates "this device chose include" from "this device has
+    // not answered"; without it the class default would re-narrow this
+    // reader's wall on the very next load.
+    reader({ allowed: true, optedIn: false, exempt: true });
+    withStorage(null);
+    expect(browseView.hideMature).toBe(true);
+
+    browseView.setHideMature(false);
+    expect(browseView.hideMature).toBe(false);
+    expect(browseView.matureParam).toBeNull();
+    expect(localStorage.getItem('aa_browse_hide_mature')).toBe('0');
+
+    // The reload.
+    browseView.hydrated = false;
+    browseView.init(null);
+    expect(browseView.hideMature, 'the deliberate include must not be forgotten').toBe(false);
+    expect(browseView.matureParam).toBeNull();
+  });
+
+  it('an exempt reader who stored EXCLUDE keeps excluding', () => {
+    reader({ allowed: true, optedIn: false, exempt: true });
+    withStorage('1');
+    expect(browseView.hideMature).toBe(true);
+    expect(browseView.matureParam).toBe('not_mature');
+  });
+
+  // ── The exemption is the SPECIFIC capability, not "some admin" ──────
+  it('⛔ a read-cap operator is NOT exempt, so the row stays absent', () => {
+    // `canSeeAdmin` is true for a holder of any admin ENTRY capability,
+    // and it is the wrong predicate here: the gate waives the mature
+    // rule for `system.admin` and nothing else, so offering the row to
+    // these accounts would be a control that could never do anything —
+    // the exact failure the cascade exists to prevent.
+    reader({ allowed: true, optedIn: false, exempt: false });
+    auth.caps = ['users.read', 'roles.read', 'teams.read', 'assets.admin'];
+    withStorage(null);
+    expect(browseView.matureExempt).toBe(false);
+    expect(browseView.matureFilterAvailable).toBe(false);
+    expect(browseView.matureParam).toBeNull();
+  });
+
+  it('⛔ unknown rights are NO rights: a caps blip withdraws the row', () => {
+    // `can()` returns false while capsStatus is `unavailable` (#956),
+    // so a resolver failure must not be able to OFFER a control. It
+    // withdraws one instead, which is the safe direction on this axis.
+    reader({ allowed: true, optedIn: false, exempt: true });
+    auth.capsStatus = 'unavailable';
+    withStorage(null);
+    expect(browseView.matureExempt).toBe(false);
+    expect(browseView.matureFilterAvailable).toBe(false);
+  });
+
+  // ── The layers stay separate ────────────────────────────────────────
+  it('⛔ NO path here writes the account preference', () => {
+    // Layer 3 narrows; layer 2 is the consent. An exempt reader ticking
+    // the row has not granted themselves anything, and unticking it has
+    // not revoked their exemption.
+    reader({ allowed: true, optedIn: false, exempt: true });
+    withStorage(null);
+
+    browseView.setHideMature(false);
+    browseView.setHideMature(true);
+
+    expect(auth.user?.matureOptedIn, 'the consent must be untouched').toBe(false);
+    expect(browseView.matureExempt, 'and so must the exemption').toBe(true);
+    // One key, and it is the device's.
+    expect(
+      Object.keys(localStorage).filter((k) => k.includes('mature')),
+      'exactly one storage key, and no user_preferences write',
+    ).toEqual(['aa_browse_hide_mature']);
+  });
+
+  it('⭐ a guest who signs in as a moderator gets the moderator default with no reload', () => {
+    // The class is a property of the SESSION, so the default cannot be
+    // a value frozen at init(). The store hydrates once per page load
+    // and the root layout re-runs the account seed on identity change;
+    // this rung has to answer correctly across that without one.
+    auth.user = null;
+    withStorage(null);
+    expect(browseView.matureFilterAvailable, 'a guest is offered nothing').toBe(false);
+    expect(browseView.matureParam).toBeNull();
+
+    reader({ allowed: true, optedIn: false, exempt: true });
+    expect(browseView.matureFilterAvailable, 'the row appears without a rehydrate').toBe(true);
+    expect(browseView.hideMature, 'and with the moderator default').toBe(true);
     expect(browseView.matureParam).toBe('not_mature');
   });
 });

@@ -179,6 +179,56 @@ hidden behaviour of the search box.
 
 **For anyone adding a control to this page: write the address. Do not fetch.**
 
+#### 3d. A FRESH SEARCH RESETS THE RESULTS REGION — amendment 2026-08-28 (#1298, #1354)
+
+3c decides what a RESTORE does with a stored offset. It is silent on what a **fresh search** does
+with the offset it is leaving behind, and that gap is what #1298 reports: refining a query left the
+reader wherever the browser happened to put them.
+
+**The rule: refining is a new address. The results region resets to its first row; the page chrome
+does not move.**
+
+1. **A refine resets the scroll offset to the top of the results.** The signature changed, so by
+   3c's own logic the old offset was measured against hits that are not coming back. 3c refuses
+   such an offset on a restore; this says a fresh search discards it too, rather than leaving it to
+   the browser.
+2. **Back navigation still restores**, subject to 3c's unchanged signature check. Same address,
+   same signature, restore. That is the case where the standard expectation and the refusal rule do
+   not conflict.
+3. **The reset targets the SCROLLPORT, not the document.** This app never scrolls the window
+   (`web/src/lib/util/scrollport.ts`, #1122), so `window.scrollTo` is the wrong instrument and does
+   nothing at all. `scrollportOf` is the single definition.
+4. **An append is not a refine.** The reader continuing down a list they are already reading keeps
+   their place.
+
+⚠️ **The destination was never DECIDED before this, which is why it varied by machine.** Measured
+on `/search`: six accumulated pages at offset 4511 of a 6088px grid, refined to a 25-hit query,
+landed on **330**, which is exactly `scrollHeight - clientHeight`: the bottom of the new list, with every
+hit the reader had just asked for above the fold. #1298 recorded the other outcome on a taller
+refined wall: Chrome's scroll anchoring re-resolved the offset against reflowed content and landed
+on 0 on one workstation and on 279 (39px FURTHER DOWN than it started) on the CI runner. Neither is
+expressible as `min(before, max)`, and both are legitimate anchoring outcomes. A page that does not
+decide gets whichever one the content happens to produce.
+
+⭐ **The browse wall looked correct without this, and that is an argument FOR stating it.** Measured
+on a 900-card wall at 29457px: refining landed on 0 at 1080p and at 390px. But nothing in the route
+decided that. `items = []` collapses the wall to zero height in the same frame, so `<main>` briefly
+has nothing to scroll and the BROWSER clamps. The landing is correct only while the chrome above
+the wall stays shorter than the viewport, which is a coincidence of the featured rail's height.
+`/search` is the same shape with the coincidence absent, because it swaps its hits in place.
+
+⚠️ **The reset is ordered BEFORE the fetch, not after the results land.** At offset 0 scroll
+anchoring has nothing to compensate, so the swap cannot re-resolve the offset underneath it; a
+reset applied afterwards would be racing the mechanism it is trying to undo. It also makes the
+refine's acknowledgement immediate rather than a jump arriving 100ms later.
+
+⭐ **It also resolves the interaction with infinite scroll (#1354).** `/search` gained the browse
+wall's paging rig in the same sprint, and the hazard `web/src/routes/+page.svelte` documents for
+the restore path is an OFFSET sitting inside the sentinel's lookahead over a one-page list, which
+parks the reader somewhere they never scrolled to. A reset to the top removes the offset, so what
+remains is the loader filling its buffer below a reader who is at the first row: the lookahead
+doing its job, which is what the browse wall has always done after a reset.
+
 #### 4c. THE MATCH ITSELF IS GATED — amendment 2026-08-13 (#902, PR #1063)
 
 §4b gates a *filtered* search. This gates the **match**, and it closes the leak that made #902 the

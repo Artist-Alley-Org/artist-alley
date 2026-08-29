@@ -36,6 +36,25 @@
 // makes them statements about the cascade rather than about a panel
 // that failed to open.
 //
+// # ⭐ RUNG 2 ASKS ABOUT CAPABILITY TO RECEIVE, NOT CONSENT (#1345)
+//
+// ADR 0090's 2026-08-28 amendment. §2 exempts `system.admin` from the
+// mature gate so a moderator can see what the instance switch hid, so
+// rows reach an exempt account regardless of consent and the #1292
+// reason for hiding the control ("it could never do anything") does not
+// hold for them. Rung 2 is therefore `opted in OR exempt`, and the row
+// carries a third default:
+//
+//   instance forbids                  no row
+//   allowed, opted in                 row, defaults INCLUDED (#1292)
+//   allowed, exempt, never opted in   row, defaults EXCLUDED (#1345)
+//
+// ⛔ WHICH IS WHY TWO CASES HERE DRIVE A NON-ADMIN. Every other case in
+// this file runs as the bootstrap admin, and the admin is EXEMPT — so
+// the two cases about a reader the cascade offers no row to had to stop
+// using them, or they would pin the hole #1345 reports instead of the
+// rule. They borrow `rosa.linden` read-only.
+//
 // # The fixture is a PAIR, for the rule-of-two reason
 //
 // One mature post and one plain one, both by the fixture's own author
@@ -57,6 +76,7 @@
 import { test, expect, type Page } from '../../helpers/test';
 import type { APIRequestContext } from '@playwright/test';
 import { loginAsAdminViaAPI, LOGGED_OUT } from '../../helpers/auth';
+import { requireSeededPrincipal, seededPrincipal } from '../../helpers/seeded-principal';
 import { tid } from '../../helpers/testids';
 import { matureContentHold } from '../../helpers/mature-content';
 import { publicModeHold } from '../../helpers/public-mode';
@@ -355,16 +375,127 @@ test.describe('#1292 browse filter menu: the Mature row', () => {
     }
   });
 
-  test('⛔ no row for a reader who has NOT opted in', async ({ page, request }) => {
-    // Rung 2. A control meaning "leave mature out of these results" is
-    // meaningless to a reader who was never going to be shown any: it
-    // could only ever do nothing, and a tickable box that does nothing
-    // is the failure this cascade exists to make unreachable.
+  test('⛔ no row for an UNEXEMPT reader who has not opted in', async ({ browser }) => {
+    // Rung 2, for the reader it was written about. A control meaning
+    // "leave mature out of these results" is meaningless to a reader
+    // who was never going to be shown any: it could only ever do
+    // nothing, and a tickable box that does nothing is the failure this
+    // cascade exists to make unreachable.
+    //
+    // ⛔ THE READER HAS TO BE A NON-ADMIN SINCE #1345, and this case
+    // used to drive the bootstrap admin. That was the defect: the admin
+    // holds the §2 moderation exemption, so rows reach them regardless
+    // of consent, and asserting "no row" for them pinned the hole
+    // rather than the rule. Rung 2 now asks whether the reader can
+    // RECEIVE mature rows, so it is only ABSENCE for a reader who can
+    // do neither — consent-in, nor receive by exemption.
+    //
+    // ⚠️ THIS BORROWS `rosa.linden` READ-ONLY. It signs in, opens a
+    // menu and asserts a row is missing; it writes no preference, no
+    // capability and no content. The account is `Base` (no
+    // `system.admin`) with an empty `mature_content`, which is exactly
+    // the class under test, and its own spec's per-user vocabulary
+    // revoke cannot interact with this axis.
+    const probe = seededPrincipal('rosa.linden');
+    await requireSeededPrincipal(browser, probe.username);
+    const ctx = await browser.newContext({ storageState: LOGGED_OUT });
+    try {
+      const page = await ctx.newPage();
+      await page.goto('/login');
+      await page.locator(tid('login-username')).fill(probe.username);
+      await page.locator(tid('login-password')).fill(probe.password);
+      await page.locator(tid('login-submit')).click();
+      await expect(page).toHaveURL(/\/(?:\?|$)/);
+
+      await gotoFixtureWall(page);
+      await openPanel(page);
+      await expect(matureRow(page), 'absent, never disabled').toHaveCount(0);
+      await expect(aiRow(page), 'the AI row has no cascade').toBeVisible();
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  // -------------------------------------------------------------------
+  // ⭐ #1345: the row renders on CAPABILITY TO RECEIVE, not on consent
+  // -------------------------------------------------------------------
+
+  test('⭐ an EXEMPT reader who never opted in IS offered the row, defaulting to EXCLUDED', async ({
+    page,
+    request,
+  }) => {
+    // ⛔ THIS IS THE REGRESSION GUARD FOR #1345 AND IT FAILS AGAINST THE
+    // OLD CASCADE, which read "instance allows AND account opted in"
+    // and therefore rendered no row here at all.
+    //
+    // ADR 0090 §2 exempts `system.admin` so a moderator can see what
+    // the instance switch hid. That means mature rows reach this reader
+    // regardless of consent, so the #1292 amendment's stated reason for
+    // hiding the control — "it could never do anything" — does not hold
+    // for them, and they were the one class shown mature work with no
+    // way to stop.
+    //
+    // The default is EXCLUDED because this reader has never said yes to
+    // anything. It is a per-view default, not a refusal: the untick
+    // below gets them the unfiltered wall in one click.
     await setOptIn(request, false);
+
+    // The device must have no stored answer, or this asserts the stored
+    // value rather than the CLASS DEFAULT, which is the new decision.
+    await page.goto('/');
+    await page.evaluate(() => localStorage.removeItem('aa_browse_hide_mature'));
+
     await gotoFixtureWall(page);
+
+    // ⭐ THE WALL IS NARROWED BY DEFAULT. Asserted as a PAIR: the mature
+    // fixture is gone AND the plain one survives, or "the filter
+    // worked" would also pass on a predicate that emptied the wall.
+    const ids = await wallIds(page);
+    expect(ids, 'the moderator default must leave mature work out').not.toContain(matureId);
+    expect(ids, 'and must not be an outage').toContain(plainId);
+
+    // The row is there, and it is UNTICKED — every tick in this menu
+    // means SHOW since #1292, so "excluded" renders as an empty box.
     await openPanel(page);
-    await expect(matureRow(page)).toHaveCount(0);
-    await expect(aiRow(page)).toBeVisible();
+    await expect(matureRow(page), 'the exemption earns the control').toHaveCount(1);
+    await expect(matureRow(page), 'and it rests EXCLUDED for this class').not.toBeChecked();
+    await page.keyboard.press('Escape');
+
+    // ⛔ AND IT NEVER CONSENTED. Ticking it is not a grant and the
+    // account preference is untouched by any of this.
+    const prefs = await readPrefs(request);
+    expect(
+      (prefs.mature_content as { show?: boolean } | undefined)?.show ?? false,
+      'layer 3 must not write layer 2',
+    ).toBe(false);
+
+    // One click gets the moderator the unfiltered wall, which is what
+    // makes this a default rather than a refusal.
+    //
+    // ⚠️ POLLED, NOT READ ONCE. Apply changes `matureParam`, which is a
+    // component of the browse wall's feedKey, so the wall empties and
+    // refetches (and, since #1298, resets to its first row). A single
+    // read here races that refetch and sees the empty wall — which is
+    // what the first version of this case did.
+    await setExcludeMature(page, false);
+    await expect
+      .poll(async () => await wallIds(page), {
+        message: 'a moderator has to be able to see what they are moderating',
+      })
+      .toContain(matureId);
+
+    // ⭐ AND THE CHOICE SURVIVES A RELOAD. This is the half a
+    // remove-the-key-on-false store cannot do: without an explicit `0`
+    // the class default would re-narrow the wall on the next load and
+    // the control would visibly forget.
+    await gotoFixtureWall(page);
+    await expect
+      .poll(async () => await wallIds(page), {
+        message: 'the deliberate include must outlive the reload',
+      })
+      .toContain(matureId);
+
+    await page.evaluate(() => localStorage.removeItem('aa_browse_hide_mature'));
   });
 
   test('⛔ no row when the INSTANCE forbids mature content', async ({ page, request }) => {
@@ -487,66 +618,72 @@ test.describe('#1292 browse filter menu: the Mature row', () => {
   // -------------------------------------------------------------------
 
   test('⛔ a stored flag does NOTHING once the cascade withdraws the row', async ({
-    page,
-    request,
+    browser,
   }) => {
-    // The device keeps the flag; the reader loses the consent. The
-    // filter must then be as if it were never set, and this asserts it
-    // in the only way that cannot go vacuous: the SAME wall, with the
-    // stored flag both ways, and no `mature=` on any request.
+    // The device keeps the flag; the reader is one the cascade offers
+    // no row to. The filter must then be as if it were never set, and
+    // this asserts it in the only way that cannot go vacuous: the SAME
+    // wall, with the stored flag both ways, and no `mature=` on any
+    // request.
     //
-    // ⚠️ THE READER HERE IS AN ADMIN, and that is why this case asserts
-    // an EQUALITY rather than "the mature post is gone". `system.admin`
-    // is EXEMPT from the mature gate (ADR 0090 §2, so a moderator can
-    // see what the instance switch hid), so an opted-out admin is still
-    // shown mature rows. The first draft of this case asserted the post
-    // was absent and failed against the shipped exemption, which is the
-    // single-arm test passing on a premise nobody checked.
+    // ⛔ THE READER IS AN UNEXEMPT NON-ADMIN, AND SINCE #1345 IT HAS TO
+    // BE. This case used to drive the bootstrap admin with the opt-in
+    // turned off, on the theory that withdrawing consent withdrew the
+    // row. It does not any more: `system.admin` holds the §2 exemption,
+    // so that reader now KEEPS the row and their stored flag goes on
+    // meaning something. Driving it as an admin would assert the
+    // opposite of the rule.
     //
-    // ⛔ WHICH LEAVES A REAL GAP, recorded rather than pinned: an admin
-    // who has not opted in is shown mature work and is offered no row
-    // to filter it, because the cascade asks about CONSENT and the gate
-    // exempts them from needing any. Widening the row to them is a
-    // product decision about a case ADR 0090's amendment does not name.
-    // This case therefore asserts only what IS decided: the view filter
-    // cannot act without the row, in either direction.
-    await setOptIn(request, true);
-    await gotoFixtureWall(page);
-    await setExcludeMature(page, true);
+    // ⚠️ `rosa.linden`, read-only, for the reason given on the rung-2
+    // case above: sign in, set a device key, read a wall, put the key
+    // back. No preference, capability or content is written.
+    const probe = seededPrincipal('rosa.linden');
+    await requireSeededPrincipal(browser, probe.username);
+    const ctx = await browser.newContext({ storageState: LOGGED_OUT });
+    try {
+      const page = await ctx.newPage();
+      await page.goto('/login');
+      await page.locator(tid('login-username')).fill(probe.username);
+      await page.locator(tid('login-password')).fill(probe.password);
+      await page.locator(tid('login-submit')).click();
+      await expect(page).toHaveURL(/\/(?:\?|$)/);
 
-    await setOptIn(request, false);
-    const walls: string[] = [];
-    for (const stored of ['1', null]) {
-      const sent: string[] = [];
-      page.on('request', (r) => {
-        if (r.url().includes('/api/v1/posts?')) sent.push(r.url());
-      });
-      await page.evaluate((v) => {
-        if (v === null) localStorage.removeItem('aa_browse_hide_mature');
-        else localStorage.setItem('aa_browse_hide_mature', v);
-      }, stored);
-      await gotoFixtureWall(page);
+      const walls: string[] = [];
+      // All THREE storage states, because the key is tri-state since
+      // #1345 and `0` is now a value it writes rather than junk. None
+      // of them may reach the request.
+      for (const stored of ['1', '0', null]) {
+        const sent: string[] = [];
+        page.on('request', (r) => {
+          if (r.url().includes('/api/v1/posts?')) sent.push(r.url());
+        });
+        await page.evaluate((v) => {
+          if (v === null) localStorage.removeItem('aa_browse_hide_mature');
+          else localStorage.setItem('aa_browse_hide_mature', v);
+        }, stored);
+        await gotoFixtureWall(page);
+
+        expect(
+          sent.filter((u) => u.includes('mature=')),
+          `stored flag ${JSON.stringify(stored)}: the request must not carry a filter the ` +
+            'menu is no longer offering a control for',
+        ).toEqual([]);
+
+        await openPanel(page);
+        await expect(matureRow(page), 'and there is no row to act through').toHaveCount(0);
+        await page.keyboard.press('Escape');
+
+        walls.push((await wallIds(page)).sort().join(','));
+        page.removeAllListeners('request');
+      }
 
       expect(
-        sent.filter((u) => u.includes('mature=')),
-        `stored flag ${JSON.stringify(stored)}: the request must not carry a filter the ` +
-          'menu is no longer offering a control for',
-      ).toEqual([]);
-
-      await openPanel(page);
-      await expect(matureRow(page), 'and there is no row to act through').toHaveCount(0);
-      await page.keyboard.press('Escape');
-
-      walls.push((await wallIds(page)).sort().join(','));
-      page.removeAllListeners('request');
+        new Set(walls).size,
+        'a stored flag changed the wall for a reader the cascade offers no row to',
+      ).toBe(1);
+    } finally {
+      await ctx.close();
     }
-
-    expect(
-      walls[0],
-      'the stored flag changed the wall for a reader the cascade no longer offers the row to',
-    ).toBe(walls[1]);
-
-    await page.evaluate(() => localStorage.removeItem('aa_browse_hide_mature'));
   });
 
   // -------------------------------------------------------------------
