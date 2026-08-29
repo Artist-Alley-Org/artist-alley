@@ -106,6 +106,15 @@ where applicable, otherwise note "no-spec-impact."
   merging two leaves a permanent marker so the old name keeps resolving instead of vanishing
   (#789, PR #1228).
 
+- **Search results now load as you scroll.** Reaching the end of `/search` used to mean clicking
+  "Load more" for every page, while the browse wall had pulled the next page in automatically for
+  some time. Both surfaces now share one paging mechanism, and the amount fetched ahead is measured
+  against the actual scrolling area rather than a fixed guess (#1354, PR #1355).
+
+- **A post's cover picture keeps its focal point.** Choosing which part of a wide or tall image
+  shows in a card is now saved with the post, so the framing survives a reload and follows the
+  picture wherever the card is drawn (#1210, PR #1332).
+
 ### Changed
 
 - **Collections hold posts, not loose files.** Dropping a file into a collection used to publish
@@ -205,7 +214,50 @@ where applicable, otherwise note "no-spec-impact."
   URLs in the contributing guide and issue templates, and the bootstrap script still provisioned
   a database and language stack this project no longer uses (#1093, #996, PR #1226).
 
+- **The browse filter menu's "Hide" section is now a "Content" category.** AI-made work and mature
+  content sit as ordinary rows alongside everything else, and a ticked box means show rather than
+  hide, which is what every other row in the menu already meant. Where an instance does not permit
+  mature content, the row is absent rather than shown disabled (#1292, PR #1343).
+
+- **Moderators can filter mature content they never opted into.** An administrator is shown mature
+  work so they can moderate it, but until now was offered no way to leave it out of a view. The
+  filter row now appears for anyone who can actually receive those rows, not only for those who
+  opted in, and for a moderator who never opted in it starts switched on. Turning it off grants
+  nothing and turning it on revokes nothing: it only narrows what a given view shows (#1345,
+  PR #1355).
+
+- **Refining a search no longer strands you mid-list.** Changing a query used to replace every
+  result while leaving the page scrolled where it was, which could drop you at the bottom of a
+  shorter list. The results now return to their first row while the search field and filters stay
+  put, and going back to a previous search still restores where you were (#1298, PR #1355).
+
+- **Changing a cover picture no longer keeps the old framing.** Swapping the image left the
+  previously saved focal point in place, so the crop pointed at part of a picture that was no
+  longer there (#1333, PR #1337).
+
+- **The interface calls the product Artist Alley.** Four strings used the repository slug as
+  though it were the name, and the README never used the name at all (#1326, PR #1337).
+
+- **Live interface copy reads more plainly.** 143 strings, including empty states and error
+  messages, carried punctuation that made them read as machine-written (#1307, PR #1337).
+
+- **The cover picker's warning tells the truth.** Whether an image is visible to signed-out
+  visitors is now reported by the server rather than guessed by the browser, so the warning shown
+  when picking a cover reflects what people will actually see (#1209, PR #1332).
+
 ### Internal
+
+- **A green test run now accounts for every test.** The browser suite summed "skipped" and "never
+  attempted" into one figure, so a cascade of tests that never ran read as a handful of deliberate
+  skips. The two are now separate, and a test that removes itself from a run without being declared
+  fails the run outright. That gate immediately caught a new test covering search paging that had
+  quietly excluded itself on CI while passing locally (#1348, #1344, PR #1350).
+
+- **Two test-harness counters that disagreed now reconcile.** One counted successful API calls and
+  the other counted database rows, and nothing had ever compared the two, so a create that returned
+  an existing record and a delete that removed nothing both went unnoticed. They are now checked
+  against each other on every run and disagreement fails it (#1351, PR #1361).
+
 
 - **Browse's tag and visibility filters joined the shared machinery.** Same convergence as the
   type filter before them, deleting a duplicated tag predicate; the wall's results are unchanged,
