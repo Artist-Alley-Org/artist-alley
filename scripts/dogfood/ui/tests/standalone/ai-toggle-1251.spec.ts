@@ -105,6 +105,7 @@ import type { APIRequestContext } from '@playwright/test';
 import { loginAsAdminViaAPI, LOGGED_OUT } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
 import { publicModeHold } from '../../helpers/public-mode';
+import { includeMatureOnThisDevice } from '../../helpers/mature-content';
 
 /** A token that appears in every fixture title and nowhere in the seed,
  *  so `/?q=<TOKEN>` renders a wall of exactly these three posts. Reading
@@ -267,6 +268,18 @@ async function gotoFixtureWall(page: Page) {
 }
 
 test.describe('#1251 browse footer — hide AI-made work', () => {
+  // ⛔ THE MATURE AXIS IS MADE INERT FOR THIS FILE (#1345). The bootstrap
+  // admin every spec here signs in as holds the ADR 0090 §2 moderation
+  // exemption and has never opted in, so their resting browse wall is
+  // mature-filtered by default and the filter button honestly reports a
+  // narrowing. This file is about a different axis, so it states that
+  // assumption rather than inheriting whatever the account holds.
+  // See includeMatureOnThisDevice: device key, no lock, contends with
+  // nothing.
+  test.beforeEach(async ({ page }) => {
+    await includeMatureOnThisDevice(page);
+  });
+
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async ({ request }) => {

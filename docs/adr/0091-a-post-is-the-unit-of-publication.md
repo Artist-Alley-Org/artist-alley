@@ -358,7 +358,7 @@ rows three subsystems read:
    preserving score order, inside one transaction, with `membership = 'manual'`. The collection is
    a static snapshot and always has been.
 
-⚠️ **And Phase 1.16.B-4 does exist** — it shipped as the `saved_search` table, `/account/saved-searches`
+⚠️ **And Phase 1.16.B-4 does exist.** It shipped as the `saved_search` table, `/account/saved-searches`
 and an email-on-match notifier. It simply was never built on `collections.smart_query`. That is the
 real reason the column has no consumer: the saved-search feature grew its own table, and this column
 was left advertising a role that had been filled elsewhere.
@@ -380,7 +380,7 @@ search produced this set, for display and for a "refresh from the original searc
 invokes deliberately. It is not an input to any read path, and nothing may make it one.
 
 ⭐ **Where this beats the prior art.** Every mature DAM offers static albums and smart/dynamic
-albums as two distinct things, distinguished at creation — Lightroom, Photo Supreme, Apple Photos.
+albums as two distinct things, distinguished at creation: Lightroom, Photo Supreme, Apple Photos.
 ResourceSpace is the cautionary case: it has no `saved_search` table, and a saved search is a
 *property* of a collection (`$allow_smart_collections`, `search.php:591`), so an RS collection is
 sometimes a set and sometimes a query and a reader of `collection_resource` cannot tell which it is

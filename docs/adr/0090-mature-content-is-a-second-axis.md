@@ -241,7 +241,7 @@ consented; it could never do anything"*.
 ⭐ **Both rules are right, and together they left a hole.** §2 exempts owner and `system.admin`
 from the mature disqualification, *"a deliberate asymmetry rather than a convenience"*, so a
 moderator can see what the instance switch hid. **That means rows reach an exempt account
-regardless of consent — so the stated reason for hiding the control does not hold for them.** The
+regardless of consent, so the stated reason for hiding the control does not hold for them.** The
 one class of reader shown mature content without opting in was the one class offered no way to stop
 seeing it. Found by sprint 16b (#1343) when its own test failed against the real exemption.
 
@@ -267,7 +267,7 @@ population: trust-and-safety guidance treats it as a cost to be reduced, not a p
 role, and no surveyed platform makes *"you are permitted to review this"* imply *"you will be shown
 this by default"*. Personal moderation is modelled elsewhere as a layer separate from platform-wide
 moderation that only ever narrows what the viewer receives (Jhaver et al., *Personalizing Content
-Moderation on Social Media*, CSCW 2023, `10.1145/3610080`) — which is what layer 3 already is.
+Moderation on Social Media*, CSCW 2023, `10.1145/3610080`), which is what layer 3 already is.
 
 It is a **per-view default, not a refusal**. One click gets an exempt reader the unfiltered wall
 when they are actually moderating.
@@ -283,7 +283,7 @@ exemption. There is still no "include" value on the wire, and nothing here write
 reasoning that "included" is the one default and a stored false is a key that says nothing. With
 two defaults that reasoning fails in both directions: an absent key can no longer mean one thing,
 and removing the key on an explicit *include* would erase an exempt moderator's deliberate choice
-and re-narrow their wall on the next load — a control that visibly forgets.
+and re-narrow their wall on the next load: a control that visibly forgets.
 
 So the key now stores `1` for an explicit exclude, `0` for an explicit include, and **no key** is
 the only spelling of "this device has not answered", which is the `local ?? class default` contract
@@ -295,11 +295,11 @@ exclude, so nothing stored had to move.
 `auth.can('system.admin')`, which mirrors ONE server predicate: `posts.Handler.ListPosts` passes
 `MatureAdmin: caller.Can(auth.SuperAdminCapability)` and `visibility.MatureItemVisible` waives the
 qualification on exactly that flag. Not `canSeeAdmin`, which is the wider "may open some admin
-surface" set and would offer the row to read-cap operators the gate does not exempt — a control that
+surface" set and would offer the row to read-cap operators the gate does not exempt: a control that
 could never do anything, which is the failure this cascade exists to prevent.
 
-⚠️ **The OWNER half of the §2 exemption is deliberately not part of this.** It is per ROW — an
-artist sees their own work — so it cannot be a property of the reader, and a browse wall is not a
+⚠️ **The OWNER half of the §2 exemption is deliberately not part of this.** It is per ROW (an
+artist sees their own work), so it cannot be a property of the reader, and a browse wall is not a
 question about one item. `MatureFilterSQL` evaluates it per row for the same reason.
 
 ⭐ **No server change was needed, and that is a property of the existing design rather than luck.**

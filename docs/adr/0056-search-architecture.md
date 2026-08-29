@@ -203,7 +203,7 @@ does not move.**
 
 ⚠️ **The destination was never DECIDED before this, which is why it varied by machine.** Measured
 on `/search`: six accumulated pages at offset 4511 of a 6088px grid, refined to a 25-hit query,
-landed on **330 — exactly `scrollHeight - clientHeight`**, the bottom of the new list, with every
+landed on **330**, which is exactly `scrollHeight - clientHeight`: the bottom of the new list, with every
 hit the reader had just asked for above the fold. #1298 recorded the other outcome on a taller
 refined wall: Chrome's scroll anchoring re-resolved the offset against reflowed content and landed
 on 0 on one workstation and on 279 (39px FURTHER DOWN than it started) on the CI runner. Neither is

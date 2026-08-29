@@ -96,3 +96,53 @@ export function matureContentHold(owner: string): MatureContentHold {
     },
   };
 }
+
+/** The browse menu's Mature row is ADR 0090's layer 3, and it is stored
+ *  per DEVICE (`aa_browse_hide_mature`). This pins it to "include" for
+ *  one browser context, so a spec about some OTHER axis is not reading
+ *  a wall the mature axis narrowed underneath it.
+ *
+ *  # ⛔ WHY ANY SPEC NEEDS THIS AT ALL (#1345)
+ *
+ *  ADR 0090 §2 exempts `system.admin` from the mature gate so a
+ *  moderator can see what the instance switch hid, and the 2026-08-28
+ *  amendment gives that reader the view control they previously lacked
+ *  — defaulting to EXCLUDED, because they never consented to anything.
+ *
+ *  ⚠️ THE BOOTSTRAP ADMIN IS EXACTLY THAT READER ON A FRESH DATABASE,
+ *  which is what CI is on every run, and it is the identity nearly every
+ *  spec in this suite signs in as. So the resting browse wall for the
+ *  suite's own account is now mature-filtered, and the filter button
+ *  honestly reports a narrowing. Three specs asserted "nothing is
+ *  hidden, so every box rests ticked and the button is inactive" — true
+ *  only while the mature axis happened to be inert for that account.
+ *
+ *  ⛔ SO THE ASSUMPTION IS STATED, NOT INHERITED. A spec about the type
+ *  filter or the AI row makes the third axis explicitly inert instead of
+ *  depending on what the account's preferences happen to hold.
+ *
+ *  ⭐ AND IT IS THE DEVICE KEY RATHER THAN THE ACCOUNT OPT-IN, which is
+ *  what keeps this safe to call from any file. The opt-in is one shared
+ *  row on the account every worker signs in as — a second writer would
+ *  race mature-row-1292's own restore. localStorage is per browser
+ *  context, so this contends with nothing and needs no lock.
+ *
+ *  `'0'` is an explicit include and is meaningful only because #1345
+ *  made the key tri-state; before that, "no narrowing" was spelled by
+ *  REMOVING the key, which is now "no local choice" and would hand the
+ *  reader their class default right back.
+ *
+ *  An init script rather than a one-off `evaluate`, so it survives every
+ *  navigation the spec makes — the store reads the key once, at init.
+ */
+export async function includeMatureOnThisDevice(page: {
+  addInitScript(script: string | (() => void)): Promise<void>;
+}): Promise<void> {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('aa_browse_hide_mature', '0');
+    } catch {
+      /* a context with storage disabled has no narrowing to undo */
+    }
+  });
+}
