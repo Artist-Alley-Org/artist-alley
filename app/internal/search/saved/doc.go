@@ -14,6 +14,17 @@
 //     layer, not this package — Store is oblivious to caller
 //     identity so tests can drive it directly.
 //
+//     ⭐ WHAT A ROW STORES IS THE WHOLE QUERY (#1368). `dsl` is one
+//     canonical string carrying the caller's expression as a single
+//     parenthesised operand conjuncted with their facet selection, and
+//     there is deliberately no second filter column: two authoritative
+//     forms of one query would need a merge rule and a precedence
+//     answer. The create endpoint takes the selection as the ordinary
+//     `dimension:value` tokens every other surface uses and composes the
+//     string via search.ComposeDSL. Before that, the expression was the
+//     only thing that travelled and every saved search replayed WIDER
+//     than the page it was saved from.
+//
 //  2. Execute + Delta: parses the stored DSL string, compiles
 //     via the shared dsl package, resolves any similar_to:<uuid>
 //     anchor via the vector.Fetcher (B-3), runs the query

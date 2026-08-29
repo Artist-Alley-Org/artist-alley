@@ -15,7 +15,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/search"
 	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
+	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 )
 
 // Handler wires the CRUD HTTP endpoints. Owner-check happens in
@@ -47,10 +49,37 @@ func (h *Handler) Mount(r chi.Router) {
 // --- create ---------------------------------------------------------------
 
 type createRequest struct {
-	Name                  string `json:"name"`
-	DSL                   string `json:"dsl"`
-	NotifyChannel         string `json:"notify_channel"`
-	NotifyIntervalMinutes int    `json:"notify_interval_minutes"`
+	Name string `json:"name"`
+	// DSL is the QUERY EXPRESSION the caller had on screen: their typed
+	// text, or the advanced panel's hand-written DSL. It is not the whole
+	// query — see Filters.
+	DSL string `json:"dsl"`
+	// Filters is the active facet selection, in the same
+	// `dimension:value` wire form every GET surface takes and the same
+	// form the SIBLING BUTTON on that page already posts (#907's
+	// save-as-collection). #1368.
+	//
+	// # ⛔ WHY THE SELECTION TRAVELS AS TOKENS AND IS SERIALISED HERE
+	//
+	// The stored query stays ONE canonical DSL string — there is no
+	// second persisted representation, no merge rule and no precedence
+	// question. What arrives on the wire is a different matter, and it
+	// is these tokens rather than a DSL string the browser assembled,
+	// for a reason facet.ParseSelection already wrote down when it
+	// REJECTED `dsl=` as the rail's wire shape: "the frontend would have
+	// to splice UI state into a hand-written query string, re-quoting
+	// values that contain a space or a colon". A browser-side quoter is
+	// a SECOND implementation of the lexer's grammar, in a language that
+	// cannot derive it from the lexer, which is precisely the shape ADR
+	// 0093 decision 3 refuses. So the tokens travel and [search.ComposeDSL]
+	// — one implementation, beside the lexer whose rules it satisfies —
+	// writes the canonical string that lands in the column.
+	//
+	// A save with no filters posts an empty list and stores exactly what
+	// it stored before.
+	Filters               []string `json:"filters"`
+	NotifyChannel         string   `json:"notify_channel"`
+	NotifyIntervalMinutes int      `json:"notify_interval_minutes"`
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +93,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_body"})
 		return
 	}
-	if req.Name == "" || req.DSL == "" {
+	// #1368 — a query is an expression, a selection, or both. It used to
+	// be "expression required", which was correct while the selection had
+	// nowhere to travel and is wrong now that it does: `filter=tag:sketch`
+	// with no typed text is a complete, runnable search on /search, so
+	// refusing to save it would be this endpoint disagreeing with the page
+	// its button sits on.
+	if req.Name == "" || (req.DSL == "" && len(req.Filters) == 0) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name_and_dsl_required"})
 		return
 	}
@@ -74,17 +109,42 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if req.NotifyIntervalMinutes <= 0 {
 		req.NotifyIntervalMinutes = 60
 	}
-	// Validate the DSL now so an unparseable query never lands in
-	// the table + wedges the coordinator later.
-	if _, err := dsl.Parse(req.DSL); err != nil {
+	// #1368 — compose the ONE canonical query that gets stored: the
+	// caller's expression as a single parenthesised operand, conjuncted
+	// with their active selection. Rejecting an unparseable selection
+	// here is what stops a saved search from being persisted WIDER than
+	// the page it was saved from, which is the defect this issue is.
+	selection, err := facet.ParseSelection(req.Filters)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_filter"})
+		return
+	}
+	canonical, err := search.ComposeDSL(req.DSL, selection)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "filter_not_representable", "message": err.Error()})
+		return
+	}
+	// Validate the composed DSL now so an unparseable query never lands
+	// in the table + wedges the coordinator later. ⛔ The COMPOSED string,
+	// not the caller's expression: the stored value is what the executor
+	// will parse, and validating the half of it that was posted would
+	// leave the other half unchecked.
+	if _, err := dsl.Parse(canonical); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "dsl_parse_error", "message": err.Error()})
+		return
+	}
+	// ComposeDSL trims, so a body carrying only whitespace reaches here
+	// as the empty string — which the column forbids and the coordinator
+	// could not run.
+	if canonical == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name_and_dsl_required"})
 		return
 	}
 
 	row, err := h.Store.Create(r.Context(), CreateParams{
 		OwnerUserRef:          id.UserRef,
 		Name:                  req.Name,
-		DSL:                   req.DSL,
+		DSL:                   canonical,
 		NotifyChannel:         req.NotifyChannel,
 		NotifyIntervalMinutes: req.NotifyIntervalMinutes,
 	})

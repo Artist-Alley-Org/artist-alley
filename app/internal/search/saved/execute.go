@@ -89,6 +89,17 @@ func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, fmt.Errorf("saved.Execute: compile dsl: %w", err)
 	}
+	// #1368 — the stored DSL is now the WHOLE query, filters included, so
+	// this conversion is what makes a replay narrow the way the page it
+	// was saved from narrowed. It can reject (a `field:` bound that is not
+	// a date), which is a stored row that cannot run rather than a
+	// transient failure — surfaced as an error so the coordinator logs it
+	// instead of quietly running the query WITHOUT the filter it could not
+	// read, which is the exact widening this issue is about.
+	selection, err := search.SelectionFromDSL(compiled.Filters, facet.Selection{})
+	if err != nil {
+		return RunResult{}, fmt.Errorf("saved.Execute: filters: %w", err)
+	}
 
 	// Build the Engine.Query with the owner as caller so
 	// visibility.Filter gates on the owner's effective view.
@@ -116,7 +127,13 @@ func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
 	matureViewer := visibility.ResolveMatureOr(ctx, e.matureResolver, ownerCaller)
 
 	query := search.Query{
-		Text:          row.DSL, // BM25 path uses the raw text if compiled tsQuery is empty (similar_to-only)
+		// ⛔ THE COMPILED FREE TEXT, NOT THE STORED DSL STRING (#1368).
+		// This used to be `row.DSL`, which was harmless only while the
+		// save path stored a bare phrase: the moment a saved query
+		// carries `(cat) AND extension:png`, handing the whole string to
+		// plainto_tsquery makes `extension` and `png` words the asset has
+		// to CONTAIN. See [dsl.CompiledQuery.FreeText].
+		Text:          compiled.FreeText,
 		Types:         []search.HitType{search.HitTypeAsset},
 		Limit:         limit,
 		CallerUserRef: &owner,
@@ -125,7 +142,7 @@ func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
 		// `tag:foo` would run WIDER than the /search?dsl=tag:foo it was
 		// saved from, and the owner would be emailed hits their own
 		// search does not return.
-		Filters: search.SelectionFromDSL(compiled.Filters, facet.Selection{}),
+		Filters: selection,
 		// The owner's mature axis (#1147). Caps stay at the zero value
 		// here — see anchorVisibleToOwner for why a background job
 		// resolves no capabilities — so the system.admin waiver inside
@@ -134,12 +151,10 @@ func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
 		// direction a timer-driven job should be wrong in.
 		Mature: matureViewer,
 	}
-	if compiled.TSQuery == "" {
-		// Pure similar_to or all-filter DSL — nothing for the
-		// BM25 path. Empty text keeps the Engine on the vector
-		// path exclusively.
-		query.Text = ""
-	}
+	// A pure similar_to or all-filter DSL contributes no free text, so
+	// Text is already empty and the Engine stays off the BM25 path. The
+	// explicit reset this replaced read `compiled.TSQuery == ""`, which
+	// was the same question asked of a value nothing executes.
 
 	// Resolve similar_to:<uuid> to an anchor embedding via the
 	// vector.Fetcher — same path the interactive /search?dsl=

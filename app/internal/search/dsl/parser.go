@@ -26,6 +26,19 @@ const (
 	FieldSensitivity Field = "sensitivity" // public / team / restricted / embargo
 	FieldExtension   Field = "extension"
 	FieldSimilarTo   Field = "similar_to" // reserved — compilation returns 501
+	// FieldField is the `field:` dimension — the FAMILY of
+	// operator-defined metadata fields (ADR 0092 / #1165), carried as one
+	// opaque `code<op>value` token exactly as the `filter=field:…` wire
+	// form carries it.
+	//
+	// ⛔ THE VALUE IS NOT PARSED HERE, deliberately. [facet.SplitFieldTerm]
+	// and [facet.FacetType.CanonicalValue] are the single authority for
+	// what a field code and an operator mean; a second reading in this
+	// package is the "two implementations that agree today" shape ADR 0093
+	// decision 3 refuses, and it is what would let a date bound canonicalise
+	// one way on the rail and another way in a saved query. So the compiler
+	// carries the token whole and the facet layer decides what it says.
+	FieldField Field = "field"
 )
 
 // AllFields is the whitelist. Exposed so error responses can list
@@ -33,6 +46,7 @@ const (
 var AllFields = []Field{
 	FieldTitle, FieldDescription, FieldBody, FieldTag, FieldOwner,
 	FieldType, FieldSensitivity, FieldExtension, FieldSimilarTo,
+	FieldField,
 }
 
 // ParseField normalises a case-insensitive identifier to its
@@ -58,6 +72,8 @@ func ParseField(s string) (Field, bool) {
 		return FieldExtension, true
 	case "similar_to", "similarto":
 		return FieldSimilarTo, true
+	case "field":
+		return FieldField, true
 	}
 	return "", false
 }

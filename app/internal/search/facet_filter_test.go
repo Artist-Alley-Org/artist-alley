@@ -160,7 +160,10 @@ func TestSelectionFromDSL_MatchesTheRail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	fromDSL := SelectionFromDSL(compiled.Filters, facet.Selection{})
+	fromDSL, err := SelectionFromDSL(compiled.Filters, facet.Selection{})
+	if err != nil {
+		t.Fatalf("SelectionFromDSL: %v", err)
+	}
 	fromRail, err := facet.ParseSelection([]string{
 		"tag:sketch", "owner:alice", "asset_type:Image", "sensitivity:public", "extension:png",
 	})
@@ -174,8 +177,8 @@ func TestSelectionFromDSL_MatchesTheRail(t *testing.T) {
 	// The owner regression this conversion exists to close: `owner:alice`
 	// used to be parsed with fmt.Sscanf("%d") into a *int64, fail, and
 	// vanish into an unexported field — no filter at all.
-	if compiled.Filters.Owner != "alice" {
-		t.Errorf("owner filter = %q, want %q", compiled.Filters.Owner, "alice")
+	if got := compiled.Filters.Owners; len(got) != 1 || got[0] != "alice" {
+		t.Errorf("owner filter = %v, want [alice]", got)
 	}
 }
 

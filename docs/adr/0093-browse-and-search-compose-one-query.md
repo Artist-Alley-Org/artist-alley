@@ -198,3 +198,114 @@ predicates, so they do not need a `RenderContext` — but any *future* dimension
 the same refusal, and the no-probe assertion must be carried onto **every** surface the dimension
 reaches, not just the one that motivated it. Slice 1 added `search/kind_filter_test.go` for exactly
 that reason.
+
+## Amendment, 2026-08-29, after #1368 (sprint 18a)
+
+Decision 3 says a filter is defined once. This amendment says what "once" means when the
+query has to be **written down and read back**, because a saved search is exactly that, and
+until now it could not be.
+
+**The defect it was written for.** A reader narrowed a search on the rail, saved it, and the
+saved search replayed **wider**: every facet filter was silently dropped, so the digest they
+were emailed contained hits their own search excludes. The bridge that folds a compiled DSL
+into a `facet.Selection` had been built and documented for this exact case; the save path
+never fed it, because the query expression was the only thing that travelled.
+
+### 1. The canonical serialization, and the contract it establishes
+
+A `facet.Selection` now has a canonical DSL spelling: every term written **exactly once**,
+sorted by (field, value) so a set has one string, values quoted by a rule **derived from the
+lexer** rather than from a list of characters. That last part is decision 3 applied to the
+serializer itself. A hand-listed set of delimiters is a second copy of the word-run grammar,
+so the serializer instead lexes its own candidate token and keeps it bare only when one
+`TokWord` carrying the original bytes comes back. Whatever the lexer starts treating specially
+next is covered on the day it changes.
+
+> **Every constraint present in a savable interactive search is represented exactly once in
+> canonical DSL and reconstructs the same effective `facet.Selection` when replayed.**
+
+⛔ **The guarantee is `Selection -> DSL -> Selection`, and NOT arbitrary boolean-DSL
+equivalence.** The compiler flattens filter terms into one set regardless of the `AND` / `OR`
+they were written in, so `extension:png OR extension:jpg` and the same pair under `AND` compile
+identically. That is not a defect being papered over: it is structurally the shape a Selection
+holds, where combination is a property of the **dimension** (the 2026-08-20 amendment above)
+rather than of the syntax. A hand-written boolean expression over filters is not something the
+round trip promises to preserve, and nothing should be built as though it were.
+
+### 2. The per-dimension classification, stated because the code had it wrong
+
+The 2026-08-20 amendment wrote down how multiple terms combine. It did not write down which
+dimensions can *carry* multiple terms, and four of them could not: `owner`, `sensitivity`,
+`asset_type` and `extension` were plain assignments in the compiler, so `extension:png AND
+extension:jpg` compiled to `jpg` and lost the first term with no error and no log line. The rail
+lets a reader tick both and the facet layer ORs them, so *singular right, plural wrong* was
+reachable from a click.
+
+| dimension | multiplicity | combination |
+| --- | --- | --- |
+| `tag` | many | **AND**: the entity carries every tag asked for |
+| `extension`, `sensitivity`, `asset_type`, `owner` | many | **OR**: one value per entity, so AND is unsatisfiable |
+| `field` | many, a **family** of logical dimensions | (code, operator) sub-groups: same code + same op OR, otherwise AND |
+
+`field:` values stay **opaque `code<op>value` tokens** through the DSL. `SplitFieldTerm` and
+`CanonicalValue` remain the single authority for what a code and an operator mean, for the same
+reason `facet/selection.go` gives for re-splitting rather than threading: one parse function with
+one set of rules keeps grouping and rendering from disagreeing. The consequence is that a future
+operator needs **no DSL change at all**.
+
+⛔ **A dimension the DSL cannot spell is a refusal, never a drop.** `ai`, `kind`, `collection`
+and `visibility` are registered and have no savable producer; if one reaches the serializer the
+save fails loudly. Silently omitting a ticked term would persist a query wider than the page it
+came from, which is this issue again with a different dimension.
+
+### 3. The composition rule: the expression is ONE parenthesised operand
+
+`AND` binds tighter than `OR` in this grammar, so conjuncting a filter onto a saved expression
+by appending it re-associates every top-level disjunction:
+
+```
+saved:  cat OR dog        + extension:png
+naive:  cat OR dog AND extension:png   parses as  cat OR (dog AND extension:png)   WRONG, wider
+here:   (cat OR dog) AND extension:png                                             correct
+```
+
+The expression is carried through **opaquely** and wrapped. Nothing parses it and nothing needs
+to; the only claim is that adding the selection cannot change what the expression already meant.
+
+### 4. ⛔ Two things the analysis missed, and both were load-bearing
+
+**The text half of the query is reconstructed from the AST, not from the stored string.**
+Nothing executes the compiler's `TSQuery`; its only readers test it for emptiness. What runs is
+`plainto_tsquery` over `Query.Text`, and both DSL callers set that to the **whole DSL string**.
+That was survivable while a saved query was a bare phrase, since English stop-wording eats `and`,
+`or` and `not` and Postgres eats the punctuation, so `cat OR dog` and `cat dog` produce the same
+lexemes. It stops being survivable the instant a saved query carries its filters:
+`(cat) AND extension:png` reaches Postgres as `'cat' & 'extens' & 'png'`, so the **filter term
+becomes a text requirement** and the replay returns near-nothing. Reconstructing the Selection
+from the canonical DSL is only half the job; the text has to be reconstructed from it too.
+
+**The wire form of a save is not the same question as its stored form.** The stored query is one
+canonical DSL string: no second persisted representation, no merge rule, no precedence answer.
+What the browser POSTs is the `dimension:value` token list it already holds, which is the form
+the save-as-collection button beside it has posted since #907, and the server composes the
+canonical string. Building that string in the browser would put a second implementation of the
+quoting grammar in a language that cannot derive it from the lexer. `facet.ParseSelection` had
+already recorded the argument, when it rejected `dsl=` as the rail's wire shape precisely
+because *"the frontend would have to splice UI state into a hand-written query string, re-quoting
+values that contain a space or a colon"*.
+
+### 5. Consequences
+
+- The DSL's quoted-string grammar gained `\\` as the escape for a literal backslash. Without it
+  **no valid spelling existed** for a value ending in one, so the canonical form could not write
+  down every value it has to carry. ⚠️ This changes the reading of existing input containing a
+  doubled backslash (two literal backslashes before, one after); verified before the change that
+  no test, fixture or stored row contained one.
+- `field` joins the DSL's field whitelist, so the parser stops answering `unknown field "field"`
+  and the whitelist rendered in error responses stays accurate.
+- The DSL path now **canonicalises values** the way the `filter=` path always has. That is not
+  tidiness: an unvalidated `field:` date bound reaches a `::TIMESTAMPTZ` cast and raises a
+  Postgres 22P02 mid-query, which is the fail-closed hole `CanonicalValue` exists to close on the
+  other path.
+- Typed ordered comparison, `file_size`, `workflow_state` and ordered non-field grouping are
+  **sprint 18b** and get their own amendment. Nothing here anticipates them.

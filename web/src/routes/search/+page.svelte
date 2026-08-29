@@ -784,18 +784,34 @@
     savingSearch = true;
     saveSearchResult = '';
     try {
-      // Use ?dsl= as the stored query when the caller composed this
-      // search in the advanced panel (dslMode); otherwise treat the
-      // free-text q as the DSL string (single-token free-text parses
-      // cleanly).
-      const dslString = q;
+      // ⛔ THE FILTERS TRAVEL WITH THE QUERY (#1368). Until this line
+      // existed the body carried the query expression alone, so a search
+      // narrowed on the rail was saved UNNARROWED: it replayed wider than
+      // the page it was saved from, and the digest the owner is emailed
+      // from it contained hits their own search excludes.
+      //
+      // Posted as `dimension:value` tokens — the same wire form the
+      // save-as-collection button beside this one has posted since #907,
+      // and the same one every GET surface takes. The server composes the
+      // ONE canonical DSL string that gets stored (search.ComposeDSL): it
+      // wraps this expression in parentheses so its own precedence
+      // survives, and conjuncts the selection onto it. Composing the
+      // string HERE would mean a second copy of the DSL's quoting rules
+      // in TypeScript, which is the duplicate grammar ADR 0093 decision 3
+      // refuses — and which cannot be derived from the Go lexer that
+      // decides what a bare token may contain.
+      //
+      // Read off `resultParams` rather than the live controls, because
+      // that is the pair (query, filters) the result set ON SCREEN was
+      // fetched with — the same reason the history snapshot reads it.
       const resp = await fetch('/api/v1/search/saved', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
           name: saveSearchName.trim(),
-          dsl: dslString,
+          dsl: resultParams.q,
+          filters: [...resultParams.filters],
           notify_channel: saveSearchChannel,
           notify_interval_minutes: saveSearchInterval,
         }),

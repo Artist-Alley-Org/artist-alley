@@ -215,39 +215,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // Service's embedding fetcher). Returns dsl.DSLError for parse
 // failures, vector.ErrNotEmbedded when similar_to references an
 // asset without a stored embedding.
-// SelectionFromDSL folds the compiler's typed [dsl.Filters] into a
-// facet.Selection, on top of whatever the `filter=` parameter already
-// contributed.
 //
-// ONE conversion, in one place, so the typed query and the rail cannot
-// drift into meaning different things — and so that adding a dimension
-// (#910's `collection:`) means a line here beside a line in the DSL
-// whitelist and a case in facet.dimensionSQL, and nothing else.
-//
-// Exported for the SAVED-SEARCH executor (search/saved), which compiles
-// the same DSL on a timer and has to reach the same predicate set. It
-// did not before #907 because nothing did; leaving it out now would mean
-// `tag:foo` narrowed the page a user saved and silently did not narrow
-// the digest they get emailed from it.
-func SelectionFromDSL(f dsl.Filters, into facet.Selection) facet.Selection {
-	for _, tag := range f.Tags {
-		into = into.With(facet.FacetTag, tag)
-	}
-	if f.Owner != "" {
-		into = into.With(facet.FacetOwner, f.Owner)
-	}
-	if f.Sensitivity != "" {
-		into = into.With(facet.FacetSensitivity, f.Sensitivity)
-	}
-	if f.AssetType != "" {
-		into = into.With(facet.FacetAssetType, f.AssetType)
-	}
-	if f.Extension != "" {
-		into = into.With(facet.FacetExtension, f.Extension)
-	}
-	return into
-}
-
+// See canonical.go for the two conversions it drives: the compiled
+// filter set folds into the same [facet.Selection] the `filter=`
+// parameter produced, and the compiled FREE TEXT — not the raw DSL
+// string — becomes the query's text.
 func (h *Handler) applyDSL(r *http.Request, query *Query, input string) error {
 	parsed, err := dsl.Parse(input)
 	if err != nil {
@@ -266,21 +238,28 @@ func (h *Handler) applyDSL(r *http.Request, query *Query, input string) error {
 	// "we don't have a Filters plumbing at Engine layer today, so the
 	// compiled TSQuery is currently informational". It was accurate; the
 	// plumbing is below.
-	query.Filters = SelectionFromDSL(compiled.Filters, query.Filters)
+	sel, err := SelectionFromDSL(compiled.Filters, query.Filters)
+	if err != nil {
+		return err
+	}
+	query.Filters = sel
 
 	// Fold DSL free-text back into query.Text if the caller only
 	// supplied `dsl=` — the Engine's BM25 path still consumes Text. A
-	// pure-filter DSL (`tag:foo` alone) compiles to an EMPTY TSQuery, so
-	// Text stays empty and the query is rejected as text-less upstream
-	// unless a `q=` accompanied it. That is unchanged and deliberate:
-	// /search is a search endpoint, and a bare facet selection with no
-	// query is browse, which has its own filtered surfaces.
-	if query.Text == "" && compiled.TSQuery != "" {
-		// A synthetic reconstruction of the free-text intent so
-		// the Engine's plainto_tsquery path still works. For
-		// pure similar_to (empty TSQuery), keep Text empty and
-		// let the hybrid path drive.
-		query.Text = input
+	// pure-filter DSL (`tag:foo` alone) compiles to NO free text, so Text
+	// stays empty and the request is a filter-only search, which
+	// Engine.Run answers normally.
+	//
+	// ⛔ IT IS THE COMPILED FREE TEXT, NOT THE RAW DSL STRING (#1368).
+	// This used to assign `input`, which meant the query's own structure
+	// became part of what Postgres searched for: `(cat) AND extension:png`
+	// reaches plainto_tsquery as `'cat' & 'extens' & 'png'`, so a filter
+	// term doubles as a text requirement and a canonical saved query
+	// returns near-nothing. See [dsl.CompiledQuery.FreeText] for why the
+	// two spellings are equivalent for a text-only DSL and why they stop
+	// being equivalent the moment filters are in the string.
+	if query.Text == "" && compiled.FreeText != "" {
+		query.Text = compiled.FreeText
 	}
 	if compiled.SimilarToAssetID == "" {
 		return nil
