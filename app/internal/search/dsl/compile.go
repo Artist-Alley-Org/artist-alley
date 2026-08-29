@@ -149,6 +149,16 @@ type Filters struct {
 	// Fields are `field:` terms, carried WHOLE as `code<op>value`
 	// (#1368). Opaque here on purpose — see [FieldField].
 	Fields []string
+	// FileSizes are `file_size:` bounds, carried WHOLE as `<op><bytes>`
+	// (#1173). Opaque here for [Fields]' reason.
+	//
+	// ⚠️ THE SLICE'S MEANING IS THE DIMENSION'S, and this is the first
+	// one whose answer is neither a plain AND nor a plain OR: bounds with
+	// the same operator OR, bounds with different operators AND. That is
+	// decided once, in [facet.subGroupKey], and this type only has to
+	// avoid destroying the terms before it gets there — which is exactly
+	// what #1368 found four plain-string fields doing.
+	FileSizes []string
 
 	// Below are compiler-internal buckets consumed by the Engine's
 	// SQL renderer. Kept exported-lowercase so tests in this
@@ -351,6 +361,10 @@ func (c *compiler) walkFieldMatch(m FieldMatchNode) (string, error) {
 	case FieldField:
 		// Opaque `code<op>value`, straight through. See [FieldField].
 		c.filters.Fields = append(c.filters.Fields, m.Value)
+		return "", nil
+	case FieldFileSize:
+		// Opaque `<op><bytes>`, straight through. See [FieldFileSize].
+		c.filters.FileSizes = append(c.filters.FileSizes, m.Value)
 		return "", nil
 	}
 	// Unreachable — parser's whitelist gate ensures every Field is

@@ -251,6 +251,59 @@ const (
 	// a moderation view rather than a discovery surface, and the control
 	// this dimension exists for is the feed's own display filter.
 	FacetVisibility FacetType = "visibility"
+
+	// FacetFileSize narrows to a range of STORED BYTES —
+	// `filter=file_size:>=12345`, backed by `assets.file_size_bytes`
+	// (#1173, sprint 18b).
+	//
+	// # ⛔ THE FIRST DIMENSION WHOSE VALUE IS A BOUND RATHER THAN A VALUE
+	//
+	// Every other non-field dimension names a thing to equal. This one
+	// names a SIDE of a number, so its value carries a comparison
+	// operator and its wire form is `<dimension>:<op><value>` — a BARE
+	// bound with the operator LEADING, unlike `field:`'s compound
+	// `code<op>value`, because `file_size` names exactly one column and
+	// has nothing to disambiguate.
+	//
+	// ⚠️ `filter=file_size>=12345` — no colon — is and stays malformed.
+	// [ParseSelection] cuts the wire token at the FIRST colon to find the
+	// dimension, so a token with no colon has no dimension. That is a
+	// property of the wire form, not of this dimension.
+	//
+	// # It is ORDERED, and its terms group by OPERATOR
+	//
+	// Two bounds with the SAME operator OR (a value list: "at least A or
+	// at least B" is the looser of the two). Two bounds with DIFFERENT
+	// operators AND, which is what makes `>=A` beside `<=B` the
+	// INTERSECTION rather than "every asset with a size at all". See
+	// [subGroupKey] and [FacetType.orderedDomain] — it is the only
+	// non-field dimension classified as ordered.
+	//
+	// # Exact bytes, int64, no float64 anywhere
+	//
+	// The column is BIGINT and reaches past 2^53, where a float64 stops
+	// being able to tell consecutive integers apart. See
+	// [canonicalByteBound] for the parse and for what it refuses: a
+	// fractional byte, a unit suffix, and anything outside int64.
+	//
+	// # Assets only
+	//
+	// A post is a set of members and a collection is a container, so
+	// neither has a byte count and both fall out of a size-filtered page
+	// through the satisfiable=false path [FacetExtension] has used since
+	// #907. The direction check [FacetAI]'s collection arm records
+	// applies and lands on the same side: this is a POSITIVE narrowing,
+	// so an entity that cannot answer leaving the page IS the answer.
+	//
+	// # Filter-only, like FacetCollection, FacetField, FacetAI,
+	// FacetKind and FacetVisibility
+	//
+	// No [Aggregator] and absent from [AllFacets]. Buckets over a
+	// continuous quantity are histogram bins — a choice of edges is a
+	// product decision, not a GROUP BY — and #907's invariant that a
+	// bucket's count equals what ticking it returns has no meaning until
+	// those edges exist.
+	FacetFileSize FacetType = "file_size"
 )
 
 // The [FacetVisibility] value vocabulary — the five sharing tiers, in
@@ -307,8 +360,8 @@ const (
 // AllFacets returns the set of aggregators the dispatcher runs when
 // the caller doesn't restrict via ?facets=...
 //
-// FacetCollection, FacetField, FacetAI, FacetKind and FacetVisibility
-// are deliberately absent — see their docs.
+// FacetCollection, FacetField, FacetAI, FacetKind, FacetVisibility and
+// FacetFileSize are deliberately absent — see their docs.
 func AllFacets() []FacetType {
 	return []FacetType{FacetAssetType, FacetTag, FacetSensitivity, FacetOwner, FacetExtension}
 }
@@ -337,6 +390,8 @@ func ParseFacetType(s string) (FacetType, bool) {
 		return FacetKind, true
 	case "visibility":
 		return FacetVisibility, true
+	case "file_size":
+		return FacetFileSize, true
 	}
 	return "", false
 }

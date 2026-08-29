@@ -97,6 +97,8 @@ func TestRoundTrip_EverySavableDimension(t *testing.T) {
 		{"owner", "owner:alice"},
 		{"extension", "extension:png"},
 		{"field equality", "field:color_space=sRGB"},
+		// #1173 — the seventh, and the first whose VALUE is a bound.
+		{"file_size", "file_size:>=12345"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -134,11 +136,19 @@ func TestRoundTrip_MultiplicitySurvives(t *testing.T) {
 		{"one field code, two values", []string{"field:color_space=sRGB", "field:color_space=AdobeRGB"}},
 		{"one field code, two operators", []string{"field:licence_expires>=2026-01-01", "field:licence_expires<=2026-06-30"}},
 		{"two field codes", []string{"field:color_space=sRGB", "field:version=v2"}},
+		// #1173 — the ordered dimension's two N≥2 shapes. Both bounds
+		// have to SURVIVE as two terms, because the grouping rule that
+		// makes them an intersection is applied downstream in
+		// facet.subGroupKey and has nothing to work with if the
+		// compiler collapsed them.
+		{"two size bounds, opposite operators", []string{"file_size:>=100", "file_size:<=900"}},
+		{"two size bounds, same operator", []string{"file_size:>=100", "file_size:>=200"}},
 		// Every dimension at once, which is the shape a real saved search has.
 		{"mixed", []string{
 			"tag:sketch", "tag:lowpoly", "extension:png", "extension:jpg",
 			"asset_type:Image", "owner:alice", "sensitivity:public",
 			"field:color_space=sRGB", "field:version~v2",
+			"file_size:>=100", "file_size:<=900",
 		}},
 	}
 	for _, tc := range cases {

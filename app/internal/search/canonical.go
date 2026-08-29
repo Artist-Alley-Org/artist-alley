@@ -59,10 +59,16 @@ var ErrDimensionNotRepresentable = errors.New("search: facet dimension has no DS
 // the serializer and the compiler bridge cannot come to disagree about
 // which name a dimension answers to.
 //
-// The six entries are the SAVABLE SURFACE, traced from producers rather
+// The entries are the SAVABLE SURFACE, traced from producers rather
 // than from the facet registry: `/search` reads `filter=` tokens from its
 // URL, the advanced page emits `field:` and `type:`, and the rail emits
 // [facet.AllFacets]. Nothing else can reach a Save button.
+//
+// #1173 adds `file_size:`, which is reachable from `/search`'s own URL
+// the moment the dimension parses — so it is savable by construction and
+// omitting it here would make [ErrDimensionNotRepresentable] fire on a
+// query a caller could type, which is a save that fails rather than a
+// save that replays wider, but is still a hole in the contract above.
 var dslFieldForFacet = map[facet.FacetType]dsl.Field{
 	facet.FacetTag:         dsl.FieldTag,
 	facet.FacetOwner:       dsl.FieldOwner,
@@ -70,6 +76,7 @@ var dslFieldForFacet = map[facet.FacetType]dsl.Field{
 	facet.FacetAssetType:   dsl.FieldType,
 	facet.FacetExtension:   dsl.FieldExtension,
 	facet.FacetField:       dsl.FieldField,
+	facet.FacetFileSize:    dsl.FieldFileSize,
 }
 
 // SelectionToDSL renders a [facet.Selection] as canonical DSL: every term
@@ -203,6 +210,7 @@ func SelectionFromDSL(f dsl.Filters, into facet.Selection) (facet.Selection, err
 		{facet.FacetAssetType, f.AssetTypes},
 		{facet.FacetExtension, f.Extensions},
 		{facet.FacetField, f.Fields},
+		{facet.FacetFileSize, f.FileSizes},
 	} {
 		if err := add(pair.ft, pair.values); err != nil {
 			return facet.Selection{}, err
