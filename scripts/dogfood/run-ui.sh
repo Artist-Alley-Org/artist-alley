@@ -34,6 +34,8 @@
 #   3  the corpus ratchet — a table leaked more than corpus-budget.txt allows
 #   4  the instance-lock audit — two files held shared config at once
 #   5  NO TESTS RAN — the selection matched nothing (#1272)
+#   6  the denominator audit: a test that was declared did not run, or
+#      skipped itself without being in skip-manifest.txt (#1348, #1344)
 
 set -uo pipefail
 
@@ -52,7 +54,7 @@ case "${1:-}" in
     federation) mode="federation"; shift ;;
     all)        mode="all"; shift ;;
     -h|--help)
-        sed -n '2,36p' "$SCRIPT_PATH"
+        sed -n '2,38p' "$SCRIPT_PATH"
         exit 0
         ;;
     "" )        ;;  # no arg → default standalone
@@ -365,29 +367,58 @@ if [ "$no_tests" = "yes" ]; then
     rc=$NO_TESTS_RC
 fi
 
-# --- 3. summary ----------------------------------------------------------
+# --- 3. summary + the denominator audit ----------------------------------
+#
+# STATS.SKIPPED IS TWO DIFFERENT EVENTS ADDED TOGETHER, and printing it
+# as one number is the whole of #1348. Playwright's own reporter keeps
+# them apart; this summary did not. Attempt 1 of run 33198346487:
+#
+#     2 failed
+#     3 skipped        <- tests that ran a `test.skip()` guard
+#     6 did not run    <- tests a failure in their serial block prevented
+#     386 passed
+#
+# `stats.skipped` is 3 + 6 = 9, which is the figure #1348 was filed on as
+# "2 became 9". Two of the nine were the ordinary environment-dependent
+# skips the quiet run also had; ONE was a guard reading `.count()` before
+# the page had drawn (fixed in kind-filter-1166); and SIX were tests that
+# never executed at all, which is not a skip in any sense a reader would
+# recognise. Folding them together turned "six questions went unasked"
+# into a word that sounds deliberate.
+#
+# So the summary line is produced by skip-audit.mjs rather than here. It
+# classifies exactly the way Playwright's own `generateSummary()` does,
+# and one classifier means the header line and the audit under it cannot
+# disagree about what a word means.
+
+# A manifest entry naming a test that is not in the report is STALE, and
+# stale is a failure, but only when this run selected the whole suite.
+# Under `--grep` an absent test means the selection and not a deletion,
+# and failing there would make the flag unusable.
+audit_full=""
+if [ "${#passthrough[@]}" -eq 0 ] && [ "$mode" != "federation" ]; then
+    audit_full="--full"
+fi
+
+# Not when nothing ran: exit 5 already owns that verdict, and an audit of
+# an empty report would report every manifest entry as deleted.
+if [ "$no_tests" != "yes" ]; then
+    step "Summary"
+    node "${UI_DIR}/skip-audit.mjs" \
+        .pw-results/report.json \
+        "${ROOT}/scripts/dogfood/skip-manifest.txt" \
+        $audit_full
+    skip_rc=$?
+    if [ "$skip_rc" -ne 0 ] && [ "$rc" -eq 0 ]; then rc=$skip_rc; fi
+fi
 
 if [ -f .pw-results/report.json ]; then
-    step "Summary"
-    node -e '
-const r = require("./.pw-results/report.json");
-const stats = r.stats ?? {};
-const total = (stats.expected ?? 0) + (stats.unexpected ?? 0) + (stats.skipped ?? 0) + (stats.flaky ?? 0);
-const pass  = stats.expected ?? 0;
-const fail  = stats.unexpected ?? 0;
-const skip  = stats.skipped ?? 0;
-const flaky = stats.flaky ?? 0;
-const ms    = stats.duration ?? 0;
-const fmt = (n) => String(n).padStart(3);
-const c = (s, n) => `[${s}m${n}[0m`;
-console.log(`  Total: ${total}   ${c("1;32", "PASS:")} ${fmt(pass)}   ${c("1;31", "FAIL:")} ${fmt(fail)}   ${c("1;33", "SKIP:")} ${fmt(skip)}   FLAKY: ${flaky}   wall: ${Math.round(ms)}ms`);
-'
     printf '\nHTML report: %s/.pw-report/index.html\n' "$UI_DIR"
 fi
 
 # --- 3b. shared-instance-config locks ------------------------------------
 #
-# Four specs write `system.public_mode` and each one reads the prior
+# Five specs write `system.public_mode` and each one reads the prior
 # value, sets what it needs and puts the prior back — a contract that is
 # correct for one writer and a lost update for two (#1248). The lock in
 # helpers/instance-lock.ts makes those windows mutually exclusive ACROSS

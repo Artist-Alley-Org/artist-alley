@@ -56,10 +56,23 @@
 //
 // Anonymous is covered by its own case because that is where a filter
 // can leak — see the visibility note on `?kind=` in openapi.yaml. It
-// runs only when the install has public mode on.
+// SETS public mode for the length of that one assertion, under the
+// cross-file lock, and puts the prior value back. It used to skip when
+// the switch was off, which on CI was always (#1344).
 
 import { test, expect, type Page } from '../../helpers/test';
 import { tid } from '../../helpers/testids';
+import { publicModeHold } from '../../helpers/public-mode';
+
+/** ⚠️ CONTENDED INSTANCE STATE: `system.public_mode`.
+ *
+ *  This file is the fifth writer of the install-wide anonymous-browsing
+ *  switch (ai-toggle-1251, collection-public-tier-1195,
+ *  collection-cover-editor-1207 and advanced-operators are the others).
+ *  The hold takes a cross-file lock, reads the prior value INSIDE it and
+ *  puts that value back on release, which is the contract #1248 needed
+ *  and a per-spec read/set/restore cannot give. */
+const publicMode = publicModeHold('kind-filter-1166');
 
 const KIND_LABEL: Record<string, string> = {
   image: 'Image',
@@ -441,10 +454,51 @@ test.describe('#1166 browse footer — asset-type filter', () => {
     await expect(page.locator(tid('browse-empty-hint'))).toContainText('Latest');
   });
 
-  test('composes with the rail chips', async ({ page }) => {
+  test('composes with the rail chips', async ({ page, request }) => {
+    // ⛔ THIS GUARD USED TO BE A POINT-IN-TIME DOM READ, AND IT IS THE
+    // ONE SKIP #1348 ACTUALLY CAUGHT:
+    //
+    //     await page.goto('/');
+    //     const chip = page.locator(tid('teams-rail-chip')).first();
+    //     test.skip((await chip.count()) === 0, 'no team chip on this instance');
+    //
+    // `count()` does not wait. The rail renders behind its own GET
+    // /teams and behind `browseRail.loaded`, and the whole section is
+    // absent until that resolves (BrowseRail.svelte: `{#if auth.user &&
+    // browseRail.loaded && hasChips}`), so "not loaded yet" and "no
+    // teams on this instance" are the SAME DOM. On a quiet box the fetch
+    // wins the race and the case runs; on a contended one it loses and
+    // the case deletes itself with a message about the corpus.
+    //
+    // Measured, not reasoned: run 33198346487 skipped this on its
+    // contended attempt and ran it on the quiet re-run of the same
+    // commit, against a database seeded identically both times.
+    //
+    // So the corpus question is asked of an instrument load cannot move,
+    // and the DOM question is WAITED for. A slow box now makes this case
+    // slow instead of making it vanish. GET /teams is the SAME call the
+    // rail makes (browseRail.load) from the same admin session, so the
+    // answer is about the corpus rather than about a different question
+    // that happens to correlate with it.
+    const teams = await request.get('/api/v1/teams?limit=1');
+    const teamCount = teams.ok()
+      ? (((await teams.json()) as { items?: unknown[] }).items ?? []).length
+      : 0;
+    test.skip(
+      teamCount === 0,
+      'no team exists on this instance, so the rail has no chip to compose with',
+    );
+
     await page.goto('/');
     const chip = page.locator(tid('teams-rail-chip')).first();
-    test.skip((await chip.count()) === 0, 'no team chip on this instance');
+    // The rail is behind that fetch, so this is the wait the old
+    // `count()` was missing. A team exists, therefore a chip is coming.
+    await expect(
+      chip,
+      'GET /teams returned a team but no chip was drawn. The rail hides teams the ' +
+        'account has hidden (browseRail.hidden), so either this account has curated ' +
+        'them all away or the rail stopped rendering.',
+    ).toBeVisible();
     await chip.click();
     await expect(page).toHaveURL(/team=/);
 
@@ -495,7 +549,42 @@ test.describe('#1166 browse footer — asset-type filter', () => {
   test('anonymous: the filter narrows within the public tier only', async ({
     browser,
     baseURL,
+    request,
   }) => {
+    // ⛔ THIS CASE USED TO SKIP ITSELF HERE, AND ON CI IT ALWAYS DID
+    // (#1344). The guard was:
+    //
+    //     const probe = await page.request.get('/api/v1/posts?limit=1');
+    //     test.skip(probe.status() === 401, 'public mode is off on this install');
+    //
+    // `public_mode`'s ZERO VALUE IS DISABLED and the key is deliberately
+    // absent on a fresh install (sysconfig/publicmode.go: "the absence
+    // of the key IS the default"). CI seeds a fresh database on every
+    // run and nothing in ui-pr.yml turns the switch on, so the probe got
+    // its 401 and the case removed itself. Confirmed on the CI log for
+    // run 33198346487: it is one of the two names under `2 skipped`.
+    //
+    // Both readings of that were bad. Either the anonymous arm of the
+    // kind filter had never been checked on CI, or it ran inside another
+    // spec's public-mode window against state it did not set, which is
+    // the #1248 lost update and worse, because that green is not
+    // repeatable.
+    //
+    // So the precondition is SET rather than waited for, exactly as
+    // ai-toggle-1251 and mature-row-1292 do it: borrow the switch under
+    // the cross-file lock, assert, give it straight back.
+    //
+    // ⚠️ LOCK ORDER. This file takes `system.public_mode` and nothing
+    // else. mature-row-1292 takes `system.mature_content` first and
+    // nests public mode inside it; a file taking them the other way
+    // round would deadlock against that one, so if this case ever needs
+    // the mature switch too it must take mature content FIRST.
+    //
+    // Waiting for the switch can outlast the default 30s budget, since
+    // collection-cover-editor-1207 holds it across its whole file.
+    test.setTimeout(600_000);
+    await publicMode.acquire(request);
+
     // A fresh context with no stored session — the standalone project
     // reuses an authenticated one, which is exactly the identity this
     // case must not have. `baseURL` is threaded through explicitly:
@@ -505,11 +594,19 @@ test.describe('#1166 browse footer — asset-type filter', () => {
     const ctx = await browser.newContext({ storageState: undefined, baseURL });
     const page = await ctx.newPage();
     try {
-      // Public mode is what decides whether this case is meaningful, and
-      // the honest probe is the endpoint itself: with it OFF the feed
-      // answers 401 before the handler sees the request.
+      await publicMode.set(request, true);
+
+      // ⭐ THE PRECONDITION IS ASSERTED, NOT ASSUMED. #1344 records the
+      // near miss that makes this line load-bearing: with public mode
+      // off, an anonymous visitor gets a sign-in card, and every
+      // "narrowing" assertion below would hold vacuously against it.
+      // The wall being on screen is what says the reader is looking at
+      // a feed at all.
       const probe = await page.request.get('/api/v1/posts?limit=1');
-      test.skip(probe.status() === 401, 'public mode is off on this install');
+      expect(
+        probe.status(),
+        'public mode was set on, so the anonymous feed must answer rather than 401',
+      ).toBe(200);
       await page.goto('/');
       await expect(page.locator(tid('browse-wall'))).toBeVisible();
 
@@ -553,6 +650,17 @@ test.describe('#1166 browse footer — asset-type filter', () => {
       }
     } finally {
       await ctx.close();
+      // The switch goes back before the lock does, and `release` does
+      // both. Idempotent, so the afterAll backstop below writes nothing
+      // once this has run.
+      await publicMode.release(request);
     }
+  });
+
+  // A backstop for a crash inside the window above. Without it a failed
+  // assertion would leave the instance public for every spec after this
+  // one, which is the second half of the damage #1248 describes.
+  test.afterAll(async ({ request }) => {
+    await publicMode.release(request);
   });
 });

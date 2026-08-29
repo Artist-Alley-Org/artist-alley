@@ -5,7 +5,7 @@
 //
 // # What this exists for
 //
-// Four specs write `system.public_mode`, and every one of them follows
+// Five specs write `system.public_mode`, and every one of them follows
 // the same three-step contract: read the prior value, set the one it
 // needs, put the prior value back. That contract is correct on its own
 // and unsound the moment two of them run at the same time, which two

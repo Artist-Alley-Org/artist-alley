@@ -783,6 +783,30 @@ test.describe('#1207 the collection cover editor', () => {
     const editor = await openCoverPage(page, 'featured');
     const marquee = editor.getByTestId('cover-editor-marquee');
     await expect(marquee).toBeVisible();
+
+    // ⛔ VISIBLE IS NOT LOADED, and this guard depends on the difference
+    // (#1348). The marquee's `disabled` is `!canMove && !canZoomIn`
+    // (CoverCropStage.svelte), and both derive from `win`, which is null
+    // until the stage image fires `onLoad` and reports a natural size.
+    // So on a slow box the control is momentarily disabled for a reason
+    // that has nothing to do with the picture's shape, and reading
+    // `isEnabled()` right here would turn a slow render into a silent
+    // skip with a message about aspect ratios.
+    //
+    // Waiting for the load makes the read mean what it says. This one
+    // has not been observed firing wrongly; it is the same shape as the
+    // rail-chip guard that WAS, which is reason enough not to leave it
+    // reading a value the page has not produced yet.
+    await expect
+      .poll(
+        async () =>
+          editor
+            .getByTestId('cover-editor-stage-image')
+            .evaluate((el) => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth > 0),
+        { message: 'the cover editor never loaded its picture, so its controls mean nothing yet' },
+      )
+      .toBe(true);
+
     test.skip(!(await marquee.isEnabled()), 'this picture is already card-shaped: no travel');
 
     const before = await readFocal(page);
