@@ -337,3 +337,56 @@ unfiled decision.
 editing are different acts, and #914 made create *smaller* on purpose by dropping its visibility
 fieldset (`CollectionCreate` defaults to `private`). If that is ever revisited, revisit it as a
 decision rather than as tidying.
+
+## Note, 2026-08-28 (#1259): a collection saved from a search is STATIC, and `smart_query` is provenance
+
+`collections.smart_query` is written on every "Save as collection", and both its column comment and
+the code that writes it promised *"Consumed by Phase 1.16.B-4 saved-search re-runs"*. That promise
+is withdrawn. Recording the reasoning here so the next person to read the column finds it rather
+than re-opening the question.
+
+⛔ **First, correcting the framing #1259 was filed under.** The issue said the rows written by "save
+as collection" are read by nothing. That is wrong twice over, and acting on it would have deleted
+rows three subsystems read:
+
+1. **The membership rows are read.** `collection_resources` has at least three live readers:
+   federation shares (`collections/queries.sql:137`), search facets (`search/selection.go:1345`)
+   and reindex scoping (`jobs/job.go:235`). The 2026-08-22 amendment above already ruled the table
+   stays, internal.
+2. **The members really are materialised.** `createCollectionWithResults`
+   (`search/saveas.go:180-240`) inserts `collection_resources` rows with a per-row `sort_order`
+   preserving score order, inside one transaction, with `membership = 'manual'`. The collection is
+   a static snapshot and always has been.
+
+⚠️ **And Phase 1.16.B-4 does exist** — it shipped as the `saved_search` table, `/account/saved-searches`
+and an email-on-match notifier. It simply was never built on `collections.smart_query`. That is the
+real reason the column has no consumer: the saved-search feature grew its own table, and this column
+was left advertising a role that had been filled elsewhere.
+
+**The decision: membership is the only membership truth. A collection saved from a search
+materialises its members at save time and does not re-evaluate.**
+
+- **Federation is the deciding constraint.** A collection shared to a peer has to be a definite set
+  of things. A query re-evaluated against the peer's corpus returns different items under the same
+  name and the same identifier, which makes the share meaningless. Membership travels; a query does
+  not.
+- **Three readers already assume rows exist.** A query-backed collection with no membership rows
+  would make federation shares, facets and reindex scoping silently see an empty collection.
+- **Always be caching.** A materialised set is cacheable and invalidatable on write. A set
+  re-derived per read is neither.
+
+**`smart_query` keeps being written, and its meaning is narrowed to PROVENANCE:** it records which
+search produced this set, for display and for a "refresh from the original search" action a reader
+invokes deliberately. It is not an input to any read path, and nothing may make it one.
+
+⭐ **Where this beats the prior art.** Every mature DAM offers static albums and smart/dynamic
+albums as two distinct things, distinguished at creation — Lightroom, Photo Supreme, Apple Photos.
+ResourceSpace is the cautionary case: it has no `saved_search` table, and a saved search is a
+*property* of a collection (`$allow_smart_collections`, `search.php:591`), so an RS collection is
+sometimes a set and sometimes a query and a reader of `collection_resource` cannot tell which it is
+holding. Keeping membership as the only membership truth means every existing reader keeps a
+defined answer.
+
+**Follow-on, not decided here.** A genuine smart-collection feature is its own epic. Its entry
+condition is giving federation shares, facets and reindex scoping a defined answer for a
+query-backed collection.

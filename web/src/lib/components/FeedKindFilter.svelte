@@ -63,10 +63,10 @@
   // NEVER gates: everyone gets that row, signed in or not. Mature is
   // ADR 0090's layer 3, a VIEW filter over rows a three-conjunct gate
   // has already allowed, so its row appears only when the instance
-  // allows mature content AND this account has opted in, and both rungs
-  // are ABSENCE rather than disablement. A ticked box that silently
-  // does nothing because the instance forbids it is the failure the
-  // cascade exists to make unreachable.
+  // allows mature content AND this reader can actually RECEIVE mature
+  // rows, and both rungs are ABSENCE rather than disablement. A ticked
+  // box that silently does nothing because the instance forbids it is
+  // the failure the cascade exists to make unreachable.
   //
   // ⛔ AND THE MATURE ROW NEVER CONSENTS. Consent is layer 2, on
   // /account/preferences. This row can only subtract from what that
@@ -191,7 +191,14 @@
     onhidemature?: (next: boolean) => void;
     /** Whether the mature row is offered AT ALL, resolved by the host
      *  from ADR 0090's layer-3 cascade: the instance allows mature
-     *  content AND this account has opted in.
+     *  content AND this reader can receive mature rows — which is
+     *  consent OR the §2 moderation exemption since #1345.
+     *
+     *  ⚠️ THE HOST ANSWERS IT, AND THIS COMPONENT MUST NOT RE-DERIVE IT.
+     *  `browseView.matureFilterAvailable` is the one definition and it
+     *  is the same predicate `matureParam` gates the request on; a
+     *  second spelling here is how the row and the request come to
+     *  disagree.
      *
      *  ⛔ ABSENCE, NEVER DISABLEMENT, and it defaults to false so a
      *  host that forgets to answer offers nothing. A disabled row would
@@ -479,11 +486,13 @@
 
         <!-- ⭐ The mature row is ABSENT, not disabled, for a reader the
              cascade does not offer it to (ADR 0090's 2026-08-26
-             amendment). The host answers `matureAvailable` from the two
-             rungs: the instance allows mature content, and this account
-             has opted in. A signed-out reader fails both, because an
-             anonymous viewer has nowhere to store a consent for this
-             row to narrow.
+             amendment, widened 2026-08-28). The host answers
+             `matureAvailable` from the two rungs: the instance allows
+             mature content, and this reader can RECEIVE mature rows —
+             by consent, or by the §2 moderation exemption that lets a
+             moderator see what the instance switch hid. A signed-out
+             reader fails both, because an anonymous viewer can neither
+             consent nor hold a capability.
 
              So a ticked mature row on an install with the feature off
              is not reachable: there is no row. Rendering it disabled

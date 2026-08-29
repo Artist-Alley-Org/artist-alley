@@ -185,7 +185,34 @@ func createCollectionWithResults(ctx context.Context, pool *pgxpool.Pool, ownerR
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Build the smart_query payload: DSL string if provided; else the
-	// raw q= text. Consumed by Phase 1.16.B-4 saved-search re-runs.
+	// raw q= text.
+	//
+	// ⛔ IT IS PROVENANCE, NOT AN EVALUATION INPUT (ADR 0091's
+	// 2026-08-28 note, #1259). This comment used to say "Consumed by
+	// Phase 1.16.B-4 saved-search re-runs", advertising a consumer that
+	// is not coming: a collection saved from a search is STATIC, and the
+	// rows written below are the whole of its membership.
+	//
+	// The decision is argued from federation. A collection shared to a
+	// peer has to be a definite set of things, and a query re-evaluated
+	// against the peer's corpus returns different items under the same
+	// name and the same identifier. Membership travels; a query does
+	// not. Three subsystems already read collection_resources on that
+	// assumption (federation shares, search facets, reindex scoping),
+	// and a materialised set is cacheable and invalidatable on write
+	// while a set re-derived per read is neither.
+	//
+	// So what this column is FOR is recording WHICH SEARCH produced this
+	// set: for display, and for a "refresh from the original search"
+	// action a reader invokes deliberately. Nothing reads it to decide
+	// what is in the collection, and nothing may start.
+	//
+	// A genuine smart-collection feature is its own epic. Its entry
+	// condition is giving those three readers a defined answer for a
+	// query-backed collection, which is exactly what ResourceSpace's
+	// merged model (a saved search as a PROPERTY of a collection) never
+	// does: a reader of its collection_resource cannot tell whether it
+	// is holding a set or a query.
 	smart := req.DSL
 	if smart == "" {
 		smart = req.Q
