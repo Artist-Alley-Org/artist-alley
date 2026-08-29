@@ -115,6 +115,11 @@ where applicable, otherwise note "no-spec-impact."
   shows in a card is now saved with the post, so the framing survives a reload and follows the
   picture wherever the card is drawn (#1210, PR #1332).
 
+- **Search results can be paged all the way through.** A search that reported hundreds of matches
+  would stop handing out results after a fixed number of pages, and raising the page size only
+  moved the ceiling rather than removing it. The full set is now reachable, in the same order, with
+  no repeated or skipped results (#1356, PR #1366).
+
 ### Changed
 
 - **Collections hold posts, not loose files.** Dropping a file into a collection used to publish
