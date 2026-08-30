@@ -309,3 +309,195 @@ values that contain a space or a colon"*.
   other path.
 - Typed ordered comparison, `file_size`, `workflow_state` and ordered non-field grouping are
   **sprint 18b** and get their own amendment. Nothing here anticipates them.
+
+## Amendment, 2026-08-29, after #1173 (sprint 18b)
+
+The 2026-08-20 amendment gave the grammar operators. It gave them exactly one meaning, and that
+meaning was wrong in a way nothing measured: a bound was a **date** because it was a bound.
+
+`facet.dimensionSQL` chose the storage column from the OPERATOR (`op == FieldOpAtLeast || op ==
+FieldOpAtMost` selected `value_date`), and `canonicalBound` accepted RFC3339 or `2006-01-02` and
+nothing else. So `filter=field:pixel_width>=1920` answered **400** against a `number` field that
+stores a perfectly orderable value in `value_num`, and no non-field dimension could be bounded at
+all. This amendment covers 18b only.
+
+⛔ **`workflow_state` is sprint 18c and gets its own amendment.** The 18a amendment's closing line
+lists it beside these; the roadmap was re-cut afterwards (`98b5d9f8`), and nothing here anticipates
+it. Resource and media UI is 18d.
+
+### 1. A bound has a DOMAIN, and the domain picks the column
+
+An operator says which **side** of a bound a row must fall on. It says nothing about what kind of
+quantity is being bounded. Those are two facts and the code carried one.
+
+| domain | canonical form | column | cast |
+|---|---|---|---|
+| temporal | RFC3339 UTC | `asset_field_value.value_date` | `TIMESTAMPTZ` |
+| numeric | shortest decimal that reads back to the same `float64` | `asset_field_value.value_num` | `DOUBLE PRECISION` |
+| bytes | exact base-10 `int64` | `assets.file_size_bytes` | `BIGINT` |
+
+Temporal behaviour is unchanged, **including** a date-only `<=` canonicalising to the last
+microsecond of that day.
+
+**The numeric canonical form is stated as a property, not as a notation:** two spellings that denote
+the same `float64` produce the same canonical string, and that string reads back to that same
+`float64`. So `1920`, `1920.0` and `1.92e3` are one term and one `CacheKey`.
+
+**Non-finite values are refused because they are out of domain, not because they would be inert.**
+`strconv.ParseFloat` accepts `NaN`, `Inf` and `Infinity`, and an ordered filter over this project's
+numeric metadata is defined over **finite** values only.
+
+⛔ The tempting justification is that such a bound would match nothing, and **that is false for
+PostgreSQL.** Postgres does not evaluate a NaN comparison as unknown: it deliberately makes NaN
+**equal to NaN** and **greater than every non-NaN float**, so NaNs sort deterministically and can
+live in btree indexes. Measured rather than assumed:
+
+| expression | result |
+|---|---|
+| `'NaN'::float8 >= 'NaN'::float8` | `t` |
+| `'NaN'::float8 > 1e300::float8` | `t` |
+| `'NaN'::float8 >= 'Infinity'::float8` | `t` |
+| `1e300::float8 >= 'NaN'::float8` | `f` |
+
+So `value_num >= 'NaN'` matches exactly the rows storing NaN, and `>= '-Infinity'` matches every row
+that has a value at all. Accepting either would surface an exceptional ordering rule through a
+control that promises an ordinary numeric bound. Rejecting during pure value-domain validation keeps
+that semantics off the wire entirely, which is a stronger reason than inertness would have been.
+
+**Bytes are `int64` with no `float64` anywhere on the path.** `file_size_bytes` is BIGINT and
+reaches past 2^53, where a `float64` stops being able to tell consecutive integers apart. A byte
+count parsed through one comes back as a different number than the caller wrote, silently, and only
+for large files, which is exactly where a size filter gets used.
+
+### 2. ⭐ THE TWO SPELLINGS ARE DISJOINT, WHICH IS WHY NO SCHEMA IS NEEDED TO CANONICALISE
+
+`FacetType.CanonicalValue` is **pure**, and it is where canonical identity (hence the cache key) is
+fixed. 18b makes the domain a function of the value alone, and that only works because no string is
+both a date and a number: RFC3339 and `2006-01-02` require the full punctuated layout, so `2026` is
+the number 2026 and never a year, and `ParseFloat` rejects every date spelling because a date
+carries `-` in the middle of its digits. Asserted, not assumed.
+
+### 3. ⛔ TWO VALIDITY CLASSES, DELIBERATELY DIFFERENT OUTCOMES
+
+This asymmetry is load-bearing, and a test asserting the wrong one looks correct and proves nothing.
+
+**Lexical and value-domain validity is PURE and is a request error.** A malformed bound, a
+non-finite numeric, a fractional byte, a unit-bearing value such as `1MB`, an integral overflow: all
+knowable without a schema, all refused in `CanonicalValue`, all **400** on the `filter=` path and a
+`DSLError` on the DSL path.
+
+**Type compatibility needs a ROW and fails CLOSED to an empty result set.** Whether a *field* may be
+compared this way is `field_definition.type`, so it is answered in `Selection.Authorize`, beside the
+`read_capability` lookup already there and on the same row, and a refusal is an empty page rather
+than an error. A 400 would tell a caller "that code names a text field" about a code they supplied,
+which is the existence oracle `validFieldCode` refuses one level up.
+
+| `field_definition.type` | ordered | column |
+|---|---|---|
+| `date`, `datetime` | yes | `value_date` |
+| `number` | yes | `value_num` |
+| everything else | **no, refused** | n/a |
+
+⚠️ **`boolean` is deliberately absent and it is the case that proves the seam does anything.** ADR
+0012 encodes a boolean as 1 or 0 in `value_num`, the same column a numeric bound reads, so
+`field:<bool>>=0` **matches every row** unless something refuses it. Every other incompatible type
+is refused twice over, by the check and by a NULL column, so a test built on those types passes
+whether or not the check exists. Found by mutating the implementation and re-running the suite, not
+by reading it.
+
+There is no integer field type in the CHECK constraint, which is why exact integral comparison
+exists only for a resource dimension and never for `field:`.
+
+### 4. `file_size`, and the value shape a non-field ordered dimension has
+
+`filter=file_size:>=12345`, backed by `assets.file_size_bytes`.
+
+The value is a **bare bound with the operator leading**, unlike `field:`'s compound
+`code<op>value`, because `file_size` names exactly one column and has nothing to disambiguate. That
+is a new value shape for `CanonicalValue` and a second split function beside `SplitFieldTerm`.
+
+⛔ **`filter=file_size>=12345` carries no colon, so it names no dimension, and it stays malformed
+forever.** `ParseSelection` cuts the wire token at the first colon; that is a property of the wire
+form rather than of this dimension, and it is why it can never be used as a fail-before.
+
+It needs **no lexer change**: `>` and `=` are not delimiters in the DSL's word run, so `>=12345`
+lexes as one `TokWord`, `parseFieldMatch` already accepts a word as a value, and `Serialize`
+therefore emits it unquoted. `:` remains unusable as an operator character for the reason #1165
+gave.
+
+**Only an asset has a file.** A post is a set of members and a collection is a container, so both
+fall through to `ok=false`, which `Selection.SQL` returns as `satisfiable=false` and all four call
+sites already honour by returning nothing for that entity. This is `FacetExtension`'s shape since
+#907 and it needs no second exclusion mechanism. It is the positive-narrowing direction `ai:`'s
+collection arm established as the test: a caller asking for files over 10MB is asking about **files**,
+so an entity with no file leaving the page is the answer rather than a loss. An arm that treated an
+active narrowing filter as no constraint would return every post and every collection beside the
+qualifying assets, which is a filter that made the result set **larger**.
+
+### 5. Ordered grouping: a classification, not a widening
+
+The 2026-08-20 amendment fixed how terms combine and the 18a amendment wrote down which dimensions
+can carry several. Neither covered a dimension whose values are **bounds**.
+
+> **A FacetType is ordered when its values are bounds carrying a comparison operator.** Among
+> non-field dimensions only `file_size` qualifies.
+>
+> - Ordered, **same** operator: **OR**. A value list, and the looser bound wins, which is what "at
+>   least A or at least B" means.
+> - Ordered, **different** operators: separate sub-groups, therefore **AND**. The intersection.
+> - `field:`: unchanged, already grouped by `(code, operator)`.
+> - Every other dimension: unchanged, one sub-group, existing OR.
+
+⛔ **The failure mode to avoid is generalising.** The operator extraction was gated on
+`dim == FacetField`; widening it to *all* dimensions would make `extension:png` operator-aware and
+hand `tag:` a value grammar it never declared. So a dimension is ordered only by appearing in
+`FacetType.orderedDomain`, which is the parallel of `FacetType.conjunctive` and is written the same
+way for the same reason. `field:` is deliberately **not** in it: its orderedness is a property of
+each field definition's declared type, answered per term against the database.
+
+`file_size:>=A` beside `file_size:<=B` ORed reads "bigger than A or smaller than B", which is every
+asset that has a size at all. That is the range that looks like it worked, and it is #1165's date
+range one dimension over.
+
+### 6. ⭐ The regression that proves it, and why it needed four populations
+
+⛔ **A count assertion that passes on a union passes on the bug.** The fixture builds four
+populations against bounds A <= B and compares hit ID **sets**:
+
+| population | condition | satisfies |
+|---|---|---|
+| L | size > B | `>=A` only |
+| U | size < A | `<=B` only |
+| X | A <= size <= B | both |
+| N | `file_size_bytes IS NULL` | **neither** |
+
+⭐ **N exists only because of NULL.** A real number is always below, within or above a range, so
+"satisfies neither bound" is unreachable for a sized row. That makes N simultaneously the
+null-handling proof and the only way the fixture can tell "matched nothing" from "was not asked".
+
+`>=A AND <=B` returns X exactly. Measured against the OR behaviour it returns 6 where 2 is correct,
+which is X ∪ L ∪ U, strictly **larger** than either single bound.
+
+### 7. Consequences
+
+- `file_size` joins the DSL whitelist and `dslFieldForFacet`, so it round-trips through a saved
+  query with no new mechanism. Both bounds have to survive as two terms, because the grouping rule
+  that makes them an intersection is applied downstream and has nothing to work with if the compiler
+  collapsed them.
+- Cache identity gains ordered terms, which is `Selection`'s own contract. **ADR 0056 is unchanged
+  and this was re-verified rather than asserted:** no cursor payload change, no pagination change,
+  no `total_count` contract change. `search/cursor.go` and the keyset path are untouched by the
+  diff, and the count and the result set narrow together, which every DB-backed assertion in this
+  arc checks on each run.
+- `fieldReadable` became `fieldGate` and returns the declared type on the same row. One lookup, two
+  facts; asking twice for two columns of one row would double the per-term cost of a filter for no
+  gain.
+- ⚠️ One existing assertion moved rather than being deleted. `field:expires<=42` was on the
+  "unknown or malformed operator" list because a bound could only be a date; it is now lexically
+  valid, and the question it was really asking, may a field DECLARED as a date be compared to 42,
+  moved to the seam that can answer it. The value-domain rejections replaced it in place.
+- ⛔ **Five mutations were run against the finished suite, and two of its assertions were vacuous
+  until that found them.** Removing the `Authorize` type check left every refusal test green, and
+  the "exactly zero posts" cross-arm assertion passed with a deliberately broken arm because the
+  fixture had no post carrying the phrase. Green is a claim about the tests that ran; both were
+  fixed and both now fail against the mutation.

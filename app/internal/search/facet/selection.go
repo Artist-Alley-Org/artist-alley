@@ -6,6 +6,7 @@ package facet
 import (
 	"context"
 	"errors"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -260,6 +261,73 @@ func (s Selection) CacheKey() string {
 // ANDed on by every site that renders this — see [FacetVisibility].
 func (t FacetType) conjunctive() bool { return t == FacetTag }
 
+// orderedDomain is the VALUE DOMAIN of a comparison bound — the fact
+// that decides WHICH STORAGE COLUMN an ordered term reads, and the unit
+// its text is parsed in (#1173, sprint 18b).
+//
+// ⛔ IT IS NOT THE OPERATOR. `>=` and `<=` say which SIDE of a bound a
+// row must fall on and nothing at all about what kind of quantity is
+// being bounded, and until 18b this file conflated the two: dimensionSQL
+// selected `value_date` on `op == FieldOpAtLeast || op == FieldOpAtMost`,
+// so a bound was a date because it was a bound. That reading has exactly
+// one column to offer, which is why `>=` was date-only and why a numeric
+// field could not be compared at all.
+type orderedDomain uint8
+
+const (
+	// domainNone is "this term carries no bound". Equality and contains
+	// land here, and so does every dimension whose values are not bounds.
+	domainNone orderedDomain = iota
+	// domainTemporal is an instant. Canonical form is RFC3339 UTC and
+	// the column is TIMESTAMPTZ — see [canonicalBound] for why the zone
+	// is decided by the parser rather than by whichever server evaluates
+	// the token.
+	domainTemporal
+	// domainNumeric is a FINITE float64. Canonical form is the shortest
+	// decimal that reads back to the same float64, and the column is
+	// DOUBLE PRECISION (`asset_field_value.value_num`).
+	domainNumeric
+	// domainBytes is an EXACT base-10 int64 count of bytes, with no
+	// float64 anywhere on the path. The column is BIGINT
+	// (`assets.file_size_bytes`), whose range extends past 2^53 where a
+	// float64 stops being able to tell consecutive integers apart — so
+	// parsing a byte count through a float would silently round a bound
+	// a caller can state exactly.
+	domainBytes
+)
+
+// orderedDomain classifies a DIMENSION as ordered and says which domain
+// its bounds live in. domainNone means "not ordered".
+//
+// # ⛔ THE CLASSIFICATION IS EXPLICIT AND IT IS DELIBERATELY SHORT
+//
+// This is the parallel of [FacetType.conjunctive] one function above,
+// and it is written the same way for the same reason. The tempting 18b
+// implementation is to make [Selection.SQL] extract an operator from
+// EVERY dimension's values rather than only from `field:`'s — which
+// would make `extension:png` operator-aware, give `tag:>=x` a meaning
+// nobody asked for, and hand every future dimension a value grammar it
+// never declared. So a dimension is ordered only by appearing here.
+//
+// [FacetFileSize] is the only non-field dimension that qualifies in 18b.
+// `field:` is NOT listed: it is a FAMILY of logical dimensions whose
+// orderedness is a property of each field definition's declared type,
+// answered per term against the database in [Selection.Authorize] and
+// carried into the renderer as a [termShape] — see [orderedFieldTypes].
+func (t FacetType) orderedDomain() orderedDomain {
+	if t == FacetFileSize {
+		return domainBytes
+	}
+	return domainNone
+}
+
+// ordered reports whether this dimension's values are BOUNDS carrying a
+// comparison operator, rather than plain values.
+//
+// Derived from [FacetType.orderedDomain] rather than being a second list,
+// so the classification and the column choice cannot come to disagree.
+func (t FacetType) ordered() bool { return t.orderedDomain() != domainNone }
+
 // CanonicalValue validates a value for dimension t and returns the form
 // the rest of the pipeline should carry.
 //
@@ -394,13 +462,35 @@ func (t FacetType) CanonicalValue(v string) (string, bool) {
 		// exists to prevent, and the reason this switch is where a
 		// dimension's value grammar lives at all.
 		if op == FieldOpAtLeast || op == FieldOpAtMost {
-			bound, ok := canonicalBound(value, op)
+			bound, _, ok := canonicalBound(value, op)
 			if !ok {
 				return "", false
 			}
 			value = bound
 		}
 		return code + string(op) + value, true
+	case FacetFileSize:
+		// #1173 sprint 18b — the SIXTH dimension with a value grammar,
+		// and the FIRST whose whole value is a BOUND.
+		//
+		// ⚠️ THE VALUE SHAPE IS NEW AND IT IS NOT `field:`'s. A field
+		// term is compound — `code<op>value` — because `field:` is a
+		// family and the term has to say WHICH field. `file_size` names
+		// exactly one column, so there is nothing to disambiguate and the
+		// value is a BARE BOUND WITH THE OPERATOR LEADING: `>=12345`.
+		//
+		// The wire spelling is therefore `filter=file_size:>=12345`.
+		// [ParseSelection] cuts at the FIRST colon, so the dimension is
+		// `file_size` and `>=12345` is the whole value; `file_size>=12345`
+		// carries no colon at all and stays malformed, which is a property
+		// of the wire form rather than of this dimension.
+		//
+		// It is rejected here rather than tolerated for [FacetAI]'s
+		// reason and [FacetCollection]'s reason at once: a malformed
+		// bound would render a predicate that matches nothing (an empty
+		// page under a label promising a narrowing) and a non-integral
+		// one would reach a `::BIGINT` cast and raise a 22P02 mid-query.
+		return canonicalByteBound(v)
 	}
 	return v, true
 }
@@ -468,14 +558,15 @@ var fieldOps = []FieldOp{FieldOpAtLeast, FieldOpAtMost, FieldOpContains, FieldOp
 const fieldOpChars = "=~<>"
 
 // canonicalBound validates and normalises a [FieldOpAtLeast] /
-// [FieldOpAtMost] value to RFC3339 UTC.
+// [FieldOpAtMost] value, and reports which [orderedDomain] it landed in.
 //
 // # Why it canonicalises rather than merely accepting
 //
 // Two reasons, and the second is the load-bearing one.
 //
 //  1. A [CacheKey] is text, so `2026-01-31` and `2026-01-31T00:00:00Z`
-//     would pay for the same query twice.
+//     would pay for the same query twice — and after 18b so would
+//     `1920`, `1920.0` and `1.92e3`.
 //  2. FEDERATION. `value_date` is TIMESTAMPTZ, so a bare `2026-01-31`
 //     has no meaning until something supplies a zone — and the thing
 //     that would supply it is whichever server happens to evaluate the
@@ -483,6 +574,24 @@ const fieldOpChars = "=~<>"
 //     origin is not one grammar. Normalising to an explicit `Z` here
 //     means the instant is decided once, by the parser, and travels with
 //     the token.
+//
+// # ⭐ THE TWO SPELLINGS ARE DISJOINT, AND THAT IS WHY NO SCHEMA IS NEEDED
+//
+// 18b makes a bound either temporal or numeric, decided WITHOUT knowing
+// the field's declared type — this function is pure, and it is what
+// [FacetType.CanonicalValue] calls, which is what fixes canonical
+// identity for the cache key. That only works because no string is both:
+//
+//   - RFC3339 and `2006-01-02` both require the full punctuated layout,
+//     so `2026` is not a year here, it is the number 2026;
+//   - `strconv.ParseFloat` rejects every date spelling, because a date
+//     carries `-` in the middle of its digits.
+//
+// So the domain is a function of the VALUE alone. What the schema then
+// decides is a different question — whether the FIELD may be compared
+// that way at all — and it is answered in [Selection.Authorize], which
+// fails CLOSED to an empty result set rather than to a 400. See
+// [orderedFieldTypes].
 //
 // # The upper bound of a date-only value is the END of that day
 //
@@ -498,18 +607,216 @@ const fieldOpChars = "=~<>"
 // and a `.999999999` bound would round UP to the next second on the way
 // into Postgres — re-introducing on the storage side exactly the
 // off-by-one this is here to remove.
-func canonicalBound(v string, op FieldOp) (string, bool) {
+//
+// ⛔ There is NO equivalent widening for the numeric arm, deliberately.
+// `1920` denotes one value of a DOUBLE PRECISION column, not a half-open
+// interval of them, so `<=1920` is the literal bound and nothing is
+// added to it.
+//
+// # The numeric canonical form, stated as a property rather than a notation
+//
+//	Two spellings that denote the same float64 produce the SAME canonical
+//	string, and that string reads back to that same float64.
+//
+// `strconv.FormatFloat(n, 'g', -1, 64)` is the shortest decimal with that
+// round-trip property, so the property is what is being relied on and the
+// notation is only how it is obtained.
+//
+// ⚠️ NON-FINITE VALUES ARE REJECTED, and the reason is that they are OUT
+// OF DOMAIN rather than inert. `strconv.ParseFloat` accepts `NaN`, `Inf`
+// and `Infinity`, and returns ±Inf with ErrRange for a decimal too large
+// to represent. An ordered filter over this project's numeric metadata is
+// defined over FINITE values only, so a special float is not a narrower
+// question, it is one this grammar does not ask.
+//
+// ⛔ AND IT IS WORTH BEING EXACT ABOUT WHAT ACCEPTING ONE WOULD DO,
+// because the intuition is wrong. Postgres does NOT evaluate a NaN
+// comparison as unknown the way IEEE 754 does. It deliberately makes NaN
+// EQUAL to NaN and GREATER THAN every non-NaN float, so that NaNs can
+// sort deterministically and live in btree indexes. Measured against this
+// project's own Postgres rather than assumed:
+//
+//	'NaN'::float8 >= 'NaN'::float8        t
+//	'NaN'::float8 >  1e300::float8        t
+//	'NaN'::float8 >= 'Infinity'::float8   t
+//	1e300::float8 >= 'NaN'::float8        f
+//
+// So `value_num >= 'NaN'` does not match nothing; it matches exactly the
+// rows storing NaN, and `>= '-Infinity'` matches every row that has a
+// value at all. Either one surfaces an exceptional ordering rule through
+// a control that promises an ordinary numeric bound. Refusing at the
+// parser keeps that semantics off the wire entirely, which is a stronger
+// reason than inertness would have been.
+func canonicalBound(v string, op FieldOp) (string, orderedDomain, bool) {
 	v = strings.TrimSpace(v)
 	if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
-		return t.UTC().Format(time.RFC3339Nano), true
+		return t.UTC().Format(time.RFC3339Nano), domainTemporal, true
 	}
 	if d, err := time.Parse("2006-01-02", v); err == nil {
 		if op == FieldOpAtMost {
 			d = d.Add(24*time.Hour - time.Microsecond)
 		}
-		return d.UTC().Format(time.RFC3339Nano), true
+		return d.UTC().Format(time.RFC3339Nano), domainTemporal, true
 	}
-	return "", false
+	if n, err := strconv.ParseFloat(v, 64); err == nil {
+		if math.IsNaN(n) || math.IsInf(n, 0) {
+			return "", domainNone, false
+		}
+		return strconv.FormatFloat(n, 'g', -1, 64), domainNumeric, true
+	}
+	return "", domainNone, false
+}
+
+// orderedBoundOps is the operator set an ORDERED DIMENSION's bare value
+// may lead with, longest-first for the same reason [fieldOps] is.
+//
+// It is the two inclusive bounds and nothing else. A bare `>` or `<`
+// matches nothing here and is therefore rejected, which is the intended
+// reading — we define inclusive bounds only, and silently treating `>`
+// as `>=` would be an off-by-one the caller cannot see. Equality and
+// contains are absent because they are not orderings: `file_size:=1234`
+// is a question nobody asks of a byte count, and admitting it would put
+// a fourth spelling of "equals" on the wire.
+var orderedBoundOps = []FieldOp{FieldOpAtLeast, FieldOpAtMost}
+
+// SplitOrderedBound splits an ORDERED DIMENSION's value into its leading
+// operator and the rest (#1173).
+//
+// This is the non-field twin of [SplitFieldTerm], and the difference in
+// shape is the difference in the dimensions. A `field:` term has to name
+// WHICH field, so its operator sits in the middle of a compound value and
+// is found by scanning. An ordered dimension names exactly one column, so
+// there is nothing before the operator and the split is a prefix match.
+//
+// Every failure path returns ok=false, which [FacetType.CanonicalValue]
+// turns into a 400 out of [ParseSelection] and [Selection.SQL] turns into
+// "this entity matches nothing" for the programmatic callers that bypass
+// it. Neither can reach a query. Exported for the same reason
+// [SplitFieldTerm] is: the grouping pass and the renderer must read the
+// operator with ONE function or they will eventually disagree about
+// where it ends.
+func SplitOrderedBound(v string) (op FieldOp, value string, ok bool) {
+	v = strings.TrimSpace(v)
+	for _, candidate := range orderedBoundOps {
+		if !strings.HasPrefix(v, string(candidate)) {
+			continue
+		}
+		value = strings.TrimSpace(v[len(candidate):])
+		if value == "" {
+			return "", "", false
+		}
+		return candidate, value, true
+	}
+	return "", "", false
+}
+
+// canonicalByteBound validates and normalises a [FacetFileSize] value —
+// `<op><int64>`, an EXACT count of bytes (#1173).
+//
+// # ⛔ int64, AND NOT A float64 ANYWHERE ON THE PATH
+//
+// `assets.file_size_bytes` is BIGINT. Beyond 2^53 a float64 cannot tell
+// consecutive integers apart, so a byte count parsed through one would
+// come back as a DIFFERENT number than the caller wrote — silently, and
+// only for large files, which is precisely where a size filter is used.
+// `strconv.ParseInt(_, 10, 64)` is exact over the whole column range and
+// reports ErrRange rather than saturating past it.
+//
+// It also gives the value-domain rejections for free, and each one is a
+// caller mistake that would otherwise look like a working filter:
+//
+//   - `12.5` — a fractional byte does not exist. ParseInt rejects it;
+//     a float parse would have silently truncated or rounded it.
+//   - `1MB` — units are NOT part of this grammar. There is no unit
+//     vocabulary on the wire, so `1MB` can only ever be a typo, and
+//     accepting the digits before the letters would run a filter three
+//     orders of magnitude away from the one that was asked for.
+//   - `9223372036854775808` — past int64. ErrRange.
+//   - `0x2000`, `1_000`, `1e3` — base 10 means base 10. ParseInt with an
+//     explicit base rejects prefixes, separators and exponents, so one
+//     spelling reaches the column.
+//
+// Canonicalising (rather than merely accepting) is [canonicalBound]'s
+// argument applied to integers: `+12345` and `12345` denote one bound and
+// must share one [CacheKey] and one stored DSL spelling.
+func canonicalByteBound(v string) (string, bool) {
+	op, rest, ok := SplitOrderedBound(v)
+	if !ok {
+		return "", false
+	}
+	n, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil {
+		return "", false
+	}
+	return string(op) + strconv.FormatInt(n, 10), true
+}
+
+// orderedFieldTypes maps a `field_definition.type` to the domain its
+// ORDERED comparisons live in. A type absent from this table supports NO
+// ordered comparison at all (#1173).
+//
+// # ⛔ THE TWO VALIDITY CLASSES ARE DIFFERENT QUESTIONS WITH DIFFERENT ANSWERS
+//
+// A malformed bound is knowable without a schema, so it is rejected in
+// [FacetType.CanonicalValue] — pure, never reaches execution, and surfaces
+// as a 400 on the `filter=` path and a DSLError on the DSL path.
+//
+// Whether a FIELD may be compared this way is not knowable without the
+// schema: it needs `field_definition.type`, which is a row. So it is
+// answered in [Selection.Authorize] beside the read-capability lookup
+// that is already there, and a refusal is an EMPTY RESULT SET rather than
+// an error — the same no-oracle direction the collection and field
+// arms take, for the same reason. A 400 would separate "that field is a
+// text field" from "no such field" on a code the caller supplied.
+//
+// # Why these three types and no others
+//
+// The enum is CHECK-constrained on `field_definition.type` to eleven
+// values (migration 00001). The storage column follows the type
+// (web/src/lib/fieldOptions.ts VALUE_COLUMN), and only two columns hold
+// an ORDERED quantity:
+//
+//	date, datetime  -> value_date  (TIMESTAMPTZ)
+//	number          -> value_num   (DOUBLE PRECISION)
+//
+// ⚠️ `boolean` also writes `value_num` — ADR 0012 encodes it as 1 or 0 —
+// and it is deliberately ABSENT. "At least true" is not a question, and
+// admitting it would let a bound act as a clumsy equality on a column
+// whose two values already have one.
+//
+// `text`, `longtext` and `rich_text` are absent because a range over
+// prose is meaningless rather than merely narrow; `select`,
+// `multi_select` and `tree` because a vocabulary has no order; and
+// `reference` because a UUID has no magnitude. There is no INTEGER field
+// type at all, which is why exact integral comparison exists only for a
+// resource dimension ([FacetFileSize]) and never for `field:`.
+var orderedFieldTypes = map[string]orderedDomain{
+	"date":     domainTemporal,
+	"datetime": domainTemporal,
+	"number":   domainNumeric,
+}
+
+// fieldTypeAdmitsBound reports whether a field of declared type ftype may
+// be compared with op against value.
+//
+// Non-bound operators are admitted unchanged: `=` and `~` are text
+// questions that every field type can be asked, and #1165's answer for a
+// type that stores nothing matching is already "no rows".
+//
+// For a bound, the value's own domain has to be the one that type stores.
+// A temporal bound on a `number` field and a numeric bound on a `date`
+// field are BOTH refusals — the mismatch is symmetric, and treating
+// either as "compare against the other column anyway" would answer a
+// different question than the caller asked.
+func fieldTypeAdmitsBound(ftype string, op FieldOp, value string) bool {
+	if op != FieldOpAtLeast && op != FieldOpAtMost {
+		return true
+	}
+	_, dom, ok := canonicalBound(value, op)
+	if !ok {
+		return false
+	}
+	return dom != domainNone && orderedFieldTypes[ftype] == dom
 }
 
 // validFieldCode reports whether s is a well-formed field-definition
@@ -743,15 +1050,31 @@ func (s Selection) Authorize(
 			// partitioning the corpus one bit at a time as an equality
 			// is. Authorizing per operator would be a gate scoped to the
 			// principal rather than to the payload.
-			code, _, _, ok := SplitFieldTerm(t.Value)
+			//
+			// #1173 sprint 18b — AND THE FIELD'S DECLARED TYPE, which is
+			// the SECOND thing about a `field:` term that cannot be
+			// decided without a row.
+			//
+			// `>=` and `<=` name a comparison, and whether a field
+			// supports one at all is `field_definition.type` — the same
+			// lookup already being made here for `read_capability`, so
+			// the check costs nothing extra. A refusal is the SAME empty
+			// result set for the SAME no-oracle reason: 400 would tell a
+			// caller "that code names a text field" about a code they
+			// supplied, which is the existence oracle [validFieldCode]
+			// refuses one level up. See [orderedFieldTypes].
+			code, op, value, ok := SplitFieldTerm(t.Value)
 			if !ok {
 				return false, nil
 			}
-			allowed, err := fieldReadable(ctx, pool, caps, code)
+			allowed, ftype, err := fieldGate(ctx, pool, caps, code)
 			if err != nil {
 				return false, err
 			}
 			if !allowed {
+				return false, nil
+			}
+			if !fieldTypeAdmitsBound(ftype, op, value) {
 				return false, nil
 			}
 		}
@@ -759,36 +1082,48 @@ func (s Selection) Authorize(
 	return true, nil
 }
 
-// fieldReadable answers "may this caller read the field definition with
-// this code" — the same question metadata's collection handler asks per
-// row (`canReadField`), asked once per selected dimension here.
+// fieldGate reads the two facts about a field definition that only the
+// DATABASE knows and that a `field:` term's admissibility depends on:
+// may this caller read it, and what TYPE is it declared as.
 //
+// The readability half is the same question metadata's collection handler
+// asks per row (`canReadField`), asked once per selected dimension here.
 // A field with a NULL read_capability is readable by everyone, which is
 // the overwhelmingly common case, so the lookup is one indexed read on
 // a small table and only for a selection that names a field at all.
 //
-// An unknown code returns (false, nil): it cannot be read because it
+// The TYPE half arrives on the same row rather than in a second query
+// (#1173): 18b needs it to decide whether an ordered comparison is
+// admissible at all, and asking twice for two columns of one row would
+// double the per-term cost of a filter for no gain. ftype is the empty
+// string whenever readable is false, so a refusal cannot be mistaken for
+// a field of some type.
+//
+// An unknown code returns (false, "", nil): it cannot be read because it
 // does not exist, and reporting that distinctly is the oracle
 // [Selection.Authorize]'s doc refuses.
-func fieldReadable(
+func fieldGate(
 	ctx context.Context, pool visibility.Pool,
 	caps visibility.CapabilityChecker, code string,
-) (bool, error) {
+) (readable bool, ftype string, err error) {
 	var readCap *string
-	err := pool.QueryRow(ctx, `
-		SELECT read_capability FROM field_definition
+	err = pool.QueryRow(ctx, `
+		SELECT read_capability, type FROM field_definition
 		 WHERE code = $1 AND status = 'active' AND searchable = TRUE`,
-		code).Scan(&readCap)
+		code).Scan(&readCap, &ftype)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return false, "", nil
 		}
-		return false, err
+		return false, "", err
 	}
 	if readCap == nil || *readCap == "" {
-		return true, nil
+		return true, ftype, nil
 	}
-	return caps != nil && caps(*readCap), nil
+	if caps != nil && caps(*readCap) {
+		return true, ftype, nil
+	}
+	return false, "", nil
 }
 
 // RenderContext carries the caller-dependent inputs a dimension needs
@@ -922,18 +1257,17 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int, rc 
 		for _, key := range subOrder {
 			parts := make([]string, 0, len(bySub[key]))
 			for _, v := range bySub[key] {
-				var op FieldOp
-				if dim == FacetField {
-					// Re-split rather than threading it out of the
-					// grouping pass: CanonicalValue has already proven it
-					// parses, so this cannot fail, and one parse function
-					// with one set of rules is what keeps the grouping
-					// and the rendering from disagreeing about where the
-					// operator ends.
-					_, op, _, _ = SplitFieldTerm(v)
+				// Re-derive rather than threading it out of the grouping
+				// pass: CanonicalValue has already proven the value
+				// parses, and one parse function with one set of rules
+				// is what keeps the grouping and the rendering from
+				// disagreeing about where the operator ends.
+				sh, ok := shapeOf(dim, v)
+				if !ok {
+					return "", nil, false
 				}
 				idx++
-				expr, ok := dimensionSQL(e, dim, a, idx, op, rc)
+				expr, ok := dimensionSQL(e, dim, a, idx, sh, rc)
 				if !ok {
 					return "", nil, false
 				}
@@ -948,19 +1282,19 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int, rc 
 }
 
 // subGroupKey returns the key that decides which terms of one dimension
-// combine with OR and which with AND (#1165).
+// combine with OR and which with AND (#1165, extended #1173).
 //
-// # Why `field:` needs this and the other dimensions do not
+// # Why `field:` needs this and most other dimensions do not
 //
-// Every other FacetType is ONE dimension: `extension` names one column,
-// so two values of it are two answers to one question and OR is the only
-// reading that makes sense. `field:` is not one dimension — it is a
-// FAMILY of them, one per field definition, collapsed into a single
-// FacetType because field definitions are data and cannot be enum
-// members ([FacetField]'s doc explains why). Grouping it by FacetType
-// alone therefore ORed terms that name DIFFERENT fields, so ticking
-// `pipeline_stage=lookdev` on top of `color_space=srgb` WIDENED the
-// result set instead of narrowing it.
+// Most FacetTypes are ONE dimension with one kind of value: `extension`
+// names one column, so two values of it are two answers to one question
+// and OR is the only reading that makes sense. `field:` is not one
+// dimension — it is a FAMILY of them, one per field definition, collapsed
+// into a single FacetType because field definitions are data and cannot
+// be enum members ([FacetField]'s doc explains why). Grouping it by
+// FacetType alone therefore ORed terms that name DIFFERENT fields, so
+// ticking `pipeline_stage=lookdev` on top of `color_space=srgb` WIDENED
+// the result set instead of narrowing it.
 //
 // That was already wrong before #1165 — it is #1157's bug, found while
 // adding the operator — but the operator is what makes it unshippable
@@ -979,17 +1313,103 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int, rc 
 //     range; `~draft` beside `>=March` is "contains draft AND is recent".
 //   - Different field → AND. Two rows of a form narrow each other.
 //
-// Non-field dimensions all return the same constant key, which
-// reproduces their previous single-group rendering exactly.
+// # ⭐ AN ORDERED DIMENSION NEEDS IT FOR EXACTLY ONE HALF OF THAT REASON
+//
+// [FacetFileSize] is one dimension over one column, so there is no code
+// to key on — but its values are BOUNDS, and the range argument above is
+// about the OPERATOR rather than about the family. `file_size:>=A` beside
+// `file_size:<=B` ORed reads "bigger than A or smaller than B", which is
+// every asset that has a size at all: the range that looks like it worked.
+// So the key is the operator alone, which makes two bounds AND (an
+// intersection) and two of the SAME bound OR (a value list, the looser
+// of the two winning, which is what "at least A or at least B" means).
+//
+// ⛔ THE CLASSIFICATION IS EXPLICIT, NOT UNIVERSAL. Extracting an operator
+// from every dimension's values would make `extension:png` operator-aware
+// and give `tag:` a value grammar nobody declared. A dimension is ordered
+// only by [FacetType.orderedDomain] naming it.
+//
+// Every other dimension returns the same constant key, which reproduces
+// its previous single-group rendering exactly.
 func subGroupKey(dim FacetType, v string) (string, bool) {
-	if dim != FacetField {
-		return "", true
+	switch {
+	case dim == FacetField:
+		code, op, _, ok := SplitFieldTerm(v)
+		if !ok {
+			return "", false
+		}
+		return code + "\x1f" + string(op), true
+	case dim.ordered():
+		op, _, ok := SplitOrderedBound(v)
+		if !ok {
+			return "", false
+		}
+		return string(op), true
 	}
-	code, op, _, ok := SplitFieldTerm(v)
-	if !ok {
-		return "", false
+	return "", true
+}
+
+// termShape is HOW one term compares: its operator, and — for an ordered
+// term — the [orderedDomain] the bound was written in (#1173).
+//
+// # ⛔ THE DOMAIN IS THE HALF THAT USED TO BE MISSING, AND ITS ABSENCE WAS THE BUG
+//
+// Before 18b [dimensionSQL] chose the storage column from the OPERATOR:
+// `op == FieldOpAtLeast || op == FieldOpAtMost` selected `value_date`.
+// That is only correct while dates are the only thing anyone can bound,
+// and it is what made `>=` date-only. The column follows the QUANTITY,
+// so the quantity has to travel with the term.
+//
+// It stays a value carried alongside the term rather than a second
+// placeholder: [dimensionSQL]'s contract is one placeholder per term, and
+// [Selection.SQL] appends exactly one arg. See [dimensionSQL]'s doc.
+type termShape struct {
+	// op is the comparison. EMPTY for a dimension whose values carry no
+	// operator, which is every dimension but `field:` and the ordered
+	// ones.
+	op FieldOp
+	// domain is the bound's value domain, and [domainNone] whenever op
+	// is not a bound.
+	domain orderedDomain
+}
+
+// shapeOf derives the [termShape] of one already-canonical term.
+//
+// ⚠️ It reads the VALUE, not the schema, and that is exactly the split
+// [canonicalBound] documents: which domain a bound was written in is
+// decided by its spelling and is knowable here, while whether the FIELD
+// admits that domain is a row and is decided in [Selection.Authorize].
+// A term that reaches here having failed the schema check renders SQL
+// that matches no row — the column it names is NULL on every row of a
+// field stored elsewhere — so the two gates fail in the same direction.
+//
+// Returns ok=false for a value the grammar cannot read, which
+// [Selection.SQL] turns into "this entity matches nothing". That is the
+// second gate [Selection.With] makes necessary: it is exported and takes
+// no error, so a programmatic caller can seed a term the parser never saw.
+func shapeOf(dim FacetType, v string) (termShape, bool) {
+	switch {
+	case dim == FacetField:
+		_, op, value, ok := SplitFieldTerm(v)
+		if !ok {
+			return termShape{}, false
+		}
+		if op != FieldOpAtLeast && op != FieldOpAtMost {
+			return termShape{op: op}, true
+		}
+		_, dom, ok := canonicalBound(value, op)
+		if !ok {
+			return termShape{}, false
+		}
+		return termShape{op: op, domain: dom}, true
+	case dim.ordered():
+		op, _, ok := SplitOrderedBound(v)
+		if !ok {
+			return termShape{}, false
+		}
+		return termShape{op: op, domain: dim.orderedDomain()}, true
 	}
-	return code + "\x1f" + string(op), true
+	return termShape{}, true
 }
 
 // dimensionSQL renders ONE (dimension, entity) pair as a boolean
@@ -1010,21 +1430,25 @@ func subGroupKey(dim FacetType, v string) (string, bool) {
 // rc is the caller context [FacetKind]'s post arm needs and every other
 // dimension ignores; see [RenderContext].
 //
-// op is the [FieldOp] of a [FacetField] term and is EMPTY for every
-// other dimension. It is a parameter rather than something re-derived
-// here because [Selection.SQL] has already parsed the value to group by
-// it, and parsing the same string twice in two places is how the
-// grouping and the predicate would come to disagree.
+// sh is the [termShape] of this term — its operator, and the domain its
+// bound was written in. Both are the ZERO VALUE for a dimension whose
+// values carry no operator, which is every dimension but `field:` and the
+// ordered ones. They are parameters rather than something re-derived here
+// because [Selection.SQL] has already parsed the value to group by it,
+// and parsing the same string twice in two places is how the grouping and
+// the predicate would come to disagree.
 //
 // ⚠️ It does NOT widen the one-placeholder contract this function's
 // callers rely on. Each operator renders a DIFFERENT EXPRESSION over the
-// SAME single placeholder, still carrying `<code><op><value>`; the split
-// still happens in SQL. That is what kept #1165 from having to change
-// the arity for every dimension, and #1251 held the same line for
-// [FacetKind] by moving the DERIVATION into SQL rather than binding the
-// compiled sets — see [Selection]'s doc. `rc` is not a counter-example:
-// it is one value for the whole selection, not a per-term placeholder.
-func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op FieldOp, rc RenderContext) (string, bool) {
+// SAME single placeholder, still carrying the whole term; the split still
+// happens in SQL. That is what kept #1165 from having to change the arity
+// for every dimension, #1251 held the same line for [FacetKind] by moving
+// the DERIVATION into SQL rather than binding the compiled sets — see
+// [Selection]'s doc — and #1173's ordered dimensions hold it again by
+// carrying the DOMAIN, which is one enum value per term rather than a
+// second bound argument. `rc` is not a counter-example either: it is one
+// value for the whole selection, not a per-term placeholder.
+func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, sh termShape, rc RenderContext) (string, bool) {
 	p := placeholder(idx)
 	switch dim {
 	case FacetTag:
@@ -1295,14 +1719,14 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 		// the whole search when a term names a field this caller may not
 		// read.
 		if e == visibility.EntityAsset {
-			match, ok := fieldValueSQL(op, p)
+			match, ok := fieldValueSQL(sh, p)
 			if !ok {
 				return "", false
 			}
 			return `EXISTS (SELECT 1 FROM asset_field_value ffv
 			                 JOIN field_definition ffd ON ffd.id = ffv.field_id
 			                WHERE ffv.asset_id = ` + a + `id
-			                  AND ffd.code = split_part(` + p + `::TEXT, '` + string(op) + `', 1)
+			                  AND ffd.code = split_part(` + p + `::TEXT, '` + string(sh.op) + `', 1)
 			                  AND ffd.searchable = TRUE
 			                  AND ffd.status = 'active'
 			                  AND ` + match + `)`, true
@@ -1312,6 +1736,58 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 		// count, the same fall-through FacetCollection relies on. That
 		// is correct rather than lossy: "assets whose material is
 		// steel" is a question about assets.
+	case FacetFileSize:
+		// #1173 sprint 18b — the stored byte count of a file, as an
+		// ordinary predicate under an ordered operator.
+		//
+		// ONE PLACEHOLDER, holding the whole bare bound `<op><digits>`,
+		// and the split happens in SQL — the same contract [FacetField]
+		// holds one case above, for the same reason: every term appends
+		// exactly one arg, and taking two here would change the arity for
+		// every dimension. The operator is a FIXED-WIDTH prefix here
+		// rather than something to search for, so the value is everything
+		// from byte len(op)+1 onward. `substr` is 1-indexed.
+		//
+		// The operator's spelling is spliced from a CLOSED Go constant
+		// ([orderedBoundOps]), never from caller text: `sh.op` reaches
+		// here only after [SplitOrderedBound] matched it against that
+		// list, and the guard below is the same fail-closed refusal
+		// [fieldValueSQL] makes for an operator it does not recognise.
+		// The caller's bytes stay in the placeholder, where
+		// [FacetType.CanonicalValue] has already proven they are an
+		// int64 in base 10.
+		//
+		// # ⛔ ONLY AN ASSET HAS A FILE, AND THE OTHER TWO ARMS ARE THE POINT
+		//
+		// A post is a set of members and a collection is a container;
+		// neither carries a byte count of its own. Both therefore fall
+		// through to ok=false, which [Selection.SQL] returns as
+		// satisfiable=false and every one of its call sites honours by
+		// skipping the entity entirely — see [FacetExtension], which has
+		// had exactly this shape since #907.
+		//
+		// That is the POSITIVE-NARROWING direction [FacetAI]'s collection
+		// arm records as the test: a caller asking for files over 10MB is
+		// asking about FILES, so an entity with no file leaving the page
+		// is the answer rather than a loss. Treating an active narrowing
+		// filter as "no constraint" on those arms would return every post
+		// and every collection beside the qualifying assets, which is a
+		// result set the filter made LARGER.
+		//
+		// ⚠️ NULL is not zero. `file_size_bytes` is nullable — an asset
+		// whose file was never measured has no size — and a comparison
+		// against NULL is NULL, so such a row satisfies NEITHER bound and
+		// drops out. That is the fail-closed reading and it is asserted
+		// rather than assumed: it is the only way a row can satisfy
+		// neither `>=A` nor `<=B` for A <= B, since a real number is
+		// always below, within or above the range.
+		if sh.op != FieldOpAtLeast && sh.op != FieldOpAtMost {
+			return "", false
+		}
+		if e == visibility.EntityAsset {
+			return a + `file_size_bytes ` + string(sh.op) + ` substr(` + p +
+				`::TEXT, ` + strconv.Itoa(len(sh.op)+1) + `)::BIGINT`, true
+		}
 	case FacetCollection:
 		// #910 — "search inside this collection", as an ordinary
 		// predicate rather than a second query path.
@@ -1359,12 +1835,13 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 }
 
 // fieldValueSQL renders the VALUE half of a [FacetField] predicate for
-// operator op, reading the term from placeholder p (#1165).
+// term shape sh, reading the term from placeholder p (#1165, typed #1173).
 //
 // The value is extracted in SQL as everything after the first occurrence
 // of the operator, so `v` below is the caller's text and nothing else.
-// An unrecognised operator returns ok=false, which [dimensionSQL] turns
-// into "this entity matches nothing" — the same fail-closed direction
+// An unrecognised operator — or a bound whose domain this function has no
+// column for — returns ok=false, which [dimensionSQL] turns into "this
+// entity matches nothing": the same fail-closed direction
 // [SplitFieldTerm] takes at parse time, repeated here because
 // [Selection.With] is exported and can seed a term the parser never saw.
 //
@@ -1373,18 +1850,32 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 //
 // A field's storage depends on its type (web/src/lib/fieldOptions.ts
 // VALUE_COLUMN): `select` and `tree` write one slug into `value_text`,
-// `multi_select` writes an array into `value_options`, and the date
-// types write `value_date`.
+// `multi_select` writes an array into `value_options`, `number` writes
+// `value_num`, and the date types write `value_date`.
 //
 //   - Equality and contains ask BOTH text columns, because a caller
 //     ticking "steel" does not know or care which one holds it, and
 //     asking both is one expression rather than a type lookup per term.
-//   - The bounds ask value_date ALONE. A range against a text field is
-//     not a narrower question, it is a meaningless one, and `value_date`
-//     is NULL on those rows so it matches nothing — which is the right
-//     answer and the fail-closed one. It also keeps the partial index
-//     `asset_field_value_date_idx (field_id, value_date)` usable, which
+//   - A BOUND asks the ONE column its domain lives in. It keeps the
+//     partial indexes `asset_field_value_date_idx (field_id, value_date)`
+//     and `asset_field_value_num_idx (field_id, value_num)` usable, which
 //     an OR across columns would have given up.
+//
+// # ⛔ THE COLUMN COMES FROM THE DOMAIN, NOT FROM THE OPERATOR
+//
+// It used to come from the operator — `>=` meant `value_date`, full stop
+// — which is why a numeric field could not be compared at all and why
+// `field:pixel_width>=1920` was a 400. The operator says which SIDE of a
+// bound a row must fall on; only the quantity says which column holds it.
+//
+// ⚠️ AND THE DOMAIN IS NOT A GUESS ABOUT THE FIELD. It is read off the
+// caller's own bound ([shapeOf]), and whether the FIELD may be compared
+// that way is a separate, schema-aware refusal in [Selection.Authorize]
+// (see [orderedFieldTypes]). The two agree by construction, because the
+// domain -> column mapping here and the type -> domain mapping there are
+// the same three rows read from two directions. If one ever slipped past
+// the other the predicate would still match no row, because a field
+// stored in `value_text` has NULL in both of these columns.
 //
 // # `strpos`, not ILIKE
 //
@@ -1398,21 +1889,25 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, op 
 // `value_options` is unnested rather than joined into one string:
 // flattening the array would let a match straddle two elements and
 // report a hit for text no single value contains.
-func fieldValueSQL(op FieldOp, p string) (string, bool) {
+func fieldValueSQL(sh termShape, p string) (string, bool) {
 	// Everything after the FIRST occurrence of the operator.
-	v := `substr(` + p + `::TEXT, position('` + string(op) + `' IN ` + p +
-		`::TEXT) + ` + strconv.Itoa(len(op)) + `)`
-	switch op {
+	v := `substr(` + p + `::TEXT, position('` + string(sh.op) + `' IN ` + p +
+		`::TEXT) + ` + strconv.Itoa(len(sh.op)) + `)`
+	switch sh.op {
 	case FieldOpEq:
 		return `(ffv.value_text = ` + v + ` OR ` + v + ` = ANY(ffv.value_options))`, true
 	case FieldOpContains:
 		return `(strpos(LOWER(ffv.value_text), LOWER(` + v + `)) > 0
 		         OR EXISTS (SELECT 1 FROM unnest(COALESCE(ffv.value_options, '{}'::TEXT[])) fo
 		                     WHERE strpos(LOWER(fo), LOWER(` + v + `)) > 0))`, true
-	case FieldOpAtLeast:
-		return `ffv.value_date >= ` + v + `::TIMESTAMPTZ`, true
-	case FieldOpAtMost:
-		return `ffv.value_date <= ` + v + `::TIMESTAMPTZ`, true
+	case FieldOpAtLeast, FieldOpAtMost:
+		switch sh.domain {
+		case domainTemporal:
+			return `ffv.value_date ` + string(sh.op) + ` ` + v + `::TIMESTAMPTZ`, true
+		case domainNumeric:
+			return `ffv.value_num ` + string(sh.op) + ` ` + v + `::DOUBLE PRECISION`, true
+		}
+		return "", false
 	}
 	return "", false
 }

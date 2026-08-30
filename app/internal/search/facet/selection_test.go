@@ -110,7 +110,30 @@ func TestFieldOperator_UnknownFails(t *testing.T) {
 		// caller mistake, which is what canonicalBound exists to stop.
 		{"bound is not a date", "field:expires>=soon"},
 		{"bound is a malformed date", "field:expires>=2026-13-45"},
-		{"bound is a number", "field:expires<=42"},
+		// ⭐ `field:expires<=42` USED TO BE ON THIS LIST and is now
+		// valid, which is #1173's whole point: a bound is temporal or
+		// NUMERIC, and which one is a property of the value's spelling.
+		// It moved to TestOrderedBound_NumericIsALexicallyValidBound,
+		// with the schema-aware half — whether a field DECLARED as a
+		// date may be compared to 42 — refused in Selection.Authorize
+		// against a real row, because that answer needs one.
+		//
+		// The VALUE-DOMAIN rejections replace it here, because they are
+		// still knowable without a schema. Each is a spelling
+		// strconv.ParseFloat accepts and this grammar's ordered domain
+		// does not contain: an ordered numeric filter here is defined
+		// over FINITE values only.
+		//
+		// ⛔ NOT because such a bound would be inert. Postgres makes NaN
+		// EQUAL to NaN and GREATER THAN every non-NaN float so NaNs can
+		// sort and be indexed, so `value_num >= 'NaN'` matches exactly
+		// the rows storing NaN and `>= '-Infinity'` matches every row
+		// with a value. Refusing keeps that exceptional ordering off a
+		// control that promises an ordinary bound. See canonicalBound.
+		{"bound is NaN", "field:width>=NaN"},
+		{"bound is Inf", "field:width>=Inf"},
+		{"bound is -Infinity", "field:width<=-Infinity"},
+		{"bound is a number with a unit", "field:width>=1920px"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			sel, err := ParseSelection([]string{c.in})

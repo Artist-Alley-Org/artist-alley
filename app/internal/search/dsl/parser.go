@@ -39,6 +39,22 @@ const (
 	// one way on the rail and another way in a saved query. So the compiler
 	// carries the token whole and the facet layer decides what it says.
 	FieldField Field = "field"
+	// FieldFileSize is the `file_size:` dimension — a BARE BOUND with
+	// the operator leading, `file_size:>=12345` (#1173, sprint 18b).
+	//
+	// ⛔ THE VALUE IS NOT PARSED HERE either, for [FieldField]'s reason.
+	// [facet.SplitOrderedBound] and [facet.FacetType.CanonicalValue] are
+	// the single authority for what a bound means, and a second reading
+	// in this package is the "two implementations that agree today"
+	// shape ADR 0093 decision 3 refuses.
+	//
+	// ⭐ IT NEEDS NO LEXER CHANGE, and that is worth stating because it
+	// is the property that made this dimension cheap. `>` and `=` are
+	// not delimiters in [Lex]'s word run — it breaks on whitespace and
+	// on `:` `(` `)` `"` and nothing else — so `>=12345` lexes as one
+	// [TokWord], which [parseFieldMatch] already accepts as a value and
+	// which [Serialize] therefore emits UNQUOTED.
+	FieldFileSize Field = "file_size"
 )
 
 // AllFields is the whitelist. Exposed so error responses can list
@@ -46,7 +62,7 @@ const (
 var AllFields = []Field{
 	FieldTitle, FieldDescription, FieldBody, FieldTag, FieldOwner,
 	FieldType, FieldSensitivity, FieldExtension, FieldSimilarTo,
-	FieldField,
+	FieldField, FieldFileSize,
 }
 
 // ParseField normalises a case-insensitive identifier to its
@@ -74,6 +90,8 @@ func ParseField(s string) (Field, bool) {
 		return FieldSimilarTo, true
 	case "field":
 		return FieldField, true
+	case "file_size", "filesize":
+		return FieldFileSize, true
 	}
 	return "", false
 }
