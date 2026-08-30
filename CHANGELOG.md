@@ -128,6 +128,14 @@ where applicable, otherwise note "no-spec-impact."
   a filter on a metadata field survives too, which was not previously possible at all (#1368,
   PR #1370).
 
+- **Search can filter by size and by numeric metadata, not just by dates.** A range on a number,
+  such as a polygon count or a pixel dimension, now works the way a date range always has, and
+  files can be filtered by how large they are. Giving both a lower and an upper bound narrows to
+  the overlap rather than widening to everything that has a value, which is what the previous
+  grouping would have done. Size filtering applies to files, so a search mixing files with posts
+  and collections returns only the files once a size bound is active, and these filters survive
+  being saved and replayed like any other (#1173 in part, PR #1373).
+
 ### Changed
 
 - **Collections hold posts, not loose files.** Dropping a file into a collection used to publish
