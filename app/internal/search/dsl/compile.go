@@ -159,6 +159,15 @@ type Filters struct {
 	// avoid destroying the terms before it gets there — which is exactly
 	// what #1368 found four plain-string fields doing.
 	FileSizes []string
+	// WorkflowStates are `workflow_state:` identities, carried WHOLE as
+	// `<domain>/<code>` or the reserved literal `none` (#1173, sprint
+	// 18c). Opaque here for [Fields]' reason.
+	//
+	// A slice, and never a plain string, for the reason #1368 found four
+	// of these fields doing the wrong thing: an asset holds exactly one
+	// state, so two identities mean OR, and a plain assignment would
+	// keep the last and drop the first with no error and no log line.
+	WorkflowStates []string
 
 	// Below are compiler-internal buckets consumed by the Engine's
 	// SQL renderer. Kept exported-lowercase so tests in this
@@ -365,6 +374,11 @@ func (c *compiler) walkFieldMatch(m FieldMatchNode) (string, error) {
 	case FieldFileSize:
 		// Opaque `<op><bytes>`, straight through. See [FieldFileSize].
 		c.filters.FileSizes = append(c.filters.FileSizes, m.Value)
+		return "", nil
+	case FieldWorkflowState:
+		// Opaque `<domain>/<code>` or `none`, straight through. See
+		// [FieldWorkflowState].
+		c.filters.WorkflowStates = append(c.filters.WorkflowStates, m.Value)
 		return "", nil
 	}
 	// Unreachable — parser's whitelist gate ensures every Field is

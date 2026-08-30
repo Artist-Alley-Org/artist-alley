@@ -99,6 +99,12 @@ func TestRoundTrip_EverySavableDimension(t *testing.T) {
 		{"field equality", "field:color_space=sRGB"},
 		// #1173 — the seventh, and the first whose VALUE is a bound.
 		{"file_size", "file_size:>=12345"},
+		// #1173 sprint 18c — the eighth, and the first whose value is
+		// another row's NATURAL KEY. It carries a `:` inside the value,
+		// so its canonical spelling is QUOTED; that is decided by the
+		// lexer, not by this list.
+		{"workflow_state", "workflow_state:asset:1/published"},
+		{"workflow_state none", "workflow_state:none"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,6 +242,102 @@ func TestRoundTrip_QuotedValues(t *testing.T) {
 			out, text := roundTrip(t, in)
 			assertSameSelection(t, in, out, text)
 		})
+	}
+}
+
+// TestRoundTrip_WorkflowStateIdentities — #1173 sprint 18c.
+//
+// ⭐ IT IS THE FIRST NON-`field:` DIMENSION WHOSE CANONICAL SPELLING IS
+// QUOTED. An asset domain is `asset:<ref>`, so the value carries a `:`,
+// which terminates the lexer's word run — [dsl.Serialize] finds that out
+// by lexing its own candidate token and emits
+// `workflow_state:"asset:1/published"` with no rule added anywhere.
+//
+// ⛔ AND THE UNKNOWN IDENTITY IS PART OF THE CONTRACT. A saved query
+// naming a state an operator later deletes must stay REPRESENTABLE: it
+// returns zero rows (asserted against real rows in
+// workflow_state_filter_test.go), and it must never become unparseable.
+func TestRoundTrip_WorkflowStateIdentities(t *testing.T) {
+	cases := []struct {
+		name  string
+		token string
+	}{
+		{"an ordinary identity", "workflow_state:asset:1/published"},
+		{"the reserved literal", "workflow_state:none"},
+		{"a non-asset domain", "workflow_state:post/published"},
+		{"an unknown but well-formed identity", "workflow_state:asset:9/never_defined"},
+		// The free-text code shapes #897 permits. Each is a value a bare
+		// token cannot carry, and none of them needs a rule of its own.
+		{"a code containing a further slash", "workflow_state:asset:1/stage/final"},
+		{"a code with whitespace", "workflow_state:asset:1/awaiting art director"},
+		{"a code that reads as or", "workflow_state:asset:1/or"},
+		{"a code with a quote", `workflow_state:asset:1/say "when"`},
+		{"a code with a backslash", `workflow_state:asset:1/C:\art\ref`},
+		{"a code ending in a backslash", `workflow_state:asset:1/trailing\`},
+		{"a code with parens", "workflow_state:asset:1/stage(2)"},
+		{"mixed case, preserved", "workflow_state:asset:1/Pending_Review"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := sel(t, tc.token)
+			out, text := roundTrip(t, in)
+			assertSameSelection(t, in, out, text)
+		})
+	}
+}
+
+// TestRoundTrip_WorkflowStateMultiplicitySurvives — two identities are
+// two terms, and the compiler must not collapse them.
+//
+// ⛔ The count assertion is the point: an asset holds exactly one state,
+// so a compiler that kept only the last value would return a STRICT
+// SUBSET and a set comparison against a one-term expectation would pass
+// on exactly that. #1368 found four dimensions doing it.
+func TestRoundTrip_WorkflowStateMultiplicitySurvives(t *testing.T) {
+	for _, tokens := range [][]string{
+		{"workflow_state:asset:1/draft", "workflow_state:asset:1/published"},
+		{"workflow_state:asset:1/draft", "workflow_state:none"},
+		{"workflow_state:asset:1/draft", "workflow_state:post/published", "workflow_state:none"},
+		{"workflow_state:asset:1/published", "extension:png", "tag:sketch"},
+	} {
+		in := sel(t, tokens...)
+		if len(in.Terms()) != len(tokens) {
+			t.Fatalf("premise failed: %d tokens produced %d terms", len(tokens), len(in.Terms()))
+		}
+		out, text := roundTrip(t, in)
+		if got := len(out.Terms()); got != len(tokens) {
+			t.Errorf("%d terms went in and %d came back — a term was dropped\n  via %s\n  got %v",
+				len(tokens), got, text, out.Params())
+		}
+		assertSameSelection(t, in, out, text)
+	}
+}
+
+// TestSelectionFromDSL_RefusesAMalformedWorkflowIdentity — the
+// fail-closed direction on the way IN, for the dimension's own grammar.
+//
+// A hand-typed `workflow_state:published` has no domain. On the
+// `filter=` path that is a 400; on the DSL path it must be a DSLError
+// rather than a term that renders a predicate nobody can satisfy.
+func TestSelectionFromDSL_RefusesAMalformedWorkflowIdentity(t *testing.T) {
+	for _, text := range []string{
+		`workflow_state:published`,
+		`workflow_state:"/published"`,
+		`workflow_state:"asset:1/"`,
+	} {
+		parsed, err := dsl.Parse(text)
+		if err != nil {
+			t.Fatalf("premise failed: %q does not parse (%v); the refusal under test is "+
+				"the VALUE's, not the grammar's", text, err)
+		}
+		compiled, err := dsl.Compile(parsed)
+		if err != nil {
+			t.Fatalf("premise failed: %q does not compile (%v)", text, err)
+		}
+		if _, err := SelectionFromDSL(compiled.Filters, facet.Selection{}); err == nil {
+			t.Errorf("SelectionFromDSL accepted %q — a concrete identity is "+
+				"<domain>/<code> with both halves non-empty", text)
+		}
 	}
 }
 
