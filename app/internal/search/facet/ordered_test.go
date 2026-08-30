@@ -178,7 +178,8 @@ func TestFileSize_ValueGrammar(t *testing.T) {
 		{">=9223372036854775808", "", "one past int64"},
 		{">=-9223372036854775809", "", "one past int64 the other way"},
 		{">=abc", "", "not a number at all"},
-		{">=NaN", "", "not an integer, and not a bound"},
+		{">=NaN", "", "not an integer. A byte count is exact and finite by " +
+			"construction, so a special float is out of this domain twice over"},
 	} {
 		t.Run(c.in, func(t *testing.T) {
 			got, ok := FacetFileSize.CanonicalValue(c.in)

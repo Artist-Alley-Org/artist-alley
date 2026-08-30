@@ -620,11 +620,33 @@ const fieldOpChars = "=~<>"
 //
 // `strconv.FormatFloat(n, 'g', -1, 64)` is the shortest decimal with that
 // round-trip property, so the property is what is being relied on and the
-// notation is only how it is obtained. ⚠️ NON-FINITE VALUES ARE REJECTED:
-// ParseFloat accepts `NaN`, `Inf` and `Infinity` (and returns ±Inf with
-// ErrRange for a decimal too large to represent), none of which is a
-// bound — `value_num >= 'NaN'` is false for every row including the ones
-// that hold NaN, which is a filter that looks applied and is not.
+// notation is only how it is obtained.
+//
+// ⚠️ NON-FINITE VALUES ARE REJECTED, and the reason is that they are OUT
+// OF DOMAIN rather than inert. `strconv.ParseFloat` accepts `NaN`, `Inf`
+// and `Infinity`, and returns ±Inf with ErrRange for a decimal too large
+// to represent. An ordered filter over this project's numeric metadata is
+// defined over FINITE values only, so a special float is not a narrower
+// question, it is one this grammar does not ask.
+//
+// ⛔ AND IT IS WORTH BEING EXACT ABOUT WHAT ACCEPTING ONE WOULD DO,
+// because the intuition is wrong. Postgres does NOT evaluate a NaN
+// comparison as unknown the way IEEE 754 does. It deliberately makes NaN
+// EQUAL to NaN and GREATER THAN every non-NaN float, so that NaNs can
+// sort deterministically and live in btree indexes. Measured against this
+// project's own Postgres rather than assumed:
+//
+//	'NaN'::float8 >= 'NaN'::float8        t
+//	'NaN'::float8 >  1e300::float8        t
+//	'NaN'::float8 >= 'Infinity'::float8   t
+//	1e300::float8 >= 'NaN'::float8        f
+//
+// So `value_num >= 'NaN'` does not match nothing; it matches exactly the
+// rows storing NaN, and `>= '-Infinity'` matches every row that has a
+// value at all. Either one surfaces an exceptional ordering rule through
+// a control that promises an ordinary numeric bound. Refusing at the
+// parser keeps that semantics off the wire entirely, which is a stronger
+// reason than inertness would have been.
 func canonicalBound(v string, op FieldOp) (string, orderedDomain, bool) {
 	v = strings.TrimSpace(v)
 	if t, err := time.Parse(time.RFC3339Nano, v); err == nil {

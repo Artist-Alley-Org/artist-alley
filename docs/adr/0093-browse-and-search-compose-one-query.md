@@ -341,9 +341,28 @@ microsecond of that day.
 
 **The numeric canonical form is stated as a property, not as a notation:** two spellings that denote
 the same `float64` produce the same canonical string, and that string reads back to that same
-`float64`. So `1920`, `1920.0` and `1.92e3` are one term and one `CacheKey`. Non-finite values are
-refused; `NaN` and `±Inf` are what `strconv.ParseFloat` accepts and no column can be compared
-against, and `value_num >= 'NaN'` is false for every row including the ones holding NaN.
+`float64`. So `1920`, `1920.0` and `1.92e3` are one term and one `CacheKey`.
+
+**Non-finite values are refused because they are out of domain, not because they would be inert.**
+`strconv.ParseFloat` accepts `NaN`, `Inf` and `Infinity`, and an ordered filter over this project's
+numeric metadata is defined over **finite** values only.
+
+⛔ The tempting justification is that such a bound would match nothing, and **that is false for
+PostgreSQL.** Postgres does not evaluate a NaN comparison as unknown: it deliberately makes NaN
+**equal to NaN** and **greater than every non-NaN float**, so NaNs sort deterministically and can
+live in btree indexes. Measured rather than assumed:
+
+| expression | result |
+|---|---|
+| `'NaN'::float8 >= 'NaN'::float8` | `t` |
+| `'NaN'::float8 > 1e300::float8` | `t` |
+| `'NaN'::float8 >= 'Infinity'::float8` | `t` |
+| `1e300::float8 >= 'NaN'::float8` | `f` |
+
+So `value_num >= 'NaN'` matches exactly the rows storing NaN, and `>= '-Infinity'` matches every row
+that has a value at all. Accepting either would surface an exceptional ordering rule through a
+control that promises an ordinary numeric bound. Rejecting during pure value-domain validation keeps
+that semantics off the wire entirely, which is a stronger reason than inertness would have been.
 
 **Bytes are `int64` with no `float64` anywhere on the path.** `file_size_bytes` is BIGINT and
 reaches past 2^53, where a `float64` stops being able to tell consecutive integers apart. A byte
