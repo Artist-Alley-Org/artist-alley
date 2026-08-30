@@ -55,6 +55,24 @@ const (
 	// [TokWord], which [parseFieldMatch] already accepts as a value and
 	// which [Serialize] therefore emits UNQUOTED.
 	FieldFileSize Field = "file_size"
+	// FieldWorkflowState is the `workflow_state:` dimension — an
+	// asset's workflow state, spelled by its NATURAL KEY
+	// `<domain>/<code>`, or the reserved literal `none` (#1173,
+	// sprint 18c).
+	//
+	// ⛔ THE VALUE IS NOT PARSED HERE either, for [FieldField]'s reason.
+	// [facet.FacetType.CanonicalValue] is the single authority for what
+	// a workflow-state identity means, including where the domain ends.
+	//
+	// ⚠️ IT NEEDS NO LEXER CHANGE AND IT IS THE FIRST NON-`field:`
+	// DIMENSION WHOSE CANONICAL SPELLING IS QUOTED. An asset domain is
+	// `asset:<ref>`, so the value carries a `:` — which DOES terminate
+	// [Lex]'s word run. [Serialize] finds that out by lexing its own
+	// candidate token rather than by consulting a list of characters,
+	// so it emits `workflow_state:"asset:1/published"` with no rule
+	// added anywhere. The same machinery covers a code carrying
+	// whitespace, a quote or a backslash, which #897 permits.
+	FieldWorkflowState Field = "workflow_state"
 )
 
 // AllFields is the whitelist. Exposed so error responses can list
@@ -62,7 +80,7 @@ const (
 var AllFields = []Field{
 	FieldTitle, FieldDescription, FieldBody, FieldTag, FieldOwner,
 	FieldType, FieldSensitivity, FieldExtension, FieldSimilarTo,
-	FieldField, FieldFileSize,
+	FieldField, FieldFileSize, FieldWorkflowState,
 }
 
 // ParseField normalises a case-insensitive identifier to its
@@ -92,6 +110,8 @@ func ParseField(s string) (Field, bool) {
 		return FieldField, true
 	case "file_size", "filesize":
 		return FieldFileSize, true
+	case "workflow_state":
+		return FieldWorkflowState, true
 	}
 	return "", false
 }

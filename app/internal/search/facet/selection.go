@@ -259,6 +259,16 @@ func (s Selection) CacheKey() string {
 // ⛔ AND NOTE WHICH DIRECTION THE OR RUNS. Widening the tier SET widens
 // the SELECTION and never the read rule, which is a separate conjunct
 // ANDed on by every site that renders this — see [FacetVisibility].
+//
+// ⭐ [FacetWorkflowState] was checked against it too (#1173 sprint 18c),
+// and it is the plainest case since `visibility`: an asset carries
+// exactly ONE `state_id`, so `workflow_state:asset:1/draft
+// workflow_state:asset:1/published` under AND returns nothing forever.
+// Under OR it is the union, which is what ticking two states on a rail
+// asks for. It is the `ai` precedent ADR 0093's 2026-08-20 amendment
+// records, one dimension over. Non-conjunctive, deliberately — and note
+// that [WorkflowStateNone] beside a concrete identity is the same OR: an
+// asset either has that state or has none.
 func (t FacetType) conjunctive() bool { return t == FacetTag }
 
 // orderedDomain is the VALUE DOMAIN of a comparison bound — the fact
@@ -309,7 +319,12 @@ const (
 // nobody asked for, and hand every future dimension a value grammar it
 // never declared. So a dimension is ordered only by appearing here.
 //
-// [FacetFileSize] is the only non-field dimension that qualifies in 18b.
+// [FacetFileSize] is the only non-field dimension that qualifies in 18b,
+// and it is still the only one after 18c: [FacetWorkflowState]'s values
+// are IDENTITIES, not bounds — `workflow_state:asset:1/published` names
+// a thing to equal and carries no comparison — so it is deliberately
+// absent and [TestOrderedDimension_ClassificationIsShort] holds the list
+// to exactly one member.
 // `field:` is NOT listed: it is a FAMILY of logical dimensions whose
 // orderedness is a property of each field definition's declared type,
 // answered per term against the database in [Selection.Authorize] and
@@ -491,6 +506,79 @@ func (t FacetType) CanonicalValue(v string) (string, bool) {
 		// page under a label promising a narrowing) and a non-integral
 		// one would reach a `::BIGINT` cast and raise a 22P02 mid-query.
 		return canonicalByteBound(v)
+	case FacetWorkflowState:
+		// #1173 sprint 18c — the SEVENTH dimension with a value grammar,
+		// and the first whose value is another row's NATURAL KEY.
+		//
+		// Two shapes, and nothing else: the reserved literal
+		// [WorkflowStateNone], or `<domain>/<code>` with both halves
+		// non-empty. See [canonicalWorkflowState].
+		return canonicalWorkflowState(v)
+	}
+	return v, true
+}
+
+// WorkflowStateNone is the [FacetWorkflowState] value that selects
+// assets carrying NO workflow state — `assets.state_id IS NULL`.
+//
+// It cannot collide with a concrete identity: a concrete one is
+// `<domain>/<code>` and must contain a `/`, and this does not.
+const WorkflowStateNone = "none"
+
+// workflowStateSep separates a workflow state's domain from its code in
+// the identity [FacetWorkflowState] carries. Spliced into the predicate
+// from here rather than written twice.
+const workflowStateSep = "/"
+
+// canonicalWorkflowState validates a [FacetWorkflowState] value and
+// returns it UNCHANGED (#1173, sprint 18c).
+//
+// # ⛔ IT VALIDATES AND IT DOES NOT REWRITE
+//
+// Every other dimension with a closed vocabulary folds case and trims
+// ([FacetAI], [FacetKind], [FacetVisibility]) because the vocabulary is
+// an enum this repository authored. This one does not, for [FacetTag]'s
+// reason: `workflow_states.domain` and `.code` are `text` with no CHECK
+// constraint, an operator defines a code as free text under #897, and
+// the exact bytes ARE the identity. Lower-casing `Final` would ask for a
+// state that does not exist while looking like it asked for the one that
+// does — a filter that looks applied and is not, which is the failure
+// [ParseSelection] exists to prevent.
+//
+// ⚠️ ONE TRANSFORMATION IS UNAVOIDABLE AND IT IS NOT THIS FUNCTION'S:
+// [ParseSelection] trims the wire token before any dimension sees it, so
+// a code with LEADING or TRAILING whitespace cannot be spelled through
+// the `filter=` parameter. That is a property of the wire form, shared
+// by every dimension, and interior whitespace survives intact. The DSL
+// path has no such trim — a quoted value carries its bytes exactly — so
+// such a code remains reachable and remains representable in a saved
+// query.
+//
+// # The validity classes, which are deliberately three
+//
+//   - [WorkflowStateNone] — accepted, and means IS NULL.
+//   - `<domain>/<code>`, both halves non-empty — accepted, WHETHER OR
+//     NOT such a row exists. Existence needs a database round trip and
+//     this function is pure; #897 lets an operator delete a state, and a
+//     saved query naming a deleted one must stay parseable and return
+//     zero rather than becoming unreadable. Matching zero is the correct
+//     answer, exactly as `extension:zzz` matches zero.
+//   - anything else — no `/`, an empty domain, an empty code — REFUSED,
+//     which is a 400 on the `filter=` path and a DSLError on the DSL
+//     path. It is knowable without a row, so it belongs in the pure
+//     class, beside [canonicalByteBound]'s malformed bound.
+//
+// The split is at the FIRST `/` ([strings.Cut]), so a code containing
+// further slashes survives whole. The predicate in [dimensionSQL]
+// performs the SAME first-slash split in SQL, over the same single
+// placeholder, and says so.
+func canonicalWorkflowState(v string) (string, bool) {
+	if v == WorkflowStateNone {
+		return v, true
+	}
+	domain, code, found := strings.Cut(v, workflowStateSep)
+	if !found || domain == "" || code == "" {
+		return "", false
 	}
 	return v, true
 }
@@ -1787,6 +1875,84 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, sh 
 		if e == visibility.EntityAsset {
 			return a + `file_size_bytes ` + string(sh.op) + ` substr(` + p +
 				`::TEXT, ` + strconv.Itoa(len(sh.op)+1) + `)::BIGINT`, true
+		}
+	case FacetWorkflowState:
+		// #1173 sprint 18c — the asset's workflow state, as an ordinary
+		// enumerated predicate.
+		//
+		// ONE PLACEHOLDER holding the whole identity, and the split
+		// happens in SQL — the same contract [FacetField] and
+		// [FacetFileSize] hold above, for the same reason: every term
+		// appends exactly one arg, and taking two here would change the
+		// arity for every dimension.
+		//
+		// # The two shapes, discriminated on the value itself
+		//
+		// [WorkflowStateNone] means `state_id IS NULL`; anything else is
+		// a concrete `<domain>/<code>`. The discrimination is EXACT
+		// rather than heuristic: [canonicalWorkflowState] has already
+		// proven a concrete value contains a `/`, and `none` does not,
+		// so no state can ever be spelled `none`. The literal below is
+		// spliced from the Go constant and never from caller text, whose
+		// bytes stay in the placeholder where they have always been.
+		//
+		// # ⭐ THE SPLIT IS AT THE FIRST `/`, AND `substr` SAYS SO
+		//
+		// `strpos` returns the FIRST occurrence, so the domain is
+		// everything before it and the code everything after — a code
+		// carrying further slashes survives whole. That is the same rule
+		// [canonicalWorkflowState] validates against in Go, stated here
+		// in the language that has the row. ⛔ `split_part(v, '/', 2)`
+		// would have been the obvious spelling and it is WRONG: it stops
+		// at the second slash and silently truncates an operator-defined
+		// code (#897) that contains one.
+		//
+		// # An unknown identity is zero, and a NULL state is not a match
+		//
+		// The EXISTS is over `workflow_states` joined to THIS asset's
+		// state, so an identity naming no row yields no rows and the
+		// asset drops out — accepted, applied, matching nothing. An
+		// asset whose `state_id` is NULL makes `fws.id = state_id` NULL,
+		// so the EXISTS is false and it drops out too. ⛔ THAT IS THE
+		// LOAD-BEARING HALF OF THE STALE-QUERY CONTRACT: the FK is
+		// ON DELETE SET NULL, so deleting a state nulls its assets, and
+		// a saved query naming the deleted state must return ZERO rather
+		// than quietly becoming [WorkflowStateNone] and widening into
+		// rows its author never asked for.
+		//
+		// # ⛔ NO `domain LIKE 'asset:%'` FILTER, DELIBERATELY
+		//
+		// Asset create does not validate that the state it writes
+		// belongs to the matching `asset:<asset_type>` domain, so an
+		// asset genuinely can carry a `post` state. Restricting the
+		// lookup to asset domains would answer "nothing" about a row
+		// that exists and is misfiled; matching it is what SURFACES the
+		// corruption. See [FacetWorkflowState].
+		//
+		// # Assets only
+		//
+		// A collection has no `state_id` column. A post has one and is
+		// still excluded, because a draft appears on no shared surface
+		// including search — so `post/wip` is unreachable through search
+		// for everyone and `post/published` is tautological. Both fall
+		// through to ok=false, which [Selection.SQL] returns as
+		// satisfiable=false and every call site honours by skipping the
+		// entity entirely — [FacetExtension]'s shape since #907, and the
+		// POSITIVE-NARROWING direction [FacetAI]'s collection arm
+		// established as the test. Treating an active workflow filter as
+		// "no constraint" on those arms would return every post and every
+		// collection beside the qualifying assets, which is a filter that
+		// made the result set LARGER.
+		if e == visibility.EntityAsset {
+			return `(CASE WHEN ` + p + `::TEXT = '` + WorkflowStateNone + `'
+			              THEN ` + a + `state_id IS NULL
+			              ELSE EXISTS (SELECT 1 FROM workflow_states fws
+			                            WHERE fws.id = ` + a + `state_id
+			                              AND fws.domain = substr(` + p + `::TEXT, 1,
+			                                    strpos(` + p + `::TEXT, '` + workflowStateSep + `') - 1)
+			                              AND fws.code = substr(` + p + `::TEXT,
+			                                    strpos(` + p + `::TEXT, '` + workflowStateSep + `') + 1))
+			         END)`, true
 		}
 	case FacetCollection:
 		// #910 — "search inside this collection", as an ordinary

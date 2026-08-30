@@ -488,6 +488,13 @@ func TestOrderedDimension_ClassificationIsShort(t *testing.T) {
 	for _, ft := range []FacetType{
 		FacetAssetType, FacetTag, FacetSensitivity, FacetOwner, FacetExtension,
 		FacetCollection, FacetField, FacetAI, FacetKind, FacetVisibility, FacetFileSize,
+		// #1173 sprint 18c. ⛔ THE SLICE IS LITERAL, SO A NEW DIMENSION
+		// THAT IS NOT ADDED HERE IS SILENTLY NOT EXAMINED and this test
+		// stays green while it stops testing. `workflow_state` is here
+		// so the assertion below is also the guard that it was NOT
+		// accidentally classified as ordered: its values are identities,
+		// not bounds.
+		FacetWorkflowState,
 	} {
 		if ft.ordered() {
 			ordered[ft] = true

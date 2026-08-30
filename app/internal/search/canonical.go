@@ -77,6 +77,15 @@ var dslFieldForFacet = map[facet.FacetType]dsl.Field{
 	facet.FacetExtension:   dsl.FieldExtension,
 	facet.FacetField:       dsl.FieldField,
 	facet.FacetFileSize:    dsl.FieldFileSize,
+
+	// #1173 sprint 18c adds `workflow_state:`, reachable from
+	// `/search`'s own URL the moment the dimension parses — so it is
+	// savable by construction, for the same reason `file_size:` is.
+	// ⛔ Omitting it would make [ErrDimensionNotRepresentable] fire on a
+	// query a caller could type, and a saved query naming a state an
+	// operator later deletes must stay REPRESENTABLE (it returns zero;
+	// it does not become unparseable).
+	facet.FacetWorkflowState: dsl.FieldWorkflowState,
 }
 
 // SelectionToDSL renders a [facet.Selection] as canonical DSL: every term
@@ -211,6 +220,7 @@ func SelectionFromDSL(f dsl.Filters, into facet.Selection) (facet.Selection, err
 		{facet.FacetExtension, f.Extensions},
 		{facet.FacetField, f.Fields},
 		{facet.FacetFileSize, f.FileSizes},
+		{facet.FacetWorkflowState, f.WorkflowStates},
 	} {
 		if err := add(pair.ft, pair.values); err != nil {
 			return facet.Selection{}, err

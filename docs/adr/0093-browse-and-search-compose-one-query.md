@@ -501,3 +501,171 @@ which is X ∪ L ∪ U, strictly **larger** than either single bound.
   the "exactly zero posts" cross-arm assertion passed with a deliberately broken arm because the
   fixture had no post carrying the phrase. Green is a claim about the tests that ran; both were
   fixed and both now fail against the mutation.
+
+## Amendment, 2026-08-30, after #1173 (sprint 18c)
+
+18b gave the grammar a bound. 18c gives it the first dimension whose value is **another row's
+natural key**, and every decision below follows from that one fact. `workflow_state` filters an
+asset by `assets.state_id`. It is an ordinary ENUMERATED dimension: no operator, no bound, and
+nothing about 18b's ordered classification changes.
+
+### 1. The identity is `<domain>/<code>`, never the row UUID
+
+`workflow_states` carries `UNIQUE (domain, code)`, and that pair is the state's identity. The
+`id` column is a per-install `gen_random_uuid()`, so a saved query naming one is meaningless on
+any other install, which the 18a amendment's portability requirement forbids. `collection:`
+names a UUID because a collection IS a row with no other identity; a workflow state has one,
+and it is stable across installs and across federation.
+
+`workflow.AssetDomain(ref)` renders `asset:<ref>`, so a real asset identity is
+`asset:1/published`. The wire form is `filter=workflow_state:asset:1/published`:
+`ParseSelection` cuts at the FIRST colon to find the dimension, so the domain's own colon
+survives inside the value and no new parsing rule was needed. The DSL spelling is
+`workflow_state:"asset:1/published"`, and the quoting is not a special case either. `Serialize`
+lexes its own candidate token and keeps it bare only when one `TokWord` carrying the original
+bytes comes back; a colon terminates the lexer's word run, so the value is quoted by the rule
+18a already derived. This is the first non-`field:` dimension whose canonical spelling is
+quoted, and it needed no serializer change to become one.
+
+### 2. ⭐ THE SPLIT IS AT THE FIRST `/`, AND THE CODE IS FREE TEXT
+
+Domain is everything before the first separator, code everything after. Domains are
+machine-owned (`asset:<int>` and the `post` constant), so they carry no `/`. A CODE is
+operator-defined free text under #897 and may carry one, along with whitespace, a quote or a
+backslash. First-slash splitting keeps every possible code intact, and the predicate spells it
+with `strpos` plus `substr` rather than `split_part`: `split_part(v, '/', 2)` is the obvious
+SQL and it is wrong, because it stops at the second slash and silently truncates a code
+containing one.
+
+⛔ **Nothing lowercases, trims, case-folds or normalises the identity.** `domain` and `code` are
+`text` with no CHECK constraint, and their exact bytes ARE the key. This is `tag`'s answer
+rather than `visibility`'s, and the difference is not stylistic: folding `Final` to `final`
+would ask for a state that does not exist while looking like it asked for the one that does,
+which is the "filter that looks applied and is not" failure this file exists to prevent.
+
+⚠️ One transformation is unavoidable and it belongs to the WIRE, not to this dimension.
+`ParseSelection` trims each `filter=` token before any dimension sees it, so a code with
+leading or trailing whitespace cannot be spelled through that parameter. Interior whitespace
+survives, the DSL path does not trim at all, and such a code therefore stays reachable and
+stays representable in a saved query.
+
+`none` is a reserved literal meaning `state_id IS NULL`. It cannot collide with a concrete
+identity, because a concrete one must contain a `/` and this does not. It is matched exactly
+for the same no-rewriting reason: `NONE` is simply a value with no separator, and it is refused
+by the ordinary rule rather than by a special case.
+
+### 3. ⛔ MALFORMED IS AN ERROR; UNKNOWN IS ZERO. TWO CLASSES, ON PURPOSE
+
+The 18b amendment established that a validity question knowable without a row is a request
+error. That applies unchanged here.
+
+| input | outcome |
+| --- | --- |
+| `none` | valid, `state_id IS NULL` |
+| `<domain>/<code>`, both halves non-empty | valid |
+| no `/`, empty domain, or empty code | **invalid**: `400` on `filter=`, a `DSLError` on the DSL path |
+| valid shape, no such `(domain, code)` row | **valid, matches ZERO** |
+| existing non-asset domain, e.g. `post/published` | **valid, matches any asset carrying it** |
+
+An unknown-but-well-formed identity is ACCEPTED rather than refused, and the reason is three
+separate ones pointing the same way. `CanonicalValue` is pure and cannot check existence without
+a database round trip. #897 lets an operator add and remove states, so rejection would make a
+stored query stop parsing the moment somebody renamed one. And matching zero is *correct* here,
+exactly as `extension:zzz` matches zero: the filter IS applied, and nothing satisfies it. That
+is a different thing from a filter that looks applied and is not, and a test that collapsed the
+two cases into one "normally zero" assertion would prove neither.
+
+### 4. ⛔ A STALE IDENTITY RETURNS ZERO AND NEVER BECOMES `none`
+
+`assets_state_id_fkey` is `ON DELETE SET NULL`. Deleting a state therefore nulls the `state_id`
+of every asset that held it, and the query naming that state keeps naming it and returns
+nothing.
+
+It must never degrade into `workflow_state:none`. If it did, deleting one state would silently
+WIDEN every stored query that referenced it into exactly the rows its author never asked for,
+which is #1368's defect arriving through the schema instead of through the serializer. `none`
+separately, and correctly, sees those nulled assets. The regression asserts all three facts,
+and the third one (that the stale query does not behave as `none`) is the load-bearing one.
+
+### 5. ⛔ A NON-ASSET DOMAIN IS ACCEPTED, BECAUSE THAT IS WHAT SURFACES A CORRUPTED ROW
+
+`post/published` is a real row, and the asset create path does NOT validate that a state it
+writes belongs to the matching `asset:<asset_type>` domain. `assets/handler.go` says so out
+loud, deferring that check to `Transition()`. So an asset genuinely can carry a post state, and
+the identity is reachable in production data.
+
+Accepting it is the only behaviour that lets the filter FIND that asset rather than hide it.
+Validating `domain LIKE 'asset:%'` would answer "nothing" about a row that exists and is
+misfiled. ⭐ This is asserted as a MATCH by exact id, not as a count and not as "normally zero",
+because a count assertion passes on all four wrong implementations at once: a domain whitelist,
+an outright rejection, an accept-then-force-zero, and any other spelling that hides the row.
+
+### 6. Grouping: ordinary enumerated OR, and deliberately not ordered
+
+An asset holds exactly ONE state, so two identities under `AND` return nothing forever. They
+combine with `OR`, which is the `ai` precedent the 2026-08-20 amendment records, one dimension
+over. `none` beside a concrete identity is the same `OR`: an asset either carries that state or
+carries none. Across dimensions the composition is unchanged `AND`.
+
+⛔ **It is NOT ordered.** Its values are identities, not bounds, and it carries no comparison
+operator, so `FacetType.orderedDomain` leaves it alone and the ordered set stays exactly
+`{file_size}`. The guard that says so is `TestOrderedDimension_ClassificationIsShort`, and
+extending it was mandatory rather than incidental: it iterates a LITERAL slice of FacetTypes, so
+a twelfth dimension that was not added to that slice would leave the test green while it
+silently stopped examining the new dimension. Green is a claim about the tests that ran.
+
+### 7. Asset-only, and the post arm is a STRUCTURAL exclusion rather than an omission
+
+| arm | supported | reason |
+| --- | --- | --- |
+| asset | **yes** | the column is `assets.state_id`, its values enumerate, and a state gates no visibility |
+| post | **no** | a draft appears on no shared surface including search |
+| collection | **no** | there is no `state_id` column at all |
+
+A collection is the easy half. The POST arm is the one worth writing down, because a post DOES
+carry `state_id` and the roadmap's own header implied that made it filterable. It does not.
+`visibility.postPublishedExpr` withholds a `wip` post from every shared surface including
+search, waived by exactly one option whose sole production caller is the author's own drafts
+listing. So `post/wip` is unreachable through search for everyone, including the author and a
+`posts.admin` holder, and `post/published` is tautological. A post workflow filter would be a
+control that can only ever return "all of them" or "none of them", which is worse than absent.
+
+Both unsupported arms use the EXISTING mechanism: `dimensionSQL` returns `ok=false`, which
+`Selection.SQL` reports as `satisfiable=false`, which all four call sites already honour by
+skipping the entity. That is `FacetExtension`'s shape since #907 and `file_size`'s in 18b, and
+it needed no second exclusion path. The direction check `ai`'s collection arm established
+applies and lands on the same side: this is a POSITIVE narrowing, so an entity that cannot
+answer leaving the page IS the answer. An arm that treated an active constraint as no
+constraint would return every post and every collection beside the qualifying assets, which is
+a filter that made the result set LARGER.
+
+### 8. Filtering needs no additional capability
+
+`workflow.Handler.ListWorkflowStates` requires authentication and nothing more, and states why:
+knowing the state vocabulary is not sensitive, and transition execution is where capability
+checks belong. Asset row visibility is already decided by the predicate every caller ANDs on
+after this fragment, a state gates nothing, and `assets.submit`, `assets.review` and
+`assets.publish` govern MUTATION. Inheriting a mutation capability into a read filter would be
+a gate scoped to the principal rather than to the payload, which #881 already established as
+the wrong shape.
+
+### 9. Consequences
+
+- `workflow_state` joins the DSL whitelist, `dslFieldForFacet` and the `SelectionFromDSL` fold,
+  so it round-trips through a saved query with no new mechanism. An unknown-but-well-formed
+  identity round-trips too, which is what keeps a stored query parseable after an operator
+  deletes and recreates a state.
+- **Filtering only.** There is no aggregator and it is absent from `AllFacets`, alongside
+  `collection`, `field`, `ai`, `kind`, `visibility` and `file_size`. Registration is what
+  `ParseFacetType` needs to accept the dimension; aggregation is a separate question and it is
+  18d's. #907's invariant that a bucket's count equals what ticking it returns has nothing to
+  promise until a bucket exists.
+- **ADR 0056 is unchanged**, re-verified rather than asserted: no cursor payload change, no
+  pagination change, no `total_count` contract change. The count and the result set narrow
+  together, which every DB-backed assertion in this arc checks on each run.
+- ⚠️ Two inconsistencies were found and deliberately NOT fixed here, because each is a
+  behavioural change to a different subsystem: the OpenAPI description of an asset's `state_id`
+  does not match what the column actually holds, and asset create accepts a state from any
+  domain. The second one is the reason section 5 exists, and closing it would remove the very
+  row the regression is built on, so it needs its own decision rather than a side effect of a
+  search sprint.

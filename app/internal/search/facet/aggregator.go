@@ -304,6 +304,117 @@ const (
 	// bucket's count equals what ticking it returns has no meaning until
 	// those edges exist.
 	FacetFileSize FacetType = "file_size"
+
+	// FacetWorkflowState narrows to an asset's WORKFLOW STATE —
+	// `filter=workflow_state:asset:1/published`, backed by
+	// `assets.state_id` (#1173, sprint 18c).
+	//
+	// # ⭐ ITS VALUE IS THE STATE'S NATURAL KEY, NEVER THE ROW UUID
+	//
+	// `workflow_states` carries `UNIQUE (domain, code)`, and that pair
+	// is the state's identity: `<domain>/<code>`. The row's `id` is a
+	// per-install `gen_random_uuid()`, so a saved query naming one is
+	// meaningless on any other install — and ADR 0093's 18a amendment
+	// requires a saved search to be a portable spelling of the query.
+	// [FacetCollection] names a UUID because a collection IS a row with
+	// no other identity; a workflow state has one, and it is stable.
+	//
+	// The split is at the FIRST `/`: the domain is everything before it,
+	// the code everything after. Domains are machine-owned
+	// ([workflow.AssetDomain] renders `asset:<int>`, and `post` is a
+	// constant), so they carry no `/`; a CODE is operator-defined free
+	// text under #897 and may carry one, whitespace, a quote or a
+	// backslash. Splitting at the first slash keeps every possible code
+	// intact. ⛔ Nothing lowercases, trims or otherwise rewrites the
+	// identity — the columns are `text` with no CHECK constraint and
+	// their exact bytes ARE the identity, the same answer [FacetTag]
+	// gives and the opposite of [FacetVisibility]'s enum.
+	//
+	// # The reserved literal `none`
+	//
+	// [WorkflowStateNone] selects assets whose `state_id IS NULL`. It is
+	// unambiguous because a concrete identity must contain a `/` and
+	// this one does not, so no state can ever be spelled `none`.
+	//
+	// # ⛔ MALFORMED IS A 400; UNKNOWN-BUT-WELL-FORMED IS ZERO
+	//
+	// Two different outcomes, deliberately. A value with no `/`, an
+	// empty domain or an empty code is refused in
+	// [FacetType.CanonicalValue] — pure, knowable without a row, a 400
+	// on the `filter=` path and a DSLError on the DSL path, exactly as
+	// [FacetFileSize]'s malformed bound is.
+	//
+	// A WELL-FORMED identity naming no existing row is ACCEPTED and
+	// matches zero. CanonicalValue is pure and cannot check existence
+	// without a database round trip; #897 lets an operator add and
+	// remove states, so rejecting an unknown identity would make a saved
+	// query stop parsing the moment somebody renamed a state; and
+	// matching zero is the CORRECT answer, exactly as `extension:zzz`
+	// matches zero. This is not the "filter that looks applied and is
+	// not" failure — the filter IS applied, and nothing satisfies it.
+	//
+	// # ⛔ A NON-ASSET DOMAIN IS ACCEPTED, AND THAT IS THE POINT
+	//
+	// `post/published` is a real row, and `assets`' handler does NOT
+	// validate that a state it writes belongs to the matching
+	// `asset:<asset_type>` domain — it says so out loud, deferring that
+	// check to `Transition()`. So an asset genuinely can carry a post
+	// state, and the only behaviour that SURFACES that corruption rather
+	// than hiding it is to accept the identity and match the row.
+	// Validating `domain LIKE 'asset:%'` here would answer "no such
+	// asset" about an asset that exists and is misfiled.
+	//
+	// # ⛔ A DELETED STATE'S IDENTITY STAYS ITSELF, AND RETURNS ZERO
+	//
+	// `assets_state_id_fkey` is ON DELETE SET NULL, so deleting a state
+	// nulls the `state_id` of every asset holding it. A saved query
+	// naming that state keeps naming it and returns nothing. It must
+	// NEVER degrade to `none`: otherwise deleting one state would
+	// silently WIDEN every stored query that referenced it into rows its
+	// author never asked for, which is #1368's defect with a different
+	// cause.
+	//
+	// # Its values combine with OR
+	//
+	// An asset holds exactly ONE state, so AND returns nothing forever —
+	// the same reading [FacetExtension], [FacetSensitivity] and
+	// [FacetAI] get, and the `ai` precedent ADR 0093's 2026-08-20
+	// amendment records. Non-conjunctive, and NOT ordered: the values
+	// are identities, not bounds, so [FacetType.orderedDomain] leaves it
+	// alone. See [FacetType.conjunctive].
+	//
+	// # Assets only
+	//
+	// A collection has no `state_id` column at all. A POST has one, and
+	// is still excluded: `visibility.postPublishedExpr` withholds a `wip`
+	// post from every shared surface including search, waived only by
+	// `IncludeDrafts`, whose sole production caller is the author's own
+	// drafts listing — so `post/wip` is unreachable through search for
+	// everyone, including the author and a `posts.admin` holder, and
+	// `post/published` is tautological. Both arms therefore fall through
+	// to ok=false, which [Selection.SQL] returns as satisfiable=false
+	// and all four call sites already honour — [FacetExtension]'s shape
+	// since #907, and the POSITIVE-NARROWING direction [FacetAI]'s
+	// collection arm established as the test.
+	//
+	// # No extra capability
+	//
+	// `workflow.Handler.ListWorkflowStates` requires authentication and
+	// nothing more, and says why: knowing the state vocabulary is not
+	// sensitive, and transition execution is where capability checks
+	// belong. Asset row visibility is already decided by the predicate
+	// every caller ANDs on after this fragment, a state gates nothing,
+	// and `assets.submit` / `review` / `publish` govern MUTATION.
+	// Inheriting a mutation capability into a read filter would be a
+	// gate scoped to the principal rather than to the payload.
+	//
+	// # Filter-only, like the six dimensions above it
+	//
+	// No [Aggregator] and absent from [AllFacets]. 18c is filtering; a
+	// bucket list of workflow states is 18d's question, and #907's
+	// invariant that a bucket's count equals what ticking it returns has
+	// nothing to promise until a bucket exists.
+	FacetWorkflowState FacetType = "workflow_state"
 )
 
 // The [FacetVisibility] value vocabulary — the five sharing tiers, in
@@ -360,8 +471,9 @@ const (
 // AllFacets returns the set of aggregators the dispatcher runs when
 // the caller doesn't restrict via ?facets=...
 //
-// FacetCollection, FacetField, FacetAI, FacetKind, FacetVisibility and
-// FacetFileSize are deliberately absent — see their docs.
+// FacetCollection, FacetField, FacetAI, FacetKind, FacetVisibility,
+// FacetFileSize and FacetWorkflowState are deliberately absent — see
+// their docs.
 func AllFacets() []FacetType {
 	return []FacetType{FacetAssetType, FacetTag, FacetSensitivity, FacetOwner, FacetExtension}
 }
@@ -392,6 +504,8 @@ func ParseFacetType(s string) (FacetType, bool) {
 		return FacetVisibility, true
 	case "file_size":
 		return FacetFileSize, true
+	case "workflow_state":
+		return FacetWorkflowState, true
 	}
 	return "", false
 }
