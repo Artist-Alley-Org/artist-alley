@@ -128,6 +128,17 @@ where applicable, otherwise note "no-spec-impact."
   a filter on a metadata field survives too, which was not previously possible at all (#1368,
   PR #1370).
 
+- **Search can filter files by their workflow state.** A search can now narrow to files sitting in
+  a given state, such as draft, awaiting review, published or archived, and choosing more than one
+  state returns the files in any of them rather than none at all. A "no workflow state" option
+  finds files that have never been given one. A state is named by where it belongs and what it is
+  called rather than by an internal row number, so a saved search keeps meaning the same thing
+  after states are edited and when it travels to another instance, and it survives being saved and
+  replayed like any other filter. Posts and collections are not filtered this way: an unpublished
+  post is already kept off every shared surface including search, and collections carry no workflow
+  state at all, so a search with a workflow-state filter active returns files only (#1173 in part,
+  PR #1376).
+
 - **Search can filter by size and by numeric metadata, not just by dates.** A range on a number,
   such as a polygon count or a pixel dimension, now works the way a date range always has, and
   files can be filtered by how large they are. Giving both a lower and an upper bound narrows to
