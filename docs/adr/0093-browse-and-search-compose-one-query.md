@@ -462,13 +462,13 @@ range one dimension over.
 ### 6. ⭐ The regression that proves it, and why it needed four populations
 
 ⛔ **A count assertion that passes on a union passes on the bug.** The fixture builds four
-populations against bounds A <= B and compares hit ID **sets**:
+populations against bounds `A <= B` and compares hit ID **sets**:
 
 | population | condition | satisfies |
 |---|---|---|
-| L | size > B | `>=A` only |
-| U | size < A | `<=B` only |
-| X | A <= size <= B | both |
+| L | `size > B` | `>=A` only |
+| U | `size < A` | `<=B` only |
+| X | `A <= size <= B` | both |
 | N | `file_size_bytes IS NULL` | **neither** |
 
 ⭐ **N exists only because of NULL.** A real number is always below, within or above a range, so
