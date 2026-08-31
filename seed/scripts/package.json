@@ -5,6 +5,6 @@
   "description": "Image tooling for the seed dataset pipeline (#604). sharp/libvips drives SVG->PNG rasterisation for the kenney-hq pool.",
   "type": "module",
   "dependencies": {
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.4"
   }
 }
