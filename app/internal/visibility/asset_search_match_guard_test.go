@@ -226,6 +226,42 @@ var allowList = []allowEntry{
 			}
 		},
 	},
+	{
+		file:  "internal/search/facet/contributors.go",
+		count: 1,
+		reason: "the contributor lookup (#1173 sprint 18d) is the aggregators' population " +
+			"with a keyset and a name predicate bolted on, and it obtains that population " +
+			"from the SAME buildAssetPopulationSQL call ownerAgg makes. So it inherits the " +
+			"same content conjunct for the same reason: a row the caller cannot open " +
+			"contributes to no contributor, whatever the query text says, so the list " +
+			"cannot move and there is nothing to probe.",
+		verify: func(t *testing.T, tree map[string]string) {
+			src := tree["internal/search/facet/contributors.go"]
+			// ⭐ THE CLAUSE, NOT THE FILE. This entry exempts the site
+			// BECAUSE the population comes from the shared builder. A
+			// version of this query that assembled its own predicate —
+			// or that reduced the selection by a different facet — would
+			// stop inheriting the conjunct while still reading like the
+			// same file.
+			if !strings.Contains(src, "buildAssetPopulationSQL(ctx, q.Request, FacetOwner, 1)") {
+				t.Error("contributors.go no longer takes its population from " +
+					"buildAssetPopulationSQL(ctx, q.Request, FacetOwner, 1).\n\n" +
+					"That call IS the reason its `a.search_text @@` is exempt: it is what " +
+					"appends visibility.FieldsReadableSQL to the predicate. A query that " +
+					"builds its own WHERE clause here is a new asset text-match channel, " +
+					"which is #902 on the contributor surface.")
+			}
+			// The exempting conjunct itself lives in the aggregator
+			// file, and the entry above asserts it on every run. This is
+			// the one thing that is specific to THIS file: that the
+			// per-row gate is not disabled by an unbounded page.
+			if !strings.Contains(src, "MaxContributorLimit") {
+				t.Error("contributors.go no longer bounds its page size. An unbounded " +
+					"contributor lookup is a full enumeration of the visibility-scoped " +
+					"owner set in one response.")
+			}
+		},
+	},
 }
 
 // TestAssetSearchMatch_EveryTextMatchIsGuarded is the enforcement.

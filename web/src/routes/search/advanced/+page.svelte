@@ -69,7 +69,11 @@
   import AdvancedQueryBuilder from '$components/search/AdvancedQueryBuilder.svelte';
   import ReverseImageDropzone from '$components/search/ReverseImageDropzone.svelte';
   import VocabularyCombobox from '$components/VocabularyCombobox.svelte';
+  import ContributorFilter from '$components/search/ContributorFilter.svelte';
+  import ExtensionFilter from '$components/search/ExtensionFilter.svelte';
+  import FileSizeFilter from '$components/search/FileSizeFilter.svelte';
   import { selectableOptions, normalizeOptions, type FieldOption } from '$lib/fieldOptions';
+  import { fileSizeTerm, DEFAULT_FILE_SIZE_UNIT, type FileSizeUnit } from '$lib/fileSizeBound';
 
   // The nav control carries whatever was in the box, so a caller who
   // typed something and then reached for "Advanced" does not lose it.
@@ -135,20 +139,56 @@
   //     rather than two alternatives.
   //
   // `rich_text` is included with text because it stores into value_text
-  // like the others. `number` is deliberately absent: the grammar's
+  // like the others.
+  //
+  // THE THIRD TRANCHE (#1173, sprint 18d). `number` used to be absent
+  // from this list, and the note here explaining why said "the grammar's
   // bounds read `value_date`, so a numeric range needs its own operator
-  // pair and its own column, and shipping a box that silently matched
-  // nothing would be worse than shipping no box.
+  // pair and its own column". That was true when it was written and
+  // stopped being true in 18b: ADR 0093's 2026-08-29 amendment separates
+  // a bound's OPERATOR from its DOMAIN, so `>=` and `<=` now read
+  // `value_num` for a field whose definition declares `number`, with the
+  // compatibility check answered per term against `field_definition.type`
+  // in `Selection.Authorize`. No new operator, no new widget family: a
+  // numeric field renders the SAME two-bound row a date does, through the
+  // same `ranges` state and the same `fieldTerms()`.
+  //
+  // ⭐ This is what gives `pixel_width` and `pixel_height` a control. They
+  // are ordinary `number` field definitions (migration 00017) and needed
+  // nothing of their own beyond being drawable.
   const TEXT_TYPES = ['text', 'longtext', 'rich_text'];
   const DATE_TYPES = ['date', 'datetime'];
+  const NUMBER_TYPES = ['number'];
 
   /** Which operator family a field's row renders. */
-  function familyOf(f: FieldDef): 'vocab' | 'text' | 'date' | 'none' {
+  function familyOf(f: FieldDef): 'vocab' | 'text' | 'date' | 'number' | 'none' {
     if (VOCAB_TYPES.includes(f.type)) return 'vocab';
     if (TEXT_TYPES.includes(f.type)) return 'text';
     if (DATE_TYPES.includes(f.type)) return 'date';
+    if (NUMBER_TYPES.includes(f.type)) return 'number';
     return 'none';
   }
+
+  /**
+   * The two shipped PIXEL-DIMENSION fields (#1173, sprint 18d).
+   *
+   * Resolved by CODE, which is the product's existing answer for these
+   * two rather than an invention here: `db.ShippedFieldCodes` registers
+   * them as shipped definitions, and `pixeldims.SelectColumnsSQL` and the
+   * IIIF handler both resolve them by code already. They are grouped with
+   * the file's own properties because that is what a pixel dimension IS —
+   * a fact about the file, beside its type and its size — rather than
+   * something an operator wrote about the work.
+   *
+   * ⛔ THE GROUPING NEVER OVERRIDES THE FIELD'S OWN CONFIGURATION. It
+   * reads `applies_to` and moves nothing: a pixel field an operator has
+   * SCOPED to a resource type is not claimed here and follows the
+   * per-type sections like any other scoped field. `status`,
+   * `show_in_advanced_search` and `read_capability` are already applied
+   * by `filterable` upstream, so a hidden or unreadable pixel field
+   * cannot re-enter through this group either.
+   */
+  const PIXEL_CODES = ['pixel_width', 'pixel_height'];
 
   /**
    * Fields this caller may both read and filter on.
@@ -177,10 +217,10 @@
    * # What is NOT participation, and stays
    *
    * The TYPE check is still here and is not the inference that was
-   * removed. It says what this page can DRAW, and #1165 has just widened
-   * it: vocabulary, text and date fields all have a control now, and
-   * `number` still does not. That remains this page's own limit rather
-   * than a statement about the field.
+   * removed. It says what this page can DRAW, and 18d has widened it
+   * again: vocabulary, text, date AND number fields all have a control
+   * now. `boolean` and `reference` still do not, and that remains this
+   * page's own limit rather than a statement about the field.
    *
    * `status !== 'archived'` also stays, and it is not an inference
    * either: `status` IS the retire-without-delete flag ADR 0092 §3
@@ -226,35 +266,62 @@
   }
 
   /**
+   * The pixel fields the "About the file" group claims — the shipped
+   * dimensions, and only while they are GLOBAL (#1173, sprint 18d).
+   *
+   * A pixel field an operator has scoped with `applies_to` is not
+   * claimed, so it appears in its type's section and nowhere else. Every
+   * field appears EXACTLY ONCE: `global` excludes whatever this claims.
+   */
+  const mediaFields = $derived(
+    filterable.filter((f) => PIXEL_CODES.includes(f.code) && isGlobal(f)),
+  );
+  const mediaCodes = $derived(new Set(mediaFields.map((f) => f.code)));
+
+  /**
    * The sections the form renders, in order (#1173).
    *
-   * Global fields first and ALWAYS, then one section per selected type
+   * "About the file" first and ALWAYS — it carries the built-in
+   * dimensions (file type, file size, pixel dimensions) that exist on
+   * every install regardless of what an operator has configured, which
+   * is why it is the one section with no field-count condition on it.
+   * Then the remaining global fields, then one section per selected type
    * carrying the fields scoped to it. A type-specific field for a type
    * nobody selected appears nowhere — which is the point of the feature,
    * and the reason `applies_to` had to stop being dropped by FieldDef.
    *
    * `show_in_advanced_search = false` never reaches here: `filterable`
    * has already dropped it, so a hidden field cannot re-enter through a
-   * type section.
+   * type section or through the media group.
    */
   const sections = $derived.by(() => {
-    const out: { key: string; label: string; fields: FieldDef[] }[] = [
+    const out: { key: string; label: string; fields: FieldDef[]; always?: boolean }[] = [
+      {
+        key: 'media',
+        label: t('search.advanced_page.section_media'),
+        fields: mediaFields,
+        always: true,
+      },
       {
         key: 'global',
         label: t('search.advanced_page.section_global'),
-        fields: filterable.filter(isGlobal),
+        fields: filterable.filter((f) => isGlobal(f) && !mediaCodes.has(f.code)),
       },
     ];
     for (const ref of selectedTypes) {
       const scoped = filterable.filter((f) => !isGlobal(f) && f.applies_to!.includes(ref));
-      if (scoped.length === 0) continue;
       out.push({
         key: `type-${ref}`,
         label: assetTypes.find((a) => a.ref === ref)?.name || String(ref),
         fields: scoped,
+        // A selected type ALWAYS gets a section, even with no fields
+        // scoped to it, because its concrete workflow states live there
+        // — see the workflow block below. Before 18d a fieldless section
+        // had nothing to hold and was dropped.
+        always: true,
       });
     }
-    return out.filter((s) => s.fields.length > 0);
+    return out.filter((s) => s.always || s.fields.length > 0);
   });
 
   /** Every field code currently on screen — the set a filter may be
@@ -385,7 +452,122 @@
     return selectedTypes.map((ref) => `type:${ref}`);
   }
 
-  const activeCount = $derived(fieldTerms().length + typeTerms().length);
+  // ───────────────────────────────────────────────────────────────────
+  // THE BUILT-IN DIMENSIONS (#1173, sprint 18d)
+  //
+  // Everything below composes through the SAME `filter=<dimension>:<value>`
+  // grammar the field rows use. None of it is a parameter of this page's
+  // own, which is what keeps the count, the submitted address and a saved
+  // search describing one query — see `searchParams()`.
+  // ───────────────────────────────────────────────────────────────────
+
+  /**
+   * The contributors ticked, as `{ref, label}`.
+   *
+   * ⛔ The REF is the identity and the label is only for drawing. Never
+   * the username: `user_username_uniq_idx` is unique CASE-SENSITIVELY
+   * while the `owner:` predicate matches `LOWER(fu.username)`, so two
+   * users can satisfy one term; the column is nullable; and a numeric
+   * username collides with the same predicate's `owner_user_ref::TEXT`
+   * arm.
+   */
+  let selectedOwners = $state<{ ref: number; label: string }[]>([]);
+
+  /** File extensions ticked or typed, already normalized. */
+  let selectedExtensions = $state<string[]>([]);
+
+  /** The file-size bounds, as the person typed them plus their unit. */
+  let fileSize = $state<{ min: string; max: string; unit: FileSizeUnit }>({
+    min: '',
+    max: '',
+    unit: DEFAULT_FILE_SIZE_UNIT,
+  });
+
+  /**
+   * "Files with no workflow state" — `filter=workflow_state:none`.
+   *
+   * ⛔ ONE CHECKBOX, GLOBAL, OUTSIDE EVERY TYPE SECTION, and that is a
+   * correctness claim rather than a layout preference. `none` means
+   * `state_id IS NULL`, which is DOMAIN-INDEPENDENT: with Image and
+   * Video both selected, a copy of this checkbox drawn under Image would
+   * still return the state-less videos. A control that claims a scope
+   * the wire does not have is a control that lies, so there is exactly
+   * one of it and it sits where nothing implies a scope.
+   *
+   * It is rendered even with ZERO types selected, because it is
+   * answerable then too.
+   */
+  let workflowNone = $state(false);
+
+  /**
+   * The CONCRETE states ticked, keyed by full `<domain>/<code>` identity.
+   *
+   * ⛔ NEVER by code alone. `workflow_states` is `UNIQUE (domain, code)`,
+   * so two resource types can both define `published` and they are two
+   * different states. Collapsing them would tick one and filter by the
+   * other.
+   */
+  let selectedStates = $state<string[]>([]);
+
+  type WorkflowStateDef = { id: string; domain: string; code: string; label: string };
+
+  /** asset-type ref → the states of that type's domain. */
+  let statesByType = $state<Record<number, WorkflowStateDef[]>>({});
+  /** asset-type refs whose state vocabulary could not be loaded. ⛔ An
+   *  error is not an empty vocabulary: `/workflow/states` refuses an
+   *  anonymous caller, and rendering that as "this type has no states"
+   *  would state an absence with no evidence. */
+  let statesFailed = $state<number[]>([]);
+
+  /** The workflow domain of one asset type — `workflow.AssetDomain`'s
+   *  spelling, which is what the filter value carries. */
+  function assetDomain(ref: number): string {
+    return `asset:${ref}`;
+  }
+
+  /** The domains currently on screen. A concrete state may only be
+   *  filtered on while its own type section is showing. */
+  const liveDomains = $derived(new Set(selectedTypes.map(assetDomain)));
+
+  const liveStates = $derived(
+    selectedStates.filter((id) => liveDomains.has(id.slice(0, id.indexOf('/')))),
+  );
+
+  function toggleState(identity: string) {
+    selectedStates = selectedStates.includes(identity)
+      ? selectedStates.filter((s) => s !== identity)
+      : [...selectedStates, identity];
+  }
+
+  /**
+   * Every built-in constraint, as `filter=` wire tokens.
+   *
+   * Same rule as `fieldTerms()`: only what is ON SCREEN contributes. The
+   * three always-visible controls always do; a concrete workflow state
+   * contributes only while its type section is open, and the pruning
+   * effect below keeps the STORED state matching that.
+   */
+  function builtinTerms(): string[] {
+    const out: string[] = [];
+    for (const o of selectedOwners) out.push(`owner:${o.ref}`);
+    for (const e of selectedExtensions) out.push(`extension:${e}`);
+    // The two bounds are INDEPENDENT terms carrying different operators,
+    // so they land in different sub-groups and AND together server-side
+    // (ADR 0093's 18b amendment §5). Either alone is a valid open-ended
+    // range. An unparseable or out-of-range value emits NOTHING rather
+    // than a clamped bound — see FileSizeFilter.
+    const lower = fileSizeTerm(fileSize.min, fileSize.unit, 'lower');
+    if (lower) out.push(lower);
+    const upper = fileSizeTerm(fileSize.max, fileSize.unit, 'upper');
+    if (upper) out.push(upper);
+    if (workflowNone) out.push('workflow_state:none');
+    for (const s of liveStates) out.push(`workflow_state:${s}`);
+    return out;
+  }
+
+  const activeCount = $derived(
+    fieldTerms().length + typeTerms().length + builtinTerms().length,
+  );
 
   /**
    * Drop constraints held for fields that are no longer on screen.
@@ -410,6 +592,63 @@
     if (t2) contains = t2;
     const r = prune(ranges);
     if (r) ranges = r;
+  });
+
+  /**
+   * The same rule for CONCRETE workflow states (#1173, sprint 18d).
+   *
+   * Deselecting a type takes its section away, so the states inside it
+   * stop being reachable and must stop being applied. `builtinTerms`
+   * already skips them; this is about the STORED state matching what is
+   * drawn, so re-selecting the type does not restore ticks the caller
+   * had visibly cleared.
+   *
+   * ⛔ `workflowNone` is deliberately untouched. It is global, it is
+   * never inside a type section, and pruning it here would delete a
+   * filter whose control is still on screen.
+   */
+  $effect(() => {
+    const live = liveDomains;
+    const kept = selectedStates.filter((id) => live.has(id.slice(0, id.indexOf('/'))));
+    if (kept.length !== selectedStates.length) selectedStates = kept;
+  });
+
+  /**
+   * The state vocabulary of each selected type.
+   *
+   * `/workflow/states` REQUIRES `domain` — it answers 400 without one —
+   * so this is one request per selected type rather than one request for
+   * "all states". That is also the honest shape: there is no such thing
+   * as a state outside a domain.
+   */
+  $effect(() => {
+    const refs = selectedTypes;
+    let cancelled = false;
+    (async () => {
+      for (const ref of refs) {
+        if (cancelled) return;
+        if (statesByType[ref]) continue;
+        try {
+          const { data, error } = await api.GET('/workflow/states', {
+            params: { query: { domain: assetDomain(ref) } as never },
+          });
+          if (cancelled) return;
+          if (error || !Array.isArray(data)) {
+            if (!statesFailed.includes(ref)) statesFailed = [...statesFailed, ref];
+            continue;
+          }
+          statesByType = { ...statesByType, [ref]: data as WorkflowStateDef[] };
+          statesFailed = statesFailed.filter((r) => r !== ref);
+        } catch {
+          if (!cancelled && !statesFailed.includes(ref)) {
+            statesFailed = [...statesFailed, ref];
+          }
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   });
 
   // Whether the instance has the CLIP/similarity channel.
@@ -470,8 +709,28 @@
     else if (initialQuery.trim()) params.set('q', initialQuery.trim());
     for (const term of typeTerms()) params.append('filter', term);
     for (const term of fieldTerms()) params.append('filter', term);
+    // The built-in dimensions (#1173, sprint 18d) go through the SAME
+    // serializer as everything else, which is the whole reason the two
+    // suggestion lookups below can be handed this exact string: the list
+    // of contributors and the list of file types describe the query
+    // being built, not the corpus.
+    for (const term of builtinTerms()) params.append('filter', term);
     return params;
   }
+
+  /**
+   * The query the two suggestion lookups run against, serialized once.
+   *
+   * ⛔ IT CARRIES THIS DIMENSION'S OWN TERMS TOO, and that is deliberate.
+   * `Selection.ForFacet` drops them server-side — "so an OR dimension
+   * does not filter itself out of existence" — which is what keeps
+   * contributor B selectable after contributor A has been ticked, and
+   * what lets a selected extension legitimately leave its own bucket
+   * list. Stripping them here would make the client responsible for a
+   * rule the server already owns, and the guarantee would stop being
+   * exercised at all.
+   */
+  const lookupQuery = $derived(searchParams(builderDsl).toString());
 
   function targetURL(dsl: string): string {
     return `/search?${searchParams(dsl).toString()}`;
@@ -492,6 +751,17 @@
     ranges = {};
     selectedTypes = [];
     builderDsl = '';
+    // The built-in dimensions clear too (#1173, sprint 18d). "Start
+    // over" that left an owner or a size bound behind would be the
+    // invisible-predicate failure with a button attached to it.
+    selectedOwners = [];
+    selectedExtensions = [];
+    // ⛔ The unit RESTORES to the default rather than being left where
+    // the caller last put it: an empty box beside a remembered "GB" is a
+    // form that is not actually blank.
+    fileSize = { min: '', max: '', unit: DEFAULT_FILE_SIZE_UNIT };
+    workflowNone = false;
+    selectedStates = [];
   }
 
   /**
@@ -692,10 +962,29 @@
       {#if fieldsLoading}
         <p class="text-sm text-fg-muted">{t('search.advanced_page.fields_loading')}</p>
       {:else if fieldsError}
+        <!-- ⛔ A LOAD FAILURE RENDERS NOTHING ELSE, deliberately. The
+             route is reachable anonymously and `/fields`,
+             `/search/facets`, `/search/contributors` and
+             `/workflow/states` all answer 401 to an anonymous caller —
+             so drawing the controls here with empty lists beside them
+             would state four authoritative absences the page has no
+             evidence for. The existing field-load failure treatment is
+             the honest one; there is deliberately no auth gate added to
+             the page itself. -->
         <p class="text-sm text-danger">{fieldsError}</p>
-      {:else if filterable.length === 0}
-        <p class="text-sm text-fg-muted">{t('search.advanced_page.fields_empty')}</p>
       {:else}
+        <!-- What these filters are about, said once at the top (#1173,
+             sprint 18d). Every dimension in this panel narrows to FILES:
+             a post is a set of members and a collection is a container,
+             so neither has an extension, a size, a workflow state or a
+             pixel dimension, and an asset-only filter takes them off the
+             page rather than passing them through. That is the
+             positive-narrowing direction ADR 0093 settles, and a person
+             should not have to discover it from a result set. -->
+        <p class="mb-4 text-xs text-fg-muted" data-testid="advanced-filters-scope">
+          {t('search.advanced_page.filters_scope')}
+        </p>
+
         <!-- THE RESOURCE-TYPE SCOPE (#1173).
 
              Two jobs in one control, which is why it sits at the top of
@@ -729,19 +1018,127 @@
           </div>
         {/if}
 
+        <!-- ABOUT THE WORK (#1173, sprint 18d) — the two dimensions that
+             are properties of the work rather than of the file it is
+             stored in. -->
+        <div class="mb-6 flex flex-col gap-4" data-testid="advanced-group-work">
+          <div class="mb-1 border-b border-border pb-1 text-xs font-semibold uppercase tracking-wide text-fg-muted">
+            {t('search.advanced_page.section_work')}
+          </div>
+
+          <ContributorFilter
+            query={lookupQuery}
+            selected={selectedOwners}
+            onchange={(v) => (selectedOwners = v)}
+          />
+
+          <!-- ⛔ THE GLOBAL WORKFLOW-STATE CHECKBOX. One of it, here,
+               outside every type section, rendered whether or not any
+               type is selected. `workflow_state:none` is
+               `state_id IS NULL` and carries no domain, so a per-type
+               copy would claim a scope the wire does not have: with
+               Image and Video both selected, ticking it under Image
+               still returns the state-less videos. -->
+          <label
+            class="flex min-h-11 items-center gap-2 text-sm text-fg sm:min-h-0"
+            data-testid="advanced-workflow-none-label"
+          >
+            <input
+              type="checkbox"
+              checked={workflowNone}
+              onchange={(e) => (workflowNone = e.currentTarget.checked)}
+              data-testid="advanced-workflow-none"
+              class="size-4 rounded border-border-strong"
+            />
+            {t('search.advanced_page.workflow_none')}
+          </label>
+        </div>
+
         <div class="flex flex-col gap-6">
           {#each sections as sec (sec.key)}
             <div data-testid="advanced-section-{sec.key}">
-              <!-- The global section keeps no heading when it is the only
-                   one: a lone "General" label above every field is chrome
-                   that names nothing the caller chose. Headings appear as
-                   soon as there is a second section to tell it apart
-                   from. -->
-              {#if sections.length > 1}
-                <div class="mb-2 border-b border-border pb-1 text-xs font-semibold uppercase tracking-wide text-fg-muted">
-                  {sec.label}
+              <!-- Every section is named now (#1173, sprint 18d). Before
+                   18d the only heading-worthy distinction was "global
+                   versus a type", so a lone global section suppressed its
+                   own label; the panel now has built-in groups that have
+                   to be told apart from each other and from the
+                   operator's fields. -->
+              <div class="mb-2 border-b border-border pb-1 text-xs font-semibold uppercase tracking-wide text-fg-muted">
+                {sec.label}
+              </div>
+
+              {#if sec.key === 'media'}
+                <!-- ABOUT THE FILE. The two built-in file dimensions sit
+                     above the pixel rows because a file's type and size
+                     are what a person reaches for first; the pixel
+                     fields below them are ordinary `field:` rows that
+                     happen to describe the same thing. -->
+                <div class="mb-4 flex flex-col gap-4">
+                  <ExtensionFilter
+                    query={lookupQuery}
+                    selected={selectedExtensions}
+                    onchange={(v) => (selectedExtensions = v)}
+                  />
+                  <FileSizeFilter
+                    min={fileSize.min}
+                    max={fileSize.max}
+                    unit={fileSize.unit}
+                    onchange={(v) => (fileSize = v)}
+                  />
                 </div>
               {/if}
+
+              {#if sec.key.startsWith('type-')}
+                {@const ref = Number(sec.key.slice(5))}
+                {@const domain = assetDomain(ref)}
+                {@const states = statesByType[ref] ?? []}
+                <!-- The CONCRETE workflow states of this type's domain.
+                     ⛔ Keyed by the full `<domain>/<code>` identity:
+                     `workflow_states` is UNIQUE (domain, code), so two
+                     resource types can both define `published` and they
+                     are two different states. Identical codes are never
+                     collapsed across domains. -->
+                {#if statesFailed.includes(ref)}
+                  <p class="mb-3 text-xs text-danger" data-testid="advanced-workflow-error-{ref}">
+                    {t('search.advanced_page.workflow_error')}
+                  </p>
+                {:else if states.length > 0}
+                  <div class="mb-4" data-testid="advanced-workflow-states-{ref}">
+                    <div class="mb-1.5 text-sm font-medium text-fg">
+                      {t('search.advanced_page.workflow_heading')}
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                      {#each states as st (st.id)}
+                        {@const identity = `${domain}/${st.code}`}
+                        {@const on = selectedStates.includes(identity)}
+                        <button
+                          type="button"
+                          onclick={() => toggleState(identity)}
+                          aria-pressed={on}
+                          data-testid="advanced-workflow-state-{identity}"
+                          class="min-h-11 rounded-full border px-3 py-1 text-xs transition-colors sm:min-h-0
+                                 {on
+                            ? 'border-accent bg-accent text-on-accent'
+                            : 'border-border bg-surface text-fg-muted hover:bg-state-hover hover:text-fg'}"
+                        >
+                          {st.label || st.code}
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              {/if}
+
+              <!-- A selected type with no scoped fields and no workflow
+                   states still gets its section, because the section is
+                   where those would go. It says so rather than leaving a
+                   heading over nothing. -->
+              {#if sec.key.startsWith('type-') && sec.fields.length === 0 && (statesByType[Number(sec.key.slice(5))] ?? []).length === 0 && !statesFailed.includes(Number(sec.key.slice(5)))}
+                <p class="mb-2 text-xs text-fg-muted" data-testid="advanced-section-empty-{sec.key}">
+                  {t('search.advanced_page.section_type_empty')}
+                </p>
+              {/if}
+
               <div class="flex flex-col gap-4">
                 {#each sec.fields as f (f.id)}
                   {@const family = familyOf(f)}
@@ -796,6 +1193,47 @@
                             />
                           </label>
                         </div>
+                      {:else if family === 'number'}
+                        <!-- #1173 sprint 18d — the SAME two-bound row a
+                             date renders, because it is the same pair of
+                             operators over the same `ranges` state. What
+                             changed is underneath: ADR 0093's 18b
+                             amendment made the bound's DOMAIN a property
+                             of the value rather than of the operator, so
+                             `>=` reads `value_num` for a field declared
+                             `number` and `value_date` for one declared
+                             `date`. The two spellings are disjoint, so
+                             nothing here has to say which it meant.
+
+                             `step="any"` because a number field is not
+                             an integer type — ADR 0012 stores every
+                             numeric value in a DOUBLE PRECISION column,
+                             and a spinner that snapped to whole numbers
+                             would make a fractional bound untypeable. -->
+                        <div class="flex flex-wrap items-center gap-2">
+                          <label class="flex items-center gap-1.5 text-xs text-fg-muted">
+                            {t('search.advanced_page.range_from')}
+                            <input
+                              type="number"
+                              step="any"
+                              value={ranges[f.code]?.from ?? ''}
+                              oninput={(e) => setRange(f.code, 'from', e.currentTarget.value)}
+                              data-testid="field-from-{f.code}"
+                              class="min-h-11 w-32 rounded-md border border-border-strong bg-surface px-2 py-1.5 text-sm"
+                            />
+                          </label>
+                          <label class="flex items-center gap-1.5 text-xs text-fg-muted">
+                            {t('search.advanced_page.range_to')}
+                            <input
+                              type="number"
+                              step="any"
+                              value={ranges[f.code]?.to ?? ''}
+                              oninput={(e) => setRange(f.code, 'to', e.currentTarget.value)}
+                              data-testid="field-to-{f.code}"
+                              class="min-h-11 w-32 rounded-md border border-border-strong bg-surface px-2 py-1.5 text-sm"
+                            />
+                          </label>
+                        </div>
                       {:else if usesTypeahead(f, opts)}
                         <!-- Same picker the upload row and the collection
                              field editor use, with its create arm off:
@@ -839,6 +1277,16 @@
             </div>
           {/each}
         </div>
+
+        <!-- An install with no configured field the caller may filter on
+             still gets the built-in dimensions above, so this line
+             reports what is genuinely absent rather than standing in for
+             the whole panel the way it did before 18d. -->
+        {#if filterable.length === 0}
+          <p class="mt-4 text-sm text-fg-muted" data-testid="advanced-fields-empty">
+            {t('search.advanced_page.fields_empty')}
+          </p>
+        {/if}
       {/if}
     </section>
   </div>
@@ -921,20 +1369,54 @@
   </div>
 </div>
 
+<style>
+  /* THE STICKY SUBMIT BAR OCCLUDES WHATEVER SCROLLS UNDER IT (#1173,
+     sprint 18d).
+
+     The bar is `position: sticky; bottom: 0`, so it floats over the
+     bottom of the viewport while the form scrolls behind it. Any
+     scroll that brings a control "just into view" therefore lands that
+     control UNDERNEATH the bar, where it cannot be tapped — measured at
+     390px, where the file-size box came to rest at y=800 with the bar's
+     top edge at y=795.
+
+     `scroll-margin-bottom` reserves the bar's height for every
+     scroll-into-view the BROWSER performs, not only the ones a test
+     drives: tabbing to a control, focusing one after a validation
+     failure, and following an in-page anchor all use the same
+     mechanism. Fixing it here rather than by padding the page is what
+     makes it hold mid-document, where the padding would not help.
+
+     `:global` because the controls it has to reach live in child
+     components (the contributor, file-type and file-size pickers), and
+     a scoped rule would stop at this file's own markup. */
+  :global([data-testid='advanced-search-page'] :is(input, select, textarea, button)) {
+    scroll-margin-bottom: 5rem;
+  }
+</style>
+
 <!-- #1157's residual is CLOSED (#1165). `text`/`longtext` fields have a
      contains box and `date`/`datetime` a range, and they got there the
      way that residual said they had to: by an operator in the shared
      grammar (facet.FieldOp — `~`, `>=`, `<=`) and a case in
      dimensionSQL, not by a widget compiling to something of its own.
 
+     #1165's own residual is CLOSED too (#1173, sprint 18d). `number`
+     fields — `pixel_width`, `pixel_height`, and whatever an operator has
+     added — render the same two-bound row a date does. They needed no
+     new widget: 18b separated a bound's DOMAIN from its OPERATOR, so
+     `>=` reads `value_num` for a field declared `number`, and the two
+     value spellings are disjoint so nothing has to say which was meant.
+
+     18d also gave the page the BUILT-IN dimensions it had none of:
+     contributor (`owner:`), file type (`extension:`), file size
+     (`file_size:`) and workflow state (`workflow_state:`). All four are
+     the same `filter=<dimension>:<value>` grammar, so `searchParams()`
+     is still the only place this page speaks it.
+
      RESIDUAL, recorded where the next author will see it:
 
-     - `number` fields (`rating`, `polycount`, `pixel_width`) still have
-       no control. The bounds read `value_date`; a numeric range needs
-       its own operator pair against `value_num`. The grammar has room
-       for it — one more FieldOp, one more case — and the shape to copy
-       is right there.
-     - `boolean` and `reference` likewise: both are equality at heart,
+     - `boolean` and `reference` fields: both are equality at heart,
        but a checkbox that means "unset" and "false" differently, and a
        picker that resolves a UUID to a name, are each a design question
        rather than a missing operator.

@@ -669,3 +669,167 @@ the wrong shape.
   domain. The second one is the reason section 5 exists, and closing it would remove the very
   row the regression is built on, so it needs its own decision rather than a side effect of a
   search sprint.
+
+## Amendment, 2026-08-31, after #1173 (sprint 18d)
+
+18b gave the grammar a bound and 18c gave it a state. Both were WIRE work: the dimensions
+became filterable and nothing rendered a control for them. This amendment is about the
+surface, and it records the decisions that are not obvious from "add some inputs".
+
+### 1. The advanced page's built-in filters narrow to FILES, and it says so
+
+`extension`, `file_size` and `workflow_state` are asset-only, and `owner` is asset-only in
+the same predicate. A post is a set of members and a collection is a container, so all three
+non-asset arms fall through to `ok=false`, which `Selection.SQL` reports as
+`satisfiable=false`, which is `FacetExtension`'s shape since #907. That is the
+POSITIVE-NARROWING direction, and it means ticking any of them takes posts and collections off the results page
+entirely.
+
+⭐ **That is correct behaviour and it is also surprising, so the panel states it once at the
+top** rather than leaving a reader to infer it from a result set that lost two thirds of its
+kinds. The regression asserts it on the HITS and proves all three kinds were present first;
+an assertion built on a query that never returned a post would be vacuous.
+
+⛔ **`types_matched` is NOT the instrument for that.** `search/query.go` assigns it the types
+the caller REQUESTED, so it names `post` on every response whether or not a post came back. A
+first draft of the regression read it and reported a leak that did not exist.
+
+### 2. Section composition, and what a group may NOT do
+
+The panel is: a scope statement, the resource-type scope, **About the work** (contributor, the
+global `workflow_state:none` checkbox), **About the file** (file type, file size, the
+globally-configured pixel fields), the remaining configured field rows, then one section per
+selected type carrying that type's concrete workflow states and type-scoped fields.
+
+⛔ **A group REGROUPS; it never overrides a field's configuration.** "About the file" claims
+`pixel_width` and `pixel_height` by CODE, which is what `db.ShippedFieldCodes`,
+`pixeldims.SelectColumnsSQL` and the IIIF handler already do, and **only while `applies_to`
+is empty**. A pixel field an operator has scoped to a type is not claimed and follows the
+per-type sections like any other. `status`, `show_in_advanced_search` and `read_capability`
+are applied upstream, so a hidden or unreadable field cannot re-enter through a group. Every
+field renders EXACTLY ONCE, and an invisible one is pruned from held state by the existing
+effect rather than merely skipped at serialization time.
+
+### 3. ⛔ `workflow_state:none` IS GLOBAL; A PER-TYPE COPY WOULD LIE
+
+`none` means `state_id IS NULL` and carries no domain. So one checkbox, outside every type
+section, rendered even with zero types selected. With Image and Video both selected, a copy
+drawn under Image would still return the state-less VIDEOS: a control claiming a scope the
+wire does not have, which is the "looks applied and is not" failure one level up.
+
+Concrete states are the opposite and for the same reason: `workflow_states` is
+`UNIQUE (domain, code)`, so two resource types defining `published` define TWO states. They
+are keyed by the full `<domain>/<code>` identity, they live inside their own type's section,
+and deselecting the type prunes them while leaving `none` untouched.
+
+⚠️ `/workflow/states` is read-only, because #897's operator management is not built, so a UI
+regression cannot create a second populated domain. What it CAN assert is the property that
+makes a collision impossible: every rendered identity carries its own section's domain, and no
+identity appears under two.
+
+### 4. The contributor lookup: `GET /search/contributors`
+
+A raw chi route beside `/search`, `/search/facets` and `/search/suggest`, which is ADR 0056
+§10's decision for the whole search family, so no OpenAPI operation and no strict-server shim.
+
+**Visibility scoping is SHARED, not re-derived.** It calls `buildAssetPopulationSQL` with
+`own = FacetOwner`, the same call `ownerAgg` makes, so the gate, the capabilities, the
+mature axis and the active selection are one expression. Every contributor it names owns at
+least one row the caller could have reached by paging their own results, so it discloses
+nothing new. The projection is `user_ref` plus the resolved label and nothing else.
+
+**Self-exclusion is the EXISTING `Selection.ForFacet`,** whose comment gives the rule: "so an
+OR dimension does not filter itself out of existence." Contributor B stays selectable after A
+is ticked; a selected contributor can nonetheless leave the list when ANOTHER dimension
+narrows, which is why the selection is page state and is never re-derived from the response.
+`FacetExtension` behaves identically and its chips are page state for the identical reason.
+
+**⛔ THE PREFIX IS OPTIONAL, AND THAT IS A CORRECTNESS PROPERTY.** All three stored identity
+columns are nullable, so a contributor can exist with no stored human-readable name.
+`users.ResolveDisplayName` renders that row `user <ref>`: rung 4, which is INVENTED rather
+than stored, so no SQL predicate can reach it. A required prefix would make such a contributor
+permanently unreachable, and continuation cannot repair it: the row never enters the candidate
+set. So an empty prefix is a valid query meaning no identity predicate at all.
+
+**⛔ MATCHING IS PER COLUMN; DISPLAY IS `ResolveDisplayName`.** A non-empty prefix matches
+`display_name`, `fullname` and `username` INDEPENDENTLY. It does NOT prefix-match a
+reconstructed `COALESCE(display_name, fullname, username)`: precedence decides WHICH NAME TO
+SHOW, not whether a row matches, and reproducing it in SQL would be the fourth copy of the
+ladder ADR 0070's 2026-08-13 amendment consolidated. Matching `fullname` is consistent with
+§3 rather than a leak, because the endpoint refuses anonymous callers outright, so rung 2
+applies and ADR 0024's opt-out branch is unreachable. The 401 is asserted, not assumed.
+
+⭐ The fixture that separates the two implementations gives each column a DIFFERENT
+distinctive token on one user who has all three. Under a ladder, the `fullname` and `username`
+tokens of a user who HAS a `display_name` match nothing.
+
+**Continuation.** Order is `(assets DESC, user_ref ASC)` with `user_ref` as the final UNIQUE
+tiebreak, so no two rows compare equal and the keyset can neither duplicate nor skip. The
+cursor carries the last row's sort key plus its ref; a prefix, query or filter change resets
+it. ⛔ **Terminal is OBSERVED, by over-fetching one row, not inferred from `len == limit`**. A
+full final page is indistinguishable from a full non-final one, and the inference reports
+"more available" on a set that has none.
+
+⚠️ The first page under an empty prefix is the same SET as the owner facet's 25 buckets;
+measured 25 of 25. The ORDER can differ, and only where `ownerAgg`'s is undefined, because it has no
+tiebreak. Asserting set equality is the honest claim.
+
+### 5. `dsl=` reaches the two suggestion endpoints, through ONE bridge
+
+The advanced page's query IS a DSL, so suggestions that ignored it would enumerate the corpus
+rather than the search. `foldDSL` compiles it through the same `dsl.Parse` / `dsl.Compile` /
+`SelectionFromDSL` path `/search` uses, and both `/search/facets` and `/search/contributors`
+call it. Strictly additive: no existing caller sends `dsl=` to `/search/facets`. `similar_to:`
+is compiled and deliberately not resolved: it is a ranking hint, and the facet population has
+never composed one.
+
+### 6. File size: a 1024-based UI over an exact byte wire
+
+Units are B / KB / MB / GB on the product's existing 1024-based convention
+(`UploadFileRow.svelte`'s `humanSize`), defaulting to MB. ⛔ **The conversion never passes
+through a JavaScript `number`**: decimal string in, `BigInt` arithmetic, base-10 digits out.
+`file_size_bytes` is BIGINT and reaches past 2^53, which is 18b's argument one language over.
+A lower bound CEILS and an upper bound FLOORS, so neither end admits a file the person
+excluded. `9223372036854775807` is valid; one more is refused, and a refused bound emits NO
+TERM rather than a clamped one. The unit tests compare DIGIT STRINGS, because a numeric
+literal on the right of the assertion would be rounded the same way a broken implementation
+rounded it.
+
+Extension normalization stays in the FRONTEND: trim, strip one leading `.`, lowercase, drop
+empty and dot-only, deduplicate. `FacetExtension` has no `CanonicalValue` case and the SQL
+already matches `LOWER(...)`, so canonicalising server-side would change `Selection.CacheKey`
+for every stored search already carrying an extension term.
+
+### 7. ⚠️ A residual this sprint FOUND and did not close
+
+`facet.dimensionSQL`'s `field:` arm conjuncts `ffd.searchable = TRUE`, and its comment
+justifies that with "the advanced page renders its rows from exactly that set". **That stopped
+being true in #1173 slice 1**, which moved the page onto `show_in_advanced_search` because
+ADR 0092 §3 separates indexing from participation, and `searchable` is what
+`rebuild_asset_search_text()` reads.
+
+Migration 00017 ships `pixel_width` and `pixel_height` with `searchable = false`, correctly:
+a pixel count has no business in a full-text index. The consequence is that a pixel bound is
+well-formed, reaches the engine and matches ZERO rows on a stock install. Measured:
+`field:pixel_width=512` returns 0 while 652 live assets carry that value, and
+`field:rating>=1` returns 1801.
+
+⛔ **Not fixed here.** Dropping the conjunct widens what every `field:` term can reach, on
+every surface and inside every stored query, which is a behavioural change to a shared
+predicate rather than a side effect of a UI sprint. Mutating the two rows is worse: it would
+put a pixel count into `search_text`. The 18d regressions therefore assert what the sprint
+owns, which is the control, its grouping and the TERM it emits, and deliberately do NOT assert
+a row count, because a row-count assertion there would be asserting the defect.
+
+### 8. Consequences
+
+- `facet.Contributors` is the first consumer of `buildAssetPopulationSQL` that is not an
+  aggregator, and it needed a new entry on `TestAssetSearchMatch_EveryTextMatchIsGuarded`'s
+  allow list. That entry asserts the CLAUSE that exempts it, the shared population call,
+  rather than naming the file, which is what the guard's own design asks for.
+- ADR 0056 is unchanged: no cursor payload change, no pagination change, no `total_count`
+  contract change. The contributor cursor is a separate, endpoint-local keyset.
+- The sticky submit bar occludes anything a scroll parks against the bottom edge, measured at
+  390px. `scroll-margin-bottom` on the page's controls reserves its height for every
+  scroll-into-view the BROWSER performs (a focus, a tab, an anchor), not only the ones a test
+  drives.

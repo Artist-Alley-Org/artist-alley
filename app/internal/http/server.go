@@ -526,6 +526,15 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 				Logger:  logger,
 			})
 		}
+		// #1173 sprint 18d — the advanced page's Contributor picker.
+		// Same raw-chi family as its three neighbours (ADR 0056 §10),
+		// and the one member of it that is NOT anonymous-safe: it
+		// refuses an anonymous caller outright, which is what keeps ADR
+		// 0070 §3's anonymous branch off this path entirely.
+		r.Method(http.MethodGet, "/search/contributors", &search.ContributorsHandler{
+			Pool:   pool,
+			Logger: logger,
+		})
 		if impl.searchService != nil {
 			r.Method(http.MethodPost, "/search/save-as-collection", &search.SaveAsCollectionHandler{
 				Service: impl.searchService,
