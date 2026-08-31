@@ -621,25 +621,44 @@
    * "all states". That is also the honest shape: there is no such thing
    * as a state outside a domain.
    */
+  /**
+   * Which domains have already been ASKED for.
+   *
+   * ⛔ A PLAIN Set, deliberately outside the reactive graph. The obvious
+   * spelling of this guard is `if (statesByType[ref]) continue`, and it
+   * is wrong here: Svelte collects an effect's dependencies from every
+   * read in its own call frame, callees included, so reading the cache
+   * the effect WRITES makes the effect wake itself. It converges rather
+   * than looping — the second pass hits the guard — but each write
+   * cancels the in-flight fetches beside it and re-issues them, so N
+   * selected types cost O(N²) requests for no gain.
+   */
+  const requestedDomains = new Set<number>();
+
   $effect(() => {
     const refs = selectedTypes;
     let cancelled = false;
     (async () => {
       for (const ref of refs) {
         if (cancelled) return;
-        if (statesByType[ref]) continue;
+        if (requestedDomains.has(ref)) continue;
+        requestedDomains.add(ref);
         try {
           const { data, error } = await api.GET('/workflow/states', {
             params: { query: { domain: assetDomain(ref) } as never },
           });
           if (cancelled) return;
           if (error || !Array.isArray(data)) {
+            // Forget the attempt, so re-selecting the type retries
+            // rather than leaving the section permanently empty.
+            requestedDomains.delete(ref);
             if (!statesFailed.includes(ref)) statesFailed = [...statesFailed, ref];
             continue;
           }
           statesByType = { ...statesByType, [ref]: data as WorkflowStateDef[] };
           statesFailed = statesFailed.filter((r) => r !== ref);
         } catch {
+          requestedDomains.delete(ref);
           if (!cancelled && !statesFailed.includes(ref)) {
             statesFailed = [...statesFailed, ref];
           }
