@@ -1189,7 +1189,25 @@ func (s Selection) Authorize(
 //
 // An unknown code returns (false, "", nil): it cannot be read because it
 // does not exist, and reporting that distinctly is the oracle
-// [Selection.Authorize]'s doc refuses.
+// [Selection.Authorize]'s doc refuses. An INACTIVE field and an
+// UNREADABLE one return the same shape, so none of the three is
+// distinguishable from the others by a caller.
+//
+// # ⛔ `searchable` IS NOT A CONJUNCT HERE, AND REMOVING IT WAS THE FIX
+//
+// This lookup used to require `searchable = TRUE` as well, which
+// conflated two independent settings. `searchable` has meant one thing
+// since the 00001 baseline: whether a field's text is folded into
+// `assets.search_text` by `rebuild_asset_search_text()`, which is the
+// flag's only functional consumer. It has never been a statement about
+// whether an EXPLICIT `field:<code><op><value>` predicate may name the
+// field, and treating it as one made an operator's indexing decision
+// silently disable a structured filter — a control that looks applied
+// and is not, because a refusal here is an empty result set rather than
+// an error.
+//
+// Lifecycle eligibility is `status = 'active'`; caller eligibility is
+// `read_capability`, applied in Go below. Index participation is neither.
 func fieldGate(
 	ctx context.Context, pool visibility.Pool,
 	caps visibility.CapabilityChecker, code string,
@@ -1197,7 +1215,7 @@ func fieldGate(
 	var readCap *string
 	err = pool.QueryRow(ctx, `
 		SELECT read_capability, type FROM field_definition
-		 WHERE code = $1 AND status = 'active' AND searchable = TRUE`,
+		 WHERE code = $1 AND status = 'active'`,
 		code).Scan(&readCap, &ftype)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1792,11 +1810,24 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, sh 
 		// caller's bytes stay in the placeholder, where they have always
 		// been.
 		//
-		// `searchable` and `status='active'` are conjuncts, not
-		// conveniences: `searchable` is the operator's statement that a
-		// field participates in search at all, and the advanced page
-		// renders its rows from exactly that set, so the backend has to
-		// agree or the page would offer a filter the engine ignores.
+		// `status='active'` is a conjunct, not a convenience: an
+		// archived field's values stop answering queries, which is the
+		// same lifecycle rule `rebuild_asset_search_text()` applies on
+		// the other half of its WHERE.
+		//
+		// ⛔ `searchable` is NOT a conjunct here, and it used to be
+		// (#1173, sprint 18d). The comment that justified it said "the
+		// advanced page renders its rows from exactly that set", which
+		// stopped being true in #1173 slice 1 when the page moved onto
+		// `show_in_advanced_search` — ADR 0092 §3 separates indexing
+		// from participation. `searchable` decides whether a field's
+		// text is folded into `assets.search_text`; it decides nothing
+		// about whether an EXPLICIT `field:` predicate may name the
+		// field. Requiring it made a well-formed filter reach the
+		// engine and match zero rows, so the control looked applied and
+		// was not. The correction is cross-cutting rather than a fix
+		// for any one field: ANY active field the caller may read is
+		// now filterable regardless of index participation.
 		//
 		// ⛔ read_capability is NOT here, even though this function does
 		// now receive a [RenderContext] (#1251). What that context
@@ -1815,7 +1846,6 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, sh 
 			                 JOIN field_definition ffd ON ffd.id = ffv.field_id
 			                WHERE ffv.asset_id = ` + a + `id
 			                  AND ffd.code = split_part(` + p + `::TEXT, '` + string(sh.op) + `', 1)
-			                  AND ffd.searchable = TRUE
 			                  AND ffd.status = 'active'
 			                  AND ` + match + `)`, true
 		}
