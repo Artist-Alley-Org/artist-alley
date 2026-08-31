@@ -662,26 +662,25 @@ test.describe('advanced search — the built-in dimensions', () => {
 
   // ── PIXEL DIMENSIONS AND THE NUMBER FAMILY ─────────────────────────
 
-  // ⚠️ REPORT-ONLY, MEASURED, AND IT BOUNDS WHAT THE TWO TESTS BELOW
-  // CAN CLAIM. `pixel_width` and `pixel_height` ship with
-  // `searchable = false` (migration 00017 — correctly, since a pixel
-  // count has no business in `search_text`), and the `field:` predicate
-  // in `facet.dimensionSQL` conjuncts `ffd.searchable = TRUE`. So a
-  // pixel bound is well-formed, reaches the engine, and matches ZERO
-  // rows on a stock install — measured: `field:pixel_width=512` returns
-  // 0 while 652 live assets carry that value, and `field:rating>=1`
-  // returns 1801.
+  // ⭐ WHAT THESE TWO TESTS OWN, AND WHERE THE EXECUTION HALF LIVES.
+  // `pixel_width` and `pixel_height` ship with `searchable = false`
+  // (migration 00017, correctly: a pixel count has no business in
+  // `search_text`), and that configuration is unchanged.
   //
-  // That predicate's own comment says `searchable` is there because "the
-  // advanced page renders its rows from exactly that set", which stopped
-  // being true when #1173 slice 1 moved the page onto
-  // `show_in_advanced_search` (ADR 0092 §3: indexing and participation
-  // are two settings). Whether to drop the conjunct is a behavioural
-  // change to a shared predicate and belongs to its own decision, so
-  // these tests assert what 18d actually owns — the CONTROL, its
-  // grouping and the TERM it emits — and deliberately do NOT assert a
-  // row count, because a row-count assertion here would be asserting the
-  // defect.
+  // `field:` execution used to conjunct `ffd.searchable = TRUE`, so a
+  // pixel bound was well-formed, reached the engine and matched zero
+  // rows. That was a conflation and it is fixed: `searchable` governs
+  // full-text index participation only, and any ACTIVE field the caller
+  // may read is filterable regardless of it (ADR 0093, sprint 18d
+  // amendment §7).
+  //
+  // The row-level proof belongs where rows can be controlled, and it is
+  // in Go: `TestFieldFilter_StockPixelDimensionsFilter` plants three
+  // assets around a range on the real shipped definition and asserts
+  // exact IDs for the lower, upper, both and outside cases. These two
+  // tests stay on what the PAGE owns, the control, its grouping and the
+  // TERM it emits, because a UI suite cannot control the corpus a bound
+  // would be measured against.
   test('⛔ pixel dimensions: the shipped global field appears EXACTLY ONCE, in Media', async ({
     page,
   }) => {

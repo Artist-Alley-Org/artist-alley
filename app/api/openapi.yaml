@@ -14105,14 +14105,26 @@ components:
             it off removes the CONTROL and nothing else: the field's
             values still feed the index, still match a text search, and
             still filter when a caller composes
-            `filter=field:<code>=<value>` directly. Making the field
-            unfindable is `searchable: false`, which is a separate
-            setting because it is a separate promise.
+            `filter=field:<code>=<value>` directly.
 
-            The read-capability gate composes on top and wins: a field
-            marked for the page is still withheld from a caller who may
-            not read it, on the page and in
-            `facet.Selection.Authorize`.
+            `searchable: false` is a separate setting with a NARROWER
+            meaning than "unfindable": it takes the field's text out of
+            the FULL-TEXT SEARCH INDEX, which is the only thing that
+            flag governs. `rebuild_asset_search_text()` is its sole
+            consumer. It does NOT disable an explicit
+            `filter=field:<code><op><value>` predicate. Any ACTIVE
+            field the caller may read can be named by a structured
+            `field:` filter whether or not its values participate in
+            the text index (#1173, sprint 18d). Requiring both was a
+            conflation, and it made a well-formed filter on a
+            non-indexed field return an empty result rather than a
+            refusal.
+
+            The read-capability gate composes on top of both flags and
+            wins: a field marked for the page is still withheld from a
+            caller who may not read it, on the page and in
+            `facet.Selection.Authorize`, which is also where a
+            structured `field:` term is refused.
 
             It FEDERATES with the definition — it names the field, not
             the server (ADR 0083's exclusion criterion).

@@ -800,26 +800,81 @@ empty and dot-only, deduplicate. `FacetExtension` has no `CanonicalValue` case a
 already matches `LOWER(...)`, so canonicalising server-side would change `Selection.CacheKey`
 for every stored search already carrying an extension term.
 
-### 7. ⚠️ A residual this sprint FOUND and did not close
+### 7. ⛔ `searchable` IS FULL-TEXT INDEX PARTICIPATION, AND NOTHING ELSE
 
-`facet.dimensionSQL`'s `field:` arm conjuncts `ffd.searchable = TRUE`, and its comment
-justifies that with "the advanced page renders its rows from exactly that set". **That stopped
-being true in #1173 slice 1**, which moved the page onto `show_in_advanced_search` because
-ADR 0092 §3 separates indexing from participation, and `searchable` is what
-`rebuild_asset_search_text()` reads.
+This sprint found a structured `field:` filter that was well-formed, reached the engine and
+matched zero rows, and the fix is a CROSS-CUTTING correction to the shared predicate rather
+than anything about pixels.
 
-Migration 00017 ships `pixel_width` and `pixel_height` with `searchable = false`, correctly:
-a pixel count has no business in a full-text index. The consequence is that a pixel bound is
-well-formed, reaches the engine and matches ZERO rows on a stock install. Measured:
-`field:pixel_width=512` returns 0 while 652 live assets carry that value, and
-`field:rating>=1` returns 1801.
+**The conflation.** `facet.fieldGate` and the `field:` execution `EXISTS` each conjuncted
+`field_definition.searchable = TRUE`. The comment justifying the second said "the advanced page
+renders its rows from exactly that set", which stopped being true in #1173 slice 1 when the page
+moved onto `show_in_advanced_search`, because ADR 0092 §3 separates indexing from participation.
 
-⛔ **Not fixed here.** Dropping the conjunct widens what every `field:` term can reach, on
-every surface and inside every stored query, which is a behavioural change to a shared
-predicate rather than a side effect of a UI sprint. Mutating the two rows is worse: it would
-put a pixel count into `search_text`. The 18d regressions therefore assert what the sprint
-owns, which is the control, its grouping and the TERM it emits, and deliberately do NOT assert
-a row count, because a row-count assertion there would be asserting the defect.
+`searchable` has had ONE functional consumer since the 00001 baseline:
+`rebuild_asset_search_text()`, which folds a field's `value_text` and `value_options` into
+`assets.search_text`. It answers "does this field's TEXT feed the index". It never answered "may
+a caller name this field in a structured predicate", and requiring it for the second question was
+a conflation of two independent settings.
+
+⚠️ The failure was INVISIBLE, which is why it survived. A refusal from `Selection.Authorize`
+returns `{Hits: [], TypesMatched: types}, nil`: HTTP 200, zero hits, no error. That shape is
+deliberate and stays: a 400 would be the existence oracle `validFieldCode` refuses. But it means
+a control that is not applied is indistinguishable from a control that matched nothing.
+
+**The decision.** The `searchable` conjunct is removed from BOTH structured-field gates. The
+contract is now general:
+
+> Any ACTIVE field the caller is authorized to read may be used by an explicit `field:`
+> structured predicate, regardless of whether its values participate in the full-text index.
+
+⛔ **`rebuild_asset_search_text()` KEEPS ITS `searchable` GATE.** That function is the flag's
+legitimate consumer and is untouched. So is `metadata`'s PATCH-time rebuild, which exists because
+that flag changes what the index holds.
+
+**What still gates, and where.** The authorization chain is TWO STAGES and neither moved.
+
+- **Lifecycle**, in both stages: `status = 'active'`. An archived or deprecated definition's
+  values stop answering, which is the same half of the `WHERE` the index builder applies.
+- **Caller eligibility**, in Go: `read_capability`, read by `fieldGate` and applied by
+  `Selection.Authorize`. Unknown, inactive and unreadable all return the same shape, so the gate
+  stays non-oracular.
+- ⛔ **There is no `read_capability` conjunct in SQL, and there must not be.** A capability is an
+  open set an operator types at runtime, which is the same reason `Query.CapChecker` cannot be a
+  cache-key component. Capability enforcement happens once, in `Selection.Authorize`, and the
+  execution `EXISTS` gates only the field code, `status = 'active'` and the typed value predicate.
+
+**NO field-definition data was mutated.** Migration 00017 ships `pixel_width` and `pixel_height`
+with `searchable = false` and that intent is CORRECT: "a number in a tsvector is noise". No
+migration flips those rows, no new eligibility flag was added, and `show_in_advanced_search` and
+`applies_to` are unchanged. The stock pixel fields now filter through ORDINARY configured-field
+predicates, exactly like any other numeric field.
+
+⚠️ An earlier draft of this record said flipping `searchable = true` would put pixel counts into
+`search_text`. That is MEASURED FALSE: the aggregation reads only `value_text` and
+`value_options`, and a `number` field writes `value_num`. 6,926 number-typed rows carry zero
+`value_text`. The flag is inert with respect to its own purpose on a numeric field. Mutating
+those rows is still wrong, for the reason above: it would state something untrue about the field.
+
+**⭐ SAVED-QUERY REPLAY CHANGES IN PLACE, AND THE EFFECT IS GENERAL.** A stored search is stored
+DSL text plus a selection; neither is rewritten here.
+
+- Existing DSL text is unchanged. `Selection.CacheKey` is unchanged. There is no migration.
+- What changes is what a stored predicate MEANS when it next runs. A `field:` term naming an
+  active, readable, non-indexed field used to return nothing and now returns rows.
+- On a stock repository the visible surface is `pixel_width` and `pixel_height`, the only active
+  `searchable = false` rows measured there. ⛔ That is not the limit of the change: any
+  OPERATOR-CREATED active, readable field with `searchable = false` is affected identically.
+- So a saved search, a scheduled search or a digest that was silently returning nothing CAN BEGIN
+  PRODUCING MATCHES. That is intended: it aligns structured filtering with the published field
+  semantics, and the previous behaviour was the defect.
+
+**The published contract was corrected too.** The `show_in_advanced_search` description in
+`openapi.yaml` described `searchable: false` as making a field "unfindable", which contradicted
+its own definition of the flag two sentences earlier. It now states that `searchable` governs
+full-text index participation, that it does not disable an explicit `field:` predicate, that
+`show_in_advanced_search` governs whether the page offers a control, and that `read_capability`
+wins over both.
 
 ### 8. Consequences
 
