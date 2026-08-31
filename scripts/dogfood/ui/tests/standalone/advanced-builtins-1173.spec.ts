@@ -200,6 +200,7 @@ test.describe('advanced search — the built-in dimensions', () => {
 
   test('⛔ contributor: two ticks are a UNION, not an intersection or a last-one-wins', async ({
     page,
+    request,
   }) => {
     await openAdvanced(page);
     const refs = await contributorOptions(page);
@@ -231,6 +232,43 @@ test.describe('advanced search — the built-in dimensions', () => {
         'satisfied by accidental AND (no terms), first-wins (A only) and last-wins (B only) ' +
         'alike; only the SET separates all four implementations.',
     ).toEqual([`owner:${a}`, `owner:${b}`].sort());
+
+    // ⛔ AND THE SAME FOUR IMPLEMENTATIONS, ONE LAYER DOWN. Emitting two
+    // tokens proves the CONTROL kept both; it says nothing about how the
+    // engine combined them.
+    //
+    //   correct OR         |A ∪ B| = |A| + |B|   (an asset has ONE owner,
+    //                                             so the sets are disjoint)
+    //   accidental AND     0
+    //   first-value-wins   |A|
+    //   last-value-wins    |B|
+    //
+    // ⭐ THE ARITHMETIC IS WRITTEN OUT, which is what separates all four.
+    // `both > 0` passes on three of them. The query is FILTER-ONLY so the
+    // population is exactly the one the suggestions were drawn from; a
+    // text query would be a different population and both counts could
+    // legitimately be zero.
+    const totalFor = async (...owners: number[]) => {
+      const qs = owners.map((o) => `filter=owner:${o}`).join('&');
+      const r = await request.get(`/api/v1/search?types=asset&limit=1&${qs}`);
+      expect(r.ok(), `search ${qs} → ${r.status()}`).toBeTruthy();
+      return ((await r.json()) as { total_count: number }).total_count;
+    };
+    const nA = await totalFor(a);
+    const nB = await totalFor(b);
+    const nBoth = await totalFor(a, b);
+    expect(
+      Math.min(nA, nB),
+      'a contributor the lookup OFFERED must own at least one visible asset, or the ' +
+        'arithmetic below is satisfied by more than one implementation',
+    ).toBeGreaterThan(0);
+    expect(
+      nBoth,
+      `owner:${a} returned ${nA}, owner:${b} returned ${nB}, and both together returned ` +
+        `${nBoth}. An asset has exactly ONE owner, so two values of this OR dimension are ` +
+        'a value list and the answer is the disjoint union. AND returns 0, first-wins ' +
+        `returns ${nA}, last-wins returns ${nB}; only ${nA + nB} is correct.`,
+    ).toBe(nA + nB);
   });
 
   test('contributor: a tick narrows the results to that contributor by exact id', async ({
