@@ -43,6 +43,8 @@ interface FieldDef {
   display_order?: number;
   applies_to?: number[];
   description?: string;
+  read_only?: boolean;
+  regexp_filter?: string | null;
 }
 
 let createdFieldIds: string[] = [];
@@ -290,6 +292,62 @@ test.describe('UI-38 the per-field page', () => {
     const cardValue = page.getByTestId(`card-field-${f.code}`).first();
     await expect(cardValue).toHaveText('on the card', { timeout: 15_000 });
     await page.screenshot({ path: testInfo.outputPath('card-field.png'), fullPage: true });
+  });
+
+  // ── 4b. The input rules round-trip through the form (#1173) ──────
+  test('the input rules save from the form and persist across a reload', async (
+    { page },
+    testInfo,
+  ) => {
+    const f = await createField(page, {
+      code: fieldCode('rules', testInfo),
+      label: 'UI-38 Input Rules',
+      type: 'text',
+    });
+    await page.goto(`/admin/fields/${f.code}`);
+
+    // Both controls are offered on an ordinary text field, unticked and
+    // empty: unset is what every existing field is in after the
+    // migration, and it has to stay that way until an operator says so.
+    await expect(page.getByTestId('field-edit-read-only')).not.toBeChecked();
+    await expect(page.getByTestId('field-edit-regexp-filter')).toHaveValue('');
+
+    await page.getByTestId('field-edit-read-only').check();
+    await page.getByTestId('field-edit-regexp-filter').fill('[A-Z]{3}_[0-9]{4}');
+    await page.getByTestId('field-options-save').click();
+    await expect(page.getByTestId('field-options-saved')).toBeVisible();
+
+    // The STORED row, not the form's own echo.
+    let stored = await readField(page, f.id);
+    expect(stored.read_only).toBe(true);
+    expect(stored.regexp_filter).toBe('[A-Z]{3}_[0-9]{4}');
+
+    // The pattern is in force on a real value write, which is the half
+    // a settings round-trip alone would not prove.
+    const bad = await page.request.put(`/api/v1/assets/${'00000000-0000-0000-0000-000000000000'}/fields/${f.id}`, {
+      data: { value_text: 'nope' },
+    });
+    expect(
+      bad.status(),
+      'a value that fails the pattern must not be accepted, whatever else is wrong with the request',
+    ).not.toBe(200);
+
+    await page.reload();
+    await expect(page.getByTestId('field-edit-read-only')).toBeChecked();
+    await expect(page.getByTestId('field-edit-regexp-filter')).toHaveValue('[A-Z]{3}_[0-9]{4}');
+
+    // Emptying the box is the CLEAR, and the clear lands as null rather
+    // than as the empty string the server refuses to store.
+    await page.getByTestId('field-edit-regexp-filter').fill('');
+    await page.getByTestId('field-edit-read-only').uncheck();
+    await page.getByTestId('field-options-save').click();
+    await expect(page.getByTestId('field-options-saved')).toBeVisible();
+
+    stored = await readField(page, f.id);
+    expect(stored.read_only).toBe(false);
+    expect(stored.regexp_filter ?? null).toBeNull();
+
+    await page.screenshot({ path: testInfo.outputPath('field-page-input-rules.png'), fullPage: true });
   });
 
   // ── 5. A mirrored field explains itself and cannot be retargeted ──

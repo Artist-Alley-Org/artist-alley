@@ -99,6 +99,16 @@ type MetadataGate interface {
 	// field_definition whose required=TRUE. Used by Create as the
 	// pre-insert validation gate.
 	RequiredCollectionFields(ctx context.Context) ([]RequiredField, error)
+	// ValidateSeedFieldValues checks the values a create body proposes
+	// against their field definitions' input rules (#1173), BEFORE the
+	// transaction opens. Same reason the required gate runs pre-insert:
+	// a refusal must not leave a half-created collection behind.
+	//
+	// A nil refusal means every value is acceptable. `read_only` is not
+	// among the rules checked here — seeding an initial value is the one
+	// human write a read-only collection field permits, and every later
+	// write is refused by the metadata value handlers.
+	ValidateSeedFieldValues(ctx context.Context, values []SeedFieldValue) (*SeedFieldRefusal, error)
 	// UpsertCollectionFieldValueInTx writes one value inside the
 	// caller's tx. Run in the same tx as the collection INSERT so
 	// a failed value write rolls the whole creation back.
@@ -118,6 +128,25 @@ type RequiredField struct {
 	Code  string
 	Label string
 	Type  string
+}
+
+// SeedFieldValue is one create-body value as the pre-insert input-rule
+// gate sees it (#1173). Ordered, so an identical body always produces
+// an identical refusal.
+//
+// Only the text member travels: an input pattern is honoured for `text`
+// and `longtext`, and both store there.
+type SeedFieldValue struct {
+	FieldID   uuid.UUID
+	ValueText *string
+}
+
+// SeedFieldRefusal names the field that refused a seeded value and
+// carries the sentence to report.
+type SeedFieldRefusal struct {
+	Code    string
+	Label   string
+	Message string
 }
 
 // CollectionFieldValueInput is the value shape collections.Create
@@ -250,6 +279,11 @@ func (h *Handler) CreateCollection(
 	// breaking it). Skipped when metadataGate is nil (test/wiring
 	// fallback).
 	suppliedValues := map[uuid.UUID]CollectionFieldValueInput{}
+	// The same values in body order. The map is what the required gate
+	// and the seeding loop want; the slice is what the input-rule gate
+	// wants, because iterating a map would make WHICH refusal an operator
+	// sees depend on Go's map ordering.
+	seedOrder := make([]SeedFieldValue, 0, 4)
 	if in.FieldValues != nil {
 		for _, fv := range *in.FieldValues {
 			suppliedValues[uuid.UUID(fv.FieldId)] = CollectionFieldValueInput{
@@ -259,6 +293,10 @@ func (h *Handler) CreateCollection(
 				ValueOptions: fv.ValueOptions,
 				ValueRef:     uuidPtrFromOpenAPI(fv.ValueRef),
 			}
+			seedOrder = append(seedOrder, SeedFieldValue{
+				FieldID:   uuid.UUID(fv.FieldId),
+				ValueText: fv.ValueText,
+			})
 		}
 	}
 	if h.metadataGate != nil {
@@ -275,6 +313,25 @@ func (h *Handler) CreateCollection(
 					FieldLabel: &rf.Label,
 				}, nil
 			}
+		}
+		// Input rules (#1173). Second pre-insert gate, deliberately
+		// beside the first rather than inside the seeding helper: by the
+		// time SeedCollectionFieldValueInTx runs, the collection row has
+		// already been written and refusing would mean rolling back a
+		// creation the caller was told nothing about. Ordering after the
+		// required check keeps "you left one out" ahead of "the one you
+		// sent is wrong", which is the order an operator can act on.
+		refusal, ivErr := h.metadataGate.ValidateSeedFieldValues(ctx, seedOrder)
+		if ivErr != nil {
+			return nil, fmt.Errorf("collections: validate seeded field values: %w", ivErr)
+		}
+		if refusal != nil {
+			return openapi.CreateCollection422JSONResponse{
+				Error:      refusal.Message,
+				Reason:     openapi.CollectionFieldPatternMismatch,
+				FieldCode:  &refusal.Code,
+				FieldLabel: &refusal.Label,
+			}, nil
 		}
 	}
 

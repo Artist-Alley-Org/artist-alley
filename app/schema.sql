@@ -2208,10 +2208,14 @@ CREATE TABLE public.field_definition (
     show_in_advanced_search boolean DEFAULT true NOT NULL,
     show_on_upload boolean DEFAULT true NOT NULL,
     edit_tab text,
+    read_only boolean DEFAULT false NOT NULL,
+    regexp_filter text,
     CONSTRAINT field_definition_edit_tab_nonblank_check CHECK (((edit_tab IS NULL) OR (btrim(edit_tab) <> ''::text))),
     CONSTRAINT field_definition_extraction_mode_check CHECK ((extraction_mode = ANY (ARRAY['skip_if_set'::text, 'replace'::text, 'append'::text, 'prepend'::text]))),
     CONSTRAINT field_definition_mirrors_column_check CHECK (((mirrors_column IS NULL) OR (mirrors_column = ANY (ARRAY['title'::text, 'description'::text])))),
     CONSTRAINT field_definition_mirrors_column_subject_check CHECK (((mirrors_column IS NULL) OR (subject_kind = 'asset'::text))),
+    CONSTRAINT field_definition_mirrored_input_rules_check CHECK (((mirrors_column IS NULL) OR ((read_only IS FALSE) AND (regexp_filter IS NULL)))),
+    CONSTRAINT field_definition_regexp_filter_nonempty_check CHECK (((regexp_filter IS NULL) OR (regexp_filter <> ''::text))),
     CONSTRAINT field_definition_show_on_card_ungated_check CHECK ((NOT (show_on_card AND (COALESCE(read_capability, ''::text) <> ''::text)))),
     CONSTRAINT field_definition_status_check CHECK ((status = ANY (ARRAY['active'::text, 'deprecated'::text, 'archived'::text]))),
     CONSTRAINT field_definition_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
@@ -2266,6 +2270,20 @@ COMMENT ON COLUMN public.field_definition.show_on_upload IS 'Participation flag 
 --
 
 COMMENT ON COLUMN public.field_definition.edit_tab IS 'Participation flag (ADR 0092 §3, #1173): which tab of the edit surface this field sits in. NULL (the default) = unassigned, which is today''s behaviour — no surface has tabs yet, and fields group by display_group. Distinct from an empty string, which the CHECK constraint refuses so that "no tab" has exactly one representation. A coarser grouping than display_group, not a replacement for it: a tab holds groups. FEDERATES with the definition.';
+
+
+--
+-- Name: COLUMN field_definition.read_only; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.read_only IS 'Refuse HUMAN writes to this field''s values (#1173, ADR 0012). FALSE by default, which is today''s behaviour. Enforced on the four identity-bearing value handlers: setting and clearing an asset value, and setting and clearing a collection value. It is NOT a freeze on the row — upload defaults, the extraction pipeline and the mirror filler still write, because a read-only field is normally one the SYSTEM owns; those writers are distinct Go functions with no HTTP route, so the exemption is a property of the call site rather than a flag any caller can send. On an ASSET the refusal applies immediately, including where no value exists yet, because asset creation writes no field-value rows and so has no human first-write seam. On a COLLECTION the create body MAY seed an initial value, and every later set or clear is refused. Refused on a field declaring mirrors_column: those carry a second human write plane on the assets row that would not obey it. Does NOT federate — it is an access rule, the same class ADR 0083 keeps out of a schema envelope.';
+
+
+--
+-- Name: COLUMN field_definition.regexp_filter; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.regexp_filter IS 'Pattern a HUMAN-supplied value of this field must match (#1173, ADR 0012). NULL (the default) = no constraint, and NULL is the ONLY representation of that: the empty string is refused by the CHECK, and removing a pattern travels as an explicit clear_regexp_filter on the update body, exactly as clear_edit_tab does for the tab. Go RE2, anchored by the SERVER as \A(?:<pattern>)\z so it always matches the WHOLE value — operators do not write ^…$, which would be line anchors under (?m) and would bind to only the outer branches of an alternation. Stored verbatim: never trimmed, because whitespace inside a pattern is meaningful and a whitespace-only pattern is a legitimate configuration. Honoured for `text` and `longtext` only; the narrowing lives in Go (regexpFilterApplies) so widening it stays a decision rather than a migration. `rich_text` is excluded deliberately even though it shares value_text: that column holds sanitised HTML, so a pattern would match markup rather than anything the operator can see. Validates HUMAN INPUT, not the stored row — system writers (defaults, extraction, mirror fill) are not checked, so a stored value may legitimately fail it. Refused on a field declaring mirrors_column. FEDERATES with the definition: it names the field, not the server.';
 
 
 --

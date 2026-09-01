@@ -5859,6 +5859,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/FieldValueUnprocessable"
 
   /assets/{id}/fields/{field_id}/history:
     parameters:
@@ -5979,6 +5981,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/FieldValueUnprocessable"
 
   /collections/{id}/fields/{field_id}/history:
     parameters:
@@ -7435,11 +7439,19 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "422":
           description: |
-            A required collection-scoped field (see
-            `field_definition.subject_kind = 'collection'` +
-            `required = true`) is missing from the request body.
-            This gate is enforced on CREATE only; subsequent
-            UPDATEs don't re-validate.
+            The create body does not satisfy the collection-scoped
+            field definitions. Both gates run BEFORE any write, so a
+            refusal never leaves a half-created collection behind, and
+            both are enforced on CREATE only — subsequent UPDATEs do
+            not re-validate.
+
+            * `required_collection_field_missing` — a field with
+              `required = true` is absent from the body.
+            * `collection_field_pattern_mismatch` — a supplied value
+              does not match its field's `regexp_filter`. Seeding an
+              initial value is the one human write a `read_only`
+              collection field allows, and the pattern still applies to
+              it.
           content:
             application/json:
               schema:
@@ -7449,7 +7461,18 @@ paths:
                   error: { type: string }
                   reason:
                     type: string
-                    enum: [required_collection_field_missing]
+                    enum:
+                      - required_collection_field_missing
+                      - collection_field_pattern_mismatch
+                    # PINNED for the reason given on searchFieldValues'
+                    # `status`: `required_collection_field_missing`
+                    # generated bare and is referenced by name from
+                    # collections.Create, and an unpinned enum renames
+                    # itself when another schema happens to share a
+                    # value.
+                    x-enum-varnames:
+                      - RequiredCollectionFieldMissing
+                      - CollectionFieldPatternMismatch
                   field_code: { type: string }
                   field_label: { type: string }
         "500":
@@ -14041,7 +14064,34 @@ components:
             later decision, and `tree` additionally has to say WHERE in
             the hierarchy a new term lands.
         required: { type: boolean }
-        searchable: { type: boolean }
+        searchable:
+          type: boolean
+          description: |
+            Fold this field's text into the FULL-TEXT SEARCH INDEX.
+            `true` by default.
+
+            That is the whole of what it governs.
+            `rebuild_asset_search_text()` is its only consumer: with it
+            off, the field's values stop contributing to
+            `assets.search_text`, so a bare word typed into the search
+            box no longer finds a record because of THIS field.
+
+            It does NOT make the field unfilterable. An explicit
+            structured predicate — `filter=field:<code><op><value>` —
+            is independent of this flag and keeps working on any
+            ACTIVE field the caller may read. Requiring both was a
+            conflation, and it made a well-formed filter on a
+            non-indexed field return an empty result rather than a
+            refusal (#1173, sprint 18d).
+
+            Independent again from `show_in_advanced_search`, which
+            decides whether the advanced page draws a CONTROL for the
+            field and touches no index and no query result.
+
+            Changing it re-derives the affected documents
+            synchronously, field-scoped, as part of the update: an
+            operator who unticks it does not have to reindex anything
+            for search to start obeying them.
         applies_to:
           type: array
           items: { type: integer, format: int64 }
@@ -14167,6 +14217,87 @@ components:
             form posting a blank input cannot invent a third state.
 
             Consumed by #1119. FEDERATES with the definition.
+        read_only:
+          type: boolean
+          description: |
+            Refuse HUMAN writes to this field's values (#1173).
+
+            `false` by default, which is today's behaviour. When true,
+            an authenticated caller cannot set or clear a value of this
+            field — on an asset or on a collection — whatever
+            capabilities they hold. Existing values are left exactly as
+            they are; this is a rule about who may WRITE, not a freeze
+            on what is stored.
+
+            It stops PEOPLE and nothing else. Upload defaults, the
+            metadata-extraction pipeline and the mirrored-column filler
+            keep writing, because a field an operator marks read-only is
+            normally one they mean the system to own. Those writers are
+            distinct server-side call sites with no operation of their
+            own in this document, so the exemption cannot be claimed by
+            a client: there is no "this is a system write" flag to send,
+            and `set_by` records provenance after the fact rather than
+            deciding anything.
+
+            ASSET fields refuse immediately, including where the field
+            holds no value yet. `POST /assets` writes no field values
+            at all — `AssetCreate.metadata` is a free-form document on
+            the asset row — so there is no human first-write to protect.
+
+            COLLECTION fields have one: `field_values` on
+            `CollectionCreate` seeds initial values inside the create
+            transaction, and that seed is ALLOWED. Every later
+            `PUT` / `DELETE` on `/collections/{id}/fields/{field_id}`
+            is refused.
+
+            Refused at configuration time on a field carrying
+            `mirrors_column`: those are views onto an `assets` column
+            that `POST /assets` and `PATCH /assets/{id}` also write, and
+            only one of the two planes would obey the flag.
+
+            Does NOT federate. It is an access rule, the same class ADR
+            0083 keeps out of a field-schema envelope alongside
+            `read_capability` / `write_capability`.
+        regexp_filter:
+          type: string
+          nullable: true
+          description: |
+            Pattern a HUMAN-supplied value of this field must match
+            (#1173). `null` (the default) means no constraint, and it is
+            the ONLY representation of that state — see
+            `FieldDefinitionUpdate.regexp_filter` for how a pattern is
+            set, and `clear_regexp_filter` for how one is removed.
+
+            Go RE2 syntax. The server anchors it: a value matches when
+            it matches `\A(?:<pattern>)\z`, so the pattern always
+            describes the WHOLE value. Do not write `^…$` — those are
+            LINE anchors as soon as a pattern turns on `(?m)`, and they
+            would bind to only the outer branches of a top-level
+            alternation. `a|b` therefore means "the whole value is a, or
+            the whole value is b", which is what an operator writing it
+            expects.
+
+            Stored verbatim. Nothing trims or rewrites it, because
+            whitespace inside a pattern is meaningful: `\A(?:   )\z`
+            legitimately matches exactly three spaces.
+
+            Honoured for `text` and `longtext`. Configuring a non-empty
+            pattern on any other type is refused, `rich_text` included:
+            that column holds server-sanitised HTML, so a pattern would
+            be matched against markup rather than against anything the
+            operator can see.
+
+            It validates INPUT, not the stored row. The same system
+            writers `read_only` exempts are not checked, so a value the
+            extraction pipeline produced may legitimately fail a pattern
+            a person would be held to. Nothing rewrites values already
+            stored when a pattern is configured or changed.
+
+            Refused at configuration time on a field carrying
+            `mirrors_column`, for the reason given under `read_only`.
+
+            FEDERATES with the definition: it describes the field, not
+            the server.
         mirrors_column:
           type: string
           nullable: true
@@ -14401,8 +14532,57 @@ components:
         clear_edit_tab:
           type: boolean
           description: "Unassign this field's edit tab. Mutually exclusive with `edit_tab`."
+        read_only:
+          type: boolean
+          description: |
+            Refuse human writes to this field's values. See
+            FieldDefinition.read_only for what that does and does not
+            stop. Refused with 400 on a field carrying
+            `mirrors_column`.
+        regexp_filter:
+          type: string
+          description: |
+            Set the pattern a human-supplied value must match. See
+            FieldDefinition.regexp_filter for the syntax and the
+            anchoring. Omit to leave the current setting alone.
+
+            Four refusals, all 400:
+
+            * a blank string. Use `clear_regexp_filter: true` to remove
+              a pattern — a partial update cannot express "remove" by
+              sending null, because null is already "leave alone" for
+              every other property here, and `""` is precisely the
+              state that would make "no pattern" ambiguous if it were
+              stored. Note that BLANK here means genuinely empty: a
+              whitespace-only pattern is a valid pattern and is
+              accepted, unlike `edit_tab`, which is a label rather than
+              a pattern and is trimmed before its own blank check.
+            * a pattern that does not compile as Go RE2. The server's
+              message names the syntax error.
+            * a non-empty pattern on a type that does not honour one —
+              anything other than `text` or `longtext`.
+            * a non-empty pattern on a field carrying `mirrors_column`.
+
+            The last two restrict the CONFIGURED PATTERN only.
+            `clear_regexp_filter: true` is accepted on every field,
+            including mirrored ones and unsupported types, so a setting
+            can always be taken back off.
+        clear_regexp_filter:
+          type: boolean
+          description: |
+            Remove this field's pattern, restoring "no constraint".
+            Mutually exclusive with `regexp_filter`; sending both is a
+            400. Always permitted, on every field and every type.
         required: { type: boolean }
-        searchable: { type: boolean }
+        searchable:
+          type: boolean
+          description: |
+            Fold this field's text into the full-text search index. See
+            FieldDefinition.searchable — it governs the INDEX only, does
+            not disable an explicit `filter=field:…` predicate, and is
+            independent of `show_in_advanced_search`. Changing it
+            re-derives the affected documents synchronously as part of
+            this request.
         applies_to:
           type: array
           items: { type: integer, format: int64 }
@@ -14844,6 +15024,18 @@ components:
               403 because a write may carry five terms of which four
               already exist — naming the one that was refused is
               strictly more useful than refusing the principal.
+            - `field_read_only` — the field declares `read_only`, so a
+              person may not set or clear its values (#1173). NOT a 403:
+              no capability grants this and no grant would lift it, so
+              reporting it as a permission problem would send the
+              operator hunting for a role that does not exist. The
+              field's configuration is the thing to change.
+            - `pattern_mismatch` — the field declares a
+              `regexp_filter` and the supplied value does not match it
+              across its whole length. Applies to human writes only;
+              defaults and extraction are not checked, so a stored
+              value may legitimately fail the pattern a new one is held
+              to.
           enum:
             - field_not_for_collection
             - value_type_mismatch
@@ -14851,6 +15043,23 @@ components:
             - option_not_offerable
             - dangling_reference
             - vocabulary_extension_forbidden
+            - field_read_only
+            - pattern_mismatch
+          # PINNED, per the note on searchFieldValues' `status`. These
+          # six names were generated bare and are referenced by name
+          # from the metadata handlers; the two added for #1173 would
+          # rename any of them the moment a value here collided with one
+          # in another schema. A generated identifier should not depend
+          # on what OTHER schemas happen to exist.
+          x-enum-varnames:
+            - FieldNotForCollection
+            - ValueTypeMismatch
+            - UnknownOption
+            - OptionNotOfferable
+            - DanglingReference
+            - VocabularyExtensionForbidden
+            - FieldReadOnly
+            - PatternMismatch
         field:
           type: string
           nullable: true

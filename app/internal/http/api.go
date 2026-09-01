@@ -1644,6 +1644,28 @@ func (a collectionsMetadataGateAdapter) RequiredCollectionFields(ctx context.Con
 	return out, nil
 }
 
+func (a collectionsMetadataGateAdapter) ValidateSeedFieldValues(
+	ctx context.Context,
+	values []collections.SeedFieldValue,
+) (*collections.SeedFieldRefusal, error) {
+	probes := make([]metadata.CollectionSeedValueProbe, 0, len(values))
+	for _, v := range values {
+		probes = append(probes, metadata.CollectionSeedValueProbe{
+			FieldID:   v.FieldID,
+			ValueText: v.ValueText,
+		})
+	}
+	refusal, err := a.md.ValidateCollectionSeedValues(ctx, probes)
+	if err != nil || refusal == nil {
+		return nil, err
+	}
+	return &collections.SeedFieldRefusal{
+		Code:    refusal.Code,
+		Label:   refusal.Label,
+		Message: refusal.Message,
+	}, nil
+}
+
 func (a collectionsMetadataGateAdapter) UpsertCollectionFieldValueInTx(
 	ctx context.Context,
 	tx pgx.Tx,

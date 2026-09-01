@@ -123,3 +123,30 @@ already depends on, which is worse than having no import at all.
   needs its own ADR.
 - ADR 0012's "admins coordinate by adopting the same slugs" is honest about the current state
   and should be read as describing a gap rather than a design.
+
+## Amendment 2026-09-01 — `regexp_filter` travels, `read_only` does not (#1173)
+
+Two columns landed on `field_definition` in migration `00064`, and this ADR's §2 list has to say
+which side of the line each falls on. Classification only. **Nothing here is implemented**, and
+nothing should be: federation still transports no metadata at all, so there is no envelope to add
+a property to and no round trip to test. The point of recording it now is that the reasoning is
+fresh and the criterion is already written down.
+
+**IN: `regexp_filter`.** The criterion in §2 leaves a property out when it "names something that
+exists only on the sender". A pattern names the FIELD: it says what a value of `shot_code` looks
+like, which is the same class of statement as `required` and `type`, both already in. A peer
+adopting `shot_code` wants the shape as well as the name, and importing the pattern binds the
+receiver to nothing local. It is also inert if ignored, which keeps a partial implementation
+honest rather than dangerous.
+
+**OUT: `read_only`.** It names who may write, which puts it with `read_capability` and
+`write_capability`, and §2 excludes those because importing one "silently widens or narrows
+access", calling that the worst failure mode a schema import has. The failure here is the narrowing
+direction rather than the widening one, and it is quieter for it: a receiver that imported
+`read_only` would find its own operators unable to edit a field they own, with no message naming
+the peer that decided it. An access rule adopted from elsewhere is exactly the thing an operator
+cannot debug.
+
+The §3 collision rule needs no change. `regexp_filter` differing between two peers is an ordinary
+per-field diff, and the whole-import rejection already puts the choice in front of the operator
+rather than merging silently.
