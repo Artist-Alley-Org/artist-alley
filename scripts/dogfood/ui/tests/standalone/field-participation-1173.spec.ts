@@ -154,6 +154,116 @@ test.describe('field participation flags (#1173)', () => {
     await expect(page.locator(tid('field-edit-show-in-advanced-search'))).toBeChecked();
     await expect(page.locator(tid('field-edit-show-on-upload'))).toBeChecked();
     await expect(page.locator(tid('field-edit-edit-tab'))).toHaveValue('');
+
+    // `searchable` is the fourth setting on this form and the oldest of
+    // them: it has existed since the 00001 baseline, both the create and
+    // the update API persist it, and until sprint 19 NO admin surface
+    // drew a control for it. The one flag that decides whether a field
+    // is findable at all could be reached only by hand-writing a PATCH.
+    //
+    // It sits in its own section rather than beside the participation
+    // toggles, and that placement is asserted rather than assumed: 18d
+    // had to unpick the conflation of "this field's text is indexed"
+    // with "this field's control appears on the advanced page", and one
+    // shared heading is how the two get read as one setting again.
+    await expect(
+      page.locator(tid('field-edit-search-index')),
+      'the search-index setting must be its own section, not a fourth line under participation',
+    ).toBeVisible();
+    await expect(page.locator(tid('field-edit-searchable'))).toBeChecked();
+    await expect(page.locator(tid('field-edit-searchable-boundary'))).toBeVisible();
+  });
+
+  test('the searchable control writes the flag it names', async ({ page, request }) => {
+    // The control has to be wired to `searchable` and to nothing else.
+    // A checkbox that saved a participation flag instead would look
+    // identical on the page and would leave the index untouched, which
+    // is precisely the failure an operator cannot see.
+    await page.goto(`/admin/fields/${PROBE_CODE}`);
+    await expect(page.locator(tid('field-edit-searchable'))).toBeChecked();
+
+    await page.locator(tid('field-edit-searchable')).uncheck();
+    await page.locator(tid('field-options-save')).click();
+    await expect(page.locator(tid('field-options-saved'))).toBeVisible();
+
+    let def = (await (await request.get(`/api/v1/fields/${probeId}`)).json()) as {
+      searchable?: boolean;
+      show_in_advanced_search?: boolean;
+      show_on_upload?: boolean;
+    };
+    expect(def.searchable).toBe(false);
+    // Its neighbours are untouched. One field's settings must not move
+    // another's, and one control must not move another control's flag.
+    expect(def.show_in_advanced_search).toBe(true);
+    expect(def.show_on_upload).toBe(true);
+
+    // A dial, and it survives a reload rather than only the response.
+    await page.reload();
+    await expect(page.locator(tid('field-edit-searchable'))).not.toBeChecked();
+    await page.locator(tid('field-edit-searchable')).check();
+    await page.locator(tid('field-options-save')).click();
+    await expect(page.locator(tid('field-options-saved'))).toBeVisible();
+
+    def = (await (await request.get(`/api/v1/fields/${probeId}`)).json()) as {
+      searchable?: boolean;
+    };
+    expect(def.searchable).toBe(true);
+  });
+
+  test('the input rules are offered, and refuse what the server refuses', async ({
+    page,
+    request,
+  }) => {
+    // The probe is a multi_select, which is exactly the case worth
+    // asserting: `read_only` is legal on every non-mirrored field, and a
+    // PATTERN is not — it applies to `text` and `longtext` only, because
+    // those are the two types that store the operator's own words. A
+    // form that offered the box here would be offering a setting the
+    // server answers 400 to.
+    await page.goto(`/admin/fields/${PROBE_CODE}`);
+    await expect(page.locator(tid('field-edit-input-rules'))).toBeVisible();
+    await expect(page.locator(tid('field-edit-read-only'))).not.toBeChecked();
+    await expect(page.locator(tid('field-edit-regexp-filter'))).toHaveCount(0);
+    await expect(page.locator(tid('field-edit-regexp-filter-type-note'))).toBeVisible();
+
+    await page.locator(tid('field-edit-read-only')).check();
+    await page.locator(tid('field-options-save')).click();
+    await expect(page.locator(tid('field-options-saved'))).toBeVisible();
+
+    const def = (await (await request.get(`/api/v1/fields/${probeId}`)).json()) as {
+      read_only?: boolean;
+      regexp_filter?: string | null;
+    };
+    expect(def.read_only).toBe(true);
+    // Unset, and unset is the ONLY way to say "no pattern" — the empty
+    // string is refused rather than stored.
+    expect(def.regexp_filter ?? null).toBeNull();
+
+    // Put it back, so the probe leaves the suite as it entered it.
+    await page.reload();
+    await expect(page.locator(tid('field-edit-read-only'))).toBeChecked();
+    await page.locator(tid('field-edit-read-only')).uncheck();
+    await page.locator(tid('field-options-save')).click();
+    await expect(page.locator(tid('field-options-saved'))).toBeVisible();
+  });
+
+  test('a mirrored field is offered neither input rule', async ({ page }) => {
+    // `title` is a view onto `assets.title` (#822), and the asset's own
+    // create and update paths write that column too. A rule set on the
+    // field plane would bind one writer and not the other, so the server
+    // refuses both settings and the form must not pretend otherwise.
+    //
+    // Not asserted on the probe: this is the one case where the controls
+    // must be ABSENT, and a probe cannot be made mirrored — which
+    // columns are mirrorable is a CHECK constraint, deliberately.
+    await page.goto('/admin/fields/title');
+    await expect(page.locator(tid('field-edit-input-rules'))).toBeVisible();
+    await expect(page.locator(tid('field-edit-input-rules-mirrored'))).toBeVisible();
+    await expect(page.locator(tid('field-edit-read-only'))).toHaveCount(0);
+    await expect(page.locator(tid('field-edit-regexp-filter'))).toHaveCount(0);
+    // The search-index control is NOT gated by mirroring: a mirrored
+    // field's text is indexed like any other.
+    await expect(page.locator(tid('field-edit-searchable'))).toHaveCount(1);
   });
 
   test('turning it off removes the control and nothing else', async ({ page, request }) => {

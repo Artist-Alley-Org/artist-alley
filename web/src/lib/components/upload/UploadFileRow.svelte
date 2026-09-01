@@ -248,6 +248,18 @@
       >{t('upload.file_row.field_default_hint', { value: hint })}</span>
     {/if}
   </span>
+  <!--
+    The operator's own note about what belongs in this field (#1173).
+    `field_definition.description` has always been authorable and was
+    never shown to the person filling the box in. It rides inside this
+    snippet rather than beside each control because both branches
+    already render the snippet, so one edit covers every type.
+  -->
+  {#if (f.description ?? '').trim()}
+    <span class="block text-[11px] leading-snug text-fg-muted" data-testid="upload-field-help-{f.code}">
+      {f.description}
+    </span>
+  {/if}
 {/snippet}
 
 <div class="flex gap-3 rounded-lg border border-border bg-surface-elevated p-3">

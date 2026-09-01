@@ -166,6 +166,24 @@ func (h *Handler) SetCollectionFieldValue(
 		}
 	}
 
+	// READ-ONLY (#1173), the collection twin of the asset gate. The
+	// asymmetry between the two is deliberate and lives elsewhere: a
+	// collection's create body MAY seed an initial value, because
+	// `CollectionCreate.field_values` is a real human first-write seam
+	// that the asset side has no equivalent of. That seam is
+	// collections.Create's, pre-transaction. THIS handler is every write
+	// after it, and every write after it is refused.
+	if msg := readOnlyRefusal(fieldRow, "set"); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetCollectionFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.FieldReadOnly,
+				Field:  &code,
+			},
+		}, nil
+	}
+
 	// Validate the supplied value_* matches the field's type.
 	if vErr := validateCollectionValueType(fieldRow.Type, req.Body); vErr != nil {
 		field := fieldRow.Code
@@ -174,6 +192,22 @@ func (h *Handler) SetCollectionFieldValue(
 				Error:  vErr.Error(),
 				Reason: openapi.ValueTypeMismatch,
 				Field:  &field,
+			},
+		}, nil
+	}
+
+	// INPUT PATTERN (#1173). `req.Body.ValueText` is what
+	// buildCollectionUpsertParams stores for the two supported types:
+	// SanitizeValueText is a no-op outside `rich_text`, which does not
+	// honour a pattern. Checked before the vocabulary gate below because
+	// the two supported types have no vocabulary to consult.
+	if msg := patternRefusal(fieldRow, req.Body.ValueText); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetCollectionFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.PatternMismatch,
+				Field:  &code,
 			},
 		}, nil
 	}
@@ -344,6 +378,27 @@ func (h *Handler) ClearCollectionFieldValue(
 	}
 	pgCollection := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	pgField := pgtype.UUID{Bytes: uuid.UUID(req.FieldId), Valid: true}
+
+	// READ-ONLY (#1173) refuses the clear as well as the set, for the
+	// reason ClearAssetFieldValue gives. The field is loaded before the
+	// transaction opens: nothing here needs the tx, and refusing without
+	// opening one keeps the cheap answer cheap. A field that has since
+	// been deleted falls through to the delete below, which is a no-op
+	// answering 204, exactly as it did before.
+	if fieldRow, fErr := h.getFieldByIDCached(ctx, pgField); fErr == nil {
+		if msg := readOnlyRefusal(fieldRow, "cleared"); msg != "" {
+			code := fieldRow.Code
+			return openapi.ClearCollectionFieldValue422JSONResponse{
+				FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+					Error:  msg,
+					Reason: openapi.FieldReadOnly,
+					Field:  &code,
+				},
+			}, nil
+		}
+	} else if !errors.Is(fErr, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("metadata: load field: %w", fErr)
+	}
 
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -784,6 +839,70 @@ func (h *Handler) SeedCollectionFieldValueInTx(
 		return fmt.Errorf("metadata: upsert collection field value: %w", err)
 	}
 	return nil
+}
+
+// CollectionSeedValueProbe is one value from a collection-create body,
+// as the pre-transaction gate needs to see it.
+//
+// Only `ValueText` travels, because it is the only member an input
+// pattern can be written about: `regexp_filter` is honoured for `text`
+// and `longtext`, and both store there. Widening the pattern to another
+// type would widen this struct with it.
+type CollectionSeedValueProbe struct {
+	FieldID   uuid.UUID
+	ValueText *string
+}
+
+// SeedValueRefusal names the field that refused a seeded value and the
+// sentence to refuse it with.
+type SeedValueRefusal struct {
+	Code    string
+	Label   string
+	Message string
+}
+
+// ValidateCollectionSeedValues checks the values a collection-create
+// body proposes, BEFORE anything is written.
+//
+// It runs pre-transaction for the reason the required-field gate does:
+// a refusal must not leave a half-created collection behind. That is
+// also why the check cannot live inside SeedCollectionFieldValueInTx,
+// which by then is already inside the caller's transaction and one
+// statement away from the collection row.
+//
+// `read_only` is deliberately NOT checked here. The create body is the
+// collection side's human first-write seam, and seeding an initial
+// value is the one write a read-only collection field permits: every
+// later set and clear is refused by the handlers above. The pattern
+// still applies to that first value, because it is a person's input
+// like any other.
+//
+// Probes are checked in the order given, so the refusal an operator
+// sees is stable across identical requests.
+func (h *Handler) ValidateCollectionSeedValues(
+	ctx context.Context,
+	probes []CollectionSeedValueProbe,
+) (*SeedValueRefusal, error) {
+	for _, p := range probes {
+		fieldRow, err := h.getFieldByIDCached(ctx, pgtype.UUID{Bytes: p.FieldID, Valid: true})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Not this gate's refusal to make. An unknown field id
+				// fails inside the create transaction with the message
+				// that path already produces.
+				continue
+			}
+			return nil, fmt.Errorf("metadata: seed value gate: %w", err)
+		}
+		if msg := patternRefusal(fieldRow, p.ValueText); msg != "" {
+			return &SeedValueRefusal{
+				Code:    fieldRow.Code,
+				Label:   fieldRow.Label,
+				Message: msg,
+			}, nil
+		}
+	}
+	return nil, nil
 }
 
 // ListRequiredCollectionFieldsRaw returns the (id, code, label, type)

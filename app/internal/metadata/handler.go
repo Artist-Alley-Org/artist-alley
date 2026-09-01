@@ -571,6 +571,64 @@ func (h *Handler) UpdateField(
 		params.EditTab = &tab
 	}
 
+	// `read_only` and `regexp_filter` (#1173, migration 00064). Both are
+	// checked against `cur` rather than against the request, and that is
+	// exact rather than approximate: `mirrors_column` and `type` are the
+	// only two properties either rule consults, and neither is writable
+	// through this schema — which columns are mirrorable is a CHECK
+	// constraint, and a field's type is fixed at creation. So the state
+	// this request LANDS ON is the stored state, and there is no
+	// same-PATCH escape of the kind the card/capability check above has
+	// to reason about.
+	if in.ReadOnly != nil {
+		if msg := validateReadOnlyConfig(cur, *in.ReadOnly); msg != "" {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+			}, nil
+		}
+		params.ReadOnly = in.ReadOnly
+	}
+
+	// The clear companion, third of its kind after `clear_default` and
+	// `clear_edit_tab`, and for the same reason: NULL is "no constraint"
+	// AND "leave it alone", so removal has to be said out loud.
+	//
+	// ⚠️ ONE DELIBERATE DIVERGENCE from the `edit_tab` arm above, which
+	// TRIMS before its blank check. A pattern is not a label: leading and
+	// trailing whitespace is meaningful inside one, and under the
+	// whole-value semantics compileFieldPattern applies, `\A(?:   )\z`
+	// legitimately matches exactly three spaces. Only the GENUINELY EMPTY
+	// string is refused; a whitespace-only pattern is a valid
+	// configuration and is stored verbatim.
+	if in.ClearRegexpFilter != nil && *in.ClearRegexpFilter {
+		if in.RegexpFilter != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "send either regexp_filter or clear_regexp_filter, not both",
+				},
+			}, nil
+		}
+		// Deliberately unguarded by the mirrored and unsupported-type
+		// rules below. Those restrict a CONFIGURED pattern; clearing one
+		// is legal on every field, so a setting can always be taken back
+		// off even where it could never have been put on.
+		params.ClearRegexpFilter = true
+	} else if in.RegexpFilter != nil {
+		if *in.RegexpFilter == "" {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "regexp_filter cannot be blank; send clear_regexp_filter to remove it",
+				},
+			}, nil
+		}
+		if msg := validateRegexpFilterConfig(cur, *in.RegexpFilter); msg != "" {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+			}, nil
+		}
+		params.RegexpFilter = in.RegexpFilter
+	}
+
 	if in.ClearDefault != nil && *in.ClearDefault {
 		if in.DefaultValue != nil {
 			return openapi.UpdateField400JSONResponse{
@@ -902,10 +960,53 @@ func (h *Handler) SetAssetFieldValue(
 		}
 	}
 
+	// READ-ONLY (#1173). Reaching this line means an identity exists, so
+	// this is a human write by construction: the system writers
+	// (ApplyAssetDefaults, the extraction adapter, mirrorFill) are
+	// separate functions that never enter this handler, which is why the
+	// exemption needs no flag and cannot be claimed by a caller.
+	//
+	// It refuses even where the field holds no value yet, and that is the
+	// asset side's whole story: `POST /assets` writes no field-value rows
+	// at all (AssetCreate.metadata is a free-form document on the asset
+	// row), so there is no human first-write seam here to leave open. The
+	// collection side has one and treats it differently.
+	//
+	// 422 rather than 403: no capability grants this and no grant would
+	// lift it, so answering with a permission code would send an operator
+	// hunting for a role that does not exist.
+	if msg := readOnlyRefusal(fieldRow, "set"); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetAssetFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.FieldReadOnly,
+				Field:  &code,
+			},
+		}, nil
+	}
+
 	upsert, valErr := buildUpsertParams(pgAsset, pgField, fieldRow.Type, req.Body, &id.UserRef)
 	if valErr != nil {
 		return openapi.SetAssetFieldValue400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: valErr.Error()},
+		}, nil
+	}
+
+	// INPUT PATTERN (#1173), against `upsert.ValueText` rather than
+	// against `req.Body.ValueText`. For `text` and `longtext` those are
+	// the same string — neither writer transforms them — and matching the
+	// value that will be STORED is what stops the rule and the row
+	// disagreeing if that ever stops being true. Types that do not honour
+	// a pattern fall through inside patternRefusal.
+	if msg := patternRefusal(fieldRow, upsert.ValueText); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetAssetFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.PatternMismatch,
+				Field:  &code,
+			},
 		}, nil
 	}
 
@@ -1187,6 +1288,24 @@ func (h *Handler) ClearAssetFieldValue(
 	// cannot be cleared at all, for the same reason SetAssetFieldValue
 	// refuses to blank one.
 	if fieldRow, err := h.getFieldByIDCached(ctx, pgField); err == nil {
+		// READ-ONLY (#1173) refuses the clear as well as the set. A
+		// setting that stopped edits and still allowed deletion would be
+		// the weaker half of the promise, and deletion is the edit an
+		// operator would least like to discover was permitted.
+		//
+		// Checked before the mirror branch only because it is cheaper;
+		// the two cannot both apply, since migration 00064's CHECK
+		// refuses `read_only` on a mirrored field outright.
+		if msg := readOnlyRefusal(fieldRow, "cleared"); msg != "" {
+			code := fieldRow.Code
+			return openapi.ClearAssetFieldValue422JSONResponse{
+				FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+					Error:  msg,
+					Reason: openapi.FieldReadOnly,
+					Field:  &code,
+				},
+			}, nil
+		}
 		if col, ok := MirrorColumnOf(fieldRow); ok {
 			return h.clearMirroredFieldValue(ctx, id, pgAsset, fieldRow, col)
 		}
@@ -1527,6 +1646,13 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 		ShowInAdvancedSearch: &r.ShowInAdvancedSearch,
 		ShowOnUpload:         &r.ShowOnUpload,
 		EditTab:              r.EditTab,
+		// The input rules (#1173). Both always sent, for the reason the
+		// participation flags are: a surface deciding whether to offer an
+		// editable control has to read the operator's answer, and an
+		// absent key would make it guess. `regexp_filter` is nil-as-null,
+		// which is the one canonical "no constraint".
+		ReadOnly:     &r.ReadOnly,
+		RegexpFilter: r.RegexpFilter,
 		// Read-only on the wire (#822). A client needs it to know that
 		// writing this field writes the ASSET — different gate, and a
 		// surface that already renders the column natively should skip the

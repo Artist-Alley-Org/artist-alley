@@ -95,6 +95,15 @@ test.describe('UI-18 collection custom fields', () => {
     // create+edit round-trip still genuinely verified.
     await expect(page.getByTestId(`admin-fields-row-${fieldCode}`)).toBeVisible();
 
+    // The id, read back from the API rather than scraped off the page:
+    // the description PATCH below is keyed on the UUID, and every field
+    // endpoint is.
+    const listed = await page.request.get('/api/v1/fields?subject_kind=collection');
+    expect(listed.ok(), `list fields → ${listed.status()}`).toBeTruthy();
+    const rows = (await listed.json()) as { id: string; code: string }[];
+    const fieldId = rows.find((f) => f.code === fieldCode)?.id;
+    expect(fieldId, `the field just created must be listed`).toBeTruthy();
+
     // 2. Create a collection, then open its edit modal — the new
     //    custom field section should surface with our field row.
     //    We create via the API to keep the test focused on the
@@ -118,7 +127,28 @@ test.describe('UI-18 collection custom fields', () => {
     // Field input renders for our test field.
     const input = page.getByTestId(`field-input-${fieldCode}`);
     await expect(input).toBeVisible();
-    await input.fill('hello from ui-18');
+
+    // #1173 — `field_definition.description` is the operator's note about
+    // what belongs in the field. It has always been authorable and was
+    // shown NOWHERE the person entering a value could read it, which made
+    // it guidance nobody was guided by. It renders under the control now.
+    //
+    // Absent before it is written: a field nobody documented must lay out
+    // exactly as it did, rather than reserving a blank line.
+    await expect(page.getByTestId(`field-help-${fieldCode}`)).toHaveCount(0);
+    const guidance = 'Anything the client needs to know before delivery.';
+    const patched = await page.request.patch(`/api/v1/fields/${fieldId}`, {
+      data: { description: guidance },
+    });
+    expect(patched.ok(), `set description → ${patched.status()}`).toBeTruthy();
+
+    await page.reload();
+    await page.getByTestId('collection-detail-more-button').click();
+    await page.getByTestId('collection-detail-edit-menuitem').click();
+    await expect(page.getByTestId('collection-fields-section')).toBeVisible();
+    await expect(page.getByTestId(`field-help-${fieldCode}`)).toHaveText(guidance);
+
+    await page.getByTestId(`field-input-${fieldCode}`).fill('hello from ui-18');
     await page.getByTestId('collection-fields-save').click();
     await expect(page.getByTestId('collection-fields-saved')).toBeVisible();
 

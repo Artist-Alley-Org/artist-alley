@@ -1150,3 +1150,169 @@ tree-wide-unique slug, so moving or renaming a term never touches a stored value
 editor-save-vs-mint race is now a DETECTED conflict (the mint path bumps `updated_at`, so a
 stale editor baseline 409s) — narrowing the 2026-07-30 amendment's last-write-wins gap to
 editor-vs-editor only.
+
+## Amendment 2026-09-01 — a field can say what a value must look like, and who may write one (#1173)
+
+**Status:** accepted. Migration `00064`. Two columns on `field_definition`: `read_only boolean NOT
+NULL DEFAULT false` and `regexp_filter text NULL`.
+
+Thirty columns described what a field IS and none of them described what a value of it may BE.
+An operator whose `shot_code` values all read `AAA_0010` had no way to say so, and one whose
+`pipeline_id` is written only by extraction had no way to stop a person overwriting it. Both gaps
+are the same gap wearing two hats: the field definition is where an operator's intent lives, and
+this pair is the intent that was unsayable.
+
+### `read_only` refuses PEOPLE, and the seam is the call site
+
+This is the decision, and it is the one that is easy to get backwards. `read_only` does not freeze
+the value. Upload defaults, the metadata-extraction pipeline and the mirrored-column filler all
+keep writing, because a field an operator marks read-only is normally one they mean the SYSTEM to
+own. What it refuses is a human write.
+
+**The exemption is not a flag and cannot be requested.** Four handlers enforce the rule, and all
+four begin with `auth.IdentityFromContext` and answer 401 without an identity:
+`SetAssetFieldValue`, `ClearAssetFieldValue`, `SetCollectionFieldValue`,
+`ClearCollectionFieldValue`. The three writers that skip it are different Go functions with no
+OpenAPI operation and no route at all: `ApplyAssetDefaults`, the extraction adapter's
+`WriteAssetFieldValue`, and `mirrorFill`. Reaching an exempt writer means being one, so there is
+nothing for a client to claim.
+
+This is why there is deliberately **no caller-selectable `initial` flag**, and why `set_by` is not
+the mechanism either. A boolean a caller can send is a boolean a caller can lie about, and `set_by`
+is server-assigned provenance: evidence of which writer ran, read after the fact, never consulted
+to decide whether a write is allowed.
+
+**The consequence, stated so it is not later mistaken for a bug: a stored value may fail a rule a
+person would be held to.** That is what "human input validation" means, and the alternative is
+worse in both directions. Applying these rules to system writers would make an operator's
+formatting preference able to break extraction; applying them retroactively would make a settings
+change into a data migration.
+
+### The asset and collection first-write distinction
+
+They differ, and the difference is structural rather than a preference.
+
+- **ASSET: refused immediately, including where the field holds no value.** There is no human
+  first-write seam to protect. `POST /assets` writes no `asset_field_value` rows at all:
+  `AssetCreate.metadata` is `additionalProperties: true` and lands in the `assets.metadata` JSONB
+  column. So "let the first human value through" would be a rule with nothing to attach to.
+- **COLLECTION: the create body MAY seed an initial value; every later write is refused.**
+  `CollectionCreate.field_values` seeds values inside the create transaction, which is a real
+  first-write seam. Refusing it would make a read-only collection field permanently empty unless
+  extraction happened to own it, and collections have no extraction pipeline.
+
+The collection seed gate runs **pre-transaction**, beside the existing required-field check and for
+the same reason recorded there: a refusal must not leave a half-created collection behind. It
+therefore cannot live inside `SeedCollectionFieldValueInTx`, which by then is one statement away
+from a written collection row.
+
+`required` is unchanged, and no `required + read_only` refusal is added. The two are already
+coherent: asset `required` is write and clear validation rather than presence at creation, and
+collection `required` is presence at creation, which the seed the flag permits satisfies.
+
+### Mirrored fields are excluded from BOTH, and partial enforcement was the tempting wrong answer
+
+`title` and `description` declare `mirrors_column` and are views onto columns of `assets`. Those
+columns carry a SECOND human write plane: `POST /assets` sets the title, `PATCH /assets/{id}`
+mutates both. Enforcing either setting on the metadata plane alone would let one plane reach a
+state the other calls invalid, which is precisely the divergence the 2026-08-10 amendment exists to
+prevent, one rule over.
+
+The alternative considered and rejected was teaching the asset create and update paths to obey the
+field's settings. That is a real feature and a much larger one: it would put a field-definition
+lookup in front of every asset write, and it would make `PATCH /assets/{id}` fail for reasons the
+caller cannot see in its own schema. Neither setting is worth that, so both are refused at
+configuration time instead.
+
+The exclusion is a CHECK constraint rather than a Go rule, following the 2026-08-10 amendment's own
+argument: a path that has not learned the rule fails loudly instead of quietly storing a setting
+half the writers obey. The handler refuses first with a sentence, so an operator sees a 400 rather
+than a 500, which is the division of labour the card-display gate already has.
+
+The unset state stays legal on a mirrored field, and so does the clear. Only the non-default
+`read_only` and a non-empty pattern are refused.
+
+### `regexp_filter`: the supported types, and why `rich_text` is not one
+
+**SUPPORTED: `text` and `longtext`.** Both store the operator's own words verbatim in `value_text`.
+
+Everything else refuses a non-empty pattern, and `rich_text` is the member worth arguing, because
+it shares the storage column and looks like it belongs. It does not, and the reason is what the
+column HOLDS. `richtext.SanitizeValueText` runs before every write, so a stored value is
+policy-clean markup, not typed text. A real one looks like this:
+
+```
+<p>Cleared for <strong>internal</strong> use.</p>
+```
+
+A pattern would be matched against tags. `^[A-Z]` fails on every rich-text value ever stored, and
+two values reading identically to a person carry different markup. It is the same objection that
+excludes `number`, `boolean`, `date` and `datetime`: the stored form is not the form the rule is
+written about. `select`, `multi_select` and `tree` already have a stronger constraint, their
+vocabulary. `reference` holds a UUID.
+
+Which types honour a pattern lives in ONE Go function, `regexpFilterApplies`, rather than in a
+CHECK constraint. That follows the `open_vocabulary` precedent in the 2026-08-02 amendment and for
+the same reason: widening the list later should be a decision rather than a migration.
+
+### Whole-value semantics, and why the server does the anchoring
+
+Go's `regexp` is RE2. A value matches when it matches `\A(?:` plus the operator's pattern plus
+`)\z`, assembled at match time.
+
+Operators are **not** asked to write the anchors themselves, and neither of the two reasons is
+cosmetic:
+
+- `^` and `$` are LINE anchors as soon as a pattern turns on `(?m)`. A hand-written
+  `^[A-Z]{3}_[0-9]{4}$` would happily accept a two-line value whose second line is anything at
+  all. `\A` and `\z` are unaffected by `(?m)`, so whole-value semantics survive a multiline
+  pattern.
+- Anchors bind tighter than a top-level alternation, so `^a|b$` means "starts with `a`, or ends
+  with `b`". The non-capturing group is what makes `a|b` mean "the whole value is `a`, or the whole
+  value is `b`", which is what the person who wrote it meant.
+
+RE2 has no backtracking and runs in time linear in the input, which is what makes accepting a
+free-text pattern from an operator safe. There is no length or complexity cap, and none is needed.
+
+### NULL is the one "no constraint", and the pattern is never trimmed
+
+`regexp_filter` is `text NULL` with no default, and a CHECK refuses the empty string. This is
+`edit_tab`'s reasoning from migration `00058` applied to a second column: if `""` were storable,
+"this field has no pattern" would have two representations and every reader would have to know
+both. Removal therefore travels as an explicit `clear_regexp_filter: true` on
+`FieldDefinitionUpdate`, mutually exclusive with `regexp_filter`, exactly as `clear_edit_tab` and
+`clear_default` do.
+
+The PATCH contract, in full:
+
+| body | result |
+|---|---|
+| neither property | unchanged, because PATCH is partial |
+| `regexp_filter` non-empty | configured, after the checks above |
+| `regexp_filter: ""` | 400, naming `clear_regexp_filter` as the way to remove one |
+| `clear_regexp_filter: true` | SQL NULL |
+| both | 400 |
+
+**One deliberate divergence from `edit_tab`, and copying that precedent wholesale would have been a
+data bug.** `edit_tab` TRIMS before its blank check, because a tab named `" "` is a tab nobody can
+navigate to. A pattern is not a label. Whitespace inside one is meaningful, and under the
+whole-value semantics above `\A(?:   )\z` legitimately matches exactly three spaces. So only the
+GENUINELY EMPTY string is refused here, a whitespace-only pattern is a valid configuration, and
+nothing trims or rewrites what the operator wrote.
+
+`clear_regexp_filter: true` is accepted on EVERY field, including mirrored ones and unsupported
+types. The two restrictions above are about a configured pattern; a setting must always be
+reachable in the direction of off, or a field configured wrongly by an import or a script becomes
+unrepairable through the API.
+
+### What refuses what
+
+Configuration-time refusals are 400 at `PATCH /fields/{id}`: a non-default `read_only` or a
+non-empty pattern on a mirrored field, a non-empty pattern on an unsupported type, a pattern that
+does not compile, a blank pattern, and the two clear properties together.
+
+Value-time refusals are 422 carrying `FieldValueUnprocessable`, the body the asset and collection
+writers already share so the two cannot describe one refusal differently. Two new reasons:
+`field_read_only` and `pattern_mismatch`. Deliberately not 403 for the first: no capability grants
+it and no grant would lift it, so a permission code would send an operator hunting for a role that
+does not exist. The thing to change is the field's configuration.

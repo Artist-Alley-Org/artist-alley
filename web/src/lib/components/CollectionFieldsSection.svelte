@@ -23,6 +23,11 @@
     id: string;
     code: string;
     label: string;
+    /** Rendered as input guidance under the control (#1173). Reaches
+        the renderer because `definitions` holds the API rows
+        themselves; declaring it here is what makes it visible to the
+        type system as well as present at runtime. */
+    description?: string;
     type:
       | 'text' | 'longtext' | 'rich_text' | 'number' | 'boolean'
       | 'date' | 'datetime' | 'select' | 'multi_select' | 'tree' | 'reference';

@@ -109,7 +109,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
           open_vocabulary, mirrors_column, show_on_card,
-          show_in_advanced_search, show_on_upload, edit_tab
+          show_in_advanced_search, show_on_upload, edit_tab,
+          read_only, regexp_filter
 `
 
 type CreateFieldDefinitionParams struct {
@@ -184,6 +185,8 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.ShowInAdvancedSearch,
 		&i.ShowOnUpload,
 		&i.EditTab,
+		&i.ReadOnly,
+		&i.RegexpFilter,
 	)
 	return i, err
 }
@@ -394,7 +397,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
        open_vocabulary, mirrors_column, show_on_card,
-       show_in_advanced_search, show_on_upload, edit_tab
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter
 FROM field_definition WHERE code = $1
 `
 
@@ -432,6 +436,8 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.ShowInAdvancedSearch,
 		&i.ShowOnUpload,
 		&i.EditTab,
+		&i.ReadOnly,
+		&i.RegexpFilter,
 	)
 	return i, err
 }
@@ -444,7 +450,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
        open_vocabulary, mirrors_column, show_on_card,
-       show_in_advanced_search, show_on_upload, edit_tab
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter
 FROM field_definition WHERE id = $1
 `
 
@@ -482,6 +489,8 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.ShowInAdvancedSearch,
 		&i.ShowOnUpload,
 		&i.EditTab,
+		&i.ReadOnly,
+		&i.RegexpFilter,
 	)
 	return i, err
 }
@@ -1299,7 +1308,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
        open_vocabulary, mirrors_column, show_on_card,
-       show_in_advanced_search, show_on_upload, edit_tab
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter
 FROM field_definition
 WHERE (
         CASE WHEN $1::TEXT IS NULL
@@ -1370,6 +1380,8 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.ShowInAdvancedSearch,
 			&i.ShowOnUpload,
 			&i.EditTab,
+			&i.ReadOnly,
+			&i.RegexpFilter,
 		); err != nil {
 			return nil, err
 		}
@@ -1389,7 +1401,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
        open_vocabulary, mirrors_column, show_on_card,
-       show_in_advanced_search, show_on_upload, edit_tab
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -1439,6 +1452,8 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.ShowInAdvancedSearch,
 			&i.ShowOnUpload,
 			&i.EditTab,
+			&i.ReadOnly,
+			&i.RegexpFilter,
 		); err != nil {
 			return nil, err
 		}
@@ -1777,7 +1792,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
           open_vocabulary, mirrors_column, show_on_card,
-          show_in_advanced_search, show_on_upload, edit_tab
+          show_in_advanced_search, show_on_upload, edit_tab,
+          read_only, regexp_filter
 `
 
 type SetFieldExtractionConfigParams struct {
@@ -1829,6 +1845,8 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.ShowInAdvancedSearch,
 		&i.ShowOnUpload,
 		&i.EditTab,
+		&i.ReadOnly,
+		&i.RegexpFilter,
 	)
 	return i, err
 }
@@ -1858,18 +1876,27 @@ UPDATE field_definition SET
     -- ambiguity in the absence of a value.
     edit_tab                  = CASE WHEN $15::BOOLEAN THEN NULL
                                      ELSE COALESCE($16, edit_tab) END,
-    status                    = COALESCE($17,                    status),
-    deprecated_replacement_id = COALESCE($18, deprecated_replacement_id),
+    read_only                 = COALESCE($17,                 read_only),
+    -- ` + "`" + `regexp_filter` + "`" + ` is the third column needing a CLEAR path, and the
+    -- only one of the three that is a PATTERN rather than a label. NULL
+    -- is the single canonical "no constraint" (the CHECK refuses ''),
+    -- and NULL is also what "leave it alone" looks like to COALESCE —
+    -- so removal has to be said out loud, exactly as ` + "`" + `edit_tab` + "`" + ` and
+    -- ` + "`" + `default_value` + "`" + ` say it. The handler refuses the two together.
+    regexp_filter             = CASE WHEN $18::BOOLEAN THEN NULL
+                                     ELSE COALESCE($19, regexp_filter) END,
+    status                    = COALESCE($20,                    status),
+    deprecated_replacement_id = COALESCE($21, deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
     -- passing NULL means "leave it alone" everywhere else in this
     -- statement, so "remove the default" would be unsayable. The
     -- explicit boolean makes removal a deliberate act rather than an
     -- ambiguity in the absence of a value.
-    default_value             = CASE WHEN $19::BOOLEAN THEN NULL
-                                     ELSE COALESCE($20, default_value) END,
+    default_value             = CASE WHEN $22::BOOLEAN THEN NULL
+                                     ELSE COALESCE($23, default_value) END,
     updated_at                = NOW(),
-    updated_by_user_ref       = $21
-WHERE id = $22
+    updated_by_user_ref       = $24
+WHERE id = $25
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
           display_order, display_group, status,
@@ -1877,7 +1904,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
           open_vocabulary, mirrors_column, show_on_card,
-          show_in_advanced_search, show_on_upload, edit_tab
+          show_in_advanced_search, show_on_upload, edit_tab,
+          read_only, regexp_filter
 `
 
 type UpdateFieldDefinitionParams struct {
@@ -1897,6 +1925,9 @@ type UpdateFieldDefinitionParams struct {
 	ShowOnUpload            *bool
 	ClearEditTab            bool
 	EditTab                 *string
+	ReadOnly                *bool
+	ClearRegexpFilter       bool
+	RegexpFilter            *string
 	Status                  *string
 	DeprecatedReplacementID pgtype.UUID
 	ClearDefault            bool
@@ -1927,6 +1958,9 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		arg.ShowOnUpload,
 		arg.ClearEditTab,
 		arg.EditTab,
+		arg.ReadOnly,
+		arg.ClearRegexpFilter,
+		arg.RegexpFilter,
 		arg.Status,
 		arg.DeprecatedReplacementID,
 		arg.ClearDefault,
@@ -1966,6 +2000,8 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.ShowInAdvancedSearch,
 		&i.ShowOnUpload,
 		&i.EditTab,
+		&i.ReadOnly,
+		&i.RegexpFilter,
 	)
 	return i, err
 }

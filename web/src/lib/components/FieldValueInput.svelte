@@ -27,6 +27,12 @@
     id: string;
     code: string;
     label: string;
+    /** The operator's own note about what belongs in this field
+     *  (#1173). Authored on /admin/fields and, until sprint 19, shown
+     *  nowhere the person entering a value could read it. Reused
+     *  as-is: no new storage, and its authoring semantics are
+     *  unchanged. */
+    description?: string;
     type:
       | 'text'
       | 'longtext'
@@ -168,6 +174,24 @@
   </span>
 {/snippet}
 
+<!--
+  The operator's guidance for this field, from the definition's own
+  `description` (#1173). BELOW the control rather than above it, so it
+  reads as help for the box the person is in rather than as a second
+  label; and rendered only when there is something to say, so a field
+  nobody documented is laid out exactly as it is today.
+
+  Not a <span> inside the <label>: on the multi_select branch the
+  wrapper is a <div>, and the guidance has to read the same in both.
+-->
+{#snippet fieldHelp()}
+  {#if (def.description ?? '').trim()}
+    <p class="mt-1 text-xs text-fg-muted" data-testid="field-help-{def.code}">
+      {def.description}
+    </p>
+  {/if}
+{/snippet}
+
 <div class="space-y-1">
   {#if def.type === 'multi_select'}
     <!--
@@ -188,6 +212,7 @@
         fieldId={serverVocabulary ? def.id : null}
         onchange={emitMultiSelect}
       />
+      {@render fieldHelp()}
     </div>
   {:else}
   <label class="block">
@@ -287,5 +312,6 @@
       />
     {/if}
   </label>
+  {@render fieldHelp()}
   {/if}
 </div>
