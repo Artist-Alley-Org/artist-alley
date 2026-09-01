@@ -128,6 +128,26 @@ where applicable, otherwise note "no-spec-impact."
   a filter on a metadata field survives too, which was not previously possible at all (#1368,
   PR #1370).
 
+- **Advanced search can narrow by contributor, file type, file size and pixel dimensions.** The
+  advanced page gains controls for the person whose work you want, the kind of file, how large it
+  is, and how many pixels across or tall it is. The contributor box can be left empty to browse
+  everyone with work in the current search rather than only the most frequent few, and picking one
+  person never hides the others. File sizes are entered in KB, MB or GB and converted exactly, so a
+  bound means the byte count you asked for. A "files with no workflow state" option sits alongside
+  the per-kind state choices and applies to the whole search, because having no state is not a
+  property of one kind of file. These filters narrow a search to files, which the page now says in
+  as many words, and the words box keeps being the one place free text is typed (#1173 in part,
+  PR #1383).
+
+- **A metadata field can now be filtered on even when its values are kept out of the text index.**
+  Whether a field's text feeds the full-text index and whether you can filter on it directly were
+  the same setting by accident, so filtering by pixel width returned nothing at all: the values
+  were deliberately kept out of the index, which silently switched the filter off too. Those are
+  separate questions now. Who may read a field, and whether the field is still in use, gate it
+  exactly as before. ⚠️ A saved or scheduled search that named such a field and had been quietly
+  returning nothing will start returning the matches it always described, including the emailed
+  digests built from one (#1173 in part, PR #1383).
+
 - **Search can filter files by their workflow state.** A search can now narrow to files sitting in
   a given state, such as draft, awaiting review, published or archived, and choosing more than one
   state returns the files in any of them rather than none at all. A "no workflow state" option
