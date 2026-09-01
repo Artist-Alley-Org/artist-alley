@@ -33,7 +33,7 @@ dependencies = [
     # FastAPI + uvicorn for the HTTP surface; multipart for the
     # /embed/image upload path.
     "fastapi==0.141.1",
-    "uvicorn[standard]==0.52.2",
+    "uvicorn[standard]==0.52.4",
     "python-multipart>=0.0.31,<0.1",
     # Pillow for image decoding — open_clip's preprocess pipeline
     # calls into PIL.Image.open under the hood.
