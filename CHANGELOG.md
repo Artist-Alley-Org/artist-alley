@@ -132,7 +132,9 @@ where applicable, otherwise note "no-spec-impact."
   settings gain three controls that were previously unreachable. **Read-only** stops people editing a
   field's values by hand while the system keeps filling it, which is what you want for something a
   machine owns. A **pattern** can require text to match a set shape before it will save, on plain and
-  long text fields, checked on the server so it holds however the value arrives. And the switch for
+  long text fields, enforced by the server whenever a person supplies or edits the value. Values the
+  system fills in for you, from an upload default or read out of the file itself, are deliberately
+  left alone, and nothing already stored is rewritten when a pattern is set. And the switch for
   **whether a field's text feeds the search index** now has a control at all: it was settable through
   the API and appeared on no screen, so nobody could reach it. That switch governs the index only, and
   filtering by that field directly keeps working either way.
