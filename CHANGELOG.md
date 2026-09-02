@@ -128,6 +128,22 @@ where applicable, otherwise note "no-spec-impact."
   a filter on a metadata field survives too, which was not previously possible at all (#1368,
   PR #1370).
 
+- **An operator can now say what a metadata value must look like, and who may write one.** A field's
+  settings gain three controls that were previously unreachable. **Read-only** stops people editing a
+  field's values by hand while the system keeps filling it, which is what you want for something a
+  machine owns. A **pattern** can require text to match a set shape before it will save, on plain and
+  long text fields, checked on the server so it holds however the value arrives. And the switch for
+  **whether a field's text feeds the search index** now has a control at all: it was settable through
+  the API and appeared on no screen, so nobody could reach it. That switch governs the index only, and
+  filtering by that field directly keeps working either way.
+
+  Title and description are left out of the two new settings on purpose. They are mirrors of the work's
+  own title and description, which can also be edited from the work itself, and a rule that only one of
+  those two routes obeyed would be worse than no rule.
+
+  A field's description is now shown as guidance beside the box when you fill it in, instead of living
+  only in the admin screens (#1173 in part, PR #1388).
+
 - **Advanced search can narrow by contributor, file type, file size and pixel dimensions.** The
   advanced page gains controls for the person whose work you want, the kind of file, how large it
   is, and how many pixels across or tall it is. The contributor box can be left empty to browse
