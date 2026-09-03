@@ -9,6 +9,36 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Your own metadata fields are now editable on a file.** The file edit page grew a section for
+  every field an operator configured for that file's type, so a value you could set at upload and
+  then never touch again is finally reachable. Title and description keep their own boxes at the
+  top of the page rather than appearing a second time in the list. Fields an operator has retired
+  but not removed still appear while they hold a value, so nothing quietly drops out of view
+  (#1119, #1173, PR #1394).
+
+- **A field an operator marked read-only now shows why it cannot be edited**, with its value still
+  in plain sight rather than hidden, and a field carrying a required pattern now shows the pattern
+  alongside its help text. Both reach the file edit page, the collection dialog and the create page
+  together, because they all use the same control (#1173, PR #1394).
+
+- **An optional value can be removed again.** Emptying a field's control and saving now clears the
+  stored value instead of failing with a save error, on both the file edit page and the collection
+  dialog. A yes/no field grew a blank choice, so "not answered" is finally different from "no": a
+  stored "no" stays a real answer, and clearing the field removes it altogether (#1119, PR #1394).
+
+- **Two people editing the same file no longer overwrite each other silently.** Each field value
+  now carries its own version, so a save refuses when someone else has changed *that field* since
+  you loaded it, tells you what it now says, and keeps what you typed so you can decide. Changing a
+  neighbouring field does not get in your way, and where several fields are saved at once the ones
+  that succeeded stay saved while only the conflicting one asks for attention (#1173, PR #1394).
+
+- **A field marked required now actually is one.** Setting it to nothing, or clearing it, is
+  refused on files and on collections alike, where before the rule reached only the title and
+  description mirrors and did nothing on every other field. A rich-text field counts as empty when
+  it holds no visible words, so formatting left behind by an empty editor no longer passes as a
+  value. Collections still require their fields at creation exactly as before, and putting a file
+  in still requires nothing at all (#1389, PR #1394).
+
 - **The sample library now carries every kind of AI declaration**, including "assisted" and an
   explicit "no AI", so each one can be seen rather than only tested (#1290, PR #1297).
 
