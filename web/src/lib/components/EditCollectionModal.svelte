@@ -9,7 +9,7 @@
   import { site } from '$stores/site.svelte';
   import { previewLadder } from '$stores/previewLadder.svelte';
   import Modal from './Modal.svelte';
-  import CollectionFieldsSection from './CollectionFieldsSection.svelte';
+  import FieldValuesSection from './FieldValuesSection.svelte';
   import CollectionCoverEditor from './CollectionCoverEditor.svelte';
   import { coverPlacement, type CoverSlot } from '$lib/util/featuredCrop';
 
@@ -655,7 +655,7 @@
              them here balances a split that otherwise left a column of
              empty space beside a tall cover picker on every collection
              with no fields defined. -->
-        <CollectionFieldsSection collectionId={seeded.id} />
+        <FieldValuesSection subjectKind="collection" subjectId={seeded.id} />
     </div>
 
     <!-- HOW THE COLLECTION LOOKS — both slots, one editor, no page

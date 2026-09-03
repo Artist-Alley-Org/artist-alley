@@ -5286,9 +5286,17 @@ paths:
         field-management UI.
 
         By default, archived (soft-deleted) fields are excluded — the
-        list is the live schema. Pass an explicit `status` to filter to
-        exactly one status; `status=archived` surfaces the tombstones
-        for anyone who needs them.
+        list is the live schema, meaning active + deprecated. Pass an
+        explicit `status` to filter to exactly one status;
+        `status=archived` surfaces the tombstones for anyone who needs
+        them.
+
+        That rule is now the SAME with and without `asset_type`. It was
+        not before #1389: the `asset_type` branch pinned
+        `status = 'active'` and discarded whatever `status` the caller
+        sent, so an editor could not ask for the definitions a record
+        may legitimately still hold values on. See `asset_type` for the
+        two questions the two settings answer.
       tags: [metadata]
       security:
         - cookieAuth: []
@@ -5305,10 +5313,30 @@ paths:
           required: false
           description: |
             When set, only fields whose `applies_to` is empty (=all)
-            or contains this asset_type ref are returned. Used by
-            the asset edit form to figure out which fields to show.
-            Implies `subject_kind=asset` — collection fields aren't
-            applies_to-scoped.
+            or contains this asset_type ref are returned. Implies
+            `subject_kind=asset` — collection fields aren't
+            applies_to-scoped, and the query enforces that server-side
+            rather than leaving it to the caller.
+
+            `status` composes with this exactly as it does without it
+            (#1389). That is a CHANGE: this parameter used to pin
+            `status = 'active'` and ignore `status` altogether, so
+            "which fields are live" had two different answers depending
+            on whether an unrelated filter was present. It has one now.
+
+            The two questions the two settings answer:
+
+            - A COMPOSER — the upload form, the create page — asks
+              "which fields may I offer for a NEW value?" and passes
+              `status=active`, because a deprecated definition is one
+              an operator has stopped wanting new values in. The
+              shipped composer already sent it.
+            - An EDITOR asks "which fields may hold a value on this
+              subject?" and passes no `status`, getting active +
+              deprecated. A deprecated definition can still hold a
+              value on an existing row, so hiding it would drop live
+              data out of the editor. Archived definitions are
+              tombstones and are excluded either way.
           schema: { type: integer, format: int64 }
         - name: subject_kind
           in: query
@@ -5839,6 +5867,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/AssetFieldValueConflict"
         "422":
           $ref: "#/components/responses/FieldValueUnprocessable"
     delete:
@@ -5848,6 +5878,30 @@ paths:
       security:
         - cookieAuth: []
         - bearerAuth: []
+      parameters:
+        - name: if_unchanged_since
+          in: query
+          required: false
+          description: |
+            PER-FIELD optimistic concurrency for a removal (#1119). The
+            token is the value row's own `set_at`, as
+            `AssetFieldValueWrite.if_unchanged_since` describes it. The
+            row is deleted only if it still carries exactly that
+            `set_at`; otherwise the operation answers **409** with
+            `AssetFieldValueConflict` and DELETES NOTHING — a stale
+            removal must not erase a newer value it never saw.
+
+            It rides in the query string because a DELETE carries no
+            body. There is no `if_absent` companion: "remove it only if
+            it is not there" has nothing to remove.
+
+            Omitting it is the unguarded removal this endpoint has
+            always performed, 204 whether or not a row existed, kept for
+            callers that are not an edit surface.
+
+            Refused with 400 on a mirrored field, for the reason given
+            on the write schema.
+          schema: { type: string, format: date-time }
       responses:
         "204":
           description: Cleared
@@ -5859,6 +5913,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/AssetFieldValueConflict"
         "422":
           $ref: "#/components/responses/FieldValueUnprocessable"
 
@@ -5963,6 +6019,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/CollectionFieldValueConflict"
         "422":
           $ref: "#/components/responses/FieldValueUnprocessable"
     delete:
@@ -5972,15 +6030,41 @@ paths:
       security:
         - cookieAuth: []
         - bearerAuth: []
+      parameters:
+        - name: if_unchanged_since
+          in: query
+          required: false
+          description: |
+            PER-FIELD optimistic concurrency for a removal (#1119). The
+            token is the value row's own `set_at`, as
+            `CollectionFieldValueWrite.if_unchanged_since` describes it. The
+            row is deleted only if it still carries exactly that
+            `set_at`; otherwise the operation answers **409** with
+            `CollectionFieldValueConflict` and DELETES NOTHING — a stale
+            removal must not erase a newer value it never saw.
+
+            It rides in the query string because a DELETE carries no
+            body. There is no `if_absent` companion: "remove it only if
+            it is not there" has nothing to remove.
+
+            Omitting it is the unguarded removal this endpoint has
+            always performed, 204 whether or not a row existed, kept for
+            callers that are not an edit surface.
+
+          schema: { type: string, format: date-time }
       responses:
         "204":
           description: Cleared
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/CollectionFieldValueConflict"
         "422":
           $ref: "#/components/responses/FieldValueUnprocessable"
 
@@ -14919,6 +15003,113 @@ components:
           type: string
           enum: [manual, exif, iptc, xmp, api, import, computed]
           default: manual
+        if_unchanged_since:
+          type: string
+          format: date-time
+          description: |
+            PER-FIELD optimistic concurrency (#1119). The token is THIS
+            VALUE ROW'S OWN `set_at`, taken from the last
+            `AssetFieldValue` the caller read or was returned. The write
+            is applied only if the stored row still carries exactly that
+            `set_at`; otherwise the operation answers **409** with
+            `AssetFieldValueConflict` and stores nothing.
+
+            The guard is FIELD-LOCAL on purpose. It is never the asset's
+            `updated_at`: two people editing two different fields of one
+            asset are not in conflict, and a subject-level token would
+            make them so. Every write to a value row advances its
+            `set_at`, on INSERT and on UPDATE alike, so the token the
+            caller holds is exactly the version it read.
+
+            Sending this where NO row exists is a **409**, not an
+            insert. A timestamp is a claim that a particular version is
+            still there; if the row was cleared meanwhile, resurrecting
+            it silently is the update that was refused wearing a
+            disguise. Use `if_absent` for a genuine first write.
+
+            Mutually exclusive with `if_absent`; sending both is a 400.
+            Sending NEITHER is the unguarded last-write-wins behaviour
+            this endpoint has always had, which the upload flush depends
+            on and which is unchanged.
+
+            Refused with 400 on a MIRRORED field (`mirrors_column`):
+            those values are the asset's own columns, so their
+            concurrency lives on the asset plane's
+            `AssetUpdate.if_unchanged_since` and not here.
+        if_absent:
+          type: boolean
+          description: |
+            The first-write half of the guard: apply this write only if
+            NO value row exists for this field on this subject. If one
+            does, the operation answers **409** with
+            `AssetFieldValueConflict` (`present: true`) and stores
+            nothing.
+
+            This is what an editor sends for a field it loaded with no
+            value. It is never a timestamp: inventing one for a row that
+            does not exist would be a guard against a version nobody
+            wrote.
+
+            Mutually exclusive with `if_unchanged_since`; sending both
+            is a 400. Refused with 400 on a mirrored field.
+    AssetFieldValueConflict:
+      type: object
+      description: |
+        A guarded field-value write was refused because the stored row
+        is not the version the caller guarded against (#1119).
+
+        Nothing was stored. The body carries what the caller needs to
+        reconcile without a second round trip: whether a value is there
+        NOW, and if so what it is, including the `set_at` a retry would
+        guard against.
+
+        `current` is REQUIRED and NULLABLE, so the key is ALWAYS
+        present. `present: false` with `current: null` is the cleared
+        case, and a client re-baselines it to `if_absent: true`; an
+        omitted key would be indistinguishable from a server that
+        forgot to send one. There is deliberately no fabricated
+        `set_at` for a row that does not exist.
+      required: [error, field_id, present, current]
+      properties:
+        error: { type: string }
+        field_id:
+          type: string
+          format: uuid
+          description: The field whose value was not written.
+        present:
+          type: boolean
+          description: |
+            Whether a value row exists for this field on this subject
+            right now. True means somebody else's write is there; false
+            means the value was removed.
+        current:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/AssetFieldValue"
+          description: |
+            The value as stored now, or JSON `null` when `present` is
+            false. Its `set_at` is the token a follow-up guarded write
+            should carry.
+    CollectionFieldValueConflict:
+      type: object
+      description: |
+        The collection twin of `AssetFieldValueConflict`, with the same
+        contract: nothing was stored, `current` is required and
+        nullable, and `present: false` carries `current: null` with no
+        fabricated `set_at`. Two schemas rather than one because
+        `current` is a different value shape on each subject kind.
+      required: [error, field_id, present, current]
+      properties:
+        error: { type: string }
+        field_id: { type: string, format: uuid }
+        present: { type: boolean }
+        current:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/CollectionFieldValue"
+          description: |
+            The value as stored now, or JSON `null` when `present` is
+            false.
     FieldValueHistoryEntry:
       type: object
       required: [id, asset_id, field_id, changed_at, set_by]
@@ -15036,6 +15227,23 @@ components:
               defaults and extraction are not checked, so a stored
               value may legitimately fail the pattern a new one is held
               to.
+            - `field_required` — the field declares `required`, so a
+              person may neither write an EMPTY value into it nor
+              remove the value it holds (#1389). What "empty" means is
+              per type: NULL or whitespace-only text; a `multi_select`
+              with no members; a NULL `value_num`, `value_date` or
+              `value_ref`; and for `rich_text`, markup carrying no
+              visible words, since the sanitiser strips no empty
+              elements and `<p><br></p>` would otherwise pass. FALSE is
+              a real boolean value and is never empty.
+
+              The rule is the LATER-write rule and applies to the
+              ordinary asset and collection field-value paths. It is
+              not a completeness gate: asset creation still requires
+              nothing, and collection create keeps its own separate
+              `required_collection_field_missing` refusal. Human writes
+              only — upload defaults, extraction and the mirrored-column
+              filler are unaffected, exactly as with `field_read_only`.
           enum:
             - field_not_for_collection
             - value_type_mismatch
@@ -15045,6 +15253,7 @@ components:
             - vocabulary_extension_forbidden
             - field_read_only
             - pattern_mismatch
+            - field_required
           # PINNED, per the note on searchFieldValues' `status`. These
           # six names were generated bare and are referenced by name
           # from the metadata handlers; the two added for #1173 would
@@ -15060,6 +15269,7 @@ components:
             - VocabularyExtensionForbidden
             - FieldReadOnly
             - PatternMismatch
+            - FieldRequired
         field:
           type: string
           nullable: true
@@ -15106,6 +15316,51 @@ components:
           type: string
           enum: [manual, api, import, computed]
           default: manual
+        if_unchanged_since:
+          type: string
+          format: date-time
+          description: |
+            PER-FIELD optimistic concurrency (#1119). The token is THIS
+            VALUE ROW'S OWN `set_at`, taken from the last
+            `CollectionFieldValue` the caller read or was returned. The write
+            is applied only if the stored row still carries exactly that
+            `set_at`; otherwise the operation answers **409** with
+            `CollectionFieldValueConflict` and stores nothing.
+
+            The guard is FIELD-LOCAL on purpose. It is never the asset's
+            `updated_at`: two people editing two different fields of one
+            asset are not in conflict, and a subject-level token would
+            make them so. Every write to a value row advances its
+            `set_at`, on INSERT and on UPDATE alike, so the token the
+            caller holds is exactly the version it read.
+
+            Sending this where NO row exists is a **409**, not an
+            insert. A timestamp is a claim that a particular version is
+            still there; if the row was cleared meanwhile, resurrecting
+            it silently is the update that was refused wearing a
+            disguise. Use `if_absent` for a genuine first write.
+
+            Mutually exclusive with `if_absent`; sending both is a 400.
+            Sending NEITHER is the unguarded last-write-wins behaviour
+            this endpoint has always had, which the upload flush depends
+            on and which is unchanged.
+
+        if_absent:
+          type: boolean
+          description: |
+            The first-write half of the guard: apply this write only if
+            NO value row exists for this field on this subject. If one
+            does, the operation answers **409** with
+            `CollectionFieldValueConflict` (`present: true`) and stores
+            nothing.
+
+            This is what an editor sends for a field it loaded with no
+            value. It is never a timestamp: inventing one for a row that
+            does not exist would be a guard against a version nobody
+            wrote.
+
+            Mutually exclusive with `if_unchanged_since`; sending both
+            is a 400.
     CollectionFieldValueHistoryEntry:
       type: object
       required: [id, collection_id, field_id, changed_at, set_by]
@@ -22203,6 +22458,22 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    AssetFieldValueConflict:
+      description: |
+        The guarded write was refused: the stored value is not the
+        version the caller guarded against, and nothing was stored.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AssetFieldValueConflict"
+    CollectionFieldValueConflict:
+      description: |
+        The guarded write was refused: the stored value is not the
+        version the caller guarded against, and nothing was stored.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CollectionFieldValueConflict"
     FieldValueUnprocessable:
       description: |
         The request is well-formed but the value cannot be stored.
@@ -22228,6 +22499,13 @@ components:
         - `vocabulary_extension_forbidden` — the field is open and the
           term would have been created, but the caller does not hold
           `fields.vocabulary.extend`.
+        - `field_read_only` — the field declares `read_only`, so a
+          person may not set or clear its values.
+        - `pattern_mismatch` — the value does not match the field's
+          `regexp_filter` across its whole length.
+        - `field_required` — the field declares `required`, so a person
+          may neither write an empty value into it nor remove the value
+          it holds (#1389).
       content:
         application/json:
           schema:

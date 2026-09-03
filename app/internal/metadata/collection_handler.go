@@ -212,6 +212,17 @@ func (h *Handler) SetCollectionFieldValue(
 		}, nil
 	}
 
+	// PER-FIELD CONCURRENCY (#1119), the collection twin. There is no
+	// mirrored branch to exempt here: `mirrors_column` is an asset-side
+	// concept and the subject-kind gate above has already refused any
+	// definition that could carry one.
+	guard, guardErr := resolveWriteGuard(req.Body.IfUnchangedSince, req.Body.IfAbsent)
+	if guardErr != nil {
+		return openapi.SetCollectionFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: guardErr.Error()},
+		}, nil
+	}
+
 	// set_by defaults to manual; the API allows callers to override
 	// (e.g. an import pipeline). Validation already happens via the
 	// openapi enum.
@@ -305,9 +316,75 @@ func (h *Handler) SetCollectionFieldValue(
 		ref = resolvedRef{ID: target.ID, Title: target.Title}
 	}
 
-	row, err := qTx.UpsertCollectionFieldValue(ctx, buildCollectionUpsertParams(
+	upsert := buildCollectionUpsertParams(
 		pgCollection, pgField, fieldRow.Type, req.Body, setBy, &id.UserRef,
-	))
+	)
+
+	// REQUIRED (#1389), R1's Set half. Against the params that will be
+	// STORED rather than the request body, for the same reason the asset
+	// path checks `upsert`: for `rich_text` the sanitiser has already
+	// run, and the sanitised form is what the emptiness predicate is
+	// defined against.
+	//
+	// It sits here rather than beside the read-only gate because the
+	// canonical-slug rewrite above can change what a vocabulary type
+	// will actually store, and an empty check that ran before it would
+	// be testing a value the row never sees.
+	if msg := requiredSetRefusal(fieldRow, collectionUpsertValue(upsert)); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetCollectionFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.FieldRequired,
+				Field:  &code,
+			},
+		}, nil
+	}
+
+	// THE WRITE. See the asset path and the guarded queries in
+	// queries.sql: the precondition is the statement's own WHERE (or,
+	// for the first-write arm, the unique index), never a handler-side
+	// read in front of an unconditional upsert.
+	var row CollectionFieldValue
+	switch guard.kind {
+	case guardUnchangedSince:
+		row, err = qTx.UpdateCollectionFieldValueIfUnchanged(ctx, UpdateCollectionFieldValueIfUnchangedParams{
+			ValueText:        upsert.ValueText,
+			ValueNum:         upsert.ValueNum,
+			ValueDate:        upsert.ValueDate,
+			ValueOptions:     upsert.ValueOptions,
+			ValueRef:         upsert.ValueRef,
+			SetBy:            upsert.SetBy,
+			SetByUserRef:     upsert.SetByUserRef,
+			CollectionID:     pgCollection,
+			FieldID:          pgField,
+			IfUnchangedSince: guard.since,
+		})
+	case guardAbsent:
+		row, err = qTx.InsertCollectionFieldValueWhenAbsent(ctx, InsertCollectionFieldValueWhenAbsentParams{
+			CollectionID: pgCollection,
+			FieldID:      pgField,
+			ValueText:    upsert.ValueText,
+			ValueNum:     upsert.ValueNum,
+			ValueDate:    upsert.ValueDate,
+			ValueOptions: upsert.ValueOptions,
+			ValueRef:     upsert.ValueRef,
+			SetBy:        upsert.SetBy,
+			SetByUserRef: upsert.SetByUserRef,
+		})
+	default:
+		row, err = qTx.UpsertCollectionFieldValue(ctx, upsert)
+	}
+	if guard.engaged() && errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(ctx)
+		body, cErr := h.collectionConflictBody(ctx, pgCollection, pgField, fieldRow)
+		if cErr != nil {
+			return nil, cErr
+		}
+		return openapi.SetCollectionFieldValue409JSONResponse{
+			CollectionFieldValueConflictJSONResponse: openapi.CollectionFieldValueConflictJSONResponse(body),
+		}, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("metadata: upsert: %w", err)
 	}
@@ -379,13 +456,28 @@ func (h *Handler) ClearCollectionFieldValue(
 	pgCollection := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	pgField := pgtype.UUID{Bytes: uuid.UUID(req.FieldId), Valid: true}
 
+	// The removal's guard (#1119) — query string, for the reason
+	// ClearAssetFieldValue gives.
+	guard, guardErr := resolveWriteGuard(req.Params.IfUnchangedSince, nil)
+	if guardErr != nil {
+		return openapi.ClearCollectionFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: guardErr.Error()},
+		}, nil
+	}
+
+	var (
+		fieldRow     FieldDefinition
+		haveFieldRow bool
+	)
+
 	// READ-ONLY (#1173) refuses the clear as well as the set, for the
 	// reason ClearAssetFieldValue gives. The field is loaded before the
 	// transaction opens: nothing here needs the tx, and refusing without
 	// opening one keeps the cheap answer cheap. A field that has since
 	// been deleted falls through to the delete below, which is a no-op
 	// answering 204, exactly as it did before.
-	if fieldRow, fErr := h.getFieldByIDCached(ctx, pgField); fErr == nil {
+	if loaded, fErr := h.getFieldByIDCached(ctx, pgField); fErr == nil {
+		fieldRow, haveFieldRow = loaded, true
 		if msg := readOnlyRefusal(fieldRow, "cleared"); msg != "" {
 			code := fieldRow.Code
 			return openapi.ClearCollectionFieldValue422JSONResponse{
@@ -396,8 +488,28 @@ func (h *Handler) ClearCollectionFieldValue(
 				},
 			}, nil
 		}
+		// REQUIRED (#1389), R1's Clear half — the collection twin of the
+		// asset refusal, on the same predicate, so a required collection
+		// field cannot be emptied after creation any more than an asset
+		// one can. R2, collection CREATE's presence rule, is untouched.
+		if msg := requiredClearRefusal(fieldRow); msg != "" {
+			code := fieldRow.Code
+			return openapi.ClearCollectionFieldValue422JSONResponse{
+				FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+					Error:  msg,
+					Reason: openapi.FieldRequired,
+					Field:  &code,
+				},
+			}, nil
+		}
 	} else if !errors.Is(fErr, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("metadata: load field: %w", fErr)
+	} else if guard.engaged() {
+		// See ClearAssetFieldValue: a precondition that cannot be
+		// evaluated must not be answered with the unguarded 204.
+		return openapi.ClearCollectionFieldValue404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+		}, nil
 	}
 
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -407,32 +519,60 @@ func (h *Handler) ClearCollectionFieldValue(
 	defer func() { _ = tx.Rollback(ctx) }()
 	qTx := New(tx)
 
-	prev, err := qTx.GetCollectionFieldValue(ctx, GetCollectionFieldValueParams{
-		CollectionID: pgCollection,
-		FieldID:      pgField,
-	})
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
-	hadOld := err == nil
-
-	if err := qTx.DeleteCollectionFieldValue(ctx, DeleteCollectionFieldValueParams{
-		CollectionID: pgCollection,
-		FieldID:      pgField,
-	}); err != nil {
-		return nil, fmt.Errorf("metadata: delete: %w", err)
+	var (
+		removed CollectionFieldValue
+		hadOld  bool
+	)
+	if guard.kind == guardUnchangedSince {
+		// ONE statement — see the asset twin and queries.sql.
+		removed, err = qTx.DeleteCollectionFieldValueIfUnchanged(ctx, DeleteCollectionFieldValueIfUnchangedParams{
+			CollectionID:     pgCollection,
+			FieldID:          pgField,
+			IfUnchangedSince: guard.since,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			body, cErr := h.collectionConflictBody(ctx, pgCollection, pgField, fieldRow)
+			if cErr != nil {
+				return nil, cErr
+			}
+			return openapi.ClearCollectionFieldValue409JSONResponse{
+				CollectionFieldValueConflictJSONResponse: openapi.CollectionFieldValueConflictJSONResponse(body),
+			}, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("metadata: guarded delete: %w", err)
+		}
+		hadOld = true
+	} else {
+		prev, gErr := qTx.GetCollectionFieldValue(ctx, GetCollectionFieldValueParams{
+			CollectionID: pgCollection,
+			FieldID:      pgField,
+		})
+		if gErr != nil && !errors.Is(gErr, pgx.ErrNoRows) {
+			return nil, gErr
+		}
+		hadOld = gErr == nil
+		if hadOld {
+			removed = CollectionFieldValue{
+				ValueText: prev.ValueText, ValueNum: prev.ValueNum, ValueDate: prev.ValueDate,
+				ValueOptions: prev.ValueOptions, ValueRef: prev.ValueRef,
+			}
+		}
+		if err := qTx.DeleteCollectionFieldValue(ctx, DeleteCollectionFieldValueParams{
+			CollectionID: pgCollection,
+			FieldID:      pgField,
+		}); err != nil {
+			return nil, fmt.Errorf("metadata: delete: %w", err)
+		}
 	}
 
 	if hadOld {
-		fieldRow, fErr := h.getFieldByIDCached(ctx, pgField)
-		if fErr != nil && !errors.Is(fErr, pgx.ErrNoRows) {
-			return nil, fErr
-		}
 		var fieldType string
-		if fErr == nil {
+		if haveFieldRow {
 			fieldType = fieldRow.Type
 		}
-		oldJSON, _ := valueRowToJSON(prev.ValueText, prev.ValueNum, prev.ValueDate, prev.ValueOptions, prev.ValueRef, fieldType)
+		oldJSON, _ := valueRowToJSON(removed.ValueText, removed.ValueNum, removed.ValueDate, removed.ValueOptions, removed.ValueRef, fieldType)
 		if err := qTx.AppendCollectionFieldValueHistory(ctx, AppendCollectionFieldValueHistoryParams{
 			CollectionID:     pgCollection,
 			FieldID:          pgField,

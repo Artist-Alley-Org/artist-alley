@@ -228,8 +228,28 @@ func (h *Handler) ListFields(
 	}
 	q := New(h.Pool)
 
+	// `status` composes with `asset_type` (#1389). It did not before:
+	// this branch pinned status='active' and discarded whatever the
+	// caller sent, so "which fields are live" had two answers depending
+	// on whether an unrelated filter was present, and the asset edit
+	// surface could not ask for the definitions a record may still
+	// legitimately hold values on.
+	//
+	// The active-only narrowing is not gone, it MOVED to the caller that
+	// owns it. Offering fields for a NEW value is a COMPOSER's question
+	// and the composer asks it explicitly — upload.svelte.ts's
+	// fieldsForAssetType already sent `status=active` alongside
+	// `asset_type`, where it was previously a no-op.
 	if req.Params.AssetType != nil {
-		rows, err := q.ListFieldDefinitionsForAssetType(ctx, *req.Params.AssetType)
+		var assetTypeStatus *string
+		if req.Params.Status != nil {
+			v := string(*req.Params.Status)
+			assetTypeStatus = &v
+		}
+		rows, err := q.ListFieldDefinitionsForAssetType(ctx, ListFieldDefinitionsForAssetTypeParams{
+			Status: assetTypeStatus,
+			Rt:     *req.Params.AssetType,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("metadata: list by rt: %w", err)
 		}
@@ -1010,6 +1030,16 @@ func (h *Handler) SetAssetFieldValue(
 		}, nil
 	}
 
+	// PER-FIELD CONCURRENCY (#1119). Resolved before the mirrored
+	// branch so a guard aimed at a mirrored field is refused rather than
+	// silently ignored.
+	guard, guardErr := resolveWriteGuard(req.Body.IfUnchangedSince, req.Body.IfAbsent)
+	if guardErr != nil {
+		return openapi.SetAssetFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: guardErr.Error()},
+		}, nil
+	}
+
 	// MIRRORED fields (#822) branch here, after validation and after the
 	// field's own write_capability, and before anything touches
 	// asset_field_value. The two gates COMPOSE: a field that declares a
@@ -1019,7 +1049,34 @@ func (h *Handler) SetAssetFieldValue(
 	// trigger refuses the row — it is a 500. This branch is what turns
 	// that impossibility into a working write.
 	if col, ok := MirrorColumnOf(fieldRow); ok {
+		if guard.engaged() {
+			return openapi.SetAssetFieldValue400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: mirroredGuardRefusal(fieldRow.Code, col)},
+			}, nil
+		}
 		return h.setMirroredFieldValue(ctx, id, pgAsset, fieldRow, col, upsert)
+	}
+
+	// REQUIRED (#1389), R1's Set half. Below the mirrored branch, so the
+	// mirrored helper keeps its own `required` refusal byte-identical —
+	// that one is the asset plane's rule (UpdateAsset refuses an empty
+	// title) and is not this one.
+	//
+	// Checked against `upsert`, the shape that will be STORED, so the
+	// rule and the row cannot disagree — the same reason patternRefusal
+	// above reads upsert.ValueText rather than the request member. For
+	// `rich_text` that matters twice over: the sanitiser has already run
+	// by this point, and the sanitised form is what the emptiness
+	// predicate is defined against.
+	if msg := requiredSetRefusal(fieldRow, assetUpsertValue(upsert)); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetAssetFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.FieldRequired,
+				Field:  &code,
+			},
+		}, nil
 	}
 
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -1114,7 +1171,57 @@ func (h *Handler) SetAssetFieldValue(
 		}
 	}
 
-	row, err := qTx.UpsertAssetFieldValue(ctx, upsert)
+	// THE WRITE. The guarded arms evaluate their precondition and
+	// mutate in ONE statement, so a competing writer cannot fit between
+	// the two — see the header on the guarded queries in queries.sql for
+	// why a handler-side compare in front of the unconditional upsert
+	// would not be equivalent at READ COMMITTED.
+	//
+	// A zero-row result IS the conflict. It is reported by rolling the
+	// transaction back first and then reading the committed state, so
+	// the body describes the world rather than this caller's abandoned
+	// attempt, and so nothing this transaction did — a vocabulary term
+	// it may have minted a few lines up — survives a refused write.
+	var row AssetFieldValue
+	switch guard.kind {
+	case guardUnchangedSince:
+		row, err = qTx.UpdateAssetFieldValueIfUnchanged(ctx, UpdateAssetFieldValueIfUnchangedParams{
+			ValueText:        upsert.ValueText,
+			ValueNum:         upsert.ValueNum,
+			ValueDate:        upsert.ValueDate,
+			ValueOptions:     upsert.ValueOptions,
+			ValueRef:         upsert.ValueRef,
+			SetBy:            upsert.SetBy,
+			SetByUserRef:     upsert.SetByUserRef,
+			AssetID:          pgAsset,
+			FieldID:          pgField,
+			IfUnchangedSince: guard.since,
+		})
+	case guardAbsent:
+		row, err = qTx.InsertAssetFieldValueWhenAbsent(ctx, InsertAssetFieldValueWhenAbsentParams{
+			AssetID:      pgAsset,
+			FieldID:      pgField,
+			ValueText:    upsert.ValueText,
+			ValueNum:     upsert.ValueNum,
+			ValueDate:    upsert.ValueDate,
+			ValueOptions: upsert.ValueOptions,
+			ValueRef:     upsert.ValueRef,
+			SetBy:        upsert.SetBy,
+			SetByUserRef: upsert.SetByUserRef,
+		})
+	default:
+		row, err = qTx.UpsertAssetFieldValue(ctx, upsert)
+	}
+	if guard.engaged() && errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(ctx)
+		body, cErr := h.assetConflictBody(ctx, pgAsset, pgField, fieldRow)
+		if cErr != nil {
+			return nil, cErr
+		}
+		return openapi.SetAssetFieldValue409JSONResponse{
+			AssetFieldValueConflictJSONResponse: openapi.AssetFieldValueConflictJSONResponse(body),
+		}, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("metadata: upsert: %w", err)
 	}
@@ -1281,13 +1388,37 @@ func (h *Handler) ClearAssetFieldValue(
 	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	pgField := pgtype.UUID{Bytes: uuid.UUID(req.FieldId), Valid: true}
 
+	// The removal's concurrency guard (#1119) rides in the QUERY STRING,
+	// because a DELETE carries no body. There is no `if_absent`
+	// companion: "remove it only if it is not there" has nothing to
+	// remove. Omitting it keeps the unguarded 204-either-way behaviour
+	// that non-edit-surface callers depend on.
+	guard, guardErr := resolveWriteGuard(req.Params.IfUnchangedSince, nil)
+	if guardErr != nil {
+		return openapi.ClearAssetFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: guardErr.Error()},
+		}, nil
+	}
+
+	// The field definition, loaded once for every gate below. Held in a
+	// variable rather than re-read per gate because the conflict body
+	// needs its code, label, type and options too.
+	var (
+		fieldRow     FieldDefinition
+		haveFieldRow bool
+		mirroredCol  string
+		isMirrored   bool
+	)
+
 	// MIRRORED fields (#822): clearing a view means emptying the column it
 	// declares, under the column's own gate — the DELETE below would find
 	// nothing to remove and answer 204 while the title stayed put, which is
 	// a lie the caller has no way to detect. A `required` mirrored field
 	// cannot be cleared at all, for the same reason SetAssetFieldValue
 	// refuses to blank one.
-	if fieldRow, err := h.getFieldByIDCached(ctx, pgField); err == nil {
+	if loaded, err := h.getFieldByIDCached(ctx, pgField); err == nil {
+		fieldRow, haveFieldRow = loaded, true
+		mirroredCol, isMirrored = MirrorColumnOf(fieldRow)
 		// READ-ONLY (#1173) refuses the clear as well as the set. A
 		// setting that stopped edits and still allowed deletion would be
 		// the weaker half of the promise, and deletion is the edit an
@@ -1306,11 +1437,40 @@ func (h *Handler) ClearAssetFieldValue(
 				},
 			}, nil
 		}
-		if col, ok := MirrorColumnOf(fieldRow); ok {
-			return h.clearMirroredFieldValue(ctx, id, pgAsset, fieldRow, col)
+		if isMirrored {
+			if guard.engaged() {
+				return openapi.ClearAssetFieldValue400JSONResponse{
+					BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: mirroredGuardRefusal(fieldRow.Code, mirroredCol)},
+				}, nil
+			}
+			return h.clearMirroredFieldValue(ctx, id, pgAsset, fieldRow, mirroredCol)
+		}
+
+		// REQUIRED (#1389), R1's Clear half, and the direct semantic
+		// counterweight to the optional Clear the edit surfaces now
+		// perform: required refuses, optional succeeds. Without both
+		// halves a human surface cannot show that `required` is what
+		// caused the refusal rather than Clear being broken outright.
+		if msg := requiredClearRefusal(fieldRow); msg != "" {
+			code := fieldRow.Code
+			return openapi.ClearAssetFieldValue422JSONResponse{
+				FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+					Error:  msg,
+					Reason: openapi.FieldRequired,
+					Field:  &code,
+				},
+			}, nil
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("metadata: load field: %w", err)
+	} else if guard.engaged() {
+		// A guard against a field definition that no longer exists
+		// cannot be honoured, and the unguarded fall-through below
+		// answers 204 for a delete that removes nothing. Say so rather
+		// than reporting success for a precondition never evaluated.
+		return openapi.ClearAssetFieldValue404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+		}, nil
 	}
 
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -1320,24 +1480,65 @@ func (h *Handler) ClearAssetFieldValue(
 	defer func() { _ = tx.Rollback(ctx) }()
 	qTx := New(tx)
 
-	prev, err := qTx.GetAssetFieldValue(ctx, GetAssetFieldValueParams{
-		AssetID: pgAsset,
-		FieldID: pgField,
-	})
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
-	hadOld := err == nil
-
-	if err := qTx.DeleteAssetFieldValue(ctx, DeleteAssetFieldValueParams{
-		AssetID: pgAsset,
-		FieldID: pgField,
-	}); err != nil {
-		return nil, fmt.Errorf("metadata: delete: %w", err)
+	var (
+		removed    AssetFieldValue
+		removedTyp string
+		hadOld     bool
+	)
+	if guard.kind == guardUnchangedSince {
+		// ONE statement: the precondition is the DELETE's own WHERE, so
+		// a competing writer cannot land between a check and a removal.
+		// RETURNING carries the row that was actually deleted, which is
+		// what the history entry is written from — no separate snapshot,
+		// so nothing can be recorded that was not removed.
+		removed, err = qTx.DeleteAssetFieldValueIfUnchanged(ctx, DeleteAssetFieldValueIfUnchangedParams{
+			AssetID:          pgAsset,
+			FieldID:          pgField,
+			IfUnchangedSince: guard.since,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			body, cErr := h.assetConflictBody(ctx, pgAsset, pgField, fieldRow)
+			if cErr != nil {
+				return nil, cErr
+			}
+			return openapi.ClearAssetFieldValue409JSONResponse{
+				AssetFieldValueConflictJSONResponse: openapi.AssetFieldValueConflictJSONResponse(body),
+			}, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("metadata: guarded delete: %w", err)
+		}
+		hadOld = true
+		if haveFieldRow {
+			removedTyp = fieldRow.Type
+		}
+	} else {
+		prev, gErr := qTx.GetAssetFieldValue(ctx, GetAssetFieldValueParams{
+			AssetID: pgAsset,
+			FieldID: pgField,
+		})
+		if gErr != nil && !errors.Is(gErr, pgx.ErrNoRows) {
+			return nil, gErr
+		}
+		hadOld = gErr == nil
+		if hadOld {
+			removed = AssetFieldValue{
+				ValueText: prev.ValueText, ValueNum: prev.ValueNum, ValueDate: prev.ValueDate,
+				ValueOptions: prev.ValueOptions, ValueRef: prev.ValueRef,
+			}
+			removedTyp = prev.Type
+		}
+		if err := qTx.DeleteAssetFieldValue(ctx, DeleteAssetFieldValueParams{
+			AssetID: pgAsset,
+			FieldID: pgField,
+		}); err != nil {
+			return nil, fmt.Errorf("metadata: delete: %w", err)
+		}
 	}
 
 	if hadOld {
-		oldJSON, _ := valueRowToJSON(prev.ValueText, prev.ValueNum, prev.ValueDate, prev.ValueOptions, prev.ValueRef, prev.Type)
+		oldJSON, _ := valueRowToJSON(removed.ValueText, removed.ValueNum, removed.ValueDate, removed.ValueOptions, removed.ValueRef, removedTyp)
 		if err := qTx.AppendAssetFieldValueHistory(ctx, AppendAssetFieldValueHistoryParams{
 			AssetID:          pgAsset,
 			FieldID:          pgField,

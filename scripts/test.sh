@@ -255,6 +255,16 @@ docker run --rm \
 # ONLY the paths a test actually reads, not all of web/: the mount
 # should expose what a test legitimately reads and nothing more.
 #
+# The THIRD is the shared rich_text emptiness case list (#1389).
+# app/internal/richtext.IsEmpty and web/src/lib/fieldDisplay.ts's
+# isFieldValueEmpty are two implementations of one rule — whether a
+# rich_text value carries anything a reader can see — and they must
+# agree, or a required field renders blank while the server considers it
+# filled. TestIsEmpty_SharedCaseList reads the case list rather than
+# carrying a second copy of it, which is the only shape that catches one
+# plane moving without the other. Without the mount it takes the same
+# t.Skipf branch #956 caught the catalogue guard taking.
+#
 # The second such path is the viewer controller (#1166).
 # app/internal/viewkind mirrors its kind resolver — the derivation
 # behind the browse card's type badge, which `GET /posts?kind=` filters
@@ -269,6 +279,7 @@ if ! docker run --rm \
     -v "${ROOT}/seed:/src/seed:ro" \
     -v "${ROOT}/web/src/lib/i18n:/src/web/src/lib/i18n:ro" \
     -v "${ROOT}/web/src/lib/components/viewers/controller.ts:/src/web/src/lib/components/viewers/controller.ts:ro" \
+    -v "${ROOT}/web/src/lib/fieldEmptiness.cases.json:/src/web/src/lib/fieldEmptiness.cases.json:ro" \
     -w /src/app \
     -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
     -e GOFLAGS -e GOMAXPROCS \

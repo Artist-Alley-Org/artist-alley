@@ -3128,9 +3128,23 @@
     "no_fields": "No collection fields defined. Admins can add them under Fields & metadata.",
     "save": "Save fields",
     "saved": "Custom fields saved.",
-    "save_error": "Failed to save one or more fields.",
+    "save_error": "Some fields didn't save. See the message under each one.",
     "locked_hint": "You don't have permission to edit this field.",
     "required_marker": "required"
+  },
+  "asset_fields": {
+    "section_title": "Custom fields",
+    "no_fields": "No fields are configured for this asset type.",
+    "save": "Save fields",
+    "saved": "Custom fields saved.",
+    "save_error": "Some fields didn't save. See the message under each one."
+  },
+  "field_value": {
+    "read_only_reason": "This field is filled in automatically, so it can't be edited by hand.",
+    "pattern_hint": "Must match: {pattern}",
+    "pattern_violation": "This doesn't match the required format.",
+    "conflict_changed": "Somebody else changed this field while you were editing. Your change wasn't saved. Save again to replace their value.",
+    "conflict_removed": "Somebody else removed this field's value while you were editing. Your change wasn't saved. Save again to write yours."
   },
   "collection_picker": {
     "title_single": "Add to collection",

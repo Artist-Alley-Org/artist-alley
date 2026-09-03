@@ -156,3 +156,247 @@ test.describe('UI-18 collection custom fields', () => {
     await page.request.delete(`/api/v1/collections/${collection.id}?hard=true`);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #1119 / #1389 — REMOVING a value, and what happens when two people
+// edit at once
+// ---------------------------------------------------------------------------
+//
+// The collection modal was the ONLY surface in the product that could
+// edit a field value at all, and it could not remove one. FieldValueInput
+// collapsed an emptied control to null, the save mapped null to
+// `undefined` so the member was OMITTED from the typed PUT, and
+// validateCollectionValueType then refused it ("value_text required for
+// field type text"). What an operator saw was the generic save error, on
+// every attempt, forever. The backend's Clear operation had ZERO web
+// callers.
+//
+// These extend the round-trip above rather than living in their own file
+// because they are the same surface, and because the CL-c discriminator
+// only means anything sitting next to CL-b: "required refuses a removal"
+// is indistinguishable from "removal is broken" unless the optional one
+// works in the same run.
+
+test.describe('#1119 — removing values and per-field conflicts', () => {
+  // Serial: CL-c turns `required` on for a moment, and R2 makes an
+  // active required collection field refuse every create that omits it.
+  test.describe.configure({ mode: 'serial' });
+
+  const RUN = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
+  const fieldIds: string[] = [];
+  let collectionId = '';
+
+  async function makeField(
+    request: import('@playwright/test').APIRequestContext,
+    name: string,
+    body: Record<string, unknown>,
+  ) {
+    const code = `cf_${name}_${RUN}`;
+    const r = await request.post('/api/v1/fields', {
+      data: {
+        code,
+        label: `CF ${name}`,
+        type: 'text',
+        subject_kind: 'collection',
+        display_order: 9300,
+        ...body,
+      },
+    });
+    expect(r.status(), `create field → ${r.status()} ${await r.text()}`).toBe(201);
+    const id = ((await r.json()) as { id: string }).id;
+    fieldIds.push(id);
+    return { id, code };
+  }
+
+  async function putValue(
+    request: import('@playwright/test').APIRequestContext,
+    fieldId: string,
+    data: Record<string, unknown>,
+  ) {
+    const r = await request.put(`/api/v1/collections/${collectionId}/fields/${fieldId}`, { data });
+    expect(r.ok(), `put value → ${r.status()} ${await r.text()}`).toBeTruthy();
+    return (await r.json()) as { set_at: string };
+  }
+
+  async function storedValue(
+    request: import('@playwright/test').APIRequestContext,
+    fieldId: string,
+  ): Promise<Record<string, unknown> | undefined> {
+    const r = await request.get(`/api/v1/collections/${collectionId}/fields`);
+    expect(r.ok()).toBeTruthy();
+    const rows = (await r.json()) as Array<Record<string, unknown>>;
+    return rows.find((v) => v.field_id === fieldId);
+  }
+
+  async function openModal(page: import('@playwright/test').Page) {
+    await page.goto(`/collections/${collectionId}`);
+    await page.getByTestId('collection-detail-more-button').click();
+    await page.getByTestId('collection-detail-edit-menuitem').click();
+    await expect(page.getByTestId('collection-fields-section')).toBeVisible();
+  }
+
+  test.beforeEach(async ({ page }) => {
+    const r = await page.request.post('/api/v1/collections', {
+      data: { name: `UI-18 field-clear ${RUN}` },
+    });
+    expect(r.status()).toBe(201);
+    collectionId = ((await r.json()) as { id: string }).id;
+  });
+
+  test.afterEach(async ({ page }) => {
+    if (collectionId) {
+      await page.request.delete(`/api/v1/collections/${collectionId}?hard=true`).catch(() => undefined);
+      collectionId = '';
+    }
+  });
+
+  test.afterAll(async ({ request }) => {
+    for (const id of fieldIds) {
+      await request.delete(`/api/v1/fields/${id}`).catch(() => undefined);
+    }
+  });
+
+  // CL-b + CL-e + CL-g's storage half, in one pass over the three types
+  // the brief names.
+  test('CL-b / CL-e: emptying the control removes text, multi_select and boolean values', async ({
+    page,
+  }) => {
+    const txt = await makeField(page.request, 'text', {});
+    const ms = await makeField(page.request, 'ms', {
+      type: 'multi_select',
+      options: { values: [{ value: 'alpha', label: 'Alpha' }, { value: 'beta', label: 'Beta' }] },
+    });
+    const bool = await makeField(page.request, 'bool', { type: 'boolean' });
+    const keep = await makeField(page.request, 'keep', {});
+
+    await putValue(page.request, txt.id, { value_text: 'remove me' });
+    await putValue(page.request, ms.id, { value_options: ['alpha', 'beta'] });
+    await putValue(page.request, bool.id, { value_num: 1 });
+    await putValue(page.request, keep.id, { value_text: 'untouched' });
+
+    await openModal(page);
+    await expect(page.getByTestId(`field-input-${txt.code}`)).toHaveValue('remove me');
+
+    await page.getByTestId(`field-input-${txt.code}`).fill('');
+    const chipRemove = page.locator(`[data-testid="vocab-chip-remove-${ms.code}"]`);
+    while ((await chipRemove.count()) > 0) await chipRemove.first().click();
+    // Removing the last chip leaves the combobox's option list open, and
+    // it overlaps the save button in the two-column layout.
+    await page.keyboard.press('Escape');
+    await page.getByTestId(`field-input-${bool.code}`).selectOption('');
+
+    await page.getByTestId('collection-fields-save').click();
+    // ABSENT, not "a generic save error" — which is what every one of
+    // these produced before.
+    await expect(page.getByTestId('collection-fields-saved')).toBeVisible();
+    expect(await storedValue(page.request, txt.id)).toBeUndefined();
+    expect(await storedValue(page.request, ms.id)).toBeUndefined();
+    expect(await storedValue(page.request, bool.id)).toBeUndefined();
+    expect((await storedValue(page.request, keep.id))?.value_text).toBe('untouched');
+  });
+
+  test('CL-c: the same removal against a REQUIRED collection field is refused', async ({ page }) => {
+    // `required` is switched on AFTER the collection exists and the
+    // value is seeded, and switched off again in the `finally`.
+    //
+    // Not tidiness: R2 — collection CREATE's required-presence rule —
+    // is still enforced, so an ACTIVE required collection field makes
+    // every other spec's `POST /collections` answer 422
+    // RequiredCollectionFieldMissing for as long as it is there. A spec
+    // that changes what a parallel spec sees is the isolation failure
+    // #1247 is about, and this one would look like a collections bug.
+    const f = await makeField(page.request, 'req', {});
+    await putValue(page.request, f.id, { value_text: 'stays put' });
+    try {
+      const on = await page.request.patch(`/api/v1/fields/${f.id}`, { data: { required: true } });
+      expect(on.ok(), `mark required → ${on.status()}`).toBeTruthy();
+
+      await openModal(page);
+      await page.getByTestId(`field-input-${f.code}`).fill('');
+      await page.getByTestId('collection-fields-save').click();
+
+      await expect(page.getByTestId(`field-error-${f.code}`)).toBeVisible();
+      await expect(page.getByTestId(`field-error-${f.code}`)).toContainText('required');
+      expect((await storedValue(page.request, f.id))?.value_text).toBe('stays put');
+    } finally {
+      await page.request.patch(`/api/v1/fields/${f.id}`, { data: { required: false } }).catch(() => undefined);
+    }
+  });
+
+  test('CL-g: FALSE is stored and does not clear; the control can tell it from unset', async ({
+    page,
+  }) => {
+    const f = await makeField(page.request, 'boolval', { type: 'boolean' });
+
+    await openModal(page);
+    await page.getByTestId(`field-input-${f.code}`).selectOption('false');
+    await page.getByTestId('collection-fields-save').click();
+    await expect(page.getByTestId('collection-fields-saved')).toBeVisible();
+    const stored = await storedValue(page.request, f.id);
+    expect(stored, 'the row must EXIST — false is an answer').toBeDefined();
+    expect(stored?.value_num).toBe(0);
+
+    // The checkbox this replaced rendered an absent value and a stored
+    // false identically. This is the assertion it could not have passed.
+    await openModal(page);
+    await expect(page.getByTestId(`field-input-${f.code}`)).toHaveValue('false');
+  });
+
+  test('CL-d: a stale removal is refused and the newer value SURVIVES', async ({ page }) => {
+    const f = await makeField(page.request, 'clconf', {});
+    await putValue(page.request, f.id, { value_text: 'loaded at T' });
+
+    await openModal(page);
+    await expect(page.getByTestId(`field-input-${f.code}`)).toHaveValue('loaded at T');
+
+    // Another actor writes a NEWER value.
+    await putValue(page.request, f.id, { value_text: 'newer, from somebody else' });
+
+    // The editor removes from its stale baseline.
+    await page.getByTestId(`field-input-${f.code}`).fill('');
+    await page.getByTestId('collection-fields-save').click();
+
+    await expect(page.getByTestId(`field-conflict-${f.code}`)).toBeVisible();
+    expect(
+      (await storedValue(page.request, f.id))?.value_text,
+      'A STALE CLEAR MUST NOT ERASE A VALUE IT NEVER SAW',
+    ).toBe('newer, from somebody else');
+  });
+
+  test('MX-a: one field saves while another conflicts, independently', async ({ page }) => {
+    const x = await makeField(page.request, 'mxx', {});
+    const y = await makeField(page.request, 'mxy', {});
+    const z = await makeField(page.request, 'mxz', {});
+    await putValue(page.request, x.id, { value_text: 'x original' });
+    await putValue(page.request, y.id, { value_text: 'y original' });
+    await putValue(page.request, z.id, { value_text: 'z untouched' });
+
+    await openModal(page);
+    await page.getByTestId(`field-input-${x.code}`).fill('x mine');
+    await page.getByTestId(`field-input-${y.code}`).fill('y mine');
+
+    await putValue(page.request, y.id, { value_text: 'y from somebody else' });
+
+    await page.getByTestId('collection-fields-save').click();
+
+    // Independent per-field operations, not a batch transaction: Y's
+    // refusal must not cost the person their X edit.
+    await expect(page.getByTestId(`field-conflict-${y.code}`)).toBeVisible();
+    await expect(page.getByTestId(`field-conflict-${x.code}`)).toHaveCount(0);
+    expect((await storedValue(page.request, x.id))?.value_text).toBe('x mine');
+    expect((await storedValue(page.request, y.id))?.value_text).toBe('y from somebody else');
+    expect((await storedValue(page.request, z.id))?.value_text).toBe('z untouched');
+
+    // The retry resolves Y from the re-baselined token and does not
+    // resend X, which already saved.
+    const xRequests: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes(`/fields/${x.id}`)) xRequests.push(r.method());
+    });
+    await page.getByTestId('collection-fields-save').click();
+    await expect(page.getByTestId('collection-fields-saved')).toBeVisible();
+    expect(xRequests, 'X already saved; the retry must not resend it').toEqual([]);
+    expect((await storedValue(page.request, y.id))?.value_text).toBe('y mine');
+    expect((await storedValue(page.request, x.id))?.value_text).toBe('x mine');
+  });
+});
