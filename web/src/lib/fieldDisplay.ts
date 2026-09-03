@@ -186,7 +186,7 @@ export function displayTreePath(f: AssetFieldValue, slug: string, t: Translate):
  * Tags collapse to a space rather than to nothing, so `<li>one</li>
  * <li>two</li>` reads as "one two" and not "onetwo".
  */
-function htmlToPlainText(html: string): string {
+export function htmlToPlainText(html: string): string {
   return html
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')
@@ -300,5 +300,61 @@ export function formatFieldValue(f: AssetFieldValue, t: Translate): FieldDisplay
     }
     default:
       return { text: '' };
+  }
+}
+
+/**
+ * Does this value carry nothing? (#1389)
+ *
+ * The client-side twin of the server's per-type rule
+ * (app/internal/metadata/required.go's `valueIsEmpty`), and it is here
+ * — beside `formatFieldValue` — because the two questions are the same
+ * question. "Does this field have a value" is what `text !== ''` has
+ * always meant on the read side; this states it for the WRITE side,
+ * where an editor has to decide whether an emptied control means
+ * "remove the stored value" or "there was never one".
+ *
+ * The server stays authoritative. This exists so the editor can choose
+ * the right REQUEST — a typed Set, a Clear, or no request at all — not
+ * so it can decide whether a write is allowed.
+ *
+ * `rich_text` goes through `htmlToPlainText` for the reason the server
+ * does not use a bare trim: the sanitiser strips no empty elements, so
+ * `<p><br></p>` is a value that reads as nothing.
+ *
+ * `boolean` is the one to keep an eye on. FALSE is a real answer stored
+ * as `value_num: 0`, and only a null is empty. A truthiness test here
+ * would turn every deliberate "no" into a deletion.
+ */
+export function isFieldValueEmpty(
+  type: AssetFieldValue['type'],
+  v: {
+    value_text?: string | null;
+    value_num?: number | null;
+    value_date?: string | null;
+    value_options?: string[] | null;
+    value_ref?: string | null;
+  },
+): boolean {
+  switch (type) {
+    case 'rich_text':
+      return htmlToPlainText((v.value_text ?? '').trim()) === '';
+    case 'text':
+    case 'longtext':
+    case 'select':
+    case 'tree':
+      return (v.value_text ?? '').trim() === '';
+    case 'multi_select':
+      return (v.value_options ?? []).length === 0;
+    case 'number':
+    case 'boolean':
+      return v.value_num == null;
+    case 'date':
+    case 'datetime':
+      return (v.value_date ?? '') === '';
+    case 'reference':
+      return (v.value_ref ?? '') === '';
+    default:
+      return true;
   }
 }

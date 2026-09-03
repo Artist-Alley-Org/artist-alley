@@ -2,7 +2,15 @@
 // Copyright (C) 2026 Kenneth Blossom
 
 import { describe, it, expect, afterAll, beforeEach } from 'vitest';
-import { formatFieldValue, type AssetFieldValue } from './fieldDisplay';
+import { formatFieldValue, isFieldValueEmpty, type AssetFieldValue } from './fieldDisplay';
+import emptinessCases from './fieldEmptiness.cases.json';
+
+/** The one list both language planes are tested against; see the file. */
+const sharedCases = emptinessCases.rich_text as Array<{
+  input: string;
+  stored: string;
+  empty: boolean;
+}>;
 
 // The formatter takes t() as a parameter precisely so a test does not
 // have to boot the lang store (which pulls in the API client + auth).
@@ -436,5 +444,79 @@ describe('formatFieldValue — scalar types', () => {
     expect(formatFieldValue(value({ type: 'boolean', value_num: 1 }), t)).toEqual({ text: 'Yes' });
     expect(formatFieldValue(value({ type: 'boolean', value_num: 0 }), t)).toEqual({ text: 'No' });
     expect(formatFieldValue(value({ type: 'boolean', value_num: null }), t)).toEqual({ text: '' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isFieldValueEmpty — the write-side twin of the "is this set" test (#1389)
+// ---------------------------------------------------------------------------
+
+describe('isFieldValueEmpty', () => {
+  // The rich_text cases ARE the point. Every one of these survives the
+  // server's sanitiser unchanged (measured against the shipped policy),
+  // so a rule written as a trim accepts a value that renders as nothing
+  // — and an editor built on that rule sends a typed Set where the
+  // person meant "remove this".
+  // The CASES ARE NOT WRITTEN HERE. `rich_text` emptiness is ONE rule
+  // with two implementations: this one, and app/internal/richtext's
+  // IsEmpty, which is what actually refuses the write. They must agree
+  // or a required field renders blank while the server considers it
+  // filled.
+  //
+  // Both suites read the same file, so a change that moves one plane
+  // and not the other fails on the other plane's test. `stored` in it
+  // is MEASURED: what the server's sanitiser actually produced for
+  // `input`. Note the &nbsp; case, whose entity reaches storage as a
+  // literal U+00A0, which is why neither predicate may be written
+  // against the entity string.
+  it('agrees with the server plane over the SHARED case list', () => {
+    expect(sharedCases.length, 'the shared case list is empty').toBeGreaterThan(0);
+    const empties = sharedCases.filter((c) => c.empty).length;
+    expect(empties, 'the list must cover BOTH verdicts').toBeGreaterThan(0);
+    expect(empties, 'the list must cover BOTH verdicts').toBeLessThan(sharedCases.length);
+    for (const c of sharedCases) {
+      expect(
+        isFieldValueEmpty('rich_text', { value_text: c.stored }),
+        `${JSON.stringify(c.input)} stored as ${JSON.stringify(c.stored)}`,
+      ).toBe(c.empty);
+    }
+  });
+
+  it('treats FALSE as a real boolean value and only null as empty', () => {
+    expect(isFieldValueEmpty('boolean', { value_num: 0 })).toBe(false);
+    expect(isFieldValueEmpty('boolean', { value_num: 1 })).toBe(false);
+    expect(isFieldValueEmpty('boolean', { value_num: null })).toBe(true);
+    // Same for a number: zero is a value.
+    expect(isFieldValueEmpty('number', { value_num: 0 })).toBe(false);
+    expect(isFieldValueEmpty('number', { value_num: null })).toBe(true);
+  });
+
+  it('reads the remaining types per their storage column', () => {
+    for (const type of ['text', 'longtext', 'select', 'tree'] as const) {
+      expect(isFieldValueEmpty(type, { value_text: null })).toBe(true);
+      expect(isFieldValueEmpty(type, { value_text: '   ' })).toBe(true);
+      expect(isFieldValueEmpty(type, { value_text: 'x' })).toBe(false);
+    }
+    expect(isFieldValueEmpty('multi_select', { value_options: null })).toBe(true);
+    expect(isFieldValueEmpty('multi_select', { value_options: [] })).toBe(true);
+    expect(isFieldValueEmpty('multi_select', { value_options: ['a'] })).toBe(false);
+    expect(isFieldValueEmpty('date', { value_date: null })).toBe(true);
+    expect(isFieldValueEmpty('datetime', { value_date: '2026-01-01T00:00:00Z' })).toBe(false);
+    expect(isFieldValueEmpty('reference', { value_ref: null })).toBe(true);
+    expect(isFieldValueEmpty('reference', { value_ref: 'abc' })).toBe(false);
+  });
+
+  // The read side and the write side must agree, or a required field
+  // renders blank while the editor believes it holds something.
+  it('agrees with formatFieldValue about which rich_text values are set', () => {
+    // The write-side predicate and the read-side "does this field have
+    // a value" test (`text !== ''`) are the same question, and a field
+    // that displays as filled while the editor treats it as removable
+    // is the divergence this pair exists to prevent.
+    for (const c of sharedCases) {
+      const showsBlank =
+        formatFieldValue(value({ type: 'rich_text', value_text: c.stored }), t).text === '';
+      expect(isFieldValueEmpty('rich_text', { value_text: c.stored }), c.stored).toBe(showsBlank);
+    }
   });
 });

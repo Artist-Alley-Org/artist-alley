@@ -1316,3 +1316,162 @@ writers already share so the two cannot describe one refusal differently. Two ne
 `field_read_only` and `pattern_mismatch`. Deliberately not 403 for the first: no capability grants
 it and no grant would lift it, so a permission code would send an operator hunting for a role that
 does not exist. The thing to change is the field's configuration.
+
+## Amendment 2026-09-02 — `required` means something on the WRITE path, and a field value is its own concurrency unit (#1389, #1119)
+
+**Status:** accepted. No migration. No new column: the token this rests on, `set_at`, has been
+on both value tables since the baseline and has always advanced per row.
+
+An operator could set `required` on a field, and on the ordinary value-write paths nothing
+enforced it, on either subject kind. The package held exactly two `fieldRow.Required` checks and
+both were inside the MIRRORED helpers, so the flag reached `title` and `description` and nothing
+else. `SetAssetFieldValue`, `ClearAssetFieldValue`, `SetCollectionFieldValue` and
+`ClearCollectionFieldValue` contained zero between them. An empty write was accepted and the value
+could be deleted outright.
+
+It stayed invisible for two sprints for a specific reason: `title` is required AND mirrored, so
+every reproduction written against the obvious field passed.
+
+### R1 and R2 are different rules, and merging them breaks the product
+
+**R1, the later-write rule.** A later HUMAN `Set` may not write an EMPTY value into a required
+field, and a later HUMAN `Clear` of one is refused. It applies to the four ordinary field-value
+handlers, on assets and collections alike, and it answers 422 `FieldValueUnprocessable` with the
+new reason `field_required` — the same body the read-only and pattern refusals already share, so
+the two subject kinds cannot describe one refusal differently.
+
+**R2, the create-time rule.** Collection CREATE separately requires values for required collection
+fields and answers 422 `RequiredCollectionFieldMissing`. Unchanged, and deliberately NOT widened.
+
+**Asset creation keeps no completeness gate at all.** `POST /assets` writes no
+`asset_field_value` rows — `AssetCreate.metadata` lands in the `assets` JSONB column — so the
+two-action guarantee holds: drop a file, press publish, nothing required.
+
+### The write matrix, and why the collection seed is exempt
+
+| writer | class | R1 |
+|---|---|---|
+| `SetAssetFieldValue` / `ClearAssetFieldValue` | human edit / removal | enforced |
+| `SetCollectionFieldValue` / `ClearCollectionFieldValue` | human edit / removal | enforced |
+| `SeedCollectionFieldValueInTx` | human INITIAL, from the create body | exempt |
+| `ApplyAssetDefaults` | system | exempt |
+| the extraction adapter's `WriteAssetFieldValue` | system | exempt |
+| `mirrorFill` | system | exempt |
+
+The seed is a HUMAN write on three counts — its own doc says required-field validation is the
+caller's job and already happened pre-transaction, `ValidateCollectionSeedValues` pattern-checks it
+because `regexp_filter` validates human input, and the 2026-09-01 amendment above carves it out
+because "the create body MAY seed an initial value; every later write is refused". Its exemption
+comes from the R1/R2 BOUNDARY, not from provenance: it is the create body, which is R2's business,
+and R2 already demands a value be there.
+
+The three system exemptions are STRUCTURAL, exactly as `read_only`'s are. Those call sites are
+different Go functions with no OpenAPI operation and no route, which is why
+`AssetFieldValueWrite.set_by` has no `default` or `mirror` member. There is deliberately no
+caller-supplied `initial` or `system` bypass, for the reason the read-only amendment gives: a
+boolean a caller can send is a boolean a caller can lie about.
+
+### What EMPTY means, per type, and why `rich_text` is not a trim
+
+| type | empty |
+|---|---|
+| `text`, `longtext`, `select`, `tree` | `value_text` NULL, or whitespace-only |
+| `rich_text` | SEMANTIC emptiness — see below |
+| `multi_select` | `value_options` NULL or zero-length |
+| `number`, `boolean` | `value_num` NULL |
+| `date`, `datetime` | `value_date` NULL |
+| `reference` | `value_ref` NULL |
+
+**FALSE is a real boolean value.** `value_num = 0` is a deliberate "no" and is never empty; only a
+NULL is. A rule written as a truthiness test would delete every one of them.
+
+**`rich_text` is measured, not assumed.** The mirrored helper's `strings.TrimSpace` test is
+text-shaped, and the stored form of a rich-text value is sanitised HTML. Nothing in
+`richtext.Sanitize` removes empty elements, and against the shipped policy these all survive it
+unchanged:
+
+```
+"<p></p>"  "<p><br></p>"  "<p>   </p>"  "<br>"  "<ul><li></li></ul>"  "<blockquote></blockquote>"
+```
+
+`<p>&nbsp;</p>` survives with the entity decoded to a literal U+00A0, which is why the predicate is
+written against the CHARACTER and never against the entity string. So a TrimSpace implementation
+accepts a required rich-text value that renders as nothing at all, and the field then reads blank
+while the server considers it filled.
+
+The rule is therefore the server-authoritative TWIN of the display rule the frontend already
+ships: `web/src/lib/fieldDisplay.ts`'s `htmlToPlainText`, whose output feeds the field count and
+the "is this set" test. ONE rule, in `app/internal/richtext` beside `Sanitize` — the package that
+already decides what a rich-text value IS, and callable from outside `metadata` because the batch
+work in 20c needs it too.
+
+### The per-field concurrency boundary
+
+**The token is the VALUE ROW'S OWN `set_at`.** Never `assets.updated_at` and never the
+collection's. Two people editing two different fields of one record are not in conflict, and a
+subject-level token would make them so on every busy record. Both upserts already write
+`set_at = NOW()` on INSERT and inside `ON CONFLICT DO UPDATE`, and both response schemas already
+carry `set_at` as required, so the token a client needs was already in its hands.
+
+Three states on a write:
+
+- `if_unchanged_since` — guarded write against an EXISTING row.
+- `if_absent: true` — guarded FIRST write, against absence.
+- neither — UNGUARDED last-write-wins, **unchanged**, and not a legacy accident to be tightened
+  later: the upload flush depends on it and so does every non-edit-surface caller.
+
+The two are mutually exclusive and sending both is a 400. `if_unchanged_since` on a row that does
+not exist is a **409, not an insert**: a timestamp is a claim that a particular version is still
+there, and silently resurrecting a value somebody cleared is the refused update wearing a disguise.
+A `Clear` carries the guard as a QUERY PARAMETER, because a DELETE has no body; it has no
+`if_absent` companion, since "remove it only if it is not there" has nothing to remove.
+
+The 409 body is `AssetFieldValueConflict` / `CollectionFieldValueConflict`, with `current`
+**required and nullable** so the key is ALWAYS present. `present: false` carries `current: null`
+and no fabricated `set_at`; an omitted key would be indistinguishable from a server that forgot to
+send one, and the client could not tell "removed" from "unknown".
+
+### The ATOMICITY guarantee, stated because the wrong answer is the easy one
+
+For every guarded mutation, **the precondition and the mutation are ONE STATEMENT**. A handler-side
+read, a comparison, and then the existing unconditional upsert or delete DOES NOT SATISFY THIS, and
+it is the path of least resistance.
+
+The reason is the isolation level. All four handlers open their transaction with
+`pgx.TxOptions{}` — empty options, so READ COMMITTED, where a non-locking `SELECT` takes no lock at
+all. The gap between such a read and the write that follows it fits an entire competing request,
+and every single-threaded test passes anyway. Measured: the read-compare-write variant passes the
+whole sequential guard matrix and answers `200 / 200` for two overlapping guarded Sets and
+`204 / 204` for two overlapping guarded Clears.
+
+So the guard is the WHERE clause of the statement that mutates — `UPDATE … WHERE set_at = $token`,
+`DELETE … WHERE set_at = $token`, and `INSERT … ON CONFLICT DO NOTHING` for the first-write arm,
+where the unique index is the precondition and no read participates. At READ COMMITTED a statement
+that meets a row another transaction is writing blocks and then re-evaluates its own WHERE against
+the version that transaction committed, so a second contender guarding on the same token cannot
+match after the first lands. A zero-row result IS the conflict, which is why each of these is
+`:one` where both deletes were previously `:exec` and surfaced no affected-row count.
+
+### Mirrored fields are EXCLUDED from the per-field contract
+
+`title` and `description` are views onto columns of `assets`. There is no `asset_field_value` row
+to carry a `set_at` — `AssetFieldValue.set_at` for a mirrored read is the asset's `updated_at`
+wearing the field shape — so a per-field token would guard a column against a timestamp from a
+different plane, on a value `PATCH /assets/{id}` can change without this endpoint ever seeing it.
+Both guards are refused with 400 naming the asset plane, which already has
+`AssetUpdate.if_unchanged_since` for exactly this. Unguarded mirrored writes are unchanged, and so
+are their own `required` refusals: those are the asset plane's rule, and R1 must not reach them or
+the two planes start describing one refusal differently.
+
+### The consequence for editors
+
+The `required` flag now has a meaning a person meets, which means the surfaces have to be able to
+meet it. `/assets/{id}/edit` renders field values for the first time, and the emptying interaction
+every typed control already had now becomes a CLEAR on the wire rather than a typed write with its
+value member omitted — which is what it was, and which both validators refused, so removing an
+optional value was impossible from any surface in the product.
+
+`boolean` was the one control that could not represent unset, and worse, could not DISPLAY the
+difference: a checkbox rendered an absent value and a stored `false` identically and always emitted
+1 or 0. It is a three-state select now, so emptying it is the same gesture as emptying a `select`
+and no Clear button had to be invented for one type.

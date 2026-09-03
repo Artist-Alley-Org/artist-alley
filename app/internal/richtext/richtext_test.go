@@ -4,6 +4,8 @@
 package richtext_test
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -143,4 +145,69 @@ func TestSanitizeValueTextPassesNilThrough(t *testing.T) {
 	if got := richtext.SanitizeValueText(richtext.FieldType, nil); got != nil {
 		t.Fatalf("nil became %v — an unset value is not an empty one", got)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Semantic emptiness, against the SHARED case list (#1389)
+// ---------------------------------------------------------------------------
+
+// The rule for "is this rich_text value empty" has two implementations,
+// one per language: IsEmpty here, and isFieldValueEmpty /
+// htmlToPlainText in web/src/lib/fieldDisplay.ts. They must agree, or a
+// required field renders blank while the server considers it filled —
+// and the editor decides between a Set and a Clear on the frontend's
+// answer while the server enforces on its own.
+//
+// So the CASES ARE NOT WRITTEN HERE. Both suites read the same file, in
+// the shape #956 established for exactly this problem: a mirror is only
+// as good as a test that reads the other side rather than a second copy
+// of what it is supposed to say.
+//
+// `stored` in that file is what Sanitize actually produced for `input`,
+// so this asserts three things at once: the sanitiser still behaves the
+// way the rule was designed around, the predicate agrees with the
+// recorded verdict, and the frontend is testing the same values.
+func TestIsEmpty_SharedCaseList(t *testing.T) {
+	const path = "../../../web/src/lib/fieldEmptiness.cases.json"
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		// The Go suite runs in a container that mounts only the paths a
+		// test actually reads; scripts/test.sh mounts this one. A skip
+		// here means the mount was dropped, which is how the catalogue
+		// guard #956 went quietly green for months — so say what is
+		// wrong rather than reporting a pass.
+		t.Skipf("shared case list not readable at %s (scripts/test.sh must mount it): %v", path, err)
+	}
+	var doc struct {
+		RichText []struct {
+			Input  string `json:"input"`
+			Stored string `json:"stored"`
+			Empty  bool   `json:"empty"`
+		} `json:"rich_text"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	if len(doc.RichText) == 0 {
+		t.Fatal("the shared case list is empty, so this test proves nothing")
+	}
+	empties := 0
+	for _, c := range doc.RichText {
+		if got := richtext.Sanitize(c.Input); got != c.Stored {
+			t.Errorf("Sanitize(%q) = %q, the case list records %q — the measured behaviour the rule was built on has changed",
+				c.Input, got, c.Stored)
+		}
+		if got := richtext.IsEmpty(c.Stored); got != c.Empty {
+			t.Errorf("IsEmpty(%q) = %v, want %v (from input %q)", c.Stored, got, c.Empty, c.Input)
+		}
+		if c.Empty {
+			empties++
+		}
+	}
+	// A list that drifted to all-empty or all-full would still pass
+	// every assertion above while testing nothing.
+	if empties == 0 || empties == len(doc.RichText) {
+		t.Fatalf("the case list must cover BOTH verdicts; %d of %d are empty", empties, len(doc.RichText))
+	}
+	t.Logf("%d shared cases, %d empty / %d not", len(doc.RichText), empties, len(doc.RichText)-empties)
 }

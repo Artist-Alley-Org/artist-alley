@@ -1,0 +1,156 @@
+{
+  "_": [
+    "THE ONE LIST BOTH PLANES ARE TESTED AGAINST (#1389).",
+    "",
+    "`rich_text` is the only field type whose stored value is markup, and the",
+    "rule for whether one is EMPTY therefore cannot be a trim: richtext.Sanitize",
+    "strips no empty elements, so <p><br></p> survives it, trims to itself, and",
+    "would pass a required check while rendering as nothing at all.",
+    "",
+    "So there is ONE rule with two implementations, one per language:",
+    "  app/internal/richtext.IsEmpty   (server-authoritative, refuses the write)",
+    "  web/src/lib/fieldDisplay.ts     (isFieldValueEmpty / htmlToPlainText,",
+    "                                   which the field count and the editor's",
+    "                                   Set-versus-Clear decision are built on)",
+    "",
+    "Two implementations of one rule drift. This file is what stops them: both",
+    "suites READ IT rather than carrying their own copy of the case list, so a",
+    "change that moves one plane and not the other fails on the other plane's",
+    "test rather than being noticed by somebody looking at a blank field.",
+    "",
+    "`stored` is MEASURED, not asserted from memory: it is what richtext.Sanitize",
+    "actually produced for `input`. Note <p>&nbsp;</p>, whose entity reaches",
+    "storage as a literal U+00A0 — which is why neither predicate may be written",
+    "against the entity string.",
+    "",
+    "Read by app/internal/richtext/richtext_test.go and",
+    "web/src/lib/fieldDisplay.test.ts. If you add a case here, both pick it up."
+  ],
+  "rich_text": [
+    {
+      "input": "",
+      "stored": "",
+      "empty": true
+    },
+    {
+      "input": "   ",
+      "stored": "   ",
+      "empty": true
+    },
+    {
+      "input": "\t\n ",
+      "stored": "\t\n ",
+      "empty": true
+    },
+    {
+      "input": "<p></p>",
+      "stored": "<p></p>",
+      "empty": true
+    },
+    {
+      "input": "<p><br></p>",
+      "stored": "<p><br></p>",
+      "empty": true
+    },
+    {
+      "input": "<p>   </p>",
+      "stored": "<p>   </p>",
+      "empty": true
+    },
+    {
+      "input": "<br>",
+      "stored": "<br>",
+      "empty": true
+    },
+    {
+      "input": "<p>&nbsp;</p>",
+      "stored": "<p> </p>",
+      "empty": true
+    },
+    {
+      "input": "<ul><li></li></ul>",
+      "stored": "<ul><li></li></ul>",
+      "empty": true
+    },
+    {
+      "input": "<ol><li></li></ol>",
+      "stored": "<ol><li></li></ol>",
+      "empty": true
+    },
+    {
+      "input": "<blockquote></blockquote>",
+      "stored": "<blockquote></blockquote>",
+      "empty": true
+    },
+    {
+      "input": "<p></p><p></p>",
+      "stored": "<p></p><p></p>",
+      "empty": true
+    },
+    {
+      "input": "<div></div>",
+      "stored": "",
+      "empty": true
+    },
+    {
+      "input": "<script>alert(1)</script>",
+      "stored": "",
+      "empty": true
+    },
+    {
+      "input": "<p><strong></strong></p>",
+      "stored": "<p><strong></strong></p>",
+      "empty": true
+    },
+    {
+      "input": "<h3></h3>",
+      "stored": "<h3></h3>",
+      "empty": true
+    },
+    {
+      "input": "<p>real</p>",
+      "stored": "<p>real</p>",
+      "empty": false
+    },
+    {
+      "input": "<p><strong>hi</strong></p>",
+      "stored": "<p><strong>hi</strong></p>",
+      "empty": false
+    },
+    {
+      "input": "<p> a </p>",
+      "stored": "<p> a </p>",
+      "empty": false
+    },
+    {
+      "input": "<ul><li>one</li><li>two</li></ul>",
+      "stored": "<ul><li>one</li><li>two</li></ul>",
+      "empty": false
+    },
+    {
+      "input": "<p>a &amp; b</p>",
+      "stored": "<p>a &amp; b</p>",
+      "empty": false
+    },
+    {
+      "input": "<p>&amp;lt;</p>",
+      "stored": "<p>&amp;lt;</p>",
+      "empty": false
+    },
+    {
+      "input": "<blockquote>quoted</blockquote>",
+      "stored": "<blockquote>quoted</blockquote>",
+      "empty": false
+    },
+    {
+      "input": "<p>0</p>",
+      "stored": "<p>0</p>",
+      "empty": false
+    },
+    {
+      "input": "<p>&nbsp;x&nbsp;</p>",
+      "stored": "<p> x </p>",
+      "empty": false
+    }
+  ]
+}

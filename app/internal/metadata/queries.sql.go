@@ -205,6 +205,42 @@ func (q *Queries) DeleteAssetFieldValue(ctx context.Context, arg DeleteAssetFiel
 	return err
 }
 
+const deleteAssetFieldValueIfUnchanged = `-- name: DeleteAssetFieldValueIfUnchanged :one
+DELETE FROM asset_field_value
+WHERE asset_id = $1
+  AND field_id = $2
+  AND set_at   = $3
+RETURNING asset_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type DeleteAssetFieldValueIfUnchangedParams struct {
+	AssetID          pgtype.UUID
+	FieldID          pgtype.UUID
+	IfUnchangedSince pgtype.Timestamptz
+}
+
+// Guarded removal. RETURNING carries the row that was deleted, so the
+// history entry is written from what was actually removed rather than
+// from a snapshot taken before the statement ran.
+func (q *Queries) DeleteAssetFieldValueIfUnchanged(ctx context.Context, arg DeleteAssetFieldValueIfUnchangedParams) (AssetFieldValue, error) {
+	row := q.db.QueryRow(ctx, deleteAssetFieldValueIfUnchanged, arg.AssetID, arg.FieldID, arg.IfUnchangedSince)
+	var i AssetFieldValue
+	err := row.Scan(
+		&i.AssetID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
+}
+
 const deleteCollectionFieldValue = `-- name: DeleteCollectionFieldValue :exec
 DELETE FROM collection_field_value
 WHERE collection_id = $1 AND field_id = $2
@@ -218,6 +254,39 @@ type DeleteCollectionFieldValueParams struct {
 func (q *Queries) DeleteCollectionFieldValue(ctx context.Context, arg DeleteCollectionFieldValueParams) error {
 	_, err := q.db.Exec(ctx, deleteCollectionFieldValue, arg.CollectionID, arg.FieldID)
 	return err
+}
+
+const deleteCollectionFieldValueIfUnchanged = `-- name: DeleteCollectionFieldValueIfUnchanged :one
+DELETE FROM collection_field_value
+WHERE collection_id = $1
+  AND field_id      = $2
+  AND set_at        = $3
+RETURNING collection_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type DeleteCollectionFieldValueIfUnchangedParams struct {
+	CollectionID     pgtype.UUID
+	FieldID          pgtype.UUID
+	IfUnchangedSince pgtype.Timestamptz
+}
+
+func (q *Queries) DeleteCollectionFieldValueIfUnchanged(ctx context.Context, arg DeleteCollectionFieldValueIfUnchangedParams) (CollectionFieldValue, error) {
+	row := q.db.QueryRow(ctx, deleteCollectionFieldValueIfUnchanged, arg.CollectionID, arg.FieldID, arg.IfUnchangedSince)
+	var i CollectionFieldValue
+	err := row.Scan(
+		&i.CollectionID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
 }
 
 const deleteFieldDefaultOverride = `-- name: DeleteFieldDefaultOverride :execrows
@@ -608,6 +677,135 @@ func (q *Queries) InsertAssetFieldValueIfAbsent(ctx context.Context, arg InsertA
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const insertAssetFieldValueWhenAbsent = `-- name: InsertAssetFieldValueWhenAbsent :one
+INSERT INTO asset_field_value (
+    asset_id, field_id,
+    value_text, value_num, value_date, value_options, value_ref,
+    set_by, set_at, set_by_user_ref
+) VALUES (
+    $1, $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    NOW(),
+    $9
+)
+ON CONFLICT (asset_id, field_id) DO NOTHING
+RETURNING asset_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type InsertAssetFieldValueWhenAbsentParams struct {
+	AssetID      pgtype.UUID
+	FieldID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+	SetBy        string
+	SetByUserRef *int64
+}
+
+// (Named apart from the defaults path's InsertAssetFieldValueIfAbsent,
+// which is the same ON CONFLICT DO NOTHING primitive with `set_by`
+// hard-wired to 'default' and no returned row.)
+// Guarded first write. The unique index (asset_id, field_id) IS the
+// precondition, so no read participates at all: a competing inserter
+// waits on the in-progress tuple and then takes DO NOTHING, and
+// exactly one row survives two overlapping attempts.
+func (q *Queries) InsertAssetFieldValueWhenAbsent(ctx context.Context, arg InsertAssetFieldValueWhenAbsentParams) (AssetFieldValue, error) {
+	row := q.db.QueryRow(ctx, insertAssetFieldValueWhenAbsent,
+		arg.AssetID,
+		arg.FieldID,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+		arg.SetBy,
+		arg.SetByUserRef,
+	)
+	var i AssetFieldValue
+	err := row.Scan(
+		&i.AssetID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
+}
+
+const insertCollectionFieldValueWhenAbsent = `-- name: InsertCollectionFieldValueWhenAbsent :one
+INSERT INTO collection_field_value (
+    collection_id, field_id,
+    value_text, value_num, value_date, value_options, value_ref,
+    set_by, set_at, set_by_user_ref
+) VALUES (
+    $1, $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    NOW(),
+    $9
+)
+ON CONFLICT (collection_id, field_id) DO NOTHING
+RETURNING collection_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type InsertCollectionFieldValueWhenAbsentParams struct {
+	CollectionID pgtype.UUID
+	FieldID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+	SetBy        string
+	SetByUserRef *int64
+}
+
+func (q *Queries) InsertCollectionFieldValueWhenAbsent(ctx context.Context, arg InsertCollectionFieldValueWhenAbsentParams) (CollectionFieldValue, error) {
+	row := q.db.QueryRow(ctx, insertCollectionFieldValueWhenAbsent,
+		arg.CollectionID,
+		arg.FieldID,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+		arg.SetBy,
+		arg.SetByUserRef,
+	)
+	var i CollectionFieldValue
+	err := row.Scan(
+		&i.CollectionID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
 }
 
 const listAssetDefaultCandidates = `-- name: ListAssetDefaultCandidates :many
@@ -1404,16 +1602,39 @@ SELECT id, code, label, description, type, options, required, searchable,
        show_in_advanced_search, show_on_upload, edit_tab,
        read_only, regexp_filter
 FROM field_definition
-WHERE status = 'active'
+WHERE (
+        CASE WHEN $1::TEXT IS NULL
+             THEN status <> 'archived'
+             ELSE status = $1::TEXT
+        END
+      )
   AND subject_kind = 'asset'
-  AND (cardinality(applies_to) = 0 OR $1::BIGINT = ANY(applies_to))
+  AND (cardinality(applies_to) = 0 OR $2::BIGINT = ANY(applies_to))
 ORDER BY display_group, display_order, code
 `
 
+type ListFieldDefinitionsForAssetTypeParams struct {
+	Status *string
+	Rt     int64
+}
+
 // Like ListFieldDefinitions but only fields whose applies_to is
 // empty (applies to all) OR contains the given asset_type ref.
-func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64) ([]FieldDefinition, error) {
-	rows, err := q.db.Query(ctx, listFieldDefinitionsForAssetType, rt)
+//
+// STATUS SEMANTICS ARE THE SAME ONES ListFieldDefinitions CARRIES
+// (#528, #1389). This query pinned `status = 'active'` and had no
+// status parameter at all, which made "which fields are live" answer
+// differently depending on whether an unrelated filter was present —
+// and left the asset edit surface unable to ask for the definitions a
+// record may legitimately still hold values on. Deprecated definitions
+// are not tombstones; archived ones are.
+//
+// The active-only narrowing did not disappear, it MOVED to the caller
+// that owns it. A composer offering fields for a NEW value passes
+// status=active, which the upload form already did; an editor passes
+// no status and gets active + deprecated.
+func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, arg ListFieldDefinitionsForAssetTypeParams) ([]FieldDefinition, error) {
+	rows, err := q.db.Query(ctx, listFieldDefinitionsForAssetType, arg.Status, arg.Rt)
 	if err != nil {
 		return nil, err
 	}
@@ -1847,6 +2068,166 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.EditTab,
 		&i.ReadOnly,
 		&i.RegexpFilter,
+	)
+	return i, err
+}
+
+const updateAssetFieldValueIfUnchanged = `-- name: UpdateAssetFieldValueIfUnchanged :one
+
+UPDATE asset_field_value SET
+    value_text      = $1,
+    value_num       = $2,
+    value_date      = $3,
+    value_options   = $4,
+    value_ref       = $5,
+    set_by          = $6,
+    set_at          = NOW(),
+    set_by_user_ref = $7
+WHERE asset_id = $8
+  AND field_id = $9
+  AND set_at   = $10
+RETURNING asset_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type UpdateAssetFieldValueIfUnchangedParams struct {
+	ValueText        *string
+	ValueNum         *float64
+	ValueDate        pgtype.Timestamptz
+	ValueOptions     []string
+	ValueRef         pgtype.UUID
+	SetBy            string
+	SetByUserRef     *int64
+	AssetID          pgtype.UUID
+	FieldID          pgtype.UUID
+	IfUnchangedSince pgtype.Timestamptz
+}
+
+// ---------------------------------------------------------------------------
+// GUARDED field-value mutation (#1119) — the precondition and the
+// mutation are ONE STATEMENT.
+//
+// Every handler here runs BeginTx with EMPTY options, so the isolation
+// level is READ COMMITTED and a plain SELECT takes no lock. A
+// handler-side "read the row, compare set_at, then run the
+// unconditional upsert" would therefore be two statements with a
+// window between them that a competing writer fits through entirely,
+// and it would read as correct in every single-threaded test. It is not
+// correct, and it is the path of least resistance, so it is written
+// down here as the thing these queries exist instead of.
+//
+// The guard is the WHERE clause. At READ COMMITTED an UPDATE or DELETE
+// that meets a row another transaction is currently writing BLOCKS,
+// and then re-evaluates its own WHERE against the version that
+// transaction committed (EvalPlanQual). So a second contender guarding
+// on the same `set_at` cannot match after the first one lands: its
+// predicate is re-checked against the new row, `set_at` has advanced,
+// and it affects zero rows. The zero-row result IS the conflict, which
+// is why every one of these is `:one` — sqlc surfaces it as
+// pgx.ErrNoRows, where `:exec` surfaced nothing at all.
+//
+// The token is the value row's OWN set_at, never the subject's
+// updated_at: two people editing two different fields of one asset are
+// not in conflict. Both upserts already write set_at = NOW() on INSERT
+// and on UPDATE, so no migration is needed to make the token advance.
+// ---------------------------------------------------------------------------
+// Guarded Set against an EXISTING row. Zero rows means either the row
+// is gone or somebody else wrote it; the handler reads the current
+// state afterwards to say which, and stores nothing either way.
+//
+// Deliberately an UPDATE and not an upsert: `if_unchanged_since` on a
+// row that does not exist is a 409, not an insert. A timestamp is a
+// claim that a particular version is still there, and resurrecting a
+// value somebody cleared would be the write that was refused wearing a
+// disguise.
+func (q *Queries) UpdateAssetFieldValueIfUnchanged(ctx context.Context, arg UpdateAssetFieldValueIfUnchangedParams) (AssetFieldValue, error) {
+	row := q.db.QueryRow(ctx, updateAssetFieldValueIfUnchanged,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+		arg.SetBy,
+		arg.SetByUserRef,
+		arg.AssetID,
+		arg.FieldID,
+		arg.IfUnchangedSince,
+	)
+	var i AssetFieldValue
+	err := row.Scan(
+		&i.AssetID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
+}
+
+const updateCollectionFieldValueIfUnchanged = `-- name: UpdateCollectionFieldValueIfUnchanged :one
+
+UPDATE collection_field_value SET
+    value_text      = $1,
+    value_num       = $2,
+    value_date      = $3,
+    value_options   = $4,
+    value_ref       = $5,
+    set_by          = $6,
+    set_at          = NOW(),
+    set_by_user_ref = $7
+WHERE collection_id = $8
+  AND field_id      = $9
+  AND set_at        = $10
+RETURNING collection_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type UpdateCollectionFieldValueIfUnchangedParams struct {
+	ValueText        *string
+	ValueNum         *float64
+	ValueDate        pgtype.Timestamptz
+	ValueOptions     []string
+	ValueRef         pgtype.UUID
+	SetBy            string
+	SetByUserRef     *int64
+	CollectionID     pgtype.UUID
+	FieldID          pgtype.UUID
+	IfUnchangedSince pgtype.Timestamptz
+}
+
+// The collection twins of the three guarded asset statements. See
+// UpdateAssetFieldValueIfUnchanged for why the guard is the WHERE
+// clause rather than a handler-side read, and why each is `:one`.
+func (q *Queries) UpdateCollectionFieldValueIfUnchanged(ctx context.Context, arg UpdateCollectionFieldValueIfUnchangedParams) (CollectionFieldValue, error) {
+	row := q.db.QueryRow(ctx, updateCollectionFieldValueIfUnchanged,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+		arg.SetBy,
+		arg.SetByUserRef,
+		arg.CollectionID,
+		arg.FieldID,
+		arg.IfUnchangedSince,
+	)
+	var i CollectionFieldValue
+	err := row.Scan(
+		&i.CollectionID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
 	)
 	return i, err
 }

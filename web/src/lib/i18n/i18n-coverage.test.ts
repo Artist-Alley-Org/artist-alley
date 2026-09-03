@@ -100,7 +100,7 @@ const TRACKED_FILES = [
   //   column cannot be retargeted, and an operator running in another
   //   language has to be able to read that. —
   'src/routes/admin/fields/[code]/+page.svelte',
-  'src/lib/components/CollectionFieldsSection.svelte',
+  'src/lib/components/FieldValuesSection.svelte',
   'src/routes/admin/federation/peers/+page.svelte',
   'src/routes/admin/federation/directories/+page.svelte',
   // — 1.55.V-2 MUST-tier surfaces (now clean) —
