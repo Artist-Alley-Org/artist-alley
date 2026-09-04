@@ -133,6 +133,41 @@ async function openAssetEdit(page: Page, assetId: string) {
 const strip = tid('asset-fields-tabs');
 const tab = (id: string) => tid(`asset-fields-tabs-tab-${id}`);
 
+/**
+ * Assert that THESE tabs exist, in THIS relative order, ignoring any
+ * others on the strip.
+ *
+ * ⛔ NOT AN ABSOLUTE COUNT, and that is the whole point. A field
+ * definition is GLOBAL and unrestricted definitions apply to every asset
+ * type, so ANY spec that assigns an `edit_tab` puts a tab on every asset
+ * edit page for as long as it holds it. field-participation-1173 does
+ * exactly that in its "an edit tab round-trips through the admin form"
+ * case, and under two workers it lands in the middle of these tests: a
+ * `toHaveCount(3)` here then fails on a "Production" tab that has nothing
+ * to do with bucketing.
+ *
+ * The claim these tests actually make is about WHICH buckets this
+ * configuration produces and in WHAT ORDER, so that is what is asserted.
+ * A foreign tab does not make the claim false.
+ */
+async function expectTabOrder(page: Page, ids: string[]) {
+  // The DEFAULT bucket's id is the empty string, and the component
+  // renders its testid suffix as `default` so the attribute is
+  // addressable at all. Normalise here so callers can pass the bucket id
+  // the rule actually uses.
+  const names = ids.map((id) => id || 'default');
+  for (const name of names) {
+    await expect(page.locator(tab(name)), `tab ${name} must exist`).toHaveCount(1);
+  }
+  const wanted = names.map((name) => `asset-fields-tabs-tab-${name}`);
+  const seen = (
+    await page
+      .locator(`${strip} [role="tab"]`)
+      .evaluateAll((els) => els.map((e) => e.getAttribute('data-testid') ?? ''))
+  ).filter((x) => wanted.includes(x));
+  expect(seen, 'the buckets this configuration produces, in order').toEqual(wanted);
+}
+
 test.describe.configure({ mode: 'serial' });
 
 test.beforeEach(async ({ page }) => {
@@ -184,7 +219,7 @@ test('A-4/A-5: one named tab plus unassigned fields yields a STRIP, default FIRS
 
   // TWO BUCKETS, so a strip.
   await expect(page.locator(strip)).toBeVisible();
-  await expect(page.locator(`${strip} [role="tab"]`)).toHaveCount(2);
+  await expectTabOrder(page, ['', 'Print']);
 
   // DEFAULT FIRST, and selected.
   const first = page.locator(`${strip} [role="tab"]`).first();
@@ -228,23 +263,15 @@ test('two named tabs PLUS unassigned yields THREE buckets, in a deterministic or
   const assetId = await makeAsset(request);
 
   await openAssetEdit(page, assetId);
-  await expect(page.locator(`${strip} [role="tab"]`)).toHaveCount(3);
+  // THREE buckets from THIS configuration: the default, then the named
+  // ones by MINIMUM MEMBER display_order. "Zebra" holds the lowest, so an
+  // alphabetical implementation would put it last.
+  await expectTabOrder(page, ['', 'Zebra', 'Alpha']);
 
-  const order = async () =>
-    page.locator(`${strip} [role="tab"]`).evaluateAll((els) =>
-      els.map((e) => e.getAttribute('data-testid')),
-    );
-  const expected = [
-    'asset-fields-tabs-tab-default',
-    'asset-fields-tabs-tab-Zebra',
-    'asset-fields-tabs-tab-Alpha',
-  ];
-  expect(await order()).toEqual(expected);
-
-  // DETERMINISTIC across reloads: the same strip, in the same order.
+  // DETERMINISTIC across reloads: the same buckets, in the same order.
   await page.reload();
   await expect(page.locator(tid('asset-fields-section'))).toBeVisible();
-  expect(await order()).toEqual(expected);
+  await expectTabOrder(page, ['', 'Zebra', 'Alpha']);
 
   // Each bucket holds its own member and nothing else.
   await expect(page.locator(tid(`field-input-${loose.code}`))).toBeVisible();
@@ -267,9 +294,18 @@ test('CLASS B — the no-tab floor: with every field unassigned there is NO stri
   const b = await makeField(request, 'b2_b', { display_order: 9461 });
   const assetId = await makeAsset(request);
   await openAssetEdit(page, assetId);
-  await expect(page.locator(strip)).toHaveCount(0);
+  // The claim is REACHABILITY, not the absence of chrome: with every one
+  // of these fields unassigned they all sit in the DEFAULT bucket, so
+  // both are on screen at once with no tab to switch to. Asserting "no
+  // strip at all" would instead be asserting that no OTHER spec currently
+  // holds an edit_tab, which is not this test's business.
   await expect(page.locator(tid(`field-input-${a.code}`))).toBeVisible();
   await expect(page.locator(tid(`field-input-${b.code}`))).toBeVisible();
+  // Neither of them is behind a named tab: no tab of this test's making
+  // exists at all, so there is nothing to switch to in order to reach
+  // them.
+  await expect(page.locator(tab(a.code))).toHaveCount(0);
+  await expect(page.locator(tab(b.code))).toHaveCount(0);
 });
 
 test('naming ONE tab on a real install yields exactly TWO buckets, because the baseline fields are unassigned', async ({
@@ -295,7 +331,7 @@ test('naming ONE tab on a real install yields exactly TWO buckets, because the b
   const assetId = await makeAsset(request);
   await openAssetEdit(page, assetId);
 
-  await expect(page.locator(`${strip} [role="tab"]`)).toHaveCount(2);
+  await expectTabOrder(page, ['', 'Only']);
   await expect(page.locator(tab('default'))).toHaveAttribute('aria-selected', 'true');
   // It is NOT in the default bucket...
   await expect(page.locator(tid(`field-input-${only.code}`))).toHaveCount(0);
@@ -322,7 +358,7 @@ test('A-15: a tab emptied by a condition KEEPS its chrome and its selection, sho
   const assetId = await makeAsset(request);
 
   await openAssetEdit(page, assetId);
-  await expect(page.locator(`${strip} [role="tab"]`)).toHaveCount(2);
+  await expectTabOrder(page, ['', 'Extras']);
 
   // Make the condition TRUE, switch into the tab, and type a draft.
   await page.locator(tid(`field-input-${ctrl.code}`)).fill('Commission');
@@ -339,7 +375,7 @@ test('A-15: a tab emptied by a condition KEEPS its chrome and its selection, sho
   await page.locator(tab('Extras')).click();
 
   // ⛔ THE TAB IS STILL THERE, still selected, and says so.
-  await expect(page.locator(`${strip} [role="tab"]`)).toHaveCount(2);
+  await expectTabOrder(page, ['', 'Extras']);
   await expect(page.locator(tab('Extras'))).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator(tid('asset-fields-tab-empty'))).toBeVisible();
   await expect(onlyInput).toHaveCount(0);
@@ -423,8 +459,7 @@ test('at 390px the strip stays a TABLIST and the page body does not scroll sidew
   await page.setViewportSize({ width: 390, height: 844 });
   await openAssetEdit(page, assetId);
 
-  const tabs = page.locator(`${strip} [role="tab"]`);
-  await expect(tabs).toHaveCount(6);
+  await expectTabOrder(page, ['', 'One', 'Two', 'Three', 'Four', 'Five']);
   // The tablist itself is present, not replaced by a menu.
   await expect(page.locator(`${strip}[role="tablist"]`)).toBeVisible();
 

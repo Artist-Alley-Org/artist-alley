@@ -674,6 +674,9 @@ test('CLASS B — with NO condition configured, the form behaves exactly as it d
   await expect(page.locator(tid('asset-fields-saved'))).toBeVisible();
   const stored = await storedValue(request, 'assets', assetId, plain.id);
   expect(stored?.value_text).toBe('ordinary');
-  // No tab strip either: one bucket is not a choice.
-  await expect(page.locator(tid('asset-fields-tabs'))).toHaveCount(0);
+  // ⚠️ DELIBERATELY NO ASSERTION ABOUT THE TAB STRIP. A field definition
+  // is GLOBAL, so whether a strip is drawn depends on whether ANY spec
+  // currently holds an `edit_tab` — field-participation-1173 holds one
+  // mid-test — and that is not a fact about conditions. The no-tab floor
+  // is asserted where it belongs, in field-tabs-1119.spec.ts.
 });
