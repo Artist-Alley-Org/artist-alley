@@ -85,9 +85,16 @@ async function makeField(
   expect(r.status(), `create field ${c} → ${r.status()} ${await r.text()}`).toBe(201);
   const id = ((await r.json()) as { id: string }).id;
   createdFields.push(id);
-  if (editTab !== undefined) {
-    await patchField(request, id, { edit_tab: editTab });
-  }
+  // ⛔ KEEP THE FIXTURE OFF THE ADVANCED SEARCH FORM. A field definition
+  // is GLOBAL and `show_in_advanced_search` defaults TRUE, so every probe
+  // here would appear as a filter control on /search —
+  // field-participation-1173 snapshots that list and asserts it is
+  // otherwise unchanged, which our fixtures broke under two workers.
+  // Folded into the same PATCH as the tab so this costs no extra request.
+  await patchField(request, id, {
+    show_in_advanced_search: false,
+    ...(editTab !== undefined ? { edit_tab: editTab } : {}),
+  });
   return { id, code: c };
 }
 

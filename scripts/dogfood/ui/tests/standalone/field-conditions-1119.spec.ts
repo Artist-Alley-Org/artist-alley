@@ -82,6 +82,21 @@ async function makeField(
   expect(r.status(), `create field ${c} → ${r.status()} ${await r.text()}`).toBe(201);
   const id = ((await r.json()) as { id: string }).id;
   createdFields.push(id);
+  // ⛔ KEEP THE FIXTURE OFF THE ADVANCED SEARCH FORM.
+  //
+  // A field definition is GLOBAL, and `show_in_advanced_search` defaults
+  // TRUE, so every probe this file creates appears as a filter control on
+  // /search for as long as it exists. field-participation-1173 snapshots
+  // that page's whole control list, changes one flag, and asserts the
+  // rest of the list is IDENTICAL — so a fixture of ours created between
+  // its two snapshots reds a spec that has nothing to do with this one.
+  // Measured, not theorised: `fc_a4_a_*` and `fc_a4_dep_*` turned up in
+  // its diff under two workers.
+  //
+  // It is a PATCH because `show_in_advanced_search` is update-only, like
+  // `edit_tab`: FieldDefinitionCreate carries none of the participation
+  // properties.
+  await patchField(request, id, { show_in_advanced_search: false });
   return { id, code: c };
 }
 
