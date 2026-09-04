@@ -3136,6 +3136,14 @@ func (s *apiServer) DeleteFieldDefaultOverride(ctx context.Context, req openapi.
 func (s *apiServer) GetAssetFields(ctx context.Context, req openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	return s.metadata.GetAssetFields(ctx, req)
 }
+
+// GetAssetFieldComposition is the per-field readability read the edit
+// surfaces evaluate `display_condition` against (#1173, #1119,
+// ADR 0099 §5). It carries no values; the typed values stay on
+// GetAssetFields, which now filters by the same effective readability.
+func (s *apiServer) GetAssetFieldComposition(ctx context.Context, req openapi.GetAssetFieldCompositionRequestObject) (openapi.GetAssetFieldCompositionResponseObject, error) {
+	return s.metadata.GetAssetFieldComposition(ctx, req)
+}
 func (s *apiServer) SetAssetFieldValue(ctx context.Context, req openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error) {
 	return s.metadata.SetAssetFieldValue(ctx, req)
 }
@@ -3151,6 +3159,14 @@ func (s *apiServer) GetAssetFieldValueHistory(ctx context.Context, req openapi.G
 // value paths share one cache + audit + capability discipline.
 func (s *apiServer) GetCollectionFields(ctx context.Context, req openapi.GetCollectionFieldsRequestObject) (openapi.GetCollectionFieldsResponseObject, error) {
 	return s.metadata.GetCollectionFields(ctx, req)
+}
+
+// GetCollectionFieldComposition is the collection twin. It matters more
+// here than on assets: GetCollectionFields has always dropped unreadable
+// rows, so "withheld" and "never set" arrive as the same nothing, and
+// those two states have opposite consequences for a display condition.
+func (s *apiServer) GetCollectionFieldComposition(ctx context.Context, req openapi.GetCollectionFieldCompositionRequestObject) (openapi.GetCollectionFieldCompositionResponseObject, error) {
+	return s.metadata.GetCollectionFieldComposition(ctx, req)
 }
 func (s *apiServer) SetCollectionFieldValue(ctx context.Context, req openapi.SetCollectionFieldValueRequestObject) (openapi.SetCollectionFieldValueResponseObject, error) {
 	return s.metadata.SetCollectionFieldValue(ctx, req)

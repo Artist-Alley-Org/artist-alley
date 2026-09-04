@@ -5805,6 +5805,58 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /assets/{id}/field-composition:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getAssetFieldComposition
+      summary: Effective per-field readability for composing this asset's form
+      description: |
+        What a composition surface needs to evaluate `display_condition`
+        against this asset, and deliberately nothing else (ADR 0099 §5).
+
+        One entry per non-archived `asset` field definition, carrying the
+        field's identity and whether THIS caller may read THIS asset's
+        values of it. **The response carries no values at all**: there is
+        no member a stored value could be placed in, so non-disclosure is
+        a property of the shape rather than a rule a handler has to
+        remember.
+
+        `readable` is derived on the SERVER and cannot be derived in the
+        browser. `GET /auth/me/capabilities` carries GLOBALLY held codes
+        only, so a grant scoped to the team that owns this asset is
+        invisible there, and a client inferring readability from it would
+        decide that the very operator the field was configured for cannot
+        read it. Here the answer is: no `read_capability` means readable;
+        otherwise the caller must hold it globally, or hold it scoped to
+        the asset's team when the asset has one.
+
+        Why a caller needs this at all: `false` and "there is no value"
+        must be distinguishable. An unreadable controller makes the whole
+        condition unevaluable and the dependent is SHOWN, while a readable
+        controller with genuinely no value is a real FALSE and the
+        dependent is HIDDEN. Without this endpoint both arrive as the same
+        nothing and a client cannot tell them apart.
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Per-field effective readability, values excluded
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FieldCompositionState" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /assets/{id}/fields:
     parameters:
       - name: id
@@ -5814,6 +5866,22 @@ paths:
     get:
       operationId: getAssetFields
       summary: All field values for an asset
+      description: |
+        Every field value set on the asset, with the mirrored columns
+        (`title`, `description`) merged in as their declared fields.
+
+        **Filtered by `field_definition.read_capability`.** A caller
+        without the effective capability for a field does not receive its
+        value, and the row is dropped rather than blanked. Effective means
+        the same thing it means on
+        `GET /assets/{id}/field-composition`: a global holding, or one
+        scoped to the asset's team where the asset has one.
+
+        Until #1173 this endpoint applied no per-field check at all, so
+        any authenticated caller received the values of every gated field
+        on the asset. That is closed. A caller that needs to distinguish
+        "withheld" from "never set" asks the `field-composition` read,
+        which answers exactly that and carries no values.
       tags: [metadata]
       security:
         - cookieAuth: []
@@ -5947,6 +6015,52 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/FieldValueHistoryEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{id}/field-composition:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getCollectionFieldComposition
+      summary: Effective per-field readability for composing this collection's form
+      description: |
+        The collection twin of `GET /assets/{id}/field-composition`. One
+        entry per non-archived `collection` field definition, carrying the
+        field's identity and whether THIS caller may read THIS
+        collection's values of it, and **no values at all** (ADR 0099 §5).
+
+        The collection surface needs this as much as the asset surface
+        does, and for a reason that is easy to miss:
+        `GET /collections/{id}/fields` has always filtered by
+        `read_capability`, but it filters by DROPPING THE ROW, so a
+        withheld value and a value that was never set arrive as the same
+        nothing. Those two states have opposite consequences for a
+        condition (unevaluable shows the dependent, absent hides it), so
+        the distinction has to come from somewhere.
+
+        `collections` carries no `team_id` column, so a team-scoped grant
+        confers nothing here and the caller's global holding is the whole
+        answer. That asymmetry with assets is deliberate and pre-existing:
+        giving collections a team is a separate decision, not something
+        this endpoint should imply.
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Per-field effective readability, values excluded
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FieldCompositionState" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -14411,6 +14525,81 @@ components:
             column of this server's schema — so per ADR 0083's
             exclusion criterion it does not travel in a federated
             field-schema envelope.
+        display_condition:
+          type: array
+          nullable: true
+          items: { type: string }
+          description: |
+            When this field should be OFFERED at all (#1173, #1119,
+            ADR 0099). `null` (the default) means always, and it is the
+            ONLY representation of that state: the storage CHECK refuses
+            `[]`, `{}`, `""` and JSON `null` alike, so no reader has to
+            know a second spelling of unset.
+
+            Each entry is a bare `<code><op><value>` term with NO `field:`
+            prefix, and the entries are combined with **AND**. Terms use
+            the EXISTING search term grammar (`facet.SplitFieldTerm`);
+            **the search grammar is not extended** for this feature, and
+            only `field:`-class terms are admissible.
+
+            A **FORM HINT and never authorization.** It decides whether a
+            CONTROL is drawn, and nothing about access, filtering,
+            indexing or write validity. A hidden field keeps its values,
+            keeps its `read_capability` and `write_capability`, and can
+            still be written through
+            `PUT /assets/{id}/fields/{field_id}`. A client that ignores
+            this property entirely is still correct, merely plainer.
+
+            **Parsing, and the one asymmetry that will surprise an
+            operator.** The parser lowercases and trims the CODE, matches
+            operators longest-first, splits on the first of `=~<>` and
+            keeps later operator characters in the value, and TRIMS the
+            parsed value. Nothing ever trims or case-folds the STORED
+            value. So `work_type= Commission ` compares the literal
+            `Commission` against the stored value exactly and
+            case-sensitively, and a stored `" Commission "` does NOT
+            match. `~` is a case-insensitive substring test instead.
+
+            **Operators by type.** `text` and `longtext` accept `=` and
+            `~`. `select` and `tree` accept `=` against the stored slug.
+            `multi_select` accepts `=` as MEMBERSHIP. `rich_text`,
+            `boolean`, `number`, `date`, `datetime` and `reference` accept
+            neither. `>=` and `<=` are refused in every pairing: they are
+            range bounds, which is a filtering question rather than a
+            composition one.
+
+            `boolean` stays excluded even though sprint 20a gave it a
+            three-state control. That changed the CONTROL, not the
+            REPRESENTATION: a boolean is still 1 or 0 in `value_num`, and
+            admitting it here would require a search-engine change. Do
+            not widen this table by widening search semantics.
+
+            **Evaluation is conjunctive with a whole-condition fail-open.**
+            All terms true shows the field; any term false hides it. If
+            ANY term is unevaluable, because the controller's definition
+            is missing or unresolvable or because the caller may not read
+            it, the WHOLE condition has no verdict and the field is SHOWN.
+            This is NOT "unknown counts as true inside the AND": with one
+            term false and another unevaluable, an AND would still hide,
+            and that is the bug. A readable controller with genuinely no
+            value is a real FALSE and still hides.
+
+            **Hiding destroys nothing.** No Set, no Clear and no empty row
+            is generated, the persisted value is untouched, an unsaved
+            draft survives and reappears on reveal, and a hidden
+            `required` field creates no new completeness or save gate
+            anywhere.
+
+            Set through `FieldDefinitionUpdate.display_condition` and
+            removed through `clear_display_condition`; it is deliberately
+            absent from `FieldDefinitionCreate`, because a create body
+            cannot reference a graph that does not exist yet.
+
+            FEDERATES with the definition (ADR 0083, amendment
+            2026-09-03): it names the field rather than the server. It is
+            the first such property to reference a SECOND field, so a
+            term whose referent has not arrived is preserved verbatim and
+            fails open at runtime.
         status:
           type: string
           enum: [active, deprecated, archived]
@@ -14426,6 +14615,58 @@ components:
             `/fields/{id}/default-overrides` and do not.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    FieldCompositionState:
+      type: object
+      required: [field_id, field_code, readable]
+      description: |
+        What a composition surface needs to know about ONE field
+        definition in order to evaluate a `display_condition` against a
+        particular subject, and nothing else (#1173, #1119, ADR 0099 §5).
+
+        **THERE IS NO VALUE MEMBER HERE AND THERE MUST NOT BE ONE.** The
+        non-disclosure requirement is met by the SHAPE: a caller who may
+        not read a field receives its identity and `readable: false`, and
+        there is no member into which the protected value could have been
+        placed. Sending the value alongside a false flag, or sending it
+        and expecting the client to drop it, are both explicitly refused
+        designs. The typed values live on
+        `GET /assets/{id}/fields` and `GET /collections/{id}/fields`, both
+        of which now filter by the same effective readability this
+        reports.
+      properties:
+        field_id: { type: string, format: uuid }
+        field_code:
+          type: string
+          description: |
+            The federation-stable code. Carried alongside the id because
+            a `display_condition` term names a CODE, so a client
+            resolving a term would otherwise need a second index to get
+            from the term to this row.
+        readable:
+          type: boolean
+          description: |
+            May THIS caller read THIS subject's values of this field?
+
+            Derived on the SERVER, and it has to be: `read_capability` is
+            answerable globally OR scoped to a team, and
+            `GET /auth/me/capabilities` carries only the global codes, so
+            a browser inferring this from what it holds would answer
+            "no" for exactly the team-scoped operator the field was
+            configured for.
+
+            `true` when the field carries no `read_capability` at all,
+            or when the caller holds it globally, or when the caller
+            holds it scoped to the subject's team and the subject has
+            one. An asset may have a `team_id`; a collection has no team
+            column, so on a collection the global holding is the whole
+            answer.
+
+            What a condition evaluator does with it: `false` makes the
+            term UNEVALUABLE, which makes the whole condition unevaluable
+            and SHOWS the dependent. That is deliberately not the same as
+            a readable field with no value, which is a real FALSE and
+            HIDES the dependent. Distinguishing those two is the reason
+            this endpoint exists.
     FieldDefault:
       type: object
       required: [kind]
@@ -14616,6 +14857,68 @@ components:
         clear_edit_tab:
           type: boolean
           description: "Unassign this field's edit tab. Mutually exclusive with `edit_tab`."
+        display_condition:
+          type: array
+          items: { type: string }
+          description: |
+            Say when this field should be offered (#1173, #1119,
+            ADR 0099). Omit to leave it alone. Use
+            `clear_display_condition: true` to remove one; a partial
+            update cannot express "remove" by sending null, because null
+            is already "leave alone" for every other property here, and it
+            cannot express it by sending `[]` either, because the storage
+            CHECK refuses the empty array as a second spelling of unset.
+
+            **REPLACES THE WHOLE ARRAY.** There is no merge and no way to
+            add a single term: a condition is one predicate, not a bag of
+            independent settings, and an operator editing one is editing a
+            sentence.
+
+            See `FieldDefinition.display_condition` for the term grammar,
+            the operator and type matrix, and the runtime semantics.
+
+            Refused with 400, each with a sentence naming what is wrong:
+
+            * a term that does not parse, or that names a facet dimension
+              other than a field
+            * an operator the controller's type does not accept, and `>=`
+              or `<=` in any pairing
+            * a controller code this server does not have
+            * a controller describing the other subject kind
+            * a condition on a MIRRORED definition, or a term naming one
+            * a term naming the field itself, or any cycle in the
+              subject-kind graph. The walk covers the WHOLE graph, so
+              `A -> B` then `B -> C` then `C -> A` is refused on the third
+              write and not before
+            * an EMPTY total applies_to intersection across the dependent
+              and EVERY controller, with empty treated as universal. This
+              is an N-way intersection rather than a pairwise check:
+              dependent `{t1,t2}` with controllers `{t1}` and `{t2}` is
+              acceptable one controller at a time and refused with both
+            * two `=` terms with different literals on one SINGLE-VALUED
+              `text` / `longtext` / `select` / `tree` controller, which can
+              never both be true. Duplicate identical terms are allowed,
+              and so are distinct `=` membership terms on one
+              `multi_select`, which can genuinely hold both. There is no
+              general contradiction solver and there is not meant to be
+            * a controller that is ALREADY ARCHIVED. `deprecated` is
+              accepted, because edit surfaces deliberately render active
+              and deprecated definitions together. Archiving a controller
+              LATER never rewrites or clears a stored condition: the
+              dependent fails open, and restoring the controller resumes
+              ordinary evaluation
+        clear_display_condition:
+          type: boolean
+          description: |
+            Remove this field's display condition, restoring "always
+            offered". Mutually exclusive with `display_condition`; sending
+            both is a 400.
+
+            Deliberately unguarded by the refusal list above, the way
+            `clear_regexp_filter` is: those rules restrict a CONFIGURED
+            condition, and taking one back off is legal on every field, so
+            a setting can always be removed even where it could no longer
+            be applied.
         read_only:
           type: boolean
           description: |

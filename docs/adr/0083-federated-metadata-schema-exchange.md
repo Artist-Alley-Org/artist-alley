@@ -150,3 +150,56 @@ cannot debug.
 The §3 collision rule needs no change. `regexp_filter` differing between two peers is an ordinary
 per-field diff, and the whole-import rejection already puts the choice in front of the operator
 rather than merging silently.
+
+## Amendment 2026-09-03 — `display_condition` is IN, and it is the first property that names a SECOND field (#1173, #1119)
+
+Migration `00065` adds `display_condition jsonb NULL` to `field_definition`, so §2's list needs one
+more entry. Classification and import semantics only. **Nothing here is implemented**, and nothing
+should be: federation still transports no metadata at all, and ADR 0099 §10 records that this sprint
+built no import runtime either.
+
+**IN: `display_condition`.** The §2 criterion leaves a property out when it "names something that
+exists only on the sender". A condition names the FIELD: it says when `commission_deadline` is worth
+offering, which is the same class of statement as `required`, `show_on_card` and `regexp_filter`, all
+already in. It binds the receiver to nothing local, and it is inert if ignored, which is what keeps a
+partial implementation honest rather than dangerous. ADR 0099 §1 settles the other half of the
+question by making the property a form hint rather than an access rule, so importing one cannot widen
+or narrow access the way `read_only` would.
+
+### The sub-rule this property needs and no earlier one did
+
+**Every property in §2's IN list so far describes the field on its own. This one REFERENCES A SECOND
+FIELD.** That is new, and it changes what "importing a property" can mean, so the reference semantics
+are written down here rather than left to be improvised.
+
+The terms hold **field CODES**, which §1 already calls federation-stable and globally unique. So the
+reference itself always survives transport. What may not survive is the **referent**: a peer can send
+`commission_deadline` with a condition naming `work_type` while the receiver has no `work_type` at
+all, or has one describing a different subject kind.
+
+- **A missing referent is PRESERVED VERBATIM.** The term is not dropped, not rewritten, and not
+  silently converted into an unconditional field. At runtime it is unresolvable and ADR 0099 §4's
+  whole-condition fail-open shows the dependent, so the field behaves as it would have without the
+  condition until the referent arrives. Dropping the term would look identical on the surface and
+  would destroy the operator's intent the first time an import ran.
+- **Resolvable terms obey the ordinary invariants.** An import whose referents all resolve must not be
+  able to store a configuration PATCH would refuse, which means the receiver runs ADR 0099 §6's
+  refusal set against the resolvable edges rather than trusting the sender's validation. Import is not
+  a back door around a local rule.
+- **A mixed condition validates the resolvable edges and preserves the unresolved ones verbatim.**
+  Partial resolution is the normal case, not an error.
+- **Two checks are DEFERRED for an unresolved edge:** cycle participation and N-way applicability
+  contribution. Neither is answerable about a definition that is not here: an edge pointing at nothing
+  cannot be placed in the graph, and there is no `applies_to` to intersect against.
+- **Whoever later resolves those edges must confront the deferred checks.** That is the moment they
+  become answerable and the moment a cycle could first close, so it is where the check belongs. An
+  import that only ever validated at receive time would leave a cycle to be discovered by the graph
+  walk of some unrelated later PATCH.
+- **Bulk import inherits ADR 0099 §8's atomicity requirement.** A batch writing many conditions is the
+  case that invariant was written for, not an exception to it.
+
+The §3 collision rule needs no change. Two peers disagreeing about a condition is an ordinary per-field
+diff, and the whole-import rejection already puts that in front of an operator instead of merging
+silently. It is worth noting that the reference sub-rule makes a per-field cherry-pick more attractive
+than it was, because importing a dependent without its controller is now a defined outcome rather than
+an accident, but changing §3 is not this amendment's business.

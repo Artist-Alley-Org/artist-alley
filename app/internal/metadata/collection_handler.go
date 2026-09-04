@@ -101,9 +101,21 @@ func (h *Handler) GetCollectionFields(
 	// Capability filter: drop fields the caller lacks read_capability for.
 	// We rebuild the slice rather than mutating the cached one (the cache
 	// shape is the unfiltered superset).
+	//
+	// The zero `pgtype.UUID` is the collection's team scope and it is
+	// deliberately invalid: `collections` carries no team_id column, so a
+	// team-scoped grant confers nothing here and the caller's global
+	// holding is the whole answer. Passing it explicitly keeps the
+	// asymmetry with the asset path visible at the call site.
+	//
+	// ⚠️ This filter DROPS THE ROW, so a withheld value and a value that
+	// was never set arrive as the same nothing. That is unchanged and is
+	// correct for a value read; it is also why a form that has to tell
+	// those two apart asks GET /collections/{id}/field-composition, which
+	// reports readability per definition and carries no values.
 	out := make([]openapi.CollectionFieldValue, 0, len(values))
 	for _, v := range values {
-		if !canReadField(ctx, h, v.FieldId, id) {
+		if !canReadField(ctx, h, v.FieldId, id, pgtype.UUID{}) {
 			continue
 		}
 		out = append(out, v)
@@ -888,18 +900,32 @@ func validateCollectionValueType(fieldType string, body *openapi.CollectionField
 }
 
 // canReadField checks the caller's identity against the field's
-// read_capability. Empty/nil capability = no gate.
-func canReadField(_ context.Context, h *Handler, fieldUUID openapi_types.UUID, id *auth.Identity) bool {
+// read_capability, in the scope of ONE subject.
+//
+// The verdict itself lives in [fieldReadableOnSubject] and must keep
+// living there: this function's job is to turn a field ID into a
+// definition and hand the question on. Before #1173 it made its own
+// `id.Can` call with no scope, which meant a grant held against the team
+// that owns the subject counted for nothing, and it was the only
+// per-field read check in the package — GetAssetFields had none at all.
+// Two copies of a security rule drift, and the drift is the bug.
+//
+// `teamID` is the SUBJECT's team scope, and an invalid one is a real
+// answer rather than a missing argument: `collections` has no team column
+// at all, so every collection caller passes the zero value and is decided
+// by their global holding. See [fieldReadableOnSubject] for the nullable
+// trap that makes that safe.
+//
+// A field that cannot be loaded is dropped conservatively. Answering
+// "readable" for a definition we could not read would be a leak decided
+// by an infrastructure failure.
+func canReadField(_ context.Context, h *Handler, fieldUUID openapi_types.UUID, id *auth.Identity, teamID pgtype.UUID) bool {
 	pgID := pgtype.UUID{Bytes: uuid.UUID(fieldUUID), Valid: true}
 	row, err := h.getFieldByIDCached(context.Background(), pgID)
 	if err != nil {
-		// Field gone — drop conservatively rather than leak.
 		return false
 	}
-	if row.ReadCapability == nil || *row.ReadCapability == "" {
-		return true
-	}
-	return id.Can(*row.ReadCapability)
+	return fieldReadableOnSubject(id, row.ReadCapability, teamID)
 }
 
 // ---------------------------------------------------------------------------

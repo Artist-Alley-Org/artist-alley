@@ -58,7 +58,10 @@
   import { t } from '$stores/lang.svelte';
   import { isFieldValueEmpty } from '$lib/fieldDisplay';
   import { fieldPatternViolated } from '$lib/fieldRules';
+  import { conditionShows, type ConditionController } from '$lib/displayCondition';
+  import { bucketFields, tabStripVisible, resolveTabSelection, groupFields } from '$lib/fieldTabs';
   import FieldValueInput from './FieldValueInput.svelte';
+  import FormTabs from './FormTabs.svelte';
 
   type FieldType =
     | 'text' | 'longtext' | 'rich_text' | 'number' | 'boolean'
@@ -89,6 +92,20 @@
      * planes reach states each other calls invalid.
      */
     mirrors_column?: string | null;
+    /**
+     * Which tab of this form the field sits in (#1173, ADR 0092 §3).
+     * `null` = unassigned, which lands in the DEFAULT bucket. Stored and
+     * validated since 18b and read by nothing until now.
+     */
+    edit_tab?: string | null;
+    /** The ordering source, and what orders the tab strip too. */
+    display_order?: number;
+    /**
+     * When this field should be offered at all (#1119, ADR 0099).
+     * `null`/absent = always. See $lib/displayCondition for the grammar
+     * and, more importantly, for the WHOLE-CONDITION FAIL-OPEN rule.
+     */
+    display_condition?: string[] | null;
   }
 
   interface Value {
@@ -128,6 +145,28 @@
   const i18nPrefix = $derived(subjectKind === 'collection' ? 'collection_fields' : 'asset_fields');
 
   let definitions = $state<FieldDef[]>([]);
+  /**
+   * SERVER-DERIVED effective readability, field id -> boolean, from
+   * `GET /{subject}/{id}/field-composition` (#1173, ADR 0099 §5).
+   *
+   * ⛔ THIS CANNOT BE DERIVED IN THE BROWSER AND MUST NOT BE ATTEMPTED.
+   * `auth.caps` carries GLOBALLY held capability codes only, so a grant
+   * scoped to the team that owns this asset is invisible here — the asset
+   * edit page's own source has said exactly that since #939. Inferring
+   * readability from it would answer "no" for precisely the operator the
+   * field was configured for.
+   *
+   * It also cannot be inferred from whether a VALUE arrived. The value
+   * endpoints drop unreadable rows, so "withheld" and "never set" look
+   * identical there, and those two have OPPOSITE consequences: withheld
+   * makes a term unevaluable and SHOWS the dependent, while a readable
+   * controller holding nothing is a real FALSE and HIDES it. Telling them
+   * apart is the whole reason this second request exists.
+   *
+   * A missing entry (the request failed, or the definition is not in the
+   * composition set) reads as UNRESOLVABLE and fails the condition open.
+   */
+  let readable = $state<Record<string, boolean>>({});
   let values = $state<Record<string, Value>>({});
   let baselines = $state<Record<string, Baseline>>({});
   let dirty = $state<Record<string, true>>({});
@@ -174,6 +213,31 @@
     return (res.data ?? []) as FieldDef[];
   }
 
+  /**
+   * The per-field readability map for THIS subject.
+   *
+   * Failure is swallowed on purpose and leaves the map empty, which makes
+   * every controller unresolvable and every condition fail OPEN — every
+   * field is shown. That is the safe direction: a condition is form
+   * composition and never authorization, so the worst outcome of not
+   * knowing is a form with more boxes on it than the operator intended,
+   * while the opposite default would hide fields because a request
+   * failed.
+   */
+  async function loadReadability(): Promise<Record<string, boolean>> {
+    const res =
+      subjectKind === 'collection'
+        ? await api.GET('/collections/{id}/field-composition', {
+            params: { path: { id: subjectId } },
+          })
+        : await api.GET('/assets/{id}/field-composition', { params: { path: { id: subjectId } } });
+    const out: Record<string, boolean> = {};
+    for (const r of (res.data ?? []) as Array<{ field_id: string; readable: boolean }>) {
+      out[r.field_id] = r.readable;
+    }
+    return out;
+  }
+
   async function loadValues(): Promise<Array<{ field_id: string; set_at?: string } & Value>> {
     const res =
       subjectKind === 'collection'
@@ -185,7 +249,12 @@
   async function load() {
     loading = true;
     try {
-      const [defs, vals] = await Promise.all([loadDefinitions(), loadValues()]);
+      const [defs, vals, readableMap] = await Promise.all([
+        loadDefinitions(),
+        loadValues(),
+        loadReadability(),
+      ]);
+      readable = readableMap;
       // Mirrored definitions are dropped here rather than being merely
       // ordered last. GET /assets/{id}/fields DOES return title and
       // description (the list path merges the mirrored columns in), so
@@ -380,6 +449,16 @@
         delete dirty[id];
         continue;
       }
+      // ⛔ A HIDDEN FIELD IS NEVER SUBMITTED, AND ITS DRAFT IS NEVER
+      // DESTROYED (ADR 0099 §4). It stays dirty and its typed value stays
+      // in `values`, so revealing it brings the draft back; it is simply
+      // not part of THIS save. `delete dirty[id]` here would silently
+      // discard a person's typing because an unrelated control changed.
+      //
+      // This is also what makes hiding non-destructive on the server
+      // side: no Set, no Clear and no empty row is emitted for it, so the
+      // persisted value is byte-identical afterwards.
+      if (!visible[id]) continue;
       const v = values[id] ?? {};
       const base = baselines[id] ?? null;
       const empty = isFieldValueEmpty(def.type, v);
@@ -464,24 +543,105 @@
     Object.keys(dirty).some((id) => {
       const def = definitions.find((d) => d.id === id);
       if (!def) return false;
+      // A hidden field is not submitted, so its draft cannot block a
+      // save. Otherwise a pattern violation in a box nobody can see would
+      // disable the button with no visible cause.
+      if (!visible[id]) return false;
       return fieldPatternViolated(def, values[id]?.value_text ?? '');
     }),
   );
 
-  const dirtyCount = $derived(Object.keys(dirty).length);
+  // Counts only what this save would actually SEND. A hidden dirty field
+  // is real and is kept, but enabling the button for it would promise a
+  // write that never happens.
+  const dirtyCount = $derived(Object.keys(dirty).filter((id) => visible[id]).length);
 
-  type Group = { name: string; defs: FieldDef[] };
-  const grouped = $derived.by(() => {
-    const buckets = new Map<string, FieldDef[]>();
+  // ── conditional visibility (#1119, ADR 0099 §4) ───────────────────
+  //
+  // ⛔ THE CONTROLLER'S VALUE IS READ FROM THE IN-FORM STATE, not from
+  // what was loaded. A person changing `work_type` has to see the
+  // dependent appear or disappear as they type; reading the persisted
+  // value would only re-evaluate after a save.
+  //
+  // ⛔ AND IT IS READ REGARDLESS OF THE CONTROLLER'S OWN VISIBILITY. A
+  // controller hidden by its own condition STILL CONTRIBUTES its value:
+  // visibility is a rendering decision and does not remove a value from
+  // the model. Skipping hidden controllers here would make a chain of
+  // conditions collapse the moment its first link was hidden.
+  function resolveController(code: string): ConditionController | undefined {
+    const def = definitions.find((d) => d.code === code);
+    // Not in the composition set at all: unresolvable, fails open. This
+    // is also what an ARCHIVED controller looks like from here, which is
+    // exactly the later-archive drift behaviour — the stored condition is
+    // untouched and the dependent is simply shown again.
+    if (!def) return undefined;
+    const r = readable[def.id];
+    if (r === undefined) return undefined;
+    const v = values[def.id] ?? {};
+    return {
+      type: def.type,
+      readable: r,
+      text: v.value_text ?? '',
+      options: v.value_options ?? [],
+    };
+  }
+
+  /** Field ids currently SHOWN. Absent from a condition means shown. */
+  const visible = $derived.by(() => {
+    const out: Record<string, boolean> = {};
     for (const d of definitions) {
-      const k = d.display_group || 'general';
-      if (!buckets.has(k)) buckets.set(k, []);
-      buckets.get(k)!.push(d);
+      out[d.id] = conditionShows(d.display_condition, resolveController);
     }
-    const out: Group[] = [];
-    for (const [name, defs] of buckets) out.push({ name, defs });
     return out;
   });
+
+  // ── tab buckets (#1173, ADR 0099 §9) ──────────────────────────────
+  //
+  // ⛔ POLICY B: the buckets come from `definitions`, the composition
+  // ELIGIBLE set, and NOT from what is currently visible. A tab whose
+  // every field is hidden keeps its chrome and its selection and shows an
+  // empty-state line. Deriving the strip from visible controls would make
+  // a tab vanish from under the selection as a side effect of typing in a
+  // different tab, taking any unsaved work in it out of reach.
+  const buckets = $derived(bucketFields(definitions));
+  const showTabs = $derived(tabStripVisible(buckets));
+
+  let selectedTab = $state<string | null>(null);
+  // Only ever moves when the selected tab STOPS EXISTING, which is a
+  // configuration change. A tab merely emptying out still matches, so the
+  // selection stays put — that is the Policy B half a naive reset breaks.
+  const activeTab = $derived(resolveTabSelection(selectedTab, buckets));
+
+  const tabItems = $derived(
+    buckets.map((b) => ({ id: b.id, label: b.name ?? t('field_tabs.default') })),
+  );
+
+  /** The definitions of the selected tab, or all of them with no strip. */
+  const tabDefs = $derived.by(() => {
+    if (buckets.length === 0) return [] as FieldDef[];
+    const b = buckets.find((x) => x.id === activeTab) ?? buckets[0];
+    return b.fields;
+  });
+
+  /**
+   * `display_group` fieldsets INSIDE the selected tab.
+   *
+   * Tabs are coarser than groups and the nesting goes one way only: a
+   * group never spans two tabs, because a tab is chosen first.
+   *
+   * The grouping itself is `$lib/fieldTabs`'s `groupFields`, which
+   * `/create` also calls. It was derived inline here and nowhere else,
+   * which is why the create page rendered a flat list; one function is
+   * what stops the two surfaces disagreeing about what a form looks like.
+   *
+   * Hidden fields are dropped HERE and not from `buckets`, which is the
+   * Policy B split: the tab exists because the DEFINITION does, and the
+   * control is absent because the CONDITION is false.
+   */
+  const grouped = $derived(groupFields(tabDefs.filter((d) => visible[d.id])));
+
+  /** Nothing to draw in the selected tab, but the tab still exists. */
+  const tabIsEmpty = $derived(buckets.length > 0 && grouped.length === 0);
 </script>
 
 {#if !(subjectKind === 'asset' && !loading && definitions.length === 0)}
@@ -500,6 +660,37 @@
     {:else if definitions.length === 0}
       <p class="text-sm text-fg-muted" data-testid="{tid}-empty">{t(`${i18nPrefix}.no_fields`)}</p>
     {:else}
+      <!--
+        THE TAB STRIP. Drawn only from two buckets up: one bucket is not a
+        choice, and a single-segment strip is chrome that says nothing.
+        The buckets come from DEFINITIONS (Policy B), so this strip does
+        not move while a person types.
+      -->
+      {#if showTabs}
+        <FormTabs
+          tabs={tabItems}
+          active={activeTab ?? ''}
+          onSelect={(id) => (selectedTab = id)}
+          label={t('field_tabs.aria_label')}
+          panelId="{tid}-tabpanel"
+          idPrefix="{tid}-tab"
+          testid="{tid}-tabs"
+        />
+      {/if}
+      <div
+        id="{tid}-tabpanel"
+        role={showTabs ? 'tabpanel' : undefined}
+        aria-labelledby={showTabs ? `${tid}-tab-${activeTab ?? ''}` : undefined}
+        class="space-y-3"
+      >
+      <!--
+        The tab is here and has nothing to show: every field in it is
+        hidden by a condition. Policy B keeps the tab and the selection
+        and says so, rather than removing the tab under the person.
+      -->
+      {#if tabIsEmpty}
+        <p class="text-sm text-fg-muted" data-testid="{tid}-tab-empty">{t('field_tabs.empty')}</p>
+      {/if}
       {#each grouped as group (group.name)}
         <fieldset class="rounded border border-border bg-surface p-3">
           <legend class="px-1 text-xs font-medium uppercase tracking-wider text-fg-muted">{group.name}</legend>
@@ -510,7 +701,7 @@
             scroll past everything to reach the save button.
           -->
           <div class="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2">
-          {#each group.defs as def (def.id)}
+          {#each group.fields as def (def.id)}
             <div data-testid="{tid}-row-{def.code}">
               <FieldValueInput
                 {def}
@@ -547,6 +738,7 @@
           </div>
         </fieldset>
       {/each}
+      </div>
 
       {#if error}
         <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger" data-testid="{tid}-error">{error}</p>

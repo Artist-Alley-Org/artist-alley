@@ -885,6 +885,11 @@ func (*PanicShim) GetEpubSpine(context.Context, openapi.GetEpubSpineRequestObjec
 	panic("PanicShim: GetEpubSpine called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetAssetFieldComposition panics by default; test shims override.
+func (*PanicShim) GetAssetFieldComposition(context.Context, openapi.GetAssetFieldCompositionRequestObject) (openapi.GetAssetFieldCompositionResponseObject, error) {
+	panic("PanicShim: GetAssetFieldComposition called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetAssetFields panics by default; test shims override.
 func (*PanicShim) GetAssetFields(context.Context, openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	panic("PanicShim: GetAssetFields called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1138,6 +1143,11 @@ func (*PanicShim) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequ
 // RemoveCollectionAcl panics by default; test shims override.
 func (*PanicShim) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
 	panic("PanicShim: RemoveCollectionAcl called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetCollectionFieldComposition panics by default; test shims override.
+func (*PanicShim) GetCollectionFieldComposition(context.Context, openapi.GetCollectionFieldCompositionRequestObject) (openapi.GetCollectionFieldCompositionResponseObject, error) {
+	panic("PanicShim: GetCollectionFieldComposition called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // GetCollectionFields panics by default; test shims override.

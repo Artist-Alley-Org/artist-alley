@@ -1475,3 +1475,72 @@ optional value was impossible from any surface in the product.
 difference: a checkbox rendered an absent value and a stored `false` identically and always emitted
 1 or 0. It is a three-state select now, so emptying it is the same gesture as emptying a `select`
 and no Clear button had to be invented for one type.
+
+## Amendment 2026-09-03 — a field can say WHEN it appears, and hiding it destroys nothing (#1173, #1119)
+
+**Status:** accepted. Migration `00065`. One column on `field_definition`:
+`display_condition jsonb NULL`, with a shape CHECK.
+
+Thirty-two columns described what a field is, what a value of it may be, and where it sits on a
+form. None of them described **when the field should be offered at all**. An operator whose
+`commission_deadline` only means anything on a `work_type` of `Commission` could show it to
+everybody always, or not create it.
+
+The full decision, including the parser contract, the operator and type matrix, the whole-condition
+fail-open rule, the configuration refusal set, the cycle-invariant atomicity boundary, Policy B for
+tabs, and the import specification, is **ADR 0099**. What follows is the part that belongs to this
+document: what the column is on the model, and what it does not do to a value.
+
+### It is a display hint, and it joins the ones already here
+
+`display_condition` sits with `display_order`, `display_group`, `show_on_card`,
+`show_in_advanced_search`, `show_on_upload` and `edit_tab`. A client that ignores it is still
+correct. Nothing about access, filtering, indexing or write validity depends on it, and a hidden
+field can still be written through `PUT /assets/{id}/fields/{field_id}` exactly as before.
+
+It is **update-only**, the same shape the other six have: `display_condition` and
+`clear_display_condition` on `FieldDefinitionUpdate`, neither on `FieldDefinitionCreate`. A field is
+created and then configured, and a create body cannot reference a graph that does not exist yet.
+
+`NULL` is the canonical unset and the CHECK makes it the only one, refusing `[]`, `{}`, `""` and JSON
+`null` alike. This is `edit_tab`'s reasoning (00058) and `regexp_filter`'s (00064) applied to a third
+column: one representation of "no constraint", so no reader has to know two.
+
+### Value preservation, stated as a property of the model
+
+**A condition never destroys a value.** This is the half of ADR 0099 that is really about the
+metadata model, so it is restated here rather than referenced.
+
+- Hiding a field emits **no Set, no Clear, and no empty row**. The stored value is untouched.
+- Revealing it restores the persisted value **byte for byte**.
+- An unsaved draft in a hidden field survives, reappears on reveal, and is **not submitted while
+  hidden**.
+- Archiving a controller does **not** rewrite or clear a stored `display_condition`, and restoring
+  the controller resumes ordinary evaluation. Configuration records what an operator decided;
+  runtime status is a fact about today, and one must not overwrite the other.
+
+### No new completeness gate
+
+**A `required` field hidden by a condition creates no new completeness or save gate**, on asset edit,
+collection edit or `/create`.
+
+This follows from the 2026-09-02 amendment above and does not modify it. R1 is a rule about a WRITE,
+enforced by the four field-value handlers, and it still refuses an API clear of a required field
+whether or not any form happens to be drawing the control. R2, collection create-time completeness,
+is unchanged. **Asset creation still requires nothing**, so the two-action guarantee holds: drop a
+file, press publish.
+
+The tempting alternative, "a hidden required field is satisfied", and its opposite, "a hidden
+required field blocks the save", are both wrong for the same reason: they would make a display hint
+decide whether a write is allowed. Composition and validity are different planes, and this column
+lives entirely in the first one.
+
+### One consequence for the read path
+
+Building conditional visibility required the composition read path to be fixed first, because
+evaluating a condition over field values the caller may not read turns form composition into an
+oracle over protected metadata. `GET /assets/{id}/fields` had **no** per-field read check and now
+filters by effective, server-derived readability; `GET /collections/{id}/fields` moves to the same
+shared helper; and both subject kinds gain a `field-composition` read that reports readability and
+carries **no values at all**. ADR 0099 section 5 is the decision; it is noted here because it changes
+what a caller receives from two endpoints this document defines.

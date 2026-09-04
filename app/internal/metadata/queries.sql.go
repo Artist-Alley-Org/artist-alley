@@ -110,7 +110,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           subject_kind, extraction_source, extraction_mode, default_value,
           open_vocabulary, mirrors_column, show_on_card,
           show_in_advanced_search, show_on_upload, edit_tab,
-          read_only, regexp_filter
+          read_only, regexp_filter, display_condition
 `
 
 type CreateFieldDefinitionParams struct {
@@ -187,6 +187,7 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.EditTab,
 		&i.ReadOnly,
 		&i.RegexpFilter,
+		&i.DisplayCondition,
 	)
 	return i, err
 }
@@ -380,6 +381,26 @@ func (q *Queries) GetAssetMirrorSubject(ctx context.Context, id pgtype.UUID) (Ge
 	return i, err
 }
 
+const getAssetTeamForFieldComposition = `-- name: GetAssetTeamForFieldComposition :one
+SELECT team_id FROM assets WHERE id = $1
+`
+
+// The team an asset belongs to, for the team-scoped half of effective
+// field readability (#1173, ADR 0099 §5).
+//
+// `assets.team_id` is NULLABLE and a NULL is not "no scope required": a
+// team-less asset SKIPS the scoped disjunct entirely and is answered by
+// the caller's GLOBAL holding alone, which is the same nullable trap
+// `hasAssetCapability` documents on the assets side. Collections have no
+// team column at all, so they have no counterpart to this query and their
+// readability is the global answer by construction.
+func (q *Queries) GetAssetTeamForFieldComposition(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getAssetTeamForFieldComposition, id)
+	var team_id pgtype.UUID
+	err := row.Scan(&team_id)
+	return team_id, err
+}
+
 const getCollectionFieldValue = `-- name: GetCollectionFieldValue :one
 SELECT v.collection_id, v.field_id, v.value_text, v.value_num, v.value_date,
        v.value_options, v.value_ref, v.set_by, v.set_at, v.set_by_user_ref,
@@ -467,7 +488,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        subject_kind, extraction_source, extraction_mode, default_value,
        open_vocabulary, mirrors_column, show_on_card,
        show_in_advanced_search, show_on_upload, edit_tab,
-       read_only, regexp_filter
+       read_only, regexp_filter, display_condition
 FROM field_definition WHERE code = $1
 `
 
@@ -507,6 +528,7 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.EditTab,
 		&i.ReadOnly,
 		&i.RegexpFilter,
+		&i.DisplayCondition,
 	)
 	return i, err
 }
@@ -520,7 +542,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        subject_kind, extraction_source, extraction_mode, default_value,
        open_vocabulary, mirrors_column, show_on_card,
        show_in_advanced_search, show_on_upload, edit_tab,
-       read_only, regexp_filter
+       read_only, regexp_filter, display_condition
 FROM field_definition WHERE id = $1
 `
 
@@ -560,6 +582,7 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.EditTab,
 		&i.ReadOnly,
 		&i.RegexpFilter,
+		&i.DisplayCondition,
 	)
 	return i, err
 }
@@ -1507,7 +1530,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        subject_kind, extraction_source, extraction_mode, default_value,
        open_vocabulary, mirrors_column, show_on_card,
        show_in_advanced_search, show_on_upload, edit_tab,
-       read_only, regexp_filter
+       read_only, regexp_filter, display_condition
 FROM field_definition
 WHERE (
         CASE WHEN $1::TEXT IS NULL
@@ -1580,6 +1603,7 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.EditTab,
 			&i.ReadOnly,
 			&i.RegexpFilter,
+			&i.DisplayCondition,
 		); err != nil {
 			return nil, err
 		}
@@ -1600,7 +1624,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        subject_kind, extraction_source, extraction_mode, default_value,
        open_vocabulary, mirrors_column, show_on_card,
        show_in_advanced_search, show_on_upload, edit_tab,
-       read_only, regexp_filter
+       read_only, regexp_filter, display_condition
 FROM field_definition
 WHERE (
         CASE WHEN $1::TEXT IS NULL
@@ -1675,6 +1699,137 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, arg List
 			&i.EditTab,
 			&i.ReadOnly,
 			&i.RegexpFilter,
+			&i.DisplayCondition,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFieldDefinitionsForComposition = `-- name: ListFieldDefinitionsForComposition :many
+SELECT id, code, read_capability
+  FROM field_definition
+ WHERE subject_kind = $1
+   AND status <> 'archived'
+ ORDER BY code
+`
+
+type ListFieldDefinitionsForCompositionRow struct {
+	ID             pgtype.UUID
+	Code           string
+	ReadCapability *string
+}
+
+// The definitions a composition surface may draw for one subject kind,
+// reduced to the identity plus the read gate (#1173, ADR 0099 §5).
+//
+// Backs GET /assets/{id}/field-composition and
+// GET /collections/{id}/field-composition, which report EFFECTIVE,
+// SERVER-DERIVED readability per field and carry no values whatsoever.
+// Selecting `read_capability` and nothing else from the gate side is the
+// point: the caller-facing shape has no member a stored value could be
+// put in, so non-disclosure is structural rather than a rule somebody has
+// to remember.
+//
+// ARCHIVED EXCLUDED, matching the status semantics of
+// ListFieldDefinitions with no explicit status (#528): archived
+// definitions are tombstones and never appear on a composition surface,
+// so reporting readability for one would describe a control that is not
+// there. A controller archived after a valid configuration therefore
+// resolves to nothing here, which is exactly what makes the dependent
+// fail open.
+func (q *Queries) ListFieldDefinitionsForComposition(ctx context.Context, subjectKind string) ([]ListFieldDefinitionsForCompositionRow, error) {
+	rows, err := q.db.Query(ctx, listFieldDefinitionsForComposition, subjectKind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFieldDefinitionsForCompositionRow
+	for rows.Next() {
+		var i ListFieldDefinitionsForCompositionRow
+		if err := rows.Scan(&i.ID, &i.Code, &i.ReadCapability); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFieldDefinitionsForConditionGraph = `-- name: ListFieldDefinitionsForConditionGraph :many
+SELECT id, code, type, subject_kind, status, applies_to, mirrors_column,
+       display_condition
+  FROM field_definition
+`
+
+type ListFieldDefinitionsForConditionGraphRow struct {
+	ID               pgtype.UUID
+	Code             string
+	Type             string
+	SubjectKind      string
+	Status           string
+	AppliesTo        []int64
+	MirrorsColumn    *string
+	DisplayCondition []byte
+}
+
+// EVERY field definition, reduced to what the display-condition
+// validator needs (#1173, ADR 0099 §6).
+//
+// Read INSIDE the advisory lock, and read WHOLE rather than edge by edge:
+// a cycle closes on the third write of `A -> B`, `B -> C`, `C -> A`, so a
+// validator that only looked at the immediate edge would accept every one
+// of those three.
+//
+// ⚠️ NO subject_kind FILTER, and that is not an oversight. Scoped to one
+// kind, a term naming a field of the OTHER kind is simply absent, and the
+// operator is told "this server does not have that field" — which is
+// false, and which would send them to create a duplicate. Reading both
+// kinds lets the validator answer the question they actually asked:
+// the field exists and describes the wrong sort of record.
+//
+// Safe because `code` is UNIQUE across the whole table
+// (field_definition_code_key), so a code names one row and the graph has
+// no ambiguity to resolve. And the two kinds' graphs are genuinely
+// disjoint, because a cross-kind edge is refused at configuration time —
+// which is why the ADVISORY LOCK stays per subject kind even though this
+// read is not. The extra rows inform a REFUSAL and can never contribute
+// an edge, so a concurrent write on the other kind cannot break an
+// invariant here; at worst it changes which of two refusals an operator
+// sees.
+//
+// ARCHIVED DEFINITIONS ARE INCLUDED, deliberately. They are excluded from
+// every composition surface but they are NOT excluded from the graph: an
+// archived dependent keeps its stored configuration (ADR 0099 §7), so its
+// edges still exist and a cycle through it is still a cycle. The
+// CONTROLLER-side status rule is a separate check in Go, which refuses an
+// already-archived controller at configuration time while leaving a
+// previously valid condition alone when the controller is archived later.
+func (q *Queries) ListFieldDefinitionsForConditionGraph(ctx context.Context) ([]ListFieldDefinitionsForConditionGraphRow, error) {
+	rows, err := q.db.Query(ctx, listFieldDefinitionsForConditionGraph)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFieldDefinitionsForConditionGraphRow
+	for rows.Next() {
+		var i ListFieldDefinitionsForConditionGraphRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Type,
+			&i.SubjectKind,
+			&i.Status,
+			&i.AppliesTo,
+			&i.MirrorsColumn,
+			&i.DisplayCondition,
 		); err != nil {
 			return nil, err
 		}
@@ -1766,6 +1921,49 @@ func (q *Queries) LockFieldDefinitionVocabulary(ctx context.Context, id pgtype.U
 	var i LockFieldDefinitionVocabularyRow
 	err := row.Scan(&i.Options, &i.Type, &i.OpenVocabulary)
 	return i, err
+}
+
+const lockFieldDisplayConditionGraph = `-- name: LockFieldDisplayConditionGraph :exec
+SELECT pg_advisory_xact_lock($1::INT, $2::INT)
+`
+
+type LockFieldDisplayConditionGraphParams struct {
+	LockSpace  int32
+	SubjectKey int32
+}
+
+// Serialises display-condition writes on ONE subject-kind graph
+// (#1173, #1119, ADR 0099 §8).
+//
+// ⛔ THE CYCLE CHECK IS THEATRE WITHOUT THIS, and it is theatre in
+// exactly the case it exists for. A condition names OTHER definitions, so
+// the conditions on one subject kind form a directed GRAPH, and
+// "that graph is acyclic" is not a property of any single row: `A -> B`
+// and `B -> A` are each individually a perfectly valid row, which is why
+// no CHECK, no UNIQUE index and no per-row trigger can express it.
+//
+// So two operators, one writing `A -> B` and one writing `B -> A`, each
+// read a graph in which the other's edge is not yet visible. Both
+// validate. Both commit. The graph now holds a 2-cycle that neither write
+// could have created on its own, and every later validation walks it.
+//
+// ADVISORY rather than `SELECT ... FOR UPDATE` over the subject kind, for
+// two reasons. The invariant belongs to the WHOLE graph, so there is no
+// single row whose lock expresses it; and taking a row lock on every
+// definition of a subject kind would block unrelated field edits for the
+// duration of a graph walk. LockFieldDefinitionVocabulary above uses FOR
+// UPDATE because there the read-modify-write really is one row's options
+// document. This is the other case.
+//
+// Transaction-scoped, so it is released by COMMIT or ROLLBACK and cannot
+// be leaked by an early return. Taken ONLY when a request actually
+// touches display_condition, so ordinary field edits never queue behind
+// it. The first key is a constant naming this lock space; the second is
+// the subject kind, mapped by the caller to a small integer rather than
+// hashed, so the value in pg_locks is readable by a person debugging one.
+func (q *Queries) LockFieldDisplayConditionGraph(ctx context.Context, arg LockFieldDisplayConditionGraphParams) error {
+	_, err := q.db.Exec(ctx, lockFieldDisplayConditionGraph, arg.LockSpace, arg.SubjectKey)
+	return err
 }
 
 const readAssetMirroredValue = `-- name: ReadAssetMirroredValue :one
@@ -2014,7 +2212,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           subject_kind, extraction_source, extraction_mode, default_value,
           open_vocabulary, mirrors_column, show_on_card,
           show_in_advanced_search, show_on_upload, edit_tab,
-          read_only, regexp_filter
+          read_only, regexp_filter, display_condition
 `
 
 type SetFieldExtractionConfigParams struct {
@@ -2068,6 +2266,7 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.EditTab,
 		&i.ReadOnly,
 		&i.RegexpFilter,
+		&i.DisplayCondition,
 	)
 	return i, err
 }
@@ -2266,18 +2465,31 @@ UPDATE field_definition SET
     -- ` + "`" + `default_value` + "`" + ` say it. The handler refuses the two together.
     regexp_filter             = CASE WHEN $18::BOOLEAN THEN NULL
                                      ELSE COALESCE($19, regexp_filter) END,
-    status                    = COALESCE($20,                    status),
-    deprecated_replacement_id = COALESCE($21, deprecated_replacement_id),
+    -- ` + "`" + `display_condition` + "`" + ` is the FOURTH column needing a CLEAR path, after
+    -- ` + "`" + `default_value` + "`" + `, ` + "`" + `edit_tab` + "`" + ` and ` + "`" + `regexp_filter` + "`" + `, and for the identical
+    -- reason: NULL is "this field is always offered" AND "leave it alone",
+    -- so removal has to be said out loud. Migration 00065's CHECK refuses
+    -- the empty array, so there is no second spelling of unset to fall back
+    -- on and no way to express removal by sending a value.
+    --
+    -- ⚠️ The condition ARRAY IS REPLACED WHOLE and never merged. A
+    -- condition is one predicate, not a bag of independent settings, and
+    -- there is deliberately no way to express "add a term": an operator
+    -- editing a condition is editing a sentence.
+    display_condition         = CASE WHEN $20::BOOLEAN THEN NULL
+                                     ELSE COALESCE($21, display_condition) END,
+    status                    = COALESCE($22,                    status),
+    deprecated_replacement_id = COALESCE($23, deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
     -- passing NULL means "leave it alone" everywhere else in this
     -- statement, so "remove the default" would be unsayable. The
     -- explicit boolean makes removal a deliberate act rather than an
     -- ambiguity in the absence of a value.
-    default_value             = CASE WHEN $22::BOOLEAN THEN NULL
-                                     ELSE COALESCE($23, default_value) END,
+    default_value             = CASE WHEN $24::BOOLEAN THEN NULL
+                                     ELSE COALESCE($25, default_value) END,
     updated_at                = NOW(),
-    updated_by_user_ref       = $24
-WHERE id = $25
+    updated_by_user_ref       = $26
+WHERE id = $27
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
           display_order, display_group, status,
@@ -2286,7 +2498,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           subject_kind, extraction_source, extraction_mode, default_value,
           open_vocabulary, mirrors_column, show_on_card,
           show_in_advanced_search, show_on_upload, edit_tab,
-          read_only, regexp_filter
+          read_only, regexp_filter, display_condition
 `
 
 type UpdateFieldDefinitionParams struct {
@@ -2309,6 +2521,8 @@ type UpdateFieldDefinitionParams struct {
 	ReadOnly                *bool
 	ClearRegexpFilter       bool
 	RegexpFilter            *string
+	ClearDisplayCondition   bool
+	DisplayCondition        []byte
 	Status                  *string
 	DeprecatedReplacementID pgtype.UUID
 	ClearDefault            bool
@@ -2342,6 +2556,8 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		arg.ReadOnly,
 		arg.ClearRegexpFilter,
 		arg.RegexpFilter,
+		arg.ClearDisplayCondition,
+		arg.DisplayCondition,
 		arg.Status,
 		arg.DeprecatedReplacementID,
 		arg.ClearDefault,
@@ -2383,6 +2599,7 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.EditTab,
 		&i.ReadOnly,
 		&i.RegexpFilter,
+		&i.DisplayCondition,
 	)
 	return i, err
 }

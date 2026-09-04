@@ -2140,7 +2140,7 @@
       "show_on_upload_help": "Show this field on the create page. Turning it off removes the field from that page only. Values already stored are untouched, and the field can still be filled in from the asset\u0027s own edit surface. The older upload pop-up still shows every field.",
       "edit_tab": "Edit tab",
       "edit_tab_placeholder": "No tab",
-      "edit_tab_help": "Groups this field under a named tab on the edit page, a coarser grouping than the display group, which still applies inside it. Leave it empty for no tab. The edit page starts reading this in a later release.",
+      "edit_tab_help": "Groups this field under a named tab on the edit page, a coarser grouping than the display group, which still applies inside it. Leave it empty for no tab. A tab strip appears once there are two or more sections; with everything in one section there is nothing to switch between.",
       "open_vocabulary": "Let values add new terms",
       "open_vocabulary_help": "A value naming a term this field doesn't have creates it instead of being refused. Matching is case-insensitive on the slug or the label, so “Sunset” and “sunset” stay one term.",
       "section_input_rules": "What a value may be",
@@ -2154,7 +2154,14 @@
       "section_search_index": "Finding this field",
       "searchable": "Include in the search index",
       "searchable_help": "Folds this field's text into what a plain search of the site matches. Turning it off takes the field's values out of that index straight away; nothing else about the field changes, and no reindex is needed.",
-      "searchable_boundary": "This is not the same as the advanced search setting above. That one decides whether a filter control is drawn; this one decides whether the words are in the index. Either way, a filter written out in full as field:code=value keeps working."
+      "searchable_boundary": "This is not the same as the advanced search setting above. That one decides whether a filter control is drawn; this one decides whether the words are in the index. Either way, a filter written out in full as field:code=value keeps working.",
+      "display_condition": "Only show this field when",
+      "display_condition_placeholder": "for example  work_type=Commission",
+      "display_condition_help": "All of these have to be true for this field to appear. Write each one as a field code, then = or ~, then the value: work_type=Commission matches the value exactly and is case sensitive, while notes~urgent matches any value containing that text, ignoring case. Remove them all to always show the field. This only decides whether the box is drawn: values already stored are never changed, and hiding a field never deletes anything.",
+      "display_condition_add": "Add a condition",
+      "display_condition_term_aria": "Condition {n}",
+      "display_condition_remove_aria": "Remove condition {n}",
+      "display_condition_none": "Always shown"
     },
     "field_detail": {
       "back": "← Back to fields",
@@ -3138,6 +3145,11 @@
     "save": "Save fields",
     "saved": "Custom fields saved.",
     "save_error": "Some fields didn't save. See the message under each one."
+  },
+  "field_tabs": {
+    "aria_label": "Field sections",
+    "default": "General",
+    "empty": "Nothing in this section applies right now. Other sections may still have fields to fill in."
   },
   "field_value": {
     "read_only_reason": "This field is filled in automatically, so it can't be edited by hand.",

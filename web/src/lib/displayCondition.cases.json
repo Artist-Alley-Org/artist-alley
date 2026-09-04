@@ -1,0 +1,443 @@
+{
+  "_": [
+    "THE ONE LIST BOTH PLANES ARE TESTED AGAINST (#1173, #1119, ADR 0099 §2).",
+    "",
+    "`display_condition` is parsed and evaluated in TWO LANGUAGES, and that is not a",
+    "choice anybody made. The authority is Go: facet.SplitFieldTerm, the same",
+    "function the search `filter=field:...` predicate uses, reused verbatim so that a",
+    "condition and a filter cannot disagree about what a term means. THE BROWSER",
+    "CANNOT CALL IT. So there are two implementations of one grammar:",
+    "",
+    "  app/internal/metadata/display_condition.go   (server; delegates to",
+    "                                                facet.SplitFieldTerm)",
+    "  web/src/lib/displayCondition.ts               (client; reimplements the same",
+    "                                                five properties)",
+    "",
+    "Two implementations of one rule drift. This file is what stops them: both suites",
+    "READ IT rather than carrying their own copy of the case list, so a change that",
+    "moves one plane fails on the other plane's test rather than being noticed months",
+    "later by an operator whose field will not appear.",
+    "",
+    "Read by app/internal/metadata/display_condition_parity_test.go and",
+    "web/src/lib/displayCondition.test.ts. If you add a case here, both pick it up.",
+    "",
+    "THE FIVE PROPERTIES THE `parse` SECTION PINS, none of them guessable:",
+    "  1. split on the FIRST character from `=~<>`",
+    "  2. operators matched LONGEST FIRST, so `>=` is never `>` then `=value`",
+    "  3. later operator characters stay IN the value",
+    "  4. the CODE is lowercased and trimmed",
+    "  5. the parsed VALUE is trimmed",
+    "",
+    "AND THE ONE THE `evaluate` SECTION PINS: nothing ever trims or case-folds the",
+    "STORED value. That asymmetry with (5) is the discriminator case below, and it is",
+    "the thing an operator will actually hit."
+  ],
+
+  "parse": [
+    {
+      "why": "the ordinary term",
+      "input": "work_type=Commission",
+      "ok": true,
+      "code": "work_type",
+      "op": "=",
+      "value": "Commission"
+    },
+    {
+      "why": "property 4 and 5 together: the CODE is trimmed AND lowercased, the VALUE is trimmed. The stored value it will be compared against is not touched at all.",
+      "input": "  Work_Type = Commission  ",
+      "ok": true,
+      "code": "work_type",
+      "op": "=",
+      "value": "Commission"
+    },
+    {
+      "why": "`~` parses like any other operator, and the literal keeps its case here; case-insensitivity is a property of the MATCH, not of the parse",
+      "input": "notes~Value",
+      "ok": true,
+      "code": "notes",
+      "op": "~",
+      "value": "Value"
+    },
+    {
+      "why": "property 1 and 3: split on the FIRST `=`, and the second one stays in the value",
+      "input": "expr=a=b",
+      "ok": true,
+      "code": "expr",
+      "op": "=",
+      "value": "a=b"
+    },
+    {
+      "why": "property 3 again with a different operator character: `~` inside an `=` value is part of the value",
+      "input": "expr=a~b",
+      "ok": true,
+      "code": "expr",
+      "op": "=",
+      "value": "a~b"
+    },
+    {
+      "why": "property 1 with the operators the other way round: `~` comes first, so `=` is in the value",
+      "input": "expr~a=b",
+      "ok": true,
+      "code": "expr",
+      "op": "~",
+      "value": "a=b"
+    },
+    {
+      "why": "property 2: LONGEST FIRST. `>=` is one operator, not `>` followed by a value beginning `=`. It parses fine and is refused separately by the display-condition matrix, which is a different rule.",
+      "input": "year>=1920",
+      "ok": true,
+      "code": "year",
+      "op": ">=",
+      "value": "1920"
+    },
+    {
+      "why": "the other bound, same reasoning",
+      "input": "year<=1920",
+      "ok": true,
+      "code": "year",
+      "op": "<=",
+      "value": "1920"
+    },
+    {
+      "why": "property 2 from the other side: `=>` is NOT an operator. The split takes `=`, and `>x` is the value.",
+      "input": "year=>1920",
+      "ok": true,
+      "code": "year",
+      "op": "=",
+      "value": ">1920"
+    },
+    {
+      "why": "⛔ AN EMBEDDED NEWLINE SURVIVES, AND THIS IS ONE TERM. `TrimSpace` strips only the ENDS of the parsed value, `validFieldCode` constrains only the code, and the storage CHECK asks only for a non-empty string. So a value may legitimately contain a newline, which is why the admin editor maps one CONTROL to one ARRAY ELEMENT and uses no delimiter at all: a line-delimited editor would load this as two terms and save the second one back with no operator.",
+      "input": "notes~line one\nline two",
+      "ok": true,
+      "code": "notes",
+      "op": "~",
+      "value": "line one\nline two"
+    },
+    {
+      "why": "the ENDS are still trimmed around an internal newline, so the leading and trailing spaces go and the newline stays",
+      "input": "notes~  line one\nline two  ",
+      "ok": true,
+      "code": "notes",
+      "op": "~",
+      "value": "line one\nline two"
+    },
+    {
+      "why": "a BLANK LINE inside the value is preserved too; nothing collapses runs of whitespace in the middle",
+      "input": "notes~a\n\nb",
+      "ok": true,
+      "code": "notes",
+      "op": "~",
+      "value": "a\n\nb"
+    },
+    {
+      "why": "a newline BEFORE the operator is part of the CODE, which no field code may contain, so this is malformed. The asymmetry with the cases above is the point: the value is permissive, the code is not.",
+      "input": "no\ntes~x",
+      "ok": false
+    },
+    {
+      "why": "MALFORMED: no operator at all, so there is nothing to split on",
+      "input": "work_type",
+      "ok": false
+    },
+    {
+      "why": "MALFORMED: an EMPTY parsed value. `code=` says nothing, and guessing that it means the empty string would silently hide every field whose controller is unset.",
+      "input": "work_type=",
+      "ok": false
+    },
+    {
+      "why": "MALFORMED: a whitespace-only value trims to empty, which is the same nothing",
+      "input": "work_type=   ",
+      "ok": false
+    },
+    {
+      "why": "MALFORMED: an empty code. There is no field to name.",
+      "input": "=Commission",
+      "ok": false
+    },
+    {
+      "why": "MALFORMED: a code carrying a character no field code may hold. Field codes are [a-z0-9_-]; the parser lowercases first, so case is not what fails here, the space is.",
+      "input": "work type=Commission",
+      "ok": false
+    },
+    {
+      "why": "MALFORMED: a `field:` PREFIX is not stored and is not accepted. The colon is not a legal code character, so a caller pasting a search token in gets a refusal rather than a term naming a field called `field:work_type`.",
+      "input": "field:work_type=Commission",
+      "ok": false
+    },
+    {
+      "why": "a code may hold digits, an underscore and a hyphen, and an uppercase one is folded rather than refused",
+      "input": "Shot-Code_2=AAA_0010",
+      "ok": true,
+      "code": "shot-code_2",
+      "op": "=",
+      "value": "AAA_0010"
+    }
+  ],
+
+  "matrix": [
+    { "type": "text", "op": "=", "allowed": true },
+    { "type": "text", "op": "~", "allowed": true },
+    { "type": "longtext", "op": "=", "allowed": true },
+    { "type": "longtext", "op": "~", "allowed": true },
+    { "type": "select", "op": "=", "allowed": true },
+    { "type": "select", "op": "~", "allowed": false },
+    { "type": "tree", "op": "=", "allowed": true },
+    { "type": "tree", "op": "~", "allowed": false },
+    { "type": "multi_select", "op": "=", "allowed": true },
+    { "type": "multi_select", "op": "~", "allowed": false },
+    { "type": "rich_text", "op": "=", "allowed": false },
+    { "type": "rich_text", "op": "~", "allowed": false },
+    { "type": "boolean", "op": "=", "allowed": false },
+    { "type": "boolean", "op": "~", "allowed": false },
+    { "type": "number", "op": "=", "allowed": false },
+    { "type": "date", "op": "=", "allowed": false },
+    { "type": "datetime", "op": "=", "allowed": false },
+    { "type": "reference", "op": "=", "allowed": false },
+    { "type": "text", "op": ">=", "allowed": false },
+    { "type": "text", "op": "<=", "allowed": false },
+    { "type": "number", "op": ">=", "allowed": false },
+    { "type": "date", "op": ">=", "allowed": false },
+    { "type": "date", "op": "<=", "allowed": false }
+  ],
+
+  "evaluate": [
+    {
+      "why": "the ordinary true arm",
+      "term": "work_type=Commission",
+      "controller": { "type": "text", "readable": true, "text": "Commission" },
+      "match": true
+    },
+    {
+      "why": "`=` IS CASE-SENSITIVE. This is not a near miss to be forgiven; the same operator is case-sensitive in the search predicate, and a condition that disagreed with the filter would be a second grammar.",
+      "term": "work_type=Commission",
+      "controller": { "type": "text", "readable": true, "text": "commission" },
+      "match": false
+    },
+    {
+      "why": "⚠️ THE DISCRIMINATOR. The condition literal is TRIMMED by the parser and the STORED value is not. So `work_type= Commission ` parses to the literal `Commission`, and a stored value of ` Commission ` is six characters longer and does NOT match. An evaluator that trimmed the stored value would pass this and would disagree with `=` everywhere else in the product.",
+      "term": "work_type= Commission ",
+      "controller": { "type": "text", "readable": true, "text": " Commission " },
+      "match": false
+    },
+    {
+      "why": "the same stored value DOES match a literal that survives trimming to the same thing, which is what makes the case above about the STORED side rather than about whitespace in general",
+      "term": "work_type=Commission",
+      "controller": { "type": "text", "readable": true, "text": "Commission" },
+      "match": true
+    },
+    {
+      "why": "a readable controller holding NOTHING is a REAL FALSE. Absence is an answer, and treating it as unknown produces an evaluator that never hides anything.",
+      "term": "work_type=Commission",
+      "controller": { "type": "text", "readable": true, "text": "" },
+      "match": false
+    },
+    {
+      "why": "`~` is a CASE-INSENSITIVE SUBSTRING match, so the literal's case is irrelevant on both sides",
+      "term": "notes~urgent",
+      "controller": { "type": "longtext", "readable": true, "text": "Please treat as URGENT before Friday" },
+      "match": true
+    },
+    {
+      "why": "`~` still has to be a substring; a shared prefix is not a match",
+      "term": "notes~urgently",
+      "controller": { "type": "longtext", "readable": true, "text": "urgent" },
+      "match": false
+    },
+    {
+      "why": "`~` against an empty stored value. The empty string is a substring of everything, but nothing is a substring of the empty string, so this is FALSE rather than a surprise TRUE.",
+      "term": "notes~urgent",
+      "controller": { "type": "longtext", "readable": true, "text": "" },
+      "match": false
+    },
+    {
+      "why": "a term whose value carries a newline evaluates like any other: `~` still matches it as a case-insensitive substring of the stored value",
+      "term": "notes~line one\nline two",
+      "controller": { "type": "longtext", "readable": true, "text": "PREFIX line one\nline two SUFFIX" },
+      "match": true
+    },
+    {
+      "why": "and it does NOT match a stored value that has a space where the newline is, so the newline is really part of the comparison rather than incidental whitespace",
+      "term": "notes~line one\nline two",
+      "controller": { "type": "longtext", "readable": true, "text": "line one line two" },
+      "match": false
+    },
+    {
+      "why": "a `select` compares the stored SLUG, because ADR 0012 keeps only the slug on the record",
+      "term": "genre=fan_art",
+      "controller": { "type": "select", "readable": true, "text": "fan_art" },
+      "match": true
+    },
+    {
+      "why": "and it does not match the label an operator might have typed instead",
+      "term": "genre=Fan Art",
+      "controller": { "type": "select", "readable": true, "text": "fan_art" },
+      "match": false
+    },
+    {
+      "why": "a `tree` value is ONE leaf slug in value_text, not a path, so it compares exactly like a select",
+      "term": "region=london",
+      "controller": { "type": "tree", "readable": true, "text": "london" },
+      "match": true
+    },
+    {
+      "why": "MEMBERSHIP: on a multi_select `=` asks whether the term is one of the stored values, not whether it is all of them",
+      "term": "roles=illustrator",
+      "controller": { "type": "multi_select", "readable": true, "options": ["writer", "illustrator", "letterer"] },
+      "match": true
+    },
+    {
+      "why": "membership still misses when the term is not in the set",
+      "term": "roles=colourist",
+      "controller": { "type": "multi_select", "readable": true, "options": ["writer", "illustrator"] },
+      "match": false
+    },
+    {
+      "why": "membership is case-sensitive too, for `=`'s reason",
+      "term": "roles=Illustrator",
+      "controller": { "type": "multi_select", "readable": true, "options": ["illustrator"] },
+      "match": false
+    },
+    {
+      "why": "an empty option set is a readable controller with no value, which is a REAL FALSE",
+      "term": "roles=illustrator",
+      "controller": { "type": "multi_select", "readable": true, "options": [] },
+      "match": false
+    }
+  ],
+
+  "condition": [
+    {
+      "why": "N=0. No condition means always shown, and no term is examined.",
+      "condition": [],
+      "controllers": {},
+      "shown": true
+    },
+    {
+      "why": "N=1 TRUE arm",
+      "condition": ["work_type=Commission"],
+      "controllers": { "work_type": { "type": "text", "readable": true, "text": "Commission" } },
+      "shown": true
+    },
+    {
+      "why": "N=1 FALSE arm. Both arms are required: an evaluator that only ever shows passes every true-arm test.",
+      "condition": ["work_type=Commission"],
+      "controllers": { "work_type": { "type": "text", "readable": true, "text": "Personal" } },
+      "shown": false
+    },
+    {
+      "why": "N>=2 case 1 — A true, B true -> SHOWN",
+      "condition": ["work_type=Commission", "roles=illustrator"],
+      "controllers": {
+        "work_type": { "type": "text", "readable": true, "text": "Commission" },
+        "roles": { "type": "multi_select", "readable": true, "options": ["illustrator"] }
+      },
+      "shown": true
+    },
+    {
+      "why": "N>=2 case 2 — A true, B false -> HIDDEN",
+      "condition": ["work_type=Commission", "roles=illustrator"],
+      "controllers": {
+        "work_type": { "type": "text", "readable": true, "text": "Commission" },
+        "roles": { "type": "multi_select", "readable": true, "options": ["writer"] }
+      },
+      "shown": false
+    },
+    {
+      "why": "N>=2 case 3 — A false, B true -> HIDDEN. The conjunction is order-independent.",
+      "condition": ["work_type=Commission", "roles=illustrator"],
+      "controllers": {
+        "work_type": { "type": "text", "readable": true, "text": "Personal" },
+        "roles": { "type": "multi_select", "readable": true, "options": ["illustrator"] }
+      },
+      "shown": false
+    },
+    {
+      "why": "⛔ N>=2 case 4 — A FALSE, B's DEFINITION MISSING -> SHOWN. This is the case a naive 'unknown counts as true inside the AND' gets wrong: `false AND true` would still HIDE. Once any term is unevaluable the condition has NO VERDICT and the remaining terms are not consulted.",
+      "condition": ["work_type=Commission", "gone=anything"],
+      "controllers": { "work_type": { "type": "text", "readable": true, "text": "Personal" } },
+      "shown": true
+    },
+    {
+      "why": "⛔ N>=2 case 5 — A FALSE, B UNREADABLE -> SHOWN, for the same reason. `readable` is a server-derived fact and never an inference from whether a value arrived.",
+      "condition": ["work_type=Commission", "budget=high"],
+      "controllers": {
+        "work_type": { "type": "text", "readable": true, "text": "Personal" },
+        "budget": { "type": "text", "readable": false }
+      },
+      "shown": true
+    },
+    {
+      "why": "N>=2 case 6 — A READABLE BUT UNSET, B true -> HIDDEN. The mirror trap: readable absence is a REAL FALSE, not unknown.",
+      "condition": ["work_type=Commission", "roles=illustrator"],
+      "controllers": {
+        "work_type": { "type": "text", "readable": true, "text": "" },
+        "roles": { "type": "multi_select", "readable": true, "options": ["illustrator"] }
+      },
+      "shown": false
+    },
+    {
+      "why": "an UNPARSEABLE term makes the whole condition unevaluable, even when a sibling term is plainly false",
+      "condition": ["work_type=Commission", "not a term"],
+      "controllers": { "work_type": { "type": "text", "readable": true, "text": "Personal" } },
+      "shown": true
+    },
+    {
+      "why": "an operator the controller's TYPE does not accept is unevaluable rather than false. Configuration refuses this pairing, so reaching it means the definition changed under a stored condition, which is later drift and fails open.",
+      "condition": ["work_type=Commission", "flag~yes"],
+      "controllers": {
+        "work_type": { "type": "text", "readable": true, "text": "Personal" },
+        "flag": { "type": "boolean", "readable": true, "text": "" }
+      },
+      "shown": true
+    },
+    {
+      "why": "DUPLICATE IDENTICAL TERMS are legal and evaluate as one",
+      "condition": ["work_type=Commission", "work_type=Commission"],
+      "controllers": { "work_type": { "type": "text", "readable": true, "text": "Commission" } },
+      "shown": true
+    },
+    {
+      "why": "two MEMBERSHIP terms on one multi_select can both be true, which is why they are legal configuration where two `=` on a single-valued controller are not",
+      "condition": ["roles=writer", "roles=illustrator"],
+      "controllers": { "roles": { "type": "multi_select", "readable": true, "options": ["writer", "illustrator"] } },
+      "shown": true
+    },
+    {
+      "why": "and they conjoin properly: holding one of the two is not enough",
+      "condition": ["roles=writer", "roles=illustrator"],
+      "controllers": { "roles": { "type": "multi_select", "readable": true, "options": ["writer"] } },
+      "shown": false
+    },
+    {
+      "why": "N=3, all true",
+      "condition": ["work_type=Commission", "notes~urgent", "roles=illustrator"],
+      "controllers": {
+        "work_type": { "type": "text", "readable": true, "text": "Commission" },
+        "notes": { "type": "longtext", "readable": true, "text": "URGENT please" },
+        "roles": { "type": "multi_select", "readable": true, "options": ["illustrator"] }
+      },
+      "shown": true
+    },
+    {
+      "why": "N=3, the middle one false",
+      "condition": ["work_type=Commission", "notes~urgent", "roles=illustrator"],
+      "controllers": {
+        "work_type": { "type": "text", "readable": true, "text": "Commission" },
+        "notes": { "type": "longtext", "readable": true, "text": "whenever" },
+        "roles": { "type": "multi_select", "readable": true, "options": ["illustrator"] }
+      },
+      "shown": false
+    },
+    {
+      "why": "N=3 with one unreadable among two TRUE terms: still SHOWN, because unevaluable is unevaluable regardless of what the others say",
+      "condition": ["work_type=Commission", "budget=high", "roles=illustrator"],
+      "controllers": {
+        "work_type": { "type": "text", "readable": true, "text": "Commission" },
+        "budget": { "type": "text", "readable": false },
+        "roles": { "type": "multi_select", "readable": true, "options": ["illustrator"] }
+      },
+      "shown": true
+    }
+  ]
+}

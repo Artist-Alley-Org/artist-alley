@@ -80,7 +80,10 @@
     type UploadRow,
   } from '$stores/upload.svelte';
   import { VALUE_COLUMN } from '$lib/fieldOptions';
+  import { conditionShows, type ConditionController } from '$lib/displayCondition';
+  import { bucketFields, tabStripVisible, resolveTabSelection, groupFields } from '$lib/fieldTabs';
   import FieldValueInput from '$components/FieldValueInput.svelte';
+  import FormTabs from '$components/FormTabs.svelte';
   import AiProvenanceControl from '$components/AiProvenanceControl.svelte';
   import ThumbnailPicker from '$components/upload/ThumbnailPicker.svelte';
   import CompanionRequirementsNote from '$components/upload/CompanionRequirementsNote.svelte';
@@ -219,6 +222,96 @@
   /** The rows of one asset type, so a field section can name its files. */
   function rowsOfType(ty: number): UploadRow[] {
     return rows.filter((r) => r.assetType === ty);
+  }
+
+  // ── conditional visibility + tabs, PER ASSET TYPE (#1119, ADR 0099) ─
+  //
+  // ⛔ ASSET TYPE IS THE OUTER AXIS AND STAYS THE OUTER AXIS. Everything
+  // below is computed for ONE type at a time and keyed by it, which is
+  // what makes a "Print" tab on `image` and a "Print" tab on `document`
+  // two separate tabs. Merging them would file a field under a heading
+  // its own asset type never mentioned.
+  //
+  // ⚠️ CONDITIONS EVALUATE AGAINST LOCAL PENDING VALUES. There is no
+  // subject here and no stored value to read, so the controller state
+  // comes from what the artist has typed into this form. There is
+  // deliberately no server fetch of existing protected values for
+  // create-time evaluation: there is nothing to fetch them from, and
+  // inventing one would build the oracle ADR 0099 §5 exists to prevent.
+  //
+  // ⚠️ AND EVERY OFFERED DEFINITION IS TREATED AS READABLE, which is
+  // correct rather than a shortcut: the value being evaluated is the one
+  // the artist is typing right now, not a stored value belonging to
+  // somebody else, so there is nothing here for a read capability to
+  // withhold. A definition that is NOT offered on this page — inactive,
+  // `show_on_upload: false`, or belonging to another asset type — is
+  // simply unresolvable, and the whole condition fails OPEN. That is why
+  // a DEPRECATED controller shows the dependent here while evaluating
+  // normally on the edit surfaces: /create is active-only by design.
+  function resolveControllerFor(ty: number): (code: string) => ConditionController | undefined {
+    const defs = fieldsByType[ty] ?? [];
+    return (code: string) => {
+      const def = defs.find((d) => d.code === code);
+      if (!def) return undefined;
+      const v = fieldValueOf(ty, def);
+      return {
+        type: def.type,
+        readable: true,
+        text: v.value_text ?? '',
+        options: v.value_options ?? [],
+      };
+    };
+  }
+
+  /** Composition-ELIGIBLE definitions of one type: what the tabs derive from. */
+  function bucketsOfType(ty: number) {
+    return bucketFields(fieldsByType[ty] ?? []);
+  }
+
+  // Selection per asset type, so switching tabs on the images does not
+  // move the tab on the 3D models.
+  let selectedTabByType = $state<Record<number, string>>({});
+
+  function activeTabOf(ty: number): string | null {
+    return resolveTabSelection(selectedTabByType[ty] ?? null, bucketsOfType(ty));
+  }
+
+  /**
+   * The definitions to DRAW for one type: the selected tab's members,
+   * minus the ones a condition currently hides.
+   *
+   * Policy B applies here too: the tab list comes from `bucketsOfType`,
+   * which knows nothing about conditions, so a tab emptied by a condition
+   * keeps its place in the strip.
+   */
+  function visibleDefsOf(ty: number): FieldDef[] {
+    const buckets = bucketsOfType(ty);
+    if (buckets.length === 0) return [];
+    const active = activeTabOf(ty);
+    const bucket = buckets.find((b) => b.id === active) ?? buckets[0];
+    const resolve = resolveControllerFor(ty);
+    return bucket.fields.filter((d) => conditionShows(d.display_condition, resolve));
+  }
+
+  /**
+   * The `display_group` fieldsets INSIDE the selected bucket.
+   *
+   * ⛔ THE FULL HIERARCHY IS asset type -> edit-tab bucket ->
+   * `display_group` -> `display_order`, and this is the layer this page
+   * was missing. It rendered the bucket's fields as ONE FLAT LIST, which
+   * meant `display_group` was ordering the list and structuring nothing:
+   * an operator who put half a type's fields in "Rights" and half in
+   * "Core" saw one undifferentiated run of inputs, while the asset edit
+   * page drew two labelled fieldsets from the same definitions.
+   *
+   * `groupFields` is the SAME function FieldValuesSection uses, not a
+   * second grouping concept. `display_order` survives inside each group
+   * because the server already returns the definitions ordered
+   * `display_group, display_order, code` and every step from there
+   * preserves input order.
+   */
+  function groupsOfType(ty: number) {
+    return groupFields(visibleDefsOf(ty));
   }
 
   /**
@@ -577,8 +670,19 @@
                   {t('upload.file_row.fields_load_error')}
                 </p>
               {/if}
+              <!--
+                ASSET TYPE IS THE OUTER AXIS (ADR 0099 §9). Tabs nest
+                INSIDE this loop and are keyed by `ty`, which is what
+                keeps a "Print" tab on images and a "Print" tab on
+                documents two separate tabs rather than one merged
+                section.
+              -->
               {#each activeTypes as ty (ty)}
                 {@const defs = fieldsByType[ty] ?? []}
+                {@const buckets = bucketsOfType(ty)}
+                {@const active = activeTabOf(ty)}
+                {@const shown = visibleDefsOf(ty)}
+                {@const groups = groupsOfType(ty)}
                 <div data-testid="create-fields-type-{ty}">
                   {#if activeTypes.length > 1}
                     <p class="mb-2 text-xs text-fg-muted">
@@ -590,16 +694,68 @@
                       {t('upload.file_row.no_fields')}
                     </p>
                   {:else}
-                    <div class="space-y-4">
-                      {#each defs as def (def.id)}
-                        <div data-testid="create-field-{def.code}">
-                          <FieldValueInput
-                            def={{ ...def, required: def.required === true }}
-                            value={fieldValueOf(ty, def)}
-                            serverVocabulary
-                            onchange={(v) => setFieldValue(ty, def, v)}
-                          />
-                        </div>
+                    <!--
+                      The strip appears from two buckets up. Its testid
+                      carries the asset type, so a spec can assert that
+                      the two types really do have their own strips.
+                    -->
+                    {#if tabStripVisible(buckets)}
+                      <FormTabs
+                        tabs={buckets.map((b) => ({ id: b.id, label: b.name ?? t('field_tabs.default') }))}
+                        active={active ?? ''}
+                        onSelect={(id) => (selectedTabByType = { ...selectedTabByType, [ty]: id })}
+                        label={t('field_tabs.aria_label')}
+                        panelId="create-fields-panel-{ty}"
+                        idPrefix="create-fields-tab-{ty}"
+                        testid="create-fields-tabs-{ty}"
+                      />
+                    {/if}
+                    <div
+                      id="create-fields-panel-{ty}"
+                      role={tabStripVisible(buckets) ? 'tabpanel' : undefined}
+                      aria-labelledby={tabStripVisible(buckets)
+                        ? `create-fields-tab-${ty}-${active ?? ''}`
+                        : undefined}
+                      class="space-y-4"
+                    >
+                      <!--
+                        Policy B: the tab stays and says so rather than
+                        disappearing out from under the selection.
+                      -->
+                      {#if shown.length === 0}
+                        <p class="text-sm text-fg-muted" data-testid="create-fields-tab-empty-{ty}">
+                          {t('field_tabs.empty')}
+                        </p>
+                      {/if}
+                      <!--
+                        `display_group` fieldsets, INSIDE the bucket. Same
+                        chrome the asset edit page draws, from the same
+                        `groupFields`: the operator's grouping has to mean
+                        the same thing on both surfaces, and before this
+                        it structured one and merely ordered the other.
+                      -->
+                      {#each groups as group (group.name)}
+                        <fieldset
+                          class="rounded border border-border p-3"
+                          data-testid="create-fields-group-{ty}-{group.name}"
+                        >
+                          <legend
+                            class="px-1 text-xs font-medium uppercase tracking-wider text-fg-muted"
+                            >{group.name}</legend
+                          >
+                          <div class="space-y-4">
+                            {#each group.fields as def (def.id)}
+                              <div data-testid="create-field-{def.code}">
+                                <FieldValueInput
+                                  def={{ ...def, required: def.required === true }}
+                                  value={fieldValueOf(ty, def)}
+                                  serverVocabulary
+                                  onchange={(v) => setFieldValue(ty, def, v)}
+                                />
+                              </div>
+                            {/each}
+                          </div>
+                        </fieldset>
                       {/each}
                     </div>
                   {/if}
