@@ -3144,6 +3144,7 @@ func (s *apiServer) GetAssetFields(ctx context.Context, req openapi.GetAssetFiel
 func (s *apiServer) GetAssetFieldComposition(ctx context.Context, req openapi.GetAssetFieldCompositionRequestObject) (openapi.GetAssetFieldCompositionResponseObject, error) {
 	return s.metadata.GetAssetFieldComposition(ctx, req)
 }
+
 // The batch metadata editor (#1173, #1119, ADR 0019). Two operations,
 // both on the metadata handler: a preview that writes nothing and mints
 // a single-use token, and an apply that spends it.
