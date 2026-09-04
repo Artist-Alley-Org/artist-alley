@@ -46,6 +46,30 @@ func TestBatch_EmptySelection(t *testing.T) {
 	}
 }
 
+// A field that does not exist answers 404 with the ordinary NotFound
+// body, and NOT a batch refusal reason.
+//
+// It is asserted because the refusal router is a switch with a default
+// arm, and a status it does not name falls through it: before this
+// test, a missing field answered 422 `field_archived` — a code that
+// says the field EXISTS and refuses values, which is a different fact
+// and would send an operator to look at a configuration that is not
+// there. It is checked AFTER the bulk-admission gate, so a caller
+// without the instrument cannot use it to probe which fields exist.
+func TestBatch_UnknownFieldIsNotFound(t *testing.T) {
+	f := newBatchFixture(t)
+	_, ctx := f.bulkOperator("nofield")
+	asset := f.asset(nil, nil)
+
+	res := f.preview(ctx, openapi.BatchModeOverwrite, uuid.New(), textValue("x"), assetEntries(asset))
+	if res.Status != 404 {
+		t.Fatalf("want 404 for a field that does not exist, got %d %+v", res.Status, res.Refusal)
+	}
+	if res.Refusal != nil && res.Refusal.Reason == openapi.BatchFieldArchived {
+		t.Fatal("a MISSING field must not be reported as an ARCHIVED one")
+	}
+}
+
 // A2. One asset entry.
 func TestBatch_SingleAssetTarget(t *testing.T) {
 	f := newBatchFixture(t)

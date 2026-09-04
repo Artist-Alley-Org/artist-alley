@@ -58,6 +58,14 @@ func previewRefusal(r *batchRefusal) openapi.PreviewBatchAssetFieldEditResponseO
 		return openapi.PreviewBatchAssetFieldEdit400JSONResponse(body)
 	case 403:
 		return openapi.PreviewBatchAssetFieldEdit403JSONResponse(body)
+	case 404:
+		// The ordinary NotFound shape, not the batch refusal body: a
+		// field that does not exist has no batch-specific reason to
+		// give, and inventing one would put a code in the enum that no
+		// client could act on differently from a 404.
+		return openapi.PreviewBatchAssetFieldEdit404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: r.Message},
+		}
 	default:
 		return openapi.PreviewBatchAssetFieldEdit422JSONResponse(body)
 	}
@@ -93,7 +101,11 @@ func (h *Handler) previewBatch(
 	field, err := h.getFieldByIDCached(ctx, pgField)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return zero, refuse(404, openapi.BatchFieldArchived, "field not found")
+			// A 404 with the ordinary NotFound body. Deliberately NOT a
+			// batch refusal reason: `field_archived` says the field
+			// exists and refuses values, which is a different fact and
+			// a different fix.
+			return zero, &batchRefusal{Status: 404, Message: "field not found"}
 		}
 		return zero, err
 	}
