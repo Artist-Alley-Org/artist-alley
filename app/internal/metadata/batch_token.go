@@ -231,10 +231,10 @@ func batchTokenHash(token string) ([]byte, bool) {
 // enumeration oracle over everybody else's previews, and a security
 // comparison that has a fast path is a security comparison somebody can
 // measure. The cost is nothing.
-func batchTokenBoundTo(row MetadataBatchPreview, callerRef int64) bool {
+func batchTokenBoundTo(storedRef, callerRef int64) bool {
 	var a, b [8]byte
 	for i := 0; i < 8; i++ {
-		a[i] = byte(row.CallerUserRef >> (8 * i))
+		a[i] = byte(storedRef >> (8 * i))
 		b[i] = byte(callerRef >> (8 * i))
 	}
 	return subtle.ConstantTimeCompare(a[:], b[:]) == 1

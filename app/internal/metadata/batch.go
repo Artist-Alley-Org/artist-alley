@@ -111,25 +111,25 @@ const (
 	modeRemove      = openapi.BatchModeRemove
 )
 
-// clearIsNotAMode records why the four modes are four and not five,
-// because the absence is the kind of thing a later reader adds back.
+// THERE IS NO BATCH CLEAR, and the absence is a decision rather than an
+// omission — which is worth saying because it is the kind of gap a
+// later reader closes on sight.
 //
 // An empty OVERWRITE and a CLEAR are different operations, not two
 // spellings of one. An empty overwrite is a SET: the row exists
-// afterwards, its `set_at` advances, a history row is written, and
-// R1's requiredSetRefusal governs it. A clear REMOVES the row and
-// R2's requiredClearRefusal governs it. 20c has no mode that does the
-// latter — with exactly one exception, `remove` emptying an OPTIONAL
-// multi_select, which deletes the row because writing `[]` into a
-// multi_select column is a shape the single-target writer refuses.
+// afterwards, its `set_at` advances, a history row is written, and R1's
+// requiredSetRefusal governs it. A clear REMOVES the row and R2's
+// requiredClearRefusal governs it. 20c has no mode that does the latter
+// — with exactly one exception, `remove` emptying an OPTIONAL
+// multi_select, which deletes the row because writing `[]` into
+// value_options is a shape the single-target writer refuses.
 //
-// The consequence worth stating out loud is that NO MODE CREATES AN
-// ACCIDENTAL EMPTY ROW. fill_empties cannot (a semantically empty
-// proposed value is refused batch-wide before any target is touched);
-// append and remove are multi_select-only; and overwrite creates one
-// only where an operator explicitly supplied an empty value for an
-// optional field, which is a thing they asked for.
-const clearIsNotAMode = "see the comment; there is no batch clear"
+// The consequence worth stating out loud: NO MODE CREATES AN ACCIDENTAL
+// EMPTY ROW. fill_empties cannot, because a semantically empty proposed
+// value is refused batch-wide before any target is touched; append and
+// remove are multi_select-only; and overwrite creates one only where an
+// operator explicitly supplied an empty value for an optional field,
+// which is a thing they asked for.
 
 // appendRemoveSupported reports whether a field type has a set
 // semantics for `append` and `remove`.

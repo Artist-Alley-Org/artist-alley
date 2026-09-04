@@ -174,7 +174,7 @@ func (h *Handler) applyBatch(
 	//
 	// Everything below this line may speak about the token. Nothing
 	// above it did.
-	if !batchTokenBoundTo(MetadataBatchPreview{CallerUserRef: row.CallerUserRef}, id.UserRef) {
+	if !batchTokenBoundTo(row.CallerUserRef, id.UserRef) {
 		return zero, tokenInvalid()
 	}
 
