@@ -2431,6 +2431,26 @@ CREATE TABLE public.metadata_backfill_run (
 
 
 --
+-- Name: metadata_batch_preview; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.metadata_batch_preview (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    token_hash bytea NOT NULL,
+    caller_user_ref bigint NOT NULL,
+    field_id uuid NOT NULL,
+    mode text NOT NULL,
+    would_change integer NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    CONSTRAINT metadata_batch_preview_mode_check CHECK ((mode = ANY (ARRAY['overwrite'::text, 'fill_empties'::text, 'append'::text, 'remove'::text]))),
+    CONSTRAINT metadata_batch_preview_would_change_check CHECK ((would_change >= 0))
+);
+
+
+--
 -- Name: notifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3725,6 +3745,22 @@ ALTER TABLE ONLY public.mcp_server_tool_grant
 
 ALTER TABLE ONLY public.metadata_backfill_run
     ADD CONSTRAINT metadata_backfill_run_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: metadata_batch_preview metadata_batch_preview_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_batch_preview
+    ADD CONSTRAINT metadata_batch_preview_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: metadata_batch_preview metadata_batch_preview_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_batch_preview
+    ADD CONSTRAINT metadata_batch_preview_token_hash_key UNIQUE (token_hash);
 
 
 --
@@ -5277,6 +5313,13 @@ CREATE INDEX metadata_backfill_run_started_by_idx ON public.metadata_backfill_ru
 
 
 --
+-- Name: metadata_batch_preview_expires_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX metadata_batch_preview_expires_at_idx ON public.metadata_batch_preview USING btree (expires_at);
+
+
+--
 -- Name: post_acls_expires_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6524,6 +6567,14 @@ ALTER TABLE ONLY public.mcp_server_tool_grant
 
 ALTER TABLE ONLY public.metadata_backfill_run
     ADD CONSTRAINT metadata_backfill_run_started_by_user_ref_fkey FOREIGN KEY (started_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
+
+
+--
+-- Name: metadata_batch_preview metadata_batch_preview_field_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_batch_preview
+    ADD CONSTRAINT metadata_batch_preview_field_id_fkey FOREIGN KEY (field_id) REFERENCES public.field_definition(id) ON DELETE CASCADE;
 
 
 --

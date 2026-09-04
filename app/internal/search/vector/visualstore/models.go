@@ -777,6 +777,19 @@ type MetadataBackfillRun struct {
 	StartedByUserRef *int64
 }
 
+type MetadataBatchPreview struct {
+	ID            pgtype.UUID
+	TokenHash     []byte
+	CallerUserRef int64
+	FieldID       pgtype.UUID
+	Mode          string
+	WouldChange   int32
+	Payload       []byte
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	ConsumedAt    pgtype.Timestamptz
+}
+
 type Notification struct {
 	ID               pgtype.UUID
 	RecipientUserRef int64
