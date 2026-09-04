@@ -173,10 +173,28 @@ func TestBatch_AtTheCeiling(t *testing.T) {
 			i, n, elapsed, float64(elapsed.Microseconds())/1000.0/float64(n))
 	}
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
-	p95 := durations[len(durations)-1] // the worst of five IS the p95 bound here
-	t.Logf("APPLY LATENCY AT %d TARGETS: p95 = %s (budget 10s)", n, p95)
-	if p95 > 10*time.Second {
-		t.Fatalf("p95 apply latency at %d targets is %s, over the 10 s budget", n, p95)
+
+	// THE WORST OF FIVE, and it is called that rather than "p95"
+	// because five samples cannot express a 95th percentile — the
+	// worst of them is the MAXIMUM, which is a strictly stronger claim
+	// than the budget asks for and is the honest name for it.
+	worst := durations[len(durations)-1]
+
+	// The budget is 10 s, and it is about PRODUCTION. Under -race every
+	// memory access is instrumented and wall-clock inflates several-
+	// fold, so enforcing the production number there would fail for a
+	// reason unrelated to this code — on a loaded self-hosted runner,
+	// intermittently, which is the worst kind. The measurement is
+	// REPORTED either way; only the threshold moves, and the looser one
+	// is still tight enough to catch a real regression.
+	budget := 10 * time.Second
+	if raceEnabled {
+		budget = 30 * time.Second
+	}
+	t.Logf("APPLY LATENCY AT %d TARGETS: worst of %d runs = %s (budget %s%s)",
+		n, runs, worst, budget, map[bool]string{true: ", relaxed under -race", false: ""}[raceEnabled])
+	if worst > budget {
+		t.Fatalf("the worst apply over %d targets is %s, past the %s budget", n, worst, budget)
 	}
 
 	// ── 2. SEARCH-TEXT REBUILD AND NOTIFY ──────────────────────────

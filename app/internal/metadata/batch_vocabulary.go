@@ -44,6 +44,7 @@ package metadata
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
@@ -68,6 +69,18 @@ type batchVocabulary struct {
 	// it re-checks against CURRENT effective permission.
 	Mintable []string
 
+	// Terms maps each mintable slug back to the OPERATOR'S RAW TERM.
+	//
+	// It exists because a minted option's LABEL is the term it was
+	// created from: EnsureOpenVocabularyTerms writes
+	// `FieldOption{Value: slug, Label: term}`. Handing it the slug
+	// would create `character-design` labelled "character-design",
+	// where the single-target writer — which passes the raw value
+	// straight through — creates it labelled "Character Design". Two
+	// writers producing different labels for one operator input is the
+	// drift this carries the raw term to avoid.
+	Terms map[string]string
+
 	// Status is every incoming slug's lifecycle state in the document,
 	// so the per-target grandfather test needs no second read. A slug
 	// absent from the map is a mintable one, which has no status yet.
@@ -91,10 +104,11 @@ type batchVocabulary struct {
 // ALWAYS take the closed branch however the flag is set.
 func resolveBatchVocabulary(
 	f FieldDefinition,
+	mode batchMode,
 	incoming []string,
 	canExtend bool,
 ) (batchVocabulary, error) {
-	out := batchVocabulary{Status: map[string]OptionStatus{}}
+	out := batchVocabulary{Status: map[string]OptionStatus{}, Terms: map[string]string{}}
 	if len(incoming) == 0 {
 		// vocabularySlugs returns nil for `select` and `tree` when the
 		// value is nil or the EMPTY STRING, and that is the whole
@@ -109,6 +123,38 @@ func resolveBatchVocabulary(
 	case "select", "multi_select", "tree":
 	default:
 		out.Slugs = incoming
+		return out, nil
+	}
+
+	// ⛔ `remove` MATCHES; IT NEVER MINTS, AND IT NEVER REFUSES.
+	//
+	// Its incoming terms name what to TAKE OUT, and its residual is a
+	// SUBSET of what each target already held — so nothing it names is
+	// ever stored, and putting it through the mint-and-membership gate
+	// answers the wrong question three ways over:
+	//
+	//   - an ARCHIVED term with no forwarding address came back 422
+	//     archived_slug, which made a retired term IMPOSSIBLE TO CLEAN
+	//     OFF the records holding it — the exact freeze grandfathering
+	//     exists to prevent, arriving through the other door.
+	//   - a term the field does not have came back 403
+	//     vocabulary_extend_required ("would create a new term") on an
+	//     open vocabulary, or 422 unknown_slug on a closed one. You
+	//     cannot hold what does not exist: the answer is no_op.
+	//   - and either way the term was marked MINTABLE, so a removal
+	//     could grow the catalogue.
+	//
+	// canonicaliseVocabulary is the shipped non-gate: it maps each term
+	// through the field's alias and tombstone redirects and passes
+	// ANYTHING IT CANNOT RESOLVE THROUGH UNCHANGED. Unchanged is
+	// exactly right here — an unresolvable term matches no held value
+	// and the target reports no_op, while a resolvable one reaches the
+	// canonical form the record actually stores.
+	if mode == modeRemove {
+		out.Slugs = canonicaliseVocabulary(f.Options, incoming)
+		for slug, resolved := range resolveOptionSlugs(f.Options, out.Slugs) {
+			out.Status[slug] = resolved.Status
+		}
 		return out, nil
 	}
 
@@ -172,6 +218,9 @@ func resolveBatchVocabulary(
 					f.Code, raw, CapVocabularyExtend).withField(f.Code).withOption(slug)
 			}
 			out.Mintable = appendUnique(out.Mintable, slug)
+			if _, seenTerm := out.Terms[slug]; !seenTerm {
+				out.Terms[slug] = strings.TrimSpace(raw)
+			}
 		}
 
 		// DEDUPE ON THE CANONICAL SLUG, order preserved. "Sunset,

@@ -351,7 +351,13 @@ SELECT DISTINCT pa.asset_id
    AND p.deleted_at IS NULL
    AND a.deleted_at IS NULL
  ORDER BY pa.asset_id
+ LIMIT $2::int
 `
+
+type ExpandPostsToAssetsParams struct {
+	PostIds []pgtype.UUID
+	Limit   int32
+}
 
 // ---------------------------------------------------------------------------
 // Batch metadata edit (#1173, #1119, ADR 0019)
@@ -371,8 +377,8 @@ SELECT DISTINCT pa.asset_id
 // deterministic order the whole contract rests on — preview and apply
 // derive the identical ordered set from it, which is why it is asset id
 // and not sort_order (mutable) or selection order (client-supplied).
-func (q *Queries) ExpandPostsToAssets(ctx context.Context, postIds []pgtype.UUID) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, expandPostsToAssets, postIds)
+func (q *Queries) ExpandPostsToAssets(ctx context.Context, arg ExpandPostsToAssetsParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, expandPostsToAssets, arg.PostIds, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

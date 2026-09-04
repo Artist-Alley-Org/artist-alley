@@ -398,7 +398,7 @@ func (h *Handler) commitBatch(
 	// unauthorized_at_apply or error, the operator's word never reached
 	// a single record and the catalogue must not have grown a term
 	// because of it.
-	mintedTerms, err := h.mintCommittedTerms(ctx, qTx, field, payload.Mintable, committed)
+	mintedTerms, err := h.mintCommittedTerms(ctx, qTx, field, payload.Mintable, payload.MintableTerms, committed)
 	if err != nil {
 		return zero, err
 	}
@@ -667,35 +667,54 @@ func (h *Handler) writeOneBatchTarget(
 // mintCommittedTerms grows the vocabulary, and ONLY for terms a
 // successful write ACTUALLY STORED.
 //
-// The coupling is the contract, and "did anything commit at all" is NOT
-// a sufficient test of it. A batch can succeed on targets that stored
-// none of the new terms:
+// The contract is per TERM — "a new term may commit only if at least
+// one successful mutation stores THAT canonical term" — so the test is
+// per term, against the set the outcomes report, and not a single
+// boolean asking whether anything at all committed.
 //
-//   - `remove` naming a term the field does not have. The term is
-//     mintable, every residual is a SUBSET of what its target already
-//     held, so no row ever carries it — and minting it would grow the
-//     catalogue with a term whose only appearance in the operation was
-//     an instruction to take it away.
-//   - a partial apply where the only targets that would have carried a
-//     new term all conflicted, went away, or lost authority, while
-//     other targets succeeded.
+// # Whether the two can currently differ
 //
-// So the terms come from the OUTCOMES — what each successful write
-// stored — intersected with what the preview said was mintable. If
-// nothing stored a given term the options document is left
+// Honestly: no. Of the three modes that can mint, every successful
+// write stores the whole proposed set, so any commit at all stores
+// every mintable term. `remove` was the case that pulled them apart —
+// it could name a term the field does not have, mark it mintable, and
+// then store nothing — and that is now fixed further upstream, where it
+// belongs: a removal MATCHES and never mints (see
+// resolveBatchVocabulary). With that closed, the intersection below
+// currently reduces to the boolean.
+//
+// It is kept anyway, and not because two forms of the same test are
+// better than one. It is kept because the boolean is only equivalent by
+// a property of the CURRENT MODE SET, which is exactly the kind of
+// coincidence a fifth mode quietly breaks — and this way the code says
+// the rule rather than a consequence of it.
+//
+// If nothing stored a given term the options document is left
 // BYTE-IDENTICAL and no cache is invalidated, because nothing changed.
 func (h *Handler) mintCommittedTerms(
 	ctx context.Context,
 	qTx *Queries,
 	field FieldDefinition,
 	mintable []string,
+	terms map[string]string,
 	stored map[string]struct{},
 ) ([]string, error) {
+	// The RAW TERMS, not the slugs. A created option is labelled with
+	// the term it was created from, so handing the slug over would
+	// label `character-design` as "character-design" where the
+	// single-target writer labels it "Character Design". They resolve
+	// to the same slug either way; only the label differs, and only
+	// one of the two is what the operator typed.
 	commit := make([]string, 0, len(mintable))
-	for _, term := range mintable {
-		if _, wrote := stored[term]; wrote {
-			commit = append(commit, term)
+	for _, slug := range mintable {
+		if _, wrote := stored[slug]; !wrote {
+			continue
 		}
+		if raw, ok := terms[slug]; ok && raw != "" {
+			commit = append(commit, raw)
+			continue
+		}
+		commit = append(commit, slug)
 	}
 	if len(commit) == 0 {
 		return nil, nil

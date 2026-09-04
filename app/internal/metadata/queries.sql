@@ -1146,7 +1146,8 @@ SELECT DISTINCT pa.asset_id
  WHERE pa.post_id = ANY(@post_ids::uuid[])
    AND p.deleted_at IS NULL
    AND a.deleted_at IS NULL
- ORDER BY pa.asset_id;
+ ORDER BY pa.asset_id
+ LIMIT sqlc.arg('limit')::int;
 
 -- name: ListPostsWithMembers :many
 -- Which of the selected posts actually hold at least one live member,

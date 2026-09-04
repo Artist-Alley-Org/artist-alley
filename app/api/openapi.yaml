@@ -12983,7 +12983,8 @@ components:
         carries the class and this carries the cause.
 
         400 — the request could not have been valid for ANY state:
-        `empty_selection`, `value_type_mismatch`, `token_required`,
+        `empty_selection`, `unknown_mode`, `unknown_selection_kind`,
+        `value_type_mismatch`, `token_required`,
         `reason_payload_too_large`, `reason_required`,
         `reason_too_long`, `confirm_count_invalid`,
         `confirm_count_required`, `confirm_count_not_applicable`,
@@ -13014,6 +13015,8 @@ components:
         cannot say which.
       enum:
         - empty_selection
+        - unknown_mode
+        - unknown_selection_kind
         - token_required
         - reason_payload_too_large
         - reason_required
@@ -13046,6 +13049,8 @@ components:
         - dangling_reference
       x-enum-varnames:
         - BatchEmptySelection
+        - BatchUnknownMode
+        - BatchUnknownSelectionKind
         - BatchTokenRequired
         - BatchReasonPayloadTooLarge
         - BatchReasonRequired

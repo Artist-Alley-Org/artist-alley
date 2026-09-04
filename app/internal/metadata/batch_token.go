@@ -102,6 +102,12 @@ type batchTokenPayload struct {
 	// options document.
 	Mintable []string `json:"mintable,omitempty"`
 
+	// MintableTerms maps each mintable slug to the OPERATOR'S RAW TERM,
+	// which is what a created option is LABELLED with. Carried through
+	// the token because the apply is where the term is created and the
+	// operator's spelling is not recoverable from the slug.
+	MintableTerms map[string]string `json:"mintable_terms,omitempty"`
+
 	// Targets is the ordered set with each target's partition. Apply
 	// writes ONLY the would_change entries and NEVER re-expands — a
 	// post that gained a member after the preview does not enlarge the

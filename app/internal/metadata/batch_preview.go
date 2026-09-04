@@ -132,6 +132,10 @@ func (h *Handler) previewBatch(
 			"writing %s requires %s", field.Code, *field.WriteCapability).withField(field.Code)
 	}
 
+	if err := validateBatchMode(body.Mode); err != nil {
+		return zero, err
+	}
+
 	// Configuration and mode first, and the VALUE only after: see
 	// batchConfigurationRefusal for why "append on a text field" is
 	// mode_not_supported_for_type rather than value_type_mismatch.
@@ -147,7 +151,7 @@ func (h *Handler) previewBatch(
 	}
 
 	// ── VOCABULARY, batch-wide half — NON-MUTATING ─────────────────
-	vocab, err := resolveBatchVocabulary(field,
+	vocab, err := resolveBatchVocabulary(field, body.Mode,
 		vocabularySlugs(field.Type, value.Text, value.Options), canExtendVocabulary(id))
 	if err != nil {
 		return zero, err
@@ -188,7 +192,7 @@ func (h *Handler) previewBatch(
 	}
 
 	// ── EXPANSION ──────────────────────────────────────────────────
-	expansion, err := h.expandSelection(ctx, q, body.Selection)
+	expansion, err := h.expandSelection(ctx, q, id, body.Selection)
 	if err != nil {
 		return zero, err
 	}
@@ -216,6 +220,7 @@ func (h *Handler) previewBatch(
 		VocabularyFingerprint: vocabularyFingerprint(field.Options),
 		Value:                 tokenValueOf(value),
 		Mintable:              vocab.Mintable,
+		MintableTerms:         vocab.Terms,
 		Targets:               targets,
 		Counts:                counts,
 		SelectionEntryCount:   expansion.EntryCount,

@@ -131,6 +131,28 @@ const (
 // operator explicitly supplied an empty value for an optional field,
 // which is a thing they asked for.
 
+// validateBatchMode refuses a mode the enum does not define.
+//
+// ⚠️ NOTHING ELSE DOES THIS. There is no spec-validation middleware in
+// front of these handlers and the generated `BatchAssetFieldMode` is a
+// bare string type whose `Valid()` nothing calls, so an unrecognised
+// mode arrives here intact. Left unchecked it was worse than cosmetic:
+// it matched none of the mode-specific arms, so a REQUIRED field could
+// be given a semantically empty value without tripping R1, every target
+// fell through the partition switch as no_op, and the request then died
+// on the preview table's CHECK constraint as a 500.
+//
+// A 400: an undefined mode could not have been valid for any state of
+// the system.
+func validateBatchMode(mode batchMode) error {
+	switch mode {
+	case modeOverwrite, modeFillEmpties, modeAppend, modeRemove:
+		return nil
+	}
+	return refuse(400, openapi.BatchUnknownMode,
+		"%q is not one of overwrite, fill_empties, append, remove", string(mode))
+}
+
 // appendRemoveSupported reports whether a field type has a set
 // semantics for `append` and `remove`.
 //
@@ -236,6 +258,7 @@ type batchExpansion struct {
 func (h *Handler) expandSelection(
 	ctx context.Context,
 	q *Queries,
+	id *auth.Identity,
 	entries []openapi.BatchAssetFieldSelectionEntry,
 ) (batchExpansion, error) {
 	out := batchExpansion{EntryCount: len(entries)}
@@ -269,13 +292,51 @@ func (h *Handler) expandSelection(
 		case openapi.BatchSelectionPost:
 			postIDs = append(postIDs, pgtype.UUID{Bytes: id, Valid: true})
 		default:
-			return out, refuse(400, openapi.BatchEmptySelection,
+			// Its OWN reason, not empty_selection: the selection was
+			// not empty, and telling a client it was describes a
+			// different fact from the one that refused it.
+			return out, refuse(400, openapi.BatchUnknownSelectionKind,
 				"selection entry kind %q is not one of asset, post", string(e.Kind))
 		}
 	}
 
 	if len(postIDs) > 0 {
-		members, err := q.ExpandPostsToAssets(ctx, postIDs)
+		// ⛔ EXPANSION IS A READ, AND IT NEEDS THE POST'S OWN READ GATE.
+		//
+		// Without this, a caller holding the bulk instrument ANYWHERE —
+		// a grant scoped to one team is enough to pass admission — could
+		// name any post id and get its member asset ids back in
+		// `targets`, each politely labelled `unauthorized`, plus its
+		// non-emptiness in `empty_posts` and its size in
+		// `counts.expanded`. The asset-existence oracle is closed
+		// (absent and out-of-scope answer alike); membership of a post
+		// the caller may not even see was not, which contradicts the
+		// reason admission is asked BEFORE expansion in the first place.
+		//
+		// visibility.PostReadable is the SHIPPED single-post gate,
+		// obtained rather than restated — it consults `visibility`,
+		// `post_acls`, drafts and `posts.admin`, and a second copy of
+		// that would drift. A post the caller cannot read contributes
+		// NOTHING and is not reported: not as a target, and not as an
+		// empty post, because "your selection reached nothing" and "you
+		// may not see that" must look the same from outside.
+		readable, err := h.readablePosts(ctx, id, postIDs)
+		if err != nil {
+			return out, err
+		}
+		postIDs = readable
+
+	}
+	if len(postIDs) > 0 {
+		// Bounded at the ceiling PLUS ONE: enough to know the ceiling
+		// was exceeded, and never the whole union. The entry ceiling
+		// admits 500 posts, and without this a selection of large
+		// posts materialises hundreds of thousands of ids — in the
+		// result set and again in the maps below — only to refuse.
+		members, err := q.ExpandPostsToAssets(ctx, ExpandPostsToAssetsParams{
+			PostIds: postIDs,
+			Limit:   int32(batchExpandedTargetCeiling + 1),
+		})
 		if err != nil {
 			return out, fmt.Errorf("metadata: expand posts: %w", err)
 		}
@@ -977,4 +1038,39 @@ func validateBatchReason(raw string) (string, error) {
 			batchReasonSemanticLimit, n)
 	}
 	return trimmed, nil
+}
+
+// readablePosts narrows a selection's post ids to the ones this caller
+// may actually read, through the shipped per-post gate.
+//
+// One EXISTS per post rather than one spliced predicate: sqlc's static
+// SQL cannot take a runtime fragment (the same constraint
+// ListAssetsPageGated documents), and the alternative — re-deriving the
+// rule in a query of our own — is a second copy of a read gate that
+// consults post visibility, ACLs, drafts and `posts.admin`. The cost is
+// bounded by the SELECTION ENTRY CEILING, which is checked before this
+// runs, so it is at most 500 index lookups on a surface the operator
+// themselves assembled.
+func (h *Handler) readablePosts(
+	ctx context.Context,
+	id *auth.Identity,
+	postIDs []pgtype.UUID,
+) ([]pgtype.UUID, error) {
+	caps := visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
+	caller := visibility.Caller{UserRef: id.UserRef, IsAnonymous: id.IsAnonymous()}
+
+	out := make([]pgtype.UUID, 0, len(postIDs))
+	for _, p := range postIDs {
+		ok, err := visibility.PostReadable(ctx, h.Pool, caller, caps, uuid.UUID(p.Bytes))
+		if err != nil {
+			// Propagated, never folded into "no". A read gate that
+			// answers denied on a transport blip is indistinguishable
+			// from a permissions bug to whoever hits it.
+			return nil, fmt.Errorf("metadata: post read gate: %w", err)
+		}
+		if ok {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }

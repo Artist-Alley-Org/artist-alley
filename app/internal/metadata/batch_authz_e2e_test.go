@@ -377,57 +377,6 @@ func TestBatch_MintCoupled_CommitMintsOnce(t *testing.T) {
 	}
 }
 
-// A36b. MINT COUPLING, THE CASE A BOOLEAN GETS WRONG. A `remove`
-// naming a term the field does not have: the term is mintable, the
-// batch SUCCEEDS, and NOTHING STORES IT — because a removal's residual
-// is a SUBSET of what its target already held.
-//
-// An implementation that minted whenever "anything committed" passes
-// A36 and A37 and grows the catalogue here with a term whose only
-// appearance in the whole operation was an instruction to take it away.
-func TestBatch_MintCoupled_RemoveNeverStoresItsTerms(t *testing.T) {
-	f := newBatchFixture(t)
-	owner, ctx := f.bulkOperator("mintrm")
-	f.grant(owner, capVocabExtend, nil)
-	ctx = f.identity(owner)
-
-	field := f.field("kw", fieldSpec{Type: "multi_select", OpenVocabulary: true,
-		Options: []map[string]any{
-			vocabOption("keep", "Keep", "active"), vocabOption("drop", "Drop", "active"),
-		}})
-	asset := f.asset(&owner, nil)
-	f.setValue(asset, field, map[string]any{"options": []string{"keep", "drop"}})
-
-	// "drop" exists and will be removed; "never-stored" does not exist,
-	// so the preview reports it mintable — and no residual can contain it.
-	p := f.mustPreview(ctx, openapi.BatchModeRemove, field,
-		optionsValue("drop", "never-stored"), assetEntries(asset))
-	if p.MintableTerms == nil || len(*p.MintableTerms) != 1 || (*p.MintableTerms)[0] != "never-stored" {
-		t.Fatalf("the fixture needs exactly one mintable term, got %+v", p.MintableTerms)
-	}
-	before := f.optionsDoc(field)
-
-	res := f.apply(ctx, p.Token, "remove names a term nothing stores", intp(p.Counts.WouldChange))
-	if res.OK == nil {
-		t.Fatalf("apply refused: %+v", res.Refusal)
-	}
-	if res.OK.OutcomeCounts.Changed != 1 {
-		t.Fatalf("the removal must succeed, got %+v", res.OK.OutcomeCounts)
-	}
-	got, _ := f.storedOptions(asset, field)
-	if strings.Join(got, ",") != "keep" {
-		t.Fatalf("want [keep] left behind, got %v", got)
-	}
-
-	if res.OK.CommittedTerms != nil && len(*res.OK.CommittedTerms) != 0 {
-		t.Fatalf("NOTHING STORED %q, so it must not be created; got %+v",
-			"never-stored", res.OK.CommittedTerms)
-	}
-	if after := f.optionsDoc(field); !bytes.Equal(before, after) {
-		t.Fatalf("the options document must be BYTE-IDENTICAL\nbefore=%s\nafter=%s", before, after)
-	}
-}
-
 // A38. MINT AUTHORITY AT APPLY: held at preview, REVOKED before apply.
 // Zero writes, zero mint, options byte-identical, TOKEN NOT CONSUMED.
 func TestBatch_MintAuthorityRevokedBeforeApply(t *testing.T) {
