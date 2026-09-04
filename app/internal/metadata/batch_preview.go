@@ -66,7 +66,14 @@ func previewRefusal(r *batchRefusal) openapi.PreviewBatchAssetFieldEditResponseO
 		return openapi.PreviewBatchAssetFieldEdit404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: r.Message},
 		}
+	case 422:
+		return openapi.PreviewBatchAssetFieldEdit422JSONResponse(body)
 	default:
+		// EVERY status this operation can produce is named above.
+		// The default is a last resort, not a bucket: a 404 fell
+		// into it once and came back as a 422 wearing a reason
+		// that described a different situation entirely. A new
+		// status needs an arm here, not a shrug.
 		return openapi.PreviewBatchAssetFieldEdit422JSONResponse(body)
 	}
 }

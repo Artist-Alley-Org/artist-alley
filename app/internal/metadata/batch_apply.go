@@ -119,7 +119,14 @@ func applyRefusal(r *batchRefusal) openapi.ApplyBatchAssetFieldEditResponseObjec
 		return openapi.ApplyBatchAssetFieldEdit403JSONResponse(body)
 	case 409:
 		return openapi.ApplyBatchAssetFieldEdit409JSONResponse(body)
+	case 422:
+		return openapi.ApplyBatchAssetFieldEdit422JSONResponse(body)
 	default:
+		// EVERY status this operation can produce is named above.
+		// The default is a last resort, not a bucket: a 404 fell
+		// into it once and came back as a 422 wearing a reason
+		// that described a different situation entirely. A new
+		// status needs an arm here, not a shrug.
 		return openapi.ApplyBatchAssetFieldEdit422JSONResponse(body)
 	}
 }
