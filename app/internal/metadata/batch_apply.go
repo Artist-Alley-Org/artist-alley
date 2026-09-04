@@ -454,9 +454,15 @@ func (h *Handler) writeBatchTargets(
 	mode batchMode,
 	value batchValue,
 	payload batchTokenPayload,
-) ([]batchOutcome, bool, error) {
+) ([]batchOutcome, map[string]struct{}, error) {
 	out := make([]batchOutcome, 0, payload.Counts.WouldChange)
-	committedAny := false
+	// The union of canonical terms that SUCCESSFUL writes actually
+	// stored. Not a boolean "did anything commit": a batch can succeed
+	// on targets that stored none of the new terms, which is exactly
+	// what `remove` does — its residual is a subset of what the target
+	// already held, so a brand-new term named in a removal is stored by
+	// nobody and must not be created.
+	stored := map[string]struct{}{}
 
 	for _, t := range payload.Targets {
 		if t.Partition != string(openapi.BatchPartitionWouldChange) {
@@ -489,7 +495,7 @@ func (h *Handler) writeBatchTargets(
 				out = append(out, res)
 				continue
 			}
-			return nil, false, fmt.Errorf("metadata: lock batch subject: %w", err)
+			return nil, nil, fmt.Errorf("metadata: lock batch subject: %w", err)
 		}
 		subject := batchSubject{
 			ID: assetID, OwnerRef: subjectRow.OwnerUserRef,
@@ -528,7 +534,7 @@ func (h *Handler) writeBatchTargets(
 
 		changed, err := h.writeOneBatchTarget(ctx, qTx, field, pgAsset, t, next, current.UserRef)
 		if err != nil {
-			return nil, false, err
+			return nil, nil, err
 		}
 		if !changed {
 			res.Outcome = openapi.BatchOutcomeConflict
@@ -541,10 +547,12 @@ func (h *Handler) writeBatchTargets(
 		} else if !t.Delete {
 			res.Terms = vocabularySlugs(field.Type, next.Text, next.Options)
 		}
-		committedAny = true
+		for _, term := range res.Terms {
+			stored[term] = struct{}{}
+		}
 		out = append(out, res)
 	}
-	return out, committedAny, nil
+	return out, stored, nil
 }
 
 // writeOneBatchTarget performs the guarded write for one target and
@@ -650,25 +658,39 @@ func (h *Handler) writeOneBatchTarget(
 }
 
 // mintCommittedTerms grows the vocabulary, and ONLY for terms a
-// successful write actually stored.
+// successful write ACTUALLY STORED.
 //
-// The coupling is the contract. `committedAny` alone is not sufficient
-// either: a batch can succeed on targets that stored none of the new
-// terms — a `remove` whose residual never included them, or a partial
-// where the only targets carrying a new term all conflicted. So the
-// terms are collected from the OUTCOMES, which record what each
-// successful write stored.
+// The coupling is the contract, and "did anything commit at all" is NOT
+// a sufficient test of it. A batch can succeed on targets that stored
+// none of the new terms:
 //
-// If nothing stored a given term, the options document is left
-// BYTE-IDENTICAL, and no cache is invalidated because nothing changed.
+//   - `remove` naming a term the field does not have. The term is
+//     mintable, every residual is a SUBSET of what its target already
+//     held, so no row ever carries it — and minting it would grow the
+//     catalogue with a term whose only appearance in the operation was
+//     an instruction to take it away.
+//   - a partial apply where the only targets that would have carried a
+//     new term all conflicted, went away, or lost authority, while
+//     other targets succeeded.
+//
+// So the terms come from the OUTCOMES — what each successful write
+// stored — intersected with what the preview said was mintable. If
+// nothing stored a given term the options document is left
+// BYTE-IDENTICAL and no cache is invalidated, because nothing changed.
 func (h *Handler) mintCommittedTerms(
 	ctx context.Context,
 	qTx *Queries,
 	field FieldDefinition,
 	mintable []string,
-	committedAny bool,
+	stored map[string]struct{},
 ) ([]string, error) {
-	if len(mintable) == 0 || !committedAny {
+	commit := make([]string, 0, len(mintable))
+	for _, term := range mintable {
+		if _, wrote := stored[term]; wrote {
+			commit = append(commit, term)
+		}
+	}
+	if len(commit) == 0 {
 		return nil, nil
 	}
 	// EnsureOpenVocabularyTerms takes its own FOR UPDATE on the row
@@ -677,7 +699,7 @@ func (h *Handler) mintCommittedTerms(
 	// write against the LIVE document. Reused rather than reimplemented
 	// so a term the batch creates is normalised by exactly the rule
 	// that normalises one the admin editor creates.
-	res, err := EnsureOpenVocabularyTerms(ctx, qTx, field.ID, mintable, true)
+	res, err := EnsureOpenVocabularyTerms(ctx, qTx, field.ID, commit, true)
 	if err != nil {
 		var rej *slugRejection
 		if errors.As(err, &rej) {
