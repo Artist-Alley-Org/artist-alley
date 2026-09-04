@@ -107,6 +107,35 @@
       "value": ">1920"
     },
     {
+      "why": "⛔ AN EMBEDDED NEWLINE SURVIVES, AND THIS IS ONE TERM. `TrimSpace` strips only the ENDS of the parsed value, `validFieldCode` constrains only the code, and the storage CHECK asks only for a non-empty string. So a value may legitimately contain a newline, which is why the admin editor maps one CONTROL to one ARRAY ELEMENT and uses no delimiter at all: a line-delimited editor would load this as two terms and save the second one back with no operator.",
+      "input": "notes~line one\nline two",
+      "ok": true,
+      "code": "notes",
+      "op": "~",
+      "value": "line one\nline two"
+    },
+    {
+      "why": "the ENDS are still trimmed around an internal newline, so the leading and trailing spaces go and the newline stays",
+      "input": "notes~  line one\nline two  ",
+      "ok": true,
+      "code": "notes",
+      "op": "~",
+      "value": "line one\nline two"
+    },
+    {
+      "why": "a BLANK LINE inside the value is preserved too; nothing collapses runs of whitespace in the middle",
+      "input": "notes~a\n\nb",
+      "ok": true,
+      "code": "notes",
+      "op": "~",
+      "value": "a\n\nb"
+    },
+    {
+      "why": "a newline BEFORE the operator is part of the CODE, which no field code may contain, so this is malformed. The asymmetry with the cases above is the point: the value is permissive, the code is not.",
+      "input": "no\ntes~x",
+      "ok": false
+    },
+    {
       "why": "MALFORMED: no operator at all, so there is nothing to split on",
       "input": "work_type",
       "ok": false
@@ -219,6 +248,18 @@
       "why": "`~` against an empty stored value. The empty string is a substring of everything, but nothing is a substring of the empty string, so this is FALSE rather than a surprise TRUE.",
       "term": "notes~urgent",
       "controller": { "type": "longtext", "readable": true, "text": "" },
+      "match": false
+    },
+    {
+      "why": "a term whose value carries a newline evaluates like any other: `~` still matches it as a case-insensitive substring of the stored value",
+      "term": "notes~line one\nline two",
+      "controller": { "type": "longtext", "readable": true, "text": "PREFIX line one\nline two SUFFIX" },
+      "match": true
+    },
+    {
+      "why": "and it does NOT match a stored value that has a space where the newline is, so the newline is really part of the comparison rather than incidental whitespace",
+      "term": "notes~line one\nline two",
+      "controller": { "type": "longtext", "readable": true, "text": "line one line two" },
       "match": false
     },
     {

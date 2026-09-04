@@ -170,33 +170,63 @@
   const canOpenVocabulary = fieldType === 'multi_select';
 
   /**
-   * The stored array as editable text: ONE TERM PER LINE.
+   * The stored array, edited as ONE CONTROL PER ARRAY ELEMENT.
    *
-   * A line, not a comma-separated list. Values here are operator text and
-   * a value containing a comma is ordinary (`work_type=Poster, framed`),
-   * so a comma separator would be ambiguous exactly where it mattered.
-   * The term grammar itself has no line-sensitive characters, so a
-   * newline is the one separator that cannot appear inside a term.
+   * ⛔ THERE IS NO DELIMITER, AND THERE MUST NOT BE ONE. The first
+   * version of this control was a textarea holding one term per LINE,
+   * which rested on a grammar rule that does not exist.
+   * `facet.SplitFieldTerm` ends with
+   *
+   *     value = strings.TrimSpace(rest[len(candidate):])
+   *
+   * and `TrimSpace` strips only the ENDS. An INTERNAL newline survives
+   * intact, `validFieldCode` constrains only the code, and 00065's CHECK
+   * asks only for a non-empty string. So `notes~line one\nline two` is a
+   * VALID SINGLE TERM whose parsed value contains a newline. A
+   * line-delimited editor loads that one stored term as two visual lines
+   * and saves it back as two terms, the second of which has no operator
+   * at all. That is a lossy round trip on a legal configuration, and it
+   * breaks the exact-survival requirement the admin surface is held to.
+   *
+   * The same argument rules out every other single-character delimiter:
+   * a comma is ordinary inside a value (`work_type=Poster, framed`), and
+   * so is anything else an operator might type. One UI item to one array
+   * element is the only mapping that cannot lose information.
+   *
+   * The fix belongs HERE and not on the server. Forbidding newlines in a
+   * stored term to save a textarea design would narrow the grammar to
+   * suit a widget, and the search predicate shares that grammar.
    */
-  function displayConditionToText(v: string[] | null | undefined): string {
-    return (v ?? []).join('\n');
+  function displayConditionRows(v: string[] | null | undefined): string[] {
+    return [...(v ?? [])];
   }
 
   /**
-   * The text back to the array the API takes.
+   * The rows the API actually takes.
    *
-   * BLANK LINES ARE DROPPED, so an operator pressing Enter twice does not
-   * send a blank term the server would refuse; each surviving line is
-   * trimmed, which matches what the parser does to a term anyway. An
-   * empty result means the box was emptied, and the caller turns that
-   * into the explicit clear rather than an empty array — the server
-   * refuses `[]` so that "no condition" has exactly one representation.
+   * ENTIRELY BLANK ROWS ARE DROPPED, because an empty row is a UI
+   * affordance: the operator pressed "add" and has not typed yet. Every
+   * other row is sent VERBATIM, never trimmed, so what comes back on the
+   * next load is byte-identical to what was stored. The parser trims the
+   * code and the value's ends itself, so trimming here would buy nothing
+   * and would silently rewrite what the operator wrote.
+   *
+   * An empty result means the operator removed every row, and the caller
+   * turns that into the explicit clear rather than an empty array: the
+   * server refuses `[]` so "no condition" has exactly one representation.
    */
-  function displayConditionTerms(text: string): string[] {
-    return text
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line !== '');
+  function displayConditionTerms(rows: string[]): string[] {
+    return rows.filter((row) => row.trim() !== '');
+  }
+
+  /** Append an empty row for the operator to type into. */
+  function addDisplayConditionRow() {
+    displayCondition = [...displayCondition, ''];
+  }
+
+  /** Drop one row BY INDEX, which is what makes the mapping one-to-one. */
+  function removeDisplayConditionRow(i: number) {
+    displayCondition = displayCondition.filter((_, n) => n !== i);
   }
 
   let label = $state(initialLabel);
@@ -218,7 +248,7 @@
   // pressing Enter twice does not send a blank term the server would
   // refuse. NOT trimmed as a whole: the per-line trim happens at save,
   // which is also where the empty box becomes the explicit clear.
-  let displayCondition = $state(displayConditionToText(initialDisplayCondition));
+  let displayCondition = $state<string[]>(displayConditionRows(initialDisplayCondition));
 
   // The long tail (#854). Collapsed by default: an operator opening a
   // field to relabel it or curate its vocabulary should not have to
@@ -291,7 +321,7 @@
   let searchableSnapshot = $state(initialSearchable);
   let readOnlySnapshot = $state(initialReadOnly);
   let regexpFilterSnapshot = $state(initialRegexpFilter ?? '');
-  let displayConditionSnapshot = $state(displayConditionToText(initialDisplayCondition));
+  let displayConditionSnapshot = $state<string[]>(displayConditionRows(initialDisplayCondition));
   let displayGroupSnapshot = $state(initialDisplayGroup);
   let displayOrderSnapshot = $state(initialDisplayOrder);
   let appliesToSnapshot = $state(JSON.stringify([...initialAppliesTo]));
@@ -510,7 +540,7 @@
     searchable = cur.searchable !== false;
     readOnly = cur.read_only === true;
     regexpFilter = cur.regexp_filter ?? '';
-    displayCondition = displayConditionToText(cur.display_condition);
+    displayCondition = displayConditionRows(cur.display_condition);
     displayGroup = cur.display_group ?? '';
     displayOrder = cur.display_order ?? 0;
     appliesTo = [...(cur.applies_to ?? [])];
@@ -1107,16 +1137,57 @@
       wrong, which is surfaced verbatim on save.
     -->
     {#if !mirrored}
-      <label class="block">
+      <div class="block" data-testid="field-edit-display-condition">
         <span class="block text-xs text-fg-muted">{t('admin.fields.display_condition')}</span>
-        <textarea
-          bind:value={displayCondition}
-          rows="3"
-          spellcheck="false"
-          placeholder={t('admin.fields.display_condition_placeholder')}
-          data-testid="field-edit-display-condition"
-          class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
-        ></textarea>
+        <!--
+          ONE CONTROL PER STORED TERM, and no delimiter anywhere. A term's
+          VALUE may legitimately contain a newline (see
+          displayConditionRows), so any single-character separator would
+          load one stored term as two and save two back. One row to one
+          array element is the only lossless mapping.
+
+          A textarea rather than an input for the same reason: an operator
+          has to be able to see and type the newline that is already legal
+          inside a value.
+        -->
+        <div class="mt-1 space-y-1.5">
+          {#each displayCondition as row, i (i)}
+            <div class="flex items-start gap-1.5">
+              <!--
+                SIZED TO ITS CONTENT. A term's value may legitimately
+                contain newlines, and a fixed `rows="1"` clipped the very
+                case this control exists to hold: the operator saw the
+                first line of a stored term and no sign there was more.
+                Capped so one long term cannot push the rest of the form
+                off the screen.
+              -->
+              <textarea
+                bind:value={displayCondition[i]}
+                rows={Math.min(6, Math.max(1, row.split('\n').length))}
+                spellcheck="false"
+                aria-label={t('admin.fields.display_condition_term_aria', { n: i + 1 })}
+                placeholder={t('admin.fields.display_condition_placeholder')}
+                data-testid="field-edit-display-condition-term-{i}"
+                class="min-h-11 w-full rounded border border-border-strong bg-surface px-2 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+              ></textarea>
+              <button
+                type="button"
+                onclick={() => removeDisplayConditionRow(i)}
+                aria-label={t('admin.fields.display_condition_remove_aria', { n: i + 1 })}
+                data-testid="field-edit-display-condition-remove-{i}"
+                class="min-h-11 shrink-0 rounded border border-border-strong px-2 text-sm text-fg-muted hover:bg-state-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >×</button
+              >
+            </div>
+          {/each}
+        </div>
+        <button
+          type="button"
+          onclick={addDisplayConditionRow}
+          data-testid="field-edit-display-condition-add"
+          class="mt-1.5 min-h-11 rounded border border-border-strong px-2.5 py-1 text-sm text-fg hover:bg-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >{t('admin.fields.display_condition_add')}</button
+        >
         <span class="mt-0.5 block text-xs text-fg-muted">
           {#if displayConditionTerms(displayCondition).length === 0}
             <span data-testid="field-edit-display-condition-none"
@@ -1125,7 +1196,7 @@
           {/if}
           {t('admin.fields.display_condition_help')}
         </span>
-      </label>
+      </div>
     {/if}
   </section>
 

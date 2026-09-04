@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { bucketFields, tabStripVisible, resolveTabSelection } from './fieldTabs';
+import { bucketFields, tabStripVisible, resolveTabSelection, groupFields } from './fieldTabs';
 
 type F = { code: string; edit_tab?: string | null; display_order?: number };
 
@@ -168,5 +168,92 @@ describe('tabStripVisible', () => {
     expect(tabStripVisible([{ id: '' }])).toBe(false);
     expect(tabStripVisible([{ id: '' }, { id: 'Print' }])).toBe(true);
     expect(tabStripVisible([{ id: '' }, { id: 'Print' }, { id: 'Rights' }])).toBe(true);
+  });
+});
+
+describe('groupFields — the display_group layer INSIDE a tab', () => {
+  // ONE implementation, called by FieldValuesSection AND by /create. The
+  // create page rendered a flat list before this existed, so
+  // `display_group` structured one surface and merely ordered the other
+  // from the same definitions.
+  type G = { code: string; display_group?: string };
+
+  it('splits fields into their groups, preserving first-appearance order', () => {
+    const out = groupFields<G>([
+      { code: 'a', display_group: 'core' },
+      { code: 'b', display_group: 'rights' },
+      { code: 'c', display_group: 'core' },
+    ]);
+    expect(out.map((g) => g.name)).toEqual(['core', 'rights']);
+    expect(out[0].fields.map((f) => f.code)).toEqual(['a', 'c']);
+    expect(out[1].fields.map((f) => f.code)).toEqual(['b']);
+  });
+
+  it('preserves the caller’s order within a group, which is display_order', () => {
+    const out = groupFields<G>([
+      { code: 'first', display_group: 'core' },
+      { code: 'second', display_group: 'core' },
+      { code: 'third', display_group: 'core' },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].fields.map((f) => f.code)).toEqual(['first', 'second', 'third']);
+  });
+
+  it.each([undefined, ''])('%p falls back to `general`, matching the column default', (g) => {
+    const out = groupFields<G>([{ code: 'a', display_group: g as string | undefined }]);
+    expect(out).toHaveLength(1);
+    expect(out[0].name).toBe('general');
+  });
+
+  it('mixes an unset group with named ones without losing anything', () => {
+    const out = groupFields<G>([
+      { code: 'a' },
+      { code: 'b', display_group: 'rights' },
+      { code: 'c' },
+    ]);
+    expect(out.map((g) => g.name)).toEqual(['general', 'rights']);
+    expect(out.flatMap((g) => g.fields.map((f) => f.code)).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('is empty for no fields, so a tab with nothing visible draws no fieldset', () => {
+    expect(groupFields<G>([])).toEqual([]);
+  });
+});
+
+describe('the full nesting: bucket first, then group', () => {
+  // The hierarchy is asset type (on /create) -> edit-tab bucket ->
+  // display_group -> display_order. This pins the two middle layers
+  // composing in that order and no other: a group NEVER spans two tabs,
+  // because the tab is chosen first.
+  type N = { code: string; edit_tab?: string | null; display_order?: number; display_group?: string };
+
+  const defs: N[] = [
+    { code: 'loose_core', display_order: 10, display_group: 'core' },
+    { code: 'print_core', edit_tab: 'Print', display_order: 20, display_group: 'core' },
+    { code: 'print_rights', edit_tab: 'Print', display_order: 30, display_group: 'rights' },
+    { code: 'print_core2', edit_tab: 'Print', display_order: 40, display_group: 'core' },
+  ];
+
+  it('the Print bucket holds TWO distinct display_group fieldsets', () => {
+    const buckets = bucketFields(defs);
+    expect(buckets.map((b) => b.id)).toEqual(['', 'Print']);
+    const print = buckets.find((b) => b.id === 'Print')!;
+    const groups = groupFields(print.fields);
+    expect(groups.map((g) => g.name)).toEqual(['core', 'rights']);
+    expect(groups[0].fields.map((f) => f.code)).toEqual(['print_core', 'print_core2']);
+    expect(groups[1].fields.map((f) => f.code)).toEqual(['print_rights']);
+  });
+
+  it('a group never spans two tabs: `core` exists in BOTH buckets, separately', () => {
+    const buckets = bucketFields(defs);
+    const dflt = groupFields(buckets.find((b) => b.id === '')!.fields);
+    const print = groupFields(buckets.find((b) => b.id === 'Print')!.fields);
+    expect(dflt.map((g) => g.name)).toEqual(['core']);
+    expect(dflt[0].fields.map((f) => f.code)).toEqual(['loose_core']);
+    // Same group NAME, different bucket, and the members do not mix.
+    expect(print.find((g) => g.name === 'core')!.fields.map((f) => f.code)).toEqual([
+      'print_core',
+      'print_core2',
+    ]);
   });
 });

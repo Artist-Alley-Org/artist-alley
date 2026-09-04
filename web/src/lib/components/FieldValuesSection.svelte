@@ -59,7 +59,7 @@
   import { isFieldValueEmpty } from '$lib/fieldDisplay';
   import { fieldPatternViolated } from '$lib/fieldRules';
   import { conditionShows, type ConditionController } from '$lib/displayCondition';
-  import { bucketFields, tabStripVisible, resolveTabSelection } from '$lib/fieldTabs';
+  import { bucketFields, tabStripVisible, resolveTabSelection, groupFields } from '$lib/fieldTabs';
   import FieldValueInput from './FieldValueInput.svelte';
   import FormTabs from './FormTabs.svelte';
 
@@ -623,30 +623,22 @@
     return b.fields;
   });
 
-  type Group = { name: string; defs: FieldDef[] };
-
   /**
    * `display_group` fieldsets INSIDE the selected tab.
    *
    * Tabs are coarser than groups and the nesting goes one way only: a
    * group never spans two tabs, because a tab is chosen first.
    *
+   * The grouping itself is `$lib/fieldTabs`'s `groupFields`, which
+   * `/create` also calls. It was derived inline here and nowhere else,
+   * which is why the create page rendered a flat list; one function is
+   * what stops the two surfaces disagreeing about what a form looks like.
+   *
    * Hidden fields are dropped HERE and not from `buckets`, which is the
    * Policy B split: the tab exists because the DEFINITION does, and the
    * control is absent because the CONDITION is false.
    */
-  const grouped = $derived.by(() => {
-    const groups = new Map<string, FieldDef[]>();
-    for (const d of tabDefs) {
-      if (!visible[d.id]) continue;
-      const k = d.display_group || 'general';
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k)!.push(d);
-    }
-    const out: Group[] = [];
-    for (const [name, defs] of groups) out.push({ name, defs });
-    return out;
-  });
+  const grouped = $derived(groupFields(tabDefs.filter((d) => visible[d.id])));
 
   /** Nothing to draw in the selected tab, but the tab still exists. */
   const tabIsEmpty = $derived(buckets.length > 0 && grouped.length === 0);
@@ -709,7 +701,7 @@
             scroll past everything to reach the save button.
           -->
           <div class="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2">
-          {#each group.defs as def (def.id)}
+          {#each group.fields as def (def.id)}
             <div data-testid="{tid}-row-{def.code}">
               <FieldValueInput
                 {def}

@@ -447,6 +447,7 @@ test('A-6: /create nests tabs INSIDE the asset type, and two types naming the sa
     display_order: 9530,
     applies_to: [1],
     edit_tab: 'Print',
+    display_group: 'core',
   });
   const imgLoose = await makeField(request, 'c_img_loose', {
     display_order: 9531,
@@ -547,6 +548,36 @@ test('A-6: /create nests tabs INSIDE the asset type, and two types naming the sa
 // A-14 — THE ADMIN FIELD EDITOR ACTUALLY CONSUMES THE PROPERTY
 // ---------------------------------------------------------------------------
 
+// Row helpers for the condition editor. ONE CONTROL PER STORED ARRAY
+// ELEMENT: there is no delimiter, so the test addresses rows by index the
+// same way the editor does.
+const condRow = (i: number) => tid(`field-edit-display-condition-term-${i}`);
+const condRows = '[data-testid^="field-edit-display-condition-term-"]';
+const condAdd = tid('field-edit-display-condition-add');
+
+async function setCondition(page: Page, terms: string[], expectExisting: number) {
+  // ⛔ WAIT FOR THE EDITOR FIRST. `count()` does NOT auto-wait, so calling
+  // this straight after a reload read zero rows off a page that had not
+  // rendered yet, removed nothing, and left the stored condition in place
+  // while the caller believed it had been cleared. The caller states how
+  // many rows it expects to find, which turns that race into a failed
+  // assertion instead of a silent no-op.
+  await expect(page.locator(tid('field-edit-display-condition'))).toBeVisible();
+  await expect(page.locator(condRows)).toHaveCount(expectExisting);
+
+  // Remove every existing row, then add exactly as many as we want. Rows
+  // are removed from the END so the surviving indices do not shift under
+  // the loop.
+  for (let n = (await page.locator(condRows).count()) - 1; n >= 0; n--) {
+    await page.locator(tid(`field-edit-display-condition-remove-${n}`)).click();
+  }
+  await expect(page.locator(condRows)).toHaveCount(0);
+  for (let i = 0; i < terms.length; i++) {
+    await page.locator(condAdd).click();
+    await page.locator(condRow(i)).fill(terms[i]);
+  }
+}
+
 test('A-14: the admin field editor loads, saves, replaces, clears and SURFACES SERVER ERRORS for display_condition', async ({
   page,
   request,
@@ -563,29 +594,32 @@ test('A-14: the admin field editor loads, saves, replaces, clears and SURFACES S
 
   // 1. Open an ordinary, non-mirrored definition.
   await page.goto(`/admin/fields/${dep.code}`);
-  const box = page.locator(tid('field-edit-display-condition'));
-  await expect(box).toBeVisible();
-  await expect(box).toHaveValue(`${ctrlA.code}=Commission`);
+  await expect(page.locator(tid('field-edit-display-condition'))).toBeVisible();
+  // ONE stored term is ONE row, holding it exactly.
+  await expect(page.locator(condRows)).toHaveCount(1);
+  await expect(page.locator(condRow(0))).toHaveValue(`${ctrlA.code}=Commission`);
 
   // 3 + 4. Set an N>=2 condition and save.
-  const twoTerms = `${ctrlA.code}=Commission\n${ctrlB.code}~urgent`;
-  await box.fill(twoTerms);
+  const twoTerms = [`${ctrlA.code}=Commission`, `${ctrlB.code}~urgent`];
+  await setCondition(page, twoTerms, 1);
   await page.locator(tid('field-options-save')).click();
   await expect(page.locator(tid('field-options-saved'))).toBeVisible();
 
-  // 5 + 6. Reload; the EXACT condition survives, in canonical form.
+  // 5 + 6. Reload; the EXACT condition survives, in canonical form, as
+  //        TWO rows.
   await page.reload();
-  await expect(page.locator(tid('field-edit-display-condition'))).toHaveValue(twoTerms);
+  await expect(page.locator(condRows)).toHaveCount(2);
+  await expect(page.locator(condRow(0))).toHaveValue(twoTerms[0]);
+  await expect(page.locator(condRow(1))).toHaveValue(twoTerms[1]);
   const after = await request.get(`/api/v1/fields/${dep.id}`);
-  expect(((await after.json()) as { display_condition: string[] }).display_condition).toEqual([
-    `${ctrlA.code}=Commission`,
-    `${ctrlB.code}~urgent`,
-  ]);
+  expect(((await after.json()) as { display_condition: string[] }).display_condition).toEqual(
+    twoTerms,
+  );
 
   // 7. REPLACE it, and prove WHOLE-ARRAY REPLACEMENT rather than a merge.
   //    The replacement is SHORTER, which is what makes the two
   //    distinguishable.
-  await page.locator(tid('field-edit-display-condition')).fill(`${ctrlB.code}~urgent`);
+  await setCondition(page, [`${ctrlB.code}~urgent`], 2);
   await page.locator(tid('field-options-save')).click();
   await expect(page.locator(tid('field-options-saved'))).toBeVisible();
   const replaced = await request.get(`/api/v1/fields/${dep.id}`);
@@ -597,19 +631,19 @@ test('A-14: the admin field editor loads, saves, replaces, clears and SURFACES S
   // 8 + 9. CLEAR it through the editor, reload, and prove the canonical
   //    unset: the member is ABSENT, not an empty array.
   await page.reload();
-  await page.locator(tid('field-edit-display-condition')).fill('');
+  await setCondition(page, [], 1);
   await page.locator(tid('field-options-save')).click();
   await expect(page.locator(tid('field-options-saved'))).toBeVisible();
   const cleared = await request.get(`/api/v1/fields/${dep.id}`);
   const clearedBody = (await cleared.json()) as { display_condition?: string[] };
   expect(clearedBody.display_condition).toBeUndefined();
   await page.reload();
-  await expect(page.locator(tid('field-edit-display-condition'))).toHaveValue('');
+  await expect(page.locator(condRows)).toHaveCount(0);
   await expect(page.locator(tid('field-edit-display-condition-none'))).toBeVisible();
 
   // 10. SERVER VALIDATION ERRORS ARE SURFACED, not silently treated as
   //     success. A self-reference is refused with a sentence.
-  await page.locator(tid('field-edit-display-condition')).fill(`${dep.code}=loop`);
+  await setCondition(page, [`${dep.code}=loop`], 0);
   await page.locator(tid('field-options-save')).click();
   const err = page.locator(tid('field-options-error'));
   await expect(err).toBeVisible();
@@ -622,6 +656,83 @@ test('A-14: the admin field editor loads, saves, replaces, clears and SURFACES S
   ).toBeUndefined();
 });
 
+test('⛔ A-14 DISCRIMINATOR: a term whose VALUE contains a newline is ONE row, and round-trips unchanged', async ({
+  page,
+  request,
+}) => {
+  // THE CASE A LINE-DELIMITED EDITOR GETS WRONG, and the reason this
+  // control maps one UI item to one array element.
+  //
+  // `facet.SplitFieldTerm` ends with
+  //     value = strings.TrimSpace(rest[len(candidate):])
+  // and `TrimSpace` strips only the ENDS. `validFieldCode` constrains
+  // only the code, and 00065's CHECK asks only for a non-empty string. So
+  // `notes~line one\nline two` is a VALID SINGLE TERM whose parsed value
+  // contains a newline.
+  //
+  // A textarea holding one term per LINE loads that stored term as two
+  // visual lines and saves it back as `["notes~line one", "line two"]`,
+  // whose second element has no operator at all. That is a lossy round
+  // trip on a legal configuration.
+  await loginAsAdminViaAPI(request);
+  const ctrl = await makeField(request, 'nl_ctrl', { display_order: 9570, type: 'longtext' });
+  const dep = await makeField(request, 'nl_dep', { display_order: 9571 });
+
+  const MULTILINE = `${ctrl.code}~line one
+line two`;
+  const canonical = [MULTILINE];
+
+  // The server accepts it, which is the premise this whole test rests on.
+  await patchField(request, dep.id, { display_condition: canonical });
+  const stored = await request.get(`/api/v1/fields/${dep.id}`);
+  expect(
+    ((await stored.json()) as { display_condition: string[] }).display_condition,
+    'the server stores an embedded newline verbatim; if this fails the premise is wrong, not the editor',
+  ).toEqual(canonical);
+
+  await page.goto(`/admin/fields/${dep.code}`);
+  await expect(page.locator(tid('field-edit-display-condition'))).toBeVisible();
+
+  // ⛔ ONE ROW, NOT TWO. This is the assertion the previous design fails.
+  await expect(
+    page.locator(condRows),
+    'a term whose value contains a newline is ONE array element and must render as ONE control',
+  ).toHaveCount(1);
+  // ...holding the WHOLE term, newline included.
+  await expect(page.locator(condRow(0))).toHaveValue(MULTILINE);
+
+  // SAVE WITHOUT SEMANTIC CHANGE: touch an unrelated property, so the
+  // condition rides along untouched through the same submit path.
+  await page.locator(tid('field-edit-label')).fill('NL round trip');
+  await page.locator(tid('field-options-save')).click();
+  await expect(page.locator(tid('field-options-saved'))).toBeVisible();
+
+  // RELOAD, and the stored array is ELEMENT-EQUIVALENT to the original.
+  const after = await request.get(`/api/v1/fields/${dep.id}`);
+  const afterCond = ((await after.json()) as { display_condition: string[] }).display_condition;
+  expect(afterCond, 'the stored condition must survive an editor round trip unchanged').toEqual(
+    canonical,
+  );
+  expect(afterCond).toHaveLength(1);
+  expect(afterCond[0]).toContain('\n');
+
+  await page.reload();
+  await expect(page.locator(condRows)).toHaveCount(1);
+  await expect(page.locator(condRow(0))).toHaveValue(MULTILINE);
+
+  // And the editor can EDIT one: adding a second ordinary term beside it
+  // leaves the multiline one intact rather than splitting it.
+  await page.locator(condAdd).click();
+  await page.locator(condRow(1)).fill(`${ctrl.code}~second`);
+  await page.locator(tid('field-options-save')).click();
+  await expect(page.locator(tid('field-options-saved'))).toBeVisible();
+  const two = await request.get(`/api/v1/fields/${dep.id}`);
+  expect(((await two.json()) as { display_condition: string[] }).display_condition).toEqual([
+    MULTILINE,
+    `${ctrl.code}~second`,
+  ]);
+});
+
 test('A-14 boundary: a MIRRORED definition is offered no condition control at all', async ({
   page,
 }) => {
@@ -631,4 +742,190 @@ test('A-14 boundary: a MIRRORED definition is offered no condition control at al
   await page.goto('/admin/fields/title');
   await expect(page.locator(tid('field-options-save'))).toBeVisible();
   await expect(page.locator(tid('field-edit-display-condition'))).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// THE FULL /create HIERARCHY: asset type -> tab bucket -> display_group
+// ---------------------------------------------------------------------------
+
+test('/create nests display_group fieldsets INSIDE the selected tab, inside the asset type', async ({
+  page,
+  request,
+}) => {
+  // ⛔ THIS IS THE LAYER /create WAS MISSING, and the assertion is written
+  // to say so. The page rendered each bucket's fields as ONE FLAT LIST:
+  // `display_group` came back from the server in the right ORDER and
+  // structured nothing, so an operator who split a type's fields between
+  // "core" and "rights" saw one undifferentiated run of inputs while the
+  // asset edit page drew two labelled fieldsets from the same
+  // definitions.
+  //
+  // Checking the server's ORDERING would not distinguish the two builds,
+  // because the ordering was already correct. What distinguishes them is
+  // the FIELDSET: `create-fields-group-{type}-{group}` does not exist on
+  // the previous head, under any name, so every group assertion below
+  // fails there by locating an element that is not in the DOM.
+  await loginAsAdminViaAPI(request);
+
+  // ⚠️ RUN-UNIQUE GROUP NAMES. The seeded corpus already uses `core`,
+  // `general`, `rights` and `technical`, and every seeded definition is
+  // UNASSIGNED, so it all lands in the default bucket. Naming a fixture
+  // group `rights` would make "the rights fieldset is absent from the
+  // default bucket" false for reasons that have nothing to do with this
+  // page. These names collide with nothing.
+  const GA = `ga${RUN}`;
+  const GB = `gb${RUN}`;
+
+  // Type 1 (Image): one tab, TWO display_groups inside it.
+  const imgCore = await makeField(request, 'g_img_core', {
+    display_order: 9560,
+    applies_to: [1],
+    edit_tab: 'Print',
+    display_group: GA,
+  });
+  const imgRights = await makeField(request, 'g_img_rights', {
+    display_order: 9561,
+    applies_to: [1],
+    edit_tab: 'Print',
+    display_group: GB,
+  });
+  const imgCore2 = await makeField(request, 'g_img_core2', {
+    display_order: 9562,
+    applies_to: [1],
+    edit_tab: 'Print',
+    display_group: GA,
+  });
+  // ...and an unassigned field, so type 1 has TWO buckets and tab
+  // navigation is a real navigation rather than one segment.
+  const imgLoose = await makeField(request, 'g_img_loose', {
+    display_order: 9563,
+    applies_to: [1],
+    display_group: GA,
+  });
+  // Type 2 (Document): its OWN "Print" tab and its own "core" group, both
+  // sharing a NAME with type 1's. Neither may merge.
+  const docPrint = await makeField(request, 'g_doc_print', {
+    display_order: 9564,
+    applies_to: [2],
+    edit_tab: 'Print',
+    display_group: GA,
+  });
+  const docLoose = await makeField(request, 'g_doc_loose', {
+    display_order: 9565,
+    applies_to: [2],
+    display_group: GA,
+  });
+
+  await page.goto('/create');
+  await expect(page.locator(tid('create-page'))).toBeVisible();
+  page.on('response', (r) => {
+    if (r.url().endsWith('/api/v1/assets') && r.request().method() === 'POST' && r.ok()) {
+      void r
+        .json()
+        .then((b: { id?: string }) => {
+          if (b.id) createdAssets.push(b.id);
+        })
+        .catch(() => undefined);
+    }
+  });
+  await page.locator(tid('create-file-input')).setInputFiles([
+    {
+      name: `ftg-${RUN}.png`,
+      mimeType: 'image/png',
+      buffer: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    },
+    {
+      name: `ftg-${RUN}.txt`,
+      mimeType: 'text/plain',
+      buffer: Buffer.from(`ftg create fixture ${Date.now()}-${Math.random()}`),
+    },
+  ]);
+  await expect(page.locator(tid('create-file-row'))).toHaveCount(2, { timeout: 30_000 });
+  await expect(page.locator(tid('create-publish'))).toBeEnabled({ timeout: 30_000 });
+  await page.getByTestId('create-fields').locator('summary').click();
+
+  const imgSection = page.getByTestId('create-fields-type-1');
+  const docSection = page.getByTestId('create-fields-type-2');
+  await expect(imgSection).toBeVisible({ timeout: 30_000 });
+  await expect(docSection).toBeVisible();
+
+  const imgCoreGroup = page.getByTestId(`create-fields-group-1-${GA}`);
+  const imgRightsGroup = page.getByTestId(`create-fields-group-1-${GB}`);
+
+  // The DEFAULT bucket is selected, so only the unassigned field is
+  // drawn, in its own `core` fieldset. `rights` lives only in the Print
+  // bucket and must not be rendered yet.
+  await expect(imgCoreGroup).toBeVisible();
+  await expect(imgCoreGroup.getByTestId(`create-field-${imgLoose.code}`)).toHaveCount(1);
+  await expect(imgRightsGroup).toHaveCount(0);
+
+  // TAB NAVIGATION CHANGES THE RENDERED BUCKET.
+  await page.getByTestId('create-fields-tabs-1-tab-Print').click();
+  await expect(imgSection.getByTestId(`create-field-${imgLoose.code}`)).toHaveCount(0);
+
+  // ⛔ AND THE BUCKET HOLDS TWO DISTINCT display_group FIELDSETS.
+  await expect(imgCoreGroup).toBeVisible();
+  await expect(imgRightsGroup).toBeVisible();
+  await expect(imgCoreGroup.locator('legend')).toHaveText(GA);
+  await expect(imgRightsGroup.locator('legend')).toHaveText(GB);
+
+  // Each field is in the RIGHT fieldset, and in exactly one.
+  await expect(imgCoreGroup.getByTestId(`create-field-${imgCore.code}`)).toHaveCount(1);
+  await expect(imgCoreGroup.getByTestId(`create-field-${imgCore2.code}`)).toHaveCount(1);
+  await expect(imgCoreGroup.getByTestId(`create-field-${imgRights.code}`)).toHaveCount(0);
+  await expect(imgRightsGroup.getByTestId(`create-field-${imgRights.code}`)).toHaveCount(1);
+  await expect(imgRightsGroup.getByTestId(`create-field-${imgCore.code}`)).toHaveCount(0);
+
+  // ORDERING IS PINNED WITHIN THE GROUP: display_order decides, so the
+  // two `core` members appear in 9560, 9562 order and not in DOM-accident
+  // order.
+  const coreOrder = await imgCoreGroup
+    .locator('[data-testid^="create-field-"]')
+    .evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
+  expect(coreOrder).toEqual([`create-field-${imgCore.code}`, `create-field-${imgCore2.code}`]);
+
+  // AND THE GROUPS THEMSELVES are in first-appearance order, which is the
+  // server's `display_group, display_order` ordering.
+  const groupOrder = (
+    await imgSection
+      .locator('[data-testid^="create-fields-group-"]')
+      .evaluateAll((els) => els.map((e) => e.getAttribute('data-testid') ?? ''))
+  ).filter((id) => id.endsWith(GA) || id.endsWith(GB));
+  expect(groupOrder).toEqual([
+    `create-fields-group-1-${GA}`,
+    `create-fields-group-1-${GB}`,
+  ]);
+
+  // ⛔ NOTHING CROSSED THE ASSET TYPE. Type 2 has a "Print" tab and a
+  // "core" group of its own; selecting type 1's Print must not have
+  // touched either, and type 2's `core` fieldset must hold only type 2's
+  // field.
+  const docCoreGroup = page.getByTestId(`create-fields-group-2-${GA}`);
+  await expect(docCoreGroup).toBeVisible();
+  await expect(docCoreGroup.getByTestId(`create-field-${docLoose.code}`)).toHaveCount(1);
+  await expect(docCoreGroup.getByTestId(`create-field-${imgCore.code}`)).toHaveCount(0);
+  await expect(docSection.getByTestId(`create-field-${docPrint.code}`)).toHaveCount(0);
+  await expect(docSection.getByTestId(`create-field-${imgCore.code}`)).toHaveCount(0);
+
+  // Type 2's own tab still navigates independently.
+  await page.getByTestId('create-fields-tabs-2-tab-Print').click();
+  await expect(docCoreGroup.getByTestId(`create-field-${docPrint.code}`)).toHaveCount(1);
+  await expect(docCoreGroup.getByTestId(`create-field-${docLoose.code}`)).toHaveCount(0);
+  // ...and type 1 did not move when type 2's tab did.
+  await expect(imgCoreGroup.getByTestId(`create-field-${imgCore.code}`)).toHaveCount(1);
+  await expect(imgRightsGroup).toBeVisible();
+
+  // AT 390px the same structure survives: the groups are still fieldsets
+  // inside the selected bucket, and the page does not scroll sideways.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(imgCoreGroup).toBeVisible();
+  await expect(imgRightsGroup).toBeVisible();
+  await expect(imgCoreGroup.getByTestId(`create-field-${imgCore.code}`)).toHaveCount(1);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow, 'the create page must not scroll sideways at 390px').toBeLessThanOrEqual(1);
 });

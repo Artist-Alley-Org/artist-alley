@@ -81,7 +81,7 @@
   } from '$stores/upload.svelte';
   import { VALUE_COLUMN } from '$lib/fieldOptions';
   import { conditionShows, type ConditionController } from '$lib/displayCondition';
-  import { bucketFields, tabStripVisible, resolveTabSelection } from '$lib/fieldTabs';
+  import { bucketFields, tabStripVisible, resolveTabSelection, groupFields } from '$lib/fieldTabs';
   import FieldValueInput from '$components/FieldValueInput.svelte';
   import FormTabs from '$components/FormTabs.svelte';
   import AiProvenanceControl from '$components/AiProvenanceControl.svelte';
@@ -291,6 +291,27 @@
     const bucket = buckets.find((b) => b.id === active) ?? buckets[0];
     const resolve = resolveControllerFor(ty);
     return bucket.fields.filter((d) => conditionShows(d.display_condition, resolve));
+  }
+
+  /**
+   * The `display_group` fieldsets INSIDE the selected bucket.
+   *
+   * ⛔ THE FULL HIERARCHY IS asset type -> edit-tab bucket ->
+   * `display_group` -> `display_order`, and this is the layer this page
+   * was missing. It rendered the bucket's fields as ONE FLAT LIST, which
+   * meant `display_group` was ordering the list and structuring nothing:
+   * an operator who put half a type's fields in "Rights" and half in
+   * "Core" saw one undifferentiated run of inputs, while the asset edit
+   * page drew two labelled fieldsets from the same definitions.
+   *
+   * `groupFields` is the SAME function FieldValuesSection uses, not a
+   * second grouping concept. `display_order` survives inside each group
+   * because the server already returns the definitions ordered
+   * `display_group, display_order, code` and every step from there
+   * preserves input order.
+   */
+  function groupsOfType(ty: number) {
+    return groupFields(visibleDefsOf(ty));
   }
 
   /**
@@ -661,6 +682,7 @@
                 {@const buckets = bucketsOfType(ty)}
                 {@const active = activeTabOf(ty)}
                 {@const shown = visibleDefsOf(ty)}
+                {@const groups = groupsOfType(ty)}
                 <div data-testid="create-fields-type-{ty}">
                   {#if activeTypes.length > 1}
                     <p class="mb-2 text-xs text-fg-muted">
@@ -705,15 +727,35 @@
                           {t('field_tabs.empty')}
                         </p>
                       {/if}
-                      {#each shown as def (def.id)}
-                        <div data-testid="create-field-{def.code}">
-                          <FieldValueInput
-                            def={{ ...def, required: def.required === true }}
-                            value={fieldValueOf(ty, def)}
-                            serverVocabulary
-                            onchange={(v) => setFieldValue(ty, def, v)}
-                          />
-                        </div>
+                      <!--
+                        `display_group` fieldsets, INSIDE the bucket. Same
+                        chrome the asset edit page draws, from the same
+                        `groupFields`: the operator's grouping has to mean
+                        the same thing on both surfaces, and before this
+                        it structured one and merely ordered the other.
+                      -->
+                      {#each groups as group (group.name)}
+                        <fieldset
+                          class="rounded border border-border p-3"
+                          data-testid="create-fields-group-{ty}-{group.name}"
+                        >
+                          <legend
+                            class="px-1 text-xs font-medium uppercase tracking-wider text-fg-muted"
+                            >{group.name}</legend
+                          >
+                          <div class="space-y-4">
+                            {#each group.fields as def (def.id)}
+                              <div data-testid="create-field-{def.code}">
+                                <FieldValueInput
+                                  def={{ ...def, required: def.required === true }}
+                                  value={fieldValueOf(ty, def)}
+                                  serverVocabulary
+                                  onchange={(v) => setFieldValue(ty, def, v)}
+                                />
+                              </div>
+                            {/each}
+                          </div>
+                        </fieldset>
                       {/each}
                     </div>
                   {/if}

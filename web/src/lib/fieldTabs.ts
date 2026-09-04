@@ -161,3 +161,47 @@ export function resolveTabSelection(
   if (current !== null && buckets.some((b) => b.id === current)) return current;
   return buckets[0].id;
 }
+
+/**
+ * `display_group` fieldsets, the layer INSIDE a tab bucket.
+ *
+ * # Why this lives here rather than in a component
+ *
+ * The nesting is asset type (on `/create`) -> edit-tab bucket ->
+ * `display_group` -> `display_order`, and this module already owns the
+ * middle of it. Putting the group layer anywhere else would make the
+ * hierarchy two half-rules in two files, which is how the two surfaces
+ * end up disagreeing about what a form looks like.
+ *
+ * ⛔ THIS IS NOT A SECOND GROUPING CONCEPT. It is the one `display_group`
+ * has always been: `FieldValuesSection` derived it inline, `/create`
+ * rendered a flat list, and the flat list was the gap. Both surfaces call
+ * THIS function now, so there is exactly one implementation of "which
+ * fieldset does this field belong in".
+ *
+ * `'general'` is the fallback for an absent or empty group, matching the
+ * column's own default and the derivation this replaces. Insertion order
+ * is preserved, so the caller's `display_order` survives both across
+ * groups (first appearance wins) and within them.
+ */
+export interface GroupableField {
+  display_group?: string;
+}
+
+export interface FieldGroup<T extends GroupableField> {
+  name: string;
+  fields: T[];
+}
+
+export function groupFields<T extends GroupableField>(defs: T[]): FieldGroup<T>[] {
+  const buckets = new Map<string, T[]>();
+  for (const d of defs) {
+    const k = d.display_group || 'general';
+    const bucket = buckets.get(k);
+    if (bucket) bucket.push(d);
+    else buckets.set(k, [d]);
+  }
+  const out: FieldGroup<T>[] = [];
+  for (const [name, fields] of buckets) out.push({ name, fields });
+  return out;
+}
