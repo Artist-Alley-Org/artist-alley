@@ -686,6 +686,24 @@ func TestBatch_RemoveThreeWayCase(t *testing.T) {
 	if got, _ := f.storedOptions(both, field); strings.Join(got, ",") != "b" {
 		t.Fatalf("the would_change target must become [b], got %v", got)
 	}
+	// The no_op target is not written either, and NEITHER OF THE TWO
+	// non-would_change targets is even REPORTED as an outcome. Apply
+	// writes ONLY the would_change subset and never re-expands; a
+	// result that carried an outcome for a no_op or a refused target
+	// would mean it had walked the whole set again.
+	if f.historyCount(onlyB, field) != 0 {
+		t.Fatal("the no_op target must gain no history row")
+	}
+	if len(res.OK.Targets) != 1 {
+		t.Fatalf("apply reports ONLY the would_change subset; got %d outcomes for %d targets",
+			len(res.OK.Targets), p.Counts.Expanded)
+	}
+	if _, reported := outcomeOf(res.OK, onlyA); reported {
+		t.Fatal("a REFUSED target is preview-only and must carry no apply outcome")
+	}
+	if _, reported := outcomeOf(res.OK, onlyB); reported {
+		t.Fatal("a NO_OP target must carry no apply outcome")
+	}
 }
 
 // A25. remove emptying an OPTIONAL multi_select DELETES THE ROW. It

@@ -515,6 +515,30 @@ func TestBatch_PreWriteRefusalLeavesTokenSpendable(t *testing.T) {
 		t.Fatal("the refused attempts must write nothing")
 	}
 
+	// A THIRD refusal, and the one that matters most: a refusal raised
+	// INSIDE the apply's transaction, AFTER the token has been marked
+	// consumed by it. The two above are Phase 0 checks and never reach
+	// the transaction at all, so on their own they would pass against an
+	// implementation that consumed the token on its own connection and
+	// committed that independently of the writes.
+	if _, err := f.pool.Exec(f.ctx,
+		`UPDATE field_definition SET read_only = true WHERE id = $1`, field); err != nil {
+		t.Fatalf("drift the definition: %v", err)
+	}
+	f.wantRefusal(f.apply(ctx, p.Token, "a good reason", intp(p.Counts.WouldChange)),
+		409, openapi.BatchDefinitionDrift)
+	if f.tokenConsumed(op) {
+		t.Fatal("THE CONSUMPTION MUST ROLL BACK WITH THE REFUSAL: a token marked consumed " +
+			"inside a transaction that then refuses must come back unspent")
+	}
+	if n := f.envelopes(op); n != 0 {
+		t.Fatalf("still no envelope; found %d", n)
+	}
+	if _, err := f.pool.Exec(f.ctx,
+		`UPDATE field_definition SET read_only = false WHERE id = $1`, field); err != nil {
+		t.Fatalf("restore the definition: %v", err)
+	}
+
 	ok := f.apply(ctx, p.Token, "corrected", intp(p.Counts.WouldChange))
 	if ok.OK == nil {
 		t.Fatalf("the corrected retry must succeed on the SAME token: %+v", ok.Refusal)
