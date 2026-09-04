@@ -203,3 +203,48 @@ diff, and the whole-import rejection already puts that in front of an operator i
 silently. It is worth noting that the reference sub-rule makes a per-field cherry-pick more attractive
 than it was, because importing a dependent without its controller is now a defined outcome rather than
 an accident, but changing §3 is not this amendment's business.
+
+## Amendment 2026-09-04 — §2's list is completed, and lifecycle stays local (20b hygiene)
+
+§2 was written during #738 and has been extended one property at a time ever since, which left a
+gap nobody was looking at: **six properties on `field_definition` appear in neither list**, and four
+of them assert `FEDERATES with the definition` in their own API descriptions. The authority is
+supposed to be this section, so a property classified only in a description is classified nowhere.
+
+Measured on `dev` at `3d53230a`, the unclassified set was `show_on_card`,
+`show_in_advanced_search`, `show_on_upload`, `edit_tab`, `open_vocabulary` and `status`. Everything
+already listed agrees with its own description, so this is a completion rather than a correction.
+
+**IN, each because it names the FIELD rather than the server:**
+
+- **`show_on_card`**, **`show_in_advanced_search`**, **`show_on_upload`**, **`edit_tab`.** All four
+  are participation or placement hints: they say where a field belongs on a surface, which is the
+  same class of statement as `type` and `display_group`, both already in. None binds to anything
+  local: unlike `applies_to`'s asset-type integers, a tab name is a string the definition carries.
+  Each is inert if ignored, which keeps a partial implementation honest rather than dangerous, and
+  all four already claimed to travel, so this records what the API has said all along.
+  ⭐ One consequence worth naming for `edit_tab`, because it is new since #1173 shipped its
+  consumer: a receiver may have no tab of that name, and that is fine. Sprint 20b's rule builds
+  buckets from whatever values the rendered definitions carry, so an imported tab name simply
+  creates a bucket on the receiver rather than failing to find one.
+- **`open_vocabulary`.** It says what a write to this field's vocabulary means: an unknown term
+  creates the term instead of being refused. That is a statement about the field, in the same class
+  as `required` and `regexp_filter`, and a peer adopting the field wants the write policy along with
+  the shape.
+
+**OUT, for the reason already written into this section:**
+
+- **`status`.** §2 excludes per-option `status` / `replaced_by` because "lifecycle is local
+  editorial history, not schema", and the definition's own `status` is the same thing one level up.
+  That THIS server has deprecated or archived a field is a decision its operators made about their
+  own corpus; importing it would retire a field on the receiver that the receiver may still be
+  using, and the receiver has no way to tell that from a field that was never offered. Retirement
+  stays a local act.
+
+The §3 collision rule needs no change: each of these differing between two peers is an ordinary
+per-field diff, and whole-import rejection already puts the choice in front of the operator.
+
+⚠️ **Classification only, and nothing here is implemented.** Federation still transports no metadata
+at all, so there is no envelope to add a property to and no round trip to test. The point of
+finishing the list now is that §2 can be trusted as the authority again: before this, four
+properties were classified in a description and two were classified nowhere.

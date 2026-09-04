@@ -9,6 +9,38 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A field can now say when it should appear.** An operator can give a metadata field a condition
+  naming another field's value, and the field is offered only while that condition holds. Hiding a
+  field is composition and nothing else: the stored value is left exactly as it was, nothing is
+  written or cleared on your behalf, an unsaved edit is still there if the field comes back, and a
+  hidden field never becomes a new thing you must fill in before saving. A condition that cannot be
+  worked out, because the field it names is gone or because you are not allowed to see that field's
+  value, shows the dependent field rather than hiding it (#1173, #1119, PR #1400).
+
+- **A field's value you are not allowed to read is no longer sent to the browser** on the surfaces
+  that compose forms. Deciding whether to draw a control now asks the server what this person may
+  actually read on this record, including permissions granted only within a team, and the protected
+  value itself never leaves the server. The same read used by the file page gained the per-field
+  permission check the collection page already had (#1173, PR #1400).
+
+- **Edit tabs work.** A field's tab, which operators have been able to set since the field settings
+  landed, now actually groups the form: on the file edit page, in the collection dialog and on the
+  create page. Fields with no tab keep their own tab and it opens first, so nothing an operator
+  never assigned can disappear. The tabs stay put while you work, so a tab whose fields are all
+  currently hidden keeps its place rather than vanishing under your cursor, and your unsaved edits
+  in one tab survive a trip to another (#1173, #1119, PR #1400).
+
+- **The create page keeps its shape.** Fields stay grouped under the file type they belong to, then
+  by tab, then by the operator's own grouping, and two file types that happen to use the same tab
+  name keep their fields apart (#1119, PR #1400).
+
+- **Conditions are configurable, and configuring them cannot lose what you typed.** The field
+  settings page can add, replace and clear a field's conditions, one control per condition, so a
+  condition whose value runs over more than one line stays one condition instead of quietly becoming
+  two. Configuration that could never work is refused when you save it with a sentence saying why,
+  including a condition that points at itself, a loop between fields, and a pair of fields that can
+  never appear on the same record (#1173, PR #1400).
+
 - **Your own metadata fields are now editable on a file.** The file edit page grew a section for
   every field an operator configured for that file's type, so a value you could set at upload and
   then never touch again is finally reachable. Title and description keep their own boxes at the
