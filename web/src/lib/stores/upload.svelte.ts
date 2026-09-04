@@ -1173,6 +1173,29 @@ export interface FieldDef {
    * last-write-wins race the artist can see and cannot explain.
    */
   mirrors_column?: string | null;
+  /**
+   * Which tab of a composition surface this field sits in (#1173,
+   * ADR 0092 §3, consumed by #1119). `null`/absent = unassigned, which
+   * lands in the DEFAULT bucket.
+   *
+   * On /create the buckets nest INSIDE the asset type, and two asset
+   * types that both name a tab "Print" get two separate tabs: those are
+   * two operator decisions about two different kinds of thing, and
+   * merging them would file a field under a heading its own asset type
+   * never mentioned.
+   */
+  edit_tab?: string | null;
+  /**
+   * When this field should be offered at all (#1119, ADR 0099).
+   * `null`/absent = always.
+   *
+   * ⚠️ On /create there is no subject, so conditions evaluate against the
+   * LOCAL PENDING VALUES in the form. There is deliberately no server
+   * fetch of existing protected values for create-time evaluation: there
+   * is nothing to fetch them from, and inventing one would build the
+   * oracle ADR 0099 §5 exists to prevent.
+   */
+  display_condition?: string[] | null;
 }
 
 /**

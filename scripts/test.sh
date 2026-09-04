@@ -265,6 +265,20 @@ docker run --rm \
 # plane moving without the other. Without the mount it takes the same
 # t.Skipf branch #956 caught the catalogue guard taking.
 #
+# The FOURTH is the shared display-condition case list (#1119).
+# app/internal/metadata's parser plus evaluator and
+# web/src/lib/displayCondition.ts are two implementations of one grammar
+# — the authority is facet.SplitFieldTerm, which the browser cannot call
+# — and they must agree, or an operator's condition hides a field on one
+# plane and shows it on the other. TestDisplayCondition*_SharedCorpus
+# reads the case list rather than carrying a second copy.
+#
+# ⛔ IT FATALS RATHER THAN SKIPPING WHEN THE MOUNT IS MISSING, which is
+# the deliberate difference from the three above and is #956's lesson
+# applied: a guard whose fallback is a skip reports green for exactly the
+# situation it exists to detect. If this line is ever dropped the suite
+# goes RED and says so.
+#
 # The second such path is the viewer controller (#1166).
 # app/internal/viewkind mirrors its kind resolver — the derivation
 # behind the browse card's type badge, which `GET /posts?kind=` filters
@@ -280,6 +294,7 @@ if ! docker run --rm \
     -v "${ROOT}/web/src/lib/i18n:/src/web/src/lib/i18n:ro" \
     -v "${ROOT}/web/src/lib/components/viewers/controller.ts:/src/web/src/lib/components/viewers/controller.ts:ro" \
     -v "${ROOT}/web/src/lib/fieldEmptiness.cases.json:/src/web/src/lib/fieldEmptiness.cases.json:ro" \
+    -v "${ROOT}/web/src/lib/displayCondition.cases.json:/src/web/src/lib/displayCondition.cases.json:ro" \
     -w /src/app \
     -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
     -e GOFLAGS -e GOMAXPROCS \

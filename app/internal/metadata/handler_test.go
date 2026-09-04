@@ -640,6 +640,18 @@ func (s metaShim) GetAssetFieldValueHistory(ctx context.Context, req openapi.Get
 func (s metaShim) GetCollectionFields(ctx context.Context, req openapi.GetCollectionFieldsRequestObject) (openapi.GetCollectionFieldsResponseObject, error) {
 	return s.h.GetCollectionFields(ctx, req)
 }
+
+// The two composition reads (#1173, #1119, ADR 0099 §5). Mounted here so
+// the readability and non-disclosure assertions can be made at the
+// API/NETWORK BOUNDARY through the same router every other case uses,
+// rather than by calling a helper directly — a helper test proves the
+// helper, not the response.
+func (s metaShim) GetAssetFieldComposition(ctx context.Context, req openapi.GetAssetFieldCompositionRequestObject) (openapi.GetAssetFieldCompositionResponseObject, error) {
+	return s.h.GetAssetFieldComposition(ctx, req)
+}
+func (s metaShim) GetCollectionFieldComposition(ctx context.Context, req openapi.GetCollectionFieldCompositionRequestObject) (openapi.GetCollectionFieldCompositionResponseObject, error) {
+	return s.h.GetCollectionFieldComposition(ctx, req)
+}
 func (s metaShim) SetCollectionFieldValue(ctx context.Context, req openapi.SetCollectionFieldValueRequestObject) (openapi.SetCollectionFieldValueResponseObject, error) {
 	return s.h.SetCollectionFieldValue(ctx, req)
 }

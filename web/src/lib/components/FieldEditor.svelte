@@ -77,6 +77,7 @@
     initialSearchable = true,
     initialReadOnly = false,
     initialRegexpFilter = null,
+    initialDisplayCondition = null,
     initialMirrorsColumn = null,
     initialReadCapability = null,
     initialWriteCapability = null,
@@ -112,6 +113,13 @@
      *  null meaning no constraint. */
     initialReadOnly?: boolean;
     initialRegexpFilter?: string | null;
+    /**
+     * The stored condition, or null for "always shown" (#1119,
+     * ADR 0099). Edited as ONE TERM PER LINE, because that is the shape
+     * an operator can read back: a comma-separated list is ambiguous the
+     * moment a value contains a comma, and values here are operator text.
+     */
+    initialDisplayCondition?: string[] | null;
     /** Set when this field is a VIEW onto a column of the asset row
      *  (#822). Neither input rule can be configured on one, so the
      *  controls are replaced by the reason rather than shown dead. */
@@ -161,6 +169,36 @@
   // and this condition with it.
   const canOpenVocabulary = fieldType === 'multi_select';
 
+  /**
+   * The stored array as editable text: ONE TERM PER LINE.
+   *
+   * A line, not a comma-separated list. Values here are operator text and
+   * a value containing a comma is ordinary (`work_type=Poster, framed`),
+   * so a comma separator would be ambiguous exactly where it mattered.
+   * The term grammar itself has no line-sensitive characters, so a
+   * newline is the one separator that cannot appear inside a term.
+   */
+  function displayConditionToText(v: string[] | null | undefined): string {
+    return (v ?? []).join('\n');
+  }
+
+  /**
+   * The text back to the array the API takes.
+   *
+   * BLANK LINES ARE DROPPED, so an operator pressing Enter twice does not
+   * send a blank term the server would refuse; each surviving line is
+   * trimmed, which matches what the parser does to a term anyway. An
+   * empty result means the box was emptied, and the caller turns that
+   * into the explicit clear rather than an empty array — the server
+   * refuses `[]` so that "no condition" has exactly one representation.
+   */
+  function displayConditionTerms(text: string): string[] {
+    return text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '');
+  }
+
   let label = $state(initialLabel);
   let description = $state(initialDescription);
   let required = $state(initialRequired);
@@ -176,6 +214,11 @@
   // spaces. The empty string is the CLEAR, and it is the only value that
   // means "no pattern" here — the server refuses a stored `""`.
   let regexpFilter = $state(initialRegexpFilter ?? '');
+  // One term per LINE. Blank lines are ignored on save, so an operator
+  // pressing Enter twice does not send a blank term the server would
+  // refuse. NOT trimmed as a whole: the per-line trim happens at save,
+  // which is also where the empty box becomes the explicit clear.
+  let displayCondition = $state(displayConditionToText(initialDisplayCondition));
 
   // The long tail (#854). Collapsed by default: an operator opening a
   // field to relabel it or curate its vocabulary should not have to
@@ -248,6 +291,7 @@
   let searchableSnapshot = $state(initialSearchable);
   let readOnlySnapshot = $state(initialReadOnly);
   let regexpFilterSnapshot = $state(initialRegexpFilter ?? '');
+  let displayConditionSnapshot = $state(displayConditionToText(initialDisplayCondition));
   let displayGroupSnapshot = $state(initialDisplayGroup);
   let displayOrderSnapshot = $state(initialDisplayOrder);
   let appliesToSnapshot = $state(JSON.stringify([...initialAppliesTo]));
@@ -265,6 +309,10 @@
       readOnly !== readOnlySnapshot ||
       // Exact, not trimmed: " " and "" are different patterns.
       regexpFilter !== regexpFilterSnapshot ||
+      // Compared through the same normalisation the SAVE uses, so
+      // re-ordered whitespace or a trailing newline is not a change.
+      JSON.stringify(displayConditionTerms(displayCondition)) !==
+        JSON.stringify(displayConditionTerms(displayConditionSnapshot)) ||
       displayGroup !== displayGroupSnapshot ||
       displayOrder !== displayOrderSnapshot ||
       JSON.stringify(appliesTo) !== appliesToSnapshot,
@@ -424,6 +472,7 @@
     searchable?: boolean;
     read_only?: boolean;
     regexp_filter?: string | null;
+    display_condition?: string[] | null;
     display_group?: string;
     display_order?: number;
     applies_to?: number[];
@@ -461,6 +510,7 @@
     searchable = cur.searchable !== false;
     readOnly = cur.read_only === true;
     regexpFilter = cur.regexp_filter ?? '';
+    displayCondition = displayConditionToText(cur.display_condition);
     displayGroup = cur.display_group ?? '';
     displayOrder = cur.display_order ?? 0;
     appliesTo = [...(cur.applies_to ?? [])];
@@ -477,6 +527,7 @@
     searchableSnapshot = searchable;
     readOnlySnapshot = readOnly;
     regexpFilterSnapshot = regexpFilter;
+    displayConditionSnapshot = displayCondition;
     displayGroupSnapshot = displayGroup;
     displayOrderSnapshot = displayOrder;
     appliesToSnapshot = JSON.stringify(appliesTo);
@@ -557,6 +608,22 @@
         // spaces is a real pattern and must not be mistaken for empty.
         if (regexpFilter !== '') body.regexp_filter = regexpFilter;
         else body.clear_regexp_filter = true;
+      }
+      // `display_condition` (#1119, ADR 0099). The FOURTH property whose
+      // removal has to be said out loud, after the default, the tab and
+      // the pattern: NULL is "always shown" AND "leave it alone", and the
+      // server refuses `[]` as a second spelling of unset.
+      //
+      // Sent for every non-mirrored field, because the control is
+      // rendered for every non-mirrored field. A mirrored definition
+      // cannot carry one at all (its column has a second write plane), so
+      // sending a value there would be this editor asserting a setting
+      // nobody chose and would earn a 400 for a change the operator never
+      // made — the same reasoning `read_only` and `show_on_card` use.
+      if (!mirrored) {
+        const terms = displayConditionTerms(displayCondition);
+        if (terms.length > 0) body.display_condition = terms;
+        else body.clear_display_condition = true;
       }
       const { data, error: apiErr, response } = await api.PATCH('/fields/{id}', {
         params: { path: { id: fieldId } },
@@ -1019,6 +1086,47 @@
       />
       <span class="mt-0.5 block text-xs text-fg-muted">{t('admin.fields.edit_tab_help')}</span>
     </label>
+
+    <!--
+      `display_condition` (#1119, ADR 0099). It belongs in "where this
+      field appears" beside the tab, because it is the same class of
+      setting: both decide COMPOSITION and neither decides access.
+
+      Not offered on a MIRRORED definition, matching `read_only` and
+      `regexp_filter` above and for the same reason: a mirrored field is a
+      view onto a column of the asset with its own write plane and its own
+      first-class control, so only one of the two planes would obey the
+      setting. The server refuses it too; rendering no control is what
+      stops an operator being refused after typing.
+
+      A textarea rather than a term builder. A builder would need the
+      whole field list, the operator matrix and the type of every
+      candidate controller to draw its dropdowns, and would still have to
+      fall back to free text for the value — while the server already
+      answers every malformed configuration with a sentence naming what is
+      wrong, which is surfaced verbatim on save.
+    -->
+    {#if !mirrored}
+      <label class="block">
+        <span class="block text-xs text-fg-muted">{t('admin.fields.display_condition')}</span>
+        <textarea
+          bind:value={displayCondition}
+          rows="3"
+          spellcheck="false"
+          placeholder={t('admin.fields.display_condition_placeholder')}
+          data-testid="field-edit-display-condition"
+          class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+        ></textarea>
+        <span class="mt-0.5 block text-xs text-fg-muted">
+          {#if displayConditionTerms(displayCondition).length === 0}
+            <span data-testid="field-edit-display-condition-none"
+              >{t('admin.fields.display_condition_none')}</span
+            >
+          {/if}
+          {t('admin.fields.display_condition_help')}
+        </span>
+      </label>
+    {/if}
   </section>
 
   <!--

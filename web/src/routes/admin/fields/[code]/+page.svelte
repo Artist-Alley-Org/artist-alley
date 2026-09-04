@@ -54,6 +54,7 @@
     searchable?: boolean;
     read_only?: boolean;
     regexp_filter?: string | null;
+    display_condition?: string[] | null;
     read_capability?: string | null;
     write_capability?: string | null;
     mirrors_column?: string | null;
@@ -211,6 +212,7 @@
     initialSearchable={field.searchable !== false}
     initialReadOnly={field.read_only === true}
     initialRegexpFilter={field.regexp_filter ?? null}
+    initialDisplayCondition={field.display_condition ?? null}
     initialMirrorsColumn={field.mirrors_column ?? null}
     initialReadCapability={field.read_capability ?? null}
     initialWriteCapability={field.write_capability ?? null}
