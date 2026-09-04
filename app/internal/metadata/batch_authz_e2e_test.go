@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -1165,15 +1166,52 @@ func TestBatch_HiddenFieldIsStillWritable(t *testing.T) {
 	controller := f.field("ctl", fieldSpec{Type: "select",
 		Options: []map[string]any{vocabOption("yes", "Yes", "active"), vocabOption("no", "No", "active")}})
 	dependent := f.field("dep", fieldSpec{Type: "text"})
+
+	// Configured through the DATABASE and then read back and EVALUATED,
+	// rather than assumed. A conditional skip here would be worse than
+	// no test at all: if the shape ever stopped being accepted, the row
+	// would carry no condition, the dependent would be trivially visible,
+	// and the test would go green while asserting nothing.
+	var controllerCode string
+	if err := f.pool.QueryRow(f.ctx,
+		`SELECT code FROM field_definition WHERE id = $1`, controller).Scan(&controllerCode); err != nil {
+		t.Fatalf("read the controller's code: %v", err)
+	}
+	// The term is `<code><op><value>` with NO field: prefix — the bare
+	// grammar ADR 0099 specifies. Writing "=yes" would name an EMPTY
+	// controller code, which resolves to nothing, FAILS THE CONDITION
+	// OPEN, and leaves the dependent visible: the test would then have
+	// asserted that a VISIBLE field is writable, which proves nothing.
+	condition := []string{controllerCode + "=yes"}
 	if _, err := f.pool.Exec(f.ctx,
 		`UPDATE field_definition SET display_condition = $1 WHERE id = $2`,
-		[]string{"=yes"}, dependent); err != nil {
-		t.Skipf("display_condition shape differs here: %v", err)
+		condition, dependent); err != nil {
+		t.Fatalf("configure display_condition: %v", err)
+	}
+	var stored []string
+	if err := f.pool.QueryRow(f.ctx,
+		`SELECT display_condition FROM field_definition WHERE id = $1`, dependent).Scan(&stored); err != nil {
+		t.Fatalf("read display_condition back: %v", err)
+	}
+	if len(stored) != 1 || stored[0] != controllerCode+"=yes" {
+		t.Fatalf("the condition must actually be stored, got %v", stored)
 	}
 
 	asset := f.asset(&owner, nil)
-	// The controller says "no", so the dependent is HIDDEN.
+	// The controller says "no", so the dependent is HIDDEN — asserted
+	// through the SHIPPED evaluator, not inferred from the fixture.
 	f.setValue(asset, controller, map[string]any{"text": "no"})
+	shown := metadata.EvaluateDisplayCondition(stored, func(code string) (metadata.ControllerState, bool) {
+		if code != controllerCode {
+			return metadata.ControllerState{}, false
+		}
+		return metadata.ControllerState{
+			Type: "select", Readable: true, Text: "no", HasText: true,
+		}, true
+	})
+	if shown {
+		t.Fatal("the fixture must make the dependent HIDDEN; otherwise this test asserts nothing")
+	}
 
 	p := f.mustPreview(ctx, openapi.BatchModeOverwrite, dependent, textValue("written anyway"),
 		assetEntries(asset))
