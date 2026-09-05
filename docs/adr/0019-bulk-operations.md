@@ -399,19 +399,57 @@ yet. An advisory lock is not a shortcut here; it is the only mechanism
 that can express the claim.
 
 **As corrected.** One transaction-scoped advisory lock space, with a
-reader half and a writer half:
-
-- the batch takes the SHARED half — on the caller's key and on a
-  structural key — BEFORE resolving authority, and holds both to commit;
-- every production path that mutates authority takes the EXCLUSIVE half
-  before it writes: the admin grant and revoke endpoints, the
-  role-assignment endpoint, the capability expiry sweeper, and the
-  team-parent endpoints that rewrite `team_closure`.
+reader half and a writer half. The batch takes the SHARED half — on the
+caller's key and on a structural key — BEFORE resolving authority, and
+holds both to commit.
 
 ⛔ **Both sides participate, and that is the whole mechanism.** A lock
 only the batch took would prove nothing — which was the defect in the
 original evidence for this family, whose test made its competing revoke
 wait on a `field_definition` lock that no production revoke touches.
+
+#### The authority-writer inventory, stated as it is
+
+An earlier draft of this amendment said "every production path that
+mutates authority takes the exclusive half". ⛔ **That was a universal
+claim reached before the enumeration was complete**, and it was false:
+`requests.Handler.Grant` writes `user_capability_grants` from the
+requests package and had been missed. The inventory is therefore given
+in full, with each entry either PARTICIPATING or carrying a stated
+lifecycle exemption.
+
+**Participating — take the exclusive half before the write:**
+
+| writer | key |
+|---|---|
+| `auth` · add a per-user grant | requester's user ref |
+| `auth` · remove a per-user grant | user ref |
+| `auth` · add a per-user revoke | user ref |
+| `auth` · remove a per-user revoke | user ref |
+| `auth` · assign a global role | user ref |
+| `auth` · capability expiry sweeper | structural |
+| `requests` · approve a capability request | **requester's** user ref, not the approver's |
+| `teams` · add a team parent | structural |
+| `teams` · remove a team parent | structural |
+
+The sweeper and the team-parent paths use the structural key because
+their blast radius is not one nameable user: the sweep reaps across every
+user at once, and re-parenting changes what every team-scoped grant
+expands to WITHOUT TOUCHING A SINGLE GRANT ROW.
+
+**Exempt, by construction — an in-flight batch for the affected
+principal cannot coexist with these:**
+
+| writer | why coexistence is impossible |
+|---|---|
+| first-boot setup assigns the initial admin role | the handler CREATES the user in the same request; a principal that does not exist cannot have a batch in flight |
+| self-registration assigns the default role | same — the row is inserted immediately above, and the account cannot authenticate until it is verified |
+| bootstrap assigns the admin role at startup | runs after migrations and BEFORE the HTTP server accepts requests, so no request of any kind is in flight |
+| the `aa seed` CLI writes `user_roles` and team-closure self-rows | a separate offline maintenance process that also TRUNCATEs; it is not reachable from any HTTP handler (the seed package's HTTP surface creates users without assigning roles) |
+
+⭐ These are exemptions with reasons, not omissions. If any of them ever
+gains a path that can run against a live principal, it joins the table
+above.
 
 Effective-capability semantics are unchanged: role-derived authority,
 direct grants, revokes, team-scoped grants and closure inheritance all

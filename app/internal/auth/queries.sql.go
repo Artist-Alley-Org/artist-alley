@@ -1655,9 +1655,14 @@ type LockAuthorityExclusiveParams struct {
 
 // THE WRITER SIDE of the authority-serialization lock (#1173, #1119).
 //
-// Taken by every path that mutates a caller's effective authority,
-// BEFORE it writes. See LockAuthorityShared for why this cannot be a
-// row lock.
+// Taken BEFORE the write by every authority-mutating path that a live
+// principal's in-flight operation can coexist with. ADR 0019 carries the
+// full inventory, including the paths that are exempt by construction
+// and why. ⛔ The inventory is stated there rather than summarised here
+// as "every path", because that universal was once written down before
+// the enumeration was finished and was false when it was.
+//
+// See LockAuthorityShared for why this cannot be a row lock.
 func (q *Queries) LockAuthorityExclusive(ctx context.Context, arg LockAuthorityExclusiveParams) error {
 	_, err := q.db.Exec(ctx, lockAuthorityExclusive, arg.LockSpace, arg.AuthorityKey)
 	return err

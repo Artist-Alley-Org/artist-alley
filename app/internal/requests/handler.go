@@ -45,6 +45,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
@@ -585,6 +586,23 @@ func (h *Handler) Grant(ctx context.Context, req *http.Request, in DecideInput) 
 				return ErrRequestAlreadyDecided
 			}
 			return fmt.Errorf("mark granted: %w", err)
+		}
+
+		// ⛔ SERIALIZED against any operation currently ACTING on the
+		// REQUESTER's authority (#1173, #1119). This is a real
+		// authority writer — it grants a capability — and it was
+		// missed when the other eight were brought under the lock,
+		// because it lives in the requests package rather than in
+		// auth. A batch metadata edit resolves the requester's
+		// effective verdict and then writes under it; without this,
+		// an approval could commit in between and the batch's stale
+		// verdict would still govern.
+		//
+		// Inside the SAME transaction as the grant and BEFORE it, on
+		// the REQUESTER's key — not the approver's. The approver is
+		// the actor; the requester is whose authority changes.
+		if err := auth.LockAuthorityForUpdate(ctx, tx, pre.RequesterUserRef); err != nil {
+			return err
 		}
 
 		// Insert the consequent user_capability_grants row in the

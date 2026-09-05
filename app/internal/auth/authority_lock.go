@@ -52,6 +52,14 @@ func authorityKey(userRef int64) int32 { return int32(userRef) }
 //
 // Call it INSIDE a transaction and BEFORE the write. Transaction-scoped,
 // so COMMIT or ROLLBACK releases it and an early return cannot leak it.
+//
+// ⛔ CALLERS ARE ENUMERATED IN ADR 0019, not summarised as "everything
+// that writes authority". Some writers are exempt by construction — a
+// role assigned to a user created in the same request, a bootstrap that
+// runs before the server serves — and an accurate list with stated
+// reasons is worth more than a universal claim that has to be true. The
+// first version of that claim was written before the enumeration was
+// complete and missed a live writer in another package.
 func LockAuthorityForUpdate(ctx context.Context, db DBTX, userRef int64) error {
 	if err := New(db).LockAuthorityExclusive(ctx, LockAuthorityExclusiveParams{
 		LockSpace:    AuthorityLockSpace,

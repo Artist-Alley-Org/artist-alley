@@ -247,6 +247,31 @@ func (s *CapabilitySweeper) SweepOnce(ctx context.Context) (int64, int64) {
 		return 0, 0 // happy steady state; stay quiet
 	}
 
+	// ── COMMIT, THEN THE CONSEQUENCES ──────────────────────────────
+	//
+	// ⛔ EVERY EFFECT BELOW IS A BEST-EFFORT CONSEQUENCE OF A REAP THAT
+	// HAS ALREADY HAPPENED, so none of them may run before the reap is
+	// durable. Emitting "this grant was reaped" audit events and
+	// request cascades and then rolling back would leave the system
+	// asserting a change to durable state that never occurred — for
+	// rows that are still present.
+	//
+	// The commit also RELEASES the structural authority lock, which is
+	// transaction-scoped. That is deliberate: the callbacks reach out to
+	// the audit recorder and the requests package on their own
+	// connections, and holding a lock that excludes every authority
+	// reader while they do so would put unrelated work behind an
+	// external effect.
+	//
+	// Nothing below can un-reap anything. A callback that fails is
+	// logged and the sweep stands, which is the contract this sweeper
+	// has always had — post-commit is what makes that contract honest
+	// rather than merely stated.
+	if err := tx.Commit(ctx); err != nil {
+		s.logWarn(ctx, "auth.capability_sweeper.commit.error", err)
+		return 0, 0
+	}
+
 	affected := make(map[int64]struct{}, len(grants)+len(revokes)+len(adminReaped))
 	for _, g := range grants {
 		teamID := pgUUIDStr(g.TeamID)
@@ -270,13 +295,6 @@ func (s *CapabilitySweeper) SweepOnce(ctx context.Context) (int64, int64) {
 			s.auditRevoke(ctx, r.UserRef, r.CapabilityCode, teamID, r.ExpiresAt.Time)
 		}
 		affected[r.UserRef] = struct{}{}
-	}
-	// COMMIT before any cache work: a cache dropped before the write
-	// lands is a cache that repopulates with the pre-write state. The
-	// structural authority lock is released here too.
-	if err := tx.Commit(ctx); err != nil {
-		s.logWarn(ctx, "auth.capability_sweeper.commit.error", err)
-		return 0, 0
 	}
 
 	if s.invalidateCaps != nil {
