@@ -9,6 +9,24 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Change one metadata field across many files at once.** A batch editor can overwrite a field, fill
+  in only the ones that are empty, or add and remove keywords, across the files you have selected.
+  Nothing is written until you have seen a preview that says exactly which files would change, which
+  would not, and which the operation cannot touch and why. Overwriting and removing also ask you to
+  type the number of files affected before they run, so a large change cannot happen by a stray
+  click. Every batch needs a written reason, and that reason is recorded (#1173, #1119, PR #1404).
+
+- **The batch editor cannot reach further than you can.** It checks, for every file separately, that
+  you may edit that file, that you may write that field, and that you may read the value it is about
+  to change. A file you cannot edit is listed as such and left alone rather than silently skipped.
+  Because it also requires read access, a field whose value is hidden from you cannot be reshaped by
+  a batch, which is deliberately stricter than editing one file at a time (#1173, #1119, PR #1404).
+
+- **A preview is used once and cannot be replayed.** Applying a preview spends it, and the change,
+  its record, and that spending all commit together, so a lost connection can never cause the same
+  batch to run twice. A preview belonging to somebody else is refused in a way that reveals nothing
+  about it, including whether it exists (#1173, #1119, PR #1404).
+
 - **A field can now say when it should appear.** An operator can give a metadata field a condition
   naming another field's value, and the field is offered only while that condition holds. Hiding a
   field is composition and nothing else: the stored value is left exactly as it was, nothing is
