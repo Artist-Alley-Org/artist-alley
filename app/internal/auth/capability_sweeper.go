@@ -169,7 +169,27 @@ func (s *CapabilitySweeper) Run(ctx context.Context) {
 // Errors are logged at WARN + counted as 0 for the failing query;
 // the call never propagates. The next tick retries.
 func (s *CapabilitySweeper) SweepOnce(ctx context.Context) (int64, int64) {
-	q := New(s.pool)
+	// ⛔ STRUCTURAL SERIALIZATION (#1173, #1119). This sweep reaps
+	// expired grants and revokes across EVERY user at once, so it cannot
+	// name the users it affects and cannot take their per-user locks.
+	// It takes the structural key instead, which every authority READER
+	// also holds shared — so a batch mid-flight cannot have its verdict
+	// invalidated by a reap that commits underneath it.
+	//
+	// One transaction for the whole sweep, so the lock is held across
+	// all of it and released by COMMIT. A failure inside degrades to the
+	// same "log and retry next tick" contract this sweeper already has.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		s.logWarn(ctx, "auth.capability_sweeper.begin.error", err)
+		return 0, 0
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := LockStructuralAuthorityForUpdate(ctx, tx); err != nil {
+		s.logWarn(ctx, "auth.capability_sweeper.lock.error", err)
+		return 0, 0
+	}
+	q := New(tx)
 
 	grants, err := q.SweepExpiredGrants(ctx)
 	if err != nil {
@@ -251,6 +271,14 @@ func (s *CapabilitySweeper) SweepOnce(ctx context.Context) (int64, int64) {
 		}
 		affected[r.UserRef] = struct{}{}
 	}
+	// COMMIT before any cache work: a cache dropped before the write
+	// lands is a cache that repopulates with the pre-write state. The
+	// structural authority lock is released here too.
+	if err := tx.Commit(ctx); err != nil {
+		s.logWarn(ctx, "auth.capability_sweeper.commit.error", err)
+		return 0, 0
+	}
+
 	if s.invalidateCaps != nil {
 		for userRef := range affected {
 			s.invalidateCaps(ctx, userRef)

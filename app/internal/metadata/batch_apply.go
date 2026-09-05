@@ -264,8 +264,11 @@ func validateConfirmCount(mode batchMode, supplied *int, wouldChange int) error 
 //     Lock-then-read, never read-then-lock: a lock taken after the
 //     read would serialise the writes while still letting the batch
 //     validate against a definition that had already changed.
-//  3. RE-RESOLVE THE CALLER'S AUTHORITY from this transaction, not
-//     from the request-time cache.
+//  3. LOCK AND RE-RESOLVE THE CALLER'S AUTHORITY. The shared half of
+//     the authority advisory lock FIRST, then the read — reading inside
+//     the transaction is necessary and NOT sufficient, because at READ
+//     COMMITTED an authority change can still commit between the read
+//     and the writes it authorizes.
 //  4. LOCK THE REFERENCE TARGET with FOR SHARE, so its liveness and
 //     every write using it are atomic.
 //  5. Per target: LOCK THE SUBJECT with FOR SHARE before reading its
@@ -332,17 +335,40 @@ func (h *Handler) commitBatch(
 			field.Code).withField(field.Code)
 	}
 
-	// ── 3. CURRENT EFFECTIVE AUTHORITY, RE-READ IN THIS TX ─────────
+	// ── 3. CURRENT EFFECTIVE AUTHORITY, LOCKED THEN RE-READ ────────
 	//
 	// EFFECTIVE, never raw grant-set equality. A caller who lost one
 	// direct grant while a role still confers the capability has not
 	// lost anything, and refusing them would be asserting about their
 	// grant rows rather than about their authority.
 	//
-	// Ordered AFTER the field lock, which is what makes the mint-
-	// authority seam observable: a contender blocked on that lock has
-	// not yet read authority, so a revocation that commits while it
-	// waits is SEEN when it proceeds.
+	// ⛔ SERIALIZED, because being inside the transaction is NOT enough.
+	//
+	// At READ COMMITTED every statement takes a fresh snapshot, so a
+	// grant, a revoke, a role assignment or a closure change can commit
+	// AFTER this read and BEFORE the writes it authorizes, and the
+	// stale verdict would still let them through. This transaction locks
+	// the field definition, the reference target and each subject — and
+	// none of those is where authority lives. Authority lives in
+	// `user_roles`, `roles`, `role_capabilities`,
+	// `user_capability_grants`, `user_capability_revokes` and
+	// `team_closure`.
+	//
+	// A row lock cannot close it either: the dangerous mutation is
+	// frequently an INSERT — a revoke ADDS a row — and there is nothing
+	// to lock before it exists. So the reader takes the shared half of
+	// the authority advisory lock, held to COMMIT, and every production
+	// path that mutates authority takes the exclusive half. See
+	// auth.LockAuthorityShared for the full argument and the registry of
+	// participating writers.
+	//
+	// BEFORE the read, not after: a lock taken afterwards would
+	// serialize the writes while still letting the verdict be drawn from
+	// a world that had already moved, which is the same shape of mistake
+	// as locking after a graph walk.
+	if err := auth.LockAuthorityShared(ctx, tx, id.UserRef); err != nil {
+		return zero, err
+	}
 	current, err := auth.ResolveEffectiveIdentity(ctx, tx, id)
 	if err != nil {
 		return zero, err

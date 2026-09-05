@@ -362,12 +362,62 @@ foreign key on `value_ref` at all**.
 3. **Proposed-reference liveness.** A pre-batch re-check is not
    sufficient; it establishes a fact that can stop being true before the
    last write lands.
-4. **Mint-authority composition.** No stale-authority mint.
+4. **Effective authority.** The caller's effective verdict and every
+   mutation it authorises are one atomic operation relative to a
+   competing authority change. This covers ALL FOUR authorities the
+   batch consumes — bulk-edit admission and per-target scope, subject
+   authority, the field's own write capability, and mint authority —
+   because all four are drawn from ONE effective-authority read.
 
 Technique is implementation-owned. As built: an explicit FOR SHARE on the
 subject and on the reference target, FOR UPDATE on the field definition
-taken BEFORE it is read, and the caller's capabilities re-resolved from
-the apply's own transaction rather than from the request-time cache.
+taken BEFORE it is read, and — for authority — a transaction-scoped
+ADVISORY LOCK taken BEFORE the authority read and held to commit.
+
+#### Amendment 2026-09-04 — re-resolving authority in the transaction is NOT serialization
+
+The first implementation of family 4 re-read the caller's capabilities
+from the apply's own transaction and treated that as sufficient. **It is
+not, and this ADR said so about every other family while missing it
+here.**
+
+At READ COMMITTED each statement takes a fresh snapshot. Re-reading in
+the transaction makes an authority change committed BEFORE the read
+visible, and does nothing about one that commits AFTER it: that change
+lands while the verdict is still being relied upon, and the writes it
+authorised go through. The batch locked the field definition, the
+reference target and each subject — and authority lives in none of
+those. It lives in `user_roles`, `roles`, `role_capabilities`,
+`user_capability_grants`, `user_capability_revokes` and `team_closure`.
+
+⛔ **A row lock could not have closed it either.** The dangerous mutation
+is frequently an INSERT — a revoke ADDS a row to
+`user_capability_revokes` — and `FOR SHARE` locks rows that exist.
+PostgreSQL has no predicate locking at READ COMMITTED, so no locking of
+the rows the authority query reads can exclude a row that does not exist
+yet. An advisory lock is not a shortcut here; it is the only mechanism
+that can express the claim.
+
+**As corrected.** One transaction-scoped advisory lock space, with a
+reader half and a writer half:
+
+- the batch takes the SHARED half — on the caller's key and on a
+  structural key — BEFORE resolving authority, and holds both to commit;
+- every production path that mutates authority takes the EXCLUSIVE half
+  before it writes: the admin grant and revoke endpoints, the
+  role-assignment endpoint, the capability expiry sweeper, and the
+  team-parent endpoints that rewrite `team_closure`.
+
+⛔ **Both sides participate, and that is the whole mechanism.** A lock
+only the batch took would prove nothing — which was the defect in the
+original evidence for this family, whose test made its competing revoke
+wait on a `field_definition` lock that no production revoke touches.
+
+Effective-capability semantics are unchanged: role-derived authority,
+direct grants, revokes, team-scoped grants and closure inheritance all
+still decide the verdict, and the decision is never reduced to raw
+grant-row equality — a team-scoped ROLE assignment produces zero rows in
+`user_capability_grants`, which is why `ScopedTeams` exists.
 
 ### Vocabulary
 

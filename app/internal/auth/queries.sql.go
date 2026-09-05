@@ -1644,6 +1644,61 @@ func (q *Queries) LoadCapabilityLicenseFeatures(ctx context.Context) ([]LoadCapa
 	return items, nil
 }
 
+const lockAuthorityExclusive = `-- name: LockAuthorityExclusive :exec
+SELECT pg_advisory_xact_lock($1::INT, $2::INT)
+`
+
+type LockAuthorityExclusiveParams struct {
+	LockSpace    int32
+	AuthorityKey int32
+}
+
+// THE WRITER SIDE of the authority-serialization lock (#1173, #1119).
+//
+// Taken by every path that mutates a caller's effective authority,
+// BEFORE it writes. See LockAuthorityShared for why this cannot be a
+// row lock.
+func (q *Queries) LockAuthorityExclusive(ctx context.Context, arg LockAuthorityExclusiveParams) error {
+	_, err := q.db.Exec(ctx, lockAuthorityExclusive, arg.LockSpace, arg.AuthorityKey)
+	return err
+}
+
+const lockAuthorityShared = `-- name: LockAuthorityShared :exec
+SELECT pg_advisory_xact_lock_shared($1::INT, $2::INT)
+`
+
+type LockAuthoritySharedParams struct {
+	LockSpace    int32
+	AuthorityKey int32
+}
+
+// THE READER SIDE of the authority-serialization lock (#1173, #1119).
+//
+// Taken by an operation that reads a caller's effective authority and
+// then performs mutations that verdict authorizes, BEFORE the read.
+// Held to COMMIT, so the verdict cannot go stale underneath the writes
+// it permitted.
+//
+// ⛔ WHY THIS CANNOT BE A ROW LOCK. Effective authority is derived from
+// `user_roles`, `roles`, `role_capabilities`, `user_capability_grants`,
+// `user_capability_revokes` and `team_closure`, and the dangerous
+// mutation is frequently an INSERT — a revoke ADDS a row to
+// `user_capability_revokes`. `SELECT ... FOR SHARE` locks rows that
+// EXIST; it cannot lock a row that does not exist yet, and PostgreSQL
+// has no predicate locking at READ COMMITTED. So no amount of row
+// locking over the tables the authority query reads can stop a revoke
+// from committing between the read and the writes. An advisory lock is
+// not a shortcut here; it is the only mechanism that can express the
+// claim.
+//
+// SHARED rather than exclusive so two concurrent batches by different
+// callers do not queue behind each other. They are both readers; only
+// an authority MUTATION needs to exclude them.
+func (q *Queries) LockAuthorityShared(ctx context.Context, arg LockAuthoritySharedParams) error {
+	_, err := q.db.Exec(ctx, lockAuthorityShared, arg.LockSpace, arg.AuthorityKey)
+	return err
+}
+
 const markRecoveryCodeUsed = `-- name: MarkRecoveryCodeUsed :exec
 UPDATE user_totp_recovery_code
    SET used_at = NOW()

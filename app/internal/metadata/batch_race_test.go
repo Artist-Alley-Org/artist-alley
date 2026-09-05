@@ -74,6 +74,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
+	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/testdb"
@@ -121,8 +122,23 @@ func newBatchRaceEnv(t *testing.T) *batchRaceEnv {
 // UPDATE, which is exactly what the batch's FOR SHARE read conflicts
 // with, so the contender piles up behind it.
 type raceGate struct {
-	tx pgx.Tx
-	t  *testing.T
+	tx       pgx.Tx
+	t        *testing.T
+	released bool
+}
+
+// autoRelease rolls the gate back if the test aborts before releasing it.
+//
+// Without this a FAILING race test hangs instead of failing: the gate's
+// uncommitted mutation holds row locks that the fixture's cleanup then
+// waits on forever. A test that hangs on failure is a test whose failure
+// nobody reads.
+func (g *raceGate) autoRelease() {
+	g.t.Cleanup(func() {
+		if !g.released {
+			_ = g.tx.Rollback(context.Background())
+		}
+	})
 }
 
 func (e *batchRaceEnv) openGate(sql string, args ...any) *raceGate {
@@ -135,13 +151,78 @@ func (e *batchRaceEnv) openGate(sql string, args ...any) *raceGate {
 		_ = tx.Rollback(context.Background())
 		e.t.Fatalf("gate mutation: %v", err)
 	}
-	return &raceGate{tx: tx, t: e.t}
+	g := &raceGate{tx: tx, t: e.t}
+	g.autoRelease()
+	return g
+}
+
+// openStaleVerdictGate holds the exclusive authority lock AND a subject
+// asset row, then performs a real authority mutation inside both.
+//
+// Two locks because the two trees park in different places. The
+// corrected batch takes the shared authority lock BEFORE its authority
+// read and parks there. The uncorrected batch takes no authority lock at
+// all, sails through the read with a stale "allowed", and parks on the
+// subject row it takes afterwards. Holding both means the overlap is
+// real and OBSERVED in either tree — so the test measures what the batch
+// DOES with the window rather than whether it has one.
+func (e *batchRaceEnv) openStaleVerdictGate(userRef int64, subject uuid.UUID, sql string, args ...any) *raceGate {
+	e.t.Helper()
+	tx, err := e.batchFixture.pool.Begin(context.Background())
+	if err != nil {
+		e.t.Fatalf("stale-verdict gate begin: %v", err)
+	}
+	g := &raceGate{tx: tx, t: e.t}
+	g.autoRelease()
+	if err := auth.LockAuthorityForUpdate(context.Background(), tx, userRef); err != nil {
+		e.t.Fatalf("stale-verdict gate authority lock: %v", err)
+	}
+	if _, err := tx.Exec(context.Background(),
+		`SELECT id FROM assets WHERE id = $1 FOR UPDATE`, subject); err != nil {
+		e.t.Fatalf("stale-verdict gate subject lock: %v", err)
+	}
+	if _, err := tx.Exec(context.Background(), sql, args...); err != nil {
+		e.t.Fatalf("stale-verdict gate mutation: %v", err)
+	}
+	return g
+}
+
+// openAuthorityGate holds the EXCLUSIVE half of the production
+// authority lock and performs a real authority mutation inside it,
+// uncommitted.
+//
+// ⛔ It takes the lock through auth.LockAuthorityForUpdate — the SAME
+// exported call the admin grant and revoke handlers, the role
+// assignment path, the expiry sweeper and the team-closure paths make.
+// That is the whole point: the previous version of this seam wrapped its
+// revoke in a `field_definition ... FOR UPDATE` that no production path
+// takes, which manufactured the ordering it claimed to observe. A gate
+// that reaches for an unrelated artifact proves nothing about
+// production.
+func (e *batchRaceEnv) openAuthorityGate(userRef int64, sql string, args ...any) *raceGate {
+	e.t.Helper()
+	tx, err := e.batchFixture.pool.Begin(context.Background())
+	if err != nil {
+		e.t.Fatalf("authority gate begin: %v", err)
+	}
+	if err := auth.LockAuthorityForUpdate(context.Background(), tx, userRef); err != nil {
+		_ = tx.Rollback(context.Background())
+		e.t.Fatalf("authority gate lock: %v", err)
+	}
+	if _, err := tx.Exec(context.Background(), sql, args...); err != nil {
+		_ = tx.Rollback(context.Background())
+		e.t.Fatalf("authority gate mutation: %v", err)
+	}
+	g := &raceGate{tx: tx, t: e.t}
+	g.autoRelease()
+	return g
 }
 
 // commit releases the gate by COMMITTING the competing change, so the
 // contender resumes into a world that has genuinely moved.
 func (g *raceGate) commit() {
 	g.t.Helper()
+	g.released = true
 	if err := g.tx.Commit(context.Background()); err != nil {
 		g.t.Fatalf("gate commit: %v", err)
 	}
@@ -441,51 +522,209 @@ func TestBatchRace_ReferenceLiveness(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// A76 — SEAM 7: MINT AUTHORITY
+// A76 — SEAM 7: EFFECTIVE AUTHORITY
 // ---------------------------------------------------------------------------
 
-// The caller's `fields.vocabulary.extend` is revoked while the apply is
-// blocked BEFORE it re-reads their authority.
+// The batch reads the caller's EFFECTIVE AUTHORITY and then writes and
+// mints under that verdict. Those two must be serialized, or an
+// authority change can commit in between and the stale verdict still
+// authorizes the mutation.
 //
-// The gate holds the FIELD DEFINITION row, which the apply must take
-// FOR UPDATE before it re-resolves the caller — so the revocation
-// commits while the apply provably has not yet asked the question. NO
-// STALE-AUTHORITY MINT: the apply refuses, and the options document is
-// byte-identical.
-func TestBatchRace_MintAuthorityRevocation(t *testing.T) {
+// # Why the previous version of this test proved nothing
+//
+// It made its competing revoke run inside
+// `WITH held AS (SELECT id FROM field_definition ... FOR UPDATE)`, so
+// the revoke waited on the field lock the apply already takes. ⛔ A
+// PRODUCTION REVOKE NEVER TOUCHES `field_definition`. It writes
+// `user_capability_revokes`, or deletes from `user_capability_grants`,
+// or changes `user_roles` — tables the batch locked nothing in. The
+// test manufactured the very ordering it claimed to prove and was green
+// over an unproven invariant.
+//
+// # What this version does instead
+//
+// The gate is the REAL production mutation, taking the REAL production
+// lock: `auth.LockAuthorityForUpdate`, the same call the admin
+// grant/revoke handlers, the role-assignment path, the expiry sweeper
+// and the team-closure paths make. Nothing here reaches for an
+// unrelated artifact to create safety with.
+//
+// The dangerous ordering is then constructed exactly: the apply is held
+// so that its authority READ has not happened, the revoke commits, and
+// the apply proceeds into the read and the write. If the batch did not
+// hold the shared half of that lock, it would read the pre-revoke
+// verdict and mint under it.
+func TestBatchRace_EffectiveAuthorityRevocation(t *testing.T) {
 	e := newBatchRaceEnv(t)
-	owner, _ := e.bulkOperator("racemint")
+	owner, _ := e.bulkOperator("raceauth")
 	e.grant(owner, capVocabExtend, nil)
 	ctx := e.identity(owner)
 
 	field := e.field("kw", fieldSpec{Type: "multi_select", OpenVocabulary: true,
 		Options: []map[string]any{vocabOption("live", "Live", "active")}})
-	asset := e.asset(&owner, nil)
+	// N >= 2, so a partial outcome would be visible: the batch must not
+	// write the first target under the stale verdict and refuse the rest.
+	a1 := e.asset(&owner, nil)
+	a2 := e.asset(&owner, nil)
+	a3 := e.asset(&owner, nil)
 
-	p := e.mustPreview(ctx, openapi.BatchModeOverwrite, field, optionsValue("race-term"), assetEntries(asset))
+	p := e.mustPreview(ctx, openapi.BatchModeOverwrite, field,
+		optionsValue("race-term"), assetEntries(a1, a2, a3))
+	if p.Counts.WouldChange != 3 {
+		t.Fatalf("the fixture needs three would_change targets, got %+v", p.Counts)
+	}
 	if p.MintableTerms == nil || len(*p.MintableTerms) != 1 {
 		t.Fatalf("the fixture needs a mintable term, got %+v", p.MintableTerms)
 	}
-	before := string(e.optionsDoc(field))
+	optionsBefore := string(e.optionsDoc(field))
 
-	// The gate takes the SAME field_definition lock the apply must hold
-	// before it reads authority, and revokes inside that window.
-	gate := e.openGate(`
-		WITH held AS (SELECT id FROM field_definition WHERE id = $1 FOR UPDATE)
+	// THE GATE IS A PRODUCTION AUTHORITY MUTATION. It takes the exclusive
+	// half of the authority lock — via the same exported call the admin
+	// handlers use — and then performs the revoke as a plain DELETE, with
+	// no reference to any other table.
+	gate := e.openAuthorityGate(owner, `
 		DELETE FROM user_capability_grants
-		 WHERE user_ref = $2 AND capability_code = $3 AND team_id IS NULL
-		   AND EXISTS (SELECT 1 FROM held)`,
-		field, owner, capVocabExtend)
+		 WHERE user_ref = $1 AND capability_code = $2 AND team_id IS NULL`,
+		owner, capVocabExtend)
 
-	res := e.race(t, "field_definition row", gate, ctx, p.Token, "extend revoked under us", intp(1))
+	res := e.race(t, "authority lock", gate, ctx, p.Token, "authority revoked under us", intp(3))
 
 	e.wantRefusal(res, 403, openapi.BatchVocabularyExtendRequired)
-	if e.rowExists(asset, field) {
-		t.Fatal("ZERO writes")
+
+	// ZERO UNAUTHORIZED WRITES, on every target — no partial batch.
+	for i, a := range []uuid.UUID{a1, a2, a3} {
+		if e.rowExists(a, field) {
+			t.Fatalf("target %d was written under a REVOKED verdict", i)
+		}
+		if e.historyCount(a, field) != 0 {
+			t.Fatalf("target %d gained a history row under a REVOKED verdict", i)
+		}
 	}
-	if after := string(e.optionsDoc(field)); after != before {
-		t.Fatalf("NO STALE-AUTHORITY MINT: the options document must be byte-identical\nbefore=%s\nafter=%s",
-			before, after)
+	// ZERO UNAUTHORIZED MINTS.
+	if after := string(e.optionsDoc(field)); after != optionsBefore {
+		t.Fatalf("a term was minted under a REVOKED verdict\nbefore=%s\nafter=%s",
+			optionsBefore, after)
+	}
+	if e.tokenConsumed(p.OperationId.String()) {
+		t.Fatal("a batch-wide refusal leaves the token spendable")
+	}
+	if e.envelopes(p.OperationId.String()) != 0 {
+		t.Fatal("and commits no audit envelope")
+	}
+}
+
+// TestBatchRace_StaleVerdictCannotAuthorizeTheWrite is THE HARM PROOF,
+// and it is the one that matters most.
+//
+// The two seams above fail on the uncorrected code because the apply
+// never blocks on a lock it does not take — a true and useful signal,
+// but it says "the mechanism is absent" rather than "the absence lets a
+// forbidden write through". This test says the second thing.
+//
+// # The dangerous ordering, constructed exactly
+//
+// The gate holds TWO things: the exclusive authority lock, and the
+// SUBJECT ASSET ROW. The subject row is a lock the uncorrected batch
+// genuinely takes, and it takes it AFTER it has read authority. So on
+// the uncorrected code the apply gets all the way past its authority
+// read with a verdict of "allowed", parks on the subject row, watches
+// the revoke commit, and then proceeds to write under a verdict that is
+// no longer true.
+//
+// On the corrected code it never gets that far: the shared authority
+// lock is taken BEFORE the read, so the apply parks there instead, and
+// when it resumes it reads the revoked state and refuses.
+//
+// Either way the overlap is real and observed. What differs is what the
+// batch does with it.
+func TestBatchRace_StaleVerdictCannotAuthorizeTheWrite(t *testing.T) {
+	e := newBatchRaceEnv(t)
+	owner, _ := e.bulkOperator("racestale")
+	e.grant(owner, capVocabExtend, nil)
+	ctx := e.identity(owner)
+
+	field := e.field("kw", fieldSpec{Type: "multi_select", OpenVocabulary: true,
+		Options: []map[string]any{vocabOption("live", "Live", "active")}})
+	// N >= 2: a partial outcome must be visible if one occurs.
+	a1 := e.asset(&owner, nil)
+	a2 := e.asset(&owner, nil)
+
+	p := e.mustPreview(ctx, openapi.BatchModeOverwrite, field,
+		optionsValue("stale-term"), assetEntries(a1, a2))
+	if p.Counts.WouldChange != 2 {
+		t.Fatalf("want 2 would_change, got %+v", p.Counts)
+	}
+	optionsBefore := string(e.optionsDoc(field))
+
+	// Hold the authority lock AND the first subject row, then revoke.
+	gate := e.openStaleVerdictGate(owner, a1, `
+		DELETE FROM user_capability_grants
+		 WHERE user_ref = $1 AND capability_code = $2 AND team_id IS NULL`,
+		owner, capVocabExtend)
+
+	res := e.race(t, "authority lock or subject row", gate, ctx, p.Token,
+		"authority revoked while the batch was in flight", intp(2))
+
+	// THE ASSERTION. However the batch got here, a revoked caller may not
+	// have written or minted anything.
+	for i, a := range []uuid.UUID{a1, a2} {
+		if e.rowExists(a, field) {
+			t.Fatalf("STALE VERDICT AUTHORIZED A WRITE: target %d was written after the "+
+				"caller's authority was revoked", i)
+		}
+		if e.historyCount(a, field) != 0 {
+			t.Fatalf("STALE VERDICT AUTHORIZED A WRITE: target %d gained a history row", i)
+		}
+	}
+	if after := string(e.optionsDoc(field)); after != optionsBefore {
+		t.Fatalf("STALE VERDICT AUTHORIZED A MINT\nbefore=%s\nafter=%s", optionsBefore, after)
+	}
+	if res.OK != nil && res.OK.OutcomeCounts.Changed != 0 {
+		t.Fatalf("STALE VERDICT AUTHORIZED %d WRITES", res.OK.OutcomeCounts.Changed)
+	}
+	// And no partial batch: the operation refuses whole.
+	e.wantRefusal(res, 403, openapi.BatchVocabularyExtendRequired)
+	if e.tokenConsumed(p.OperationId.String()) {
+		t.Fatal("a batch-wide refusal leaves the token spendable")
+	}
+}
+
+// TestBatchRace_BulkAuthorityRevocation is the same seam over a
+// DIFFERENT authority kind, because A76 pointed only at
+// `fields.vocabulary.extend` and that is not the whole surface. The
+// batch consumes four: bulk-edit admission and per-target scope, subject
+// authority, the field's own write capability, and mint authority — and
+// every one of them is drawn from the SAME effective-authority read.
+//
+// Here the bulk instrument itself is revoked mid-flight, on a field with
+// no vocabulary at all, so nothing about minting is involved.
+func TestBatchRace_BulkAuthorityRevocation(t *testing.T) {
+	e := newBatchRaceEnv(t)
+	owner, _ := e.bulkOperator("racebulk")
+	ctx := e.identity(owner)
+
+	field := e.field("t", fieldSpec{Type: "text"})
+	a1 := e.asset(&owner, nil)
+	a2 := e.asset(&owner, nil)
+
+	p := e.mustPreview(ctx, openapi.BatchModeOverwrite, field, textValue("batch"),
+		assetEntries(a1, a2))
+	if p.Counts.WouldChange != 2 {
+		t.Fatalf("want 2 would_change, got %+v", p.Counts)
+	}
+
+	gate := e.openAuthorityGate(owner, `
+		DELETE FROM user_capability_grants
+		 WHERE user_ref = $1 AND capability_code = $2 AND team_id IS NULL`,
+		owner, capBulkEdit)
+
+	res := e.race(t, "authority lock", gate, ctx, p.Token, "bulk grant revoked under us", intp(2))
+
+	e.wantRefusal(res, 403, openapi.BatchBulkCapabilityRequired)
+	for i, a := range []uuid.UUID{a1, a2} {
+		if e.rowExists(a, field) {
+			t.Fatalf("target %d was written after the bulk instrument was revoked", i)
+		}
 	}
 	if e.tokenConsumed(p.OperationId.String()) {
 		t.Fatal("the token stays spendable")
