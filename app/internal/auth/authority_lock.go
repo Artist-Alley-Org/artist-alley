@@ -146,15 +146,29 @@ func LockAuthorityShared(ctx context.Context, db DBTX, userRef int64) error {
 // blocks the transaction-scoped SHARED half a batch takes, which is the
 // point.
 //
-// ⚠️ OPERATIONAL CONSEQUENCE, stated because an operator will meet it:
-// while a seed holds this, every batch metadata apply WAITS. A full
-// reseed takes minutes, so an apply that starts during one will most
-// likely exhaust its request deadline and fail rather than queue to
-// completion. It fails CLOSED — nothing is written — which is the safe
-// direction, and an operator running `aa seed --reset` against a live
-// deployment is already accepting that the instance's content is being
-// replaced underneath it. It is still a real change in behaviour and
-// belongs in the release notes rather than in a surprise.
+// ⚠️ OPERATIONAL CONSEQUENCE, stated because an operator will meet it.
+// While this is held, batch metadata applies WAIT — so the only thing
+// that matters is how long it is held, and the answer is: for the
+// authority spans only, never for a whole command.
+//
+// `aa seed` takes it four times, each around one authority mutation and
+// released immediately after: the seed's own bootstrap, `resetContent`
+// (the reset's TRUNCATE and DELETEs plus the restoration, as one span),
+// `applyTeams`, and `applyFixturePrincipals`. Catalogue loading, users,
+// memberships, follows, fields, collections, featured, ASSETS, POSTS,
+// likes and comments — the parts of a reseed that actually take minutes
+// — run with this lock NOT held.
+//
+// An earlier revision wrapped the whole `Runner.Run` and did have the
+// consequence this note used to describe: an unrelated apply could wait
+// out its deadline while image files loaded. That is no longer true and
+// the note is corrected rather than left standing, because a stale
+// operational warning is worse than none — it invites a fix for a
+// problem that is not there.
+//
+// The remaining waits are bounded by the reset and bootstrap spans. A
+// batch apply that collides with one blocks briefly and, if it did ever
+// exceed its deadline, fails CLOSED with nothing written.
 func AcquireStructuralAuthorityLock(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) (func(), error) {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {

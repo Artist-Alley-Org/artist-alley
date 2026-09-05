@@ -514,17 +514,25 @@ two queries and no others. `team_memberships` is deliberately absent:
 `EffectiveScopedCapabilitiesForUser` does not read it, so it is not
 authority-bearing for this invariant.
 
-⚠️ **The operational consequence, stated rather than absorbed.** While a
-seed holds the structural lock, every batch metadata apply WAITS. A full
-reseed takes minutes, so an apply that begins during one will most likely
-exhaust its request deadline and fail rather than queue to completion. It
-fails CLOSED — nothing is written — and an operator running
-`aa seed --reset` against a live deployment is already accepting that the
-instance's content is being replaced underneath them. It belongs in the
-release notes rather than in a surprise. If that proves too blunt, the
-narrower follow-up is a `lock_timeout` on the batch's acquisition so it
-refuses cleanly instead of hanging; that changes the batch's failure mode
-and is deliberately NOT taken here.
+⚠️ **The operational consequence, stated rather than absorbed.** While the
+structural lock is held, batch metadata applies WAIT — so what matters is
+how long it is held, and it is held only for the authority spans above,
+never across a whole command. The long parts of a reseed — catalogue
+loading, users, memberships, follows, fields, collections, featured,
+ASSETS, POSTS, likes and comments — run WITHOUT it.
+
+An earlier revision wrapped the entire `Runner.Run`, and did have the
+consequence an earlier version of this paragraph described: an unrelated
+apply could wait out its whole request deadline while image files were
+loading. After the narrowing that is no longer true, and the wording is
+corrected rather than left standing — a stale operational warning invites
+a fix for a problem that is not there.
+
+The remaining waits are bounded by the reset and bootstrap spans, and a
+collision fails CLOSED with nothing written. A `lock_timeout` on the
+batch's acquisition is deliberately NOT taken: it would change the
+batch's failure taxonomy, and the excessive-scope problem it would have
+papered over is fixed at the source instead.
 
 **Exempt, by construction — an in-flight batch for the affected
 principal cannot coexist with these:**
