@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -121,7 +122,9 @@ func TestBatch_ExpandedTargetCeiling(t *testing.T) {
 // four separate builds would measure the fixture rather than the
 // operation.
 //
-//  1. apply latency at 1,000 targets, p95 <= 10 s
+//  1. apply latency at 1,000 targets, p95 <= 10 s — a PRODUCTION
+//     acceptance, measured over enough samples to mean p95, and
+//     asserted only in an uninstrumented build (see raceEnabled)
 //  2. the search-text rebuild and cache notify fire for every written
 //     row, and the elapsed trigger cost is reported
 //  3. the audit envelope round-trips BYTE-INTACT and stays under 128 KB
@@ -148,8 +151,13 @@ func TestBatch_AtTheCeiling(t *testing.T) {
 	}
 	selection := postEntries(posts...)
 
-	// ── 1. LATENCY, p95 over five runs ─────────────────────────────
-	const runs = 5
+	// ── 1. LATENCY, p95 ────────────────────────────────────────────
+	//
+	// TWENTY samples, because the statistic is named p95 and five
+	// cannot express a 95th percentile — with five, "p95" can only
+	// mean the maximum, and calling the maximum p95 overstates what
+	// was measured even when the number is comfortable.
+	const runs = 20
 	durations := make([]time.Duration, 0, runs)
 	var lastOp string
 	for i := 0; i < runs; i++ {
@@ -174,27 +182,31 @@ func TestBatch_AtTheCeiling(t *testing.T) {
 	}
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 
-	// THE WORST OF FIVE, and it is called that rather than "p95"
-	// because five samples cannot express a 95th percentile — the
-	// worst of them is the MAXIMUM, which is a strictly stronger claim
-	// than the budget asks for and is the honest name for it.
-	worst := durations[len(durations)-1]
+	// The 95th percentile by NEAREST RANK: the smallest sample at or
+	// above which 95% of them fall. With 20 samples that is the 19th
+	// smallest, so exactly one run may exceed it — which is what a p95
+	// means and what the acceptance was written against.
+	idx := int(math.Ceil(0.95*float64(len(durations)))) - 1
+	p95 := durations[idx]
 
-	// The budget is 10 s, and it is about PRODUCTION. Under -race every
-	// memory access is instrumented and wall-clock inflates several-
-	// fold, so enforcing the production number there would fail for a
-	// reason unrelated to this code — on a loaded self-hosted runner,
-	// intermittently, which is the worst kind. The measurement is
-	// REPORTED either way; only the threshold moves, and the looser one
-	// is still tight enough to catch a real regression.
-	budget := 10 * time.Second
+	// THE ACCEPTANCE IS 10 SECONDS, and it is a PRODUCTION criterion.
+	//
+	// Under -race every memory access is instrumented, so a duration
+	// measured there is not a measurement of the thing the criterion is
+	// about. ⛔ The answer is NOT a looser threshold: a second budget
+	// standing in for the acceptance is how the acceptance quietly
+	// becomes the second budget. So the timing is REPORTED under -race
+	// and ASSERTED only in an uninstrumented build, while everything
+	// else this test proves — every target written, the rebuild, the
+	// envelope, the guard contention — runs in full either way.
+	const budget = 10 * time.Second
+	t.Logf("APPLY LATENCY AT %d TARGETS over %d runs: p95 = %s, max = %s, min = %s (acceptance: p95 <= %s)",
+		n, runs, p95, durations[len(durations)-1], durations[0], budget)
 	if raceEnabled {
-		budget = 30 * time.Second
-	}
-	t.Logf("APPLY LATENCY AT %d TARGETS: worst of %d runs = %s (budget %s%s)",
-		n, runs, worst, budget, map[bool]string{true: ", relaxed under -race", false: ""}[raceEnabled])
-	if worst > budget {
-		t.Fatalf("the worst apply over %d targets is %s, past the %s budget", n, worst, budget)
+		t.Log("latency NOT ASSERTED in this build: -race instrumentation invalidates a " +
+			"wall-clock SLA. The acceptance is proven by the uninstrumented run.")
+	} else if p95 > budget {
+		t.Fatalf("p95 apply latency at %d targets is %s, over the %s acceptance", n, p95, budget)
 	}
 
 	// ── 2. SEARCH-TEXT REBUILD AND NOTIFY ──────────────────────────

@@ -5,6 +5,7 @@
 
 package metadata_test
 
-// raceEnabled is false in an uninstrumented build. See its twin in
-// race_enabled_test.go for why the batch's latency budget consults it.
+// raceEnabled is false in an uninstrumented build, which is the only
+// build that can prove the batch's production latency acceptance. See
+// its twin in race_enabled_test.go.
 const raceEnabled = false

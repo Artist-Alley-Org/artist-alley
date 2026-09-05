@@ -60,6 +60,12 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
+// capVocabExtend is the SHIPPED vocabulary-extension capability
+// (migration 00057), named here rather than beside the batch tests
+// because the baseline probes use it too and must compile without
+// any of the batch files.
+const capVocabExtend = "fields.vocabulary.extend"
+
 type batchFixture struct {
 	t    *testing.T
 	pool *pgxpool.Pool
@@ -538,4 +544,76 @@ func vocabOptionWith(slug, label, status string, extra map[string]any) map[strin
 		o[k] = v
 	}
 	return o
+}
+
+// collectionField seeds a COLLECTION-subject definition, which the
+// asset batch plane must not be able to address.
+func (f *batchFixture) collectionField(code string) uuid.UUID {
+	f.t.Helper()
+	id := uuid.New()
+	if _, err := f.pool.Exec(f.ctx, `
+		INSERT INTO field_definition
+		    (id, code, label, type, subject_kind, applies_to, required, status,
+		     options, open_vocabulary, read_only)
+		VALUES ($1, $2, $3, 'text', 'collection', '{}', false, 'active', '{}'::jsonb, false, false)`,
+		id, "bx_"+code+"_"+id.String()[:8], code,
+	); err != nil {
+		f.t.Fatalf("seed collection field: %v", err)
+	}
+	f.t.Cleanup(func() {
+		c := context.Background()
+		_, _ = f.pool.Exec(c, `DELETE FROM asset_field_value_history WHERE field_id = $1`, id)
+		_, _ = f.pool.Exec(c, `DELETE FROM asset_field_value WHERE field_id = $1`, id)
+		_, _ = f.pool.Exec(c, `DELETE FROM metadata_batch_preview WHERE field_id = $1`, id)
+		_, _ = f.pool.Exec(c, `DELETE FROM field_definition WHERE id = $1`, id)
+	})
+	return id
+}
+
+// tableScans reads Postgres' own counter of sequential plus index scans
+// on one table, so "nothing was read" is an observation of the DATABASE
+// rather than of the handler's intentions.
+func (f *batchFixture) tableScans(table string) int64 {
+	f.t.Helper()
+	var n *int64
+	if err := f.pool.QueryRow(f.ctx, `
+		SELECT COALESCE(seq_scan, 0) + COALESCE(idx_scan, 0)
+		  FROM pg_stat_user_tables WHERE relname = $1`, table).Scan(&n); err != nil {
+		f.t.Fatalf("read scan counter for %s: %v", table, err)
+	}
+	if n == nil {
+		return 0
+	}
+	return *n
+}
+
+func (f *batchFixture) previewTokenCount() int {
+	f.t.Helper()
+	var n int
+	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM metadata_batch_preview`).Scan(&n); err != nil {
+		f.t.Fatalf("count preview tokens: %v", err)
+	}
+	return n
+}
+
+// distinctReach computes the true distinct union independently of the
+// handler, so the expected value in a ceiling assertion is not derived
+// from the code under test.
+func (f *batchFixture) distinctReach(sets ...[]uuid.UUID) int {
+	seen := map[uuid.UUID]struct{}{}
+	for _, s := range sets {
+		for _, id := range s {
+			seen[id] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
+func (f *batchFixture) auditEventCount() int {
+	f.t.Helper()
+	var n int
+	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM audit_events`).Scan(&n); err != nil {
+		f.t.Fatalf("count audit events: %v", err)
+	}
+	return n
 }

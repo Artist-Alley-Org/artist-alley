@@ -152,6 +152,13 @@ job-queue job… progress streams to the UI." For these four modes that is
   trimming — a partial expansion would silently write a different set
   than the operator selected — and a single post whose membership alone
   exceeds the expanded ceiling is refused on the same terms.
+- **The over-ceiling refusal names the TRUE distinct expanded count**,
+  not the bound it was measured against. The count is computed in the
+  database and the target ids are read only once it is known to fit, so
+  the server neither executes a partial batch nor pulls an unbounded id
+  set into memory to find out how far over the selection reaches. An
+  operator told "1,001" when the real answer is 50,000 would trim one
+  post at a time towards a target that was never within reach.
 - **#39's remaining actions stay job-oriented.** Delete, zip, CSV export
   and contact sheets are unbounded by nature; this supersession does not
   reach them.
@@ -163,6 +170,15 @@ ordinary single-target write to an unrelated field completing in 4 ms
 while the batch held its guards for 3 s.
 
 ### The public wire contract
+
+**Collections are outside this plane, on both sides.** They are not a
+selection kind, and a field whose `subject_kind` is `collection` is NOT
+FOUND on this endpoint — refused before any stored target value is
+inspected, with no token issued. The single-target asset writer does not
+ask this question (it writes `asset_field_value` whatever the definition
+says, while its collection twin gates the discriminator explicitly);
+that asymmetry is pre-existing, is NOT changed here, and is not a reason
+to carry the gap onto a plane that reaches a thousand records at once.
 
 **Preview** takes the mode, the field, the proposed value and a TYPED
 selection of `{kind, id}` entries where kind is `asset` or `post`. The
@@ -425,6 +441,22 @@ Unlike the Decision's "a single undo can revert the batch", there is no
 batch undo in this subset. The per-field history the Consequences
 anticipate exists and is written per target; a bulk revert built on it is
 not part of this amendment.
+
+### Two narrow wire-hardening codes, discovered in implementation
+
+`unknown_mode` and `unknown_selection_kind`, both 400. Neither is part
+of the batch's product surface; both exist because nothing between the
+wire and the handler validates a closed enum. There is no
+spec-validation middleware, and the generated enum types are bare
+strings whose `Valid()` has no callers, so an undefined `mode` or
+selection `kind` arrives intact. Left unchecked, an undefined mode
+matched no mode-specific arm — which let a REQUIRED field take a
+semantically empty value without tripping R1, partitioned every target
+as a no-op, and then died on a CHECK constraint as a 500.
+
+They are recorded here so the enum is not re-derived without them, and
+so the next reader knows they answer a shape question rather than a
+product one.
 
 ### Deliberately out of scope
 

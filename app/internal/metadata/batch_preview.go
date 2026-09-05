@@ -117,6 +117,31 @@ func (h *Handler) previewBatch(
 		return zero, err
 	}
 
+	// ── SUBJECT KIND ───────────────────────────────────────────────
+	//
+	// This endpoint's selection plane is assets and posts. A field
+	// scoped to COLLECTIONS is not a field it can address, and
+	// collections are outside this sprint's selection and value planes
+	// entirely — so a collection field is NOT FOUND here, in the same
+	// sense and with the same answer as an id naming no field at all.
+	//
+	// ⚠️ The single-target asset writer does NOT ask this. It loads a
+	// field by id and writes `asset_field_value` whatever the
+	// definition's subject_kind says, while its collection twin gates
+	// the discriminator explicitly (collection_handler.go). That
+	// asymmetry is PRE-EXISTING and this sprint does not touch the
+	// single-target endpoint — but it is not a reason to carry the gap
+	// onto a plane that can reach a thousand records at once, and the
+	// scope this operation was accepted under puts collections outside
+	// it either way.
+	//
+	// Placed ABOVE everything that reads a value: no stored target
+	// value is inspected, nothing is written, and no token is issued
+	// that could later mutate one.
+	if field.SubjectKind != string(SubjectAsset) {
+		return zero, &batchRefusal{Status: 404, Message: "field not found"}
+	}
+
 	// ── G4 — the field's OWN write_capability, BATCH-WIDE ──────────
 	//
 	// Reproduced at its SHIPPED GLOBAL-ONLY scope. See

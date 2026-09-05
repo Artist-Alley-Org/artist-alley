@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -219,4 +221,152 @@ func TestBatch_ExpansionObeysPostReadability(t *testing.T) {
 	if ok.Counts.Expanded != 1 {
 		t.Fatalf("an org-only post is readable and must still expand; got %+v", ok.Counts)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Collection-subject fields are outside this endpoint's plane
+// ---------------------------------------------------------------------------
+
+// A COLLECTION-SUBJECT FIELD IS NOT FOUND ON THE ASSET BATCH PLANE.
+//
+// Collections are outside this sprint's selection and value planes, so
+// a field scoped to them is not a field this endpoint can address —
+// not found, in the same sense and with the same answer as an id
+// naming no field at all.
+//
+// ⚠️ The single-target asset writer does NOT ask this: it loads a field
+// by id and writes `asset_field_value` whatever the definition says,
+// while its collection twin gates the discriminator explicitly. That
+// asymmetry is PRE-EXISTING, this sprint does not touch the
+// single-target endpoint, and it is carried as a separate finding — but
+// it is not a reason to extend the gap onto a plane that reaches a
+// thousand records at once.
+//
+// The refusal is asserted to happen BEFORE ANY STORED VALUE IS READ,
+// on Postgres' own scan counter for `asset_field_value` rather than on
+// the handler's good intentions.
+func TestBatch_CollectionSubjectFieldIsNotOnThisPlane(t *testing.T) {
+	f := newBatchFixture(t)
+	owner, ctx := f.bulkOperator("subjkind")
+	asset := f.asset(&owner, nil)
+
+	field := f.collectionField("collfield")
+	// The field is real and holds a value on this very asset, so a
+	// refusal cannot be mistaken for "there was nothing to look at".
+	f.setValue(asset, field, map[string]any{"text": "a value nobody should read"})
+
+	beforeScans := f.tableScans("asset_field_value")
+	beforeTokens := f.previewTokenCount()
+
+	res := f.preview(ctx, openapi.BatchModeOverwrite, field, textValue("x"), assetEntries(asset))
+	if res.Status != 404 {
+		t.Fatalf("a collection-subject field is not addressable here; want 404, got %d %+v",
+			res.Status, res.Refusal)
+	}
+	if res.OK != nil {
+		t.Fatal("no preview, and therefore no partition over collection-field values")
+	}
+	if after := f.tableScans("asset_field_value"); after != beforeScans {
+		t.Fatalf("ZERO STORED TARGET VALUES INSPECTED: asset_field_value was scanned %d extra times",
+			after-beforeScans)
+	}
+	if after := f.previewTokenCount(); after != beforeTokens {
+		t.Fatalf("NO TOKEN may be issued that could later mutate it; %d minted", after-beforeTokens)
+	}
+	if got, _ := f.storedText(asset, field); got != "a value nobody should read" {
+		t.Fatalf("and nothing is written; got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The over-ceiling refusal reports the TRUE distinct expanded count
+// ---------------------------------------------------------------------------
+
+// A bounded read keeps an unbounded id set out of application memory,
+// and it CANNOT report the true count: `LIMIT 1001` says 1001 whether
+// the selection reaches 1,001 assets or fifty thousand. An operator
+// told the smaller number would trim one post at a time towards a
+// target that was never within reach.
+//
+// Both properties at once: the count is computed in the DATABASE, and
+// the ids are read only once it is known to fit.
+func TestBatch_ExpandedCeilingReportsTheTrueCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds several thousand assets")
+	}
+	f := newBatchFixture(t)
+	owner, ctx := f.bulkOperator("truecount")
+	field := f.textField(false)
+
+	pool := f.bulkAssets(owner, 1200)
+
+	t.Run("exactly 1000 is ALLOWED", func(t *testing.T) {
+		post := f.post(owner, pool[:1000]...)
+		p := f.mustPreview(ctx, openapi.BatchModeOverwrite, field, textValue("x"), postEntries(post))
+		if p.Counts.Expanded != 1000 {
+			t.Fatalf("the ceiling is inclusive; want 1000 expanded, got %+v", p.Counts)
+		}
+	})
+
+	t.Run("1001 refuses with actual = 1001", func(t *testing.T) {
+		post := f.post(owner, pool[:1001]...)
+		res := f.preview(ctx, openapi.BatchModeOverwrite, field, textValue("x"), postEntries(post))
+		f.wantPreviewRefusal(res, 422, openapi.BatchExpandedTargetCeiling)
+		if res.Refusal.Actual == nil || *res.Refusal.Actual != 1001 {
+			t.Fatalf("want actual=1001, got %v", res.Refusal.Actual)
+		}
+	})
+
+	// THE ROW A BOUNDED READ ALONE GETS WRONG.
+	t.Run("one post of 1200 reports 1200, NOT 1001", func(t *testing.T) {
+		post := f.post(owner, pool...)
+		res := f.preview(ctx, openapi.BatchModeOverwrite, field, textValue("x"), postEntries(post))
+		f.wantPreviewRefusal(res, 422, openapi.BatchExpandedTargetCeiling)
+		if res.Refusal.Actual == nil {
+			t.Fatal("the refusal must name the actual count")
+		}
+		if *res.Refusal.Actual == 1001 {
+			t.Fatal("1001 is the BOUND, not the count: a LIMIT ceiling+1 read cannot " +
+				"report how far over the selection actually reaches")
+		}
+		if *res.Refusal.Actual != 1200 {
+			t.Fatalf("want the TRUE distinct count 1200, got %d", *res.Refusal.Actual)
+		}
+		if res.Refusal.Expected == nil || *res.Refusal.Expected != 1000 {
+			t.Fatalf("want the ceiling named, got %v", res.Refusal.Expected)
+		}
+		if res.Refusal.EntryCount == nil || *res.Refusal.EntryCount != 1 {
+			t.Fatalf("want the entry count named (ONE post reached 1200), got %v", res.Refusal.EntryCount)
+		}
+		if res.OK != nil {
+			t.Fatal("NO PARTIAL EXPANSION")
+		}
+	})
+
+	// The distinct total is NOT the sum of the parts. Two posts sharing
+	// members, plus assets named directly that are also in those posts,
+	// must count each asset ONCE.
+	t.Run("mixed assets and posts with duplicates count the TRUE DISTINCT set", func(t *testing.T) {
+		// A overlaps B on pool[600:700], and every directly-named
+		// asset is also inside one of them. Nothing here is distinct
+		// by accident.
+		setA := pool[0:700]
+		setB := pool[600:1200]
+		postA := f.post(owner, setA...)
+		postB := f.post(owner, setB...)
+		direct := assetEntries(pool[0], pool[650], pool[1100])
+		sel := append(direct, postEntries(postA, postB)...)
+
+		res := f.preview(ctx, openapi.BatchModeOverwrite, field, textValue("x"), sel)
+		f.wantPreviewRefusal(res, 422, openapi.BatchExpandedTargetCeiling)
+
+		// The truth, computed independently of the handler.
+		want := f.distinctReach(setA, setB, []uuid.UUID{pool[0], pool[650], pool[1100]})
+		if res.Refusal.Actual == nil || *res.Refusal.Actual != want {
+			t.Fatalf("want the TRUE distinct count %d, got %v", want, res.Refusal.Actual)
+		}
+		if res.Refusal.EntryCount == nil || *res.Refusal.EntryCount != len(sel) {
+			t.Fatalf("want entry_count=%d, got %v", len(sel), res.Refusal.EntryCount)
+		}
+	})
 }

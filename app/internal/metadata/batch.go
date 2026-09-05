@@ -277,6 +277,7 @@ func (h *Handler) expandSelection(
 	}
 
 	var postIDs []pgtype.UUID
+	var assetIDs []pgtype.UUID
 	seen := make(map[uuid.UUID]struct{}, len(entries))
 	targets := make([]uuid.UUID, 0, len(entries))
 
@@ -289,6 +290,7 @@ func (h *Handler) expandSelection(
 			}
 			seen[id] = struct{}{}
 			targets = append(targets, id)
+			assetIDs = append(assetIDs, pgtype.UUID{Bytes: id, Valid: true})
 		case openapi.BatchSelectionPost:
 			postIDs = append(postIDs, pgtype.UUID{Bytes: id, Valid: true})
 		default:
@@ -327,12 +329,51 @@ func (h *Handler) expandSelection(
 		postIDs = readable
 
 	}
+
+	// ── THE CEILING, COUNTED BEFORE ANYTHING IS MATERIALISED ───────
+	//
+	// Two separable requirements pull in opposite directions, and both
+	// are met here rather than one at the other's expense.
+	//
+	// The refusal must name the TRUE distinct expanded count. A bounded
+	// read alone cannot: `LIMIT 1001` reports 1001 whether the
+	// selection reaches 1,001 assets or fifty thousand, and an operator
+	// told the smaller number would trim one post at a time towards a
+	// target that was never within reach.
+	//
+	// And the server must not pull an unbounded id set into
+	// application memory to find that out. So the COUNT is computed in
+	// the database, where the set never leaves, and the ids are read
+	// only once the count is known to fit — still bounded, because a
+	// bound that is only ever redundant is still the thing that makes
+	// the memory claim true rather than incidental.
+	//
+	// Counted over BOTH halves of the selection at once, because the
+	// distinct total is not the sum of the parts: an asset named
+	// directly and also reached through two posts is one target.
+	total, err := q.CountBatchExpandedTargets(ctx, CountBatchExpandedTargetsParams{
+		AssetIds: assetIDs,
+		PostIds:  postIDs,
+	})
+	if err != nil {
+		return out, fmt.Errorf("metadata: count expanded targets: %w", err)
+	}
+	if total > int64(batchExpandedTargetCeiling) {
+		r := refuse(422, openapi.BatchExpandedTargetCeiling,
+			"a batch may reach at most %d distinct assets; these %d selection entries reach %d",
+			batchExpandedTargetCeiling, len(entries), total)
+		limit, actual, entryCount := batchExpandedTargetCeiling, int(total), len(entries)
+		r.Expected, r.Actual, r.EntryCount = &limit, &actual, &entryCount
+		// NO PARTIAL EXPANSION reaches a partition or an apply: the
+		// refusal returns before a single target id is read.
+		return out, r
+	}
+
 	if len(postIDs) > 0 {
-		// Bounded at the ceiling PLUS ONE: enough to know the ceiling
-		// was exceeded, and never the whole union. The entry ceiling
-		// admits 500 posts, and without this a selection of large
-		// posts materialises hundreds of thousands of ids — in the
-		// result set and again in the maps below — only to refuse.
+		// Bounded at the ceiling PLUS ONE. Redundant now that the count
+		// above has already refused anything larger — and kept anyway,
+		// because "this read is bounded" should be a property of the
+		// read rather than of the check that happens to precede it.
 		members, err := q.ExpandPostsToAssets(ctx, ExpandPostsToAssetsParams{
 			PostIds: postIDs,
 			Limit:   int32(batchExpandedTargetCeiling + 1),
@@ -375,15 +416,6 @@ func (h *Handler) expandSelection(
 			reported[p] = struct{}{}
 			out.EmptyPosts = append(out.EmptyPosts, p)
 		}
-	}
-
-	if len(targets) > batchExpandedTargetCeiling {
-		r := refuse(422, openapi.BatchExpandedTargetCeiling,
-			"a batch may reach at most %d distinct assets; these %d selection entries reach %d",
-			batchExpandedTargetCeiling, len(entries), len(targets))
-		limit, actual, entryCount := batchExpandedTargetCeiling, len(targets), len(entries)
-		r.Expected, r.Actual, r.EntryCount = &limit, &actual, &entryCount
-		return out, r
 	}
 
 	sort.Slice(targets, func(i, j int) bool {

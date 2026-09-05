@@ -1322,3 +1322,33 @@ RETURNING id, consumed_at;
 -- server can no longer attribute to anybody.
 DELETE FROM metadata_batch_preview
  WHERE expires_at < NOW() - INTERVAL '24 hours';
+
+-- name: CountBatchExpandedTargets :one
+-- THE TRUE DISTINCT EXPANDED-TARGET COUNT, computed in the DATABASE.
+--
+-- The over-ceiling refusal has to name the ACTUAL count — an operator
+-- told "at most 1000, and this reaches 1001" when it really reaches
+-- 50,000 has been told the wrong thing about their own selection, and
+-- would go on trimming it one post at a time. But materialising 50,000
+-- ids in application memory to count them is the thing the bounded read
+-- exists to avoid.
+--
+-- Both, then: COUNT here, where the set never leaves the server, and a
+-- BOUNDED id read afterwards only once the count is known to fit.
+--
+-- UNION and not UNION ALL: the count is of DISTINCT assets, and an
+-- asset selected directly AND reachable through two selected posts is
+-- one target. That is the same dedupe ExpandPostsToAssets performs, in
+-- the one place where it has to see both halves of the selection.
+SELECT count(*)
+  FROM (
+        SELECT unnest(@asset_ids::uuid[]) AS asset_id
+         UNION
+        SELECT pa.asset_id
+          FROM post_assets pa
+          JOIN posts p ON p.id = pa.post_id
+          JOIN assets a ON a.id = pa.asset_id
+         WHERE pa.post_id = ANY(@post_ids::uuid[])
+           AND p.deleted_at IS NULL
+           AND a.deleted_at IS NULL
+       ) AS expanded;

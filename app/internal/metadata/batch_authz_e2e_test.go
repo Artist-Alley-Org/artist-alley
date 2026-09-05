@@ -31,8 +31,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
-const capVocabExtend = "fields.vocabulary.extend"
-
 // ---------------------------------------------------------------------------
 // A28-A32 — grandfathering, preserved
 // ---------------------------------------------------------------------------
