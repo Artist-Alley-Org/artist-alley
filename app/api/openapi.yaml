@@ -12336,6 +12336,252 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /batch/asset-fields/preview:
+    post:
+      operationId: previewBatchAssetFieldEdit
+      summary: Preview one field's change across many assets
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      description: |
+        DRY RUN. Resolves a typed selection to a distinct, ordered set
+        of assets, partitions every one of them, and mints a SINGLE-USE
+        token that `applyBatchAssetFieldEdit` spends. Writes no field
+        value, creates no vocabulary term and records no audit event
+        (ADR 0019, #1173, #1119).
+
+        ## Expansion
+
+        The selection is a list of typed `{kind, id}` entries, and the
+        SERVER expands `post` entries through post membership. A client
+        never sends an expanded asset list, so a post that gained or
+        lost a member between the operator's last read and this call is
+        expanded against the membership that exists NOW. Duplicates are
+        collapsed to distinct assets — an asset reachable through two
+        selected posts is one target, written once — and the resulting
+        set is ordered BY ASSET ID, never by selection order, so a
+        preview and its apply derive the identical ordered set. A
+        selected post with no members contributes no targets and is
+        reported in `empty_posts`.
+
+        Collections are not a selection kind here.
+
+        ## The two ceilings
+
+        At most 500 SELECTION ENTRIES, checked BEFORE any membership
+        query runs, and at most 1000 DISTINCT EXPANDED TARGETS. Both
+        refuse with 422 (`selection_entry_ceiling` /
+        `expanded_target_ceiling`) rather than trimming: a partial
+        expansion would silently write a different set than the operator
+        selected. A single post whose membership alone exceeds the
+        expanded ceiling is refused on the same terms.
+
+        ## The six partitions
+
+        Every target of a successful preview lands in EXACTLY ONE of
+        `would_change`, `no_op`, `refused`, `inapplicable`, `unreadable`
+        and `unauthorized`, and
+
+            expanded  = would_change + no_op + refused + inapplicable
+                        + unreadable + unauthorized
+            eligible  = would_change + no_op
+
+        `refused` is a TARGET-LEVEL refusal carrying a machine reason
+        (a required field that the operation would empty, a retired
+        vocabulary term chosen fresh on that target); it is never
+        written at apply. `unreadable` is the read side of the
+        anti-oracle rule: a caller who may write a field but may not
+        READ it on this subject learns nothing about the stored value,
+        not its emptiness, not its membership, not its `set_at`.
+
+        ## What the token binds
+
+        The ordered target set with each target's partition; the field's
+        identity and its configuration fingerprint including the
+        vocabulary options document; the mode; the exact canonical
+        value; and the CALLER. Apply writes only the `would_change`
+        subset and never re-expands. The token is never authority: the
+        apply re-evaluates the caller's CURRENT effective permissions,
+        the field's CURRENT configuration and the reference target's
+        CURRENT liveness, and refuses when any of them moved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BatchAssetFieldPreviewRequest" }
+      responses:
+        "200":
+          description: Preview computed. Nothing was written.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchAssetFieldPreview" }
+        "400":
+          description: The request could not have been valid for any state of the system.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchAssetFieldRefusal" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller may not reach for this instrument, or may not write this field.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchAssetFieldRefusal" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: Well formed and understood, and this definition, value or scale refuses it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchAssetFieldRefusal" }
+
+  /batch/asset-fields/apply:
+    post:
+      operationId: applyBatchAssetFieldEdit
+      summary: Spend a batch preview token and commit its writes
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      description: |
+        Commits the `would_change` subset of a preview. The body has
+        EXACTLY THREE MEMBERS — `token`, `reason` and a `confirm_count`
+        that is required for `overwrite` and `remove` and forbidden
+        otherwise. It carries NO mode and NO value: both are read from
+        the token, which is why no payload-mismatch refusal exists.
+
+        ## The token is single-use, and consumption is a COMMITTED
+        ## OUTCOME rather than a delivered response
+
+        Token consumption, the durable field and vocabulary mutations,
+        and the operation's single audit envelope are ONE ATOMIC
+        COMMITTED OUTCOME. There are exactly two durable results:
+
+        1. A PRE-WRITE REFUSAL — anything below — commits no field
+           value, no vocabulary term and no audit envelope, and LEAVES
+           THE TOKEN USABLE. An operator who mistypes the confirmation
+           count or omits the reason corrects the payload and retries
+           without re-previewing.
+        2. A COMMITTED APPLY — including a partial one where some
+           targets conflicted, and including one where `would_change`
+           was zero — commits its result, EXACTLY ONE audit envelope
+           and the consumption together.
+
+        A lost HTTP response therefore never makes a spent token
+        spendable. Replaying a spent token answers 409
+        `preview_consumed` with zero additional writes, zero additional
+        vocabulary mutations and zero additional audit envelopes.
+
+        ## Validation precedence, and why it is exactly this
+
+        NO token-bound fact — the mode, the `would_change` count, the
+        field, the target set, the expiry, the consumption state or the
+        expected confirmation count — may influence any externally
+        visible response until BOTH integrity and caller binding have
+        succeeded.
+
+        Token-INDEPENDENT request-shape checks may run first, because
+        they leak nothing: a missing `token` member (400
+        `token_required`), the reason's bounds (400
+        `reason_payload_too_large` / `reason_required` /
+        `reason_too_long`) and a `confirm_count` outside its CONSTANT
+        bounds (400 `confirm_count_invalid`). Then, in exactly this
+        order:
+
+        1. integrity — 403 `preview_token_invalid`
+        2. caller binding — 403 `preview_token_invalid`
+        3. consumption state — 409 `preview_consumed`
+        4. expiry — 409 `preview_expired`
+        5. mode-specific confirmation validation — 400
+           `confirm_count_required` / `confirm_count_not_applicable` /
+           `confirm_count_mismatch`
+        6. current authority, definition, configuration, vocabulary and
+           reference-liveness checks — 403 / 409
+        7. the committed apply
+
+        MALFORMED, UNKNOWN, TAMPERED and ANOTHER CALLER'S tokens
+        collapse to ONE BYTE-IDENTICAL 403 `preview_token_invalid`, in
+        status, body and message, and stay indistinguishable however
+        else they differ — expired, consumed, `overwrite`-mode,
+        `fill_empties`-mode. A client MUST NOT be built to tell them
+        apart, and cannot be: mode-specific confirmation errors are
+        reachable only by the token's OWN caller, because apply does not
+        send the mode and answering `confirm_count_required` versus
+        `confirm_count_not_applicable` before binding would report
+        somebody else's token's mode.
+
+        For a token that IS provably the caller's own, CONSUMED WINS
+        OVER EXPIRED: a token that is both answers 409
+        `preview_consumed`, because that tells the operator their
+        operation ALREADY RAN, where `preview_expired` would invite them
+        to run it a second time.
+
+        ## The operator reason
+
+        REQUIRED, and deliberately stricter than the optional reason
+        fields elsewhere in this API: a bulk mutation reaches up to
+        1000 records and there is no undo. It is NOT bound into the
+        token — it is a fact about this apply, not about the preview —
+        so there is no substitution to detect. Recorded verbatim, after
+        trimming, in the audit envelope.
+
+        ## Concurrency
+
+        Batch-wide: a change to the field's status, `read_only`,
+        `required`, `regexp_filter`, `type`, `mirrors_column`,
+        `applies_to`, `read_capability` or `write_capability` answers
+        409 `definition_drift` with ZERO writes; a change to its
+        vocabulary options document answers 409 `vocabulary_drift`; the
+        proposed reference target ceasing to resolve answers 409
+        `reference_invalidated`. Per target: a value that moved since
+        the preview is `conflict`, a SOFT-DELETED target is `gone`, and
+        a target the caller can no longer reach is
+        `unauthorized_at_apply` with a sub-reason. An ARCHIVED asset is
+        not a state change and is still written — archive is not
+        deletion, on the subject plane or the reference plane.
+
+        The apply reports on completion. There is no live progress.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BatchAssetFieldApplyRequest" }
+      responses:
+        "200":
+          description: |
+            The apply committed. Its result, its single audit envelope
+            and the token's consumption are one durable outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchAssetFieldApplyResult" }
+        "400":
+          description: The request could not have been valid for any state of the system.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchAssetFieldRefusal" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            Not provably this caller's own token, or the caller's
+            current authority does not permit the operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchAssetFieldRefusal" }
+        "409":
+          description: |
+            The token is provably this caller's own but is spent or
+            stale, or the world moved. The remedy is to re-preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchAssetFieldRefusal" }
+        "422":
+          description: Well formed and understood, and refused on its merits.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchAssetFieldRefusal" }
+
 components:
   securitySchemes:
     cookieAuth:
@@ -12355,6 +12601,516 @@ components:
         Personal Access Token, format `aa_pat_<32 chars>`. Issued via
         `POST /auth/tokens`. Send as `Authorization: Bearer aa_pat_...`.
   schemas:
+    BatchAssetFieldMode:
+      type: string
+      description: |
+        What the batch does to each target's value.
+
+        - `overwrite` — replace the value on every eligible target.
+          Reports `no_op` as ZERO even against a target already holding
+          the proposed value: a set advances `set_at` and writes a
+          history row, so it is a real change to the record.
+        - `fill_empties` — write only where the value is semantically
+          EMPTY. A target holding any non-empty value is `no_op`. FALSE
+          is a real boolean value and is never empty.
+        - `append` — add the proposed terms to the existing set.
+        - `remove` — take the proposed terms out of the existing set.
+
+        `append` and `remove` are `multi_select` ONLY. Every other type
+        refuses them batch-wide with 422 `mode_not_supported_for_type`
+        rather than being given an invented set semantics.
+      enum: [overwrite, fill_empties, append, remove]
+      x-enum-varnames: [BatchModeOverwrite, BatchModeFillEmpties, BatchModeAppend, BatchModeRemove]
+    BatchAssetFieldSelectionKind:
+      type: string
+      description: |
+        What a selection entry names. `post` entries are expanded
+        server-side through post membership; `asset` entries are
+        already targets. Collections are not a selection kind.
+      enum: [asset, post]
+      x-enum-varnames: [BatchSelectionAsset, BatchSelectionPost]
+    BatchAssetFieldSelectionEntry:
+      type: object
+      description: |
+        ONE typed selection entry. Typed because the shipped selection
+        store is a bare list of ids with no kind discriminator, and a
+        server that guessed would expand a post id as an asset id and
+        silently write nothing.
+      required: [kind, id]
+      properties:
+        kind: { $ref: "#/components/schemas/BatchAssetFieldSelectionKind" }
+        id: { type: string, format: uuid }
+    BatchAssetFieldValue:
+      type: object
+      description: |
+        The proposed value, in whichever typed member matches the
+        field's declared type — the same mapping
+        `AssetFieldValueWrite` uses: text / longtext / rich_text /
+        select / tree → `value_text`; number / boolean → `value_num`;
+        date / datetime → `value_date`; multi_select →
+        `value_options`; reference → `value_ref`.
+
+        The five types that CANNOT express a semantically empty value
+        (number, boolean, date, datetime, reference) must carry their
+        typed member; omitting it is 400 `value_type_mismatch`. A
+        `multi_select` with an empty option set is likewise 400
+        `value_type_mismatch`, mirroring the single-target writer.
+
+        The three text-shaped types and the two single-slug vocabulary
+        types CAN express emptiness, and what happens then is a
+        property of the field rather than of the batch: a REQUIRED
+        field refuses it (422 `required_value_empty`), and an OPTIONAL
+        one stores it. Nothing trims: a `text` field given "   " stores
+        "   ". `select` and `tree` do NOT treat whitespace lexically —
+        "" never enters the vocabulary pipeline and stores as '', while
+        "   " enters it as a slug, matches nothing, and is 422
+        `unknown_slug`.
+      properties:
+        value_text: { type: string, nullable: true }
+        value_num: { type: number, nullable: true }
+        value_date: { type: string, format: date-time, nullable: true }
+        value_options:
+          type: array
+          items: { type: string }
+          nullable: true
+        value_ref: { type: string, format: uuid, nullable: true }
+    BatchAssetFieldPreviewRequest:
+      type: object
+      description: |
+        Takes the mode, the field, the proposed value and the typed
+        selection. It takes NO operator reason and NO confirmation
+        count: both belong to the apply, which is the call that
+        actually changes records.
+      required: [mode, field_id, selection, value]
+      properties:
+        mode: { $ref: "#/components/schemas/BatchAssetFieldMode" }
+        field_id: { type: string, format: uuid }
+        selection:
+          type: array
+          description: |
+            At least one entry, at most 500. The entry ceiling is
+            checked BEFORE any membership query runs.
+          minItems: 1
+          items: { $ref: "#/components/schemas/BatchAssetFieldSelectionEntry" }
+        value: { $ref: "#/components/schemas/BatchAssetFieldValue" }
+    BatchAssetFieldPartition:
+      type: string
+      description: |
+        Which of the six partitions a previewed target belongs to.
+        Every target of a successful preview belongs to exactly one.
+
+        - `would_change` — the apply will write this target.
+        - `no_op` — eligible, and the mode leaves it unchanged.
+        - `refused` — refused ON ITS MERITS for this target, with a
+          machine reason. Never written at apply. Preview-only: a value
+          that MOVES trips the concurrency guard and reports
+          `conflict`, and a definition or vocabulary change is a
+          batch-wide 409, so nothing can turn into a `refused` between
+          preview and apply.
+        - `inapplicable` — the field does not apply to this asset's
+          type. Not an error.
+        - `unreadable` — the caller may not READ this field on this
+          subject. Nothing about the stored value is disclosed.
+        - `unauthorized` — the caller may not write this target: no
+          bulk instrument in its scope, or the ordinary subject
+          authority rule refuses them.
+      enum: [would_change, no_op, refused, inapplicable, unreadable, unauthorized]
+      x-enum-varnames:
+        [BatchPartitionWouldChange, BatchPartitionNoOp, BatchPartitionRefused,
+         BatchPartitionInapplicable, BatchPartitionUnreadable, BatchPartitionUnauthorized]
+    BatchAssetFieldTargetRefusalReason:
+      type: string
+      description: |
+        Why one target was refused on its merits.
+
+        - `required_would_empty` — `remove` would leave a REQUIRED
+          field empty on this target.
+        - `vocabulary_retired_not_held` — the value chooses a
+          deprecated or archived term FRESH on this target. A target
+          that ALREADY HOLDS that term is grandfathered and is not
+          refused, which is why this verdict is per target and not
+          batch-wide.
+      enum: [required_would_empty, vocabulary_retired_not_held]
+      x-enum-varnames: [BatchRefusalRequiredWouldEmpty, BatchRefusalVocabularyRetiredNotHeld]
+    BatchAssetFieldPreviewTarget:
+      type: object
+      description: |
+        One expanded target and its partition. `if_unchanged_since`
+        appears ONLY on a `would_change` target and is that value row's
+        own `set_at` — absent where no row exists yet. It is never
+        emitted for an `unreadable` target, which would disclose that
+        the value exists and when it was last written.
+      required: [asset_id, partition]
+      properties:
+        asset_id: { type: string, format: uuid }
+        partition: { $ref: "#/components/schemas/BatchAssetFieldPartition" }
+        refusal_reason:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/BatchAssetFieldTargetRefusalReason"
+        if_unchanged_since: { type: string, format: date-time, nullable: true }
+    BatchAssetFieldCounts:
+      type: object
+      description: |
+        The six partition counts plus the two derived totals, so a
+        client can assert the reconciliation rather than recompute it:
+
+            expanded = would_change + no_op + refused + inapplicable
+                       + unreadable + unauthorized
+            eligible = would_change + no_op
+      required: [expanded, eligible, would_change, no_op, refused, inapplicable, unreadable, unauthorized]
+      properties:
+        expanded: { type: integer }
+        eligible: { type: integer }
+        would_change: { type: integer }
+        no_op: { type: integer }
+        refused: { type: integer }
+        inapplicable: { type: integer }
+        unreadable: { type: integer }
+        unauthorized: { type: integer }
+    BatchAssetFieldPreview:
+      type: object
+      description: |
+        A computed preview and the single-use token that applies it.
+        Nothing has been written: no field value, no vocabulary term,
+        no audit event.
+      required:
+        [token, expires_at, operation_id, mode, field_id, field_code, field_type,
+         selection_entry_count, counts, targets, resolved_value]
+      properties:
+        token:
+          type: string
+          description: |
+            OPAQUE. Bound to the caller, single-use, and the only thing
+            the apply needs. Its structure is not a contract and a
+            client must not parse it.
+        expires_at: { type: string, format: date-time }
+        operation_id:
+          type: string
+          format: uuid
+          description: Ties this preview to the audit envelope its apply writes.
+        mode:
+          allOf:
+            - $ref: "#/components/schemas/BatchAssetFieldMode"
+          description: |
+            ECHOED so an operator surface can show what it is about to
+            do without holding its own copy. The apply reads the mode
+            from the token and never from the request.
+        field_id: { type: string, format: uuid }
+        field_code: { type: string }
+        field_type: { type: string }
+        resolved_value:
+          allOf:
+            - $ref: "#/components/schemas/BatchAssetFieldValue"
+          description: |
+            The CANONICAL value the apply will store, after
+            vocabulary canonicalisation and rich-text sanitising —
+            aliases and merge tombstones already followed to their
+            targets, casing and whitespace variants already collapsed
+            onto the existing slug, duplicates already deduped on the
+            canonical slug with order preserved. Preview and apply
+            store the same bytes.
+        mintable_terms:
+          type: array
+          items: { type: string }
+          description: |
+            Terms that DO NOT YET EXIST in an open vocabulary and would
+            be created by the apply. Listing them is not creating them:
+            a preview mutates no options document. A term is minted at
+            apply ONLY IF at least one target successfully stores it.
+        selection_entry_count: { type: integer }
+        empty_posts:
+          type: array
+          items: { type: string, format: uuid }
+          description: Selected posts that hold no members, and so contributed no targets.
+        counts: { $ref: "#/components/schemas/BatchAssetFieldCounts" }
+        targets:
+          type: array
+          description: Every expanded target, ordered by asset id.
+          items: { $ref: "#/components/schemas/BatchAssetFieldPreviewTarget" }
+    BatchAssetFieldApplyRequest:
+      type: object
+      description: |
+        EXACTLY THREE MEMBERS. No mode and no value: the token carries
+        both, which is why no payload-mismatch refusal exists.
+      required: [token, reason]
+      properties:
+        token:
+          type: string
+          description: |
+            The opaque single-use token from the preview. Absent → 400
+            `token_required`. Malformed, unknown, tampered, or bound to
+            another caller → ONE byte-identical 403
+            `preview_token_invalid`.
+        reason:
+          type: string
+          maxLength: 2000
+          description: |
+            REQUIRED. Why this bulk change is being made, recorded
+            verbatim in the audit envelope.
+
+            THE AUTHORITATIVE RULE, which the server enforces and this
+            schema cannot express: the value is TRIMMED, must be
+            NON-EMPTY after trimming, and must be AT MOST 500 UNICODE
+            CODE POINTS AFTER TRIMMING. 500 code points, not 500 bytes
+            — a 500-character reason written in a multi-byte script is
+            accepted. Over 500 after trimming is 400 `reason_too_long`;
+            absent, empty or whitespace-only is 400 `reason_required`.
+
+            The `maxLength: 2000` above is a RAW DEFENSIVE CEILING on
+            the request as received, NOT the product rule. It exists
+            only to cap request size, it is checked BEFORE trimming,
+            and exceeding it is a DISTINCT refusal — 400
+            `reason_payload_too_large`. It is deliberately looser than
+            the semantic limit so that a conforming external validator
+            never rejects a value this server would accept: whitespace
+            around a 500-code-point body is valid and would be refused
+            by a schema that encoded 500 here.
+        confirm_count:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          nullable: true
+          description: |
+            The typed confirmation. REQUIRED for `overwrite` and
+            `remove`, FORBIDDEN otherwise — supplying it on
+            `fill_empties` or `append` is REFUSED with 400
+            `confirm_count_not_applicable` rather than ignored.
+
+            It confirms the token's `would_change`, NOT `eligible`: the
+            number the operator types is the number of records that
+            will actually change. A mismatch is 400
+            `confirm_count_mismatch` and names the expected value.
+
+            Its CONSTANT bounds — an integer, not negative, not above
+            1000 — are checked before the token is looked at, because
+            they are facts about the schema rather than about anybody's
+            token. Everything mode-specific about it is checked only
+            AFTER the token has been proved to be this caller's own.
+    BatchAssetFieldOutcome:
+      type: string
+      description: |
+        What happened to one `would_change` target at apply.
+
+            would_change = changed + conflict + gone
+                           + unauthorized_at_apply + error
+
+        - `changed` — written.
+        - `conflict` — the value moved since the preview. The rest of
+          the batch proceeds.
+        - `gone` — the target was SOFT-DELETED since the preview. An
+          ARCHIVED target is not gone and is still written.
+        - `unauthorized_at_apply` — the caller's effective permission
+          over this target changed. Carries a sub-reason.
+        - `error` — an unexpected per-target failure.
+      enum: [changed, conflict, gone, unauthorized_at_apply, error]
+      x-enum-varnames:
+        [BatchOutcomeChanged, BatchOutcomeConflict, BatchOutcomeGone,
+         BatchOutcomeUnauthorizedAtApply, BatchOutcomeError]
+    BatchAssetFieldUnauthorizedReason:
+      type: string
+      description: |
+        Which of the three per-target gates the caller stopped passing
+        between the preview and the apply.
+
+        - `bulk_scope` — the bulk instrument no longer covers this
+          target's team.
+        - `subject_authority` — the ordinary owner-or-team mutation
+          rule now refuses this target, typically because it was
+          transferred or moved teams.
+        - `unreadable` — the caller lost READ permission on this field
+          for this subject.
+      enum: [bulk_scope, subject_authority, unreadable]
+      x-enum-varnames:
+        [BatchUnauthorizedBulkScope, BatchUnauthorizedSubjectAuthority, BatchUnauthorizedUnreadable]
+    BatchAssetFieldApplyTarget:
+      type: object
+      required: [asset_id, outcome]
+      properties:
+        asset_id: { type: string, format: uuid }
+        outcome: { $ref: "#/components/schemas/BatchAssetFieldOutcome" }
+        unauthorized_reason:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/BatchAssetFieldUnauthorizedReason"
+    BatchAssetFieldApplyCounts:
+      type: object
+      required: [changed, conflict, gone, unauthorized_at_apply, error]
+      properties:
+        changed: { type: integer }
+        conflict: { type: integer }
+        gone: { type: integer }
+        unauthorized_at_apply: { type: integer }
+        error: { type: integer }
+    BatchAssetFieldApplyResult:
+      type: object
+      description: |
+        A COMMITTED apply. The token is spent, exactly one audit
+        envelope exists for it, and the two facts committed together
+        with the writes.
+
+        A result with `changed: 0` is still a committed apply — an
+        operation whose preview found nothing to change is a real
+        operation, it consumes its token, and it records one envelope.
+      required: [operation_id, mode, field_id, field_code, counts, outcome_counts, targets]
+      properties:
+        operation_id: { type: string, format: uuid }
+        mode: { $ref: "#/components/schemas/BatchAssetFieldMode" }
+        field_id: { type: string, format: uuid }
+        field_code: { type: string }
+        counts:
+          allOf:
+            - $ref: "#/components/schemas/BatchAssetFieldCounts"
+          description: The preview's partition counts, as bound into the token.
+        outcome_counts: { $ref: "#/components/schemas/BatchAssetFieldApplyCounts" }
+        targets:
+          type: array
+          description: Every `would_change` target and what happened to it.
+          items: { $ref: "#/components/schemas/BatchAssetFieldApplyTarget" }
+        committed_terms:
+          type: array
+          items: { type: string }
+          description: |
+            Vocabulary terms this apply actually created. A term is
+            minted ONLY IF at least one target successfully stored it;
+            if every would_change target ended `conflict`, `gone`,
+            `unauthorized_at_apply` or `error`, the options document is
+            left byte-identical and this is empty.
+    BatchAssetFieldRefusalReason:
+      type: string
+      description: |
+        Why a batch preview or apply was refused. The status code
+        carries the class and this carries the cause.
+
+        400 — the request could not have been valid for ANY state:
+        `empty_selection`, `unknown_mode`, `unknown_selection_kind`,
+        `value_type_mismatch`, `token_required`,
+        `reason_payload_too_large`, `reason_required`,
+        `reason_too_long`, `confirm_count_invalid`,
+        `confirm_count_required`, `confirm_count_not_applicable`,
+        `confirm_count_mismatch`.
+
+        403 — authorization, INCLUDING anything not provably this
+        caller's token: `preview_token_invalid`,
+        `bulk_capability_required`, `field_write_capability_required`,
+        `vocabulary_extend_required`.
+
+        422 — well formed, understood, and refused on its merits:
+        `field_archived`, `field_read_only`, `field_mirrored`,
+        `mode_not_supported_for_type`, `pattern_mismatch`,
+        `required_value_empty`, `fill_empties_value_empty`,
+        `unknown_slug`, `archived_slug`, `dangling_reference`,
+        `selection_entry_ceiling`, `expanded_target_ceiling`.
+
+        409, apply only — the token is provably this caller's own but
+        is spent or stale, or the world moved; the remedy is to
+        re-preview: `preview_consumed`, `preview_expired`,
+        `definition_drift`, `vocabulary_drift`, `reference_invalidated`.
+
+        `dangling_reference` (preview) and `reference_invalidated`
+        (apply) are deliberately NOT the same code. The first says the
+        proposed target never resolved; the second says it resolved
+        when the operator looked and has since stopped. They call for
+        different actions and a client that cannot tell them apart
+        cannot say which.
+      enum:
+        - empty_selection
+        - unknown_mode
+        - unknown_selection_kind
+        - token_required
+        - reason_payload_too_large
+        - reason_required
+        - reason_too_long
+        - confirm_count_invalid
+        - confirm_count_required
+        - confirm_count_not_applicable
+        - confirm_count_mismatch
+        - preview_token_invalid
+        - preview_consumed
+        - preview_expired
+        - bulk_capability_required
+        - field_write_capability_required
+        - vocabulary_extend_required
+        - field_archived
+        - field_mirrored
+        - mode_not_supported_for_type
+        - required_value_empty
+        - fill_empties_value_empty
+        - unknown_slug
+        - archived_slug
+        - selection_entry_ceiling
+        - expanded_target_ceiling
+        - definition_drift
+        - vocabulary_drift
+        - reference_invalidated
+        - value_type_mismatch
+        - field_read_only
+        - pattern_mismatch
+        - dangling_reference
+      x-enum-varnames:
+        - BatchEmptySelection
+        - BatchUnknownMode
+        - BatchUnknownSelectionKind
+        - BatchTokenRequired
+        - BatchReasonPayloadTooLarge
+        - BatchReasonRequired
+        - BatchReasonTooLong
+        - BatchConfirmCountInvalid
+        - BatchConfirmCountRequired
+        - BatchConfirmCountNotApplicable
+        - BatchConfirmCountMismatch
+        - BatchPreviewTokenInvalid
+        - BatchPreviewConsumed
+        - BatchPreviewExpired
+        - BatchBulkCapabilityRequired
+        - BatchFieldWriteCapabilityRequired
+        - BatchVocabularyExtendRequired
+        - BatchFieldArchived
+        - BatchFieldMirrored
+        - BatchModeNotSupportedForType
+        - BatchRequiredValueEmpty
+        - BatchFillEmptiesValueEmpty
+        - BatchUnknownSlug
+        - BatchArchivedSlug
+        - BatchSelectionEntryCeiling
+        - BatchExpandedTargetCeiling
+        - BatchDefinitionDrift
+        - BatchVocabularyDrift
+        - BatchReferenceInvalidated
+        - BatchValueTypeMismatch
+        - BatchFieldReadOnly
+        - BatchPatternMismatch
+        - BatchDanglingReference
+    BatchAssetFieldRefusal:
+      type: object
+      description: |
+        ONE refusal body for both batch operations, so the two cannot
+        describe the same refusal differently.
+
+        Every apply-time refusal — the request-shape checks and steps 1
+        through 6 alike — writes zero field values, mints no vocabulary
+        term, commits no audit envelope, and LEAVES THE TOKEN UNSPENT.
+
+        `expected` and `actual` are populated where a number is the
+        whole story: the count a `confirm_count_mismatch` wanted, and
+        the ceiling and the measured size on the two ceiling refusals.
+        `field` is the field's code where one is known.
+      required: [error, reason]
+      properties:
+        error: { type: string }
+        reason: { $ref: "#/components/schemas/BatchAssetFieldRefusalReason" }
+        field: { type: string, nullable: true }
+        option: { type: string, nullable: true }
+        expected: { type: integer, nullable: true }
+        actual: { type: integer, nullable: true }
+        entry_count:
+          type: integer
+          nullable: true
+          description: |
+            On `expanded_target_ceiling`, the number of SELECTION
+            ENTRIES that expanded to the over-ceiling target count — so
+            an operator can see that a handful of posts reached
+            thousands of assets.
     AssetType:
       type: object
       required: [ref]

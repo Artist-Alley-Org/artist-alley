@@ -1070,6 +1070,16 @@ func (*PanicShim) VerifyEmail(context.Context, openapi.VerifyEmailRequestObject)
 	panic("PanicShim: VerifyEmail called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ApplyBatchAssetFieldEdit panics by default; test shims override.
+func (*PanicShim) ApplyBatchAssetFieldEdit(context.Context, openapi.ApplyBatchAssetFieldEditRequestObject) (openapi.ApplyBatchAssetFieldEditResponseObject, error) {
+	panic("PanicShim: ApplyBatchAssetFieldEdit called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// PreviewBatchAssetFieldEdit panics by default; test shims override.
+func (*PanicShim) PreviewBatchAssetFieldEdit(context.Context, openapi.PreviewBatchAssetFieldEditRequestObject) (openapi.PreviewBatchAssetFieldEditResponseObject, error) {
+	panic("PanicShim: PreviewBatchAssetFieldEdit called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetPublicBrowseViews panics by default; test shims override.
 func (*PanicShim) GetPublicBrowseViews(context.Context, openapi.GetPublicBrowseViewsRequestObject) (openapi.GetPublicBrowseViewsResponseObject, error) {
 	panic("PanicShim: GetPublicBrowseViews called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

@@ -777,6 +777,19 @@ type MetadataBackfillRun struct {
 	StartedByUserRef *int64             `json:"started_by_user_ref"`
 }
 
+type MetadataBatchPreview struct {
+	ID            pgtype.UUID        `json:"id"`
+	TokenHash     []byte             `json:"token_hash"`
+	CallerUserRef int64              `json:"caller_user_ref"`
+	FieldID       pgtype.UUID        `json:"field_id"`
+	Mode          string             `json:"mode"`
+	WouldChange   int32              `json:"would_change"`
+	Payload       []byte             `json:"payload"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt    pgtype.Timestamptz `json:"consumed_at"`
+}
+
 type Notification struct {
 	ID               pgtype.UUID        `json:"id"`
 	RecipientUserRef int64              `json:"recipient_user_ref"`

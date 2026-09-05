@@ -1118,3 +1118,237 @@ SELECT id, code, read_capability
 -- team column at all, so they have no counterpart to this query and their
 -- readability is the global answer by construction.
 SELECT team_id FROM assets WHERE id = $1;
+
+-- ---------------------------------------------------------------------------
+-- Batch metadata edit (#1173, #1119, ADR 0019)
+-- ---------------------------------------------------------------------------
+
+-- name: ExpandPostsToAssets :many
+-- Membership expansion for a batch selection's `post` entries.
+--
+-- SERVER-SIDE on purpose. A client that expanded posts itself would be
+-- sending an asset list the server has to trust, and the whole reason
+-- the selection is typed is that the server, not the client, decides
+-- what a post means. Soft-deleted posts and soft-deleted assets are
+-- excluded here rather than partitioned later: they were never targets,
+-- so counting them as `gone` would report an outcome for something the
+-- operator never selected.
+--
+-- DISTINCT because an asset can sit in several selected posts and is
+-- one target however many routes reach it. The ORDER BY is the
+-- deterministic order the whole contract rests on — preview and apply
+-- derive the identical ordered set from it, which is why it is asset id
+-- and not sort_order (mutable) or selection order (client-supplied).
+SELECT DISTINCT pa.asset_id
+  FROM post_assets pa
+  JOIN posts p ON p.id = pa.post_id
+  JOIN assets a ON a.id = pa.asset_id
+ WHERE pa.post_id = ANY(@post_ids::uuid[])
+   AND p.deleted_at IS NULL
+   AND a.deleted_at IS NULL
+ ORDER BY pa.asset_id
+ LIMIT sqlc.arg('limit')::int;
+
+-- name: ListPostsWithMembers :many
+-- Which of the selected posts actually hold at least one live member,
+-- so the preview can REPORT the ones that hold none rather than
+-- silently dropping them. A selected post that contributes no target is
+-- a thing the operator should see.
+SELECT DISTINCT pa.post_id
+  FROM post_assets pa
+  JOIN posts p ON p.id = pa.post_id
+  JOIN assets a ON a.id = pa.asset_id
+ WHERE pa.post_id = ANY(@post_ids::uuid[])
+   AND p.deleted_at IS NULL
+   AND a.deleted_at IS NULL;
+
+-- name: ListBatchTargetSubjects :many
+-- The batch's PREVIEW-side subject probe: owner, team and asset type
+-- for every selected target, in the deterministic order.
+--
+-- Not GetAssetMutationSubject in a loop — that is one round trip per
+-- target, and at the 1000-target ceiling the difference is the whole
+-- latency budget. Same projection and the same `deleted_at IS NULL`
+-- filter, so the two answer the same question about liveness: only a
+-- SOFT DELETE removes a subject from the probe. An ARCHIVED asset comes
+-- back and is written, because archive is not deletion.
+--
+-- No row lock. This is the preview, which writes nothing and therefore
+-- has nothing to make atomic; the apply takes its own locked read per
+-- target (see LockBatchTargetSubject).
+SELECT id, owner_user_ref, team_id, asset_type
+  FROM assets
+ WHERE id = ANY(@asset_ids::uuid[])
+   AND deleted_at IS NULL
+ ORDER BY id;
+
+-- name: LockBatchTargetSubject :one
+-- The batch's APPLY-side subject probe, and the seam that makes the
+-- per-target subject invariant atomic (#1173, ADR 0019).
+--
+-- FOR SHARE, and the row lock is the entire point.
+--
+-- "Inside the same transaction" is NOT sufficient at READ COMMITTED.
+-- The precondition this read establishes lives on `assets` while the
+-- mutation it authorises lands on `asset_field_value`, a DIFFERENT
+-- table, so 20a's single-statement guarded-update pattern does not
+-- transfer: there is no one statement that can both test the owner and
+-- write the value. Nor does the FK from asset_field_value.asset_id
+-- help. Its implicit lock is FOR KEY SHARE, which conflicts only with
+-- FOR UPDATE, while an ownership transfer, a team move and a soft
+-- delete all take FOR NO KEY UPDATE — so the FK lets every one of them
+-- slip between this read and the write it authorises.
+--
+-- FOR SHARE DOES conflict with FOR NO KEY UPDATE. Taking it here means
+-- the read BLOCKS until any in-flight transfer, team move or soft
+-- delete of this asset has committed, then sees the committed truth,
+-- and HOLDS the row against a later one until this batch commits. The
+-- authority verdict and the write it authorises become one atomic
+-- operation, which is what the invariant says they are.
+--
+-- Read BEFORE the write and inside the transaction, for the reason
+-- UpdateAsset states on the assets plane.
+SELECT id, owner_user_ref, team_id, asset_type
+  FROM assets
+ WHERE id = $1
+   AND deleted_at IS NULL
+ FOR SHARE;
+
+-- name: LockBatchReferenceTarget :one
+-- The proposed reference target's liveness, held for the batch.
+--
+-- Same FOR SHARE mechanism and the same reason, one plane over: THERE
+-- IS NO FOREIGN KEY ON `value_ref` (asset_field_value has exactly two,
+-- on asset_id and field_id), so nothing in the schema stops the target
+-- being soft-deleted midway through a thousand writes that point at it.
+-- A pre-batch re-check is not sufficient — it establishes a fact that
+-- can stop being true before the last write lands. The lock makes the
+-- liveness verdict and every write using it atomic.
+--
+-- `deleted_at IS NULL` and NEVER `status`: an ARCHIVED asset is a valid
+-- reference target, exactly as GetReferencedAsset has it. Archive is not
+-- deletion on this plane either.
+SELECT id
+  FROM assets
+ WHERE id = $1
+   AND deleted_at IS NULL
+ FOR SHARE;
+
+-- name: LockFieldDefinitionForBatch :one
+-- The batch-wide definition, configuration and vocabulary seam.
+--
+-- FOR UPDATE on the field_definition row, taken BEFORE the batch reads
+-- anything about the field. Every writer of that row — UpdateField,
+-- ArchiveField, the options editor, EnsureOpenVocabularyTerms' own
+-- LockFieldDefinitionVocabulary — either takes FOR UPDATE or issues an
+-- UPDATE, which takes FOR NO KEY UPDATE, and both conflict with this.
+-- So there are EXACTLY TWO valid serial outcomes: the external change
+-- wins and the batch reads it and refuses batch-wide with zero writes
+-- and no mint, or the batch wins and the ENTIRE batch executes under
+-- one validated state with the external change following it. The
+-- forbidden third — the first N targets written under the old rules and
+-- the rest under the new ones — cannot happen.
+--
+-- Lock BEFORE the read, not after. A lock taken after would serialise
+-- the writes while still letting the batch validate against a
+-- definition that has already changed, which is the failure mode
+-- display_condition_race_test.go's header names exactly.
+SELECT id, code, label, type, subject_kind, applies_to, required, status,
+       options, open_vocabulary, mirrors_column, read_only, regexp_filter,
+       read_capability, write_capability, display_condition
+  FROM field_definition
+ WHERE id = $1
+ FOR UPDATE;
+
+-- name: ListBatchTargetValues :many
+-- Every stored value for one field across the batch's targets, in one
+-- round trip. Targets holding no value simply do not come back, and
+-- absence is the emptiness the fill_empties mode is about.
+SELECT asset_id, value_text, value_num, value_date, value_options, value_ref, set_at
+  FROM asset_field_value
+ WHERE field_id = $1
+   AND asset_id = ANY(@asset_ids::uuid[]);
+
+-- name: InsertBatchPreview :one
+-- Mint one preview token's durable binding. `token_hash` and never the
+-- token: a database that has never held the bearer secret cannot leak
+-- it, which is the same reason session tokens are stored hashed.
+INSERT INTO metadata_batch_preview
+    (token_hash, caller_user_ref, field_id, mode, would_change, payload, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, created_at, expires_at;
+
+-- name: GetBatchPreviewByTokenHash :one
+-- The unlocked read behind apply's steps 1 through 5. It answers for a
+-- row belonging to ANY caller on purpose: the caller-binding comparison
+-- is made in Go, and it must be made on the SAME code path for a row
+-- that exists and one that does not, so that "belongs to somebody else"
+-- and "does not exist" cannot be told apart by timing or by shape.
+SELECT id, caller_user_ref, field_id, mode, would_change, payload,
+       created_at, expires_at, consumed_at
+  FROM metadata_batch_preview
+ WHERE token_hash = $1;
+
+-- name: ConsumeBatchPreview :one
+-- THE SINGLE-USE LATCH, and the reason consumption cannot be lost.
+--
+-- Run INSIDE the apply transaction, before any field write. The
+-- predicate and the mutation are ONE statement, so two concurrent
+-- replays of one token cannot both see it unconsumed: the second blocks
+-- on the row lock the first took, and when it proceeds it matches zero
+-- rows and reports the replay. A handler-side "read, compare, update"
+-- would let both through at READ COMMITTED.
+--
+-- Because it lives in the apply's transaction, a refusal that rolls
+-- that transaction back also rolls this back: a pre-write refusal
+-- leaves the token spendable, and a committed apply spends it in the
+-- same durable outcome as its writes and its audit envelope. There is
+-- no third result.
+UPDATE metadata_batch_preview
+   SET consumed_at = NOW()
+ WHERE id = $1
+   AND consumed_at IS NULL
+RETURNING id, consumed_at;
+
+-- name: PurgeExpiredBatchPreviews :exec
+-- Opportunistic sweep from the preview endpoint, so the table stays
+-- bounded without a scheduler.
+--
+-- The cutoff is well past expiry, not at it: a token that has just
+-- expired must still be found, so that its own caller gets 409
+-- preview_expired rather than the 403 an unattributable credential
+-- gets. Past the cutoff the distinction stops being useful — the token
+-- is hours dead — and 403 is the right answer for a credential the
+-- server can no longer attribute to anybody.
+DELETE FROM metadata_batch_preview
+ WHERE expires_at < NOW() - INTERVAL '24 hours';
+
+-- name: CountBatchExpandedTargets :one
+-- THE TRUE DISTINCT EXPANDED-TARGET COUNT, computed in the DATABASE.
+--
+-- The over-ceiling refusal has to name the ACTUAL count — an operator
+-- told "at most 1000, and this reaches 1001" when it really reaches
+-- 50,000 has been told the wrong thing about their own selection, and
+-- would go on trimming it one post at a time. But materialising 50,000
+-- ids in application memory to count them is the thing the bounded read
+-- exists to avoid.
+--
+-- Both, then: COUNT here, where the set never leaves the server, and a
+-- BOUNDED id read afterwards only once the count is known to fit.
+--
+-- UNION and not UNION ALL: the count is of DISTINCT assets, and an
+-- asset selected directly AND reachable through two selected posts is
+-- one target. That is the same dedupe ExpandPostsToAssets performs, in
+-- the one place where it has to see both halves of the selection.
+SELECT count(*)
+  FROM (
+        SELECT unnest(@asset_ids::uuid[]) AS asset_id
+         UNION
+        SELECT pa.asset_id
+          FROM post_assets pa
+          JOIN posts p ON p.id = pa.post_id
+          JOIN assets a ON a.id = pa.asset_id
+         WHERE pa.post_id = ANY(@post_ids::uuid[])
+           AND p.deleted_at IS NULL
+           AND a.deleted_at IS NULL
+       ) AS expanded;

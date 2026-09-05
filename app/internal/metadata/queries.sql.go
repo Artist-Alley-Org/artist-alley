@@ -94,6 +94,83 @@ func (q *Queries) ArchiveFieldDefinition(ctx context.Context, arg ArchiveFieldDe
 	return err
 }
 
+const consumeBatchPreview = `-- name: ConsumeBatchPreview :one
+UPDATE metadata_batch_preview
+   SET consumed_at = NOW()
+ WHERE id = $1
+   AND consumed_at IS NULL
+RETURNING id, consumed_at
+`
+
+type ConsumeBatchPreviewRow struct {
+	ID         pgtype.UUID
+	ConsumedAt pgtype.Timestamptz
+}
+
+// THE SINGLE-USE LATCH, and the reason consumption cannot be lost.
+//
+// Run INSIDE the apply transaction, before any field write. The
+// predicate and the mutation are ONE statement, so two concurrent
+// replays of one token cannot both see it unconsumed: the second blocks
+// on the row lock the first took, and when it proceeds it matches zero
+// rows and reports the replay. A handler-side "read, compare, update"
+// would let both through at READ COMMITTED.
+//
+// Because it lives in the apply's transaction, a refusal that rolls
+// that transaction back also rolls this back: a pre-write refusal
+// leaves the token spendable, and a committed apply spends it in the
+// same durable outcome as its writes and its audit envelope. There is
+// no third result.
+func (q *Queries) ConsumeBatchPreview(ctx context.Context, id pgtype.UUID) (ConsumeBatchPreviewRow, error) {
+	row := q.db.QueryRow(ctx, consumeBatchPreview, id)
+	var i ConsumeBatchPreviewRow
+	err := row.Scan(&i.ID, &i.ConsumedAt)
+	return i, err
+}
+
+const countBatchExpandedTargets = `-- name: CountBatchExpandedTargets :one
+SELECT count(*)
+  FROM (
+        SELECT unnest($1::uuid[]) AS asset_id
+         UNION
+        SELECT pa.asset_id
+          FROM post_assets pa
+          JOIN posts p ON p.id = pa.post_id
+          JOIN assets a ON a.id = pa.asset_id
+         WHERE pa.post_id = ANY($2::uuid[])
+           AND p.deleted_at IS NULL
+           AND a.deleted_at IS NULL
+       ) AS expanded
+`
+
+type CountBatchExpandedTargetsParams struct {
+	AssetIds []pgtype.UUID
+	PostIds  []pgtype.UUID
+}
+
+// THE TRUE DISTINCT EXPANDED-TARGET COUNT, computed in the DATABASE.
+//
+// The over-ceiling refusal has to name the ACTUAL count — an operator
+// told "at most 1000, and this reaches 1001" when it really reaches
+// 50,000 has been told the wrong thing about their own selection, and
+// would go on trimming it one post at a time. But materialising 50,000
+// ids in application memory to count them is the thing the bounded read
+// exists to avoid.
+//
+// Both, then: COUNT here, where the set never leaves the server, and a
+// BOUNDED id read afterwards only once the count is known to fit.
+//
+// UNION and not UNION ALL: the count is of DISTINCT assets, and an
+// asset selected directly AND reachable through two selected posts is
+// one target. That is the same dedupe ExpandPostsToAssets performs, in
+// the one place where it has to see both halves of the selection.
+func (q *Queries) CountBatchExpandedTargets(ctx context.Context, arg CountBatchExpandedTargetsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countBatchExpandedTargets, arg.AssetIds, arg.PostIds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createFieldDefinition = `-- name: CreateFieldDefinition :one
 INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
@@ -307,6 +384,62 @@ func (q *Queries) DeleteFieldDefaultOverride(ctx context.Context, arg DeleteFiel
 	return result.RowsAffected(), nil
 }
 
+const expandPostsToAssets = `-- name: ExpandPostsToAssets :many
+
+SELECT DISTINCT pa.asset_id
+  FROM post_assets pa
+  JOIN posts p ON p.id = pa.post_id
+  JOIN assets a ON a.id = pa.asset_id
+ WHERE pa.post_id = ANY($1::uuid[])
+   AND p.deleted_at IS NULL
+   AND a.deleted_at IS NULL
+ ORDER BY pa.asset_id
+ LIMIT $2::int
+`
+
+type ExpandPostsToAssetsParams struct {
+	PostIds []pgtype.UUID
+	Limit   int32
+}
+
+// ---------------------------------------------------------------------------
+// Batch metadata edit (#1173, #1119, ADR 0019)
+// ---------------------------------------------------------------------------
+// Membership expansion for a batch selection's `post` entries.
+//
+// SERVER-SIDE on purpose. A client that expanded posts itself would be
+// sending an asset list the server has to trust, and the whole reason
+// the selection is typed is that the server, not the client, decides
+// what a post means. Soft-deleted posts and soft-deleted assets are
+// excluded here rather than partitioned later: they were never targets,
+// so counting them as `gone` would report an outcome for something the
+// operator never selected.
+//
+// DISTINCT because an asset can sit in several selected posts and is
+// one target however many routes reach it. The ORDER BY is the
+// deterministic order the whole contract rests on — preview and apply
+// derive the identical ordered set from it, which is why it is asset id
+// and not sort_order (mutable) or selection order (client-supplied).
+func (q *Queries) ExpandPostsToAssets(ctx context.Context, arg ExpandPostsToAssetsParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, expandPostsToAssets, arg.PostIds, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var asset_id pgtype.UUID
+		if err := rows.Scan(&asset_id); err != nil {
+			return nil, err
+		}
+		items = append(items, asset_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAssetFieldValue = `-- name: GetAssetFieldValue :one
 SELECT v.asset_id, v.field_id, v.value_text, v.value_num, v.value_date,
        v.value_options, v.value_ref, v.set_by, v.set_at, v.set_by_user_ref,
@@ -399,6 +532,47 @@ func (q *Queries) GetAssetTeamForFieldComposition(ctx context.Context, id pgtype
 	var team_id pgtype.UUID
 	err := row.Scan(&team_id)
 	return team_id, err
+}
+
+const getBatchPreviewByTokenHash = `-- name: GetBatchPreviewByTokenHash :one
+SELECT id, caller_user_ref, field_id, mode, would_change, payload,
+       created_at, expires_at, consumed_at
+  FROM metadata_batch_preview
+ WHERE token_hash = $1
+`
+
+type GetBatchPreviewByTokenHashRow struct {
+	ID            pgtype.UUID
+	CallerUserRef int64
+	FieldID       pgtype.UUID
+	Mode          string
+	WouldChange   int32
+	Payload       []byte
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	ConsumedAt    pgtype.Timestamptz
+}
+
+// The unlocked read behind apply's steps 1 through 5. It answers for a
+// row belonging to ANY caller on purpose: the caller-binding comparison
+// is made in Go, and it must be made on the SAME code path for a row
+// that exists and one that does not, so that "belongs to somebody else"
+// and "does not exist" cannot be told apart by timing or by shape.
+func (q *Queries) GetBatchPreviewByTokenHash(ctx context.Context, tokenHash []byte) (GetBatchPreviewByTokenHashRow, error) {
+	row := q.db.QueryRow(ctx, getBatchPreviewByTokenHash, tokenHash)
+	var i GetBatchPreviewByTokenHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.CallerUserRef,
+		&i.FieldID,
+		&i.Mode,
+		&i.WouldChange,
+		&i.Payload,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+	)
+	return i, err
 }
 
 const getCollectionFieldValue = `-- name: GetCollectionFieldValue :one
@@ -767,6 +941,47 @@ func (q *Queries) InsertAssetFieldValueWhenAbsent(ctx context.Context, arg Inser
 		&i.SetAt,
 		&i.SetByUserRef,
 	)
+	return i, err
+}
+
+const insertBatchPreview = `-- name: InsertBatchPreview :one
+INSERT INTO metadata_batch_preview
+    (token_hash, caller_user_ref, field_id, mode, would_change, payload, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, created_at, expires_at
+`
+
+type InsertBatchPreviewParams struct {
+	TokenHash     []byte
+	CallerUserRef int64
+	FieldID       pgtype.UUID
+	Mode          string
+	WouldChange   int32
+	Payload       []byte
+	ExpiresAt     pgtype.Timestamptz
+}
+
+type InsertBatchPreviewRow struct {
+	ID        pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
+// Mint one preview token's durable binding. `token_hash` and never the
+// token: a database that has never held the bearer secret cannot leak
+// it, which is the same reason session tokens are stored hashed.
+func (q *Queries) InsertBatchPreview(ctx context.Context, arg InsertBatchPreviewParams) (InsertBatchPreviewRow, error) {
+	row := q.db.QueryRow(ctx, insertBatchPreview,
+		arg.TokenHash,
+		arg.CallerUserRef,
+		arg.FieldID,
+		arg.Mode,
+		arg.WouldChange,
+		arg.Payload,
+		arg.ExpiresAt,
+	)
+	var i InsertBatchPreviewRow
+	err := row.Scan(&i.ID, &i.CreatedAt, &i.ExpiresAt)
 	return i, err
 }
 
@@ -1158,6 +1373,112 @@ func (q *Queries) ListAssetMirroredValues(ctx context.Context, id pgtype.UUID) (
 			&i.Options,
 			&i.DisplayGroup,
 			&i.DisplayOrder,
+			&i.SetAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBatchTargetSubjects = `-- name: ListBatchTargetSubjects :many
+SELECT id, owner_user_ref, team_id, asset_type
+  FROM assets
+ WHERE id = ANY($1::uuid[])
+   AND deleted_at IS NULL
+ ORDER BY id
+`
+
+type ListBatchTargetSubjectsRow struct {
+	ID           pgtype.UUID
+	OwnerUserRef *int64
+	TeamID       pgtype.UUID
+	AssetType    int64
+}
+
+// The batch's PREVIEW-side subject probe: owner, team and asset type
+// for every selected target, in the deterministic order.
+//
+// Not GetAssetMutationSubject in a loop — that is one round trip per
+// target, and at the 1000-target ceiling the difference is the whole
+// latency budget. Same projection and the same `deleted_at IS NULL`
+// filter, so the two answer the same question about liveness: only a
+// SOFT DELETE removes a subject from the probe. An ARCHIVED asset comes
+// back and is written, because archive is not deletion.
+//
+// No row lock. This is the preview, which writes nothing and therefore
+// has nothing to make atomic; the apply takes its own locked read per
+// target (see LockBatchTargetSubject).
+func (q *Queries) ListBatchTargetSubjects(ctx context.Context, assetIds []pgtype.UUID) ([]ListBatchTargetSubjectsRow, error) {
+	rows, err := q.db.Query(ctx, listBatchTargetSubjects, assetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBatchTargetSubjectsRow
+	for rows.Next() {
+		var i ListBatchTargetSubjectsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerUserRef,
+			&i.TeamID,
+			&i.AssetType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBatchTargetValues = `-- name: ListBatchTargetValues :many
+SELECT asset_id, value_text, value_num, value_date, value_options, value_ref, set_at
+  FROM asset_field_value
+ WHERE field_id = $1
+   AND asset_id = ANY($2::uuid[])
+`
+
+type ListBatchTargetValuesParams struct {
+	FieldID  pgtype.UUID
+	AssetIds []pgtype.UUID
+}
+
+type ListBatchTargetValuesRow struct {
+	AssetID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+	SetAt        pgtype.Timestamptz
+}
+
+// Every stored value for one field across the batch's targets, in one
+// round trip. Targets holding no value simply do not come back, and
+// absence is the emptiness the fill_empties mode is about.
+func (q *Queries) ListBatchTargetValues(ctx context.Context, arg ListBatchTargetValuesParams) ([]ListBatchTargetValuesRow, error) {
+	rows, err := q.db.Query(ctx, listBatchTargetValues, arg.FieldID, arg.AssetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBatchTargetValuesRow
+	for rows.Next() {
+		var i ListBatchTargetValuesRow
+		if err := rows.Scan(
+			&i.AssetID,
+			&i.ValueText,
+			&i.ValueNum,
+			&i.ValueDate,
+			&i.ValueOptions,
+			&i.ValueRef,
 			&i.SetAt,
 		); err != nil {
 			return nil, err
@@ -1841,6 +2162,40 @@ func (q *Queries) ListFieldDefinitionsForConditionGraph(ctx context.Context) ([]
 	return items, nil
 }
 
+const listPostsWithMembers = `-- name: ListPostsWithMembers :many
+SELECT DISTINCT pa.post_id
+  FROM post_assets pa
+  JOIN posts p ON p.id = pa.post_id
+  JOIN assets a ON a.id = pa.asset_id
+ WHERE pa.post_id = ANY($1::uuid[])
+   AND p.deleted_at IS NULL
+   AND a.deleted_at IS NULL
+`
+
+// Which of the selected posts actually hold at least one live member,
+// so the preview can REPORT the ones that hold none rather than
+// silently dropping them. A selected post that contributes no target is
+// a thing the operator should see.
+func (q *Queries) ListPostsWithMembers(ctx context.Context, postIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listPostsWithMembers, postIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var post_id pgtype.UUID
+		if err := rows.Scan(&post_id); err != nil {
+			return nil, err
+		}
+		items = append(items, post_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRequiredCollectionFields = `-- name: ListRequiredCollectionFields :many
 
 SELECT id, code, label, type
@@ -1885,6 +2240,156 @@ func (q *Queries) ListRequiredCollectionFields(ctx context.Context) ([]ListRequi
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockBatchReferenceTarget = `-- name: LockBatchReferenceTarget :one
+SELECT id
+  FROM assets
+ WHERE id = $1
+   AND deleted_at IS NULL
+ FOR SHARE
+`
+
+// The proposed reference target's liveness, held for the batch.
+//
+// Same FOR SHARE mechanism and the same reason, one plane over: THERE
+// IS NO FOREIGN KEY ON `value_ref` (asset_field_value has exactly two,
+// on asset_id and field_id), so nothing in the schema stops the target
+// being soft-deleted midway through a thousand writes that point at it.
+// A pre-batch re-check is not sufficient — it establishes a fact that
+// can stop being true before the last write lands. The lock makes the
+// liveness verdict and every write using it atomic.
+//
+// `deleted_at IS NULL` and NEVER `status`: an ARCHIVED asset is a valid
+// reference target, exactly as GetReferencedAsset has it. Archive is not
+// deletion on this plane either.
+func (q *Queries) LockBatchReferenceTarget(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockBatchReferenceTarget, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const lockBatchTargetSubject = `-- name: LockBatchTargetSubject :one
+SELECT id, owner_user_ref, team_id, asset_type
+  FROM assets
+ WHERE id = $1
+   AND deleted_at IS NULL
+ FOR SHARE
+`
+
+type LockBatchTargetSubjectRow struct {
+	ID           pgtype.UUID
+	OwnerUserRef *int64
+	TeamID       pgtype.UUID
+	AssetType    int64
+}
+
+// The batch's APPLY-side subject probe, and the seam that makes the
+// per-target subject invariant atomic (#1173, ADR 0019).
+//
+// FOR SHARE, and the row lock is the entire point.
+//
+// "Inside the same transaction" is NOT sufficient at READ COMMITTED.
+// The precondition this read establishes lives on `assets` while the
+// mutation it authorises lands on `asset_field_value`, a DIFFERENT
+// table, so 20a's single-statement guarded-update pattern does not
+// transfer: there is no one statement that can both test the owner and
+// write the value. Nor does the FK from asset_field_value.asset_id
+// help. Its implicit lock is FOR KEY SHARE, which conflicts only with
+// FOR UPDATE, while an ownership transfer, a team move and a soft
+// delete all take FOR NO KEY UPDATE — so the FK lets every one of them
+// slip between this read and the write it authorises.
+//
+// FOR SHARE DOES conflict with FOR NO KEY UPDATE. Taking it here means
+// the read BLOCKS until any in-flight transfer, team move or soft
+// delete of this asset has committed, then sees the committed truth,
+// and HOLDS the row against a later one until this batch commits. The
+// authority verdict and the write it authorises become one atomic
+// operation, which is what the invariant says they are.
+//
+// Read BEFORE the write and inside the transaction, for the reason
+// UpdateAsset states on the assets plane.
+func (q *Queries) LockBatchTargetSubject(ctx context.Context, id pgtype.UUID) (LockBatchTargetSubjectRow, error) {
+	row := q.db.QueryRow(ctx, lockBatchTargetSubject, id)
+	var i LockBatchTargetSubjectRow
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerUserRef,
+		&i.TeamID,
+		&i.AssetType,
+	)
+	return i, err
+}
+
+const lockFieldDefinitionForBatch = `-- name: LockFieldDefinitionForBatch :one
+SELECT id, code, label, type, subject_kind, applies_to, required, status,
+       options, open_vocabulary, mirrors_column, read_only, regexp_filter,
+       read_capability, write_capability, display_condition
+  FROM field_definition
+ WHERE id = $1
+ FOR UPDATE
+`
+
+type LockFieldDefinitionForBatchRow struct {
+	ID               pgtype.UUID
+	Code             string
+	Label            string
+	Type             string
+	SubjectKind      string
+	AppliesTo        []int64
+	Required         bool
+	Status           string
+	Options          []byte
+	OpenVocabulary   bool
+	MirrorsColumn    *string
+	ReadOnly         bool
+	RegexpFilter     *string
+	ReadCapability   *string
+	WriteCapability  *string
+	DisplayCondition []byte
+}
+
+// The batch-wide definition, configuration and vocabulary seam.
+//
+// FOR UPDATE on the field_definition row, taken BEFORE the batch reads
+// anything about the field. Every writer of that row — UpdateField,
+// ArchiveField, the options editor, EnsureOpenVocabularyTerms' own
+// LockFieldDefinitionVocabulary — either takes FOR UPDATE or issues an
+// UPDATE, which takes FOR NO KEY UPDATE, and both conflict with this.
+// So there are EXACTLY TWO valid serial outcomes: the external change
+// wins and the batch reads it and refuses batch-wide with zero writes
+// and no mint, or the batch wins and the ENTIRE batch executes under
+// one validated state with the external change following it. The
+// forbidden third — the first N targets written under the old rules and
+// the rest under the new ones — cannot happen.
+//
+// Lock BEFORE the read, not after. A lock taken after would serialise
+// the writes while still letting the batch validate against a
+// definition that has already changed, which is the failure mode
+// display_condition_race_test.go's header names exactly.
+func (q *Queries) LockFieldDefinitionForBatch(ctx context.Context, id pgtype.UUID) (LockFieldDefinitionForBatchRow, error) {
+	row := q.db.QueryRow(ctx, lockFieldDefinitionForBatch, id)
+	var i LockFieldDefinitionForBatchRow
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.Label,
+		&i.Type,
+		&i.SubjectKind,
+		&i.AppliesTo,
+		&i.Required,
+		&i.Status,
+		&i.Options,
+		&i.OpenVocabulary,
+		&i.MirrorsColumn,
+		&i.ReadOnly,
+		&i.RegexpFilter,
+		&i.ReadCapability,
+		&i.WriteCapability,
+		&i.DisplayCondition,
+	)
+	return i, err
 }
 
 const lockFieldDefinitionVocabulary = `-- name: LockFieldDefinitionVocabulary :one
@@ -1963,6 +2468,25 @@ type LockFieldDisplayConditionGraphParams struct {
 // hashed, so the value in pg_locks is readable by a person debugging one.
 func (q *Queries) LockFieldDisplayConditionGraph(ctx context.Context, arg LockFieldDisplayConditionGraphParams) error {
 	_, err := q.db.Exec(ctx, lockFieldDisplayConditionGraph, arg.LockSpace, arg.SubjectKey)
+	return err
+}
+
+const purgeExpiredBatchPreviews = `-- name: PurgeExpiredBatchPreviews :exec
+DELETE FROM metadata_batch_preview
+ WHERE expires_at < NOW() - INTERVAL '24 hours'
+`
+
+// Opportunistic sweep from the preview endpoint, so the table stays
+// bounded without a scheduler.
+//
+// The cutoff is well past expiry, not at it: a token that has just
+// expired must still be found, so that its own caller gets 409
+// preview_expired rather than the 403 an unattributable credential
+// gets. Past the cutoff the distinction stops being useful — the token
+// is hours dead — and 403 is the right answer for a credential the
+// server can no longer attribute to anybody.
+func (q *Queries) PurgeExpiredBatchPreviews(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, purgeExpiredBatchPreviews)
 	return err
 }
 
