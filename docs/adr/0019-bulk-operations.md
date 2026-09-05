@@ -433,7 +433,8 @@ lifecycle exemption.
 | `teams` · remove a team parent | transaction | structural |
 | `cmd/aa` · `aa seed` bootstrap admin | **session** | structural |
 | `cmd/aa` · `aa seed --reset` (`resetContent`) | **session** | structural |
-| `cmd/aa` · `aa seed` runner | **session** | structural |
+| `seed` · `Runner.applyTeams` (`team_closure`) | **session** | structural |
+| `seed` · `Runner.applyFixturePrincipals` (`user_roles`) | **session** | structural |
 
 The sweeper, the team-parent paths and every seed span use the structural
 key because their blast radius is not one nameable user: the sweep reaps
@@ -468,9 +469,50 @@ that does not span the thing it protects. Session and transaction
 advisory locks share one space and conflict identically; scope decides
 only when a lock is released.
 
-Three separate, non-overlapping spans rather than one lock held across
-the whole command, so a reseed blocks batch applies only while it is
-actually changing authority.
+⛔ **A session lock makes its own release a correctness problem, not a
+tidiness one.** `pgxpool.Conn.Release()` returns a connection TO THE POOL
+FOR REUSE, and a session-scoped advisory lock survives until it is
+explicitly unlocked or the PostgreSQL session is destroyed — an ordinary
+release does neither. So a single failed unlock (a cancelled context, a
+network blip, a statement timeout) would hand a still-locked session back
+to the pool, where it would sit idle and unowned holding the structural
+lock forever, and every batch apply after it would block indefinitely on
+a lock with no owner. A swallowed error there is a total, permanent stall
+of the feature with nothing to explain it.
+
+The release therefore HIJACKS the connection out of the pool and CLOSES
+it whenever the unlock fails, which destroys the backend session and is
+what actually drops the lock, and logs at ERROR. The pool opens a
+replacement on demand.
+
+**Four separate, non-overlapping spans, each no wider than the authority
+mutation it protects.** An earlier version wrapped the seed runner's
+whole `Run`, which held the STRUCTURAL lock — the one that excludes every
+batch authority reader — across catalogue loading, users, memberships,
+follows, fields, collections, featured, ASSETS, POSTS, likes and
+comments. A reseed runs for minutes, so an unrelated batch apply could
+wait out its entire deadline while image files were loading. Only two of
+those phases mutate authority.
+
+The runner's protection lives IN the two phases rather than around the
+call, so any caller gets it — including a test that drives one directly,
+which is how the narrowing is proven rather than asserted.
+
+⭐ **The phase, not the statement, is the semantic unit for both, and
+that is a claim rather than a convenience.** `team_closure` describes a
+HIERARCHY: it is only the shape the catalogue specifies once every team's
+rows are in, so a reader resolving a scoped grant against a half-built
+closure sees a real and different expansion. The fixture principals are
+seeded as a SET, and a reader midway through sees a world that is neither
+the old one nor the new one. Locking per statement would open exactly
+those windows.
+
+**The exhaustive check.** Every write to `user_roles`, `roles`,
+`role_capabilities`, `user_capability_grants`, `user_capability_revokes`,
+`team_closure` and `team_parents` in the seed package resolves to those
+two queries and no others. `team_memberships` is deliberately absent:
+`EffectiveScopedCapabilitiesForUser` does not read it, so it is not
+authority-bearing for this invariant.
 
 ⚠️ **The operational consequence, stated rather than absorbed.** While a
 seed holds the structural lock, every batch metadata apply WAITS. A full

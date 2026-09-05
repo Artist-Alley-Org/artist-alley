@@ -689,7 +689,7 @@ func TestBatchRace_StaleVerdictCannotAuthorizeTheWrite(t *testing.T) {
 	}
 }
 
-// TestBatchRace_SeedStructuralAuthorityMutation drives the REAL batch
+// TestBatchRace_StructuralAuthorityLockExcludesTheBatch drives the REAL batch
 // against the STRUCTURAL half of the authority lock — the half `aa seed`
 // takes.
 //
@@ -700,15 +700,21 @@ func TestBatchRace_StaleVerdictCannotAuthorizeTheWrite(t *testing.T) {
 // `user_roles`, `user_capability_grants` and `user_capability_revokes`
 // wholesale.
 //
-// ⛔ The gate takes that lock through auth.AcquireStructuralAuthorityLock
-// — the SAME exported call `resetContent` and the seed runner make — and
-// then performs a seed-equivalent authority mutation: deleting the
-// caller's grants outright, which is exactly what the reset's cascade
-// does to them. Nothing here reaches for a lock production seed code
-// does not take.
+// ⛔ WHAT THIS PROVES, AND WHAT IT DOES NOT. The gate takes the lock
+// through auth.AcquireStructuralAuthorityLock — the same exported call
+// the seed spans make — and performs a seed-equivalent authority
+// mutation. So it proves the PRIMITIVE excludes a batch correctly, with
+// N = 3 and no partial write.
+//
+// It does NOT prove that any production caller takes it. That is a
+// separate claim and it is proven separately, by driving the real
+// callers: TestSeedReset_WaitsForAnInFlightAuthorityReader over
+// `resetContent`, and the two phase tests in internal/seed over
+// applyTeams and applyFixturePrincipals. Reading this test as caller
+// evidence is the mistake that let a missing writer through twice.
 //
 // N = 3, so a partial outcome would be visible.
-func TestBatchRace_SeedStructuralAuthorityMutation(t *testing.T) {
+func TestBatchRace_StructuralAuthorityLockExcludesTheBatch(t *testing.T) {
 	e := newBatchRaceEnv(t)
 	owner, _ := e.bulkOperator("raceseed")
 	ctx := e.identity(owner)
@@ -726,7 +732,7 @@ func TestBatchRace_SeedStructuralAuthorityMutation(t *testing.T) {
 
 	// The SESSION-scoped structural lock, held exactly as a seed holds
 	// it across its multi-statement span.
-	release, err := auth.AcquireStructuralAuthorityLock(context.Background(), e.batchFixture.pool)
+	release, err := auth.AcquireStructuralAuthorityLock(context.Background(), e.batchFixture.pool, nil)
 	if err != nil {
 		t.Fatalf("structural lock: %v", err)
 	}

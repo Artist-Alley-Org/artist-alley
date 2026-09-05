@@ -6,6 +6,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -154,7 +155,7 @@ func LockAuthorityShared(ctx context.Context, db DBTX, userRef int64) error {
 // deployment is already accepting that the instance's content is being
 // replaced underneath it. It is still a real change in behaviour and
 // belongs in the release notes rather than in a surprise.
-func AcquireStructuralAuthorityLock(ctx context.Context, pool *pgxpool.Pool) (func(), error) {
+func AcquireStructuralAuthorityLock(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) (func(), error) {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("auth: acquire connection for structural authority lock: %w", err)
@@ -167,13 +168,46 @@ func AcquireStructuralAuthorityLock(ctx context.Context, pool *pgxpool.Pool) (fu
 	return func() {
 		// context.WithoutCancel: the release must run even when the
 		// caller's context is already cancelled, or a cancelled seed
-		// would leave the lock held until the connection is reaped and
-		// every batch apply would wait on a process that has gone.
-		if _, err := conn.Exec(context.WithoutCancel(ctx),
+		// would leave the lock held while its process walks away.
+		_, uerr := conn.Exec(context.WithoutCancel(ctx),
 			`SELECT pg_advisory_unlock($1::INT, $2::INT)`,
-			AuthorityLockSpace, AuthorityStructuralKey); err != nil {
-			_ = err // the connection release below drops the lock anyway
+			AuthorityLockSpace, AuthorityStructuralKey)
+		if uerr == nil {
+			conn.Release()
+			return
 		}
-		conn.Release()
+
+		// ⛔ THE UNLOCK FAILED, SO THIS SESSION MAY STILL OWN THE LOCK,
+		// AND IT MUST NOT GO BACK INTO THE POOL.
+		//
+		// Release() returns the connection FOR REUSE. A SESSION-scoped
+		// advisory lock outlives the transaction that took it and is
+		// dropped only by an explicit unlock or by the destruction of
+		// the PostgreSQL session — and an ordinary release does
+		// neither. So one failed unlock (a cancelled context, a network
+		// blip, a statement timeout) would hand a still-locked session
+		// back to the pool, where it sits idle and unowned holding the
+		// structural authority lock forever. Every batch apply after
+		// that blocks indefinitely on a lock with no owner, and nothing
+		// in the system would explain why: a swallowed error becomes a
+		// total, permanent stall of the feature.
+		//
+		// Hijack takes the connection OUT of the pool permanently, so
+		// it can never be handed to anyone else, and closing it
+		// destroys the backend session — which is what actually
+		// releases the lock. The pool opens a replacement on demand.
+		hijacked := conn.Hijack()
+		closeErr := hijacked.Close(context.WithoutCancel(ctx))
+		if logger != nil {
+			logger.LogAttrs(context.WithoutCancel(ctx), slog.LevelError,
+				"auth.authority_lock.unlock_failed_session_destroyed",
+				slog.String("unlock_err", uerr.Error()),
+				slog.Any("close_err", closeErr),
+				slog.String("consequence",
+					"the connection was removed from the pool and its session closed, "+
+						"which is what releases a session-scoped advisory lock; returning "+
+						"it would have stalled every batch apply indefinitely"),
+			)
+		}
 	}, nil
 }

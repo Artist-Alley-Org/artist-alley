@@ -193,7 +193,7 @@ func runSeed(args []string) error {
 	// against a live instance. It may create the admin and assign the
 	// global Admin role, which is an authority mutation like any other.
 	if err := func() error {
-		release, err := auth.AcquireStructuralAuthorityLock(ctx, pool)
+		release, err := auth.AcquireStructuralAuthorityLock(ctx, pool, logger)
 		if err != nil {
 			return err
 		}
@@ -235,24 +235,18 @@ func runSeed(args []string) error {
 			return auth.HashPassword(plaintext, cfg.ScrambleKey)
 		},
 	})
-	// SERIALIZED across the runner too. Its fixture pass calls
-	// SeedSetUserGlobalRole, and it writes team_closure self-rows — both
-	// change what an existing principal's effective authority resolves
-	// to, and this process is documented to run against a live server.
+	// ⛔ NO LOCK HERE. The runner serializes ITSELF, around the two
+	// phases that actually mutate authority — see applyTeams and
+	// applyFixturePrincipals. Wrapping runner.Run() instead held the
+	// STRUCTURAL lock across catalogue loading, users, memberships,
+	// follows, fields, collections, featured, ASSETS, POSTS, likes and
+	// comments, so an unrelated batch apply could wait out its whole
+	// deadline while image files were loading.
 	//
-	// A SEPARATE, NON-OVERLAPPING acquisition rather than one lock held
-	// across the whole command: the three spans do not nest, and holding
-	// one lock from the first bootstrap through the last seeded asset
-	// would block every batch apply for the entire reseed rather than
-	// for the parts that actually touch authority.
-	counts, err := func() (seed.Counts, error) {
-		release, lerr := auth.AcquireStructuralAuthorityLock(ctx, pool)
-		if lerr != nil {
-			return seed.Counts{}, lerr
-		}
-		defer release()
-		return runner.Run(ctx)
-	}()
+	// The protection also belongs with the code that mutates authority
+	// rather than with a caller that has to remember: any caller of
+	// those phases gets it, including a test that drives one directly.
+	counts, err := runner.Run(ctx)
 	if err != nil {
 		return err
 	}
@@ -382,7 +376,7 @@ func resetContent(
 	// exempt: it executes before the HTTP server accepts anything, so
 	// there is no in-flight operation to serialize against. One
 	// function, two call sites, two answers.
-	release, err := auth.AcquireStructuralAuthorityLock(ctx, pool)
+	release, err := auth.AcquireStructuralAuthorityLock(ctx, pool, logger)
 	if err != nil {
 		return fmt.Errorf("seed reset: %w", err)
 	}

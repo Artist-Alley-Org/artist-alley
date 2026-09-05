@@ -71,6 +71,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
@@ -115,6 +116,21 @@ func (r *Runner) applyTestFixtures(ctx context.Context, cat *catalogues) error {
 // AlreadyExisted=true, and the role assignment is a DELETE-then-INSERT,
 // so a re-seed onto a live database converges rather than duplicating.
 func (r *Runner) applyFixturePrincipals(ctx context.Context, ps []catFixturePrincipal) error {
+	// ⛔ SERIALIZED, for the same reason applyTeams is: the loop below
+	// calls SeedSetUserGlobalRole, and a role assignment is an authority
+	// mutation — more consequential than a direct grant, because a
+	// team-scoped ROLE produces zero rows in `user_capability_grants`
+	// and is invisible to anything watching that table.
+	//
+	// ⭐ The phase is the semantic unit: these principals are seeded as a
+	// SET, and a reader resolving authority midway through would see a
+	// fixture world that is neither the old one nor the new one.
+	release, err := auth.AcquireStructuralAuthorityLock(ctx, r.pool, r.log)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	if len(ps) == 0 {
 		return nil
 	}

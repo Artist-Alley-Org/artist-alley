@@ -54,6 +54,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
@@ -430,6 +431,30 @@ func (r *Runner) applyUsers(ctx context.Context, cat *catalogues) error {
 // --- phase: teams -----------------------------------------------------
 
 func (r *Runner) applyTeams(ctx context.Context, cat *catalogues) error {
+	// ⛔ SERIALIZED AGAINST IN-FLIGHT AUTHORITY READERS (#1173, #1119).
+	//
+	// `SeedInsertTeamClosureSelf` below writes `team_closure`, which is
+	// what expands every TEAM-SCOPED grant to the teams it actually
+	// reaches. Changing it changes effective authority for anyone
+	// holding such a grant, without touching a grant row — and `aa seed`
+	// is documented to run against a live instance.
+	//
+	// ⭐ THE PHASE IS THE SEMANTIC UNIT, not the individual insert. The
+	// closure is a HIERARCHY: it is only the shape the catalogue
+	// describes once every team's rows are in. Locking per statement
+	// would leave a reader free to resolve a scoped grant against a
+	// half-built hierarchy, which is a real and different expansion.
+	//
+	// The lock lives HERE rather than around `Run`, which used to hold
+	// it across assets and posts too, and it lives in the phase rather
+	// than in the caller so that any caller gets it — including a test
+	// that drives this phase directly.
+	release, err := auth.AcquireStructuralAuthorityLock(ctx, r.pool, r.log)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	for _, t := range cat.Teams {
 		slug := slugify(t.Name)
 		id, err := r.insertTeam(ctx, t.ID, slug, t.Name)
