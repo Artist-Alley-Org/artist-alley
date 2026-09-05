@@ -6,6 +6,8 @@ package auth
 import (
 	"context"
 	"fmt"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // AuthorityLockSpace is the first key of the transaction-scoped advisory
@@ -55,11 +57,17 @@ func authorityKey(userRef int64) int32 { return int32(userRef) }
 //
 // ⛔ CALLERS ARE ENUMERATED IN ADR 0019, not summarised as "everything
 // that writes authority". Some writers are exempt by construction — a
-// role assigned to a user created in the same request, a bootstrap that
-// runs before the server serves — and an accurate list with stated
-// reasons is worth more than a universal claim that has to be true. The
-// first version of that claim was written before the enumeration was
-// complete and missed a live writer in another package.
+// role assigned to a user created in the same request, the bootstrap
+// that runs before the server serves — and an accurate list with stated
+// reasons is worth more than a universal claim that has to be true.
+//
+// That claim has now been wrong twice, both times from classifying by
+// PACKAGE OR COMMAND NAME instead of by CALL SITE. First it missed a
+// live writer in another package. Then it wrote off `aa seed` as
+// offline, when that command is documented to run against a live server
+// and its reset empties the authority tables outright. The exemption
+// belongs to the call site: `bootstrap.Run` is exempt at server startup
+// and NOT exempt when `aa seed` invokes it.
 func LockAuthorityForUpdate(ctx context.Context, db DBTX, userRef int64) error {
 	if err := New(db).LockAuthorityExclusive(ctx, LockAuthorityExclusiveParams{
 		LockSpace:    AuthorityLockSpace,
@@ -110,4 +118,62 @@ func LockAuthorityShared(ctx context.Context, db DBTX, userRef int64) error {
 		return fmt.Errorf("auth: share-lock structural authority: %w", err)
 	}
 	return nil
+}
+
+// AcquireStructuralAuthorityLock takes the EXCLUSIVE structural
+// authority lock at SESSION scope, on a connection of its own, and
+// returns the function that releases it.
+//
+// # Why session scope, when everything else here is transaction scoped
+//
+// The transaction-scoped variants are right for a writer whose whole
+// authority mutation is one transaction. `aa seed` is not that. Its
+// reset runs a TRUNCATE and a series of DELETEs as separate autocommit
+// statements, then hands off to the bootstrap restoration, then to the
+// runner's own writes — and every one of those steps changes authority.
+// A transaction-scoped lock would be released at the end of whichever
+// statement took it, leaving the rest of the span unprotected.
+//
+// ⛔ THAT WOULD BE THE A76 DEFECT IN A NEW COSTUME: a lock that exists,
+// that the production path really takes, and that does not span the
+// thing it claims to protect. So the lock is held on a dedicated
+// connection for the whole span and released explicitly.
+//
+// Session and transaction advisory locks share one lock space and
+// conflict with each other exactly as you would expect; the scope only
+// decides WHEN a lock is released, never who it excludes. So this
+// blocks the transaction-scoped SHARED half a batch takes, which is the
+// point.
+//
+// ⚠️ OPERATIONAL CONSEQUENCE, stated because an operator will meet it:
+// while a seed holds this, every batch metadata apply WAITS. A full
+// reseed takes minutes, so an apply that starts during one will most
+// likely exhaust its request deadline and fail rather than queue to
+// completion. It fails CLOSED — nothing is written — which is the safe
+// direction, and an operator running `aa seed --reset` against a live
+// deployment is already accepting that the instance's content is being
+// replaced underneath it. It is still a real change in behaviour and
+// belongs in the release notes rather than in a surprise.
+func AcquireStructuralAuthorityLock(ctx context.Context, pool *pgxpool.Pool) (func(), error) {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("auth: acquire connection for structural authority lock: %w", err)
+	}
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1::INT, $2::INT)`,
+		AuthorityLockSpace, AuthorityStructuralKey); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("auth: take structural authority lock: %w", err)
+	}
+	return func() {
+		// context.WithoutCancel: the release must run even when the
+		// caller's context is already cancelled, or a cancelled seed
+		// would leave the lock held until the connection is reaped and
+		// every batch apply would wait on a process that has gone.
+		if _, err := conn.Exec(context.WithoutCancel(ctx),
+			`SELECT pg_advisory_unlock($1::INT, $2::INT)`,
+			AuthorityLockSpace, AuthorityStructuralKey); err != nil {
+			_ = err // the connection release below drops the lock anyway
+		}
+		conn.Release()
+	}, nil
 }

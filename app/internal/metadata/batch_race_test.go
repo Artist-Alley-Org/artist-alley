@@ -689,6 +689,87 @@ func TestBatchRace_StaleVerdictCannotAuthorizeTheWrite(t *testing.T) {
 	}
 }
 
+// TestBatchRace_SeedStructuralAuthorityMutation drives the REAL batch
+// against the STRUCTURAL half of the authority lock — the half `aa seed`
+// takes.
+//
+// The two seams above use the per-user key, which the admin grant and
+// revoke endpoints take. The structural key is what a mutation with an
+// unnameable blast radius takes: the expiry sweeper, a team re-parenting,
+// and `aa seed --reset`, whose TRUNCATE ... CASCADE empties
+// `user_roles`, `user_capability_grants` and `user_capability_revokes`
+// wholesale.
+//
+// ⛔ The gate takes that lock through auth.AcquireStructuralAuthorityLock
+// — the SAME exported call `resetContent` and the seed runner make — and
+// then performs a seed-equivalent authority mutation: deleting the
+// caller's grants outright, which is exactly what the reset's cascade
+// does to them. Nothing here reaches for a lock production seed code
+// does not take.
+//
+// N = 3, so a partial outcome would be visible.
+func TestBatchRace_SeedStructuralAuthorityMutation(t *testing.T) {
+	e := newBatchRaceEnv(t)
+	owner, _ := e.bulkOperator("raceseed")
+	ctx := e.identity(owner)
+
+	field := e.field("t", fieldSpec{Type: "text"})
+	a1 := e.asset(&owner, nil)
+	a2 := e.asset(&owner, nil)
+	a3 := e.asset(&owner, nil)
+
+	p := e.mustPreview(ctx, openapi.BatchModeOverwrite, field, textValue("batch"),
+		assetEntries(a1, a2, a3))
+	if p.Counts.WouldChange != 3 {
+		t.Fatalf("want 3 would_change, got %+v", p.Counts)
+	}
+
+	// The SESSION-scoped structural lock, held exactly as a seed holds
+	// it across its multi-statement span.
+	release, err := auth.AcquireStructuralAuthorityLock(context.Background(), e.batchFixture.pool)
+	if err != nil {
+		t.Fatalf("structural lock: %v", err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			release()
+		}
+	}()
+
+	// The seed-equivalent mutation, committed inside the held lock.
+	if _, err := e.batchFixture.pool.Exec(e.batchFixture.ctx,
+		`DELETE FROM user_capability_grants WHERE user_ref = $1`, owner); err != nil {
+		t.Fatalf("seed-equivalent authority wipe: %v", err)
+	}
+
+	done := make(chan applyResult, 1)
+	go func() { done <- e.applyOnContender(ctx, p.Token, "seed wiped authority under us", intp(3)) }()
+	e.waitForBlockedContender(t, "structural authority lock")
+	released = true
+	release()
+
+	var res applyResult
+	select {
+	case res = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the apply never completed after the structural lock released")
+	}
+
+	e.wantRefusal(res, 403, openapi.BatchBulkCapabilityRequired)
+	for i, a := range []uuid.UUID{a1, a2, a3} {
+		if e.rowExists(a, field) {
+			t.Fatalf("target %d was written after a seed-equivalent authority wipe", i)
+		}
+		if e.historyCount(a, field) != 0 {
+			t.Fatalf("target %d gained a history row", i)
+		}
+	}
+	if e.tokenConsumed(p.OperationId.String()) {
+		t.Fatal("a batch-wide refusal leaves the token spendable")
+	}
+}
+
 // TestBatchRace_BulkAuthorityRevocation is the same seam over a
 // DIFFERENT authority kind, because A76 pointed only at
 // `fields.vocabulary.extend` and that is not the whole surface. The

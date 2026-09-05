@@ -420,22 +420,69 @@ lifecycle exemption.
 
 **Participating — take the exclusive half before the write:**
 
-| writer | key |
-|---|---|
-| `auth` · add a per-user grant | requester's user ref |
-| `auth` · remove a per-user grant | user ref |
-| `auth` · add a per-user revoke | user ref |
-| `auth` · remove a per-user revoke | user ref |
-| `auth` · assign a global role | user ref |
-| `auth` · capability expiry sweeper | structural |
-| `requests` · approve a capability request | **requester's** user ref, not the approver's |
-| `teams` · add a team parent | structural |
-| `teams` · remove a team parent | structural |
+| writer | scope | key |
+|---|---|---|
+| `auth` · add a per-user grant | transaction | user ref |
+| `auth` · remove a per-user grant | transaction | user ref |
+| `auth` · add a per-user revoke | transaction | user ref |
+| `auth` · remove a per-user revoke | transaction | user ref |
+| `auth` · assign a global role | transaction | user ref |
+| `auth` · capability expiry sweeper | transaction | structural |
+| `requests` · approve a capability request | transaction | **requester's** ref, not the approver's |
+| `teams` · add a team parent | transaction | structural |
+| `teams` · remove a team parent | transaction | structural |
+| `cmd/aa` · `aa seed` bootstrap admin | **session** | structural |
+| `cmd/aa` · `aa seed --reset` (`resetContent`) | **session** | structural |
+| `cmd/aa` · `aa seed` runner | **session** | structural |
 
-The sweeper and the team-parent paths use the structural key because
-their blast radius is not one nameable user: the sweep reaps across every
-user at once, and re-parenting changes what every team-scoped grant
-expands to WITHOUT TOUCHING A SINGLE GRANT ROW.
+The sweeper, the team-parent paths and every seed span use the structural
+key because their blast radius is not one nameable user: the sweep reaps
+across every user at once, re-parenting changes what every team-scoped
+grant expands to WITHOUT TOUCHING A SINGLE GRANT ROW, and the reset
+empties the authority tables outright.
+
+#### `aa seed` is NOT lifecycle-exempt, and the session scope is why
+
+An earlier draft of this inventory wrote it off as "offline maintenance
+that also TRUNCATEs". ⛔ **Both halves were false**, and the mistake was
+the same one that produced the false universal above: classifying by
+command name instead of by call site and actual concurrency.
+
+It is DESIGNED for a live instance. Its migrate step is documented as
+safe "whether the server already migrated, is migrating right now, or was
+never started", and `--reset` broadcasts a wildcard cache flush over
+NOTIFY precisely because "the seeder is a separate process with no cache
+Registry" and a server may be serving throughout. And the TRUNCATE is the
+BLAST RADIUS rather than a reason to dismiss it: `seed.Reset`'s
+`TRUNCATE ... CASCADE` and its `DELETE FROM teams` empty `user_roles`,
+`user_capability_grants` and `user_capability_revokes` wholesale, and
+`bootstrap.Run` then restores the admin's role.
+
+⛔ **The seed spans take the lock at SESSION scope, and that is not a
+detail.** Their authority mutations run as a series of autocommit
+statements — a TRUNCATE, several DELETEs, a bootstrap restoration, then
+the runner's own writes. A transaction-scoped lock would be released at
+the end of whichever statement took it and would leave the rest of the
+span unprotected: a lock that exists, that production really takes, and
+that does not span the thing it protects. Session and transaction
+advisory locks share one space and conflict identically; scope decides
+only when a lock is released.
+
+Three separate, non-overlapping spans rather than one lock held across
+the whole command, so a reseed blocks batch applies only while it is
+actually changing authority.
+
+⚠️ **The operational consequence, stated rather than absorbed.** While a
+seed holds the structural lock, every batch metadata apply WAITS. A full
+reseed takes minutes, so an apply that begins during one will most likely
+exhaust its request deadline and fail rather than queue to completion. It
+fails CLOSED — nothing is written — and an operator running
+`aa seed --reset` against a live deployment is already accepting that the
+instance's content is being replaced underneath them. It belongs in the
+release notes rather than in a surprise. If that proves too blunt, the
+narrower follow-up is a `lock_timeout` on the batch's acquisition so it
+refuses cleanly instead of hanging; that changes the batch's failure mode
+and is deliberately NOT taken here.
 
 **Exempt, by construction — an in-flight batch for the affected
 principal cannot coexist with these:**
@@ -444,8 +491,13 @@ principal cannot coexist with these:**
 |---|---|
 | first-boot setup assigns the initial admin role | the handler CREATES the user in the same request; a principal that does not exist cannot have a batch in flight |
 | self-registration assigns the default role | same — the row is inserted immediately above, and the account cannot authenticate until it is verified |
-| bootstrap assigns the admin role at startup | runs after migrations and BEFORE the HTTP server accepts requests, so no request of any kind is in flight |
-| the `aa seed` CLI writes `user_roles` and team-closure self-rows | a separate offline maintenance process that also TRUNCATEs; it is not reachable from any HTTP handler (the seed package's HTTP surface creates users without assigning roles) |
+| **server-startup** `bootstrap.Run` (`run()`) | executes after migrations and BEFORE the HTTP server accepts anything, so no request of any kind is in flight |
+
+⭐ **One function, two call sites, two answers.** `bootstrap.Run` appears
+three times. The startup call is exempt for the reason above. The two
+inside `aa seed` are a different concurrency context entirely and are
+covered by the seed spans in the participating table. The exemption
+belongs to the CALL SITE, never to the function.
 
 ⭐ These are exemptions with reasons, not omissions. If any of them ever
 gains a path that can run against a live principal, it joins the table
