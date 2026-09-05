@@ -188,7 +188,18 @@ func runSeed(args []string) error {
 		AdminPath:           cfg.BootstrapAdminPath,
 		DefaultAdminEnabled: cfg.BootstrapDefaultAdmin,
 	}
-	if err := bootstrap.Run(ctx, pool, bootstrapCfg, logger, nil); err != nil {
+	// SERIALIZED for the same reason resetContent is: this is the
+	// SEED-invoked bootstrap, running in a process documented to operate
+	// against a live instance. It may create the admin and assign the
+	// global Admin role, which is an authority mutation like any other.
+	if err := func() error {
+		release, err := auth.AcquireStructuralAuthorityLock(ctx, pool, logger)
+		if err != nil {
+			return err
+		}
+		defer release()
+		return bootstrap.Run(ctx, pool, bootstrapCfg, logger, nil)
+	}(); err != nil {
 		return fmt.Errorf("seed: bootstrap admin: %w", err)
 	}
 
@@ -224,6 +235,17 @@ func runSeed(args []string) error {
 			return auth.HashPassword(plaintext, cfg.ScrambleKey)
 		},
 	})
+	// ⛔ NO LOCK HERE. The runner serializes ITSELF, around the two
+	// phases that actually mutate authority — see applyTeams and
+	// applyFixturePrincipals. Wrapping runner.Run() instead held the
+	// STRUCTURAL lock across catalogue loading, users, memberships,
+	// follows, fields, collections, featured, ASSETS, POSTS, likes and
+	// comments, so an unrelated batch apply could wait out its whole
+	// deadline while image files were loading.
+	//
+	// The protection also belongs with the code that mutates authority
+	// rather than with a caller that has to remember: any caller of
+	// those phases gets it, including a test that drives one directly.
 	counts, err := runner.Run(ctx)
 	if err != nil {
 		return err
@@ -329,6 +351,37 @@ func resetContent(
 	bootstrapCfg bootstrap.Config,
 	logger *slog.Logger,
 ) error {
+	// ⛔ SERIALIZED AGAINST IN-FLIGHT AUTHORITY READERS (#1173, #1119).
+	//
+	// `aa seed` is DESIGNED to run against a live instance — its own
+	// migrate step is documented as safe "whether the server already
+	// migrated, is migrating right now, or was never started", and
+	// --reset broadcasts a wildcard cache flush precisely because a
+	// server may be serving while this runs.
+	//
+	// And what it does here is the largest authority mutation in the
+	// system. seed.Reset's TRUNCATE ... CASCADE and its `DELETE FROM
+	// teams` empty user_roles, user_capability_grants and
+	// user_capability_revokes wholesale; bootstrap.Run then puts the
+	// admin's role back. A batch metadata edit that resolved its
+	// verdict just before this would otherwise write under authority
+	// that no longer exists.
+	//
+	// THE LOCK SPANS BOTH STEPS, not either one. Releasing it between
+	// the reset and the restoration would leave a window in which the
+	// authority tables are empty and a reader could act on that.
+	//
+	// ⭐ This is the SEED-INVOKED bootstrap.Run. The one in run() at
+	// server startup is a different concurrency context and stays
+	// exempt: it executes before the HTTP server accepts anything, so
+	// there is no in-flight operation to serialize against. One
+	// function, two call sites, two answers.
+	release, err := auth.AcquireStructuralAuthorityLock(ctx, pool, logger)
+	if err != nil {
+		return fmt.Errorf("seed reset: %w", err)
+	}
+	defer release()
+
 	if err := seed.Reset(ctx, pool, bootstrap.DefaultUsername); err != nil {
 		return fmt.Errorf("seed reset: %w", err)
 	}

@@ -87,6 +87,26 @@ func openResetAdminPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// openResetAdminPoolNamed is openResetAdminPool with a distinctive
+// application_name, so a wait observation in pg_stat_activity can name
+// exactly which backend it is watching.
+func openResetAdminPoolNamed(t *testing.T, appName string) *pgxpool.Pool {
+	t.Helper()
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	dsn := fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=disable password=%s application_name=%s",
+		resetAdminEnvOr("AA_DB_HOST", "postgres"), resetAdminEnvOr("AA_DB_PORT", "5432"),
+		resetAdminEnvOr("AA_DB_USER", "artist_alley"), testdb.Name(t), pwd, appName)
+	pool, err := pgxpool.New(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
 // adminAuthority is the post-reset state this file is about, read three
 // independent ways so a partial repair cannot look like a whole one.
 type adminAuthority struct {

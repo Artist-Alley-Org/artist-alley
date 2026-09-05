@@ -33,11 +33,21 @@ import (
 // effective verdict and the mutation it authorises are atomic" a
 // statement about the database rather than about a cache.
 //
-// Pass the transaction handle, not the pool. Read under the same
-// snapshot as the writes, the verdict cannot be stale by the time they
-// land: a revocation that committed before this read is SEEN, and one
-// that commits after it is ordered after this whole transaction, which
-// is the serial order the batch's atomicity contract permits.
+// Pass the transaction handle, not the pool. That much is necessary —
+// it is what makes a revocation committed BEFORE this read visible.
+//
+// ⛔ IT IS NOT SUFFICIENT, and an earlier version of this comment said
+// otherwise. At READ COMMITTED each statement takes a fresh snapshot,
+// so a revocation committing AFTER this read is NOT ordered after the
+// transaction: it lands while the verdict drawn here is still being
+// relied upon, and the writes it authorized go through anyway. Nothing
+// about being "in the transaction" prevents that.
+//
+// Callers that go on to MUTATE under the verdict must therefore hold
+// [LockAuthorityShared] across the read and those mutations. This
+// function deliberately does not take it itself: a pure reader — one
+// that answers a question and writes nothing — has no reason to
+// serialize against administrators.
 //
 // # Effective, never raw
 //

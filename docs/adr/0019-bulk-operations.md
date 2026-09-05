@@ -362,12 +362,202 @@ foreign key on `value_ref` at all**.
 3. **Proposed-reference liveness.** A pre-batch re-check is not
    sufficient; it establishes a fact that can stop being true before the
    last write lands.
-4. **Mint-authority composition.** No stale-authority mint.
+4. **Effective authority.** The caller's effective verdict and every
+   mutation it authorises are one atomic operation relative to a
+   competing authority change. This covers ALL FOUR authorities the
+   batch consumes — bulk-edit admission and per-target scope, subject
+   authority, the field's own write capability, and mint authority —
+   because all four are drawn from ONE effective-authority read.
 
 Technique is implementation-owned. As built: an explicit FOR SHARE on the
 subject and on the reference target, FOR UPDATE on the field definition
-taken BEFORE it is read, and the caller's capabilities re-resolved from
-the apply's own transaction rather than from the request-time cache.
+taken BEFORE it is read, and — for authority — a transaction-scoped
+ADVISORY LOCK taken BEFORE the authority read and held to commit.
+
+#### Amendment 2026-09-04 — re-resolving authority in the transaction is NOT serialization
+
+The first implementation of family 4 re-read the caller's capabilities
+from the apply's own transaction and treated that as sufficient. **It is
+not, and this ADR said so about every other family while missing it
+here.**
+
+At READ COMMITTED each statement takes a fresh snapshot. Re-reading in
+the transaction makes an authority change committed BEFORE the read
+visible, and does nothing about one that commits AFTER it: that change
+lands while the verdict is still being relied upon, and the writes it
+authorised go through. The batch locked the field definition, the
+reference target and each subject — and authority lives in none of
+those. It lives in `user_roles`, `roles`, `role_capabilities`,
+`user_capability_grants`, `user_capability_revokes` and `team_closure`.
+
+⛔ **A row lock could not have closed it either.** The dangerous mutation
+is frequently an INSERT — a revoke ADDS a row to
+`user_capability_revokes` — and `FOR SHARE` locks rows that exist.
+PostgreSQL has no predicate locking at READ COMMITTED, so no locking of
+the rows the authority query reads can exclude a row that does not exist
+yet. An advisory lock is not a shortcut here; it is the only mechanism
+that can express the claim.
+
+**As corrected.** One transaction-scoped advisory lock space, with a
+reader half and a writer half. The batch takes the SHARED half — on the
+caller's key and on a structural key — BEFORE resolving authority, and
+holds both to commit.
+
+⛔ **Both sides participate, and that is the whole mechanism.** A lock
+only the batch took would prove nothing — which was the defect in the
+original evidence for this family, whose test made its competing revoke
+wait on a `field_definition` lock that no production revoke touches.
+
+#### The authority-writer inventory, stated as it is
+
+An earlier draft of this amendment said "every production path that
+mutates authority takes the exclusive half". ⛔ **That was a universal
+claim reached before the enumeration was complete**, and it was false:
+`requests.Handler.Grant` writes `user_capability_grants` from the
+requests package and had been missed. The inventory is therefore given
+in full, with each entry either PARTICIPATING or carrying a stated
+lifecycle exemption.
+
+**Participating — take the exclusive half before the write:**
+
+| writer | scope | key |
+|---|---|---|
+| `auth` · add a per-user grant | transaction | user ref |
+| `auth` · remove a per-user grant | transaction | user ref |
+| `auth` · add a per-user revoke | transaction | user ref |
+| `auth` · remove a per-user revoke | transaction | user ref |
+| `auth` · assign a global role | transaction | user ref |
+| `auth` · capability expiry sweeper | transaction | structural |
+| `requests` · approve a capability request | transaction | **requester's** ref, not the approver's |
+| `teams` · add a team parent | transaction | structural |
+| `teams` · remove a team parent | transaction | structural |
+| `cmd/aa` · `aa seed` bootstrap admin | **session** | structural |
+| `cmd/aa` · `aa seed --reset` (`resetContent`) | **session** | structural |
+| `seed` · `Runner.applyTeams` (`team_closure`) | **session** | structural |
+| `seed` · `Runner.applyFixturePrincipals` (`user_roles`) | **session** | structural |
+
+The sweeper, the team-parent paths and every seed span use the structural
+key because their blast radius is not one nameable user: the sweep reaps
+across every user at once, re-parenting changes what every team-scoped
+grant expands to WITHOUT TOUCHING A SINGLE GRANT ROW, and the reset
+empties the authority tables outright.
+
+#### `aa seed` is NOT lifecycle-exempt, and the session scope is why
+
+An earlier draft of this inventory wrote it off as "offline maintenance
+that also TRUNCATEs". ⛔ **Both halves were false**, and the mistake was
+the same one that produced the false universal above: classifying by
+command name instead of by call site and actual concurrency.
+
+It is DESIGNED for a live instance. Its migrate step is documented as
+safe "whether the server already migrated, is migrating right now, or was
+never started", and `--reset` broadcasts a wildcard cache flush over
+NOTIFY precisely because "the seeder is a separate process with no cache
+Registry" and a server may be serving throughout. And the TRUNCATE is the
+BLAST RADIUS rather than a reason to dismiss it: `seed.Reset`'s
+`TRUNCATE ... CASCADE` and its `DELETE FROM teams` empty `user_roles`,
+`user_capability_grants` and `user_capability_revokes` wholesale, and
+`bootstrap.Run` then restores the admin's role.
+
+⛔ **The seed spans take the lock at SESSION scope, and that is not a
+detail.** Their authority mutations run as a series of autocommit
+statements — a TRUNCATE, several DELETEs, a bootstrap restoration, then
+the runner's own writes. A transaction-scoped lock would be released at
+the end of whichever statement took it and would leave the rest of the
+span unprotected: a lock that exists, that production really takes, and
+that does not span the thing it protects. Session and transaction
+advisory locks share one space and conflict identically; scope decides
+only when a lock is released.
+
+⛔ **A session lock makes its own release a correctness problem, not a
+tidiness one.** `pgxpool.Conn.Release()` returns a connection TO THE POOL
+FOR REUSE, and a session-scoped advisory lock survives until it is
+explicitly unlocked or the PostgreSQL session is destroyed — an ordinary
+release does neither. So a single failed unlock (a cancelled context, a
+network blip, a statement timeout) would hand a still-locked session back
+to the pool, where it would sit idle and unowned holding the structural
+lock forever, and every batch apply after it would block indefinitely on
+a lock with no owner. A swallowed error there is a total, permanent stall
+of the feature with nothing to explain it.
+
+The release therefore HIJACKS the connection out of the pool and CLOSES
+it whenever the unlock fails, which destroys the backend session and is
+what actually drops the lock, and logs at ERROR. The pool opens a
+replacement on demand.
+
+**Four separate, non-overlapping spans, each no wider than the authority
+mutation it protects.** An earlier version wrapped the seed runner's
+whole `Run`, which held the STRUCTURAL lock — the one that excludes every
+batch authority reader — across catalogue loading, users, memberships,
+follows, fields, collections, featured, ASSETS, POSTS, likes and
+comments. A reseed runs for minutes, so an unrelated batch apply could
+wait out its entire deadline while image files were loading. Only two of
+those phases mutate authority.
+
+The runner's protection lives IN the two phases rather than around the
+call, so any caller gets it — including a test that drives one directly,
+which is how the narrowing is proven rather than asserted.
+
+⭐ **The phase, not the statement, is the semantic unit for both, and
+that is a claim rather than a convenience.** `team_closure` describes a
+HIERARCHY: it is only the shape the catalogue specifies once every team's
+rows are in, so a reader resolving a scoped grant against a half-built
+closure sees a real and different expansion. The fixture principals are
+seeded as a SET, and a reader midway through sees a world that is neither
+the old one nor the new one. Locking per statement would open exactly
+those windows.
+
+**The exhaustive check.** Every write to `user_roles`, `roles`,
+`role_capabilities`, `user_capability_grants`, `user_capability_revokes`,
+`team_closure` and `team_parents` in the seed package resolves to those
+two queries and no others. `team_memberships` is deliberately absent:
+`EffectiveScopedCapabilitiesForUser` does not read it, so it is not
+authority-bearing for this invariant.
+
+⚠️ **The operational consequence, stated rather than absorbed.** While the
+structural lock is held, batch metadata applies WAIT — so what matters is
+how long it is held, and it is held only for the authority spans above,
+never across a whole command. The long parts of a reseed — catalogue
+loading, users, memberships, follows, fields, collections, featured,
+ASSETS, POSTS, likes and comments — run WITHOUT it.
+
+An earlier revision wrapped the entire `Runner.Run`, and did have the
+consequence an earlier version of this paragraph described: an unrelated
+apply could wait out its whole request deadline while image files were
+loading. After the narrowing that is no longer true, and the wording is
+corrected rather than left standing — a stale operational warning invites
+a fix for a problem that is not there.
+
+The remaining waits are bounded by the reset and bootstrap spans, and a
+collision fails CLOSED with nothing written. A `lock_timeout` on the
+batch's acquisition is deliberately NOT taken: it would change the
+batch's failure taxonomy, and the excessive-scope problem it would have
+papered over is fixed at the source instead.
+
+**Exempt, by construction — an in-flight batch for the affected
+principal cannot coexist with these:**
+
+| writer | why coexistence is impossible |
+|---|---|
+| first-boot setup assigns the initial admin role | the handler CREATES the user in the same request; a principal that does not exist cannot have a batch in flight |
+| self-registration assigns the default role | same — the row is inserted immediately above, and the account cannot authenticate until it is verified |
+| **server-startup** `bootstrap.Run` (`run()`) | executes after migrations and BEFORE the HTTP server accepts anything, so no request of any kind is in flight |
+
+⭐ **One function, two call sites, two answers.** `bootstrap.Run` appears
+three times. The startup call is exempt for the reason above. The two
+inside `aa seed` are a different concurrency context entirely and are
+covered by the seed spans in the participating table. The exemption
+belongs to the CALL SITE, never to the function.
+
+⭐ These are exemptions with reasons, not omissions. If any of them ever
+gains a path that can run against a live principal, it joins the table
+above.
+
+Effective-capability semantics are unchanged: role-derived authority,
+direct grants, revokes, team-scoped grants and closure inheritance all
+still decide the verdict, and the decision is never reduced to raw
+grant-row equality — a team-scoped ROLE assignment produces zero rows in
+`user_capability_grants`, which is why `ScopedTeams` exists.
 
 ### Vocabulary
 
