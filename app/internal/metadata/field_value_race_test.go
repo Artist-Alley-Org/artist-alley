@@ -511,3 +511,85 @@ func putJSONRaw(r chi.Router, path string, body any) *httptest.ResponseRecorder 
 func jsonUnmarshalSoft(b []byte, v any) error { return json.Unmarshal(b, v) }
 
 func urlQueryEscape(s string) string { return url.QueryEscape(s) }
+
+// ---------------------------------------------------------------------------
+// TWO ORDINARY WRITERS, TWO POSTS, OPPOSITE DIRECTIONS (#1173, ADR 0019)
+// ---------------------------------------------------------------------------
+
+// NO BATCH IS INVOLVED. This is two ordinary single-target metadata
+// writes, and it deadlocks without migration 00067.
+//
+// Every asset_field_value write ends in a rebuild of the containing
+// posts' search documents, and the trigger that drives it walked
+// `post_assets` with NO ORDER BY. The order it got was the order the
+// membership rows happened to sit in, so two assets that belong to the
+// same two posts, attached in opposite orders, take those two post rows
+// in opposite orders. Two concurrent writers then hold each other's
+// second post and neither can proceed: SQLSTATE 40P01, with nothing
+// unusual on either side.
+//
+// This is why 00067 sorts the loop, and it is worth stating plainly
+// that the value of that sort is INDEPENDENT of the batch editor: the
+// pair below is reachable by two people editing two pictures in the
+// same two posts at the same time.
+//
+// THE SEAM: a gate holds BOTH posts, so each writer parks on the first
+// post ITS order reaches. Releasing the gate hands each of them exactly
+// one post and leaves them wanting the other, which is the collision,
+// deterministically, rather than a hoped-for interleaving.
+func TestRace_OrdinaryWritersOppositeMultiPostOrder(t *testing.T) {
+	e := newBatchRaceEnv(t)
+	owner := e.user("ordvsord")
+	ctx := e.identity(owner)
+	f1 := e.field("o1", fieldSpec{Type: "text"})
+	f2 := e.field("o2", fieldSpec{Type: "text"})
+
+	y := e.asset(&owner, nil)
+	z := e.asset(&owner, nil)
+	ps := e.sortedPosts(owner, 2)
+	pLow, qHigh := ps[0], ps[1]
+
+	// OPPOSITE physical orders, which is the whole fixture. Y's row in
+	// the low post is written first and Z's row in the high post is,
+	// so an unordered loop walks Y as low-then-high and Z as
+	// high-then-low.
+	e.addMember(pLow, y, 0)
+	e.addMember(qHigh, y, 1)
+	e.addMember(qHigh, z, 2)
+	e.addMember(pLow, z, 3)
+
+	w1 := e.writer(t)
+	w2 := e.writer(t)
+
+	gate := e.openPostLockGate(pLow, qHigh)
+	err1c := make(chan error, 1)
+	err2c := make(chan error, 1)
+	go func() { err1c <- w1.setFieldValue(ctx, y, f1, "ordinaryyword") }()
+	go func() { err2c <- w2.setFieldValue(ctx, z, f2, "ordinaryzword") }()
+
+	e.waitForBlockedApp(t, w1.appName, "its first post row")
+	e.waitForBlockedApp(t, w2.appName, "its first post row")
+	gate.commit()
+
+	err1 := awaitErr(t, err1c, "the writer on the first asset")
+	err2 := awaitErr(t, err2c, "the writer on the second asset")
+
+	if isDeadlock(err1) || isDeadlock(err2) {
+		t.Fatalf("TWO ORDINARY WRITES DEADLOCKED over two posts they share, with no batch "+
+			"anywhere near them: %v / %v", err1, err2)
+	}
+	if err1 != nil {
+		t.Fatalf("the first ordinary write failed: %v", err1)
+	}
+	if err2 != nil {
+		t.Fatalf("the second ordinary write failed: %v", err2)
+	}
+	if got, ok := e.storedText(y, f1); !ok || got != "ordinaryyword" {
+		t.Fatalf("the first value must have landed, got %q", got)
+	}
+	if got, ok := e.storedText(z, f2); !ok || got != "ordinaryzword" {
+		t.Fatalf("the second value must have landed, got %q", got)
+	}
+	e.assertPostDocumentIsFresh(t, pLow, "the low post after both ordinary writes")
+	e.assertPostDocumentIsFresh(t, qHigh, "the high post after both ordinary writes")
+}

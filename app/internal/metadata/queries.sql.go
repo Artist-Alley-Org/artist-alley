@@ -1411,8 +1411,8 @@ type ListBatchTargetSubjectsRow struct {
 // back and is written, because archive is not deletion.
 //
 // No row lock. This is the preview, which writes nothing and therefore
-// has nothing to make atomic; the apply takes its own locked read per
-// target (see LockBatchTargetSubject).
+// has nothing to make atomic; the apply takes its own locked read over
+// the whole target set (see LockBatchAssetTier).
 func (q *Queries) ListBatchTargetSubjects(ctx context.Context, assetIds []pgtype.UUID) ([]ListBatchTargetSubjectsRow, error) {
 	rows, err := q.db.Query(ctx, listBatchTargetSubjects, assetIds)
 	if err != nil {
@@ -2162,6 +2162,45 @@ func (q *Queries) ListFieldDefinitionsForConditionGraph(ctx context.Context) ([]
 	return items, nil
 }
 
+const listPostsContainingAssets = `-- name: ListPostsContainingAssets :many
+SELECT DISTINCT post_id
+  FROM post_assets
+ WHERE asset_id = ANY($1::uuid[])
+ ORDER BY post_id
+`
+
+// The DISTINCT posts that contain any of these assets, ascending.
+//
+// The batch suppresses the per-row asset-to-post search propagation
+// inside its own transaction and owes the rebuild instead. This is the
+// set it owes it for, coalesced (a thousand targets across four posts
+// is four rebuilds, not a thousand) and ASCENDING, so the post tier is
+// acquired in one direction by every acquirer.
+//
+// No `deleted_at` filter on either side: a post whose document would be
+// rebuilt by the ordinary trigger must be rebuilt here too, or
+// suppressing the trigger would change what gets indexed rather than
+// only when.
+func (q *Queries) ListPostsContainingAssets(ctx context.Context, assetIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listPostsContainingAssets, assetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var post_id pgtype.UUID
+		if err := rows.Scan(&post_id); err != nil {
+			return nil, err
+		}
+		items = append(items, post_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPostsWithMembers = `-- name: ListPostsWithMembers :many
 SELECT DISTINCT pa.post_id
   FROM post_assets pa
@@ -2242,84 +2281,108 @@ func (q *Queries) ListRequiredCollectionFields(ctx context.Context) ([]ListRequi
 	return items, nil
 }
 
-const lockBatchReferenceTarget = `-- name: LockBatchReferenceTarget :one
-SELECT id
+const lockBatchAssetTier = `-- name: LockBatchAssetTier :many
+SELECT id, owner_user_ref, team_id, asset_type, deleted_at
   FROM assets
- WHERE id = $1
-   AND deleted_at IS NULL
- FOR SHARE
+ WHERE id = ANY($1::uuid[])
+ ORDER BY id
+ FOR UPDATE
 `
 
-// The proposed reference target's liveness, held for the batch.
-//
-// Same FOR SHARE mechanism and the same reason, one plane over: THERE
-// IS NO FOREIGN KEY ON `value_ref` (asset_field_value has exactly two,
-// on asset_id and field_id), so nothing in the schema stops the target
-// being soft-deleted midway through a thousand writes that point at it.
-// A pre-batch re-check is not sufficient — it establishes a fact that
-// can stop being true before the last write lands. The lock makes the
-// liveness verdict and every write using it atomic.
-//
-// `deleted_at IS NULL` and NEVER `status`: an ARCHIVED asset is a valid
-// reference target, exactly as GetReferencedAsset has it. Archive is not
-// deletion on this plane either.
-func (q *Queries) LockBatchReferenceTarget(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, lockBatchReferenceTarget, id)
-	var id_2 pgtype.UUID
-	err := row.Scan(&id_2)
-	return id_2, err
-}
-
-const lockBatchTargetSubject = `-- name: LockBatchTargetSubject :one
-SELECT id, owner_user_ref, team_id, asset_type
-  FROM assets
- WHERE id = $1
-   AND deleted_at IS NULL
- FOR SHARE
-`
-
-type LockBatchTargetSubjectRow struct {
+type LockBatchAssetTierRow struct {
 	ID           pgtype.UUID
 	OwnerUserRef *int64
 	TeamID       pgtype.UUID
 	AssetType    int64
+	DeletedAt    pgtype.Timestamptz
 }
 
-// The batch's APPLY-side subject probe, and the seam that makes the
-// per-target subject invariant atomic (#1173, ADR 0019).
+// THE BATCH'S WHOLE ASSET TIER, IN ONE ORDERED STATEMENT (#1173, ADR
+// 0019).
 //
-// FOR SHARE, and the row lock is the entire point.
+// One row lock per id, taken FOR UPDATE, in ASCENDING id order, over
+// the union of the would-change SUBJECTS and any proposed REFERENCE
+// TARGET. It replaces a per-target locked read plus a separate,
+// earlier lock on the reference target.
 //
-// "Inside the same transaction" is NOT sufficient at READ COMMITTED.
-// The precondition this read establishes lives on `assets` while the
-// mutation it authorises lands on `asset_field_value`, a DIFFERENT
-// table, so 20a's single-statement guarded-update pattern does not
-// transfer: there is no one statement that can both test the owner and
-// write the value. Nor does the FK from asset_field_value.asset_id
-// help. Its implicit lock is FOR KEY SHARE, which conflicts only with
-// FOR UPDATE, while an ownership transfer, a team move and a soft
-// delete all take FOR NO KEY UPDATE — so the FK lets every one of them
-// slip between this read and the write it authorises.
+// # Why one statement, and why ascending
 //
-// FOR SHARE DOES conflict with FOR NO KEY UPDATE. Taking it here means
-// the read BLOCKS until any in-flight transfer, team move or soft
-// delete of this asset has committed, then sees the committed truth,
-// and HOLDS the row against a later one until this batch commits. The
-// authority verdict and the write it authorises become one atomic
-// operation, which is what the invariant says they are.
+// The per-target version acquired its locks interleaved with its
+// writes, and each write drags a lock on `posts` behind it: the
+// asset_field_value trigger rebuilds the asset's search_text, that
+// UPDATE fires assets_member_post_search_text, and that rebuilds every
+// containing post. So after the first target the batch was holding a
+// POST row and still asking for ASSET rows, while an ordinary
+// single-target write takes the same two in the opposite order. That is
+// a lock-order inversion, and it deadlocked (SQLSTATE 40P01).
 //
-// Read BEFORE the write and inside the transaction, for the reason
-// UpdateAsset states on the assets plane.
-func (q *Queries) LockBatchTargetSubject(ctx context.Context, id pgtype.UUID) (LockBatchTargetSubjectRow, error) {
-	row := q.db.QueryRow(ctx, lockBatchTargetSubject, id)
-	var i LockBatchTargetSubjectRow
-	err := row.Scan(
-		&i.ID,
-		&i.OwnerUserRef,
-		&i.TeamID,
-		&i.AssetType,
-	)
-	return i, err
+// Taking the entire asset tier FIRST closes it. The batch acquires
+// every assets row it will need before it writes anything, so it never
+// asks for an assets row while holding a posts row.
+//
+// ORDER BY id, and it is load-bearing rather than cosmetic: two batches
+// over overlapping sets must queue rather than deadlock. EXPLAIN puts
+// LockRows ABOVE the Sort, so the rows are locked in the sorted order
+// and not in whatever order the scan produced them.
+//
+// # Why FOR UPDATE and not FOR SHARE
+//
+// FOR SHARE is not strong enough here, and the reason is the same
+// trigger chain. Every write in this batch ends in an UPDATE of the
+// subject's `assets` row, which needs FOR NO KEY UPDATE, so a FOR
+// SHARE holder is a holder that must UPGRADE. Two batches sharing one
+// target would each hold FOR SHARE and each block trying to upgrade,
+// which is a deadlock the pre-lock was supposed to remove. FOR UPDATE
+// is taken once, at the strength the transaction will ultimately need,
+// and nothing upgrades.
+//
+// FOR UPDATE also conflicts with the FOR KEY SHARE that a foreign key
+// takes, which is what makes a membership INSERT into `post_assets`
+// queue behind the batch instead of racing its post rebuild. FOR NO KEY
+// UPDATE would not: KEY SHARE is compatible with it. A membership
+// DELETE takes no lock on the parent at all and is unaffected either
+// way, which is why the post rebuild also locks its post at entry.
+//
+// # No deleted_at filter, deliberately
+//
+// Lock and RETURN whatever exists, and classify afterwards in Go. The
+// two roles refuse differently. An absent or soft-deleted SUBJECT is
+// that target's `gone`; an absent or soft-deleted REFERENCE TARGET is a
+// batch-wide `reference_invalidated` that writes nothing. So the
+// filter cannot live in the statement that serves both. `deleted_at`
+// comes back so the caller can tell the two apart, and NEVER `status`:
+// an ARCHIVED asset is a valid subject and a valid reference target.
+//
+// The owner, team and type come back with the lock, so the per-target
+// gates re-check G1, G2 and G5 against a row this transaction HOLDS
+// rather than one it re-reads. That is strictly stronger than the
+// previous FOR SHARE: ownership transfer, team move and soft delete
+// all take FOR NO KEY UPDATE, and FOR UPDATE conflicts with every one
+// of them.
+func (q *Queries) LockBatchAssetTier(ctx context.Context, assetIds []pgtype.UUID) ([]LockBatchAssetTierRow, error) {
+	rows, err := q.db.Query(ctx, lockBatchAssetTier, assetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockBatchAssetTierRow
+	for rows.Next() {
+		var i LockBatchAssetTierRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerUserRef,
+			&i.TeamID,
+			&i.AssetType,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockFieldDefinitionForBatch = `-- name: LockFieldDefinitionForBatch :one
@@ -2533,6 +2596,22 @@ SELECT rebuild_asset_search_text(p.asset_id)
 // conjunct of the same WHERE.
 func (q *Queries) RebuildAssetSearchTextForField(ctx context.Context, fieldID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, rebuildAssetSearchTextForField, fieldID)
+	return err
+}
+
+const rebuildPostSearchText = `-- name: RebuildPostSearchText :exec
+SELECT public.rebuild_post_search_text($1::uuid)
+`
+
+// Rebuild ONE post's search document, explicitly.
+//
+// The same function the four search triggers call, so the coalesced
+// rebuild and the ordinary per-row one can never bake a different
+// document. It takes its post FOR NO KEY UPDATE at entry, before it
+// reads anything, which is what makes calling it late in a transaction
+// safe.
+func (q *Queries) RebuildPostSearchText(ctx context.Context, postID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, rebuildPostSearchText, postID)
 	return err
 }
 
@@ -2793,6 +2872,23 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.DisplayCondition,
 	)
 	return i, err
+}
+
+const suppressAssetPostSearchPropagation = `-- name: SuppressAssetPostSearchPropagation :exec
+SELECT set_config('aa.suppress_asset_post_search', 'on', true)
+`
+
+// Turn OFF the per-row asset-to-post search propagation FOR THIS
+// TRANSACTION ONLY (migration 00067).
+//
+// `set_config(..., is_local => true)` is SET LOCAL in function form,
+// so the flag dies with the transaction and can never leak to the next
+// caller that borrows this pooled connection. A transaction that sets
+// it OWES the rebuild: see ListPostsContainingAssets and
+// RebuildPostSearchText.
+func (q *Queries) SuppressAssetPostSearchPropagation(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, suppressAssetPostSearchPropagation)
+	return err
 }
 
 const updateAssetFieldValueIfUnchanged = `-- name: UpdateAssetFieldValueIfUnchanged :one
