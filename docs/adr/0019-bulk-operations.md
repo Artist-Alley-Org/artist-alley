@@ -163,11 +163,14 @@ job-queue job… progress streams to the UI." For these four modes that is
   and contact sheets are unbounded by nature; this supersession does not
   reach them.
 
-Measured at the 1,000-target ceiling: p95 apply 3.1 s against a 10 s
+Measured at the 1,000-target ceiling: p95 apply 0.83 s against a 10 s
 budget, one `rebuild_asset_search_text` and one `pg_notify` per written
-row, a 39.6 KB audit envelope against a 128 KB budget, and a concurrent
-ordinary single-target write to an unrelated field completing in 4 ms
-while the batch held its guards for 3 s.
+row, four post-document rebuilds rather than one per written row, and a
+39.6 KB audit envelope against a 128 KB budget. A concurrent ordinary
+single-target write to another field ON A BATCH TARGET now queues for
+the batch's duration rather than passing through it. See the 2026-09-06
+amendment: the earlier figures on this line, and the framing that made
+"an unrelated field" the relevant variable, were both wrong.
 
 ### The public wire contract
 
@@ -369,10 +372,14 @@ foreign key on `value_ref` at all**.
    authority, the field's own write capability, and mint authority —
    because all four are drawn from ONE effective-authority read.
 
-Technique is implementation-owned. As built: an explicit FOR SHARE on the
-subject and on the reference target, FOR UPDATE on the field definition
-taken BEFORE it is read, and — for authority — a transaction-scoped
-ADVISORY LOCK taken BEFORE the authority read and held to commit.
+Technique is implementation-owned. As built: ONE ascending FOR UPDATE
+statement over the would-change subjects UNION any proposed reference
+target, taken before a single value is written; FOR UPDATE on the field
+definition taken BEFORE it is read; and, for authority, a
+transaction-scoped ADVISORY LOCK taken BEFORE the authority read and
+held to commit. The subject and reference locks were FOR SHARE, taken
+one target at a time; the 2026-09-06 amendment records why that
+deadlocked and what replaced it.
 
 #### Amendment 2026-09-04 — re-resolving authority in the transaction is NOT serialization
 
@@ -663,6 +670,182 @@ ADR 0052, ADR 0012 (per-type emptiness and the rich-text survivor list),
 ADR 0099 §§1, 5 and 8 (a hidden field is still writable; the
 non-disclosure filter; the atomicity precedent), ADR 0083 §2, ADR 0092 §2
 (`fields.vocabulary.extend` as a dial).
+
+## Amendment 2026-09-06: the lock hierarchy, after a real deadlock
+
+Sprint 20c-i's apply deadlocked against an ordinary single-target
+metadata write. SQLSTATE 40P01, intermittently, on post-merge Integration
+CI. It was not a test artifact and it was not contention: it was a
+LOCK-ORDER INVERSION, and the edge that closed the cycle sat two trigger
+levels below the statement the error named.
+
+### The chain
+
+```
+INSERT asset_field_value ... ON CONFLICT
++- asset_field_value_search_text  (AFTER INSERT OR UPDATE, per row)
+   +- rebuild_asset_search_text(asset_id)
+      +- UPDATE assets SET search_text ...   -> FOR NO KEY UPDATE on
+         |                                      assets[V], held to COMMIT
+         +- assets_member_post_search_text  (AFTER UPDATE OF search_text,
+            |                                sensitivity, status,
+            |                                processing_status, deleted_at)
+            +- asset_member_post_search_text_trigger()
+               FOR r IN SELECT post_id FROM post_assets
+                         WHERE asset_id = NEW.id      -- NO ORDER BY
+               +- rebuild_post_search_text(post_id)
+                  +- UPDATE posts SET search_text ->  FOR NO KEY UPDATE
+                                                      on posts[P]
+```
+
+EVERY metadata write therefore takes an `assets` row, and then a `posts`
+row for each containing post that asset has. The batch, which locked and
+wrote one target at a time, held a post row from an earlier target while
+asking for the next asset row:
+
+```
+batch    holds posts[P]  -> waits assets[V]
+ordinary holds assets[V] -> waits posts[P]
+```
+
+Two transactions, the same two tiers, opposite order. Nothing either one
+did was individually wrong, which is what made the wait graph look
+unclosable and is the reason this is recorded rather than fixed quietly.
+
+### The correction
+
+**Asset tier.** ONE statement locks the would-change subjects UNION any
+proposed reference target, FOR UPDATE, ORDER BY id, before a single value
+is written. It replaces both the per-target FOR SHARE probe and the
+separately taken reference-target lock, and the batch never asks for an
+`assets` row while holding a `posts` row again.
+
+FOR UPDATE rather than FOR SHARE, and the reason is the same trigger
+chain that caused the deadlock. Every write ends in an UPDATE of the
+subject's `assets` row, which needs FOR NO KEY UPDATE, so a FOR SHARE
+holder is a holder that must UPGRADE: two batches sharing one target
+would each hold FOR SHARE and each block on the upgrade. FOR UPDATE is
+also the weakest mode that makes a membership INSERT queue rather than
+race, because a foreign key takes FOR KEY SHARE and that conflicts with
+FOR UPDATE and not with FOR NO KEY UPDATE.
+
+**Post tier.** The per-row asset-to-post propagation is SUPPRESSED inside
+the batch transaction, with a `SET LOCAL` flag the trigger checks, and
+the debt is paid once per DISTINCT containing post, ASCENDING, after all
+writes. A thousand targets across four posts is four rebuilds. The
+suppression is transaction-local by construction, so it cannot survive
+into the next caller that borrows the connection.
+
+**The shared rebuild function locks before it reads.**
+`rebuild_post_search_text` takes its post FOR NO KEY UPDATE as its FIRST
+statement. It bakes its document out of three reads that all precede its
+UPDATE, and at READ COMMITTED blocking on the UPDATE's row lock
+re-evaluates the target row and NOTHING ELSE: the local variables keep
+whatever snapshot they were computed from. Without the entry lock a
+transaction can compute a post document, wait, and then apply it over a
+document another transaction just committed. That is reachable from a
+membership removal and from the addition of a member that is not itself
+being edited, and both now have regressions.
+
+**The multi-post loops are sorted.**
+`asset_member_post_search_text_trigger`, `assets_mature_sync` and
+`assets_ai_provenance_sync` walk their posts ORDER BY post_id. The value
+of that sort is INDEPENDENT of the batch editor: two ordinary writers,
+editing two assets that belong to the same two posts whose membership
+rows were written in opposite orders, deadlocked with no batch anywhere
+near them. Migration 00067.
+
+### The hierarchy, stated as an order
+
+1. `field_definition[field]`, FOR UPDATE, row-scoped, and the shared half
+   of the authority advisory lock.
+2. Subjects UNION reference target: FOR UPDATE, ascending `assets.id`,
+   ONE statement.
+3. The field-value writes, and the asset search_text rebuild they set
+   off: NO KEY UPDATE on rows already held at tier 2, and NO POST LOCK.
+4. The coalesced post rebuild, ascending `post_id`, each call taking NO
+   KEY UPDATE on its post at entry.
+5. Vocabulary mint: FOR UPDATE on the vocabulary row, which is the
+   `field_definition` row already held at tier 1.
+6. The audit envelope: an append-only insert whose foreign keys take KEY
+   SHARE on rows already held.
+
+Acyclic, because the asset tier closes before any post lock is taken, no
+path takes an `assets` row lock after a `posts` row lock, and every
+multi-post acquirer walks ascending.
+
+**Tier 3 holding no post lock is load-bearing and is not free.** `assets`
+carries two other AFTER UPDATE triggers, `assets_mature_sync` and
+`assets_ai_provenance_sync`, which both loop `post_assets` and touch
+`posts`. Neither fires here only because both early-return unless
+`mature`, `ai_provenance` or the nullness of `deleted_at` actually
+changed, and a field-value write changes none of them. That is an
+assumption about somebody else's trigger, so it is covered
+BEHAVIOURALLY: with a real batch parked mid-write-phase, an independent
+transaction takes FOR NO KEY UPDATE NOWAIT on every containing post and
+must get it.
+
+### What this costs, measured
+
+At the 1,000-target four-post ceiling, on one host, 20 samples each:
+
+| | before | after |
+|---|---|---|
+| apply p95, uninstrumented | 20.2 s, of which 18 runs sat at 3.5 s and two at 20 s and 22 s | 0.83 s, every run within 35 ms of the median |
+| apply p95, under `-race` | 3.8 s | 1.19 s |
+| ordinary write to another field ON A BATCH TARGET, during the batch | 7 ms | 19 ms in one run, 829 ms in another |
+
+The apply got several times faster and the spread collapsed, which
+follows from coalescing: one 250-member post-document rebuild PER WRITTEN
+ROW becomes four for the whole operation. The pre-correction run's two
+outliers at 20 s and 22 s are recorded as measured; their cause was not
+established.
+
+The contention figure moved the other way, and it is now a coin flip
+rather than a constant. That is the intended trade and the honest
+description of it: the batch holds every target FOR UPDATE for the length
+of the operation, so a concurrent write to a TARGET either starts before
+the batch reaches its lock pass and passes through, or arrives after and
+waits.
+
+A write to an asset the batch is NOT editing takes none of the batch's
+asset-tier row locks, so it never contends at tier 2. It can still wait
+on the batch later: if that asset shares a containing post with any batch
+target, its own trigger chain requests that post while the batch's
+rebuild phase holds it. Direct tier-2 contention is confined to batch
+TARGETS; contention mediated by a shared post is not. The transaction-wide
+regression exercises exactly that path, with an ordinary write to a
+non-target that shares a post with one.
+
+The ceiling test only LOGS this number; it asserts that the concurrent
+write does not error and that its value lands, and that contract is
+unchanged.
+
+The old line in this ADR, "a concurrent ordinary single-target write to
+an unrelated field completing in 4 ms", was doubly wrong. The figure is
+not reproducible, and "unrelated field" was never the relevant variable:
+the trigger chain runs identically whatever field was written, so the
+contention was always about the SUBJECT and its posts and never about
+the field.
+
+### Preserved unchanged
+
+The validation precedence and the zero-change rules above are untouched
+by this work and are not re-decided here. A `would_change == 0` apply is
+still a REAL operation: it still runs the field-definition seam and the
+authority serialization, still consumes its token, and still writes
+exactly one envelope. What N = 0 removes is only the work there is none
+of, namely subject rows to lock and post documents to rebuild, and it is
+NOT a bypass: a proposed reference target still joins the asset tier's
+lock set, so a reference that has gone still refuses batch-wide.
+
+### Out of scope, and recorded rather than fixed
+
+`recompute_post_mature` and `recompute_post_ai_provenance` share the
+read-before-lock shape corrected in `rebuild_post_search_text`. The batch
+never changes their inputs, so there is no freshness interaction with
+this work and they are left alone. They are named here so the next reader
+does not have to rediscover them.
 
 ## Alternatives considered
 

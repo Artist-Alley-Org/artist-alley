@@ -269,12 +269,33 @@ func validateConfirmCount(mode batchMode, supplied *int, wouldChange int) error 
 //     the transaction is necessary and NOT sufficient, because at READ
 //     COMMITTED an authority change can still commit between the read
 //     and the writes it authorizes.
-//  4. LOCK THE REFERENCE TARGET with FOR SHARE, so its liveness and
-//     every write using it are atomic.
-//  5. Per target: LOCK THE SUBJECT with FOR SHARE before reading its
-//     owner and team, then write guarded on the preview's set_at.
-//  6. Mint any term at least one successful write actually stored.
-//  7. Record EXACTLY ONE audit envelope.
+//  4. LOCK THE WHOLE ASSET TIER in ONE ascending FOR UPDATE pass:
+//     every would-change subject AND any proposed reference target,
+//     one statement, before a single value is written. Reference
+//     liveness is decided here, batch-wide, from that one locked read.
+//  5. Per target: read the owner and team off the row this transaction
+//     already HOLDS, then write guarded on the preview's set_at.
+//  6. Rebuild each DISTINCT containing post's search document exactly
+//     once, ascending, after every write.
+//  7. Mint any term at least one successful write actually stored.
+//  8. Record EXACTLY ONE audit envelope.
+//
+// # Steps 4 and 6 are ONE correction, and it is a lock-order one
+//
+// Every field-value write drags a lock on `posts` behind it. The
+// asset_field_value trigger rebuilds the subject's search_text, that
+// UPDATE fires assets_member_post_search_text, and that rebuilds every
+// containing post. So a batch that locked its subjects one at a time,
+// interleaved with its writes, was holding a POST row from an earlier
+// target while asking for the next ASSET row. An ordinary
+// single-target write takes those two in the opposite order, and the
+// pair deadlocked (SQLSTATE 40P01).
+//
+// The asset tier is therefore taken WHOLE and FIRST, and the post tier
+// is SUPPRESSED during the writes and paid off once per post
+// afterwards, ascending. The batch never asks for an assets row while
+// holding a posts row, and no two acquirers walk the post tier in
+// opposite directions. See migration 00067 for the database half.
 //
 // Any refusal before the commit rolls all of it back, including the
 // consumption — which is what makes "a pre-write refusal leaves the
@@ -393,30 +414,51 @@ func (h *Handler) commitBatch(
 
 	value := payload.Value.batchValue()
 
-	// ── 4. THE REFERENCE-LIVENESS SEAM ─────────────────────────────
-	if field.Type == "reference" && value.Ref.Valid {
-		if _, err := qTx.LockBatchReferenceTarget(ctx, value.Ref); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				// DELIBERATELY NOT dangling_reference. That code says
-				// the target never resolved; this one says it resolved
-				// when the operator looked and has since stopped, and
-				// the remedy is to re-preview rather than to correct
-				// the value.
-				return zero, refuse(409, openapi.BatchReferenceInvalidated,
-					"%s: referenced asset %s no longer exists; nothing was written",
-					field.Code, uuid.UUID(value.Ref.Bytes)).withField(field.Code)
-			}
-			return zero, fmt.Errorf("metadata: lock reference target: %w", err)
-		}
-	}
-
-	// ── 5. THE PER-TARGET WRITES ───────────────────────────────────
-	outcomes, committed, err := h.writeBatchTargets(ctx, tx, qTx, current, field, mode, value, payload)
+	// ── 4. THE ASSET TIER, LOCKED WHOLE AND IN ONE DIRECTION ───────
+	live, err := h.lockBatchAssetTier(ctx, qTx, field, value, payload)
 	if err != nil {
 		return zero, err
 	}
 
-	// ── 6. THE COUPLED MINT ────────────────────────────────────────
+	// THE REFERENCE-LIVENESS SEAM, decided from that one locked read
+	// and BEFORE any per-target outcome exists.
+	//
+	// The precedence is the point. A single id can be both a subject
+	// and the proposed reference target, and the two roles refuse
+	// differently: as a subject an absent or soft-deleted row is that
+	// target's `gone`, as the reference target it is a batch-wide
+	// refusal that writes nothing at all. reference_invalidated WINS,
+	// and it wins HERE, before the write pass runs, so a response
+	// carrying both a reference_invalidated and a per-target `gone` is
+	// a shape that cannot occur.
+	if field.Type == "reference" && value.Ref.Valid {
+		if _, ok := live[uuid.UUID(value.Ref.Bytes)]; !ok {
+			// DELIBERATELY NOT dangling_reference. That code says
+			// the target never resolved; this one says it resolved
+			// when the operator looked and has since stopped, and
+			// the remedy is to re-preview rather than to correct
+			// the value.
+			return zero, refuse(409, openapi.BatchReferenceInvalidated,
+				"%s: referenced asset %s no longer exists; nothing was written",
+				field.Code, uuid.UUID(value.Ref.Bytes)).withField(field.Code)
+		}
+	}
+
+	// ── 5. THE PER-TARGET WRITES ───────────────────────────────────
+	outcomes, committed, err := h.writeBatchTargets(ctx, tx, qTx, current, field, mode, value, payload, live)
+	if err != nil {
+		return zero, err
+	}
+
+	// ── 6. THE COALESCED POST REBUILD ──────────────────────────────
+	//
+	// On EVERY success path, because a success that skips it commits
+	// stale post documents.
+	if err := h.rebuildBatchPostSearch(ctx, qTx, outcomes); err != nil {
+		return zero, err
+	}
+
+	// ── 7. THE COUPLED MINT ────────────────────────────────────────
 	//
 	// A new term commits ONLY IF at least one successful write actually
 	// stored it. "The preview predicted would_change > 0" is not
@@ -429,7 +471,7 @@ func (h *Handler) commitBatch(
 		return zero, err
 	}
 
-	// ── 7. EXACTLY ONE AUDIT ENVELOPE ──────────────────────────────
+	// ── 8. EXACTLY ONE AUDIT ENVELOPE ──────────────────────────────
 	//
 	// In this transaction, and its failure FAILS THE APPLY. See
 	// RecordBatchAssetFieldEditInTx for why this one writer is not
@@ -455,6 +497,132 @@ func (h *Handler) commitBatch(
 	}
 
 	return batchResultBody(row, payload, field, mode, outcomes, mintedTerms), nil
+}
+
+// lockBatchAssetTier takes the batch's ENTIRE asset tier in one
+// ascending FOR UPDATE statement, and returns the LIVE rows by id.
+//
+// The set is the union of the would-change subjects and, on a
+// reference field, the proposed reference target. One statement, so
+// there is exactly one acquisition order and it is ascending id; one
+// read, so the per-target gates below re-check G1, G2 and G5 against
+// rows this transaction HOLDS rather than re-reading them.
+//
+// # Why FOR UPDATE rather than the FOR SHARE this replaced
+//
+// Every write in this batch ends in an UPDATE of the subject's
+// `assets` row, which needs FOR NO KEY UPDATE. A FOR SHARE holder is
+// therefore a holder that must UPGRADE, and two batches sharing one
+// target would each hold FOR SHARE and each block on the upgrade,
+// which is the deadlock the pre-lock exists to remove. FOR UPDATE is
+// taken once, at the strength the transaction will ultimately need.
+//
+// FOR UPDATE is also the weakest mode that makes a membership INSERT
+// queue behind the batch: a foreign key takes FOR KEY SHARE, which
+// conflicts with FOR UPDATE and not with FOR NO KEY UPDATE. A
+// membership DELETE takes no parent lock at all in either mode, which
+// is why rebuild_post_search_text locks its post at entry as well.
+//
+// # Absent and soft-deleted are the SAME answer, and the caller maps it
+//
+// The statement does not filter `deleted_at`: it locks and returns
+// whatever exists, and the classification happens here, because the
+// two roles this set serves refuse differently. Filtering to the live
+// rows is that classification, and NOTHING is filtered on `status`. An
+// archived asset is a live subject and a valid reference target.
+func (h *Handler) lockBatchAssetTier(
+	ctx context.Context,
+	qTx *Queries,
+	field FieldDefinition,
+	value batchValue,
+	payload batchTokenPayload,
+) (map[uuid.UUID]LockBatchAssetTierRow, error) {
+	seen := make(map[uuid.UUID]struct{}, len(payload.Targets)+1)
+	ids := make([]pgtype.UUID, 0, len(payload.Targets)+1)
+	add := func(id uuid.UUID) {
+		if _, dup := seen[id]; dup {
+			// An id serving BOTH roles is locked and read ONCE. It is
+			// still classified twice, under the precedence commitBatch
+			// states.
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, pgtype.UUID{Bytes: id, Valid: true})
+	}
+	for _, t := range payload.Targets {
+		if t.Partition != string(openapi.BatchPartitionWouldChange) {
+			continue
+		}
+		assetID, err := uuid.Parse(t.AssetID)
+		if err != nil {
+			continue
+		}
+		add(assetID)
+	}
+	if field.Type == "reference" && value.Ref.Valid {
+		// The reference target joins the SAME set even when there is
+		// nothing to write. A zero-would-change apply is a real
+		// operation, and it must still refuse batch-wide if the
+		// reference it names has gone.
+		add(uuid.UUID(value.Ref.Bytes))
+	}
+
+	live := make(map[uuid.UUID]LockBatchAssetTierRow, len(ids))
+	if len(ids) == 0 {
+		return live, nil
+	}
+	rows, err := qTx.LockBatchAssetTier(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("metadata: lock batch asset tier: %w", err)
+	}
+	for _, r := range rows {
+		if r.DeletedAt.Valid {
+			continue
+		}
+		live[uuid.UUID(r.ID.Bytes)] = r
+	}
+	return live, nil
+}
+
+// rebuildBatchPostSearch pays off what the suppression flag deferred:
+// one rebuild per DISTINCT containing post, ascending post id, after
+// every field-value write in the batch has landed.
+//
+// The set is derived from the targets that actually CHANGED. A target
+// that ended conflict, gone, unauthorized_at_apply or error wrote
+// nothing, so nothing about its posts moved and rebuilding them would
+// be taking a post row lock for no reason.
+//
+// Ascending, and one call per post rather than one per written row:
+// a thousand targets across four posts is four rebuilds. Each call
+// takes its post FOR NO KEY UPDATE at entry, before it reads the
+// member documents it bakes, so the document it writes is computed
+// from the world it holds rather than from one it merely saw.
+func (h *Handler) rebuildBatchPostSearch(
+	ctx context.Context,
+	qTx *Queries,
+	outcomes []batchOutcome,
+) error {
+	written := make([]pgtype.UUID, 0, len(outcomes))
+	for _, o := range outcomes {
+		if o.Outcome != openapi.BatchOutcomeChanged {
+			continue
+		}
+		written = append(written, pgtype.UUID{Bytes: o.AssetID, Valid: true})
+	}
+	if len(written) == 0 {
+		return nil
+	}
+	posts, err := qTx.ListPostsContainingAssets(ctx, written)
+	if err != nil {
+		return fmt.Errorf("metadata: containing posts: %w", err)
+	}
+	for _, postID := range posts {
+		if err := qTx.RebuildPostSearchText(ctx, postID); err != nil {
+			return fmt.Errorf("metadata: rebuild post search text: %w", err)
+		}
+	}
+	return nil
 }
 
 // batchOutcome is one would_change target's fate.
@@ -487,7 +655,24 @@ func (h *Handler) writeBatchTargets(
 	mode batchMode,
 	value batchValue,
 	payload batchTokenPayload,
+	live map[uuid.UUID]LockBatchAssetTierRow,
 ) ([]batchOutcome, map[string]struct{}, error) {
+	// SUPPRESS the per-row asset-to-post search propagation for the
+	// rest of THIS transaction, and only this one: set_config's third
+	// argument is SET LOCAL, so the flag dies with the transaction and
+	// cannot reach the next caller that borrows this connection.
+	//
+	// Setting it is taking on a debt. rebuildBatchPostSearch pays it,
+	// on every success path, once per distinct containing post and in
+	// ascending post id order. Suppressing without paying would commit
+	// stale post documents; paying per row instead of per post is what
+	// produced the inverted lock order in the first place.
+	if payload.Counts.WouldChange > 0 {
+		if err := qTx.SuppressAssetPostSearchPropagation(ctx); err != nil {
+			return nil, nil, fmt.Errorf("metadata: suppress post propagation: %w", err)
+		}
+	}
+
 	out := make([]batchOutcome, 0, payload.Counts.WouldChange)
 	// The union of canonical terms that SUCCESSFUL writes actually
 	// stored. Not a boolean "did anything commit": a batch can succeed
@@ -512,23 +697,22 @@ func (h *Handler) writeBatchTargets(
 		pgAsset := pgtype.UUID{Bytes: assetID, Valid: true}
 		res := batchOutcome{AssetID: assetID}
 
-		// THE SUBJECT SEAM. FOR SHARE, taken BEFORE the owner and team
-		// are read, so a competing ownership transfer, team move or
-		// soft delete either committed before this read (and is seen)
-		// or is blocked until this batch commits (and is ordered after
-		// it). See LockBatchTargetSubject for why "same transaction"
-		// is not sufficient on its own.
-		subjectRow, err := qTx.LockBatchTargetSubject(ctx, pgAsset)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				// SOFT-DELETED since the preview. An ARCHIVED asset is
-				// NOT gone — the probe filters deleted_at and never
-				// status — and is written below like any other.
-				res.Outcome = openapi.BatchOutcomeGone
-				out = append(out, res)
-				continue
-			}
-			return nil, nil, fmt.Errorf("metadata: lock batch subject: %w", err)
+		// THE SUBJECT SEAM, already held. lockBatchAssetTier took this
+		// row FOR UPDATE before any write in this batch, so the owner
+		// and team below are read off a row this transaction HOLDS: a
+		// competing ownership transfer, team move or soft delete either
+		// committed before that lock (and is seen here) or is blocked
+		// until this batch commits (and is ordered after it). Stronger
+		// than the FOR SHARE it replaced, which conflicted with the
+		// same three writers but not with a membership insert.
+		subjectRow, held := live[assetID]
+		if !held {
+			// ABSENT OR SOFT-DELETED since the preview. An ARCHIVED
+			// asset is NOT gone: the tier filters deleted_at and never
+			// status, and is written below like any other.
+			res.Outcome = openapi.BatchOutcomeGone
+			out = append(out, res)
+			continue
 		}
 		subject := batchSubject{
 			ID: assetID, OwnerRef: subjectRow.OwnerUserRef,
