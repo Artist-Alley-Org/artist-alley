@@ -203,6 +203,8 @@ BEGIN
       FROM post_assets pa JOIN assets a ON a.id = pa.asset_id
      WHERE pa.post_id = p_post_id
        AND a.deleted_at IS NULL
+       -- #883: only members every caller could see standalone
+       -- contribute their words to the shared post document.
        AND a.sensitivity = 'public'
        AND a.status = 'active'
        AND a.processing_status = 'ready';
