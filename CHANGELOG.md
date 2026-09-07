@@ -397,6 +397,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **Two kinds of metadata edit could deadlock each other, and one of them needed no batch at all.**
+  Saving a metadata value rebuilds the searchable text of the file and then of every post that file
+  appears in. Two writes could reach those posts in opposite orders and stop each other dead, so one
+  was cancelled by the database and the person saw the save fail. That happened between a batch edit
+  and an ordinary single-file save, and also between two ordinary saves on files that share more than
+  one post, which needed no batch involved and could happen before batch editing existed. Writes now
+  take the files they touch up front and in a fixed order, a batch rebuilds each affected post once at
+  the end instead of once per file, and every rebuild claims its post before it reads what goes into
+  it, so a rebuild can no longer publish a document it worked out from stale inputs. A batch over a
+  thousand files also got substantially faster. Deterministic tests now reproduce each of these races
+  and fail without the fix (#1173, #1119, PR #1410).
+
 - **A green test run now accounts for every test.** The browser suite summed "skipped" and "never
   attempted" into one figure, so a cascade of tests that never ran read as a handful of deliberate
   skips. The two are now separate, and a test that removes itself from a run without being declared
