@@ -698,9 +698,10 @@ INSERT asset_field_value ... ON CONFLICT
                                                       on posts[P]
 ```
 
-EVERY metadata write therefore takes an `assets` row and then a `posts`
-row. The batch, which locked and wrote one target at a time, held a post
-row from an earlier target while asking for the next asset row:
+EVERY metadata write therefore takes an `assets` row, and then a `posts`
+row for each containing post that asset has. The batch, which locked and
+wrote one target at a time, held a post row from an earlier target while
+asking for the next asset row:
 
 ```
 batch    holds posts[P]  -> waits assets[V]
@@ -790,25 +791,35 @@ At the 1,000-target four-post ceiling, on one host, 20 samples each:
 
 | | before | after |
 |---|---|---|
-| apply p95, uninstrumented | 20.2 s, of which 18 runs sat at 3.5 s and two cold ones at 20 s and 22 s | 0.83 s, every run within 35 ms of the median |
+| apply p95, uninstrumented | 20.2 s, of which 18 runs sat at 3.5 s and two at 20 s and 22 s | 0.83 s, every run within 35 ms of the median |
 | apply p95, under `-race` | 3.8 s | 1.19 s |
 | ordinary write to another field ON A BATCH TARGET, during the batch | 7 ms | 19 ms in one run, 829 ms in another |
 
-The apply got several times faster, and the spread collapsed. Both follow
-from the same change: coalescing turns one 250-member post-document
-rebuild PER WRITTEN ROW into four for the whole operation, and the two
-cold outliers in the pre-correction run were that work meeting cold
-statistics.
+The apply got several times faster and the spread collapsed, which
+follows from coalescing: one 250-member post-document rebuild PER WRITTEN
+ROW becomes four for the whole operation. The pre-correction run's two
+outliers at 20 s and 22 s are recorded as measured; their cause was not
+established.
 
 The contention figure moved the other way, and it is now a coin flip
 rather than a constant. That is the intended trade and the honest
 description of it: the batch holds every target FOR UPDATE for the length
 of the operation, so a concurrent write to a TARGET either starts before
 the batch reaches its lock pass and passes through, or arrives after and
-waits. A write to an asset the batch is not editing is unaffected either
-way. The ceiling test only LOGS this number; it asserts that the
-concurrent write does not error and that its value lands, and that
-contract is unchanged.
+waits.
+
+A write to an asset the batch is NOT editing takes none of the batch's
+asset-tier row locks, so it never contends at tier 2. It can still wait
+on the batch later: if that asset shares a containing post with any batch
+target, its own trigger chain requests that post while the batch's
+rebuild phase holds it. Direct tier-2 contention is confined to batch
+TARGETS; contention mediated by a shared post is not. The transaction-wide
+regression exercises exactly that path, with an ordinary write to a
+non-target that shares a post with one.
+
+The ceiling test only LOGS this number; it asserts that the concurrent
+write does not error and that its value lands, and that contract is
+unchanged.
 
 The old line in this ADR, "a concurrent ordinary single-target write to
 an unrelated field completing in 4 ms", was doubly wrong. The figure is
