@@ -212,6 +212,36 @@
       : ['overwrite', 'fill_empties'],
   );
 
+  /**
+   * A MODE DOES NOT OUTLIVE THE FIELD THAT OFFERED IT.
+   *
+   * `mode` is state of its own while the modes actually offered are
+   * derived from the chosen field's type, so picking `append` on a
+   * multi_select and then switching to a text field leaves the two
+   * disagreeing. `<select bind:value>` does not rescue it: with no
+   * matching option the element renders NOTHING SELECTED and reports
+   * `""`, while the binding keeps `append`. Measured, before this
+   * existed: the control showed an empty box and the request carried
+   * `append`.
+   *
+   * That is the worst of the three possible outcomes. The server does
+   * refuse it, batch-wide with 422 `mode_not_supported_for_type`, so
+   * nothing could ever have been miswritten. But the operator would be
+   * reading a refusal about a mode they cannot see they chose.
+   *
+   * `overwrite` is the fallback because it is the mode every type has
+   * and the one the form opens on, so the reset lands somewhere the
+   * operator can see and change rather than somewhere clever.
+   *
+   * ⛔ NOT a client-side validation model. This normalises a control to
+   * its own options; which modes a field ACCEPTS remains the server's
+   * to decide, and an unsupported mode that reaches it is still
+   * refused there.
+   */
+  $effect(() => {
+    if (!modes.includes(mode)) mode = 'overwrite';
+  });
+
   /** The typed confirmation is REQUIRED for `overwrite` and `remove`
    *  and FORBIDDEN otherwise: supplying it on `fill_empties` or
    *  `append` is refused with 400 `confirm_count_not_applicable`

@@ -190,16 +190,18 @@ function watchBatch(page: Page) {
     async applies(): Promise<BatchCall[]> {
       return (await settle()).filter((c) => c.path.endsWith('/apply'));
     },
-    /** The one successful preview, with a NON-EMPTY OPAQUE TOKEN.
-     *  Every apply assertion in this file goes through here, so no test
-     *  can assert about an apply it never earned a token for. */
-    async okPreview(): Promise<Record<string, unknown>> {
-      const ok = (await settle()).filter((c) => c.path.endsWith('/preview') && c.status === 200);
-      expect(ok, 'exactly one successful preview').toHaveLength(1);
-      const body = ok[0].body as Record<string, unknown>;
-      expect(typeof body.token, 'the preview token').toBe('string');
-      expect((body.token as string).length, 'a non-empty opaque token').toBeGreaterThan(0);
-      return body;
+    /** How many batch calls have been seen so far.
+     *
+     *  Synchronous, and read BEFORE the action under test, so a test
+     *  can assert about the calls THAT ACTION made rather than about
+     *  every call the test has ever provoked. A file that previews
+     *  twice (the token lifecycle cases below do) cannot otherwise say
+     *  which request it means. */
+    mark(): number {
+      return pending.length;
+    },
+    async since(from: number): Promise<BatchCall[]> {
+      return (await settle()).slice(from);
     },
     dispose() {
       page.off('response', onResponse);
@@ -207,9 +209,24 @@ function watchBatch(page: Page) {
   };
 }
 
+type BatchWatcher = ReturnType<typeof watchBatch>;
+
 // ---------------------------------------------------------------------------
 // Driving the real surface
 // ---------------------------------------------------------------------------
+
+/** One typed selection entry, in the shape the contract requires. */
+interface SelEntry {
+  kind: 'asset' | 'post';
+  id: string;
+}
+const assetEntry = (id: string): SelEntry => ({ kind: 'asset', id });
+const postEntry = (id: string): SelEntry => ({ kind: 'post', id });
+
+/** Order-insensitive comparison key. The server orders its TARGETS by
+ *  asset id, but the selection is sent in tick order, and the test
+ *  cares that EXACTLY these pairs were sent, not in which sequence. */
+const entryKeys = (e: SelEntry[]): string[] => e.map((x) => `${x.kind}:${x.id}`).sort();
 
 async function gotoProfile(page: Page) {
   await page.setViewportSize({ width: 1600, height: 1000 });
@@ -272,11 +289,81 @@ async function num(page: Page, testid: string): Promise<number> {
   return Number((await page.getByTestId(testid).textContent())?.trim());
 }
 
+/** Tick exactly these entries, and prove the selection is what was
+ *  asked for before anything is previewed. */
+async function selectEntries(page: Page, entries: SelEntry[]) {
+  for (const e of entries) await tick(page, e.kind, e.id);
+  expect(
+    await selectionCount(page),
+    'the precondition this case needs really exists on the page',
+  ).toBe(entries.length);
+}
+
+/**
+ * THE SUCCESSFUL-PREVIEW STRUCTURAL BASELINE, in one place.
+ *
+ * Every case in this file that expects to reach a preview panel goes
+ * through here, and each one therefore proves the same five things in
+ * the same order:
+ *
+ *   1. the intended selectable cards EXIST and publish both halves of
+ *      their identity (`tick`);
+ *   2. they were actually SELECTED (the count is the entry count);
+ *   3. a REAL preview request was sent by this action, exactly one;
+ *   4. that request carried EXACTLY the intended `{kind, id}` entries,
+ *      no more and no fewer;
+ *   5. it came back 200 with a NON-EMPTY OPAQUE TOKEN, and the server
+ *      counted the same number of entries it was sent.
+ *
+ * Only then may a caller assert anything about an apply. A case that
+ * skipped step 4 could pass on a client that sent a bare uuid list, and
+ * a case that skipped step 5 could assert about an apply it never
+ * earned a token for.
+ *
+ * ⛔ Intentional-refusal cases and N=0 do NOT use this: they have the
+ * opposite obligation and assert it separately.
+ */
+async function previewOk(
+  page: Page,
+  watch: BatchWatcher,
+  entries: SelEntry[],
+  compose: () => Promise<void>,
+): Promise<Record<string, unknown>> {
+  await selectEntries(page, entries);
+  await openBatch(page);
+  await compose();
+
+  const from = watch.mark();
+  await preview(page);
+  await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
+
+  const fresh = (await watch.since(from)).filter((c) => c.path.endsWith('/preview'));
+  expect(fresh, 'exactly one REAL preview request was sent by this action').toHaveLength(1);
+  const call = fresh[0];
+  expect(call.status, `preview -> ${call.status} ${JSON.stringify(call.body)}`).toBe(200);
+
+  const sent = (call.payload.selection ?? []) as SelEntry[];
+  expect(entryKeys(sent), 'the TYPED selection payload that earned this token').toEqual(
+    entryKeys(entries),
+  );
+
+  const body = call.body as Record<string, unknown>;
+  expect(typeof body.token, 'the preview token').toBe('string');
+  expect((body.token as string).length, 'a non-empty opaque token').toBeGreaterThan(0);
+  expect(body.selection_entry_count, 'the server counted the entries it was sent').toBe(
+    entries.length,
+  );
+  return body;
+}
+
 // ---------------------------------------------------------------------------
 // The corpus
 // ---------------------------------------------------------------------------
 
 let field: { id: string; code: string };
+/** A multi_select definition, so a test can reach `append` / `remove`
+ *  and then leave them behind. */
+let multiField: { id: string; code: string };
 /** A1 is a member of BOTH posts. A2 belongs to P1 only, A3 to P2 only.
  *  A4 is never in a post, and is the N=1 direct-asset case. */
 let A1 = '', A2 = '', A3 = '', A4 = '';
@@ -285,6 +372,10 @@ let P1 = '', P2 = '', PEMPTY = '';
 test.beforeAll(async ({ request }) => {
   await loginAsAdminViaAPI(request);
   field = await makeField(request, 'text');
+  multiField = await makeField(request, 'multi', {
+    type: 'multi_select',
+    options: { values: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
+  });
   A1 = await makeAsset(request, 'a1');
   A2 = await makeAsset(request, 'a2');
   A3 = await makeAsset(request, 'a3');
@@ -389,26 +480,12 @@ test('with nothing selected there is no batch action and no request', async ({ p
 test('a mixed asset+post selection reaches the server as TYPED entries', async ({ page }) => {
   const watch = watchBatch(page);
   try {
-    await tick(page, 'asset', A4);
-    await tick(page, 'post', P1);
-    expect(await selectionCount(page), 'the mixed precondition really exists').toBe(2);
-
-    await openBatch(page);
-    await composeText(page, field.id, field.code, 'overwrite', 'mixed selection');
-    await preview(page);
-    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
-
-    const calls = await watch.previews();
-    expect(calls, 'a REAL preview request was sent').toHaveLength(1);
-
-    // THE PAYLOAD. Two entries, each carrying its own kind. On the old
-    // store this could only ever have been a list of bare uuids.
-    const sel = calls[0].payload.selection as Array<{ kind: string; id: string }>;
-    expect(sel).toHaveLength(2);
-    expect(sel).toContainEqual({ kind: 'asset', id: A4 });
-    expect(sel).toContainEqual({ kind: 'post', id: P1 });
-
-    const body = await watch.okPreview();
+    // THE PAYLOAD, checked by the shared baseline: two entries, each
+    // carrying its own kind. On the old store this could only ever have
+    // been a list of bare uuids.
+    const body = await previewOk(page, watch, [assetEntry(A4), postEntry(P1)], () =>
+      composeText(page, field.id, field.code, 'overwrite', 'mixed selection'),
+    );
     expect(body.selection_entry_count).toBe(2);
     // A4 is a lone asset; P1 holds A1 and A2. Three distinct targets,
     // computed by the SERVER from membership it read for itself.
@@ -427,15 +504,10 @@ test('a mixed asset+post selection reaches the server as TYPED entries', async (
 test('N=1 direct asset expands to exactly itself', async ({ page }) => {
   const watch = watchBatch(page);
   try {
-    await tick(page, 'asset', A4);
-    await openBatch(page);
-    await composeText(page, field.id, field.code, 'overwrite', 'n1 asset');
-    await preview(page);
-    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
-
-    const body = await watch.okPreview();
+    const body = await previewOk(page, watch, [assetEntry(A4)], () =>
+      composeText(page, field.id, field.code, 'overwrite', 'n1 asset'),
+    );
     const counts = body.counts as Record<string, number>;
-    expect(body.selection_entry_count).toBe(1);
     expect(counts.expanded).toBe(1);
     expect((body.targets as Array<{ asset_id: string }>).map((t) => t.asset_id)).toEqual([A4]);
     expect(body.empty_posts ?? []).toEqual([]);
@@ -447,20 +519,13 @@ test('N=1 direct asset expands to exactly itself', async ({ page }) => {
 test('N=1 EMPTY post is a real entry that expands to nothing', async ({ page }) => {
   const watch = watchBatch(page);
   try {
-    await tick(page, 'post', PEMPTY);
-    await openBatch(page);
-    await composeText(page, field.id, field.code, 'overwrite', 'n1 empty post');
-    await preview(page);
-    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
-
-    const body = await watch.okPreview();
+    // The entry is REAL: the baseline proves it was sent as a typed
+    // `post` entry and that the server counted it.
+    const body = await previewOk(page, watch, [postEntry(PEMPTY)], () =>
+      composeText(page, field.id, field.code, 'overwrite', 'n1 empty post'),
+    );
     const counts = body.counts as Record<string, number>;
 
-    // The entry is REAL: it was sent, and it is counted.
-    expect((await watch.previews())[0].payload.selection).toEqual([
-      { kind: 'post', id: PEMPTY },
-    ]);
-    expect(body.selection_entry_count).toBe(1);
     // It expanded to zero. No invented target, and no crash.
     expect(counts.expanded).toBe(0);
     expect(counts.would_change).toBe(0);
@@ -476,14 +541,9 @@ test('N=1 EMPTY post is a real entry that expands to nothing', async ({ page }) 
 test('N=1 non-empty post expands through its membership', async ({ page }) => {
   const watch = watchBatch(page);
   try {
-    await tick(page, 'post', P1);
-    await openBatch(page);
-    await composeText(page, field.id, field.code, 'overwrite', 'n1 post');
-    await preview(page);
-    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
-
-    const body = await watch.okPreview();
-    expect(body.selection_entry_count).toBe(1);
+    const body = await previewOk(page, watch, [postEntry(P1)], () =>
+      composeText(page, field.id, field.code, 'overwrite', 'n1 post'),
+    );
     expect((body.counts as Record<string, number>).expanded).toBe(2);
     expect(
       (body.targets as Array<{ asset_id: string }>).map((t) => t.asset_id).sort(),
@@ -498,27 +558,35 @@ test('overlapping posts plus a duplicated direct asset reconcile to the distinct
 }) => {
   const watch = watchBatch(page);
   try {
-    // P1 = {A1, A2}, P2 = {A1, A3}, and A1 is ALSO selected directly.
-    // Four entries; three distinct targets.
-    await tick(page, 'post', P1);
-    await tick(page, 'post', P2);
-    await tick(page, 'asset', A1);
-    await tick(page, 'asset', A4);
-    expect(await selectionCount(page), 'the overlap precondition exists').toBe(4);
-
-    await openBatch(page);
-    await composeText(page, field.id, field.code, 'overwrite', 'overlap');
-    await preview(page);
-    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
-
-    const body = await watch.okPreview();
+    // THE FIXTURE, stated exactly.
+    //
+    //   P1 = {A1, A2}          2 members
+    //   P2 = {A1, A3}          2 members
+    //   A1  selected directly  1, and it is ALSO a member of BOTH posts
+    //   A4  selected directly  1, and it is in no post
+    //
+    //   FOUR selection entries.
+    //   Naive membership + direct cardinality: 2 + 2 + 1 + 1 = 6.
+    //   The server's DISTINCT UNION: {A1, A2, A3, A4} = 4.
+    //
+    // So the interesting number is not that six became four by
+    // arithmetic anybody could do here, it is that the SERVER did it,
+    // from membership it read for itself, and that A1 reached through
+    // two posts and directly is ONE target written ONCE.
+    const body = await previewOk(
+      page,
+      watch,
+      [postEntry(P1), postEntry(P2), assetEntry(A1), assetEntry(A4)],
+      () => composeText(page, field.id, field.code, 'overwrite', 'overlap'),
+    );
     const counts = body.counts as Record<string, number>;
 
-    // The DISTINCT UNION of post-expanded members and direct asset
-    // targets, computed here from the fixture and NOWHERE in the app.
+    // The distinct union, computed here from the fixture and NOWHERE in
+    // the app. The duplicate A1s are written out rather than collapsed
+    // so the set literal reads as the six naive contributions it is.
     const union = new Set([A1, A2, A1, A3, A1, A4]);
+    expect(union.size, 'four distinct targets out of six naive contributions').toBe(4);
     expect(counts.expanded).toBe(union.size);
-    expect(body.selection_entry_count).toBe(4);
 
     // The server's own reconciliation identity, asserted rather than
     // recomputed.
@@ -597,12 +665,9 @@ test('a mistyped confirmation count is refused before anything is written', asyn
   await loginAsAdminViaAPI(request);
   const watch = watchBatch(page);
   try {
-    await tick(page, 'asset', A4);
-    await openBatch(page);
-    await composeText(page, field.id, field.code, 'overwrite', 'confirm probe');
-    await preview(page);
-    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
-    const body = await watch.okPreview();
+    const body = await previewOk(page, watch, [assetEntry(A4)], () =>
+      composeText(page, field.id, field.code, 'overwrite', 'confirm probe'),
+    );
     const wouldChange = (body.counts as Record<string, number>).would_change;
     expect(wouldChange).toBe(1);
 
@@ -638,13 +703,9 @@ test('a committed apply reports the targets that did NOT change', async ({ page,
     // Two targets through one post. Both are would_change under
     // `overwrite`, which reports no_op as zero even against a target
     // already holding the value.
-    await tick(page, 'post', P1);
-    await openBatch(page);
-    await composeText(page, field.id, field.code, 'overwrite', `committed ${RUN}`);
-    await preview(page);
-    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
-
-    const body = await watch.okPreview();
+    const body = await previewOk(page, watch, [postEntry(P1)], () =>
+      composeText(page, field.id, field.code, 'overwrite', `committed ${RUN}`),
+    );
     const wouldChange = (body.counts as Record<string, number>).would_change;
     expect(wouldChange, 'both members are eligible').toBe(2);
 
@@ -706,12 +767,9 @@ test('a target SOFT-DELETED between preview and apply comes back gone', async ({
   try {
     await gotoProfile(page);
     await clearSelection(page);
-    await tick(page, 'asset', doomedAsset);
-    await openBatch(page);
-    await composeText(page, field.id, field.code, 'overwrite', 'gone probe');
-    await preview(page);
-    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
-    await watch.okPreview();
+    await previewOk(page, watch, [assetEntry(doomedAsset)], () =>
+      composeText(page, field.id, field.code, 'overwrite', 'gone probe'),
+    );
 
     // SOFT delete, which is what DELETE does on an asset. An ARCHIVED
     // asset would NOT be gone and would still be written; this is the
@@ -743,6 +801,173 @@ test('a target SOFT-DELETED between preview and apply comes back gone', async ({
 });
 
 // ---------------------------------------------------------------------------
+// THE TOKEN'S LIFECYCLE, as the operator experiences it
+//
+// Both refusals below are 409s, and 409 is the one family whose whole
+// remedy is "preview again": the token is provably this caller's own,
+// but it is spent or stale. So both cases assert the same product
+// transition, which is the thing a client can get wrong: the refusal is
+// VISIBLE, no committed result is shown, the stale preview is DISCARDED
+// rather than left pressable, and the selection is untouched.
+// ---------------------------------------------------------------------------
+
+test('a SPENT token is refused as preview_consumed and the preview is discarded', async ({
+  page,
+  request,
+}) => {
+  await loginAsAdminViaAPI(request);
+  const target = await makeAsset(request, 'singleuse');
+  const watch = watchBatch(page);
+  try {
+    await gotoProfile(page);
+    await clearSelection(page);
+    const body = await previewOk(page, watch, [assetEntry(target)], () =>
+      composeText(page, field.id, field.code, 'overwrite', 'single use probe'),
+    );
+    const token = body.token as string;
+    const wouldChange = (body.counts as Record<string, number>).would_change;
+    expect(wouldChange).toBe(1);
+
+    // SPEND THE UI'S OWN TOKEN, out of band, through the exact apply
+    // contract: three members, the token, a reason, and the
+    // confirmation count `overwrite` requires. This is a REAL commit by
+    // the same caller, which is what makes the next press a genuine
+    // second use of one token rather than a simulated one.
+    //
+    // ⛔ Not "the first apply returned 200, so it must be single use".
+    // That asserts nothing about the SECOND use, which is the property.
+    const spent = await request.post('/api/v1/batch/asset-fields/apply', {
+      data: { token, reason: 'spent out of band', confirm_count: wouldChange },
+    });
+    expect(
+      spent.status(),
+      `out-of-band apply -> ${spent.status()} ${await spent.text()}`,
+    ).toBe(200);
+
+    // Now the operator presses Apply on the preview they are still
+    // looking at, holding the token that has just been consumed.
+    const from = watch.mark();
+    await applyWith(page, 'the operator presses apply', wouldChange);
+
+    // The RENDERED refusal is awaited before the network is inspected,
+    // and that ordering is load-bearing rather than stylistic: the
+    // watcher only holds responses it has already seen, so reading it
+    // the instant after a click races the request it is asking about.
+    const refusal = page.getByTestId('batch-refusal');
+    await expect(refusal).toBeVisible();
+    await expect(refusal).toHaveAttribute('data-refusal-reason', 'preview_consumed');
+    await expect(refusal).toHaveAttribute('data-refusal-status', '409');
+
+    const applies = (await watch.since(from)).filter((c) => c.path.endsWith('/apply'));
+    expect(applies, 'the UI sent a REAL apply request').toHaveLength(1);
+    expect(applies[0].status).toBe(409);
+    expect((applies[0].body as Record<string, unknown>).reason).toBe('preview_consumed');
+
+    // NO committed result for this second press, and the spent preview
+    // is gone: there is no Apply left to press, and the operator is
+    // back at compose with a Preview button.
+    await expect(page.getByTestId('batch-result')).toHaveCount(0);
+    await expect(page.getByTestId('batch-apply-submit')).toHaveCount(0);
+    await expect(page.getByTestId('batch-preview-panel')).toHaveCount(0);
+    await expect(page.getByTestId('batch-preview-submit')).toBeVisible();
+
+    // Exactly ONE apply committed, and it was the out-of-band one. The
+    // second press wrote nothing.
+    expect(await storedText(request, target, field.id)).toBe('single use probe');
+    expect(await selectionCount(page)).toBe(1);
+  } finally {
+    watch.dispose();
+  }
+});
+
+test('an EXPIRED preview is refused and the operator must preview again', async ({
+  page,
+  request,
+}) => {
+  await loginAsAdminViaAPI(request);
+  const target = await makeAsset(request, 'expired');
+  const watch = watchBatch(page);
+  const APPLY_GLOB = '**/batch/asset-fields/apply';
+  try {
+    await gotoProfile(page);
+    await clearSelection(page);
+    await previewOk(page, watch, [assetEntry(target)], () =>
+      composeText(page, field.id, field.code, 'overwrite', 'expiry probe'),
+    );
+
+    // ⚠️ THE ONE MOCKED RESPONSE IN THIS FILE, and the reason it is a
+    // mock is worth writing down rather than discovering later.
+    //
+    // `batchPreviewTTL` is a `const` in batch_token.go, fifteen
+    // minutes, with no configuration seam, no admin endpoint and no
+    // database handle reachable from this suite. The only faithful
+    // alternatives are sleeping for a quarter of an hour, which is not
+    // a test, or reaching into `metadata_batch_preview` behind the
+    // product, which asserts less than this does.
+    //
+    // So the mock is as narrow as it can be and still prove the thing:
+    // ONE apply response, on the real endpoint, carrying the SERVER'S
+    // OWN 409 `preview_expired` body verbatim from batch_apply.go. The
+    // request is real, the UI's own handling is real, and everything
+    // asserted below is the product's behaviour rather than the mock's.
+    let served = false;
+    await page.route(APPLY_GLOB, async (route) => {
+      if (served) return route.continue();
+      served = true;
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'this preview has expired; re-preview to see the current state',
+          reason: 'preview_expired',
+        }),
+      });
+    });
+
+    const from = watch.mark();
+    await applyWith(page, 'applying a stale preview', 1);
+
+    // Rendered refusal first, then the network, for the reason given in
+    // the consumed-token case above.
+    const refusal = page.getByTestId('batch-refusal');
+    await expect(refusal).toBeVisible();
+    await expect(refusal).toHaveAttribute('data-refusal-reason', 'preview_expired');
+    await expect(refusal).toHaveAttribute('data-refusal-status', '409');
+
+    const applies = (await watch.since(from)).filter((c) => c.path.endsWith('/apply'));
+    expect(applies, 'the UI sent a REAL apply request').toHaveLength(1);
+    expect(applies[0].status).toBe(409);
+    expect((applies[0].body as Record<string, unknown>).reason).toBe('preview_expired');
+    expect(served, 'the interception actually fired').toBe(true);
+
+    // Same product transition as a consumed token: nothing committed,
+    // the stale preview discarded, a fresh preview required.
+    await expect(page.getByTestId('batch-result')).toHaveCount(0);
+    await expect(page.getByTestId('batch-apply-submit')).toHaveCount(0);
+    await expect(page.getByTestId('batch-preview-panel')).toHaveCount(0);
+    await expect(page.getByTestId('batch-preview-submit')).toBeVisible();
+
+    expect(await storedText(request, target, field.id)).toBeUndefined();
+    expect(await selectionCount(page)).toBe(1);
+
+    // And previewing again really works: the operator is not stuck.
+    await page.unroute(APPLY_GLOB);
+    const again = watch.mark();
+    await preview(page);
+    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
+    const fresh = (await watch.since(again)).filter((c) => c.path.endsWith('/preview'));
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0].status).toBe(200);
+    expect(entryKeys(fresh[0].payload.selection as SelEntry[])).toEqual(
+      entryKeys([assetEntry(target)]),
+    );
+  } finally {
+    await page.unroute(APPLY_GLOB).catch(() => undefined);
+    watch.dispose();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // mintable_terms is NOT committed_terms
 // ---------------------------------------------------------------------------
 
@@ -764,17 +989,13 @@ test('a preview term is not reported as created when no target stored it', async
   try {
     await gotoProfile(page);
     await clearSelection(page);
-    await tick(page, 'asset', target);
-    await openBatch(page);
-    await page.getByTestId('batch-field-select').selectOption(vocab.id);
-    await page.getByTestId('batch-mode-select').selectOption('overwrite');
-    const combo = page.getByTestId(`vocab-input-${vocab.code}`);
-    await combo.fill(fresh);
-    await page.getByTestId(`vocab-create-${vocab.code}`).click();
-
-    await preview(page);
-    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
-    const body = await watch.okPreview();
+    const body = await previewOk(page, watch, [assetEntry(target)], async () => {
+      await page.getByTestId('batch-field-select').selectOption(vocab.id);
+      await page.getByTestId('batch-mode-select').selectOption('overwrite');
+      const combo = page.getByTestId(`vocab-input-${vocab.code}`);
+      await combo.fill(fresh);
+      await page.getByTestId(`vocab-create-${vocab.code}`).click();
+    });
     // The preview says the term WOULD be created.
     expect(body.mintable_terms).toContain(fresh);
     await expect(page.getByTestId('batch-mintable-terms')).toContainText(fresh);
@@ -801,6 +1022,78 @@ test('a preview term is not reported as created when no target stored it', async
 });
 
 // ---------------------------------------------------------------------------
+// append / remove are multi_select-ONLY, and they do not survive the
+// field that made them available
+//
+// The hazard is a composition one rather than a rule one: `mode` is
+// component state of its own, while the modes actually OFFERED are
+// derived from the selected field's type. Pick `append` on a
+// multi_select, switch to a text field, and a control that kept its
+// stale value would send a mode the server refuses batch-wide with 422
+// `mode_not_supported_for_type`, and worse, would be SHOWING one
+// thing while SENDING another.
+// ---------------------------------------------------------------------------
+
+test('append does not survive a switch to a non-multi_select field', async ({ page }) => {
+  const watch = watchBatch(page);
+  try {
+    let offered: string[] = [];
+    let shown = '';
+
+    const body = await previewOk(page, watch, [assetEntry(A4)], async () => {
+      const modeSelect = page.getByTestId('batch-mode-select');
+
+      // 1 + 2. A multi_select field, in a mode only multi_select has.
+      await page.getByTestId('batch-field-select').selectOption(multiField.id);
+      await expect(modeSelect.locator('option')).toHaveCount(4);
+      await modeSelect.selectOption('append');
+      await expect(modeSelect).toHaveValue('append');
+
+      // 3. Switch to a TEXT field, whose modes do not include `append`.
+      await page.getByTestId('batch-field-select').selectOption(field.id);
+
+      offered = await modeSelect
+        .locator('option')
+        .evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+      shown = await modeSelect.inputValue();
+
+      // The visible control and the bound value must AGREE. A select
+      // sitting on `append` with no such option rendered, or on an
+      // empty value with options available, is the failure either way.
+      expect(offered, 'append and remove are withdrawn with the field').toEqual([
+        'overwrite',
+        'fill_empties',
+      ]);
+      expect(offered, 'the control shows a mode it actually offers').toContain(shown);
+
+      await page.getByTestId(`field-input-${field.code}`).fill('after the switch');
+    });
+
+    // 4 + 5. THE REAL REQUEST. No stale append/remove reached the wire,
+    // and what was sent is what the control was showing.
+    const calls = await watch.previews();
+    const sent = calls[calls.length - 1];
+    expect(sent.payload.mode, 'the mode that was actually sent').toBe(shown);
+    expect(['overwrite', 'fill_empties']).toContain(sent.payload.mode);
+    // The server echoes the mode it read, so this is its reading too.
+    expect(body.mode).toBe(shown);
+
+    // And the withdrawal is not one-way: the modes come back with a
+    // multi_select field, so `append` stayed multi_select-only rather
+    // than being disabled everywhere.
+    await page.getByTestId('batch-back').click();
+    await page.getByTestId('batch-field-select').selectOption(multiField.id);
+    const backAgain = await page
+      .getByTestId('batch-mode-select')
+      .locator('option')
+      .evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+    expect(backAgain).toEqual(['overwrite', 'fill_empties', 'append', 'remove']);
+  } finally {
+    watch.dispose();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 390px. Mobile is a REDUCED app, not a shrunken one: what matters is
 // that the bar and the whole flow are still REACHABLE there.
 // ---------------------------------------------------------------------------
@@ -813,15 +1106,16 @@ test('the selection bar and the batch flow are reachable at 390px', async ({ pag
     await expect(page.getByTestId('profile-wall')).toBeVisible();
     await clearSelection(page);
 
+    // The bar has to be reachable BEFORE the flow can be, so that is
+    // asserted here rather than left to the baseline.
     await tick(page, 'asset', A4);
     await expect(page.getByTestId('selection-bar')).toBeVisible();
     await expect(page.getByTestId('selection-batch-edit')).toBeVisible();
+    await page.getByTestId('selection-clear').click();
 
-    await openBatch(page);
-    await composeText(page, field.id, field.code, 'overwrite', 'from a phone');
-    await preview(page);
-    await expect(page.getByTestId('batch-preview-panel')).toBeVisible();
-    await watch.okPreview();
+    await previewOk(page, watch, [assetEntry(A4)], () =>
+      composeText(page, field.id, field.code, 'overwrite', 'from a phone'),
+    );
   } finally {
     watch.dispose();
   }
