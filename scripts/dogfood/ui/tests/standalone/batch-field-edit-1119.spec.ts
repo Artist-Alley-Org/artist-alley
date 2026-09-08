@@ -31,10 +31,11 @@
 // `selection_entry_count`, `empty_posts` and the partition totals are
 // read out of the preview RESPONSE and asserted against the fixture the
 // test itself built. The overlap case is the sharp one: two posts
-// sharing a member, plus that member selected directly as an asset,
-// must reach the server as FOUR entries and come back as THREE
-// distinct targets, and no line of application code is permitted to
-// know that.
+// sharing a member, that member selected directly as an asset as
+// well, and a lone asset belonging to no post, must reach the server
+// as FOUR entries whose six naive contributions collapse to a
+// distinct union of FOUR targets, and no line of application code is
+// permitted to know that.
 //
 // # The committed-apply case is the point of the file
 //
