@@ -67,6 +67,7 @@
   import FooterTabs from '$components/FooterTabs.svelte';
   import PostParamHost from '$components/PostParamHost.svelte';
   import { createMarquee } from '$lib/util/marquee.svelte';
+  import type { SelectionEntry } from '$stores/selection.svelte';
 
   interface Props {
     ref?: number;
@@ -311,14 +312,27 @@
   // below. Collections are absent because CollectionCard carries no
   // `data-select-id` — it is not selectable, so it is not in the range
   // either.
-  const orderedSelectableIds = () =>
+  //
+  // TYPED entries (#1119). This profile is THE mixed surface: one band
+  // sweeps a post grid and an uploads grid in a single gesture (#1177)
+  // so it is the one place where a bare id list was not merely
+  // under-specified but actually ambiguous: two cards in this list can
+  // carry the same uuid, one as a post and one as an asset, and the
+  // batch endpoints must be told which is which.
+  const orderedSelectableEntries = (): SelectionEntry[] =>
     activeTab === 'likes'
-      ? [...sortedLikedPosts.map((p) => p.id), ...sortedLikedAssets.map((a) => a.id)]
-      : [...sortedPosts.map((p) => p.id), ...sortedAssets.map((a) => a.id)];
+      ? [
+          ...sortedLikedPosts.map((p) => ({ kind: 'post' as const, id: p.id })),
+          ...sortedLikedAssets.map((a) => ({ kind: 'asset' as const, id: a.id })),
+        ]
+      : [
+          ...sortedPosts.map((p) => ({ kind: 'post' as const, id: p.id })),
+          ...sortedAssets.map((a) => ({ kind: 'asset' as const, id: a.id })),
+        ];
 
   const marquee = createMarquee(
     () => portfolioWallEl ?? likesWallEl,
-    { ordered: orderedSelectableIds },
+    { ordered: orderedSelectableEntries },
   );
 </script>
 

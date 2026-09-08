@@ -58,6 +58,7 @@
   import { t } from '$stores/lang.svelte';
   import { isFieldValueEmpty } from '$lib/fieldDisplay';
   import { fieldPatternViolated } from '$lib/fieldRules';
+  import { fieldWriteBody } from '$lib/fieldWriteValue';
   import { conditionShows, type ConditionController } from '$lib/displayCondition';
   import { bucketFields, tabStripVisible, resolveTabSelection, groupFields } from '$lib/fieldTabs';
   import FieldValueInput from './FieldValueInput.svelte';
@@ -314,30 +315,11 @@
    * express that mistake.
    */
   function setBody(def: FieldDef, v: Value, base: Baseline): Record<string, unknown> {
-    const body: Record<string, unknown> = {};
-    switch (def.type) {
-      case 'text':
-      case 'longtext':
-      case 'rich_text':
-      case 'select':
-      case 'tree':
-        body.value_text = v.value_text ?? '';
-        break;
-      case 'number':
-      case 'boolean':
-        body.value_num = v.value_num;
-        break;
-      case 'date':
-      case 'datetime':
-        body.value_date = v.value_date;
-        break;
-      case 'multi_select':
-        body.value_options = v.value_options ?? [];
-        break;
-      case 'reference':
-        body.value_ref = v.value_ref;
-        break;
-    }
+    // The type→member mapping moved to `$lib/fieldWriteValue` when the
+    // batch editor needed the identical answer (#1119). It is the same
+    // switch it always was; what stays HERE is the guard, which is this
+    // surface's alone, because a batch has no per-value baseline to send.
+    const body: Record<string, unknown> = { ...fieldWriteBody(def.type, v) };
     if (base) body.if_unchanged_since = base.setAt;
     else body.if_absent = true;
     return body;

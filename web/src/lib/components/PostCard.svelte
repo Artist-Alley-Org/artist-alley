@@ -22,7 +22,7 @@
   import CardCheckbox from './CardCheckbox.svelte';
   import { auth } from '$stores/auth.svelte';
   import { site } from '$stores/site.svelte';
-  import { selection } from '$stores/selection.svelte';
+  import { selection, type SelectionEntry } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { t } from '$stores/lang.svelte';
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
@@ -160,9 +160,9 @@
      *  Undefined ⇒ the array IS the membership, which is the case on
      *  every list endpoint. */
     memberCount?: number;
-    /** Feed-order ids for range selection (#1127). A thunk — see
-     *  CardCheckbox's prop of the same name. */
-    orderedIds?: () => string[];
+    /** Feed-order TYPED entries for range selection (#1127). A thunk;
+     *  see CardCheckbox's prop of the same name. */
+    ordered?: () => SelectionEntry[];
   }
 
   let {
@@ -171,8 +171,13 @@
     tileSizes = DEFAULT_TILE_SIZES,
     mode = 'grid',
     memberCount: memberCountProp,
-    orderedIds,
+    ordered,
   }: Props = $props();
+
+  /** What this card contributes to the selection: a POST, always.
+   *  Identity is the pair, and this half of it is a property of the
+   *  component rather than of the surface hosting it. */
+  const entry = $derived<SelectionEntry>({ kind: 'post', id: post.id });
 
   /** Selection is gated exactly as CardCheckbox gates it — same two
    *  conditions, because a shift-click that selected on a surface with
@@ -428,7 +433,7 @@
 
   // Selected state (#515 slice 3). A browse card contributes its POST id
   // to the shared selection.
-  const selected = $derived(selection.has(post.id));
+  const selected = $derived(selection.has('post', post.id));
 
   // #555 — grid is a zero-gap CONTACT SHEET: drop the card chrome
   // (rounded / border / elevated bg) so tiles butt into one unbroken
@@ -845,7 +850,7 @@
     if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.button === 0 && canSelect) {
       e.preventDefault();
       e.stopPropagation();
-      selection.extendTo(post.id, orderedIds ? orderedIds() : [post.id]);
+      selection.extendTo(entry, ordered ? ordered() : [entry]);
       return;
     }
     // Modifier-key / non-primary clicks fall through to the native
@@ -870,12 +875,16 @@
   keeps the /?post={id} modal intercept (handleClick) with /posts/{id} as
   the modifier-click / new-tab fallback.
 -->
-<!-- `data-select-id` is what the marquee hit-tests against (#1127). It
-     rides the CARD ROOT rather than the checkbox because the band
-     selects a card when it touches the card, not when it happens to
-     clip a 24px control in one corner. -->
+<!-- `data-select-id` + `data-select-kind` are what the marquee
+     hit-tests against (#1127, #1119). They ride the CARD ROOT rather
+     than the checkbox because the band selects a card when it touches
+     the card, not when it happens to clip a 24px control in one
+     corner. The kind travels with the id because the batch contract's
+     identity is the PAIR, and a mixed profile band has to be able to
+     say which of two same-uuid cards it crossed. -->
 <div
   data-select-id={post.id}
+  data-select-kind="post"
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
   {#if social}
@@ -988,7 +997,7 @@
          and one control: what the card IS on the left, and the one
          control that belongs to READING a shelf — the checkbox — on the
          right. The checkbox moving to the right is a MOVE, not a second
-         checkbox: same `CardCheckbox`, same `orderedIds`, so
+         checkbox: same `CardCheckbox`, same `ordered`, so
          shift-range and the marquee's passthrough behave as before.
 
          ONE GAP, AND IT IS THE ONLY ONE. #1158's band held a two-control
@@ -1087,7 +1096,7 @@
           tooltipKey={post.id}
         />
       {/if}
-      <CardCheckbox id={post.id} placement="inline" {orderedIds} />
+      <CardCheckbox kind="post" id={post.id} placement="inline" {ordered} />
     </div>
   {/if}
 
@@ -1138,7 +1147,7 @@
          frame, so the checkbox is an inline control in the bottom band
          below and nothing at all sits over the preview. -->
     {#if !detailed}
-      <CardCheckbox id={post.id} corner={showOverlay ? 'right' : 'left'} {orderedIds} />
+      <CardCheckbox kind="post" id={post.id} corner={showOverlay ? 'right' : 'left'} {ordered} />
     {/if}
 
     <!-- Kind / multi-asset indicator. BOTTOM-right, PERSISTENT — the one

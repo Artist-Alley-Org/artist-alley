@@ -12,7 +12,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { browseView, columnMinPx, type ListColumnDef } from '$stores/browseView.svelte';
-  import { selection } from '$stores/selection.svelte';
+  import { selection, type SelectionEntry } from '$stores/selection.svelte';
   import { auth } from '$stores/auth.svelte';
   import { site } from '$stores/site.svelte';
   import { t } from '$stores/lang.svelte';
@@ -97,7 +97,7 @@
   interface Props {
     items: Post[];
     loading?: boolean;
-    /** Feed-order ids for range selection (#1127).
+    /** Feed-order TYPED entries for range selection (#1127).
      *
      *  ⚠️ Deliberately NOT used as this table's range order. The list
      *  view SORTS client-side, so the sequence on screen is
@@ -106,7 +106,7 @@
      *  things the reader cannot see between the two they clicked.
      *  Accepted so the browse page can hand one prop to both branches
      *  of ContentGrid; see `rangeOrder` below. */
-    orderedIds?: () => string[];
+    ordered?: () => SelectionEntry[];
   }
   let { items, loading = false }: Props = $props();
 
@@ -301,17 +301,21 @@
   // would select rows scattered through the table rather than the block
   // the reader dragged across. Everywhere else the two are identical and
   // the distinction never comes up.
-  const rangeOrder = () => sortedItems.map((p) => p.id);
+  const rangeOrder = (): SelectionEntry[] =>
+    sortedItems.map((p) => ({ kind: 'post' as const, id: p.id }));
 
   const canSelect = $derived(!!auth.user && !site.demoMode);
 
   function toggleRow(id: string, shift: boolean) {
+    // Every row of this table is a POST, so the kind is a constant
+    // here, but it is still STORED, not inferred downstream.
+    const entry: SelectionEntry = { kind: 'post', id };
     if (shift) {
-      selection.extendTo(id, rangeOrder());
+      selection.extendTo(entry, rangeOrder());
       return;
     }
-    selection.toggle(id);
-    selection.setAnchor(id);
+    selection.toggle(entry);
+    selection.setAnchor(entry);
   }
 
   /** Move focus by `delta` rows, wrapping at neither end.
@@ -322,7 +326,11 @@
    *  impossible to reach a row without selecting everything on the way,
    *  and there is no modifier here to escape it with.) */
   function moveFocus(from: string, delta: number, el: HTMLElement) {
-    const order = rangeOrder();
+    // Row ids, not selection entries: this moves FOCUS between rows and
+    // has nothing to do with what is selected. Same `sortedItems`
+    // sequence `rangeOrder` is built from, so the two cannot disagree
+    // about what "the next row" is.
+    const order = sortedItems.map((p) => p.id);
     const i = order.indexOf(from);
     const next = i + delta;
     if (i < 0 || next < 0 || next >= order.length) return;
@@ -538,13 +546,14 @@
            rather than an accident of it. -->
       <div data-list-rows>
       {#each sortedItems as post (post.id)}
-        {@const selected = selection.has(post.id)}
+        {@const selected = selection.has('post', post.id)}
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <div
           role="row"
           tabindex="0"
           data-row-id={post.id}
           data-select-id={post.id}
+          data-select-kind="post"
           aria-selected={canSelect ? selected : undefined}
           onclick={(e) => {
             // Shift+click selects rather than opens, exactly as it does

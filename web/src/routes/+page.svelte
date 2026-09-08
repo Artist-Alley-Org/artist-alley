@@ -19,11 +19,11 @@
   import BrowseFooter from '$components/BrowseFooter.svelte';
   import PostListTable from '$components/PostListTable.svelte';
   import ContentGrid from '$components/ContentGrid.svelte';
-  import SelectionBar from '$components/SelectionBar.svelte';
   import { browseView } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import { createMarquee } from '$lib/util/marquee.svelte';
+  import type { SelectionEntry } from '$stores/selection.svelte';
   import { createInfiniteScroll } from '$lib/util/infiniteScroll.svelte';
   import { resetResultsScroll } from '$lib/util/resultsScroll';
   import type { components } from '$api/schema';
@@ -454,8 +454,8 @@
   //
   // Attached to the WALL, not to <main>: the band should not start from
   // the rail, the featured strip or the page gutters, all of which are
-  // chrome with their own gestures. `orderedIds` is the loaded feed in
-  // feed order — the same array the grid renders from — which is what
+  // chrome with their own gestures. `orderedEntries` is the loaded feed
+  // in feed order, the same array the grid renders from, which is what
   // makes a range "everything between these two posts" rather than
   // "everything between these two positions in some column".
   //
@@ -464,7 +464,15 @@
   // see, so there is no phantom selection of an unfetched page.
   let wallEl = $state<HTMLElement | null>(null);
   const orderedIds = () => items.map((p) => p.id);
-  const marquee = createMarquee(() => wallEl, { ordered: orderedIds });
+  /** The same feed order, as TYPED selection entries (#1119). Browse is
+   *  a post surface end to end, so every entry here is `post`, and it
+   *  is written down rather than assumed downstream, because the batch
+   *  contract's identity is the pair and the store now holds the pair.
+   *  `orderedIds` stays as it was for PostParamHost's sibling walk,
+   *  which navigates and does not select. */
+  const orderedEntries = (): SelectionEntry[] =>
+    items.map((p) => ({ kind: 'post' as const, id: p.id }));
+  const marquee = createMarquee(() => wallEl, { ordered: orderedEntries });
 
   const hasMore = $derived(nextCursor !== null);
   // guestFeed has its own empty state below; without this the generic
@@ -562,8 +570,8 @@
   // this route only says what "sibling" means here and what to do when
   // the walk runs off the loaded end.
   //
-  // `orderedIds` is already the marquee's ordering (the loaded feed in
-  // feed order, the same array the grid renders from), so the arrows
+  // `orderedIds` is the same loaded feed, in the same order, that the
+  // marquee's `orderedEntries` is built from, so the arrows
   // and the range-selection gesture cannot disagree about what comes
   // next.
 
@@ -666,13 +674,6 @@
       {t('browse.results_for', { query })}
     </p>
   {/if}
-
-  <!-- Multi-select indicator (#515 slice 3). Sticky under the navbar so
-       the count stays visible while scrolling a long feed; the full
-       bulk-action bar is #39. Renders only while a selection is active. -->
-  <div class="sticky top-2 z-30 empty:hidden">
-    <SelectionBar />
-  </div>
 
   <!-- #417 — the curated rail sits ABOVE both branches below. For a
        guest it is the entire landing page (posts are members-only);
@@ -882,10 +883,10 @@
          the two halves of one feed. -->
     {#snippet cardSnippet(item: unknown, mode: typeof browseView.mode)}
       {@const post = item as Post}
-      <PostCard {post} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} {orderedIds} />
+      <PostCard {post} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} ordered={orderedEntries} />
     {/snippet}
     {#snippet listSnippet()}
-      <PostListTable {items} {loading} {orderedIds} />
+      <PostListTable {items} {loading} ordered={orderedEntries} />
     {/snippet}
 
     <div
