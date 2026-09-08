@@ -126,7 +126,7 @@
 
   // Selected state (#515 slice 3) — the card gets a ring, the checkbox a
   // check. Read from the shared selection singleton.
-  const selected = $derived(selection.has(asset.id));
+  const selected = $derived(selection.has('asset', asset.id));
 
   // #555 — grid is a zero-gap CONTACT SHEET: drop the card chrome
   // (rounded / border / elevated bg) so tiles butt into one unbroken
@@ -299,10 +299,14 @@
   overlay is pointer-events-none; the tool row (z-20) captures its own
   clicks above the link.
 -->
-<!-- `data-select-id` is what the marquee hit-tests against (#1177), and
-     it carries the ASSET id — the same id CardCheckbox contributes to
-     the selection store, so a band and a click build one set rather
-     than two. PostCard has had this attribute since #1127; AssetCard
+<!-- `data-select-id` + `data-select-kind` are what the marquee
+     hit-tests against (#1177), and they carry the ASSET id and the
+     `asset` kind, the same pair CardCheckbox contributes to the
+     selection store, so a band and a click build one set rather
+     than two. THE KIND IS PART OF THE ATTRIBUTE CONTRACT (#1119): the
+     band reads identity off the DOM, the batch endpoints require a
+     typed `{kind, id}`, and a card that published only its uuid would
+     force the band to guess the half the server refuses to guess. PostCard has had this attribute since #1127; AssetCard
      never got it, which made marquee-drag select ZERO cards on the
      profile uploads grid while the checkbox and Shift+range worked
      fine (they go through CardCheckbox, not the hit-test).
@@ -317,6 +321,7 @@
      make a sweep silently drop cards it visibly crossed. -->
 <div
   data-select-id={asset.id}
+  data-select-kind="asset"
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
   {#if detailed && !restricted}
@@ -382,7 +387,7 @@
         variant="inline"
         tooltipKey={asset.id}
       />
-      <CardCheckbox id={asset.id} placement="inline" />
+      <CardCheckbox kind="asset" id={asset.id} placement="inline" />
     </div>
   {/if}
 
@@ -450,7 +455,7 @@
            it is an inline control in the bottom band there, so nothing
            sits over the preview. -->
       {#if !detailed}
-        <CardCheckbox id={asset.id} />
+        <CardCheckbox kind="asset" id={asset.id} />
       {/if}
 
       <!-- The kind, as an ICON and never as a word (#1047). This is the

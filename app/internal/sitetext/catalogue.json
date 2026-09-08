@@ -383,7 +383,8 @@
   },
   "selection": {
     "count": "{count} selected",
-    "clear": "Clear"
+    "clear": "Clear",
+    "edit_field": "Edit a field"
   },
   "user_menu": {
     "signed_in_as": "Signed in as @{username}",
@@ -3588,7 +3589,7 @@
     },
     "drafts": {
       "hint": "Only you can see these. Publish one from its post menu when it's ready.",
-      "empty": "No drafts. Tick \u201cSave as a draft\u201d when you upload to start one."
+      "empty": "No drafts. Tick “Save as a draft” when you upload to start one."
     },
     "about": {
       "location": "Location",
@@ -3734,5 +3735,105 @@
     "publish_help": "A draft is visible only to you until you publish it.",
     "open_full_page": "Use the full page instead",
     "media_type_unknown": "Other"
+  },
+  "batch": {
+    "title": "Edit a field on the selection",
+    "selection_summary": "{count} selected. A selected post is expanded to its assets by the server.",
+    "loading_fields": "Loading fields...",
+    "fields_error": "The field list could not be loaded.",
+    "field_label": "Field",
+    "field_placeholder": "Choose a field",
+    "mode_label": "Mode",
+    "mode": {
+      "overwrite": "Overwrite every eligible asset",
+      "fill_empties": "Fill only the empty ones",
+      "append": "Add these terms",
+      "remove": "Take these terms out"
+    },
+    "value_label": "Value",
+    "preview": "Preview",
+    "previewing": "Previewing...",
+    "back": "Back",
+    "apply": "Apply",
+    "applying": "Applying...",
+    "again": "Start another",
+    "close": "Close",
+    "counts": {
+      "entries": "Selected entries",
+      "expanded": "Assets reached",
+      "eligible": "Eligible",
+      "would_change": "Would change",
+      "no_op": "No change",
+      "refused": "Refused",
+      "inapplicable": "Not applicable",
+      "unreadable": "Not readable",
+      "unauthorized": "Not permitted"
+    },
+    "resolved_value_label": "Value that will be stored:",
+    "empty_posts": "{count} selected post(s) hold no assets, so they contributed nothing.",
+    "mintable_terms": "New terms this would create: {terms}",
+    "reason_label": "Why are you making this change?",
+    "confirm_label": "Type {count} to confirm how many records will change",
+    "committed": "Applied. {count} record(s) changed.",
+    "outcome": {
+      "changed": "Changed",
+      "conflict": "Value moved",
+      "gone": "Deleted",
+      "unauthorized_at_apply": "Permission changed",
+      "error": "Failed"
+    },
+    "outcome_detail": {
+      "changed": "was written",
+      "conflict": "its value moved after the preview, so it was left alone",
+      "gone": "it was deleted after the preview",
+      "unauthorized_at_apply": "your permission over it changed before it was written:",
+      "error": "it failed unexpectedly"
+    },
+    "unauthorized_reason": {
+      "bulk_scope": "the bulk editor no longer covers its team",
+      "subject_authority": "you may no longer change this record",
+      "unreadable": "you lost read access to this field here"
+    },
+    "committed_terms": "Terms created: {terms}",
+    "committed_terms_none": "No new vocabulary terms were created.",
+    "selection_kept": "Your selection of {count} is still here.",
+    "refusal_generic": "The server refused this operation.",
+    "refusal_expected": "It expected {count}.",
+    "reason": {
+      "archived_slug": "That term is archived.",
+      "bulk_capability_required": "You may not use the bulk editor.",
+      "confirm_count_invalid": "The confirmation count is out of range.",
+      "confirm_count_mismatch": "The confirmation count does not match what would change.",
+      "confirm_count_not_applicable": "This mode does not take a confirmation count.",
+      "confirm_count_required": "This mode needs a typed confirmation count.",
+      "dangling_reference": "That reference does not resolve.",
+      "definition_drift": "The field definition changed since the preview. Preview again.",
+      "empty_selection": "Nothing was selected.",
+      "expanded_target_ceiling": "The selection expands to too many assets. The limit is 1000.",
+      "field_archived": "That field is archived, so its values cannot be set.",
+      "field_mirrored": "That field mirrors an asset column and cannot be batch edited.",
+      "field_read_only": "That field is read only.",
+      "field_write_capability_required": "You may not write this field.",
+      "fill_empties_value_empty": "Fill empties needs a value to fill with.",
+      "mode_not_supported_for_type": "That mode does not apply to this field type.",
+      "pattern_mismatch": "The value does not match the pattern this field requires.",
+      "preview_consumed": "That preview has already been applied. Preview again.",
+      "preview_expired": "That preview has expired. Preview again.",
+      "preview_token_invalid": "That preview token is not valid for you.",
+      "reason_payload_too_large": "The reason is too large to accept.",
+      "reason_required": "A reason is required.",
+      "reason_too_long": "The reason is longer than 500 characters.",
+      "reference_invalidated": "That reference stopped resolving since the preview. Preview again.",
+      "required_value_empty": "This field is required, so it cannot be given an empty value.",
+      "selection_entry_ceiling": "Too many selected entries. The limit is 500.",
+      "token_required": "The preview token was missing.",
+      "unknown": "The server refused this operation.",
+      "unknown_mode": "That is not a mode this server knows.",
+      "unknown_selection_kind": "That is not a selection kind this server knows.",
+      "unknown_slug": "That term is not in this vocabulary.",
+      "value_type_mismatch": "The value does not match this field type.",
+      "vocabulary_drift": "The vocabulary changed since the preview. Preview again.",
+      "vocabulary_extend_required": "You may not add terms to this vocabulary."
+    }
   }
 }

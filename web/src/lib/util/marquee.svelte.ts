@@ -41,7 +41,7 @@
 // and #1127 states it outright. Pen behaves like touch here for the same
 // reason: it is used on a surface that also scrolls.
 
-import { selection } from '$stores/selection.svelte';
+import { selection, selectionKey, type SelectionEntry } from '$stores/selection.svelte';
 import { cancelNativeDrag } from '$lib/util/nativeDrag';
 import { scrollportOf } from '$lib/util/scrollport';
 
@@ -66,12 +66,13 @@ export interface MarqueeRect {
 }
 
 export interface MarqueeOptions {
-  /** Selector for one selectable card. Each match must carry
-   *  `data-select-id`. */
+  /** Selector for one selectable card. Each match must carry BOTH
+   *  `data-select-id` and `data-select-kind`. See `apply`. */
   itemSelector?: string;
-  /** The feed-order id list, for the anchor bookkeeping a marquee
-   *  leaves behind. */
-  ordered: () => string[];
+  /** The feed-order entry list, for the anchor bookkeeping a marquee
+   *  leaves behind. TYPED entries, because a profile band sweeps posts
+   *  and assets in the same gesture (#1177). */
+  ordered: () => SelectionEntry[];
 }
 
 /**
@@ -106,10 +107,10 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
   let startDocY = 0;
   let lastX = 0;
   let lastY = 0;
-  /** Ids selected by the marquee before it started, so the band is
+  /** Entries selected before the marquee started, so the band is
    *  ADDITIVE — dragging over nothing must not clear a selection the
    *  reader built by clicking. */
-  let baseline: string[] = [];
+  let baseline: SelectionEntry[] = [];
   let raf: number | null = null;
 
   /** The scrolling ancestor. The browse wall lives inside <main>'s own
@@ -174,26 +175,37 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
     const el = getEl();
     if (!el) return;
     const st = scrollTopOf();
-    const inBand = new Set<string>();
+    // Keyed by `kind:id`, not by id: the profile band sweeps a post
+    // grid and an asset grid in one gesture, and an asset that happens
+    // to share a uuid with a post is a DIFFERENT card the reader can
+    // see. A Set of bare ids would have merged the two into one entry
+    // and dropped whichever the hit-test visited second.
+    const inBand = new Map<string, SelectionEntry>();
     for (const node of el.querySelectorAll<HTMLElement>(itemSelector)) {
       const id = node.dataset.selectId;
-      if (!id) continue;
+      const kind = node.dataset.selectKind;
+      // BOTH halves are required. A card carrying only the id is the
+      // #1177 failure one level up: the band would select something
+      // whose kind it had to guess, and a guessed kind is exactly what
+      // the batch contract refuses to accept from a client.
+      if (!id || (kind !== 'asset' && kind !== 'post')) continue;
       const r = node.getBoundingClientRect();
       // Card rect into document space, then a plain AABB overlap.
       const top = r.top + st;
       if (r.left < dl + dw && r.right > dl && top < dt + dh && top + r.height > dt) {
-        inBand.add(id);
+        const entry: SelectionEntry = { kind, id };
+        inBand.set(selectionKey(entry), entry);
       }
     }
-    const next: string[] = [];
-    for (const id of baseline) {
-      if (!inBand.has(id)) next.push(id); // was on, band leaves it on
+    const next: SelectionEntry[] = [];
+    for (const e of baseline) {
+      if (!inBand.has(selectionKey(e))) next.push(e); // was on, band leaves it on
     }
-    const was = new Set(baseline);
-    for (const id of inBand) {
-      if (!was.has(id)) next.push(id); // was off, band turns it on
+    const was = new Set(baseline.map(selectionKey));
+    for (const [k, e] of inBand) {
+      if (!was.has(k)) next.push(e); // was off, band turns it on
     }
-    selection.ids = next;
+    selection.replace(next);
   }
 
   /** Scroll the wall when the pointer sits near the scrollport's top or
@@ -315,7 +327,7 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
     if (e.key !== 'Escape' || !active) return;
     e.preventDefault();
     e.stopPropagation();
-    selection.ids = [...baseline];
+    selection.replace(baseline);
     cancel();
   }
 
@@ -345,7 +357,7 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
       // THE PRE-GESTURE SNAPSHOT. Everything the band does is expressed
       // against this and nothing else — see `apply` for the XOR, and
       // `cancel` for the fact that restoring it is the whole undo.
-      baseline = [...selection.ids];
+      baseline = selection.snapshot();
       capturedEl = e.currentTarget as HTMLElement;
       capturedEl.setPointerCapture(e.pointerId);
       // Escape is armed only while a band is live, and torn down with
@@ -375,7 +387,7 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
       // somewhere to extend from — the last id in feed order that the
       // band caught, not the last one the hit-test happened to visit.
       const ordered = opts.ordered();
-      const caught = ordered.filter((id) => selection.has(id));
+      const caught = ordered.filter((e) => selection.hasEntry(e));
       selection.setAnchor(caught.length > 0 ? caught[caught.length - 1] : null);
     }
   }

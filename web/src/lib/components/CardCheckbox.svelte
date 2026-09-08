@@ -23,12 +23,21 @@
 
   import { auth } from '$stores/auth.svelte';
   import { site } from '$stores/site.svelte';
-  import { selection } from '$stores/selection.svelte';
+  import { selection, type SelectionEntry, type SelectionKind } from '$stores/selection.svelte';
   import { t } from '$stores/lang.svelte';
 
   interface Props {
-    /** The id this card contributes to the selection (post id on browse,
-     *  asset id in collections / profile assets). */
+    /** What this card contributes: `post` on browse and every post
+     *  grid, `asset` on the profile uploads grid and the asset detail
+     *  surfaces.
+     *
+     *  REQUIRED, and stored as half of the selection's identity rather
+     *  than inferred later. The batch endpoints take
+     *  `{kind, id}` entries because "a server that guessed would expand
+     *  a post id as an asset id and silently write nothing", and the
+     *  only place in the app that KNOWS which it is, is the card. */
+    kind: SelectionKind;
+    /** The id this card contributes to the selection. */
     id: string;
     /** Which top corner to sit in (#1111). Left by default, which is
      *  every card this component has ever rendered on.
@@ -42,15 +51,18 @@
      *  every hover — the same corner collision #578 resolved for the
      *  multi-asset badge by moving it, not by shrinking it. */
     corner?: 'left' | 'right';
-    /** The feed-order id list this card sits in, for Shift+click range
-     *  selection (#1127). A THUNK rather than an array so the card does
-     *  not re-render every time the feed appends a page — it is only
-     *  read at the moment of a shift-click.
+    /** The feed-order entry list this card sits in, for Shift+click
+     *  range selection (#1127). A THUNK rather than an array so the
+     *  card does not re-render every time the feed appends a page: it
+     *  is only read at the moment of a shift-click.
+     *
+     *  TYPED entries, not ids: a range on a mixed surface has to be
+     *  able to say which of two same-uuid cards it stopped at.
      *
      *  Absent on surfaces that have not adopted range selection; the
      *  checkbox then falls back to a plain toggle, which is what it has
      *  always done. */
-    orderedIds?: () => string[];
+    ordered?: () => SelectionEntry[];
     /** Where this checkbox sits (#1136).
      *
      *  `overlay` — the historical placement: absolutely positioned in a
@@ -71,10 +83,11 @@
     placement?: 'overlay' | 'inline';
   }
 
-  let { id, corner = 'left', orderedIds, placement = 'overlay' }: Props = $props();
+  let { kind, id, corner = 'left', ordered, placement = 'overlay' }: Props = $props();
 
+  const entry = $derived<SelectionEntry>({ kind, id });
   const canSelect = $derived(!!auth.user && !site.demoMode);
-  const selected = $derived(selection.has(id));
+  const selected = $derived(selection.has(kind, id));
   // Pinned visible while selecting; otherwise hover/focus/touch-revealed.
   const pinned = $derived(selected || selection.active);
 
@@ -85,15 +98,15 @@
     // (#1127). A reader who has started selecting is aiming at
     // checkboxes; making the range gesture work only on the artwork
     // would mean the two targets 6px apart do different things.
-    if (e.shiftKey && orderedIds) {
-      selection.extendTo(id, orderedIds());
+    if (e.shiftKey && ordered) {
+      selection.extendTo(entry, ordered());
       return;
     }
-    selection.toggle(id);
+    selection.toggle(entry);
     // A plain toggle re-pivots, so the next Shift+click ranges from
     // here. Dropping the anchor when UNchecking would strand the next
     // range on a stale pivot several screens away.
-    selection.setAnchor(id);
+    selection.setAnchor(entry);
   }
 </script>
 

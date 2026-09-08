@@ -33,6 +33,7 @@
   import ExploreMenu from '$components/ExploreMenu.svelte';
   import CardTooltip from '$components/CardTooltip.svelte';
   import ToastHost from '$components/ToastHost.svelte';
+  import SelectionBar from '$components/SelectionBar.svelte';
 
   let { children } = $props();
 
@@ -513,9 +514,12 @@
     `position: sticky; top: 0` inside <main> now pins to the chrome's
     bottom edge while the chrome is up and to the top of the viewport
     once it has hidden — with no JS and no magic offset, because the box
-    itself moved. #1113's sticky teams rail is built on exactly that,
-    and the browse page's SelectionBar stops pinning underneath the
-    navbar as a side effect.
+    itself moved. #1113's sticky teams rail is built on exactly that.
+
+    (The browse page's SelectionBar used to be the other beneficiary
+    named here. It is no longer a sticky descendant of anything: it
+    moved to the shell as a fixed bar in #1119, because a selection
+    that survives navigation cannot have its only handle on one page.)
   -->
   <!-- `data-testid` because `main` alone is not a unique handle on this
        app. /admin/integrations/api embeds Scalar's API reference, a Vue
@@ -565,6 +569,15 @@
        itself to the right host at push time (a viewer dialog occupies
        the top layer, where a body-level node is invisible). -->
   <ToastHost />
+
+  <!-- The selection's count / Clear / batch action (#515, #1119). ONE
+       instance for the whole app, same reasoning as CardTooltip and
+       ToastHost, and here it is load-bearing rather than tidy: the
+       selection store is a global singleton that survives navigation,
+       ten surfaces can add to it, and a per-page mount left every
+       surface but browse with a selection nobody could see, clear or
+       act on. It renders nothing while the selection is empty. -->
+  <SelectionBar />
 
   {#if !!auth.user}
     <!-- Upload modal + drop overlay are gated on auth: only signed-in
