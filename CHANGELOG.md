@@ -9,6 +9,20 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Change one metadata field across many files at once, from anywhere you can select them.**
+  Ticking files or posts anywhere in the app now shows a bar with the count, a way to clear it, and
+  a button to edit a field across everything selected. Before, that bar only existed on the browse
+  page, so a selection made anywhere else quietly went nowhere. Selecting a post means selecting
+  what is inside it: the server works out the real list of files, so two posts sharing a picture
+  count that picture once, and the number you are shown is the server's, never the page's guess.
+  Nothing is written until you have seen a preview naming exactly which files would change, which
+  would not, and which the operation cannot touch and why, and overwriting or removing still asks
+  you to type that number first. When the change runs, the result says what actually happened to
+  each file rather than just reporting success: a file someone else edited first, or deleted, or
+  that you lost permission on, is named. A run that changes nothing is still a real, recorded run
+  and is not offered back to you as if it never happened. Your selection stays put throughout
+  (#1173, #1119, PR #1421).
+
 - **Change one metadata field across many files at once.** A batch editor can overwrite a field, fill
   in only the ones that are empty, or add and remove keywords, across the files you have selected.
   Nothing is written until you have seen a preview that says exactly which files would change, which
