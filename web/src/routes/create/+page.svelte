@@ -87,7 +87,7 @@
   import AiProvenanceControl from '$components/AiProvenanceControl.svelte';
   import ThumbnailPicker from '$components/upload/ThumbnailPicker.svelte';
   import CompanionRequirementsNote from '$components/upload/CompanionRequirementsNote.svelte';
-  // #1408 — this page mounted the NOTE that names the missing files and
+  // #1408: this page mounted the NOTE that names the missing files and
   // nothing that could supply one. The picker existed only inside the
   // modal's file row, so a /create artist read "this model still needs
   // Textures/planks.png" on a page with no way to attach it.
@@ -169,7 +169,7 @@
   function onDrop(e: DragEvent) {
     e.preventDefault();
     dragOver = false;
-    // #1408 — NOT `dataTransfer.files`. That is a flat FileList whose
+    // #1408: NOT `dataTransfer.files`. That is a flat FileList whose
     // members all carry an empty `webkitRelativePath`, so a dropped
     // folder arrived as basenames and a model's `textures/diffuse.png`
     // could not be matched to the file that satisfies it. addDrop reads
@@ -182,7 +182,7 @@
   let folderInputEl = $state<HTMLInputElement | null>(null);
 
   // Per-row companion picker. One hidden input, retargeted at whichever
-  // row asked — a row is a list item here, not a component, so an input
+  // row asked: a row is a list item here, not a component, so an input
   // per row would put N of them in the DOM for one that is ever used.
   let companionInputEl = $state<HTMLInputElement | null>(null);
   let companionRowId = $state<string | null>(null);
@@ -464,7 +464,7 @@
 
   // ── submit ───────────────────────────────────────────────────────
 
-  // #1408 — `blockedByCompanions` is a file still being placed against
+  // #1408: `blockedByCompanions` is a file still being placed against
   // the model, or one waiting on an answer the decision panel above is
   // asking for. Publishing over either loses it or guesses.
   const canSubmit = $derived(
@@ -687,7 +687,7 @@
                     <div class="mt-2">
                       <CompanionRequirementsNote requirements={row.requirements} testid={row.id} />
                     </div>
-                    <!-- #1408 — and the control that supplies one. The
+                    <!-- #1408, and the control that supplies one. The
                          note above named the missing paths on a page
                          that offered no way to attach anything; the
                          picker existed only in the modal. The path is

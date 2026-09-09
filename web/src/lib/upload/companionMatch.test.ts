@@ -57,10 +57,10 @@ describe('path helpers', () => {
   });
 });
 
-describe('reconcileCompanions — with real relative paths', () => {
+describe('reconcileCompanions: with real relative paths', () => {
   // ⭐ The structural claim this file's headline case rests on: TWO
   // models, and a basename that collides across them. Asserted, not
-  // assumed — a fixture that quietly lost one model would make every
+  // assumed. A fixture that quietly lost one model would make every
   // "no cross-wiring" assertion below vacuously true.
   const models = [
     complete('row-wood', 'wood/model.gltf', ['textures/diffuse.png']),
@@ -85,11 +85,11 @@ describe('reconcileCompanions — with real relative paths', () => {
     expect(res.undecided).toEqual([]);
     expect(res.unrelated).toEqual([]);
     expect(res.assignments).toHaveLength(2);
-    // Identity, both directions — a swap would still be "2 assignments".
+    // Identity, both directions. A swap would still be "2 assignments".
     const byCand = new Map(res.assignments.map((a) => [a.candidateId, a]));
     expect(byCand.get('c-wood')?.rowId).toBe('row-wood');
     expect(byCand.get('c-metal')?.rowId).toBe('row-metal');
-    // And the path sent is the DECLARED one, verbatim — the server
+    // And the path sent is the DECLARED one, verbatim. The server
     // matches on exact string, so a reconstructed path could only miss.
     expect(byCand.get('c-wood')?.path).toBe('textures/diffuse.png');
     expect(byCand.get('c-wood')?.via).toBe('path');
@@ -122,7 +122,7 @@ describe('reconcileCompanions — with real relative paths', () => {
   });
 });
 
-describe('reconcileCompanions — flat drop, no path information', () => {
+describe('reconcileCompanions: flat drop, no path information', () => {
   it('matches on basename when it is unambiguous in BOTH directions', () => {
     const models = [complete('row', 'model.gltf', ['textures/diffuse.png'])];
     const res = reconcileCompanions(models, [{ id: 'c', path: 'diffuse.png', hasPath: false }]);
@@ -165,7 +165,7 @@ describe('reconcileCompanions — flat drop, no path information', () => {
   });
 });
 
-describe('reconcileCompanions — incomplete declarations', () => {
+describe('reconcileCompanions: incomplete declarations', () => {
   it('will not call a leftover unrelated when an .obj is in the batch', () => {
     // An .obj declares .mtl libraries; each .mtl declares its own
     // textures one level below what the uploaded bytes can see. In that

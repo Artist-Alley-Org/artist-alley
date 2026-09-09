@@ -20,7 +20,7 @@
 // multi-file selection gives basenames and an empty
 // `webkitRelativePath`, which is exactly the case the matcher must
 // refuse to guess about. Directory information only exists when the
-// browser produces it — a `webkitdirectory` input, or a folder drop
+// browser produces it: a `webkitdirectory` input, or a folder drop
 // read through `webkitGetAsEntry`. Playwright can drive the first by
 // pointing `setInputFiles` at a real directory, so the tree has to be
 // real.
@@ -52,7 +52,7 @@ export function buildGltf(declared: string[], nonce: string): Buffer {
  * The whole no-cross-wiring claim is an identity claim: two textures
  * called `diffuse.png` in different directories must land on different
  * models. Asserting two companion rows exist proves nothing about
- * that — a swap is also two rows. So each carries a marker the spec
+ * that. A swap is also two rows. So each carries a marker the spec
  * reads back out of the stored bytes.
  */
 export function markerFile(marker: string): Buffer {
@@ -60,7 +60,7 @@ export function markerFile(marker: string): Buffer {
 }
 
 export interface FixtureTree {
-  /** Absolute path of the tree root — hand this to setInputFiles. */
+  /** Absolute path of the tree root. Hand this to setInputFiles. */
   root: string;
   /** Absolute path of one member, by its tree-relative path. */
   path(rel: string): string;
@@ -86,7 +86,7 @@ export function writeTree(files: Record<string, Buffer>): FixtureTree {
  * The title the upload store derives from a filename.
  *
  * Mirrors `defaultTitleFromFilename` in upload.svelte.ts, and is how a
- * spec finds the asset id for a file it uploaded through the BROWSER —
+ * spec finds the asset id for a file it uploaded through the BROWSER:
  * the POST happens in the page and the response never reaches the test
  * except by watching the traffic.
  */

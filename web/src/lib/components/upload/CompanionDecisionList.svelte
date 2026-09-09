@@ -6,7 +6,7 @@
    *
    * ## Why a refusal gets a surface
    *
-   * A flat multi-file drop carries no directory information at all —
+   * A flat multi-file drop carries no directory information at all:
    * `DataTransfer.files` gives basenames and nothing else. So when two
    * models in one drop declare `wood/diffuse.png` and
    * `metal/diffuse.png`, and one file called `diffuse.png` arrives,
@@ -20,7 +20,7 @@
    * cannot conclude that a leftover file is unrelated to it.
    *
    * Both are questions, and this is where they get asked. Nothing on
-   * this list has been uploaded as anything yet — that is the whole
+   * this list has been uploaded as anything yet. That is the whole
    * reason the answer is still worth something.
    *
    * Mounted on BOTH upload surfaces (the modal and /create) because the
@@ -39,7 +39,7 @@
   const undecided = $derived(upload.undecidedCandidates);
 
   // Per-candidate answer, keyed by candidate id. Seeded from the first
-  // option the matcher offered — a SUGGESTION sitting in a control the
+  // option the matcher offered: a SUGGESTION sitting in a control the
   // artist has to press, never an answer applied on their behalf.
   let choice = $state<Record<string, { rowId: string; path: string }>>({});
 

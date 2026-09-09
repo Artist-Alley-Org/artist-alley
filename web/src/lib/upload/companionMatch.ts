@@ -7,7 +7,7 @@
 //
 // Dropping a model and its textures together produced N unrelated
 // assets. Every `File` in the drop became its own upload row, nothing
-// looked at the batch, and the model's `companions` stayed empty — so
+// looked at the batch, and the model's `companions` stayed empty, so
 // the upload succeeded, the render job succeeded, and the model came
 // out grey. #754 made the model SAY what it was missing; this makes the
 // same drop SATISFY it.
@@ -18,7 +18,7 @@
 // by type would attach an unrelated illustration to a model that never
 // named it, and would still miss a `.bin` buffer. The only thing that
 // decides is the list the model itself declares, which the SERVER
-// parses (`GET /assets/{id}/companion-requirements`) — the browser does
+// parses (`GET /assets/{id}/companion-requirements`). The browser does
 // not re-implement format3d, for the same reason the create page asks
 // the server for the asset type instead of computing it: a second
 // expression of a rule is free to disagree with the first.
@@ -39,7 +39,7 @@
 //     resolve to different files with no ambiguity at all.
 //
 //  2. BASENAME, ONLY WHEN 1:1. A flat multi-file drop carries no
-//     directory information — `DataTransfer.files` is a flat FileList
+//     directory information. `DataTransfer.files` is a flat FileList
 //     and `webkitRelativePath` is empty. Collapsing to basename
 //     matching unconditionally is exactly how `img.jpg` gets attached
 //     to the model that wanted `metal/img.jpg` when it belonged to the
@@ -53,7 +53,7 @@
 //     a batch that contains a model whose declaration we could only
 //     read PARTIALLY (an .obj names .mtl libraries; each .mtl names its
 //     own textures, one level further down than the uploaded bytes can
-//     see) is `undecided/incomplete` — because in that batch "this file
+//     see) is `undecided/incomplete`, because in that batch "this file
 //     is unrelated" is a claim we have no basis for. Only when every
 //     model's declaration is COMPLETE is a non-matching file called
 //     unrelated and sent on to become its own asset, which is what the
@@ -83,7 +83,7 @@ export interface ModelTarget {
   /**
    * True when the declaration is the WHOLE list. False for an .obj
    * (`partial`), for an unreadable parse, and for a format we have no
-   * reader for — in all three the batch cannot conclude that a leftover
+   * reader for. In all three the batch cannot conclude that a leftover
    * file is unrelated.
    */
   complete: boolean;
@@ -92,7 +92,7 @@ export interface ModelTarget {
 export interface CompanionAssignment {
   candidateId: string;
   rowId: string;
-  /** The declared path, verbatim — this is what the server matches on. */
+  /** The declared path, verbatim. This is what the server matches on. */
   path: string;
   via: 'path' | 'basename';
 }
@@ -175,7 +175,7 @@ export function relativeTo(dir: string, full: string): string {
 
 interface DeclaredSlot {
   rowId: string;
-  /** The declared path verbatim — what gets sent to the server. */
+  /** The declared path verbatim: what gets sent to the server. */
   declared: string;
   /** Where that reference points, as a batch-relative path. */
   expected: string;
@@ -342,8 +342,8 @@ export function reconcileCompanions(
  * against the declared path by exact string, so a file attached as
  * `img.jpg` never satisfies a declared `textures/img.jpg`, and the
  * artist was left to notice that and retype it. Preferring a declared
- * path the file can only be — by its position in a picked directory, or
- * by being the one file with that name — removes the retyping without
+ * path the file can only be (by its position in a picked directory, or
+ * by being the one file with that name) removes the retyping without
  * ever inventing a path the model did not name.
  */
 export function suggestCompanionPath(

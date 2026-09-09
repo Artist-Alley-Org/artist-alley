@@ -11,7 +11,7 @@
   import UploadFileRow from './UploadFileRow.svelte';
   import PostComposeForm from './PostComposeForm.svelte';
   import ThumbnailPicker from './ThumbnailPicker.svelte';
-  // #1408 — the files a same-batch reconciliation refused to place.
+  // #1408: the files a same-batch reconciliation refused to place.
   import CompanionDecisionList from './CompanionDecisionList.svelte';
 
   let dialogEl: HTMLDialogElement | undefined = $state();
@@ -19,12 +19,12 @@
   // Hidden file input behind the "Add files" button.
   let pickerEl: HTMLInputElement | undefined = $state();
 
-  // #1408 — a SECOND input, with `webkitdirectory`.
+  // #1408: a SECOND input, with `webkitdirectory`.
   //
   // It is a separate control because the attribute is not a modifier on
   // the first one: an input carrying `webkitdirectory` can pick ONLY a
   // directory, so folding it into "Add files" would take away picking a
-  // file. And it earns its place — `webkitRelativePath` is populated
+  // file. And it earns its place: `webkitRelativePath` is populated
   // only for a directory pick, and that path is the only thing that
   // tells `wood/diffuse.png` from `metal/diffuse.png` when both are in
   // the same upload.
@@ -63,7 +63,7 @@
 
   // Drop straight onto the modal's own zone. Goes through addDrop, not
   // `dataTransfer.files`, so a dropped FOLDER keeps its structure
-  // (#1408) — the global listener in the store does the same.
+  // (#1408). The global listener in the store does the same.
   function handleDrop(e: DragEvent) {
     e.preventDefault();
     void upload.addDrop(e.dataTransfer);
@@ -90,7 +90,7 @@
   const submitDisabled = $derived(
     upload.composeBusy ||
       upload.anyInFlight ||
-      // #1408 — a file still being placed, or still waiting on the
+      // #1408: a file still being placed, or still waiting on the
       // artist's answer, is a file this submit would lose or guess at.
       upload.blockedByCompanions ||
       upload.readyRows.length === 0,

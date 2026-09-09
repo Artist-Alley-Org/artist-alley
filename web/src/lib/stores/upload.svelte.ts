@@ -31,7 +31,7 @@ import { putStorageObject } from '$lib/util/storageUpload';
 // DISPLAY rule, so the write side and the read side cannot disagree
 // about what the four states are.
 import type { AiProvenance } from '$lib/aiProvenance';
-// #1408 — same-batch companion reconciliation. The MATCHING rule lives
+// #1408: same-batch companion reconciliation. The MATCHING rule lives
 // in its own pure module so it can be reasoned about (and tested)
 // without a store; the PATH CAPTURE lives in another because reading a
 // relative path out of a drop is a browser-API problem, not a queue
@@ -101,7 +101,7 @@ export interface UploadRow {
   readonly file: File;
   /**
    * Where this file sat in the batch it arrived in, relative to what
-   * was dropped or picked — `wood/model.gltf`, not `model.gltf` (#1408).
+   * was dropped or picked: `wood/model.gltf`, not `model.gltf` (#1408).
    *
    * A model's declared references are relative to ITS OWN directory, so
    * without this the batch cannot tell `wood/textures/diffuse.png` from
@@ -236,7 +236,7 @@ export interface PendingCompanion {
   /**
    * The path this companion was last STORED under, or null if it has
    * not been stored yet. Editing `path` after a successful upload used
-   * to leave the server holding the old one — the row said
+   * to leave the server holding the old one. The row said
    * `textures/foo.png`, the asset had `foo.png`, and the requirement
    * stayed missing with nothing on screen saying why (#1408).
    */
@@ -252,8 +252,8 @@ export interface PendingCompanion {
  * It is deliberately NOT an `UploadRow`: a row uploads the instant it
  * exists, and the whole defect is that a texture uploaded as its own
  * asset. A candidate has not become anything yet. It ends up as exactly
- * one of three things — a companion on a model, an ordinary asset row,
- * or a question for the artist — and never guesses which.
+ * one of three things: a companion on a model, an ordinary asset row,
+ * or a question for the artist, and never guesses which.
  */
 export interface PendingCandidate {
   readonly id: string;
@@ -370,7 +370,7 @@ class UploadState {
 
   /**
    * Per-batch bookkeeping. A batch reconciles ONCE, when every model in
-   * it has finished asking the server what it needs — reconciling
+   * it has finished asking the server what it needs. Reconciling
    * per-model would let the first model claim a colliding basename that
    * the second model was also going to declare, which is the exact
    * cross-wiring this feature must not do.
@@ -467,7 +467,7 @@ class UploadState {
    * exposes them (#1408).
    *
    * ⚠️ Hand it the live `DataTransfer` straight out of the drop
-   * handler and do not await anything first — `webkitGetAsEntry` is
+   * handler and do not await anything first. `webkitGetAsEntry` is
    * only valid inside the event turn (see dropEntries.ts).
    */
   async addDrop(dt: DataTransfer | null, ctx: OpenContext = {}): Promise<void> {
@@ -538,7 +538,7 @@ class UploadState {
    * `path` defaulted to `file.name`. The server satisfies a requirement
    * by EXACT string match of the stored path against the declared path,
    * so a file attached as `img.jpg` never satisfied a declared
-   * `textures/img.jpg` — the artist attached the right file, watched
+   * `textures/img.jpg`. The artist attached the right file, watched
    * the warning not move, and had no way to know a path they never saw
    * was the reason. `suggestCompanionPath` prefers a path the model
    * actually declared, taken from where the file sits in a picked
@@ -632,7 +632,7 @@ class UploadState {
       await this.loadRequirements(row);
     } catch {
       // Best effort. A companion left behind at an unreferenced path is
-      // inert — it satisfies no declaration — so failing loudly here
+      // inert (it satisfies no declaration), so failing loudly here
       // would report a problem the artist cannot act on.
     }
   }
@@ -670,7 +670,7 @@ class UploadState {
       this.dragDepth = 0;
       const dt = e.dataTransfer;
       if (!dt) return;
-      // #1408 — `dt.files` is a flat FileList whose members all carry an
+      // #1408: `dt.files` is a flat FileList whose members all carry an
       // EMPTY webkitRelativePath, so a directory drop arrived as
       // basenames and `wood/diffuse.png` was indistinguishable from
       // `metal/diffuse.png`. addDrop reads the entry API instead, and
@@ -712,7 +712,7 @@ class UploadState {
       this.composeError = t('upload.err_no_files');
       return false;
     }
-    // #1408 — files reconciliation REFUSED to place are still files the
+    // #1408: files reconciliation REFUSED to place are still files the
     // artist chose. Publishing over the top of them would either lose
     // them silently or guess where they go, and the whole point of
     // surfacing the question is that neither is acceptable.
@@ -875,13 +875,13 @@ class UploadState {
    *
    * ## What changed
    *
-   * A batch with NO model file behaves exactly as before — every file
+   * A batch with NO model file behaves exactly as before, every file
    * is a row, immediately. That is the ordinary upload and it must not
    * acquire a delay or a decision.
    *
    * A batch WITH a model file splits: the models become rows and start
    * uploading at once, and the rest are HELD as candidates. Holding is
-   * the point — a texture that has already become an asset cannot be
+   * the point: a texture that has already become an asset cannot be
    * un-become one, so the decision has to happen before the bytes are
    * committed to an asset row. Nothing is held for long: the models are
    * uploading in parallel and the batch reconciles as soon as they have
@@ -901,7 +901,7 @@ class UploadState {
 
     // ⚠️ REGISTERED BEFORE THE ROWS EXIST. `addRows` starts the runner,
     // and a model whose upload fails SYNCHRONOUSLY settles inside that
-    // call — against a batch that would not be there yet, stranding
+    // call, against a batch that would not be there yet, stranding
     // every file held beside it with nothing to release them.
     // `modelRowIds` is filled in below, and `settleBatchMember` refuses
     // to conclude anything while it is still empty.
@@ -1061,7 +1061,7 @@ class UploadState {
       // is advisory, and an upload must not be reported as failed
       // because the advice could not be fetched.
       //
-      // #1408 — and it is what the batch waits on. A model that never
+      // #1408, and it is what the batch waits on. A model that never
       // answers must still SETTLE, or the files held beside it are held
       // for good; `finally` is load-bearing here, not tidiness.
       void this.loadRequirements(row).finally(() => this.settleBatchMember(row));
@@ -1082,7 +1082,7 @@ class UploadState {
    *
    * Waiting for the whole batch is not an optimisation. Reconciling
    * model-by-model would let the first model to answer claim a file by
-   * basename that the second model was about to declare too — and the
+   * basename that the second model was about to declare too, and the
    * collision that makes the match ambiguous would never be visible,
    * because by then it would already be resolved wrongly.
    */
@@ -1092,7 +1092,7 @@ class UploadState {
     const batch = this.batches.get(batchId);
     if (!batch) return;
     batch.settled.add(row.id);
-    // Membership not wired yet (see enqueue) — the caller re-checks.
+    // Membership not wired yet (see enqueue). The caller re-checks.
     if (batch.modelRowIds.length === 0) return;
     if (batch.modelRowIds.some((id) => !batch.settled.has(id))) return;
     void this.reconcileBatch(batchId);
@@ -1104,7 +1104,7 @@ class UploadState {
    *
    * The declaration is the server's, fetched per model. Nothing here
    * inspects a file's type, and every path sent to the server is a
-   * declared path copied verbatim — the server satisfies a requirement
+   * declared path copied verbatim. The server satisfies a requirement
    * by exact string match, so a path this invented could only ever miss.
    */
   private async reconcileBatch(batchId: string): Promise<void> {
@@ -1121,7 +1121,7 @@ class UploadState {
 
     if (modelRows.length === 0) {
       // Every model in the batch failed to upload. The files beside it
-      // are ordinary files again — releasing them is the only answer
+      // are ordinary files again. Releasing them is the only answer
       // that loses nothing.
       this.releaseCandidates(held);
       return;
@@ -1133,7 +1133,7 @@ class UploadState {
         modelPath: r.relPath,
         declared: r.requirements?.declared ?? [],
         // An .obj is `partial` and an unreadable or unparsed model told
-        // us nothing — in both, "this leftover file is unrelated" is a
+        // us nothing. In both, "this leftover file is unrelated" is a
         // claim with no basis, so the batch must not make it.
         complete: r.requirements?.status === 'ok' && !r.requirements.partial,
       })),
@@ -1149,7 +1149,7 @@ class UploadState {
     // left behind after it was successfully attached leaves the artist
     // looking at a permanent progress note over a Publish button that
     // refuses. Caught by driving a real 17-file folder through the
-    // modal — every companion said DONE and the banner never went.
+    // modal. Every companion said DONE and the banner never went.
     const clearHeld = (ids: Iterable<string>) => {
       const gone = new Set(ids);
       this.candidates = this.candidates.filter((c) => !gone.has(c.id));
@@ -1186,7 +1186,7 @@ class UploadState {
     if (release.length > 0) this.releaseCandidates(release);
 
     // Anything the matcher did not speak about is released rather than
-    // silently dropped — a file the artist chose must always end up
+    // silently dropped: a file the artist chose must always end up
     // SOMEWHERE.
     const orphans = held.filter((c) => !placed.has(c.id));
     if (orphans.length > 0) this.releaseCandidates(orphans);
@@ -1240,9 +1240,9 @@ class UploadState {
    * ⛔ The bug this removes is silent. `addCompanions` only ever pushed
    * onto `row.companions`, and `uploadCompanions` was called from one
    * place: `runRow`, before the row reached `ready`. So a companion
-   * added afterwards — which is when the artist adds one, because the
+   * added afterwards (which is when the artist adds one, because the
    * #754 warning naming the missing file only appears once the row is
-   * ready — sat in the list looking attached, was never sent, and the
+   * ready) sat in the list looking attached, was never sent, and the
    * warning it was meant to clear stayed exactly as it was.
    */
   async attachCompanions(rowId: string, items: { file: File; path: string }[]): Promise<void> {
@@ -1268,7 +1268,7 @@ class UploadState {
    *
    * The re-ask is the other half of the fix: `missing` is a live
    * subtraction the server recomputes per request, so the note only
-   * goes away if somebody asks again — and it must go away without a
+   * goes away if somebody asks again, and it must go away without a
    * page reload, because a reload is not something the artist should
    * have to discover.
    */
@@ -1566,7 +1566,7 @@ function newId(): string {
  *
  * By extension only, through the SAME table the viewer uses to decide
  * what body to mount. It answers "does this file have companions at
- * all", never "is this file a texture" — the second question is the one
+ * all", never "is this file a texture". The second question is the one
  * #1408 must not ask, because answering it by type is how an unrelated
  * illustration gets attached to a model that never named it.
  */

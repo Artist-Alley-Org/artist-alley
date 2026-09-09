@@ -24,7 +24,7 @@
 //      happens afterwards on the captured handles.
 //   2. `FileSystemDirectoryReader.readEntries` returns a PAGE, not the
 //      directory. It has to be called until it answers empty, or a
-//      folder of more than ~100 files silently arrives truncated —
+//      folder of more than ~100 files silently arrives truncated,
 //      which would present as "some of my textures attached and some
 //      became separate assets".
 //
@@ -34,7 +34,7 @@
 //
 // When none of that is available (a browser without the entry API, a
 // drop that yields no entries) this falls back to the flat file list,
-// with `hasPath: false` — which is a HONEST answer the matcher then
+// with `hasPath: false`, which is a HONEST answer the matcher then
 // handles deliberately, rather than a basename quietly presented as a
 // path.
 
@@ -96,7 +96,7 @@ export async function entriesFromDataTransfer(dt: DataTransfer | null): Promise<
   if (!dt) return [];
   const flat = dt.files ? Array.from(dt.files) : [];
 
-  // Synchronous capture — see the header.
+  // Synchronous capture. See the header.
   const roots: FsEntryLike[] = [];
   let sawItems = false;
   try {

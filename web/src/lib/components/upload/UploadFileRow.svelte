@@ -77,7 +77,7 @@
       input.value = ''; // reset so picking the same file again re-fires
     }
   }
-  // #1408 — through addCompanionDrop, so a dropped FOLDER of textures
+  // #1408: through addCompanionDrop, so a dropped FOLDER of textures
   // keeps its relative structure and the suggested path can be the one
   // the model actually declares instead of a bare filename.
   function onCompanionDrop(e: DragEvent) {

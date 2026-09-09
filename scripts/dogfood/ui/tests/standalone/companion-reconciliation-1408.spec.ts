@@ -1,10 +1,10 @@
-// #1408 — a model and its companions dropped TOGETHER are reconciled.
+// #1408: a model and its companions dropped TOGETHER are reconciled.
 //
 // # The bug
 //
 // Interactive upload never looked at the batch. The global drop handler
 // passed `dataTransfer.files` straight through and every `File` became
-// its own `UploadRow`, which uploads the instant it exists — so a model
+// its own `UploadRow`, which uploads the instant it exists, so a model
 // plus three textures was four unrelated assets, the model's
 // `companions` stayed empty, and #754's warning naming the missing
 // files had nothing that could ever clear it. Four separate mechanisms
@@ -14,7 +14,7 @@
 // `metal/diffuse.png`; a manual attachment defaulted its path to the
 // bare filename, which the server's EXACT-match rule can never satisfy
 // against a declared `textures/img.jpg`; and /create had no attach
-// control at all — it mounted the note naming the missing files on a
+// control at all. It mounted the note naming the missing files on a
 // page offering no way to supply one.
 //
 // # What each case would catch
@@ -22,7 +22,7 @@
 //  1. SAME-DROP, WITH REAL DIRECTORIES, TWO MODELS. The headline. Both
 //     models declare `textures/diffuse.png` and there are two different
 //     files by that name. A fix that matched on basename attaches one
-//     of them to both models and is wrong half the time — so the
+//     of them to both models and is wrong half the time, so the
 //     assertion is on the BYTES stored against each asset, not on the
 //     count of companion rows, because a swap is also two rows.
 //
@@ -39,7 +39,7 @@
 //  4. AMBIGUITY IS SURFACED, NEVER GUESSED. Flat-selected, two models
 //     declaring the same basename in different directories, one file.
 //     There is no fact available that says which model wanted it. The
-//     spec asserts NOTHING was attached and the question was asked —
+//     spec asserts NOTHING was attached and the question was asked,
 //     then answers it and asserts the answer landed on the right model
 //     and only that one.
 //
@@ -83,7 +83,7 @@ interface Requirements {
  *
  * The POST happens in the page, so the id never reaches the test except
  * by watching the traffic. Recorded at creation and keyed by the title
- * the store derives from the filename — which carries this run's nonce,
+ * the store derives from the filename, which carries this run's nonce,
  * so it names exactly one row in the database.
  */
 function watchAssetIds(page: Page): Map<string, string> {
@@ -205,7 +205,7 @@ test.describe('same-drop companion reconciliation (#1408)', () => {
 
       // A `webkitdirectory` input is what makes `webkitRelativePath`
       // exist at all. Without it the browser hands over basenames and
-      // the two `diffuse.png` files are indistinguishable — which is
+      // the two `diffuse.png` files are indistinguishable, which is
       // case 4 below, not this one.
       const folderInput = page.locator(tid('upload-folder-input'));
       await expect(
@@ -221,7 +221,7 @@ test.describe('same-drop companion reconciliation (#1408)', () => {
       created.push(woodId, metalId, strayId);
 
       // ⚠️ STRUCTURAL: prove the fixture is what the rest of this test
-      // claims — two DISTINCT models, and a declared basename that
+      // claims: two DISTINCT models, and a declared basename that
       // genuinely collides across them, read back from the server
       // rather than assumed.
       expect(woodId).not.toBe(metalId);
@@ -240,7 +240,7 @@ test.describe('same-drop companion reconciliation (#1408)', () => {
       });
       await expect(page.locator('[data-testid^="companion-req-missing-"]')).toHaveCount(0);
 
-      // ⭐ PERSISTED IDENTITY. Not "two companion rows exist" — a swap
+      // ⭐ PERSISTED IDENTITY. Not "two companion rows exist": a swap
       // is also two rows. The bytes stored against each asset say which
       // file landed where.
       const woodComps = await companionsOf(request, woodId);
@@ -305,7 +305,7 @@ test.describe('same-drop companion reconciliation (#1408)', () => {
         '[data-testid="create-file-list"] [data-testid="companion-req-missing-path"]',
       );
 
-      // Flat selection — three individual files, no directory. This is
+      // Flat selection: three individual files, no directory. This is
       // the case with NO relative path information at all.
       await page
         .locator(tid('create-file-input'))
@@ -338,7 +338,7 @@ test.describe('same-drop companion reconciliation (#1408)', () => {
       expect(mid.missing).toEqual([normal]);
       expect(mid.attached).toEqual([diffuse]);
       await expect(createMissing).toHaveCount(1);
-      // By NAME, on the page — #754's contract, still intact.
+      // By NAME, on the page. #754's contract, still intact.
       await expect(createMissingPaths).toHaveText([normal]);
 
       // ── the late attachment. The row is READY; this is precisely the
@@ -347,7 +347,7 @@ test.describe('same-drop companion reconciliation (#1408)', () => {
       await expect(
         attach,
         '/create mounted the note naming the missing file and NO control that could ' +
-          'supply one — the picker existed only inside the modal (#1408)',
+          'supply one. The picker existed only inside the modal (#1408)',
       ).toHaveCount(1);
       // Through the REAL control: the artist clicks "add companion" and
       // picks a file, which is the path the hidden input alone would
@@ -384,7 +384,7 @@ test.describe('same-drop companion reconciliation (#1408)', () => {
       // ⛔ And the TWO-ACTION FLOW still ends in a published post.
       // Holding a candidate blocks submit by design, so a candidate
       // left in the held list after being attached would fail here and
-      // nowhere else — every companion reads DONE either way.
+      // nowhere else. Every companion reads DONE either way.
       await expect(page.locator(tid('companion-holding-create'))).toHaveCount(0);
       const publish = page.locator(tid('create-publish'));
       await publish.scrollIntoViewIfNeeded();
@@ -430,7 +430,7 @@ test.describe('same-drop companion reconciliation (#1408)', () => {
       created.push(woodId, metalId);
 
       // ⚠️ STRUCTURAL: two models, one shared basename, two distinct
-      // declared paths — the definition of the ambiguity under test.
+      // declared paths: the definition of the ambiguity under test.
       const woodReq = await requirementsOf(request, woodId);
       const metalReq = await requirementsOf(request, metalId);
       expect(woodReq.declared).toEqual(['wood/diffuse.png']);
@@ -443,7 +443,7 @@ test.describe('same-drop companion reconciliation (#1408)', () => {
       });
       await expect(page.locator(tid('companion-decision'))).toHaveCount(1);
 
-      // ⛔ And nothing was attached while it stands unanswered — on
+      // ⛔ And nothing was attached while it stands unanswered, on
       // EITHER model. A guess would have put it on one of them.
       expect(await companionsOf(request, woodId)).toEqual([]);
       expect(await companionsOf(request, metalId)).toEqual([]);
