@@ -77,11 +77,12 @@
       input.value = ''; // reset so picking the same file again re-fires
     }
   }
+  // #1408 — through addCompanionDrop, so a dropped FOLDER of textures
+  // keeps its relative structure and the suggested path can be the one
+  // the model actually declares instead of a bare filename.
   function onCompanionDrop(e: DragEvent) {
     e.preventDefault();
-    if (e.dataTransfer?.files?.length) {
-      upload.addCompanions(row.id, e.dataTransfer.files);
-    }
+    void upload.addCompanionDrop(row.id, e.dataTransfer);
   }
 
   interface Props {
@@ -607,16 +608,19 @@
           </p>
 
           {#each row.companions as c (c.id)}
-            <div class="flex items-center gap-2 rounded bg-surface-elevated px-2 py-1.5">
+            <div class="flex items-center gap-2 rounded bg-surface-elevated px-2 py-1.5" data-testid="upload-companion-row">
               <span class="truncate text-xs text-fg-muted" title={c.file.name}>{c.file.name}</span>
               <input
                 type="text"
                 value={c.path}
+                data-testid="upload-companion-path"
+                aria-label={t('companions.decide_path_aria')}
                 oninput={(e) => upload.setCompanionPath(row.id, c.id, (e.currentTarget as HTMLInputElement).value)}
-                disabled={c.state === 'uploading' || c.state === 'done'}
+                onchange={() => upload.commitCompanionPaths(row.id)}
+                disabled={c.state === 'uploading'}
                 class="ml-auto w-44 rounded border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:opacity-60"
               />
-              <span class="w-14 text-right text-[10px] uppercase tracking-wider"
+              <span class="w-14 text-right text-[10px] uppercase tracking-wider" data-testid="upload-companion-state"
                 class:text-fg-muted={c.state === 'pending'}
                 class:text-accent={c.state === 'uploading'}
                 class:text-success={c.state === 'done'}
@@ -636,6 +640,7 @@
           <button
             type="button"
             onclick={openCompanionPicker}
+            data-testid="upload-add-companion"
             class="text-xs text-accent hover:underline"
           >{t('upload.file_row.add_companion')}</button>
         </div>
