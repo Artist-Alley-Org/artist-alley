@@ -11,11 +11,24 @@
   import UploadFileRow from './UploadFileRow.svelte';
   import PostComposeForm from './PostComposeForm.svelte';
   import ThumbnailPicker from './ThumbnailPicker.svelte';
+  // #1408: the files a same-batch reconciliation refused to place.
+  import CompanionDecisionList from './CompanionDecisionList.svelte';
 
   let dialogEl: HTMLDialogElement | undefined = $state();
 
   // Hidden file input behind the "Add files" button.
   let pickerEl: HTMLInputElement | undefined = $state();
+
+  // #1408: a SECOND input, with `webkitdirectory`.
+  //
+  // It is a separate control because the attribute is not a modifier on
+  // the first one: an input carrying `webkitdirectory` can pick ONLY a
+  // directory, so folding it into "Add files" would take away picking a
+  // file. And it earns its place: `webkitRelativePath` is populated
+  // only for a directory pick, and that path is the only thing that
+  // tells `wood/diffuse.png` from `metal/diffuse.png` when both are in
+  // the same upload.
+  let folderEl: HTMLInputElement | undefined = $state();
 
   // Watch upload.open and drive the <dialog> showModal/close. Using
   // a $effect rather than the open prop on dialog so we get
@@ -48,6 +61,14 @@
     input.value = '';
   }
 
+  // Drop straight onto the modal's own zone. Goes through addDrop, not
+  // `dataTransfer.files`, so a dropped FOLDER keeps its structure
+  // (#1408). The global listener in the store does the same.
+  function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    void upload.addDrop(e.dataTransfer);
+  }
+
   async function handleSubmit() {
     await upload.submit();
   }
@@ -69,6 +90,9 @@
   const submitDisabled = $derived(
     upload.composeBusy ||
       upload.anyInFlight ||
+      // #1408: a file still being placed, or still waiting on the
+      // artist's answer, is a file this submit would lose or guess at.
+      upload.blockedByCompanions ||
       upload.readyRows.length === 0,
   );
 </script>
@@ -121,6 +145,8 @@
         <button
           type="button"
           onclick={() => pickerEl?.click()}
+          ondragover={(e) => e.preventDefault()}
+          ondrop={handleDrop}
           class="flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-surface-elevated px-6 py-6 text-fg-muted transition-colors hover:border-accent hover:text-fg"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -138,6 +164,28 @@
           data-testid="upload-file-input"
           onchange={handlePicked}
         />
+        <input
+          bind:this={folderEl}
+          type="file"
+          multiple
+          webkitdirectory
+          class="hidden"
+          data-testid="upload-folder-input"
+          onchange={handlePicked}
+        />
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onclick={() => folderEl?.click()}
+            class="rounded border border-border px-2 py-1 text-xs text-fg-muted hover:text-fg"
+            data-testid="upload-add-folder"
+          >
+            {t('companions.add_folder')}
+          </button>
+          <span class="text-xs text-fg-muted">{t('companions.add_folder_help')}</span>
+        </div>
+
+        <CompanionDecisionList surface="modal" />
 
         {#if upload.rows.length > 0}
           <div class="space-y-2">

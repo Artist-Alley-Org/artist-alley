@@ -87,6 +87,12 @@
   import AiProvenanceControl from '$components/AiProvenanceControl.svelte';
   import ThumbnailPicker from '$components/upload/ThumbnailPicker.svelte';
   import CompanionRequirementsNote from '$components/upload/CompanionRequirementsNote.svelte';
+  // #1408: this page mounted the NOTE that names the missing files and
+  // nothing that could supply one. The picker existed only inside the
+  // modal's file row, so a /create artist read "this model still needs
+  // Textures/planks.png" on a page with no way to attach it.
+  import CompanionDecisionList from '$components/upload/CompanionDecisionList.svelte';
+  import { is3DExt } from '$components/viewers/controller';
 
   let fileInputEl = $state<HTMLInputElement | null>(null);
   let dragOver = $state(false);
@@ -163,7 +169,41 @@
   function onDrop(e: DragEvent) {
     e.preventDefault();
     dragOver = false;
-    addFiles(e.dataTransfer?.files ?? null);
+    // #1408: NOT `dataTransfer.files`. That is a flat FileList whose
+    // members all carry an empty `webkitRelativePath`, so a dropped
+    // folder arrived as basenames and a model's `textures/diffuse.png`
+    // could not be matched to the file that satisfies it. addDrop reads
+    // the entry API, and must get the LIVE DataTransfer in this turn.
+    void upload.addDrop(e.dataTransfer);
+  }
+
+  // ── companions (#1408) ───────────────────────────────────────────
+
+  let folderInputEl = $state<HTMLInputElement | null>(null);
+
+  // Per-row companion picker. One hidden input, retargeted at whichever
+  // row asked: a row is a list item here, not a component, so an input
+  // per row would put N of them in the DOM for one that is ever used.
+  let companionInputEl = $state<HTMLInputElement | null>(null);
+  let companionRowId = $state<string | null>(null);
+
+  function isModelRow(row: UploadRow): boolean {
+    const name = row.file.name;
+    const dot = name.lastIndexOf('.');
+    return is3DExt(dot > 0 ? name.slice(dot + 1) : '');
+  }
+
+  function openCompanionPicker(rowId: string) {
+    companionRowId = rowId;
+    companionInputEl?.click();
+  }
+
+  function onCompanionPicked(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    if (companionRowId && input.files && input.files.length > 0) {
+      upload.addCompanions(companionRowId, input.files);
+    }
+    input.value = '';
   }
 
   const rows = $derived(upload.rows);
@@ -424,7 +464,12 @@
 
   // ── submit ───────────────────────────────────────────────────────
 
-  const canSubmit = $derived(!submitting && !upload.composeBusy && ready.length > 0);
+  // #1408: `blockedByCompanions` is a file still being placed against
+  // the model, or one waiting on an answer the decision panel above is
+  // asking for. Publishing over either loses it or guesses.
+  const canSubmit = $derived(
+    !submitting && !upload.composeBusy && !upload.blockedByCompanions && ready.length > 0,
+  );
 
   async function publish(asDraft: boolean) {
     if (!canSubmit) return;
@@ -540,6 +585,30 @@
                 (e.currentTarget as HTMLInputElement).value = '';
               }}
             />
+            <input
+              bind:this={folderInputEl}
+              type="file"
+              multiple
+              webkitdirectory
+              class="hidden"
+              data-testid="create-folder-input"
+              onchange={(e) => {
+                addFiles((e.currentTarget as HTMLInputElement).files);
+                (e.currentTarget as HTMLInputElement).value = '';
+              }}
+            />
+            <!-- The per-row companion picker's one input. `multiple`
+                 and NOT `webkitdirectory`: attaching by hand is usually
+                 one or two named files, and the relative path each one
+                 needs is suggested from what the model declares. -->
+            <input
+              bind:this={companionInputEl}
+              type="file"
+              multiple
+              class="hidden"
+              data-testid="create-companion-input"
+              onchange={onCompanionPicked}
+            />
             <button
               type="button"
               onclick={() => fileInputEl?.click()}
@@ -548,6 +617,21 @@
             >
               {t('create.dropzone')}
             </button>
+            <div class="flex flex-wrap items-center justify-center gap-2 pb-2">
+              <button
+                type="button"
+                onclick={() => folderInputEl?.click()}
+                class="rounded border border-border px-2 py-1 text-xs text-fg-muted hover:text-fg"
+                data-testid="create-add-folder"
+              >
+                {t('companions.add_folder')}
+              </button>
+              <span class="text-xs text-fg-muted">{t('companions.add_folder_help')}</span>
+            </div>
+
+            <div class="space-y-2">
+              <CompanionDecisionList surface="create" />
+            </div>
 
             {#if rows.length > 0}
               <ul class="mt-3 space-y-2" data-testid="create-file-list">
@@ -603,6 +687,51 @@
                     <div class="mt-2">
                       <CompanionRequirementsNote requirements={row.requirements} testid={row.id} />
                     </div>
+                    <!-- #1408, and the control that supplies one. The
+                         note above named the missing paths on a page
+                         that offered no way to attach anything; the
+                         picker existed only in the modal. The path is
+                         SUGGESTED from what the model declares, so the
+                         artist does not retype an internal relative
+                         path they were never shown. -->
+                    {#if isModelRow(row)}
+                      <div class="mt-2 space-y-1" data-testid="create-companions-{row.id}">
+                        {#each row.companions as c (c.id)}
+                          <div class="flex items-center gap-2 text-xs" data-testid="create-companion-row">
+                            <span class="max-w-[8rem] shrink-0 truncate text-fg-muted">{c.file.name}</span>
+                            <input
+                              type="text"
+                              value={c.path}
+                              aria-label={t('companions.decide_path_aria')}
+                              data-testid="create-companion-path"
+                              class="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-1 font-mono text-xs text-fg"
+                              oninput={(e) =>
+                                upload.setCompanionPath(row.id, c.id, (e.currentTarget as HTMLInputElement).value)}
+                              onchange={() => upload.commitCompanionPaths(row.id)}
+                            />
+                            <span class="shrink-0 text-fg-muted" data-testid="create-companion-state">
+                              {c.state === 'errored' ? (c.error ?? c.state) : c.state}
+                            </span>
+                            <button
+                              type="button"
+                              onclick={() => upload.removeCompanion(row.id, c.id)}
+                              aria-label={t('upload.file_row.remove_companion_aria')}
+                              class="shrink-0 rounded px-1 text-fg-muted hover:text-fg"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        {/each}
+                        <button
+                          type="button"
+                          onclick={() => openCompanionPicker(row.id)}
+                          class="rounded border border-border px-2 py-1 text-xs text-fg-muted hover:text-fg"
+                          data-testid="create-add-companion"
+                        >
+                          {t('upload.file_row.add_companion')}
+                        </button>
+                      </div>
+                    {/if}
                   </li>
                 {/each}
               </ul>

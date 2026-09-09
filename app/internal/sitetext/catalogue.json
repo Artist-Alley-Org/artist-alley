@@ -3470,6 +3470,8 @@
   "upload": {
     "err_wait_finish": "Wait for all uploads to finish.",
     "err_no_files": "No files uploaded.",
+    "err_undecided_companions": "{n} file(s) in this upload still need an answer before you can publish.",
+    "err_companions_pending": "Still working out which files belong to the model. One moment.",
     "err_create_post": "Failed to create post.",
     "err_create_asset": "Failed to create asset.",
     "err_upload_failed": "Upload failed.",
@@ -3690,7 +3692,22 @@
     "missing_help": "Attach these alongside the model, at exactly these paths, or it will render without them.",
     "partial_help": "This is an .obj, so only the material libraries it names are listed. Attach those and check again to see the textures they need.",
     "all_present": "This model has every file it references.",
-    "unreadable": "This file could not be read, so we cannot say what it needs."
+    "unreadable": "This file could not be read, so we cannot say what it needs.",
+    "checking": "Checking what the model needs before uploading {count} more file(s)\u2026",
+    "attached_note": "{count} file(s) from this upload were attached to the model automatically.",
+    "decide_heading": "{count} file(s) need an answer",
+    "decide_ambiguous": "More than one model in this upload could want this name, and the drop did not say which folder it came from. Pick the model it belongs to, or upload it on its own.",
+    "decide_incomplete": "This upload includes an .obj, whose material libraries name their own textures one level deeper than we can read. Attach this to the model if it is one of them, or upload it on its own.",
+    "decide_file_aria": "File awaiting an answer",
+    "decide_target_aria": "Model to attach this file to",
+    "decide_path_aria": "Relative path the model references this file at",
+    "decide_attach": "Attach",
+    "decide_separate": "Upload on its own",
+    "decide_separate_all": "Upload all of them on their own",
+    "decide_discard": "Discard",
+    "decide_discard_aria": "Discard this file",
+    "add_folder": "Add a folder",
+    "add_folder_help": "Picking the folder keeps the relative paths, so textures in subdirectories match on their own."
   },
   "create": {
     "title": "New post",
