@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
+/**
+ * Merge a freshly fetched FIRST PAGE into a list the reader has already
+ * paged through (#1407).
+ *
+ * # Why a merge and not a reload
+ *
+ * Every list that can go stale after a publish is cursor paged, and
+ * three of them accumulate pages as the reader scrolls. The obvious
+ * refresh, re-running the first page and assigning it, throws away every
+ * page after it and puts the reader back at the top of a list they were
+ * halfway down. That trades a stale page for a destructive one.
+ *
+ * The obvious alternative, pushing the new row onto the end, is worse,
+ * because it puts an item wherever the client guessed rather than where
+ * the server's sort says it goes, and it re-appears when a later page
+ * fetch reaches it honestly.
+ *
+ * So: the server's first page replaces the first page, and everything
+ * the reader had beyond it keeps its order behind that. Concretely,
+ * given `fresh` = the page the server just returned and `existing` =
+ * what is on screen:
+ *
+ *   result = fresh ++ (existing minus everything in fresh)
+ *
+ * # What that guarantees
+ *
+ * - **Exactly once.** An id in `fresh` is removed from the tail, so a
+ *   row that was already loaded cannot appear twice, and a row pushed
+ *   from page one onto page two by a new arrival is not duplicated
+ *   either: it drops out of `fresh` and survives in the tail, in the
+ *   position the shift actually moved it to.
+ * - **Server order.** Nothing here decides where anything goes. The
+ *   head is the server's answer verbatim; the tail is the server's
+ *   earlier answer with the overlap taken out.
+ * - **Direction agnostic.** With the feed sorted oldest-first, a new
+ *   post is genuinely not on page one, `fresh` contains nothing new,
+ *   and the list is left alone rather than being told a lie about
+ *   where the item sits.
+ * - **No cursor churn.** The caller keeps its existing `next_cursor`.
+ *   Keyset cursors name a position in the sort, not an offset, so rows
+ *   arriving at the head do not move it.
+ */
+export function mergeRefreshedHead<T extends { id: string }>(
+  existing: readonly T[],
+  fresh: readonly T[],
+): T[] {
+  const refreshed = new Set(fresh.map((row) => row.id));
+  return [...fresh, ...existing.filter((row) => !refreshed.has(row.id))];
+}

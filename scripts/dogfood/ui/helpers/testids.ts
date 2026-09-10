@@ -191,6 +191,24 @@ export const testIds = {
     none:             'asset-usage-none',
   },
 
+  // The quick-upload modal, and the collection surface that opens it
+  // (#1407). Only the controls a spec has to DRIVE are here: the file
+  // input, the post-mode picker, the submit, and the empty-state call
+  // to action a curator presses to fill a new collection.
+  upload: {
+    fileInput:        'upload-file-input',
+    postMode:         'upload-post-mode',
+    submit:           'upload-submit',
+    composeEnabled:   'upload-compose-enabled',
+    composeError:     'upload-compose-error',
+    // The collection empty state's "upload your first" button. The
+    // sharpest case of #1407: the artist pressed exactly this, the
+    // upload landed in this collection, and the empty state stayed.
+    collectionEmpty:  'collection-empty-upload',
+    // The posts wall, which exists only once the collection has one.
+    collectionPosts:  'collection-posts',
+  },
+
   // Generic page surfaces ------------------------------------
   page: {
     errorBoundary:    'page-error-boundary',

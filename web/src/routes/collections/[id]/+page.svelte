@@ -176,6 +176,27 @@
     void load();
   });
 
+  // #1407: the publish that happened while the artist was standing
+  // here. This page owns the sharpest case of the bug: its empty state
+  // carries an "upload your first" button, so the artist pressed it,
+  // completed the upload INTO this collection, and the empty state was
+  // still on screen.
+  //
+  // `loadPosts()` and nothing cleverer. The membership arrives in ONE
+  // request (limit 200, see its own note) so there is no page to reset
+  // the reader to and no accumulated tail to protect: the refetch is a
+  // straight replacement by the server's answer, which is also why no
+  // row can appear twice.
+  //
+  // Fired on ANY successful publish rather than only one carrying this
+  // collection's id. A publish elsewhere refetches a list that comes
+  // back identical, which is a request; a publish that reached this
+  // collection by a route this page did not predict (the navbar
+  // button prefills the same collection from the URL, and the compose
+  // form can be pointed at another one) is the artist's work missing
+  // from the page they are looking at.
+  onMount(() => upload.onSuccess(() => void loadPosts()));
+
   async function load() {
     loading = true;
     error = null;
@@ -599,6 +620,7 @@
           <button
             type="button"
             onclick={uploadHere}
+            data-testid="collection-empty-upload"
             class="mt-3 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90"
           >
             {t('collections.upload_first')}

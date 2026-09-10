@@ -56,6 +56,8 @@
   import PostParamHost from '$components/PostParamHost.svelte';
   import TeamFollowButton from '$components/TeamFollowButton.svelte';
   import TeamAvatar from '$components/TeamAvatar.svelte';
+  import { upload } from '$stores/upload.svelte';
+  import { mergeRefreshedHead } from '$lib/util/refreshHead';
 
   interface Team {
     id: string;
@@ -97,6 +99,11 @@
   let assetsLoaded = $state(false);
   let loadingContent = $state(false);
 
+  /** `page` is the ordinary load (first page, or the next one appended);
+   *  `head` is #1407's post-publish refresh, which re-asks for page one
+   *  and merges it over what is loaded. */
+  type FetchMode = 'page' | 'head';
+
   async function loadTeam(id: string): Promise<void> {
     loadingTeam = true;
     notFound = false;
@@ -123,31 +130,43 @@
     members = ((m.data ?? []) as Member[]).slice(0, MEMBER_STRIP);
   }
 
-  async function loadPosts(cursor: string | null): Promise<void> {
+  async function loadPosts(cursor: string | null, mode: FetchMode = 'page'): Promise<void> {
     loadingContent = true;
     try {
       const query: Record<string, string | number> = { team_id: teamId, limit: PAGE };
       if (cursor) query.cursor = cursor;
       query.dir = browseView.feedDir;
       const { data } = await api.GET('/posts', { params: { query: query as never } });
-      const items = (data?.items ?? []) as unknown[];
-      posts = cursor ? [...posts, ...items] : items;
-      postsCursor = (data?.next_cursor as string | null) ?? null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const items = (data?.items ?? []) as any[];
+      if (mode === 'head' && posts.length > 0) {
+        // #1407: merged, not swapped, and the cursor is left alone.
+        // See `mergeRefreshedHead`.
+        posts = mergeRefreshedHead(posts, items);
+      } else {
+        posts = cursor ? [...posts, ...items] : items;
+        postsCursor = (data?.next_cursor as string | null) ?? null;
+      }
     } finally {
       loadingContent = false;
       postsLoaded = true;
     }
   }
 
-  async function loadAssets(cursor: string | null): Promise<void> {
+  async function loadAssets(cursor: string | null, mode: FetchMode = 'page'): Promise<void> {
     loadingContent = true;
     try {
       const query: Record<string, string | number> = { team_id: teamId, limit: PAGE };
       if (cursor) query.cursor = cursor;
       const { data } = await api.GET('/assets', { params: { query: query as never } });
-      const items = (data?.items ?? []) as unknown[];
-      assets = cursor ? [...assets, ...items] : items;
-      assetsCursor = (data?.next_cursor as string | null) ?? null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const items = (data?.items ?? []) as any[];
+      if (mode === 'head' && assets.length > 0) {
+        assets = mergeRefreshedHead(assets, items);
+      } else {
+        assets = cursor ? [...assets, ...items] : items;
+        assetsCursor = (data?.next_cursor as string | null) ?? null;
+      }
     } finally {
       loadingContent = false;
       assetsLoaded = true;
@@ -158,6 +177,24 @@
     browseView.init(); // pick up the user's tile-size + mode preference
     if (auth.user) void teamFollows.load(); // so the follow pill renders correct on first paint
   });
+
+  // #1407: a publish landed while the artist was standing on a studio.
+  //
+  // Both lists, because this is the surface where an ASSET-ONLY upload
+  // has somewhere to be: the posts tab shows what was composed, the
+  // assets tab shows the files whether or not a post was made.
+  //
+  // The assets tab is refreshed only when it has ALREADY been loaded.
+  // It is lazy by design (a reader who came for the feed does not pay
+  // for a second list), and fetching it here would spend that request
+  // on a tab nobody has opened, then hand `selectTab` a `assetsLoaded`
+  // it did not set.
+  onMount(() =>
+    upload.onSuccess(() => {
+      if (postsLoaded) void loadPosts(null, 'head');
+      if (assetsLoaded) void loadAssets(null, 'head');
+    }),
+  );
 
   /** Load (or reload) everything when the route's team changes.
    *

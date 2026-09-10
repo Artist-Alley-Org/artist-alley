@@ -58,6 +58,7 @@
   import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
   import { browseView } from '$stores/browseView.svelte';
+  import { upload } from '$stores/upload.svelte';
   import AssetCard from '$components/AssetCard.svelte';
   import CollectionCard from '$components/CollectionCard.svelte';
   import PostCard from '$components/PostCard.svelte';
@@ -226,6 +227,32 @@
       likesLoading = false;
     }
   }
+
+  // #1407: a publish landed while the artist was standing on a profile.
+  //
+  // A SEPARATE `onMount` from the one below, because that one is
+  // `async`: Svelte treats a promise return as a promise and never as a
+  // teardown, so an unsubscribe returned from it would silently never
+  // run and this component would keep answering after it unmounted.
+  //
+  // Portfolio is a FIXED first slice (limit 24, no "load more"), so its
+  // refresh is a straight re-ask and cannot duplicate a row or strand a
+  // page. Drafts is refreshed only if the tab was opened, and by
+  // clearing its loaded flag: `loadDrafts` returns early on it, so
+  // calling it without the reset would do nothing at all, which is
+  // exactly how a draft published from the modal stayed invisible on
+  // the tab that exists to show it.
+  onMount(() =>
+    upload.onSuccess(() => {
+      const p = profile;
+      if (!p) return;
+      void loadContent(p.ref, !!auth.user && auth.user.ref === p.ref);
+      if (draftsLoaded) {
+        draftsLoaded = false;
+        void loadDrafts(p.ref);
+      }
+    }),
+  );
 
   onMount(async () => {
     browseView.init(); // pick up the user's tile-size preference for the grids
