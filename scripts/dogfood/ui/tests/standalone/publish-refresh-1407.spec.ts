@@ -485,6 +485,48 @@ async function resultsScrollTop(page: Page): Promise<number> {
   return page.evaluate(() => document.querySelector('main')?.scrollTop ?? -1);
 }
 
+/**
+ * Put the reader somewhere that is not the top AND leave the navbar
+ * reachable.
+ *
+ * ⚠️ THE TWO ARE IN TENSION, AND THAT IS THE WHOLE REASON THIS EXISTS.
+ * The header auto-hides on the way down and comes back on the way up
+ * (`chromeScroll.svelte.ts`: past `HIDE_AFTER`, direction decided with
+ * a `DIRECTION_EPSILON` of 6). A case that scrolls the results and then
+ * reaches for `nav-upload-button` is asking for a control the app has
+ * deliberately slid off screen, and it fails as "element is outside of
+ * the viewport" only once the transition has actually landed, which is
+ * why it survives a quiet run and rots under a loaded one.
+ *
+ * So this scrolls the way a reader does: down with real wheel events,
+ * then a short way back up, which is the gesture that brings the
+ * chrome back. Then it WAITS for the button to be in the viewport
+ * rather than assuming the transition finished, and asserts the offset
+ * it leaves behind is genuinely non-zero.
+ */
+async function scrollResultsAndKeepNavbar(page: Page): Promise<number> {
+  await page.mouse.move(200, 400);
+  await page.mouse.wheel(0, 900);
+  await page.waitForTimeout(300);
+  // Up, past DIRECTION_EPSILON, but nowhere near back to the top.
+  await page.mouse.wheel(0, -160);
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const b = document.querySelector('[data-testid="nav-upload-button"]');
+          if (!b) return -1;
+          return Math.round(b.getBoundingClientRect().top);
+        }),
+      {
+        message: 'the auto-hiding header has to be back before the modal can be opened',
+        timeout: 15_000,
+      },
+    )
+    .toBeGreaterThanOrEqual(0);
+  return resultsScrollTop(page);
+}
+
 test.describe('#1407 a publish reaches the result page it was made from', () => {
   /** Assets this file made through the API. Deleted in afterEach. */
   let apiAssets: string[] = [];
@@ -589,11 +631,7 @@ test.describe('#1407 a publish reaches the result page it was made from', () => 
     // Put the reader somewhere that is not the top, and PROVE they are
     // there. Without this the "it did not reset" assertion is satisfied
     // by an offset that was already 0.
-    await page.evaluate(() => {
-      const port = document.querySelector('main');
-      if (port) port.scrollTop = Math.floor((port.scrollHeight - port.clientHeight) / 2);
-    });
-    const offsetBefore = await resultsScrollTop(page);
+    const offsetBefore = await scrollResultsAndKeepNavbar(page);
     expect(
       offsetBefore,
       'the results region must genuinely scroll, or this case cannot observe a reset',
