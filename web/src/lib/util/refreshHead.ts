@@ -41,12 +41,24 @@
  *   where the item sits.
  * - **No cursor churn.** The caller keeps its existing `next_cursor`.
  *   Keyset cursors name a position in the sort, not an offset, so rows
- *   arriving at the head do not move it.
+ *   arriving at the head do not move it. That holds for `/search` too:
+ *   its cursor is `(score, id, type)` (app/internal/search/interfaces.go),
+ *   not an offset.
+ *
+ * # The key
+ *
+ * `id` by default, which is what the posts and assets lists are keyed
+ * on. `/search` passes its own, because a search result's identity is
+ * the PAIR `(type, id)`: the server itself tie-breaks on both, since
+ * the three entity types come from three tables and nothing makes one
+ * table's uuid distinguishable from another's. Keying a mixed list on
+ * `id` alone would be asserting a uniqueness the data does not promise.
  */
-export function mergeRefreshedHead<T extends { id: string }>(
+export function mergeRefreshedHead<T>(
   existing: readonly T[],
   fresh: readonly T[],
+  key: (row: T) => string = (row) => (row as { id: string }).id,
 ): T[] {
-  const refreshed = new Set(fresh.map((row) => row.id));
-  return [...fresh, ...existing.filter((row) => !refreshed.has(row.id))];
+  const refreshed = new Set(fresh.map(key));
+  return [...fresh, ...existing.filter((row) => !refreshed.has(key(row)))];
 }

@@ -207,6 +207,12 @@ export const testIds = {
     collectionEmpty:  'collection-empty-upload',
     // The posts wall, which exists only once the collection has one.
     collectionPosts:  'collection-posts',
+    // The result page's two states, for #1407's search case. The
+    // no-matches line is what makes "the hit was genuinely absent
+    // first" a POSITIVE assertion rather than the absence of a
+    // selector, which a query that never ran would also satisfy.
+    searchNoMatches:  'search-no-matches',
+    searchTotalCount: 'search-total-count',
   },
 
   // Generic page surfaces ------------------------------------

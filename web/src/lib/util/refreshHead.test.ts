@@ -101,4 +101,47 @@ describe('mergeRefreshedHead', () => {
   it('is a first load when nothing is on screen', () => {
     expect(ids(mergeRefreshedHead([], rows('a', 'b')))).toEqual(['a', 'b']);
   });
+
+  // `/search` (#1407). Its rows come from three tables, so identity is
+  // the pair `(type, id)` and not the uuid alone, which is what the
+  // engine's own cursor tie-breaks on.
+  describe('with a caller-supplied key', () => {
+    interface Hit {
+      type: string;
+      id: string;
+    }
+    const key = (h: Hit) => `${h.type}:${h.id}`;
+    const label = (list: Hit[]) => list.map(key);
+
+    it('keeps two entities that happen to share a uuid apart', () => {
+      // The failure a bare `id` key would produce: the refreshed asset
+      // silently evicts the post the reader was already looking at.
+      const onScreen: Hit[] = [
+        { type: 'post', id: 'shared' },
+        { type: 'collection', id: 'c1' },
+      ];
+      const fresh: Hit[] = [{ type: 'asset', id: 'shared' }];
+      expect(label(mergeRefreshedHead(onScreen, fresh, key))).toEqual([
+        'asset:shared',
+        'post:shared',
+        'collection:c1',
+      ]);
+    });
+
+    it('still removes the overlap, matched on the pair', () => {
+      const onScreen: Hit[] = [
+        { type: 'asset', id: 'a' },
+        { type: 'post', id: 'p' },
+      ];
+      const fresh: Hit[] = [
+        { type: 'asset', id: 'new' },
+        { type: 'asset', id: 'a' },
+      ];
+      expect(label(mergeRefreshedHead(onScreen, fresh, key))).toEqual([
+        'asset:new',
+        'asset:a',
+        'post:p',
+      ]);
+    });
+  });
 });

@@ -551,24 +551,24 @@ class UploadState {
    *
    * Every production surface that lists posts or assets:
    * `routes/+page.svelte` (the feed), `routes/collections/[id]`,
-   * `routes/teams/[id]` (both tabs) and `components/UserProfile`,
-   * which is what `/users/by-ref/[ref]` and
+   * `routes/teams/[id]` (both tabs), `routes/search`, and
+   * `components/UserProfile`, which is what `/users/by-ref/[ref]` and
    * `/users/by-username/[username]` mount.
    *
-   * `routes/search` does NOT, and that is a decision rather than an
-   * omission. Its only refresh primitive is `runSearch`, which carries
-   * ADR 0056 §3c's mandated scroll reset: refining is a new address, so
-   * a non-append run puts the reader back at the first hit. Firing that
-   * from a background event would yank a reader down a result list to
-   * the top of it, which is the destructive half of this bug rather
-   * than a fix for it. A search result is an answer to a question the
-   * reader asked, not the place their new work lives, and the surfaces
-   * where it does live are all listed above.
+   * `routes/search` is on that list and the reason is worth writing
+   * down, because the first answer was to leave it off. Its ordinary
+   * non-append run carries ADR 0056 §3c's scroll reset, replaces
+   * `hits` and rewrites `cursor` from a page-one response, and all
+   * three are wrong for a background refresh. But the fix for that is
+   * a third mode, not an exclusion: the reset was ALREADY conditional
+   * on the append arm, so the mode the surface needs was reachable
+   * inside the model it already had. Refining stays exactly what it
+   * was; nothing here changes what a new address means.
    *
-   * `routes/create` is not a consumer either: it is a full-page flow
-   * that navigates to what it made (#1119). It calls `submit()` like
-   * the modal does, so this fires there too, and finds nobody home,
-   * which is correct.
+   * `routes/create` is not a consumer: it is a full-page flow that
+   * navigates to what it made (#1119). It calls `submit()` like the
+   * modal does, so this fires there too, and finds nobody home, which
+   * is correct.
    */
   onSuccess(fn: UploadSuccessListener): () => void {
     this.successListeners.add(fn);

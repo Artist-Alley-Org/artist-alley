@@ -68,6 +68,8 @@
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import { createInfiniteScroll } from '$lib/util/infiniteScroll.svelte';
   import { resetResultsScroll } from '$lib/util/resultsScroll';
+  import { mergeRefreshedHead } from '$lib/util/refreshHead';
+  import { upload } from '$stores/upload.svelte';
   import {
     hitAsCardAsset,
     hitAsCollection,
@@ -322,7 +324,48 @@
     load: () => void runSearch(q, { append: true }),
   });
 
-  async function runSearch(query: string, opts: { append?: boolean } = {}) {
+  /**
+   * `append` is the reader continuing down the list. `refresh` is
+   * #1407: a publish landed while the reader was standing on a result
+   * page, and the answer they are looking at is now out of date.
+   *
+   * Neither is a REFINE, and refresh is the one that has to say so
+   * loudest, because everything a refine does is wrong here: it resets
+   * the results region to its first row, it replaces `hits`, and it
+   * rewrites `cursor` from a page-one response. The reader did not ask
+   * a new question; they added something to the answer.
+   */
+  async function runSearch(
+    query: string,
+    opts: { append?: boolean; refresh?: boolean } = {},
+  ) {
+    // ⛔ NOT WHILE THE ADDRESS IS CHANGING. `loading` is a fresh query
+    // in flight, which means the hits on screen are about to be
+    // replaced by an answer to a DIFFERENT question. Superseding it
+    // with a refresh of the OLD result set would leave the reader
+    // looking at the previous answer under the new url. The publish is
+    // not lost: the query that is already running will return the
+    // server's current answer, which includes it.
+    if (opts.refresh && loading) return;
+    // ⭐ THE REFRESH RE-ASKS `resultParams`, NEVER THE LIVE CONTROLS,
+    // and that is a correctness requirement rather than tidiness. The
+    // page's search box is `bind:value={q}`, so `q` runs AHEAD of the
+    // results by every keystroke the reader has typed and not yet
+    // submitted; the kind chips and filter tokens move ahead of them
+    // the same way. A background refresh reading those would fetch an
+    // answer to a question nobody has asked yet and merge it into the
+    // set on screen. `resultParams` is the one record of what the
+    // visible hits actually answer, which is why the history snapshot
+    // is captured from it too.
+    const rQuery = opts.refresh ? resultParams.q : query;
+    const rDsl = opts.refresh ? resultParams.dsl : dslMode;
+    const rKinds = opts.refresh ? resultParams.kinds : kinds;
+    const rFilters = opts.refresh ? resultParams.filters : filters;
+    // Nothing has been asked, so there is no answer to bring up to
+    // date. Returning rather than falling into the clear-and-return
+    // below, which would wipe `resultParams` and the facets on a page
+    // that is merely empty.
+    if (opts.refresh && !rQuery && rFilters.length === 0) return;
     const gen = ++searchGen;
     // ⭐ REFINING IS A NEW ADDRESS (#1298, ADR 0056 §3c's 2026-08-28
     // amendment): the results region goes back to its first row, and
@@ -344,10 +387,15 @@
     // re-resolve the offset against reflowed content — which is the
     // mechanism #1298 measured landing on 0 here, 184 on a second run
     // and 279 on the CI runner, none of them decided by this page.
-    if (!opts.append) resetResultsScroll(resultsEl);
+    // ⛔ `refresh` is excluded for the same reason `append` is, one step
+    // stronger. #1407's whole point is that the reader keeps the page
+    // they were on; sending them to row one to show them their own
+    // upload would be the destructive half of that bug rather than a
+    // fix for it.
+    if (!opts.append && !opts.refresh) resetResultsScroll(resultsEl);
     // #1157 — a filter selection is a runnable query with no text. The
     // clear-and-return below is for a genuinely EMPTY address only.
-    if (!query && filters.length === 0) {
+    if (!rQuery && rFilters.length === 0) {
       hits = [];
       totalCount = 0;
       totalCountCapped = false;
@@ -357,9 +405,13 @@
       resultParams = { q: '', dsl: dslMode, kinds: [...kinds], filters: [...filters] };
       return;
     }
+    // A refresh sets NEITHER. `loading` swaps the results region for
+    // skeletons, which is a flash of nothing over a list the reader is
+    // reading, and `loadingMore` prints a footer saying they asked for
+    // another page. They asked for neither.
     if (opts.append) {
       loadingMore = true;
-    } else {
+    } else if (!opts.refresh) {
       loading = true;
     }
     error = '';
@@ -368,21 +420,27 @@
     let appended = 0;
     try {
       const params = new URLSearchParams({ limit: '25' });
-      if (dslMode) params.set('dsl', query);
-      else if (query !== '') params.set('q', query);
-      if (kinds.length > 0) params.set('types', kinds.join(','));
+      if (rDsl) params.set('dsl', rQuery);
+      else if (rQuery !== '') params.set('q', rQuery);
+      if (rKinds.length > 0) params.set('types', rKinds.join(','));
+      // ⛔ A REFRESH IS PAGE ONE and never carries the cursor: it is
+      // re-asking the head of the same answer, not asking for more of
+      // it. Every narrowing the reader has on is still in the request
+      // above, so a post that does not match their query, their kinds
+      // or their filters does not come back, and their visible
+      // membership does not change.
       if (opts.append && cursor) params.set('cursor', cursor);
       // #907 — repeated, one per tick. Appended to BOTH requests: the
       // counts have to be computed against the same population as the
       // results, or the rail goes back to describing a page nobody is
       // looking at.
-      for (const f of filters) params.append('filter', f);
+      for (const f of rFilters) params.append('filter', f);
       const facetParams = new URLSearchParams();
-      if (query !== '') facetParams.set('q', query);
-      for (const f of filters) facetParams.append('filter', f);
+      if (rQuery !== '') facetParams.set('q', rQuery);
+      for (const f of rFilters) facetParams.append('filter', f);
       const [searchResp, facetsResp] = await Promise.all([
         fetch(`/api/v1/search?${params.toString()}`, { credentials: 'include' }),
-        opts.append || dslMode
+        opts.append || rDsl
           ? Promise.resolve(null)
           : fetch(`/api/v1/search/facets?${facetParams.toString()}`, { credentials: 'include' }),
       ]);
@@ -393,15 +451,40 @@
       }
       const data = (await searchResp.json()) as SearchResponse;
       if (gen !== searchGen) return;
-      cursor = data.next_cursor || '';
       totalCount = data.total_count;
       totalCountCapped = data.total_count_capped;
-      hits = opts.append ? [...hits, ...data.hits] : data.hits;
-      appended = data.hits.length;
+      if (opts.refresh && hits.length > 0) {
+        // #1407. The server's page one replaces page one and the pages
+        // the reader has already accumulated keep their order behind
+        // it, minus the overlap. See `mergeRefreshedHead` for why that
+        // is exactly-once and why it cannot invent a position.
+        //
+        // Keyed on `(type, id)`: the three entity types come from three
+        // tables, so a hit's identity is the pair, which is what the
+        // server's own cursor tie-breaks on.
+        //
+        // `cursor` is deliberately NOT reassigned. Page one's cursor
+        // points at page two and the reader is holding further pages
+        // than that; the search cursor is `(score, id, type)` rather
+        // than an offset, so a hit arriving at the head does not move
+        // the position it names.
+        hits = mergeRefreshedHead(hits, data.hits, (h) => `${h.type}:${h.id}`);
+        // `appended` stays 0: nothing was consumed, so the lookahead
+        // pump has no buffer to top back up.
+      } else {
+        // An empty region has no pages to protect, so a refresh of one
+        // is simply its first load, cursor included: without it the
+        // list would be permanently one page deep.
+        cursor = data.next_cursor || '';
+        hits = opts.append ? [...hits, ...data.hits] : data.hits;
+        appended = data.hits.length;
+      }
       // Recorded beside the hits it describes, never before them: an
       // aborted or superseded fetch (both return above) must leave the
-      // previous result set and its parameters matching each other.
-      resultParams = { q: query, dsl: dslMode, kinds: [...kinds], filters: [...filters] };
+      // previous result set and its parameters matching each other. A
+      // refresh writes back the same values it read, because it asked
+      // the same question.
+      resultParams = { q: rQuery, dsl: rDsl, kinds: [...rKinds], filters: [...rFilters] };
       if (facetsResp && facetsResp.ok) {
         const fd = (await facetsResp.json()) as FacetsResponse;
         facets = fd.facets ?? {};
@@ -531,6 +614,22 @@
     // change (pushQueryToURL strips it).
     if (page.url.searchParams.get('advanced')) advancedOpen = true;
   });
+
+  // #1407: a publish landed while the reader was standing on a result
+  // page. The upload modal is mounted once in the layout and the navbar
+  // button is on every route, so this surface is reachable from the
+  // same door every other one is, and the answer on screen goes out of
+  // date the moment the post exists.
+  //
+  // A SEPARATE onMount from the one above so the unsubscribe is what
+  // gets returned; the store hands it back for exactly this.
+  //
+  // `refresh`, not a plain call: see `runSearch` for the three things
+  // an ordinary non-append run would do that are all wrong here. The
+  // query, the kinds and the filters are re-sent unchanged, so the
+  // server decides membership and a post that does not match this
+  // reader's narrowing simply does not come back.
+  onMount(() => upload.onSuccess(() => void runSearch(resultParams.q, { refresh: true })));
 
   // ---------------------------------------------------------------------
   // The URL is this page's input (#1053)
@@ -986,7 +1085,7 @@
   {/if}
 
   {#if !loading && hits.length === 0 && hasRunnableQuery}
-    <p class="text-sm text-fg-muted">{t('search.no_matches')}</p>
+    <p class="text-sm text-fg-muted" data-testid="search-no-matches">{t('search.no_matches')}</p>
   {:else if !loading && !hasRunnableQuery}
     <!-- Landing on /search with no query. Not an "advanced search"
          headline page — an invitation to type, and nothing else on
