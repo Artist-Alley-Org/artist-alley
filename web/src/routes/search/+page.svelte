@@ -99,6 +99,19 @@
   let totalCountCapped = $state(false);
   let loading = $state(false);
   let loadingMore = $state(false);
+  /**
+   * A post-publish refresh is on the wire (#1407).
+   *
+   * SEPARATE from the two above because it is invisible by design: it
+   * must not draw skeletons over a list somebody is reading, and it
+   * must not print a footer saying they asked for another page. But it
+   * IS a request against `hits` and `cursor`, so anything asking "may I
+   * start a fetch now" has to count it. Without this the paging pump
+   * saw an idle surface mid-refresh and could fire a page that
+   * superseded the refresh by generation, which is the same class of
+   * bug in the other direction.
+   */
+  let refreshing = $state(false);
   let error = $state('');
   let facets = $state<Record<string, FacetResult>>({});
   /** The results region. Only ever used to FIND the scrollport (#1298);
@@ -321,7 +334,7 @@
     // BOTH flags. `loading` is a fresh query and `loadingMore` is an
     // append, and a pump that only watched the second would fire a
     // second page against a first page that has not landed.
-    busy: () => loading || loadingMore,
+    busy: () => loading || loadingMore || refreshing,
     load: () => void runSearch(q, { append: true }),
   });
 
@@ -341,7 +354,7 @@
    * landed.
    */
   const uploadRefresh = createRefreshGate({
-    busy: () => loading || loadingMore,
+    busy: () => loading || loadingMore || refreshing,
     run: () => void runSearch(resultParams.q, { refresh: true }),
   });
 
@@ -432,13 +445,17 @@
       resultParams = { q: '', dsl: dslMode, kinds: [...kinds], filters: [...filters] };
       return;
     }
-    // A refresh sets NEITHER. `loading` swaps the results region for
-    // skeletons, which is a flash of nothing over a list the reader is
-    // reading, and `loadingMore` prints a footer saying they asked for
-    // another page. They asked for neither.
+    // A refresh sets NEITHER OF THE VISIBLE FLAGS. `loading` swaps the
+    // results region for skeletons, which is a flash of nothing over a
+    // list the reader is reading, and `loadingMore` prints a footer
+    // saying they asked for another page. They asked for neither. It
+    // does claim the surface through `refreshing`, which is invisible
+    // and exists so nothing else starts a fetch on top of it.
     if (opts.append) {
       loadingMore = true;
-    } else if (!opts.refresh) {
+    } else if (opts.refresh) {
+      refreshing = true;
+    } else {
       loading = true;
     }
     error = '';
@@ -523,6 +540,9 @@
         loading = false;
         loadingMore = false;
       }
+      // NOT generation guarded: a refresh that lost a race still has to
+      // stop claiming the surface, or the pump and the gate both stall.
+      if (opts.refresh) refreshing = false;
       // ⭐ UNCONDITIONALLY, INCLUDING A SUPERSEDED RESPONSE. The gate
       // re-reads `busy()` for itself; what it needs from here is only
       // to be told that something finished, so an owed refresh is

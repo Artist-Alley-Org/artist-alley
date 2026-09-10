@@ -824,6 +824,28 @@ function holdNextResponse(
   };
 }
 
+/**
+ * Count every matching request the page makes.
+ *
+ * ⭐ Not "a request was sent", which proves nothing about what the
+ * reader sees. This counts whether the SAME page had to be asked for
+ * TWICE, which is what happens when the first one is thrown away: the
+ * requirement is that an in-flight operation is preserved rather than
+ * cancelled, and a redundant re-fetch is the signature of cancelling it.
+ */
+function countRequests(page: Page, match: (url: URL) => boolean): () => number {
+  let n = 0;
+  page.on('request', (req) => {
+    if (req.method().toUpperCase() !== 'GET') return;
+    try {
+      if (match(new URL(req.url()))) n += 1;
+    } catch {
+      // not a url we care about
+    }
+  });
+  return () => n;
+}
+
 /** Ids of every result card on `/search`, keyed the way the app keys them. */
 async function resultIdentities(page: Page): Promise<string[]> {
   return page.evaluate(() =>
@@ -873,6 +895,10 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
 
     // ⚠️ Arm the hold BEFORE the page loads, and let page one through:
     // the request this case races is the CURSORED one.
+    const cursoredRequests = countRequests(
+      page,
+      (url) => url.pathname === '/api/v1/search' && url.searchParams.has('cursor'),
+    );
     const hold = holdNextResponse(
       page,
       (url, method) =>
@@ -945,6 +971,16 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
         `${id} was on screen and must still be, exactly once`,
       ).toBe(1);
     }
+
+    // ⭐ AND THE READER'S PAGE WAS PRESERVED, NOT RE-FETCHED. This and
+    // the assertion above close both ways the defect can show: either
+    // the discarded page never arrives (that one fails) or the paging
+    // pump quietly asks for it a SECOND time (this one fails). A fix
+    // that cancels the in-flight request cannot satisfy both.
+    expect(
+      cursoredRequests(),
+      'the page the reader had already asked for must be USED, not thrown away and re-requested',
+    ).toBe(1);
 
     // 3. Address, document and scroll are all where they were.
     expect(await resultsScrollTop(page), 'the reader must not be sent to the top').toBeGreaterThan(0);
