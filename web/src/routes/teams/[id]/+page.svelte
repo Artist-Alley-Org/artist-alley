@@ -419,7 +419,6 @@
             <div class="mt-6 text-center">
               <button
                 type="button"
-                data-testid="team-posts-load-more"
                 class="rounded-md border border-border px-4 py-2 text-sm font-medium text-fg hover:border-border-strong disabled:opacity-60"
                 onclick={() => void loadPosts(postsCursor)}
                 disabled={loadingContent}

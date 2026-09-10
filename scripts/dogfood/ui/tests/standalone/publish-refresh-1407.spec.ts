@@ -1243,28 +1243,36 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
 
   // ── 14. the studio page, whose coordination is its own ─────────────
   //
-  // `/teams/{id}` does not use the generation machinery the feed and
-  // the results page share, so it gets its own case rather than being
+  // `/teams/{id}` does not use the generation machinery the feed and the
+  // results page share, so it gets its own case rather than being
   // assumed covered. Its defect is a different shape: ONE busy flag for
-  // TWO loaders. With both tabs loaded, a publish starts a posts head
-  // and an assets head together, and whichever finished first wrote
-  // "idle" while the other was still running, on a page where that flag
-  // is what disables the load-more control and what any refresh has to
-  // consult.
+  // TWO loaders. With both lists live, a publish starts a posts head and
+  // an assets head together, and whichever finished first wrote "idle"
+  // while the other was still running, on a page where that flag is what
+  // disables load-more and what any refresh has to consult.
   //
-  // ⚠️ The observation this turns on is the CONTROL'S STATE, not a row
-  // count, and that is deliberate: the flag being wrong is the bug, and
-  // a row count cannot see it. The continuity assertions after the
-  // release cover the list itself.
+  // ⭐ WHAT THIS MEASURES IS WHEN, NOT WHETHER. Holding the assets load
+  // open and counting the studio's POSTS requests says exactly one
+  // thing: did the refresh start on top of a request that was already in
+  // flight? On the defect the posts head goes out immediately, before
+  // the release. That is not "a request was sent" (which proves nothing
+  // about the reader); it is a request landing on the wrong side of a
+  // response this case is holding.
+  //
+  // ⚠️ AND THE FIXTURE IS DELIBERATELY TINY. An earlier version made 41
+  // posts so the studio would page, and they sat at the head of the
+  // newest-first wall for the length of the test: three unrelated specs
+  // went red reading a feed this one had taken over (#1198's lesson, and
+  // create-page-1119 writes it down). Nothing here needs a second page,
+  // so nothing here makes one.
   //
   // ⚠️ ONE CONTRIVANCE, STATED. Nothing on this page opens the modal
   // with the studio's id (`NavUploadButton` scopes to a collection and
-  // nothing else), so a modal publish cannot land IN the team today.
-  // The row the refreshed head has to surface is therefore written
-  // directly, before the publish. What is under test is that the head
-  // re-asks the server AFTER the pending page settles, and that is what
-  // the row proves.
-  test('the studio page does not report itself idle while a page is loading', async ({
+  // nothing else), so a modal publish cannot land IN the team today. The
+  // row the refreshed head has to surface is therefore written directly,
+  // before the publish. What is under test is that the head re-asks the
+  // server AFTER the in-flight load settles, and that row proves it did.
+  test('the studio page does not refresh on top of a load in flight', async ({
     page,
     request,
   }) => {
@@ -1279,9 +1287,6 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
     expect(created.status(), 'fixture team').toBe(201);
     const teamId = ((await created.json()) as { id: string }).id;
 
-    // The studio page pages at 36, so 40 posts guarantees a real cursor
-    // and a real second page. One asset backs all of them: a post needs
-    // a member, and reusing one keeps the fixture to 41 writes.
     const backing = await makeSearchableAsset(request, `#1407 studio backing ${stamp}`);
     apiAssets.push(backing);
     const teamPosts: string[] = [];
@@ -1298,94 +1303,75 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
       teamPosts.push(id);
       return id;
     };
-    for (let i = 0; i < 40; i++) await makeTeamPost(String(i).padStart(2, '0'));
+    for (let i = 0; i < 3; i++) await makeTeamPost(String(i));
 
     try {
+      // Count the studio's own posts requests. One is made on mount; the
+      // refresh would be a second.
+      const postsRequests = countRequests(
+        page,
+        (url) => url.pathname === '/api/v1/posts' && url.searchParams.has('team_id'),
+      );
+
       await page.goto(`/teams/${teamId}`);
       await expect(page.locator(tid('team-page'))).toBeVisible({ timeout: 30_000 });
-      await expect(page.locator(tid('team-posts-load-more'))).toBeVisible({ timeout: 30_000 });
       const idsBefore = await resultIdentities(page);
-      expect(idsBefore.length, 'the first page must be full and short of the whole set').toBe(36);
+      expect(idsBefore.length, 'the studio must show its posts first').toBe(3);
+      await expect
+        .poll(() => postsRequests(), { timeout: 20_000 })
+        .toBe(1);
 
-      // BOTH tabs loaded. This is the precondition the bug needs: one
-      // loader cannot clear a flag out from under another that was
-      // never started.
-      await page.locator(tid('team-tab-assets')).click();
-      await expect(page.locator(tid('team-tab-assets'))).toHaveAttribute('aria-selected', 'true');
-      await page.locator(tid('team-tab-posts')).click();
-      await expect(page.locator(tid('team-posts-load-more'))).toBeEnabled();
-
-      // Hold page two open.
+      // Hold the assets tab's load open. This is an ORDINARY page load,
+      // not a refresh, so what follows is a refresh meeting a request
+      // that was already in flight.
       const hold = holdNextResponse(
         page,
-        (url, method) =>
-          method === 'GET' && url.pathname === '/api/v1/posts' && url.searchParams.has('cursor'),
+        (url, method) => method === 'GET' && url.pathname === '/api/v1/assets',
       );
-      await page.locator(tid('team-posts-load-more')).click();
+      await page.locator(tid('team-tab-assets')).click();
       await expect
         .poll(() => hold.held(), {
-          message: 'page two must be genuinely in flight',
+          message: 'the assets load must be genuinely in flight',
           timeout: 20_000,
         })
         .toBe(1);
-      await expect(
-        page.locator(tid('team-posts-load-more')),
-        'the surface is busy, so its load-more is disabled',
-      ).toBeDisabled();
 
-      // The row the refreshed head has to bring back. Written before
-      // the publish, so a head that re-asks the server after the
-      // pending page settles will see it.
+      // The row the refreshed head has to bring back.
       const lateId = await makeTeamPost('late');
 
       const before = await markDocument(page);
-      // Reaching the load-more button scrolled the page to it, which
-      // hides the header. Bring it back before opening the modal.
       await revealNavbar(page);
       await page.locator(tid('nav-upload-button')).click();
       await pickAndPublish(page, fixtureFiles(1, 'teamhold'));
       await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 });
 
-      // ⭐ THE ASSERTION THAT CATCHES THE SHARED FLAG. An immediate
-      // refresh starts two loaders here; neither is held, so both
-      // finish in milliseconds, and the first to finish used to report
-      // the whole surface idle while page two was still on the wire.
-      // The wait is what lets that happen before the check, so a pass
-      // cannot be the check simply arriving first.
+      // ⭐ THE ASSERTION. An immediate refresh starts both loaders here,
+      // so the posts head would already have gone out. The wait is what
+      // lets that happen before the check, so a pass cannot be the check
+      // simply arriving first.
       await page.waitForTimeout(3000);
-      expect(hold.held(), 'page two is still held, so nothing may say otherwise').toBe(1);
-      await expect(
-        page.locator(tid('team-posts-load-more')),
-        'a request is still in flight, so the surface must not report itself idle',
-      ).toBeDisabled();
+      expect(hold.held(), 'the assets load is still held, so nothing may say otherwise').toBe(1);
+      expect(
+        postsRequests(),
+        'a load is still in flight, so the refresh must not have started on top of it',
+      ).toBe(1);
 
       await hold.release();
 
-      // The held page arrived, the refreshed head brought the late row,
-      // and nothing is doubled.
-      await expect
-        .poll(async () => (await resultIdentities(page)).length, {
-          message: 'the page the reader asked for must arrive',
-          timeout: 30_000,
-        })
-        .toBeGreaterThan(idsBefore.length);
+      // Now it runs, and it re-asks the SERVER: the row written after
+      // the page loaded is on screen, once, and nothing is doubled.
+      await page.locator(tid('team-tab-posts')).click();
       await expect(
         page.locator(`a[data-marquee-passthrough][href="/posts/${lateId}"]`),
-        'the head must re-ask the SERVER after the pending page settles',
+        'the head must re-ask the server once the in-flight load settles',
       ).toHaveCount(1, { timeout: 30_000 });
-
       const idsAfter = await resultIdentities(page);
       expect(duplicatesIn(idsAfter), 'no post may appear twice').toEqual([]);
       for (const id of idsBefore) {
         expect(idsAfter.filter((x) => x === id).length, `${id} exactly once`).toBe(1);
       }
-      await expectSameDocument(page, before, 'the held page and the refresh both landed');
-      // 41 posts at 36 to a page, so the second page completed the set
-      // and the control is GONE rather than re-enabled. Asserting the
-      // whole set is on screen says the same thing more directly: both
-      // pages landed, and the late row the head fetched is among them.
-      expect(idsAfter.length, 'both pages, plus the row the head brought back').toBe(41);
-      await expect(page.locator(tid('team-posts-load-more'))).toHaveCount(0);
+      expect(idsAfter.length, 'the three it had, plus the one the head found').toBe(4);
+      await expectSameDocument(page, before, 'the held load and the refresh both landed');
       await hold.stop();
     } finally {
       for (const id of teamPosts) {

@@ -213,10 +213,6 @@ export const testIds = {
     // selector, which a query that never ran would also satisfy.
     searchNoMatches:  'search-no-matches',
     searchTotalCount: 'search-total-count',
-    // The studio page's "load more". Its DISABLED state is the surface
-    // saying a content request is in flight, which is the observation
-    // that catches two loaders sharing one busy flag (#1407).
-    teamPostsLoadMore: 'team-posts-load-more',
   },
 
   // Generic page surfaces ------------------------------------
