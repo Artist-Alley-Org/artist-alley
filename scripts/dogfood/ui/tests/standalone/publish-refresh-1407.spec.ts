@@ -1313,10 +1313,32 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
         (url) => url.pathname === '/api/v1/posts' && url.searchParams.has('team_id'),
       );
 
+      // ⚠️ PIN THE VIEW MODE. `resultIdentities` reads the card's
+      // stretched link, which LIST mode does not render at all (it draws
+      // a table instead), and the mode is a stored preference rather
+      // than a constant. This case is about concurrency, so the mode is
+      // a variable it should not be carrying.
+      await page.addInitScript(() => {
+        try {
+          localStorage.setItem('aa_browse_mode', 'grid');
+        } catch {
+          // storage disabled; the default mode renders cards anyway
+        }
+      });
       await page.goto(`/teams/${teamId}`);
       await expect(page.locator(tid('team-page'))).toBeVisible({ timeout: 30_000 });
+      // ⚠️ AND WAIT FOR THE POSTS. `team-page` is the outer container and
+      // is visible before `loadPosts` resolves, so reading the cards
+      // straight after it counts an empty grid on any runner slower than
+      // the one this was written on. CI found that; a fast workstation
+      // never would.
+      await expect
+        .poll(async () => (await resultIdentities(page)).length, {
+          message: 'the studio must show its posts first',
+          timeout: 30_000,
+        })
+        .toBe(3);
       const idsBefore = await resultIdentities(page);
-      expect(idsBefore.length, 'the studio must show its posts first').toBe(3);
       await expect
         .poll(() => postsRequests(), { timeout: 20_000 })
         .toBe(1);
