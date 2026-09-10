@@ -756,10 +756,21 @@ test.describe('#1407 a publish reaches the result page it was made from', () => 
 // arrived, would make every assertion below true for the wrong reason.
 
 /**
- * Hold the next matching response open until `release()` is called.
+ * Let the next matching request REACH THE SERVER, then hold its response
+ * until `release()` is called.
  *
- * Returns the number of requests it has caught so far, so a case can
- * assert the request it is racing genuinely went out.
+ * ⚠️ THE ORDER MATTERS AND IT IS THE WHOLE INSTRUMENT. Holding before
+ * `continue()` would keep the request in the browser, so the server
+ * would not run the query until after the publish committed and every
+ * held response would come back already containing the new content.
+ * That is the one situation these cases must NOT arrange, because it is
+ * the false premise the broken fix rests on: "the request already in
+ * flight will carry it". `route.fetch()` performs the request now and
+ * `route.fulfill()` delivers it later, so the response held here was
+ * genuinely computed BEFORE the publish and genuinely cannot contain it.
+ *
+ * Returns the number of requests it has caught, so a case can assert
+ * the request it is racing genuinely went out.
  */
 function holdNextResponse(
   page: Page,
@@ -788,8 +799,15 @@ function holdNextResponse(
     // case is about, must be allowed straight through.
     armed = false;
     caught += 1;
+    let response;
+    try {
+      response = await route.fetch();
+    } catch {
+      await route.continue().catch(() => undefined);
+      return;
+    }
     await gate;
-    await route.continue();
+    await route.fulfill({ response }).catch(() => undefined);
   });
 
   return {
@@ -932,22 +950,25 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
     expect(await resultsScrollTop(page), 'the reader must not be sent to the top').toBeGreaterThan(0);
     await expectSameDocument(page, before, 'the held page and the refresh both landed');
 
-    // 4. Paging still works afterwards: the cursor was not corrupted.
+    // 4. Paging is not corrupted.
+    //
+    // ⚠️ NOT "another page must arrive". Page two was fetched while the
+    // population was still 40 and returned its last 15, so it was
+    // TERMINAL and the engine handed back no cursor. There is nothing
+    // further to ask for, and demanding it would be asserting against
+    // the fixture rather than against the code. What a corrupted cursor
+    // would do instead is re-deliver rows, so that is what is asserted:
+    // pump again and nothing may double or disappear.
     await hold.stop();
     const beforeMore = (await resultIdentities(page)).length;
-    if (beforeMore < SEEDED + 1) {
-      await page.evaluate(() => {
-        const port = document.querySelector('main');
-        if (port) port.scrollTop = port.scrollHeight;
-      });
-      await expect
-        .poll(async () => (await resultIdentities(page)).length, {
-          message: 'the cursor must still be usable after the refresh',
-          timeout: 30_000,
-        })
-        .toBeGreaterThan(beforeMore);
-      expect(duplicatesIn(await resultIdentities(page))).toEqual([]);
-    }
+    await page.evaluate(() => {
+      const port = document.querySelector('main');
+      if (port) port.scrollTop = port.scrollHeight;
+    });
+    await page.waitForTimeout(2500);
+    const idsFinal = await resultIdentities(page);
+    expect(duplicatesIn(idsFinal), 'a further pump must not duplicate anything').toEqual([]);
+    expect(idsFinal.length, 'the list may only grow').toBeGreaterThanOrEqual(beforeMore);
   });
 
   // ── 12. search: a FRESH query in flight, which must not drop it ─────
