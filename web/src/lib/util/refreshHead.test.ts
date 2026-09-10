@@ -13,7 +13,7 @@
 // it and puts it in the wrong place. The merge has to do neither.
 
 import { describe, expect, it } from 'vitest';
-import { mergeRefreshedHead } from './refreshHead';
+import { appendWithoutRepeats, mergeRefreshedHead } from './refreshHead';
 
 interface Row {
   id: string;
@@ -143,5 +143,47 @@ describe('mergeRefreshedHead', () => {
         'post:p',
       ]);
     });
+  });
+});
+
+// The tail-side twin (#1407). `/teams/{id}` has no generation guard, so
+// its append composes from the list AS IT IS WHEN THE RESPONSE LANDS,
+// which is not the list the request was issued against.
+describe('appendWithoutRepeats', () => {
+  interface Row {
+    id: string;
+  }
+  const rows = (...ids: string[]): Row[] => ids.map((id) => ({ id }));
+  const ids = (list: Row[]): string[] => list.map((r) => r.id);
+
+  it('puts the incoming page on the end, in the server order', () => {
+    expect(ids(appendWithoutRepeats(rows('a', 'b'), rows('c', 'd')))).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ]);
+  });
+
+  it('⛔ does NOT re-add a row a refresh already kept', () => {
+    // The bug: a head refresh landed between the request and its
+    // response and retained `b`, which this page is also about to
+    // deliver. A bare concatenation shows it twice.
+    const onScreen = rows('a', 'b');
+    const page = rows('b', 'c');
+    expect(ids(appendWithoutRepeats(onScreen, page))).toEqual(['a', 'b', 'c']);
+  });
+
+  it('leaves a repeated row where it already sits, rather than moving it', () => {
+    const onScreen = rows('a', 'b', 'c');
+    const page = rows('a', 'd');
+    expect(ids(appendWithoutRepeats(onScreen, page))).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('is idempotent, so a page delivered twice adds it once', () => {
+    const onScreen = rows('a', 'b');
+    const page = rows('c', 'd');
+    const once = appendWithoutRepeats(onScreen, page);
+    expect(ids(appendWithoutRepeats(once, page))).toEqual(ids(once));
   });
 });

@@ -69,6 +69,7 @@
   import { createInfiniteScroll } from '$lib/util/infiniteScroll.svelte';
   import { resetResultsScroll } from '$lib/util/resultsScroll';
   import { mergeRefreshedHead } from '$lib/util/refreshHead';
+  import { createRefreshGate } from '$lib/util/refreshGate';
   import { upload } from '$stores/upload.svelte';
   import {
     hitAsCardAsset,
@@ -325,6 +326,26 @@
   });
 
   /**
+   * #1407's publish-to-refresh seam, held behind whatever this page is
+   * already fetching.
+   *
+   * `busy` is THE SAME EXPRESSION the paging pump uses, deliberately:
+   * the two things that must not collide are a refresh and a page, so
+   * they have to agree on what "a page is in flight" means. Watching
+   * only `loading` is what let a refresh supersede an append and throw
+   * the reader's next page away.
+   *
+   * `run` reads `resultParams` when it RUNS, so a refresh queued behind
+   * a query that changes the address describes the set that query left
+   * on screen rather than the one that was there when the publish
+   * landed.
+   */
+  const uploadRefresh = createRefreshGate({
+    busy: () => loading || loadingMore,
+    run: () => void runSearch(resultParams.q, { refresh: true }),
+  });
+
+  /**
    * `append` is the reader continuing down the list. `refresh` is
    * #1407: a publish landed while the reader was standing on a result
    * page, and the answer they are looking at is now out of date.
@@ -339,14 +360,20 @@
     query: string,
     opts: { append?: boolean; refresh?: boolean } = {},
   ) {
-    // ⛔ NOT WHILE THE ADDRESS IS CHANGING. `loading` is a fresh query
-    // in flight, which means the hits on screen are about to be
-    // replaced by an answer to a DIFFERENT question. Superseding it
-    // with a refresh of the OLD result set would leave the reader
-    // looking at the previous answer under the new url. The publish is
-    // not lost: the query that is already running will return the
-    // server's current answer, which includes it.
-    if (opts.refresh && loading) return;
+    // ⛔ A REFRESH NEVER ARRIVES HERE WHILE A REQUEST IS IN FLIGHT, and
+    // that is `uploadRefresh`'s job rather than a check on this line.
+    //
+    // This used to stand down on `loading`, which was wrong twice. It
+    // watched one flag where the paging pump watches two, so a refresh
+    // could still supersede an APPEND: the append owns generation N,
+    // the refresh bumps to N+1, and the page the reader had already
+    // scrolled for is discarded by the guards below and never arrives.
+    // And standing down at all DROPS the publish, on the false premise
+    // that the running request will carry it: that request may have
+    // read the database before the publish committed.
+    //
+    // So the decision moved to the gate, which defers instead of
+    // dropping. See `refreshGate.ts`.
     // ⭐ THE REFRESH RE-ASKS `resultParams`, NEVER THE LIVE CONTROLS,
     // and that is a correctness requirement rather than tidiness. The
     // page's search box is `bind:value={q}`, so `q` runs AHEAD of the
@@ -496,6 +523,12 @@
         loading = false;
         loadingMore = false;
       }
+      // ⭐ UNCONDITIONALLY, INCLUDING A SUPERSEDED RESPONSE. The gate
+      // re-reads `busy()` for itself; what it needs from here is only
+      // to be told that something finished, so an owed refresh is
+      // retried. A `settled()` hidden behind the generation guard would
+      // strand a refresh queued behind a request that lost a race.
+      uploadRefresh.settled();
     }
     // #1354 — top the buffer back up. The IntersectionObserver alone
     // cannot do this once the lookahead is deeper than one page is
@@ -629,7 +662,7 @@
   // query, the kinds and the filters are re-sent unchanged, so the
   // server decides membership and a post that does not match this
   // reader's narrowing simply does not come back.
-  onMount(() => upload.onSuccess(() => void runSearch(resultParams.q, { refresh: true })));
+  onMount(() => upload.onSuccess(() => uploadRefresh.request()));
 
   // ---------------------------------------------------------------------
   // The URL is this page's input (#1053)

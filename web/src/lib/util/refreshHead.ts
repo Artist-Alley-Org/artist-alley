@@ -62,3 +62,28 @@ export function mergeRefreshedHead<T>(
   const refreshed = new Set(fresh.map(key));
   return [...fresh, ...existing.filter((row) => !refreshed.has(key(row)))];
 }
+
+/**
+ * Put a fetched page on the END of a list, minus anything the list
+ * already holds (#1407).
+ *
+ * The twin of `mergeRefreshedHead`, for a surface whose append composes
+ * from the list AS IT IS WHEN THE RESPONSE LANDS rather than from the
+ * list the request was issued against. On `/teams/{id}` those two can
+ * differ, because a post-publish head refresh can retain rows that a
+ * page request already on the wire is also about to deliver, and a bare
+ * concatenation then shows them twice.
+ *
+ * Order is the server's: the incoming page keeps its sequence, and it
+ * goes after what is on screen. Only the overlap is dropped, and
+ * dropping it is what keeps the row at the ONE position it already
+ * occupies rather than moving it to the tail.
+ */
+export function appendWithoutRepeats<T>(
+  existing: readonly T[],
+  incoming: readonly T[],
+  key: (row: T) => string = (row) => (row as { id: string }).id,
+): T[] {
+  const held = new Set(existing.map(key));
+  return [...existing, ...incoming.filter((row) => !held.has(key(row)))];
+}

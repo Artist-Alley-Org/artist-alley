@@ -27,6 +27,7 @@
   import { createInfiniteScroll } from '$lib/util/infiniteScroll.svelte';
   import { resetResultsScroll } from '$lib/util/resultsScroll';
   import { mergeRefreshedHead } from '$lib/util/refreshHead';
+  import { createRefreshGate } from '$lib/util/refreshGate';
   import { upload } from '$stores/upload.svelte';
   import type { components } from '$api/schema';
 
@@ -189,6 +190,23 @@
 
   let generation = 0;
 
+  // ⛔ AND IT WAITS ITS TURN. `generation` is ONE counter shared by
+  // every mode, so a head fired while an append was on the wire bumped
+  // past it and the guards dropped the appended page: the reader
+  // scrolled, the loader fired, and the rows never arrived. The gate
+  // defers instead, which is the only answer that neither cancels the
+  // page nor drops the publish. It cannot stand down permanently on the
+  // strength of the running request either, because that request may
+  // have read the database before the publish committed.
+  //
+  // `run` reads `query` and the rail parameters when it RUNS, so a
+  // refresh queued behind a REFINE describes the wall that refine left
+  // on screen.
+  const uploadRefresh = createRefreshGate({
+    busy: () => loading,
+    run: () => void fetchPage(query, activeTeamId, activeTag, activeKinds, null, 'head'),
+  });
+
   /** How a fetched page joins what is already on screen.
    *
    *  `reset`  = a new address: the page IS the list.
@@ -336,6 +354,11 @@
         loading = false;
         initialLoaded = true;
       }
+      // ⭐ UNCONDITIONALLY, INCLUDING A SUPERSEDED RESPONSE (#1407).
+      // The gate re-reads `busy()` itself; all it needs from here is to
+      // be told something finished, so a refresh queued behind a
+      // request that lost a race is still tried.
+      uploadRefresh.settled();
     }
     // #1159 — top the buffer back up. See `pumpFeed` for why the
     // IntersectionObserver alone cannot do this once the lookahead is
@@ -496,11 +519,8 @@
   // `kind=`, the feed pill, the AI and mature toggles), so a post that
   // does not belong in the reader's current narrowing does not appear
   // in it, which is correct rather than a gap.
-  onMount(() =>
-    upload.onSuccess(() => {
-      void fetchPage(query, activeTeamId, activeTag, activeKinds, null, 'head');
-    }),
-  );
+  //
+  onMount(() => upload.onSuccess(() => uploadRefresh.request()));
 
   // ── Marquee drag-select (#1127) ───────────────────────────────────
   //

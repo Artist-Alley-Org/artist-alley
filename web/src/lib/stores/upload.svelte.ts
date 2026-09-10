@@ -569,6 +569,17 @@ class UploadState {
    * navigates to what it made (#1119). It calls `submit()` like the
    * modal does, so this fires there too, and finds nobody home, which
    * is correct.
+   *
+   * # ⛔ A SUBSCRIBER MUST NOT REFRESH ON THE SPOT
+   *
+   * Every list here can have a request in flight when this fires, and
+   * refreshing straight into that is how the first version lost the
+   * reader's next page. Each consumer routes this through a
+   * `createRefreshGate` (`$lib/util/refreshGate`), which runs the
+   * refresh when the surface is free and holds it when it is not.
+   * Skipping the refresh instead is not available: the request already
+   * on the wire may have read the database before the publish
+   * committed, so it cannot be relied on to carry the new content.
    */
   onSuccess(fn: UploadSuccessListener): () => void {
     this.successListeners.add(fn);

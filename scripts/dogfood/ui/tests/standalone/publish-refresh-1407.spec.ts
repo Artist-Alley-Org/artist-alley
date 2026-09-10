@@ -137,6 +137,21 @@ async function markDocument(page: Page): Promise<{ url: string }> {
   return { url: page.url() };
 }
 
+/**
+ * The marker half on its own, for the one case whose address is SUPPOSED
+ * to change: the reader submits a new query, so `page.url()` moving is
+ * the behaviour rather than the failure. The document surviving is still
+ * the thing that proves nothing reloaded.
+ */
+async function expectNoReload(page: Page, why: string) {
+  expect(
+    await page.evaluate(
+      () => (window as unknown as Record<string, unknown>).__aa1407 ?? null,
+    ),
+    `${why}: the marker is gone, so the page RELOADED`,
+  ).toBe('same-document');
+}
+
 async function expectSameDocument(page: Page, before: { url: string }, why: string) {
   expect(
     await page.evaluate(
@@ -508,7 +523,23 @@ async function scrollResultsAndKeepNavbar(page: Page): Promise<number> {
   await page.mouse.move(200, 400);
   await page.mouse.wheel(0, 900);
   await page.waitForTimeout(300);
-  // Up, past DIRECTION_EPSILON, but nowhere near back to the top.
+  await revealNavbar(page);
+  return resultsScrollTop(page);
+}
+
+/**
+ * Bring the auto-hiding header back and WAIT for it, without returning
+ * the reader to the top.
+ *
+ * Anything that scrolls the page hides it, and Playwright's own
+ * `scrollIntoViewIfNeeded` counts: clicking a control at the bottom of
+ * a list scrolls down to reach it, and the navbar goes with it. A short
+ * upward wheel is the gesture that reveals it (`chromeScroll`: past
+ * `DIRECTION_EPSILON`, which is 6), and the poll is what makes this
+ * deterministic instead of a bet on the transition being finished.
+ */
+async function revealNavbar(page: Page): Promise<void> {
+  await page.mouse.move(200, 400);
   await page.mouse.wheel(0, -160);
   await expect
     .poll(
@@ -524,7 +555,6 @@ async function scrollResultsAndKeepNavbar(page: Page): Promise<number> {
       },
     )
     .toBeGreaterThanOrEqual(0);
-  return resultsScrollTop(page);
 }
 
 test.describe('#1407 a publish reaches the result page it was made from', () => {
@@ -681,5 +711,548 @@ test.describe('#1407 a publish reaches the result page it was made from', () => 
     }
 
     await expectSameDocument(page, before, 'the results caught up in place');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1407: the refresh must not race a page that is already in flight
+// ---------------------------------------------------------------------------
+//
+// # The race
+//
+// Every list here owns its own fetch, and any of them can have a
+// request outstanding when a publish lands. The first version of this
+// work fired the refresh immediately, and the three surfaces resolved
+// the collision three different and equally wrong ways:
+//
+//   - `/search` and `/` supersede by generation. The refresh bumps past
+//     the append, the append's response is dropped by its own guard,
+//     and the page the reader had already scrolled for never arrives.
+//   - `/teams/{id}` has no generation at all. Its append composes from
+//     whatever the list holds when the response LANDS, so a refresh
+//     arriving in between leaves it re-adding rows the merge kept.
+//
+// # ⛔ AND THE OBVIOUS FIX IS THE OTHER HALF OF THE BUG
+//
+// "Skip the refresh while something is in flight" drops the publish,
+// and the excuse for it is false: the running request may have read the
+// database BEFORE the publish committed, so its response is not
+// guaranteed to carry the new content. The artist would be told their
+// work is not there, which is #1407 itself.
+//
+// # ⚠️ WHY THESE HOLD THE RESPONSE
+//
+// A case that hoped the two requests would overlap would pass or fail
+// by network luck, and on a quiet workstation it would simply never
+// reproduce. So the page response is INTERCEPTED AND HELD open, the
+// publish is completed while it is held, and only then is it released.
+// The overlap is arranged, not awaited.
+//
+// # ⚠️ AND WHY THE FIXTURE IS ASSERTED FIRST
+//
+// Each case proves the held request was genuinely outstanding before it
+// publishes, and proves the rows it is about to check for were not
+// there already. A hold that never engaged, or a page that had already
+// arrived, would make every assertion below true for the wrong reason.
+
+/**
+ * Hold the next matching response open until `release()` is called.
+ *
+ * Returns the number of requests it has caught so far, so a case can
+ * assert the request it is racing genuinely went out.
+ */
+function holdNextResponse(
+  page: Page,
+  match: (url: URL, method: string) => boolean,
+): { held: () => number; release: () => Promise<void>; stop: () => Promise<void> } {
+  let caught = 0;
+  let releaseNow: (() => void) | null = null;
+  const gate = new Promise<void>((resolve) => {
+    releaseNow = resolve;
+  });
+  let armed = true;
+
+  void page.route('**/api/v1/**', async (route) => {
+    let url: URL;
+    try {
+      url = new URL(route.request().url());
+    } catch {
+      await route.continue();
+      return;
+    }
+    if (!armed || !match(url, route.request().method().toUpperCase())) {
+      await route.continue();
+      return;
+    }
+    // One request only. Everything after it, including the refresh this
+    // case is about, must be allowed straight through.
+    armed = false;
+    caught += 1;
+    await gate;
+    await route.continue();
+  });
+
+  return {
+    held: () => caught,
+    release: async () => {
+      releaseNow?.();
+      // Let the released response land and the gate drain.
+      await page.waitForTimeout(1500);
+    },
+    stop: async () => {
+      releaseNow?.();
+      await page.unroute('**/api/v1/**').catch(() => undefined);
+    },
+  };
+}
+
+/** Ids of every result card on `/search`, keyed the way the app keys them. */
+async function resultIdentities(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll('a[data-marquee-passthrough]')]
+      .map((a) => a.getAttribute('href') ?? '')
+      .filter((h) => h.startsWith('/assets/') || h.startsWith('/posts/'))
+      .map((h) => h.replace(/^\/(assets|posts)\//, (_m, t: string) => `${t}:`)),
+  );
+}
+
+function duplicatesIn(ids: string[]): string[] {
+  const seen = new Map<string, number>();
+  for (const id of ids) seen.set(id, (seen.get(id) ?? 0) + 1);
+  return [...seen.entries()].filter(([, n]) => n > 1).map(([id]) => id);
+}
+
+test.describe('#1407 a publish does not race a page that is already loading', () => {
+  let apiAssets: string[] = [];
+
+  test.beforeEach(async ({ page }) => {
+    uploaded.watch(page);
+    apiAssets = [];
+  });
+
+  test.afterEach(async ({ request }) => {
+    await uploaded.cleanup(request);
+    for (const id of apiAssets) {
+      await request.delete(`/api/v1/assets/${id}`).catch(() => undefined);
+    }
+    apiAssets = [];
+  });
+
+  // ── 11. search: a held page two, and a publish on top of it ────────
+  test('search keeps the page it was already fetching', async ({ page, request }) => {
+    const token = `aa1407hold${STAMP.replace(/-/g, '')}`;
+    const assetIds = watchCreatedAssetIds(page);
+
+    // Two pages worth. The result limit is 25, so 40 rows guarantees a
+    // second page exists and that its rows are distinguishable from the
+    // first page's.
+    const SEEDED = 40;
+    for (let i = 0; i < SEEDED; i++) {
+      apiAssets.push(
+        await makeSearchableAsset(request, `${token} ${String(i).padStart(2, '0')}`),
+      );
+    }
+
+    // ⚠️ Arm the hold BEFORE the page loads, and let page one through:
+    // the request this case races is the CURSORED one.
+    const hold = holdNextResponse(
+      page,
+      (url, method) =>
+        method === 'GET' && url.pathname === '/api/v1/search' && url.searchParams.has('cursor'),
+    );
+
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.goto(`/search?q=${token}`);
+    await expect(page.locator(tid('search-total-count'))).toBeVisible({ timeout: 30_000 });
+
+    const counterBefore = await readCounter(page);
+    expect(counterBefore.total, 'the seeded rows are the whole population').toBe(SEEDED);
+    expect(
+      counterBefore.shown,
+      'page one must not already be the whole answer, or there is no second page to hold',
+    ).toBeLessThan(SEEDED);
+    const idsBefore = await resultIdentities(page);
+
+    // Scroll into the pump's reach, keeping the navbar available. This
+    // is what fires the cursored request the hold is waiting for.
+    const offsetBefore = await scrollResultsAndKeepNavbar(page);
+    expect(offsetBefore, 'the reader must genuinely be off the top').toBeGreaterThan(0);
+
+    // ⚠️ THE PRECONDITION THAT MAKES THIS A CONCURRENCY CASE AT ALL.
+    // If no cursored request went out, nothing is being raced and every
+    // assertion below would hold on any implementation.
+    await expect
+      .poll(() => hold.held(), {
+        message: 'page two must be genuinely in flight before the publish',
+        timeout: 20_000,
+      })
+      .toBe(1);
+    await expect(page.locator(tid('search-loading-more'))).toBeVisible();
+
+    // Publish WHILE page two is held open.
+    const before = await markDocument(page);
+    await page.locator(tid('nav-upload-button')).click();
+    await pickAndPublish(page, [
+      {
+        name: `${token}-held.txt`,
+        mimeType: 'text/plain',
+        buffer: Buffer.from(`#1407 held page ${STAMP}`),
+      },
+    ]);
+    await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 });
+    await expect.poll(() => assetIds.length, { timeout: 30_000 }).toBe(1);
+
+    await hold.release();
+
+    // 1. The publish was NOT dropped: the answer is current.
+    await expect
+      .poll(async () => (await readCounter(page)).total, {
+        message: 'the publish must not be lost merely because a page was loading',
+        timeout: 30_000,
+      })
+      .toBe(SEEDED + 1);
+
+    // 2. The held page was NOT discarded, and nothing doubled.
+    await expect
+      .poll(async () => (await resultIdentities(page)).length, {
+        message: 'the page the reader had already asked for must arrive',
+        timeout: 30_000,
+      })
+      .toBeGreaterThan(idsBefore.length);
+    const idsAfter = await resultIdentities(page);
+    expect(duplicatesIn(idsAfter), 'no (type, id) may appear twice').toEqual([]);
+    for (const id of idsBefore) {
+      expect(
+        idsAfter.filter((x) => x === id).length,
+        `${id} was on screen and must still be, exactly once`,
+      ).toBe(1);
+    }
+
+    // 3. Address, document and scroll are all where they were.
+    expect(await resultsScrollTop(page), 'the reader must not be sent to the top').toBeGreaterThan(0);
+    await expectSameDocument(page, before, 'the held page and the refresh both landed');
+
+    // 4. Paging still works afterwards: the cursor was not corrupted.
+    await hold.stop();
+    const beforeMore = (await resultIdentities(page)).length;
+    if (beforeMore < SEEDED + 1) {
+      await page.evaluate(() => {
+        const port = document.querySelector('main');
+        if (port) port.scrollTop = port.scrollHeight;
+      });
+      await expect
+        .poll(async () => (await resultIdentities(page)).length, {
+          message: 'the cursor must still be usable after the refresh',
+          timeout: 30_000,
+        })
+        .toBeGreaterThan(beforeMore);
+      expect(duplicatesIn(await resultIdentities(page))).toEqual([]);
+    }
+  });
+
+  // ── 12. search: a FRESH query in flight, which must not drop it ─────
+  test('search queues the publish behind a query that changes the address', async ({
+    page,
+    request,
+  }) => {
+    // Two distinct populations. The reader is looking at A, submits B,
+    // and the publish lands into B while B's request is held.
+    const tokenA = `aa1407qa${STAMP.replace(/-/g, '')}`;
+    const tokenB = `aa1407qb${STAMP.replace(/-/g, '')}`;
+    const assetIds = watchCreatedAssetIds(page);
+    for (let i = 0; i < 3; i++) {
+      apiAssets.push(await makeSearchableAsset(request, `${tokenA} ${i}`));
+      apiAssets.push(await makeSearchableAsset(request, `${tokenB} ${i}`));
+    }
+
+    await page.goto(`/search?q=${tokenA}`);
+    await expect(page.locator(tid('search-total-count'))).toBeVisible({ timeout: 30_000 });
+    expect((await readCounter(page)).total).toBe(3);
+
+    // Hold the request for B, the NON-append one.
+    const hold = holdNextResponse(
+      page,
+      (url, method) =>
+        method === 'GET' &&
+        url.pathname === '/api/v1/search' &&
+        (url.searchParams.get('q') ?? '') === tokenB,
+    );
+
+    const before = await markDocument(page);
+    await page.locator(tid('search-input')).fill(tokenB);
+    await page.locator(tid('search-input')).press('Enter');
+    await expect
+      .poll(() => hold.held(), {
+        message: 'the new query must be genuinely in flight',
+        timeout: 20_000,
+      })
+      .toBe(1);
+
+    // Publish a row that belongs to B, while B is still on the wire.
+    await page.locator(tid('nav-upload-button')).click();
+    await pickAndPublish(page, [
+      {
+        name: `${tokenB}-during.txt`,
+        mimeType: 'text/plain',
+        buffer: Buffer.from(`#1407 query in flight ${STAMP}`),
+      },
+    ]);
+    await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 });
+    await expect.poll(() => assetIds.length, { timeout: 30_000 }).toBe(1);
+
+    await hold.release();
+
+    // ⭐ THE POINT. The publish was queued, not dropped, AND the
+    // refresh it produced applied to B, the set actually on screen,
+    // rather than to A, which is what a gate holding parameters from
+    // queue time would have refreshed.
+    await expect
+      .poll(async () => (await readCounter(page)).total, {
+        message: 'the queued publish must reach the query that is now on screen',
+        timeout: 30_000,
+      })
+      .toBe(4);
+    await expect(
+      page.locator(`a[data-marquee-passthrough][href="/assets/${assetIds[0]}"]`),
+    ).toHaveCount(1, { timeout: 30_000 });
+    expect(duplicatesIn(await resultIdentities(page))).toEqual([]);
+    expect(page.url(), 'the address is B').toContain(tokenB);
+    // ⚠️ The ADDRESS moved on purpose here, so only the reload half of
+    // the usual check applies. `before` is kept for the marker it
+    // stamped.
+    void before;
+    await expectNoReload(page, 'the queued refresh applied to the new address');
+    await hold.stop();
+  });
+
+  // ── 13. the browse feed, with page two held ────────────────────────
+  test('the feed keeps the page it was already fetching', async ({ page }) => {
+    const postIds = watchCreatedPostIds(page);
+
+    const hold = holdNextResponse(
+      page,
+      (url, method) =>
+        method === 'GET' && url.pathname === '/api/v1/posts' && url.searchParams.has('cursor'),
+    );
+
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.goto('/');
+    await expect(page.locator('a[data-marquee-passthrough]').first()).toBeAttached({
+      timeout: 30_000,
+    });
+    const idsBefore = await resultIdentities(page);
+    expect(idsBefore.length, 'the wall must have a first page').toBeGreaterThan(0);
+
+    const offsetBefore = await scrollResultsAndKeepNavbar(page);
+    expect(offsetBefore).toBeGreaterThan(0);
+
+    await expect
+      .poll(() => hold.held(), {
+        message: 'the next feed page must be genuinely in flight before the publish',
+        timeout: 20_000,
+      })
+      .toBe(1);
+
+    const before = await markDocument(page);
+    await page.locator(tid('nav-upload-button')).click();
+    await pickAndPublish(page, fixtureFiles(1, 'feedhold'));
+    await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 });
+    await expect.poll(() => postIds.length, { timeout: 30_000 }).toBe(1);
+
+    await hold.release();
+
+    // The publish arrived, in the SERVER's position rather than one the
+    // client chose: it is on page one of a newest-first wall, so it is
+    // at the head of the merged list.
+    await expect(
+      page.locator(`a[data-marquee-passthrough][href="/posts/${postIds[0]}"]`),
+      'the publish must not be lost merely because a page was loading',
+    ).toHaveCount(1, { timeout: 30_000 });
+    const idsAfter = await resultIdentities(page);
+    expect(idsAfter[0], 'newest first, so the new post leads the wall').toBe(
+      `posts:${postIds[0]}`,
+    );
+
+    // The held page was not discarded, and nothing doubled.
+    expect(
+      idsAfter.length,
+      'the page the reader had already asked for must arrive',
+    ).toBeGreaterThan(idsBefore.length);
+    expect(duplicatesIn(idsAfter), 'no post may appear twice').toEqual([]);
+    for (const id of idsBefore) {
+      expect(idsAfter.filter((x) => x === id).length, `${id} exactly once`).toBe(1);
+    }
+
+    expect(await resultsScrollTop(page), 'the wall must not reset').toBeGreaterThan(0);
+    await expectSameDocument(page, before, 'the held page and the refresh both landed');
+
+    // The cursor still works.
+    await hold.stop();
+    const beforeMore = idsAfter.length;
+    await page.evaluate(() => {
+      const port = document.querySelector('main');
+      if (port) port.scrollTop = port.scrollHeight;
+    });
+    await expect
+      .poll(async () => (await resultIdentities(page)).length, {
+        message: 'the cursor must still be usable after the refresh',
+        timeout: 30_000,
+      })
+      .toBeGreaterThan(beforeMore);
+    expect(duplicatesIn(await resultIdentities(page))).toEqual([]);
+  });
+
+  // ── 14. the studio page, whose coordination is its own ─────────────
+  //
+  // `/teams/{id}` does not use the generation machinery the feed and
+  // the results page share, so it gets its own case rather than being
+  // assumed covered. Its defect is a different shape: ONE busy flag for
+  // TWO loaders. With both tabs loaded, a publish starts a posts head
+  // and an assets head together, and whichever finished first wrote
+  // "idle" while the other was still running, on a page where that flag
+  // is what disables the load-more control and what any refresh has to
+  // consult.
+  //
+  // ⚠️ The observation this turns on is the CONTROL'S STATE, not a row
+  // count, and that is deliberate: the flag being wrong is the bug, and
+  // a row count cannot see it. The continuity assertions after the
+  // release cover the list itself.
+  //
+  // ⚠️ ONE CONTRIVANCE, STATED. Nothing on this page opens the modal
+  // with the studio's id (`NavUploadButton` scopes to a collection and
+  // nothing else), so a modal publish cannot land IN the team today.
+  // The row the refreshed head has to surface is therefore written
+  // directly, before the publish. What is under test is that the head
+  // re-asks the server AFTER the pending page settles, and that is what
+  // the row proves.
+  test('the studio page does not report itself idle while a page is loading', async ({
+    page,
+    request,
+  }) => {
+    const stamp = `${STAMP}-${Math.random().toString(36).slice(2, 6)}`;
+    const created = await request.post('/api/v1/teams', {
+      data: {
+        name: `#1407 studio ${stamp}`,
+        slug: `aa1407-studio-${stamp}`.toLowerCase().replace(/[^a-z0-9-]/g, ''),
+        description: 'fixture for #1407',
+      },
+    });
+    expect(created.status(), 'fixture team').toBe(201);
+    const teamId = ((await created.json()) as { id: string }).id;
+
+    // The studio page pages at 36, so 40 posts guarantees a real cursor
+    // and a real second page. One asset backs all of them: a post needs
+    // a member, and reusing one keeps the fixture to 41 writes.
+    const backing = await makeSearchableAsset(request, `#1407 studio backing ${stamp}`);
+    apiAssets.push(backing);
+    const teamPosts: string[] = [];
+    const makeTeamPost = async (label: string): Promise<string> => {
+      const r = await request.post('/api/v1/posts', {
+        data: {
+          title: `#1407 studio ${stamp} ${label}`,
+          members: [{ asset_id: backing, sort_order: 0 }],
+          team_id: teamId,
+        },
+      });
+      expect(r.status(), `fixture post ${label}`).toBe(201);
+      const id = ((await r.json()) as { id: string }).id;
+      teamPosts.push(id);
+      return id;
+    };
+    for (let i = 0; i < 40; i++) await makeTeamPost(String(i).padStart(2, '0'));
+
+    try {
+      await page.goto(`/teams/${teamId}`);
+      await expect(page.locator(tid('team-page'))).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator(tid('team-posts-load-more'))).toBeVisible({ timeout: 30_000 });
+      const idsBefore = await resultIdentities(page);
+      expect(idsBefore.length, 'the first page must be full and short of the whole set').toBe(36);
+
+      // BOTH tabs loaded. This is the precondition the bug needs: one
+      // loader cannot clear a flag out from under another that was
+      // never started.
+      await page.locator(tid('team-tab-assets')).click();
+      await expect(page.locator(tid('team-tab-assets'))).toHaveAttribute('aria-selected', 'true');
+      await page.locator(tid('team-tab-posts')).click();
+      await expect(page.locator(tid('team-posts-load-more'))).toBeEnabled();
+
+      // Hold page two open.
+      const hold = holdNextResponse(
+        page,
+        (url, method) =>
+          method === 'GET' && url.pathname === '/api/v1/posts' && url.searchParams.has('cursor'),
+      );
+      await page.locator(tid('team-posts-load-more')).click();
+      await expect
+        .poll(() => hold.held(), {
+          message: 'page two must be genuinely in flight',
+          timeout: 20_000,
+        })
+        .toBe(1);
+      await expect(
+        page.locator(tid('team-posts-load-more')),
+        'the surface is busy, so its load-more is disabled',
+      ).toBeDisabled();
+
+      // The row the refreshed head has to bring back. Written before
+      // the publish, so a head that re-asks the server after the
+      // pending page settles will see it.
+      const lateId = await makeTeamPost('late');
+
+      const before = await markDocument(page);
+      // Reaching the load-more button scrolled the page to it, which
+      // hides the header. Bring it back before opening the modal.
+      await revealNavbar(page);
+      await page.locator(tid('nav-upload-button')).click();
+      await pickAndPublish(page, fixtureFiles(1, 'teamhold'));
+      await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 });
+
+      // ⭐ THE ASSERTION THAT CATCHES THE SHARED FLAG. An immediate
+      // refresh starts two loaders here; neither is held, so both
+      // finish in milliseconds, and the first to finish used to report
+      // the whole surface idle while page two was still on the wire.
+      // The wait is what lets that happen before the check, so a pass
+      // cannot be the check simply arriving first.
+      await page.waitForTimeout(3000);
+      expect(hold.held(), 'page two is still held, so nothing may say otherwise').toBe(1);
+      await expect(
+        page.locator(tid('team-posts-load-more')),
+        'a request is still in flight, so the surface must not report itself idle',
+      ).toBeDisabled();
+
+      await hold.release();
+
+      // The held page arrived, the refreshed head brought the late row,
+      // and nothing is doubled.
+      await expect
+        .poll(async () => (await resultIdentities(page)).length, {
+          message: 'the page the reader asked for must arrive',
+          timeout: 30_000,
+        })
+        .toBeGreaterThan(idsBefore.length);
+      await expect(
+        page.locator(`a[data-marquee-passthrough][href="/posts/${lateId}"]`),
+        'the head must re-ask the SERVER after the pending page settles',
+      ).toHaveCount(1, { timeout: 30_000 });
+
+      const idsAfter = await resultIdentities(page);
+      expect(duplicatesIn(idsAfter), 'no post may appear twice').toEqual([]);
+      for (const id of idsBefore) {
+        expect(idsAfter.filter((x) => x === id).length, `${id} exactly once`).toBe(1);
+      }
+      await expectSameDocument(page, before, 'the held page and the refresh both landed');
+      // 41 posts at 36 to a page, so the second page completed the set
+      // and the control is GONE rather than re-enabled. Asserting the
+      // whole set is on screen says the same thing more directly: both
+      // pages landed, and the late row the head fetched is among them.
+      expect(idsAfter.length, 'both pages, plus the row the head brought back').toBe(41);
+      await expect(page.locator(tid('team-posts-load-more'))).toHaveCount(0);
+      await hold.stop();
+    } finally {
+      for (const id of teamPosts) {
+        await request.delete(`/api/v1/posts/${id}`).catch(() => undefined);
+      }
+      await request.delete(`/api/v1/teams/${teamId}`).catch(() => undefined);
+    }
   });
 });
