@@ -9,6 +9,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Drop a 3D model and its texture files together and they arrive as one textured model.**
+  Supplying a model alongside the files it references now attaches them automatically, instead of
+  leaving you with a pile of unrelated uploads and a warning you could not clear. The model's own
+  declared references decide what belongs to it, so a file it never names stays an ordinary upload.
+  Where the browser gives us the folder, nested paths such as `textures/foo.png` are kept, so a
+  texture matches the path the model actually asks for. When a name really is ambiguous, you are
+  asked which model it belongs to rather than having it guessed for you. Attaching a file after the
+  upload has finished now genuinely uploads it, and the list of missing files updates on the spot
+  without a page reload. The same behaviour is in the upload dialog and on the create page
+  (#1408, PR #1425).
+
 - **Change one metadata field across many files at once, from anywhere you can select them.**
   Ticking files or posts anywhere in the app now shows a bar with the count, a way to clear it, and
   a button to edit a field across everything selected. Before, that bar only existed on the browse
