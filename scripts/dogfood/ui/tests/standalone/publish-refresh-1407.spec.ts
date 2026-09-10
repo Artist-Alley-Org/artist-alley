@@ -775,6 +775,7 @@ test.describe('#1407 a publish reaches the result page it was made from', () => 
 function holdNextResponse(
   page: Page,
   match: (url: URL, method: string) => boolean,
+  opts: { blockFurther?: boolean } = {},
 ): { held: () => number; release: () => Promise<void>; stop: () => Promise<void> } {
   let caught = 0;
   let releaseNow: (() => void) | null = null;
@@ -791,7 +792,27 @@ function holdNextResponse(
       await route.continue();
       return;
     }
-    if (!armed || !match(url, route.request().method().toUpperCase())) {
+    if (!match(url, route.request().method().toUpperCase())) {
+      await route.continue();
+      return;
+    }
+    if (!armed) {
+      // ⛔ NO SECOND CHANCE, and this is what makes the defect
+      // OBSERVABLE rather than merely likely. Discarding the reader's
+      // page is SELF HEALING on the broken code: the cursor was never
+      // advanced, so the paging pump can quietly ask for the same page
+      // again and the rows turn up after all, depending on where the
+      // sentinel happens to land. That made the red a coin flip. With
+      // the retry blocked, the only way those rows can be on screen is
+      // if the response this case held was actually used.
+      //
+      // It costs the correct implementation nothing: it needs no retry,
+      // so there is nothing here for it to trip over.
+      if (opts.blockFurther) {
+        caught += 1;
+        await route.abort().catch(() => undefined);
+        return;
+      }
       await route.continue();
       return;
     }
@@ -903,6 +924,7 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
       page,
       (url, method) =>
         method === 'GET' && url.pathname === '/api/v1/search' && url.searchParams.has('cursor'),
+      { blockFurther: true },
     );
 
     await page.setViewportSize({ width: 390, height: 700 });
@@ -1090,6 +1112,7 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
       page,
       (url, method) =>
         method === 'GET' && url.pathname === '/api/v1/posts' && url.searchParams.has('cursor'),
+      { blockFurther: true },
     );
 
     await page.setViewportSize({ width: 390, height: 700 });
