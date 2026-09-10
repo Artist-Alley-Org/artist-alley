@@ -776,8 +776,15 @@ function holdNextResponse(
   page: Page,
   match: (url: URL, method: string) => boolean,
   opts: { blockFurther?: boolean } = {},
-): { held: () => number; release: () => Promise<void>; stop: () => Promise<void> } {
+): {
+  held: () => number;
+  /** The rows the held response actually carried, as `type:id`. */
+  heldRows: () => string[];
+  release: () => Promise<void>;
+  stop: () => Promise<void>;
+} {
   let caught = 0;
+  let heldRows: string[] = [];
   let releaseNow: (() => void) | null = null;
   const gate = new Promise<void>((resolve) => {
     releaseNow = resolve;
@@ -821,18 +828,38 @@ function holdNextResponse(
     armed = false;
     caught += 1;
     let response;
+    let body: Buffer;
     try {
       response = await route.fetch();
+      body = await response.body();
     } catch {
       await route.continue().catch(() => undefined);
       return;
     }
+    // ⭐ WHAT THIS PAGE ACTUALLY CARRIES, read before it is delivered.
+    // A case can then name the exact rows that must survive, instead of
+    // asserting the list got longer: a head refresh alone lengthens it
+    // by one, so a length check passes while the reader's page is still
+    // in the bin.
+    try {
+      const parsed = JSON.parse(body.toString('utf8')) as {
+        hits?: Array<{ type: string; id: string }>;
+        items?: Array<{ id: string }>;
+      };
+      if (parsed.hits) heldRows = parsed.hits.map((h) => `${h.type}:${h.id}`);
+      // The feed's `/posts` payload has no `type`, because everything in
+      // it is a post. Keyed the same way regardless.
+      else if (parsed.items) heldRows = parsed.items.map((i) => `post:${i.id}`);
+    } catch {
+      heldRows = [];
+    }
     await gate;
-    await route.fulfill({ response }).catch(() => undefined);
+    await route.fulfill({ response, body }).catch(() => undefined);
   });
 
   return {
     held: () => caught,
+    heldRows: () => [...heldRows],
     release: async () => {
       releaseNow?.();
       // Let the released response land and the gate drain.
@@ -869,11 +896,17 @@ function countRequests(page: Page, match: (url: URL) => boolean): () => number {
 
 /** Ids of every result card on `/search`, keyed the way the app keys them. */
 async function resultIdentities(page: Page): Promise<string[]> {
+  // ⚠️ THE ENGINE'S OWN KEY, `type:id`, and singular because that is
+  // what the search API calls a hit's type. The permalinks are plural
+  // (`/assets/`, `/posts/`), so the trailing `s` is dropped here rather
+  // than left to a caller to remember: the first version of this
+  // compared `assets:x` against the API's `asset:x` and could never
+  // match, which made a case go red against a correct implementation.
   return page.evaluate(() =>
     [...document.querySelectorAll('a[data-marquee-passthrough]')]
       .map((a) => a.getAttribute('href') ?? '')
       .filter((h) => h.startsWith('/assets/') || h.startsWith('/posts/'))
-      .map((h) => h.replace(/^\/(assets|posts)\//, (_m, t: string) => `${t}:`)),
+      .map((h) => h.replace(/^\/(asset|post)s\//, (_m, t: string) => `${t}:`)),
   );
 }
 
@@ -979,13 +1012,27 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
       .toBe(SEEDED + 1);
 
     // 2. The held page was NOT discarded, and nothing doubled.
-    await expect
-      .poll(async () => (await resultIdentities(page)).length, {
-        message: 'the page the reader had already asked for must arrive',
-        timeout: 30_000,
-      })
-      .toBeGreaterThan(idsBefore.length);
+    //
+    // ⚠️ NAMED ROWS, NOT A LENGTH. The head refresh on its own makes
+    // the list one longer, because the new row joins page one and
+    // pushes its last row into the tail. A length check is satisfied by
+    // that while the reader's page is still in the bin, which is how
+    // this case passed on the defect before it was written this way.
+    const heldRows = hold.heldRows();
+    expect(
+      heldRows.length,
+      'the held response must genuinely have carried rows, or this proves nothing',
+    ).toBeGreaterThan(0);
+    for (const row of heldRows) {
+      await expect
+        .poll(async () => (await resultIdentities(page)).filter((x) => x === row).length, {
+          message: `${row} was on the page the reader had already asked for and must arrive, once`,
+          timeout: 30_000,
+        })
+        .toBe(1);
+    }
     const idsAfter = await resultIdentities(page);
+    expect(idsAfter.length, 'and the list grew by that page').toBeGreaterThan(idsBefore.length);
     expect(duplicatesIn(idsAfter), 'no (type, id) may appear twice').toEqual([]);
     for (const id of idsBefore) {
       expect(
@@ -1150,10 +1197,22 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
     ).toHaveCount(1, { timeout: 30_000 });
     const idsAfter = await resultIdentities(page);
     expect(idsAfter[0], 'newest first, so the new post leads the wall').toBe(
-      `posts:${postIds[0]}`,
+      `post:${postIds[0]}`,
     );
 
-    // The held page was not discarded, and nothing doubled.
+    // The held page was not discarded, and nothing doubled. Named rows
+    // rather than a length, for the reason the search case gives.
+    const heldRows = hold.heldRows();
+    expect(
+      heldRows.length,
+      'the held response must genuinely have carried rows',
+    ).toBeGreaterThan(0);
+    for (const row of heldRows) {
+      expect(
+        idsAfter.filter((x) => x === row).length,
+        `${row} was on the page the reader had already asked for and must arrive, once`,
+      ).toBe(1);
+    }
     expect(
       idsAfter.length,
       'the page the reader had already asked for must arrive',
