@@ -139,6 +139,7 @@
         <span class="mb-1 block text-fg-muted">{t('upload.compose.post_mode_label')}</span>
         <select
           bind:value={upload.compose.mode}
+          data-testid="upload-post-mode"
           class="w-full rounded border border-border-strong bg-surface-elevated px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         >
           <option value="one-post">{t('upload.compose.mode_one_post')}</option>

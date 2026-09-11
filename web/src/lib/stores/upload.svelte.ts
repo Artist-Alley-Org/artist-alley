@@ -340,6 +340,36 @@ interface OpenContext {
   teamId?: string | null;
 }
 
+/**
+ * What one successful `submit()` actually produced (#1407).
+ *
+ * The modal is mounted ONCE, globally, in `routes/+layout.svelte`, so
+ * the route the artist was standing on when they published is not
+ * something this store knows or should know. It therefore does not
+ * refresh anything itself; it says what happened and leaves each
+ * surface to re-ask the server in whatever way that surface's own
+ * paging, ordering and snapshot semantics allow.
+ *
+ * ⚠️ CAPTURED BEFORE `reset()`. `reset()` drops every row, which is
+ * where the asset ids live, and `resetCompose()` is the only thing
+ * that could later disagree about the collection. A subscriber that
+ * read the store instead of this payload would be reading a store
+ * that has already been emptied.
+ */
+export interface UploadSuccess {
+  /** Post ids created, in creation order. Empty for an asset-only upload. */
+  postIds: string[];
+  /** Asset ids of every row that was published, in queue order. */
+  assetIds: string[];
+  /** The collection the posts were published into, or null. */
+  collectionId: string | null;
+  /** The team context the modal was opened with, or null. */
+  teamId: string | null;
+}
+
+/** A surface's reaction to a successful publish. */
+export type UploadSuccessListener = (result: UploadSuccess) => void;
+
 // ---- Constants ------------------------------------------------------------
 
 const CONCURRENCY = 3;
@@ -405,6 +435,19 @@ class UploadState {
   createdPostIds = $state<string[]>([]);
   composeBusy = $state(false);
   composeError = $state<string | null>(null);
+
+  /**
+   * Surfaces waiting to hear that a publish landed (#1407).
+   *
+   * A plain listener set rather than a `$state` counter watched by an
+   * `$effect`, and that is not a style preference. Svelte 5 collects
+   * dependencies THROUGH CALL FRAMES, so an effect that read a counter
+   * and then called a route's own `loadPosts()` would subscribe itself
+   * to every piece of state that refetch touches and re-run on its own
+   * results. A callback is invoked outside any tracking scope, so a
+   * refetch cannot become its own trigger.
+   */
+  private successListeners = new Set<UploadSuccessListener>();
 
   /** Rows that have finished uploading and have asset_ids. */
   get readyRows(): UploadRow[] {
@@ -488,6 +531,80 @@ class UploadState {
       (r) => r.state === 'uploading' || r.state === 'asset-creating',
     );
     this.resetCompose();
+  }
+
+  /**
+   * Hear about successful publishes for as long as the caller is
+   * mounted (#1407). Returns the unsubscribe function, which is what
+   * `onMount` wants returned:
+   *
+   * ```svelte
+   * onMount(() => upload.onSuccess(() => void loadPosts()));
+   * ```
+   *
+   * ⛔ A subscriber must NOT manufacture rows out of the payload. The
+   * ids are there to say WHAT landed, not to be rendered: the server
+   * decides things the client guessed at (asset type is promoted
+   * server side), so the surface re-asks and shows what comes back.
+   *
+   * # Who listens, and who deliberately does not
+   *
+   * Every production surface that lists posts or assets:
+   * `routes/+page.svelte` (the feed), `routes/collections/[id]`,
+   * `routes/teams/[id]` (both tabs), `routes/search`, and
+   * `components/UserProfile`, which is what `/users/by-ref/[ref]` and
+   * `/users/by-username/[username]` mount.
+   *
+   * `routes/search` is on that list and the reason is worth writing
+   * down, because the first answer was to leave it off. Its ordinary
+   * non-append run carries ADR 0056 §3c's scroll reset, replaces
+   * `hits` and rewrites `cursor` from a page-one response, and all
+   * three are wrong for a background refresh. But the fix for that is
+   * a third mode, not an exclusion: the reset was ALREADY conditional
+   * on the append arm, so the mode the surface needs was reachable
+   * inside the model it already had. Refining stays exactly what it
+   * was; nothing here changes what a new address means.
+   *
+   * `routes/create` is not a consumer: it is a full-page flow that
+   * navigates to what it made (#1119). It calls `submit()` like the
+   * modal does, so this fires there too, and finds nobody home, which
+   * is correct.
+   *
+   * # ⛔ A SUBSCRIBER MUST NOT REFRESH ON THE SPOT
+   *
+   * Every list here can have a request in flight when this fires, and
+   * refreshing straight into that is how the first version lost the
+   * reader's next page. Each consumer routes this through a
+   * `createRefreshGate` (`$lib/util/refreshGate`), which runs the
+   * refresh when the surface is free and holds it when it is not.
+   * Skipping the refresh instead is not available: the request already
+   * on the wire may have read the database before the publish
+   * committed, so it cannot be relied on to carry the new content.
+   */
+  onSuccess(fn: UploadSuccessListener): () => void {
+    this.successListeners.add(fn);
+    return () => {
+      this.successListeners.delete(fn);
+    };
+  }
+
+  /**
+   * Announce a landed publish.
+   *
+   * Iterates a COPY, so a subscriber that unsubscribes itself while
+   * being called cannot skip the next one. Each call is isolated: a
+   * surface whose refetch throws must not turn a publish that
+   * genuinely succeeded into `composeError`, which would tell the
+   * artist their work was not saved when it was.
+   */
+  private emitSuccess(result: UploadSuccess): void {
+    for (const fn of [...this.successListeners]) {
+      try {
+        fn(result);
+      } catch {
+        // Deliberately swallowed. See above.
+      }
+    }
   }
 
   /** Hard reset — drops every row + posts state. Called after a successful submit. */
@@ -763,7 +880,24 @@ class UploadState {
       if (this.compose.enabled) {
         await this.createPosts(ready);
       }
+      // #1407: read the outcome BEFORE the teardown that destroys it.
+      // `reset()` empties `rows`, so `ready[].assetId` is only
+      // available here, and `resetCompose()` runs from inside it.
+      const result: UploadSuccess = {
+        postIds: [...this.createdPostIds],
+        assetIds: ready.map((r) => r.assetId).filter((v): v is string => !!v),
+        collectionId: this.compose.collectionId,
+        teamId: this.contextTeamId,
+      };
       this.reset();
+      // AFTER `reset()`, and the ordering is load-bearing against
+      // #1408. `reset()` tears down the companion lifecycle:
+      // `candidates`, `batches`, the undecided questions. A
+      // subscriber that ran before it would be looking at a modal that
+      // is still open, still holding rows, and still mid-reconciliation.
+      // Emitting afterwards means a surface only ever sees a store that
+      // has finished.
+      this.emitSuccess(result);
       return true;
     } catch (e) {
       this.composeError = e instanceof Error ? e.message : t('upload.err_create_post');

@@ -58,6 +58,8 @@
   import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
   import { browseView } from '$stores/browseView.svelte';
+  import { upload } from '$stores/upload.svelte';
+  import { createRefreshGate } from '$lib/util/refreshGate';
   import AssetCard from '$components/AssetCard.svelte';
   import CollectionCard from '$components/CollectionCard.svelte';
   import PostCard from '$components/PostCard.svelte';
@@ -157,6 +159,20 @@
     return null;
   }
 
+  /**
+   * How many portfolio requests are in flight (#1407).
+   *
+   * `loadContent` had no busy state at all and ends in three bare
+   * replacements, so a refresh started on top of one already running
+   * loses to it: the fresh answer lands, then the older PRE-PUBLISH
+   * response returns and overwrites `posts` and `assets` with the
+   * version that does not contain the new work. Counted rather than a
+   * boolean for the reason the studio page gives: this is the "is
+   * anything running" question the refresh gate consults, and it has to
+   * be right when more than one thing is.
+   */
+  let contentInFlight = $state(0);
+
   async function loadContent(ownerRef: number, self: boolean) {
     // Independent + best-effort: a members-only 401 on the posts feed
     // (anonymous viewer) must not blank the collections an anonymous
@@ -167,20 +183,27 @@
     // uploads grid is off the visitor view, and a fetch whose result is
     // conditionally rendered is a grid one `{#if}` away from coming
     // back.
-    const [p, c] = await Promise.all([
-      api.GET('/posts', { params: { query: { author_ref: ownerRef, limit: 24 } } }).catch(() => ({ data: null })),
-      api.GET('/collections', { params: { query: { owner_ref: ownerRef, limit: 24 } } }).catch(() => ({ data: null })),
-    ]);
-    posts = (p.data?.items ?? []) as any[];
-    collections = (c.data?.items ?? []) as any[];
+    contentInFlight += 1;
+    try {
+      const [p, c] = await Promise.all([
+        api.GET('/posts', { params: { query: { author_ref: ownerRef, limit: 24 } } }).catch(() => ({ data: null })),
+        api.GET('/collections', { params: { query: { owner_ref: ownerRef, limit: 24 } } }).catch(() => ({ data: null })),
+      ]);
+      posts = (p.data?.items ?? []) as any[];
+      collections = (c.data?.items ?? []) as any[];
 
-    if (self) {
-      const a = await api
-        .GET('/assets', { params: { query: { owner_ref: ownerRef, limit: 24 } } })
-        .catch(() => ({ data: null }));
-      assets = (a.data?.items ?? []) as any[];
-    } else {
-      assets = [];
+      if (self) {
+        const a = await api
+          .GET('/assets', { params: { query: { owner_ref: ownerRef, limit: 24 } } })
+          .catch(() => ({ data: null }));
+        assets = (a.data?.items ?? []) as any[];
+      } else {
+        assets = [];
+      }
+    } finally {
+      contentInFlight -= 1;
+      // ⭐ UNCONDITIONALLY, so a refresh owed behind this request runs.
+      uploadRefresh.settled();
     }
   }
 
@@ -197,6 +220,45 @@
   let draftsLoading = $state(false);
   let draftsLoaded = $state(false);
 
+  /**
+   * #1407's publish-to-refresh seam, held behind whatever this profile
+   * is already fetching.
+   *
+   * `busy` names BOTH loaders the handler touches. The portfolio one is
+   * obvious; `draftsLoading` is there because `loadDrafts` early-returns
+   * while a load is in flight, so a handler that ran then would clear
+   * `draftsLoaded` straight into that return and the owed refresh would
+   * be gone. Likes are deliberately absent: an upload cannot change who
+   * liked what, so that loader is not this consumer's business.
+   */
+  const uploadRefresh = createRefreshGate({
+    busy: () => contentInFlight > 0 || draftsLoading,
+    run: () => {
+      const p = profile;
+      if (!p) return;
+      void loadContent(p.ref, !!auth.user && auth.user.ref === p.ref);
+      if (draftsLoaded) {
+        draftsLoaded = false;
+        void loadDrafts(p.ref);
+      }
+    },
+  });
+
+  /**
+   * ⚠️ THE EARLY RETURN IS A DROPPED EVENT UNLESS SOMETHING HOLDS THE
+   * REFRESH BACK (#1407).
+   *
+   * The upload-success handler clears `draftsLoaded` and calls this. If
+   * a draft load was ALREADY in flight, this returned immediately, that
+   * older request then set `draftsLoaded = true` on its way out, and
+   * nothing was owed any more: a draft published from the modal stayed
+   * invisible on the tab that exists to show it, which is the bug this
+   * whole issue is about wearing a different hat.
+   *
+   * `draftsLoading` is therefore part of the gate's `busy`, so the
+   * handler never runs while a draft load is on the wire. It runs
+   * afterwards, when this function will actually do the work.
+   */
   async function loadDrafts(ownerRef: number) {
     if (draftsLoaded || draftsLoading) return;
     draftsLoading = true;
@@ -208,6 +270,7 @@
       draftsLoaded = true;
     } finally {
       draftsLoading = false;
+      uploadRefresh.settled();
     }
   }
 
@@ -226,6 +289,31 @@
       likesLoading = false;
     }
   }
+
+  // #1407: a publish landed while the artist was standing on a profile.
+  //
+  // A SEPARATE `onMount` from the one below, because that one is
+  // `async`: Svelte treats a promise return as a promise and never as a
+  // teardown, so an unsubscribe returned from it would silently never
+  // run and this component would keep answering after it unmounted.
+  //
+  // Portfolio is a FIXED first slice (limit 24, no "load more"), so its
+  // refresh is a straight re-ask and cannot duplicate a row or strand a
+  // page. Drafts is refreshed only if the tab was opened, and by
+  // clearing its loaded flag: `loadDrafts` returns early on it, so
+  // calling it without the reset would do nothing at all.
+  //
+  // ⛔ AND IT WAITS FOR WHATEVER IS ALREADY RUNNING. Both loaders here
+  // end in bare replacements with no generation guard, so a refresh
+  // started on top of one already on the wire loses to it. `busy`
+  // covers BOTH of them, which is what closes the drafts hole: the
+  // handler is never invoked while a draft load is in flight, so it
+  // cannot clear `draftsLoaded` into an early return that throws the
+  // event away.
+  //
+  // `run` reads `profile` when it RUNS, so the refresh describes the
+  // person whose page is on screen.
+  onMount(() => upload.onSuccess(() => uploadRefresh.request()));
 
   onMount(async () => {
     browseView.init(); // pick up the user's tile-size preference for the grids

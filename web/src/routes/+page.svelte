@@ -26,6 +26,9 @@
   import type { SelectionEntry } from '$stores/selection.svelte';
   import { createInfiniteScroll } from '$lib/util/infiniteScroll.svelte';
   import { resetResultsScroll } from '$lib/util/resultsScroll';
+  import { mergeRefreshedHead } from '$lib/util/refreshHead';
+  import { createRefreshGate } from '$lib/util/refreshGate';
+  import { upload } from '$stores/upload.svelte';
   import type { components } from '$api/schema';
 
   onMount(() => { browseView.init(); });
@@ -187,13 +190,40 @@
 
   let generation = 0;
 
+  // ⛔ AND IT WAITS ITS TURN. `generation` is ONE counter shared by
+  // every mode, so a head fired while an append was on the wire bumped
+  // past it and the guards dropped the appended page: the reader
+  // scrolled, the loader fired, and the rows never arrived. The gate
+  // defers instead, which is the only answer that neither cancels the
+  // page nor drops the publish. It cannot stand down permanently on the
+  // strength of the running request either, because that request may
+  // have read the database before the publish committed.
+  //
+  // `run` reads `query` and the rail parameters when it RUNS, so a
+  // refresh queued behind a REFINE describes the wall that refine left
+  // on screen.
+  const uploadRefresh = createRefreshGate({
+    busy: () => loading,
+    run: () => void fetchPage(query, activeTeamId, activeTag, activeKinds, null, 'head'),
+  });
+
+  /** How a fetched page joins what is already on screen.
+   *
+   *  `reset`  = a new address: the page IS the list.
+   *  `append` = the reader scrolled: the page goes on the end.
+   *  `head`   = #1407, a publish landed while the reader stood here:
+   *             page one is re-asked and merged over the top, leaving
+   *             the accumulated tail, the cursor and the scroll offset
+   *             exactly where they were. */
+  type FetchMode = 'reset' | 'append' | 'head';
+
   async function fetchPage(
     q: string,
     team: string | null,
     tag: string | null,
     kinds: string,
     cursor: string | null,
-    reset: boolean,
+    mode: FetchMode,
   ) {
     loading = true;
     error = null;
@@ -225,7 +255,7 @@
       // job, so a studio's videos is one request and not an
       // intersection this page computes.
       if (kinds) params.kind = kinds;
-      if (!reset && cursor) params.cursor = cursor;
+      if (mode === 'append' && cursor) params.cursor = cursor;
       // Feed filter + direction from the BrowseFooter store.
       //
       // `filter` is now a straight pass-through to the server's typed
@@ -299,9 +329,24 @@
       }
 
       const pageItems = (data.items ?? []) as Post[];
-      items = reset ? pageItems : [...items, ...pageItems];
-      nextCursor = (data.next_cursor as string | null) ?? null;
-      appended = pageItems.length;
+      if (mode === 'head' && items.length > 0) {
+        // #1407. `nextCursor` is deliberately NOT reassigned: page
+        // one's cursor points at page two, and the reader is holding
+        // pages well past that. Keyset cursors name a position in the
+        // sort rather than an offset, so a post arriving at the head
+        // does not move the one they already have.
+        //
+        // `appended` stays 0 so the lookahead pump does not fire. The
+        // buffer is as deep as it was; nothing was consumed.
+        items = mergeRefreshedHead(items, pageItems);
+      } else {
+        // An empty list has no tail to protect, so a `head` refresh of
+        // one is just its first load, including its cursor, without
+        // which the feed would be permanently one page deep.
+        items = mode === 'append' ? [...items, ...pageItems] : pageItems;
+        nextCursor = (data.next_cursor as string | null) ?? null;
+        appended = pageItems.length;
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : t('common.failed_to_load');
     } finally {
@@ -309,6 +354,11 @@
         loading = false;
         initialLoaded = true;
       }
+      // ⭐ UNCONDITIONALLY, INCLUDING A SUPERSEDED RESPONSE (#1407).
+      // The gate re-reads `busy()` itself; all it needs from here is to
+      // be told something finished, so a refresh queued behind a
+      // request that lost a race is still tried.
+      uploadRefresh.settled();
     }
     // #1159 — top the buffer back up. See `pumpFeed` for why the
     // IntersectionObserver alone cannot do this once the lookahead is
@@ -395,7 +445,7 @@
       // a route that scrolled itself on mount would fight the snapshot
       // restore that back-navigation is about to run.
       if (refine) resetResultsScroll(wallEl);
-      void fetchPage(query, activeTeamId, activeTag, activeKinds, null, true);
+      void fetchPage(query, activeTeamId, activeTag, activeKinds, null, 'reset');
     });
   });
 
@@ -446,9 +496,31 @@
     sentinel: () => sentinel,
     more: () => nextCursor !== null,
     busy: () => loading,
-    load: () => void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, false),
+    load: () => void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, 'append'),
   });
   const pumpFeed = () => feedScroll.pump();
+
+  // #1407: a publish landed while the reader was standing on the feed.
+  //
+  // The wall re-asks the SERVER for its first page and merges the
+  // answer over what is loaded (`mergeRefreshedHead`). It does not
+  // insert the new post from the upload store: the store's row is not a
+  // `Post`, and the server decides fields the client only guessed at.
+  //
+  // ⛔ AND IT IS NOT A RESET. `items = []` here would collapse a wall
+  // the reader may be 30000px down, re-place every tile and land them
+  // at row one. #1298 established that ordering the reader back to the
+  // top is what a REFINE means, and a publish is not a refine. They
+  // asked a question about their own work, not a different one about
+  // the wall.
+  //
+  // The filtered feed is handled by doing nothing special: the refresh
+  // re-runs whatever query is on screen (`?q=`, `?team=`, `?tag=`,
+  // `kind=`, the feed pill, the AI and mature toggles), so a post that
+  // does not belong in the reader's current narrowing does not appear
+  // in it, which is correct rather than a gap.
+  //
+  onMount(() => upload.onSuccess(() => uploadRefresh.request()));
 
   // ── Marquee drag-select (#1127) ───────────────────────────────────
   //
@@ -581,7 +653,7 @@
   // resolves; the user sees it on the next press.
   function loadMoreForSiblingWalk() {
     if (nextCursor && !loading) {
-      void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, false);
+      void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, 'append');
     }
   }
 
