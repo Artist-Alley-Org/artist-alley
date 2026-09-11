@@ -270,6 +270,82 @@ describe('createRefreshGate', () => {
     });
   });
 
+  // `UserProfile`'s drafts loader (#1407). It early-returns while a load
+  // is in flight, so a handler that ran at that moment cleared the
+  // "loaded" flag straight into that return, the older request set the
+  // flag again on its way out, and nothing was owed any more. The event
+  // was swallowed. Naming the loader in `busy` is what closes it, and
+  // these two cases are the difference.
+  describe('a loader that early-returns while it is in flight', () => {
+    function draftsSurface(includeInBusy: boolean) {
+      const s = manualScheduler();
+      let draftsLoading = false;
+      let draftsLoaded = true; // the tab has been opened once
+      let refreshedDrafts = 0;
+
+      // The real shape of `loadDrafts`: refuse to do anything while a
+      // load is in flight or the data is already considered loaded.
+      const loadDrafts = () => {
+        if (draftsLoaded || draftsLoading) return;
+        draftsLoading = true;
+        refreshedDrafts += 1;
+        // ...and it finishes later, via `finish()`.
+      };
+      const g = createRefreshGate({
+        busy: () => (includeInBusy ? draftsLoading : false),
+        run: () => {
+          if (draftsLoaded) {
+            draftsLoaded = false;
+            loadDrafts();
+          }
+        },
+        schedule: s.schedule,
+      });
+      return {
+        g,
+        s,
+        refreshedDrafts: () => refreshedDrafts,
+        startLoad: () => {
+          draftsLoaded = false;
+          draftsLoading = true;
+        },
+        finishLoad: () => {
+          draftsLoading = false;
+          draftsLoaded = true;
+          g.settled();
+        },
+      };
+    }
+
+    it('⛔ swallows the publish when the loader is NOT named in busy', () => {
+      const t = draftsSurface(false);
+      t.startLoad(); // a draft load is already on the wire
+      t.g.request(); // the publish lands
+      t.s.flush();
+      t.finishLoad(); // the older request sets "loaded" on its way out
+      t.s.flush();
+      expect(
+        t.refreshedDrafts(),
+        'the handler ran into the early return and the event is gone',
+      ).toBe(0);
+      expect(t.g.pending, 'and nothing is owed any more').toBe(false);
+    });
+
+    it('keeps it owed and refreshes after, when the loader IS named', () => {
+      const t = draftsSurface(true);
+      t.startLoad();
+      t.g.request();
+      t.s.flush();
+      expect(t.refreshedDrafts(), 'nothing while the load is in flight').toBe(0);
+      expect(t.g.pending).toBe(true);
+
+      t.finishLoad();
+      t.s.flush();
+      expect(t.refreshedDrafts(), 'and it actually reloads afterwards').toBe(1);
+      expect(t.g.pending).toBe(false);
+    });
+  });
+
   it('does not queue a second attempt while one is already scheduled', () => {
     const t = gate(true);
     t.g.request();

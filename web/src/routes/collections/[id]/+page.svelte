@@ -41,6 +41,7 @@
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import { upload } from '$stores/upload.svelte';
+  import { createRefreshGate } from '$lib/util/refreshGate';
   import { t } from '$stores/lang.svelte';
   import { browseView } from '$stores/browseView.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
@@ -131,7 +132,27 @@
   let collection = $state<Collection | null>(null);
   let posts = $state<PostRow[]>([]);
   let loading = $state(true);
-  let postsLoading = $state(true);
+  /**
+   * How many membership requests are in flight, NOT whether one is
+   * (#1407).
+   *
+   * `loadPosts` is reachable from three places: the mount chain through
+   * `load()`, the admin restore that re-runs `load()`, and the
+   * post-publish refresh. A boolean cannot describe two of those
+   * overlapping, and the thing that reads it is the refresh gate, whose
+   * whole job is to answer "is anything running" correctly. Same
+   * primitive, same reason, as the studio page.
+   *
+   */
+  let postsInFlight = $state(0);
+  /** False until the first membership answer has landed. The wall shows
+   *  skeletons rather than the empty state until then, which is what
+   *  the old boolean's `true` initial value was doing: `load()` fetches
+   *  the collection BEFORE it asks for the members, so a plain
+   *  "something is in flight" would report idle across that gap and
+   *  flash "nothing in this collection yet" at every reader. */
+  let postsEverLoaded = $state(false);
+  const postsLoading = $derived(postsInFlight > 0 || !postsEverLoaded);
   let error = $state<string | null>(null);
   // Separate from `error` on purpose: one is "we could not load this",
   // the other is "this is not yours to see", and they should not look
@@ -195,7 +216,22 @@
   // button prefills the same collection from the URL, and the compose
   // form can be pointed at another one) is the artist's work missing
   // from the page they are looking at.
-  onMount(() => upload.onSuccess(() => void loadPosts()));
+  //
+  // ⛔ AND IT WAITS FOR WHATEVER IS ALREADY RUNNING. `loadPosts` ends in
+  // a bare replacement and has no generation guard, so refreshing on
+  // top of a request already on the wire loses to it: the fresh answer
+  // lands, then the older PRE-PUBLISH response returns and overwrites
+  // the list with the version that does not contain the new post. The
+  // page is stale again, which is the bug this whole issue is about.
+  //
+  // The gate defers instead. It cannot skip the refresh either, because
+  // the request already running may have read the database before the
+  // publish committed. See `refreshGate.ts`.
+  const uploadRefresh = createRefreshGate({
+    busy: () => postsInFlight > 0,
+    run: () => void loadPosts(),
+  });
+  onMount(() => upload.onSuccess(() => uploadRefresh.request()));
 
   async function load() {
     loading = true;
@@ -215,9 +251,14 @@
         // told them something had gone wrong. Nothing had.
         if (response?.status === 404) {
           notFound = true;
+          // No membership request will be made, so release the
+          // first-paint hold rather than leaving the wall in skeletons
+          // behind a branch that never renders it.
+          postsEverLoaded = true;
           return;
         }
         error = (apiErr as { error?: string } | undefined)?.error ?? t('collections.error_not_found');
+        postsEverLoaded = true;
         return;
       }
       collection = data as Collection;
@@ -228,14 +269,19 @@
   }
 
   async function loadPosts() {
-    postsLoading = true;
+    postsInFlight += 1;
     try {
       const { data } = await api.GET('/collections/{id}/posts', {
         params: { path: { id }, query: { limit: 200 } },
       });
       posts = (data?.items ?? []) as unknown as PostRow[];
     } finally {
-      postsLoading = false;
+      postsInFlight -= 1;
+      postsEverLoaded = true;
+      // ⭐ UNCONDITIONALLY. The gate re-reads `busy()` for itself; all
+      // it needs from here is to be told that something finished, so a
+      // refresh owed behind this request is actually run.
+      uploadRefresh.settled();
     }
   }
 

@@ -847,9 +847,15 @@ function holdNextResponse(
         items?: Array<{ id: string }>;
       };
       if (parsed.hits) heldRows = parsed.hits.map((h) => `${h.type}:${h.id}`);
-      // The feed's `/posts` payload has no `type`, because everything in
-      // it is a post. Keyed the same way regardless.
-      else if (parsed.items) heldRows = parsed.items.map((i) => `post:${i.id}`);
+      // A list payload has no `type`, because everything in it is one
+      // kind. The PATH says which, and getting that wrong is not a
+      // cosmetic mislabel: a case asserting the held answer does not
+      // already contain the new row would compare `asset:x` against
+      // `post:x`, never match, and pass without testing anything.
+      else if (parsed.items) {
+        const kind = url.pathname === '/api/v1/assets' ? 'asset' : 'post';
+        heldRows = parsed.items.map((i) => `${kind}:${i.id}`);
+      }
     } catch {
       heldRows = [];
     }
@@ -1401,5 +1407,193 @@ test.describe('#1407 a publish does not race a page that is already loading', ()
       }
       await request.delete(`/api/v1/teams/${teamId}`).catch(() => undefined);
     }
+  });
+
+  // ── 15. the collection, with its own pre-publish answer held ───────
+  //
+  // `loadPosts` ends in a bare replacement and has no generation guard,
+  // so a refresh started on top of a request already on the wire LOSES
+  // to it: the fresh answer lands, then the older pre-publish response
+  // returns and overwrites the list with the version that does not
+  // contain the new post. The reader is looking at a stale page again.
+  //
+  // ⭐ WHAT MAKES THE RED THE CONCURRENCY DEFECT. The held response is
+  // the server's genuine pre-publish answer for an EMPTY collection, so
+  // the two implementations end in visibly different places: the old
+  // one finishes with that empty answer painted last, and the corrected
+  // one finishes with a server answer fetched afterwards. The final
+  // assertion is on the post being THERE, which the stale overwrite
+  // cannot satisfy no matter how the timing falls, because the held
+  // body is empty by construction and nothing re-asks after it.
+  test('the collection does not lose to a pre-publish answer', async ({ page, request }) => {
+    const postIds = watchCreatedPostIds(page);
+    const made = await request.post('/api/v1/collections', {
+      data: {
+        name: `#1407 race ${STAMP}-${Math.random().toString(36).slice(2, 6)}`,
+        description: 'fixture for #1407',
+      },
+    });
+    expect(made.status(), 'fixture collection').toBe(201);
+    const raceCollectionId = ((await made.json()) as { id: string }).id;
+
+    try {
+      await page.addInitScript(() => {
+        try {
+          localStorage.setItem('aa_browse_mode', 'grid');
+        } catch {
+          // storage disabled; the default mode renders cards anyway
+        }
+      });
+      await page.goto(`/collections/${raceCollectionId}`);
+      await expect(
+        page.locator(tid('collection-empty-upload')),
+        'the fixture collection must start empty',
+      ).toBeVisible({ timeout: 30_000 });
+
+      // Hold the NEXT membership answer. `route.fetch()` runs it against
+      // the server now, so the body held is the genuine pre-publish
+      // answer: an empty collection. Delivering it last is exactly the
+      // overwrite this case is about.
+      const hold = holdNextResponse(
+        page,
+        (url, method) =>
+          method === 'GET' && /^\/api\/v1\/collections\/[^/]+\/posts$/.test(url.pathname),
+      );
+      const membershipRequests = countRequests(page, (url) =>
+        /^\/api\/v1\/collections\/[^/]+\/posts$/.test(url.pathname),
+      );
+
+      // Something the page does on its own puts that request on the
+      // wire: the admin controls re-run `load()`, and so does a reload.
+      // A reload is the plainest, and it re-arms the same page state.
+      await page.reload();
+      await expect
+        .poll(() => hold.held(), {
+          message: 'the membership request must be genuinely in flight',
+          timeout: 20_000,
+        })
+        .toBe(1);
+      expect(hold.heldRows(), 'the held answer is the EMPTY collection').toEqual([]);
+      const beforeRequests = membershipRequests();
+
+      const before = await markDocument(page);
+      await revealNavbar(page);
+      await page.locator(tid('nav-upload-button')).click();
+      await pickAndPublish(page, fixtureFiles(1, 'collrace'));
+      await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 });
+      await expect.poll(() => postIds.length, { timeout: 30_000 }).toBe(1);
+
+      // ⭐ The refresh must NOT have started on top of the held request.
+      await page.waitForTimeout(3000);
+      expect(hold.held(), 'the membership answer is still held').toBe(1);
+      expect(
+        membershipRequests(),
+        'a request is still in flight, so the refresh must not have started on top of it',
+      ).toBe(beforeRequests);
+
+      await hold.release();
+
+      // The stale empty answer lands first, then the owed refresh runs
+      // and the post the artist made is on the wall, once.
+      await expect(
+        page.locator(`a[data-marquee-passthrough][href="/posts/${postIds[0]}"]`),
+        'the pre-publish answer overwrote the wall and nothing re-asked (#1407)',
+      ).toHaveCount(1, { timeout: 30_000 });
+      await expect(page.locator(tid('collection-posts'))).toBeVisible();
+      await expect(page.locator(tid('collection-empty-upload'))).toHaveCount(0);
+      expect(duplicatesIn(await resultIdentities(page))).toEqual([]);
+      await expectSameDocument(page, before, 'the held answer and the refresh both landed');
+      await hold.stop();
+    } finally {
+      await request.delete(`/api/v1/collections/${raceCollectionId}`).catch(() => undefined);
+    }
+  });
+
+  // ── 16. the author's own profile, uploads grid ─────────────────────
+  //
+  // `loadContent` had no busy state at all and ends in three bare
+  // replacements, so the same overwrite is available: the fresh answer
+  // lands and the older pre-publish one returns on top of it. Driven
+  // through the ASSET-ONLY flow, because the uploads grid is the one
+  // surface where an upload with no post has somewhere to be.
+  test('the profile does not lose to a pre-publish answer', async ({ page, request }) => {
+    const me = await request.get('/api/v1/auth/me');
+    expect(me.status()).toBe(200);
+    const username = ((await me.json()) as { username: string }).username;
+
+    const assetIds = watchCreatedAssetIds(page);
+    const postIds = watchCreatedPostIds(page);
+
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem('aa_browse_mode', 'grid');
+      } catch {
+        // storage disabled; the default mode renders cards anyway
+      }
+    });
+    await page.goto(`/users/by-username/${username}`);
+    await expect(page.locator(tid('profile-wall'))).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(tid('profile-uploads'))).toBeVisible({ timeout: 30_000 });
+
+    // Hold the owner-scoped ASSETS answer: the pre-publish uploads grid.
+    const hold = holdNextResponse(
+      page,
+      (url, method) =>
+        method === 'GET' && url.pathname === '/api/v1/assets' && url.searchParams.has('owner_ref'),
+    );
+    const ownerAssetRequests = countRequests(
+      page,
+      (url) => url.pathname === '/api/v1/assets' && url.searchParams.has('owner_ref'),
+    );
+
+    await page.reload();
+    await expect
+      .poll(() => hold.held(), {
+        message: 'the uploads request must be genuinely in flight',
+        timeout: 20_000,
+      })
+      .toBe(1);
+    const beforeRequests = ownerAssetRequests();
+
+    const before = await markDocument(page);
+    await revealNavbar(page);
+    await page.locator(tid('nav-upload-button')).click();
+    await pickAndPublish(page, fixtureFiles(1, 'profrace'), { post: false });
+    await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 });
+    await expect.poll(() => assetIds.length, { timeout: 30_000 }).toBe(1);
+    expect(postIds, 'the asset-only flow composes no post').toHaveLength(0);
+
+    // ⭐ The refresh must NOT have started on top of the held request.
+    await page.waitForTimeout(3000);
+    expect(hold.held(), 'the uploads answer is still held').toBe(1);
+    expect(
+      ownerAssetRequests(),
+      'a request is still in flight, so the refresh must not have started on top of it',
+    ).toBe(beforeRequests);
+
+    await hold.release();
+
+    // ⭐ The held body is the grid WITHOUT the new asset, so a stale
+    // overwrite leaves it off the page. It is there only if something
+    // re-asked afterwards.
+    expect(
+      hold.heldRows().some((r) => r === `asset:${assetIds[0]}`),
+      'the held answer predates the upload, so it cannot already contain it',
+    ).toBe(false);
+    await expect(
+      page.locator(tid('profile-uploads')).locator(`a[href="/assets/${assetIds[0]}"]`).first(),
+      'the pre-publish answer overwrote the grid and nothing re-asked (#1407)',
+    ).toBeAttached({ timeout: 30_000 });
+
+    const gridIds = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-testid="profile-uploads"] a[href^="/assets/"]')]
+        .map((a) => a.getAttribute('href') ?? ''),
+    );
+    expect(
+      gridIds.filter((h) => h === `/assets/${assetIds[0]}`).length,
+      'the new upload appears exactly once',
+    ).toBeGreaterThanOrEqual(1);
+    await expectSameDocument(page, before, 'the held answer and the refresh both landed');
+    await hold.stop();
   });
 });
