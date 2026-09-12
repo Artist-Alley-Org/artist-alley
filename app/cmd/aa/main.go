@@ -103,7 +103,7 @@ func runSeed(args []string) error {
 		"enqueue a preview job per asset so the seed produces derivatives "+
 			"(card thumbnails, video sprites); false = fast metadata-only seed")
 	fixtures := fs.Bool("fixtures", false,
-		"also seed the dogfood suite's one-time substrate: four login-capable "+
+		"also seed the dogfood suite's one-time substrate: five login-capable "+
 			"principals and four admin-owned plates the specs used to create for "+
 			"themselves on every fresh database and could never delete (there is no "+
 			"user-delete endpoint, and asset/post DELETE is a soft delete). Off by "+

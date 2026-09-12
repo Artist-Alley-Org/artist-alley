@@ -263,7 +263,7 @@ jobs:
 
           # --fixtures on BOTH: the nightly runs `all`, which includes
           # the standalone project, and its databases are fresh — so
-          # without the seeded substrate five specs pay the one-time
+          # without the seeded substrate six specs pay the one-time
           # create cost here too (#1270). site_b gets it for the same
           # reason its stack exists: whatever studio-a needs, studio-b is
           # supposed to be able to answer.

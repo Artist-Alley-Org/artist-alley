@@ -110,7 +110,7 @@ func (r *Runner) applyTestFixtures(ctx context.Context, cat *catalogues) error {
 	return r.applyFixtureAdminUploads(ctx, cat.Fixtures.Admin)
 }
 
-// applyFixturePrincipals creates the accounts four specs sign in as.
+// applyFixturePrincipals creates the accounts six specs sign in as.
 //
 // Idempotent on username: CreateUser returns the existing row with
 // AlreadyExisted=true, and the role assignment is a DELETE-then-INSERT,

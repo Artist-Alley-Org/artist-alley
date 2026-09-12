@@ -57,6 +57,14 @@
    "why": "The vocabulary NON-HOLDER. The spec revokes fields.vocabulary.extend from this account through /admin/users/{ref}/revokes — a per-user revoke, never an edit to the Base role, which would change the instance for every other spec in the run."
   },
   {
+   "username": "ilse.varga",
+   "full_name": "Ilse Varga",
+   "email": "ilse.varga@studio.local",
+   "password": "MyShelfMyRules!1119",
+   "consumed_by": "scripts/dogfood/ui/tests/standalone/post-editor-1119.spec.ts",
+   "why": "The post AUTHOR in the mixed-authority membership case, and it has to be an ORDINARY account. The bootstrap admin holds system.admin, which canMutateCollection admits on EVERY collection, so an admin author could remove their post from anybody's shelf and the assertion that authorship confers no such authority would be vacuous. Separate from the other four because this file pins and un-pins collection memberships and the others run in parallel workers."
+  },
+  {
    "username": "omar.haddad",
    "full_name": "Omar Haddad",
    "email": "omar.haddad@studio.local",

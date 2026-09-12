@@ -1380,6 +1380,11 @@ func (*PanicShim) RemovePostAsset(context.Context, openapi.RemovePostAssetReques
 	panic("PanicShim: RemovePostAsset called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListPostCollections panics by default; test shims override.
+func (*PanicShim) ListPostCollections(context.Context, openapi.ListPostCollectionsRequestObject) (openapi.ListPostCollectionsResponseObject, error) {
+	panic("PanicShim: ListPostCollections called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListPostComments panics by default; test shims override.
 func (*PanicShim) ListPostComments(context.Context, openapi.ListPostCommentsRequestObject) (openapi.ListPostCommentsResponseObject, error) {
 	panic("PanicShim: ListPostComments called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

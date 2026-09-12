@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// The principals the SEED owns, which four specs sign in as (#1270).
+// The principals the SEED owns, which six specs sign in as (#1270).
 //
 // # What this replaces, and why it had to change
 //

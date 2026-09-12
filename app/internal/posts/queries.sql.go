@@ -649,10 +649,12 @@ func (q *Queries) RemovePostTag(ctx context.Context, arg RemovePostTagParams) er
 
 const replacePostTags = `-- name: ReplacePostTags :exec
 WITH wipe AS (
-    DELETE FROM post_tags WHERE post_id = $1
+    DELETE FROM post_tags
+     WHERE post_id = $1
+       AND tag <> ALL($2::TEXT[])
 )
 INSERT INTO post_tags (post_id, tag)
-SELECT $1, unnest($2::TEXT[])
+SELECT $1, t FROM unnest($2::TEXT[]) AS t
 ON CONFLICT (post_id, tag) DO NOTHING
 `
 
@@ -661,8 +663,33 @@ type ReplacePostTagsParams struct {
 	Column2 []string
 }
 
-// Wipes and refills the tag set in one transaction. Called by
-// UpdatePost when the body sends a `tags` array.
+// Make the post's tag set exactly $2. Called by UpdatePost when the body
+// sends a `tags` array.
+//
+// ⛔ THE TWO SUB-STATEMENTS MUST TOUCH DISJOINT ROWS, and that is the
+// whole reason for the `<> ALL` and not a narrowing for speed.
+//
+// This was `DELETE FROM post_tags WHERE post_id = $1` in the CTE with an
+// unrestricted `INSERT … ON CONFLICT DO NOTHING` beside it, and it
+// SILENTLY DROPPED EVERY TAG THAT SURVIVED THE REPLACE. Data-modifying
+// sub-statements in a WITH clause all run against the same snapshot and
+// cannot see one another's effects (PostgreSQL manual, 7.8.2), so the
+// INSERT's conflict check still saw the row the CTE was deleting, skipped
+// the insert as a duplicate, and then the delete took the row away.
+// Re-sending a tag the post already had therefore REMOVED it.
+//
+// Nothing shipped ever sent `tags` on a PATCH, which is why this went
+// unseen: the `tags` property was declared, accepted, and reached only by
+// hand-written requests that added tags rather than re-sending them. The
+// post editor (#1119) is its first real caller.
+//
+// Restricting each half to rows the other does not touch removes the
+// dependency instead of relying on an ordering the engine does not
+// promise: the CTE deletes only the tags being taken AWAY, and the INSERT
+// adds only the ones not already there. A surviving tag keeps its row.
+//
+// An EMPTY array clears the set, as it must: `tag <> ALL('{}')` is true
+// for every row, and `unnest('{}')` yields none.
 func (q *Queries) ReplacePostTags(ctx context.Context, arg ReplacePostTagsParams) error {
 	_, err := q.db.Exec(ctx, replacePostTags, arg.PostID, arg.Column2)
 	return err

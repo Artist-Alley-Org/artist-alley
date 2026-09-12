@@ -239,13 +239,37 @@ test.describe('#1210 a post cover gets a focal point', () => {
     }));
   }
 
+  /** Open the cover surface, WHICH IS NOW A SECTION OF THE POST EDITOR.
+   *
+   *  ⚠️ THE ROUTE IN CHANGED AND NOTHING ELSE DID, and that is the reason
+   *  this helper was edited instead of the assertions. #1119 folded the
+   *  cover dialog into the real "Edit post" editor the way #1264 folded
+   *  CollectionCoverEditor into EditCollectionModal, so "Cover and
+   *  framing…" is gone from the post menu and `post-cover-editor` is a
+   *  block rather than its own `<dialog>`. Every assertion below is about
+   *  the FRAMING: the stage's aspect, the marquee's travel, the stored
+   *  pair, the tile's `object-position`. All of it has to survive the
+   *  move untouched. That is what makes this file the regression that the
+   *  fold changed the surface and not the behaviour. */
   async function openCoverDialog(page: Page) {
     await page.goto(`/posts/${postId}`);
     await page.locator('[aria-label="Post actions"]').first().click();
-    await page.getByTestId('post-edit-cover').click();
-    const dialog = page.getByTestId('post-cover-editor');
-    await expect(dialog).toBeVisible();
-    return dialog;
+    await page.getByTestId('post-edit').click();
+    await expect(page.getByTestId('post-edit-body')).toBeVisible();
+    const section = page.getByTestId('post-cover-editor');
+    await expect(section).toBeVisible();
+    return section;
+  }
+
+  /** Commit through the editor's ONE Save.
+   *
+   *  There is no `post-cover-save` any more: the surface has a single
+   *  commit for the cover, the framing, the title, the description, the
+   *  visibility and the tags, which is the whole of #1264's ruling. The
+   *  editor closing is the signal, so that is what is awaited. */
+  async function saveCover(page: Page) {
+    await page.getByTestId('post-edit-save').click();
+    await expect(page.getByTestId('post-edit-body')).toBeHidden();
   }
 
   async function storedFocal(request: APIRequestContext) {
@@ -299,8 +323,7 @@ test.describe('#1210 a post cover gets a focal point', () => {
     await page.mouse.move(sbox.x + 4, sbox.y + sbox.height - 4, { steps: 25 });
     await page.mouse.up();
 
-    await page.getByTestId('post-cover-save').click();
-    await expect(page.getByTestId('post-cover-editor')).toBeHidden();
+    await saveCover(page);
 
     const stored = await storedFocal(request);
     expect(stored.x, 'the drag went to the left edge').toBeLessThan(0.2);
@@ -344,8 +367,7 @@ test.describe('#1210 a post cover gets a focal point', () => {
     const reset = page.getByTestId('post-crop-reset-focal');
     await expect(reset).toBeEnabled();
     await reset.click();
-    await page.getByTestId('post-cover-save').click();
-    await expect(page.getByTestId('post-cover-editor')).toBeHidden();
+    await saveCover(page);
 
     // NULL, not 0.5. The two render identically and are stored
     // differently on purpose: null is "the author never framed this",

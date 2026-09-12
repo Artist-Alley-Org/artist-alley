@@ -306,8 +306,8 @@ jobs:
       # required coverage class, rather than seeding a fixture the suite
       # then passes against without exercising it (ADR 0068; #750/#753).
       #
-      # --fixtures adds the suite's own one-time substrate (#1270): four
-      # login-capable principals and four admin-owned plates that five
+      # --fixtures adds the suite's own one-time substrate (#1270): five
+      # login-capable principals and four admin-owned plates that six
       # specs used to create for themselves and could never delete —
       # there is no user-delete endpoint, and asset/post DELETE is a soft
       # delete. Every database here is FRESH, so this job paid that cost

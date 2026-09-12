@@ -6918,6 +6918,86 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /posts/{id}/collections:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listPostCollections
+      summary: Which collections this post of mine is pinned in
+      description: |
+        The AUTHOR's answer to "where has my post been shelved", and the
+        read the post editor's membership section is built on (#1119).
+
+        # Not the same question as `GET /collections/{id}/posts`
+
+        That operation walks one collection and lists its posts. This one
+        walks one post and lists its collections, which nothing in the
+        product could do before: `collection_posts` had a writer, a
+        remover and a per-collection listing, and no way to ask the
+        question from the post's side at all.
+
+        # Shape
+
+        It is `GET /assets/{id}/posts` turned around, deliberately, down
+        to the field names. The two answer the same KIND of question
+        ("where did my thing end up, including in other people's hands")
+        and a second shape for it would be a second disclosure rule to
+        keep right.
+
+          * `items`: the collections holding this post that the ordinary
+            collection read rule ALREADY grants this caller, each carried
+            whole. Nothing new is disclosed here.
+          * `withheld_count`: how many FURTHER live collections hold it.
+            An integer and nothing else: no id, no name, no curator, no
+            timestamp, and no cursor over the withheld set. The count is
+            the whole disclosure, and it is what makes "my post is
+            shelved somewhere I cannot see" sayable at all.
+
+        # `can_remove` is the caller's authority, not the collection's
+
+        Membership is COLLECTION-owned (#882): removing a post from a
+        collection is the curator's act, and authoring the post confers
+        nothing. So each item says whether THIS caller may remove from
+        THAT collection, resolved by the same predicate
+        `DELETE /collections/{id}/posts/{post_id}` applies. A client that
+        derived it from `owner_user_ref` would be a second expression of
+        an authorization rule, and it would be wrong for the two
+        capability holders the predicate also admits.
+
+        A false `can_remove` is not a weaker read. The collection is
+        listed, named and linkable exactly as a mutable one is, because
+        the caller could already see it; the flag decides whether a
+        REMOVE control is offered, and the server refuses the call
+        regardless.
+
+        # Who may ask
+
+        The post's AUTHOR, plus `posts.admin` / `system.admin`. Anyone
+        else gets the SAME `404` a nonexistent post gets, not a `403`,
+        because "this post sits in 3 collections you cannot see" is the
+        author's information about their own work, and answering it for a
+        stranger would make the endpoint a shelving oracle over every
+        collection on the instance.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The collections this post is pinned in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostCollectionUsage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /posts/{id}/acls:
     parameters:
       - name: id
@@ -17083,6 +17163,71 @@ components:
             other — in particular `withheld_count` is not
             "total − items.length", which is how #1237 found the server
             reporting readable-but-truncated posts as withheld.
+    PostCollectionUsage:
+      type: object
+      description: |
+        The answer to `GET /posts/{id}/collections` (#1119).
+
+        `AssetPostUsage` turned around. The split between the two fields
+        IS the disclosure rule, and it is that schema's: everything the
+        caller is entitled to arrives whole in `items`, and everything
+        they are not is compressed to a single integer that carries no
+        handle back to the collection it counted.
+      required: [items, withheld_count]
+      properties:
+        items:
+          type: array
+          description: |
+            The collections holding this post that the collection read
+            rule grants this caller, each with the caller's own removal
+            authority over it.
+          items: { $ref: "#/components/schemas/PostCollectionMembership" }
+        withheld_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            How many FURTHER live collections hold this post: ones the
+            caller may not read.
+
+            Existence and count, never identity. No companion array of
+            ids, no cursor, and no filter that moves this number
+            selectively, because any of those would turn the count back
+            into the collections it counted. `0` means the caller can
+            already see every collection this post is in.
+
+            Soft-deleted collections are not counted: a tombstoned shelf
+            is not somewhere the post appears.
+
+            ⚠️ INDEPENDENT OF HOW MANY `items` CAME BACK. `items` is a
+            bounded page; this counts what the caller may NOT read, so a
+            post in more readable collections than one page holds still
+            reports `0` here. It is not `total − items.length`, which is
+            the arithmetic that made truncation look like withholding on
+            the asset side (#1237).
+    PostCollectionMembership:
+      type: object
+      description: |
+        One collection this post is pinned in, and whether the CALLER may
+        take it off that shelf (#1119).
+      required: [collection, can_remove]
+      properties:
+        collection:
+          $ref: "#/components/schemas/Collection"
+        can_remove:
+          type: boolean
+          description: |
+            Whether this caller may remove the post from THIS
+            collection: the verdict
+            `DELETE /collections/{id}/posts/{post_id}` will reach,
+            resolved here by the same predicate rather than restated.
+
+            ⛔ AUTHORING THE POST DOES NOT SET IT. Membership is the
+            curator's (#882), so an author looking at their own post sees
+            `false` for every collection they do not own or administer,
+            and a client must offer no removal control for those. It is a
+            statement about authority, not about readability: the
+            collection is listed either way.
     CollectionPostWrite:
       type: object
       description: |

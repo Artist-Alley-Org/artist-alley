@@ -3327,6 +3327,17 @@ func (s *apiServer) GetPostsByAsset(ctx context.Context, req openapi.GetPostsByA
 func (s *apiServer) ListAssetPosts(ctx context.Context, req openapi.ListAssetPostsRequestObject) (openapi.ListAssetPostsResponseObject, error) {
 	return s.posts.ListAssetPosts(ctx, req)
 }
+
+// ListPostCollections (`GET /posts/{id}/collections`) delegates to
+// COLLECTIONS despite its path, which is the MIRROR of the rule the line
+// above applies: the payload is hydrated Collections, the gate on each
+// one is the collection read rule, and each item's `can_remove` is the
+// collection mutation predicate. All three live there. The post half is
+// one authorship lookup (#1119).
+func (s *apiServer) ListPostCollections(ctx context.Context, req openapi.ListPostCollectionsRequestObject) (openapi.ListPostCollectionsResponseObject, error) {
+	return s.collections.ListPostCollections(ctx, req)
+}
+
 func (s *apiServer) CreatePost(ctx context.Context, req openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
 	resp, err := s.posts.CreatePost(ctx, req)
 	s.invalidateSearchOnPostWrite(ctx, err)
