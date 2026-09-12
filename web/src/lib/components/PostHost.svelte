@@ -25,7 +25,7 @@
   import CommentsThread from './CommentsThread.svelte';
   import FollowButton from './FollowButton.svelte';
   import Menu from './Menu.svelte';
-  import PostCoverEditor from './PostCoverEditor.svelte';
+  import EditPostModal from './EditPostModal.svelte';
   import ShareEntityModal from './ShareEntityModal.svelte';
   import WhiteboardCanvas from './whiteboard/WhiteboardCanvas.svelte';
   import BrushCanvas from './whiteboard/BrushCanvas.svelte';
@@ -552,22 +552,29 @@
   function manageAccess() {
     shareOpen = true;
   }
-  function editPost() {
-    stubAction('Edit post');
-  }
-
-  // ── The cover, and where its grid crop is centred (#1210) ─────────
+  // ── Edit post (#1119) ─────────────────────────────────────────────
   //
-  // A SEPARATE ITEM FROM "Edit post", which is still a stub. Folding
-  // this into it would put the post editor's name on a dialog that
-  // edits one thing, and an author who opened it looking for the title
-  // would find a crop marquee. The item says what it does; when the
-  // real editor lands this becomes a section of it, the way
-  // CollectionCoverEditor is a section of EditCollectionModal.
-  let coverOpen = $state(false);
+  // This was `stubAction('Edit post')`. Every column the dialog writes
+  // has been accepted by `PATCH /posts/{id}` for sprints, and no shipped
+  // client sent that request except the cover dialog, which sent three
+  // of them, so an author who wanted to fix a typo in a published title
+  // had the API and no product.
+  //
+  // ⚠️ THE COVER ITEM WENT WITH IT, and that is the same decision #1264
+  // made on the collection side rather than a cleanup taken in passing.
+  // This menu carried a REAL "Cover and framing…" beside a STUBBED "Edit
+  // post…", and the cover dialog's own note said what to do when the
+  // editor arrived: "this becomes a section of it exactly as
+  // CollectionCoverEditor is a section of EditCollectionModal (ADR 0091's
+  // one-editing-surface ruling)". A second door onto one room is what
+  // the owner's ruling refuses ("we shouldn't have more than one menu
+  // to edit"), so there is one item and `PostCoverEditor` is a block
+  // inside what it opens. Nothing about the cover's SEMANTICS moved with
+  // it; see that component and EditPostModal's `coverBody`.
+  let editOpen = $state(false);
 
-  function editCover() {
-    coverOpen = true;
+  function editPost() {
+    editOpen = true;
   }
 
   /** Re-read the post after a cover save, from the server rather than
@@ -972,9 +979,6 @@
                 {t('playlist_actions.bulk_tag')}
               </button>
             {/if}
-            <button type="button" role="menuitem" onclick={editCover} data-testid="post-edit-cover" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
-              {t('post_menu.edit_cover')}
-            </button>
             <button type="button" role="menuitem" onclick={editPost} data-testid="post-edit" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
               {t('post_menu.edit_post')}
             </button>
@@ -1287,13 +1291,22 @@
       onclose={() => (shareOpen = false)}
     />
 
-    <!-- Same placement rule as the two dialogs around it (#1210): raised
-         from a menu that lives inside the viewer dialog, so it has to be
-         declared where Modal's portal can find that dialog. -->
-    <PostCoverEditor
+    <!-- Same placement rule as the two dialogs around it (#1210, #1119):
+         raised from a menu that lives inside the viewer dialog, so it has
+         to be declared where Modal's portal can find that dialog.
+         Declared at the top level of PostHost there is no open <dialog>
+         ancestor, the viewer wins the stacking contest, and the editor
+         renders UNDERNEATH it: present, invisible and unclickable, which
+         reads as "the menu item does nothing".
+
+         `onsaved` is `reloadPost`, not a local patch: the editor reports
+         that something changed and the SERVER says what the post now is.
+         Several of a post's fields are derived there (`updated_at` at
+         minimum, and the AI provenance whenever the cover moves). -->
+    <EditPostModal
       {post}
-      open={coverOpen}
-      onclose={() => (coverOpen = false)}
+      open={editOpen}
+      onclose={() => (editOpen = false)}
       onsaved={reloadPost}
     />
 
