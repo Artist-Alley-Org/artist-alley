@@ -9,6 +9,16 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Finish an upload and the page you were already on catches up by itself.**
+  Publishing through the quick upload dialog used to leave the page behind it showing the
+  old answer until you reloaded the browser. A collection, the browse feed, a team page, a
+  profile and the search results now ask the server for the current answer instead. Your
+  place is kept: the order does not change, the list does not jump back to the first page,
+  and nothing you were already looking at is shown twice. If a page of results was already
+  loading when the upload finished, that page still arrives, once. An upload that failed or
+  was refused does not appear as new work. The full create page still takes you to the post
+  it made, as it always has (#1407, PR #1427).
+
 - **Drop a 3D model and its texture files together and they arrive as one textured model.**
   Supplying a model alongside the files it references now attaches them automatically, instead of
   leaving you with a pile of unrelated uploads and a warning you could not clear. The model's own
