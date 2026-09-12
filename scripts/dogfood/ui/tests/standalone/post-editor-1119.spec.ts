@@ -156,26 +156,79 @@ async function reallyVisible(page: Page, testid: string): Promise<boolean> {
     );
 }
 
-/** Every `window.alert` the page raised, and every uncaught error /
- *  console error.
+/** The browser's own report of a failed subresource.
+ *
+ *  Carries NO url, which is the whole problem with matching on it. See
+ *  [watchPage]. */
+const SUBRESOURCE_FAILURE = /Failed to load resource/i;
+
+/** A preview rung that may legitimately not exist yet. */
+const PREVIEW_VARIANT = /\/variants\//;
+
+/** Every `window.alert` the page raised, every uncaught JS error, and
+ *  every request the PAGE made that answered 400 or worse.
  *
  *  ⛔ THE ALERT LIST IS ARM 1's OTHER HALF. Playwright auto-dismisses
  *  dialogs when nothing is listening, which means the stub's alert would
  *  vanish silently and the test would fail on some LATER assertion with a
  *  confusing message. Listening records it, so "the stub is still there"
- *  is its own sentence. */
+ *  is its own sentence.
+ *
+ *  ⚠️ WHY THE CONSOLE LIST IS NOT SIMPLY "EVERY ERROR", and this is a
+ *  measurement rather than a concession. The browser logs every failed
+ *  subresource as a console error, and on THIS surface one class of them
+ *  is expected: the cover picker draws `/variants/col` for each member,
+ *  exactly as PostCard does, and a member whose raster pass has not
+ *  produced that rung answers 404. Measured against a post of two freshly
+ *  uploaded text members: two console errors, and the responses behind
+ *  them were `404 /api/v1/assets/{id}/variants/col` twice, nothing else.
+ *
+ *  That is also why an unfiltered assertion passed on a workstation and
+ *  failed on CI. It is a RACE with the preview worker, not a difference of
+ *  opinion: a warm stack often has the rung by the time the dialog opens
+ *  and a fresh database never does. Asserting zero console errors was
+ *  therefore asserting the worker had drained, which is not what this
+ *  spec is about.
+ *
+ *  ⛔ IT IS ATTRIBUTED, NOT DROPPED, because the console message carries no
+ *  url and matching its text alone would blind the check to a real error
+ *  that happened to be phrased the same way. Three lists, and every
+ *  assertion site checks all three:
+ *
+ *    * `errors`: uncaught JS exceptions, NEVER filtered, plus any console
+ *      error that is not a subresource line.
+ *    * `httpErrors`: every >= 400 the page provoked EXCEPT a preview
+ *      variant. So the 404s excused above still have to be that exact
+ *      class, and a 500 on the post read or a 403 on the membership list
+ *      is still a failure.
+ *    * `alerts`: the stub.
+ */
 function watchPage(page: Page) {
   const alerts: string[] = [];
   const errors: string[] = [];
+  const httpErrors: string[] = [];
   page.on('dialog', (d) => {
     alerts.push(d.message());
     void d.dismiss().catch(() => undefined);
   });
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(`console: ${m.text()}`);
+    if (m.type() !== 'error') return;
+    if (SUBRESOURCE_FAILURE.test(m.text())) return;
+    errors.push(`console: ${m.text()}`);
   });
-  return { alerts, errors };
+  page.on('response', (r) => {
+    if (r.status() < 400) return;
+    let path: string;
+    try {
+      path = new URL(r.url()).pathname;
+    } catch {
+      path = r.url();
+    }
+    if (PREVIEW_VARIANT.test(path)) return;
+    httpErrors.push(`${r.status()} ${path}`);
+  });
+  return { alerts, errors, httpErrors };
 }
 
 /** Open the post page and the real editor through the real menu item.
@@ -342,6 +395,7 @@ test.describe('#1119 the post editor persists what an author changes', () => {
     await expect(page.locator('body')).toContainText(newTitle, { timeout: 20_000 });
 
     expect(watched.errors, 'no console or runtime errors').toEqual([]);
+    expect(watched.httpErrors, 'no failed request other than a missing preview rung').toEqual([]);
     await page.screenshot({
       path: testInfo.outputPath('post-editor-desktop.png'),
       fullPage: true,
@@ -696,6 +750,10 @@ test.describe('#1119 the post editor persists what an author changes', () => {
 
       expect(watched.alerts, 'no stub alert').toEqual([]);
       expect(watched.errors, `no console or runtime errors at ${viewport.name}`).toEqual([]);
+      expect(
+        watched.httpErrors,
+        `no failed request other than a missing preview rung at ${viewport.name}`,
+      ).toEqual([]);
       await page.screenshot({
         path: testInfo.outputPath(`post-editor-${viewport.name}.png`),
         fullPage: true,
@@ -946,6 +1004,10 @@ test.describe('#1119 membership removal follows the collection, not the post', (
       ).toBe(true);
 
       expect(watched.errors, 'no console or runtime errors').toEqual([]);
+      expect(
+        watched.httpErrors,
+        'no failed request other than a missing preview rung',
+      ).toEqual([]);
       await page.screenshot({
         path: testInfo.outputPath('post-editor-membership-mixed.png'),
         fullPage: true,
