@@ -8,6 +8,6 @@
   "packageManager": "npm@11.19.0",
   "dependencies": {
     "puppeteer": "^25.10.0",
-    "three": "^0.185.1"
+    "three": "^0.186.0"
   }
 }
