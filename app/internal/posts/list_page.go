@@ -339,6 +339,7 @@ type ListPostsPageRow struct {
 	UpdatedAt             pgtype.Timestamptz
 	DeletedAt             pgtype.Timestamptz
 	DeletedReason         *string
+	CommentsEnabled       bool
 }
 
 // listPostsPageColumns is the SELECT list, kept identical to the one the
@@ -346,7 +347,7 @@ type ListPostsPageRow struct {
 const listPostsPageColumns = `id, author_user_ref, title, description, visibility, cover_asset_id,
        cover_thumbnail_asset_id, posted_at, like_count, comment_count,
        origin_server_id, team_id, state_id, created_at, updated_at,
-       deleted_at, deleted_reason`
+       deleted_at, deleted_reason, comments_enabled`
 
 // ListPostsPageGated runs the feed query for one caller. Cursor
 // pagination on the (posted_at, id) keyset, in whichever direction
@@ -642,6 +643,7 @@ LIMIT $7::INTEGER`)
 			&i.CoverAssetID, &i.CoverThumbnailAssetID, &i.PostedAt,
 			&i.LikeCount, &i.CommentCount, &i.OriginServerID, &i.TeamID,
 			&i.StateID, &i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
+			&i.CommentsEnabled,
 		); err != nil {
 			return nil, fmt.Errorf("posts: list page scan: %w", err)
 		}
@@ -746,6 +748,7 @@ LIMIT $3::INTEGER`
 			&i.CoverAssetID, &i.CoverThumbnailAssetID, &i.PostedAt,
 			&i.LikeCount, &i.CommentCount, &i.OriginServerID, &i.TeamID,
 			&i.StateID, &i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
+			&i.CommentsEnabled,
 		); err != nil {
 			return nil, fmt.Errorf("posts: shared with me scan: %w", err)
 		}

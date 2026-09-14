@@ -33,6 +33,11 @@ export interface PostForPlaylist {
    *  this local mirror of the schema is hand-written and older cached
    *  payloads may predate the field. */
   draft?: boolean;
+  /** Whether the post takes new ordinary comments (#1119 sprint 21d).
+   *  Present on every post the API returns; optional here for the same
+   *  reason `draft` is. Absent reads as true, which is what every post
+   *  was before the setting existed. */
+  comments_enabled?: boolean;
   cover_asset_id?: string | null;
   posted_at: string;
   like_count: number;

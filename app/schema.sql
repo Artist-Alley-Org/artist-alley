@@ -2539,6 +2539,7 @@ CREATE TABLE public.posts (
     ai_pure boolean DEFAULT false NOT NULL,
     cover_focal_x double precision,
     cover_focal_y double precision,
+    comments_enabled boolean DEFAULT true NOT NULL,
     CONSTRAINT posts_ai_provenance_check CHECK (((ai_provenance IS NULL) OR (ai_provenance = ANY (ARRAY['none'::text, 'assisted'::text, 'generated'::text])))),
     CONSTRAINT posts_cover_focal_check CHECK ((((cover_focal_x IS NULL) AND (cover_focal_y IS NULL)) OR (((cover_focal_x >= (0)::double precision) AND (cover_focal_x <= (1)::double precision)) AND ((cover_focal_y >= (0)::double precision) AND (cover_focal_y <= (1)::double precision))))),
     CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
@@ -2585,6 +2586,12 @@ COMMENT ON COLUMN public.posts.cover_focal_x IS 'Horizontal focal point for the 
 --
 
 COMMENT ON COLUMN public.posts.cover_focal_y IS 'Vertical focal point for the post cover''s square crop, as a FRACTION of the picture''s height (0 = top edge, 1 = bottom edge, #1210). See cover_focal_x for the destination shape, why it is a fraction, why NULL means centre, why the two are constrained together, and why it must be painted from a contain rung.';
+
+--
+-- Name: COLUMN posts.comments_enabled; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.comments_enabled IS 'Whether this post accepts NEW ordinary comments and replies (#1119 sprint 21d). A setting of the post, chosen by whoever may edit it: not a user preference (two posts by one author differ independently), not a capability (`posts.comment` says whether a caller may comment at all; this says whether THIS post takes one from anybody, and `system.admin` does not bypass it), and not a workflow state. NOT NULL because "unset" is not a product state; DEFAULT true because that is how every post behaved before the column existed. CREATION ONLY: false refuses POST /posts/{id}/comments with 409 `comments_disabled` and nothing else changes, so existing comments stay readable wherever the thread was readable, and listing, deletion and moderation are untouched. Whiteboards and annotations are separate paths and do not read this column. The comment-create transaction reads it FOR NO KEY UPDATE before inserting, so a committed disable is never raced by a check-then-insert.';
 
 
 --

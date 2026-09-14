@@ -14,6 +14,16 @@
   // currentUserRef matches author_user_ref). Moderator override
   // exists server-side via comments.delete.any but isn't surfaced
   // here yet — the response just succeeds when the API allows it.
+  //
+  // Comments off (#1119 sprint 21d): `commentsEnabled` is the POST's
+  // setting as the host holds it. When false, the thread is read-only:
+  // every existing comment renders exactly as before, and neither the
+  // top-level composer nor a Reply is offered; a short note says why.
+  // The server is the authority, so a 409 `comments_disabled` (a stale
+  // representation that still said true) is handled the same way, and
+  // nothing is ever appended to `items` before the server has accepted
+  // it. Re-enabling is the host re-reading the post and the prop
+  // flipping back; nothing here navigates.
 
   import { onMount } from 'svelte';
   import { api } from '$api/client';
@@ -45,9 +55,30 @@
 
   interface Props {
     postId: string;
+    /** `Post.comments_enabled` as the host holds it. Read-only thread when
+     *  false. Defaults to true so a host that predates the setting still
+     *  offers the composer and lets the server refuse. */
+    commentsEnabled?: boolean;
+    /** Fired when the server refused a comment because the post's
+     *  setting is off and the host's copy did not know. The host re-reads
+     *  the post; it carries nothing, for the reason EditPostModal's
+     *  `onsaved` carries nothing. */
+    onstale?: () => void;
   }
 
-  let { postId }: Props = $props();
+  let { postId, commentsEnabled = true, onstale }: Props = $props();
+
+  // The server said no to a comment the host's copy of the post did not
+  // know was refused: withdraw the composers until the host's copy
+  // changes, since the server's answer is the true state. Cleared when
+  // the prop moves (the host re-read the post), so a re-enable brings
+  // the composers back without a reload.
+  let refusedByServer = $state(false);
+  $effect(() => {
+    void commentsEnabled;
+    refusedByServer = false;
+  });
+  const canCompose = $derived(commentsEnabled && !refusedByServer);
 
   let items = $state<Comment[]>([]);
   let loading = $state(true);
@@ -149,10 +180,20 @@
     if (!trimmed) return null;
     posting = true;
     try {
-      const { data, error: apiErr } = await api.POST('/posts/{id}/comments', {
+      const { data, error: apiErr, response } = await api.POST('/posts/{id}/comments', {
         params: { path: { id: postId } },
         body: { body: trimmed, parent_id: parentId ?? null },
       });
+      if (response.status === 409 && (apiErr as { error?: string } | undefined)?.error === 'comments_disabled') {
+        // Honest, and in the thread's own words: the post does not
+        // take comments. Nothing was written, so nothing is shown as
+        // written. Open reply composers close with the top-level one.
+        refusedByServer = true;
+        replyTargets = new Map();
+        replyDrafts = new Map();
+        onstale?.();
+        throw new Error(t('comments.err_disabled'));
+      }
       if (apiErr || !data) {
         throw new Error(
           (apiErr as { error?: string } | undefined)?.error ?? t('comments.err_post'),
@@ -246,30 +287,44 @@
   }
 </script>
 
-<div class="space-y-3 text-sm">
-  <!-- Top-level composer. Disabled while submitting. -->
-  <form
-    onsubmit={(e) => { e.preventDefault(); void submitTopLevel(); }}
-    class="space-y-2"
-  >
-    <textarea
-      bind:value={newBody}
-      placeholder={t('comments.compose_placeholder')}
-      rows="2"
-      maxlength="10000"
-      disabled={posting}
-      class="w-full resize-y rounded-md border border-border-strong bg-surface px-3 py-2 text-fg placeholder:text-fg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:opacity-50"
-    ></textarea>
-    <div class="flex justify-end">
-      <button
-        type="submit"
-        disabled={posting || !newBody.trim()}
-        class="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-on-accent transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {posting ? t('common.posting') : t('comments.submit_label')}
-      </button>
-    </div>
-  </form>
+<div class="space-y-3 text-sm" data-testid="comments-thread" data-comments-enabled={canCompose ? 'yes' : 'no'}>
+  {#if canCompose}
+    <!-- Top-level composer. Disabled while submitting. -->
+    <form
+      onsubmit={(e) => { e.preventDefault(); void submitTopLevel(); }}
+      class="space-y-2"
+      data-testid="comments-composer"
+    >
+      <textarea
+        bind:value={newBody}
+        placeholder={t('comments.compose_placeholder')}
+        rows="2"
+        maxlength="10000"
+        disabled={posting}
+        data-testid="comments-composer-body"
+        class="w-full resize-y rounded-md border border-border-strong bg-surface px-3 py-2 text-fg placeholder:text-fg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:opacity-50"
+      ></textarea>
+      <div class="flex justify-end">
+        <button
+          type="submit"
+          disabled={posting || !newBody.trim()}
+          data-testid="comments-composer-submit"
+          class="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-on-accent transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {posting ? t('common.posting') : t('comments.submit_label')}
+        </button>
+      </div>
+    </form>
+  {:else}
+    <!-- Comments off (#1119 21d): no composer, and a sentence instead of
+         a silent absence. The thread below still renders in full. -->
+    <p
+      class="rounded-md border border-border bg-surface-elevated px-3 py-2 text-xs text-fg-muted"
+      data-testid="comments-disabled-note"
+    >
+      {t('comments.disabled_note')}
+    </p>
+  {/if}
 
   {#if error}
     <p role="alert" class="rounded-md border border-danger/40 bg-danger-container px-3 py-2 text-xs text-danger">
@@ -300,7 +355,7 @@
       <div class="space-y-2 border-t border-border pt-3">
         <!-- Root comment row. -->
 
-        <div class="flex gap-2">
+        <div class="flex gap-2" data-testid="comment-row" data-comment-id={root.id}>
           <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/20 text-[10px] font-semibold text-accent">
             {#if author?.avatar_url}
               <img src={author.avatar_url} alt="" class="h-full w-full rounded-full object-cover" />
@@ -320,13 +375,16 @@
             </div>
             <p class="mt-0.5 whitespace-pre-wrap text-fg">{root.body}</p>
             <div class="mt-1 flex items-center gap-3 text-xs text-fg-muted">
-              <button
-                type="button"
-                class="hover:text-fg"
-                onclick={() => openReply(group.root.id, root.id)}
-              >
-                {t('comments.reply')}
-              </button>
+              {#if canCompose}
+                <button
+                  type="button"
+                  class="hover:text-fg"
+                  data-testid="comment-reply"
+                  onclick={() => openReply(group.root.id, root.id)}
+                >
+                  {t('comments.reply')}
+                </button>
+              {/if}
               {#if auth.user?.ref === root.author_user_ref}
                 <button
                   type="button"
@@ -345,7 +403,7 @@
         {#each group.replies as reply (reply.id)}
           {@const replyAuthor = authors.get(reply.author_user_ref)}
           {@const indent = Math.min(reply.depth, 4) * 16}
-          <div class="flex gap-2" style="margin-left: {indent}px">
+          <div class="flex gap-2" style="margin-left: {indent}px" data-testid="comment-row" data-comment-id={reply.id}>
             <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent/20 text-[10px] font-semibold text-accent">
               {#if replyAuthor?.avatar_url}
                 <img src={replyAuthor.avatar_url} alt="" class="h-full w-full rounded-full object-cover" />
@@ -365,13 +423,16 @@
               </div>
               <p class="mt-0.5 whitespace-pre-wrap text-fg">{reply.body}</p>
               <div class="mt-1 flex items-center gap-3 text-xs text-fg-muted">
-                <button
-                  type="button"
-                  class="hover:text-fg"
-                  onclick={() => openReply(group.root.id, reply.id)}
-                >
-                  {t('comments.reply')}
-                </button>
+                {#if canCompose}
+                  <button
+                    type="button"
+                    class="hover:text-fg"
+                    data-testid="comment-reply"
+                    onclick={() => openReply(group.root.id, reply.id)}
+                  >
+                    {t('comments.reply')}
+                  </button>
+                {/if}
                 {#if auth.user?.ref === reply.author_user_ref}
                   <button
                     type="button"
@@ -387,10 +448,11 @@
         {/each}
 
         <!-- Inline reply composer for this root, if open. -->
-        {#if replyTargets.has(group.root.id)}
+        {#if canCompose && replyTargets.has(group.root.id)}
           <form
             onsubmit={(e) => { e.preventDefault(); void submitReply(group.root.id); }}
             class="space-y-2 pl-10"
+            data-testid="comment-reply-composer"
           >
             <textarea
               bind:value={() => replyDrafts.get(group.root.id) ?? '', (v) => {

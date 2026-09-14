@@ -1270,8 +1270,16 @@
         <span class="ml-auto text-xs text-fg-muted" title={postedAbsolute}>{postedRelative}</span>
       </div>
 
+      <!-- The thread reads the POST's comments setting from the host's
+           copy, which reloadPost refreshes after every editor save: turn
+           comments off in the editor and the composer goes; turn them
+           back on and it returns, with no navigation (#1119 21d). -->
       <div class="mt-6">
-        <CommentsThread postId={post.id} />
+        <CommentsThread
+          postId={post.id}
+          commentsEnabled={post.comments_enabled ?? true}
+          onstale={reloadPost}
+        />
       </div>
     </div>
 

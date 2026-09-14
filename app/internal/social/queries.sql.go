@@ -1157,6 +1157,39 @@ func (q *Queries) ListWhiteboardsForPost(ctx context.Context, targetID pgtype.UU
 	return items, nil
 }
 
+const lockPostCommentsEnabled = `-- name: LockPostCommentsEnabled :one
+SELECT comments_enabled
+FROM posts
+WHERE id = $1 AND deleted_at IS NULL
+FOR NO KEY UPDATE
+`
+
+// The comments-enabled gate, read UNDER THE ROW LOCK inside the
+// comment-create transaction (#1119 sprint 21d).
+//
+// FOR NO KEY UPDATE and not FOR SHARE, deliberately. The AFTER INSERT
+// trigger on comments (comments_after_insert) runs
+// `UPDATE posts SET comment_count = comment_count + 1` on this same
+// row, and an UPDATE takes FOR NO KEY UPDATE. Two comment transactions
+// that each held FOR SHARE first would both then try to upgrade and
+// deadlock on each other; taking the trigger's own lock mode up front
+// serialises them exactly as the trigger already does, one statement
+// earlier. A concurrent PATCH that flips the column takes the same
+// lock, so it waits for an open comment transaction to commit (that
+// comment landed BEFORE the disable) and a comment transaction that
+// reaches this read after the disable committed sees false and
+// rolls back. READ COMMITTED re-reads the row after the lock wait, so
+// the value returned is the committed one, never the snapshot's.
+//
+// pgx.ErrNoRows here means the post was hard- or soft-deleted between
+// the readability gate and this statement; the caller answers 404.
+func (q *Queries) LockPostCommentsEnabled(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, lockPostCommentsEnabled, id)
+	var comments_enabled bool
+	err := row.Scan(&comments_enabled)
+	return comments_enabled, err
+}
+
 const softDeleteComment = `-- name: SoftDeleteComment :execrows
 UPDATE comments
    SET deleted_at = NOW(),

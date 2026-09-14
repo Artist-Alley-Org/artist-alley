@@ -14,14 +14,20 @@
 -- browse grid's square tile (#1210), as fractions of the ORIGINAL
 -- picture. Both NULL means centred, which is what every post rendered
 -- before the columns existed; the column CHECK refuses half a pair.
+-- comments_enabled is the author's decision about whether the post
+-- takes ordinary comments (#1119 sprint 21d). Always written, never
+-- defaulted here: the handler resolves "omitted" to true itself, so the
+-- column default is only ever exercised by writes that bypass it.
 INSERT INTO posts (
     author_user_ref, title, description, visibility, cover_asset_id,
-    cover_thumbnail_asset_id, team_id, state_id, cover_focal_x, cover_focal_y
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    cover_thumbnail_asset_id, team_id, state_id, cover_focal_x, cover_focal_y,
+    comments_enabled
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
           cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
           posted_at, like_count, comment_count,
-          origin_server_id, team_id, state_id, created_at, updated_at;
+          origin_server_id, team_id, state_id, created_at, updated_at,
+          comments_enabled;
 
 -- name: GetPost :one
 -- `ai_provenance` is DERIVED (#1167, ADR 0094) — maintained by the
@@ -37,7 +43,7 @@ SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
        cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
        posted_at, like_count, comment_count,
        origin_server_id, team_id, state_id, created_at, updated_at,
-       ai_provenance
+       ai_provenance, comments_enabled
 FROM posts
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -70,6 +76,12 @@ WHERE id = $1 AND deleted_at IS NULL;
 --   4. otherwise the stored value stands.
 -- Both axes read the same arms, so the pair can never half-clear into a
 -- posts_cover_focal_check violation.
+--
+-- comments_enabled (#1119 sprint 21d) is a plain COALESCE: the narg is
+-- a nullable boolean, so an absent field keeps the stored value and an
+-- explicit false is a real value, not an absence. The handler passes a
+-- *bool for exactly that reason; a bare bool would read false as
+-- "not sent" and the setting could never be turned off.
 UPDATE posts SET
     title                    = COALESCE(sqlc.narg('title'),                    title),
     description              = COALESCE(sqlc.narg('description'),              description),
@@ -77,6 +89,7 @@ UPDATE posts SET
     cover_asset_id           = COALESCE(sqlc.narg('cover_asset_id'),           cover_asset_id),
     cover_thumbnail_asset_id = COALESCE(sqlc.narg('cover_thumbnail_asset_id'), cover_thumbnail_asset_id),
     state_id                 = COALESCE(sqlc.narg('state_id'),                 state_id),
+    comments_enabled         = COALESCE(sqlc.narg('comments_enabled')::BOOLEAN, comments_enabled),
     cover_focal_x            = CASE WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
                                     WHEN sqlc.narg('cover_focal_x')::DOUBLE PRECISION IS NOT NULL
                                          THEN sqlc.narg('cover_focal_x')::DOUBLE PRECISION
@@ -96,7 +109,8 @@ WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
           cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
           posted_at, like_count, comment_count,
-          origin_server_id, team_id, state_id, created_at, updated_at;
+          origin_server_id, team_id, state_id, created_at, updated_at,
+          comments_enabled;
 
 -- name: SoftDeletePost :exec
 -- deleted_by_user_ref: see the note on assets.SoftDeleteAsset. The
