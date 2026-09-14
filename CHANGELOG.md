@@ -9,6 +9,16 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Publish later.** You can now schedule one of your own drafts to publish at a time you
+  choose, from the post editor or from the create page. The pending time is shown in the post
+  editor, where you can cancel it. The schedule is made in your name, and your right to publish is
+  checked again when it actually runs, so if that right is taken away in between the post simply
+  stays a draft. A post holds one pending schedule at a time; to change the time, cancel it and
+  schedule again. If the create page saves your draft but cannot schedule it, you keep exactly one
+  draft with no schedule and nothing published, and you can try again from the draft. Publish now
+  and Save as draft work exactly as before. Publication happens on the scheduler's next pass,
+  usually within a few minutes, not at an exact second (#1119, PR #1431).
+
 - **"Edit post" does something now.** It used to be a placeholder that changed nothing. It now
   opens an editor where you can change a post's title, description, who can see it and its tags,
   choose which of its files is the cover, and set how that cover is framed. If somebody else
