@@ -936,6 +936,7 @@ type ScheduledAction struct {
 	CreatedBy    *int64             `json:"created_by"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	ExecutedAt   pgtype.Timestamptz `json:"executed_at"`
+	Origin       string             `json:"origin"`
 }
 
 type SearchFeedback struct {

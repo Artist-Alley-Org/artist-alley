@@ -936,6 +936,7 @@ type ScheduledAction struct {
 	CreatedBy    *int64
 	CreatedAt    pgtype.Timestamptz
 	ExecutedAt   pgtype.Timestamptz
+	Origin       string
 }
 
 type SearchFeedback struct {

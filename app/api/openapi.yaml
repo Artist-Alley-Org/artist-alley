@@ -2074,6 +2074,14 @@ paths:
           schema:
             type: string
             enum: [pending, done, cancelled, failed]
+            # Pinned: oapi-codegen prefixes enum identifiers only while
+            # they collide with another schema's values, so adding or
+            # removing an enum elsewhere in this file renames these.
+            x-enum-varnames:
+              - ListScheduledActionsParamsStatePending
+              - ListScheduledActionsParamsStateDone
+              - ListScheduledActionsParamsStateCancelled
+              - ListScheduledActionsParamsStateFailed
         - name: limit
           in: query
           required: false
@@ -6912,6 +6920,141 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: The post is not published
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /posts/{id}/publication-schedule:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getPostPublicationSchedule
+      summary: The author's pending publication schedule for a post
+      description: |
+        The author-facing status read of scheduled publication (#1119,
+        ADR 0020). Answers with the ONE pending schedule the author made
+        for this post, or `null` when there is none.
+
+        Own-post only. The caller must be the post's author; a readable
+        post authored by somebody else is refused with `403`, and a
+        post the caller cannot read (including a soft-deleted one) is
+        `404`, in that order, so this cannot be used to learn which
+        post ids exist. Operator- and system-scheduled actions on the
+        same post are NOT reported here: this surface shows the author
+        their own instruction and nothing else.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The pending author schedule, or null.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostPublicationScheduleStatus" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      operationId: setPostPublicationSchedule
+      summary: Schedule a draft post to publish at a future time
+      description: |
+        Records a standing instruction to publish this draft at
+        `scheduled_for`, carried out by the scheduled-action engine
+        (ADR 0020) through the same publication core the publish
+        endpoint uses. The row is an ordinary `change_state` action on
+        the post, created by THIS caller: `created_by` is the real
+        requesting user, and the identity, capabilities and authorship
+        it publishes as are loaded again when the action fires. A
+        caller who loses the right to publish before then has stopped
+        the scheduled publication too.
+
+        Schedule-time gates, in order: the post must be readable
+        (`404` otherwise, deleted posts included); the caller must be
+        its author (`403`); the caller must currently hold
+        `posts.publish` (`403`); the post must currently be a draft
+        (`409`); and `scheduled_for` must be in the future (`400`).
+
+        ONE PENDING SCHEDULE PER POST. A PUT that finds the caller's
+        own pending schedule replaces it in the same transaction, so
+        changing the time is one request. Two requests racing for the
+        same post are serialised by the database: exactly one wins and
+        the other answers `409`, after which a re-read shows the
+        winner's schedule.
+
+        Timing. The action becomes eligible at `scheduled_for` and is
+        carried out on the scheduler's next normal pass, which runs
+        every few minutes. It is not a to-the-second promise.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostPublicationScheduleRequest" }
+      responses:
+        "200":
+          description: The schedule now standing for this post.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostPublicationSchedule" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The post is already published, or a concurrent request
+            created the post's pending schedule first. Re-read the
+            status to see what stands.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: cancelPostPublicationSchedule
+      summary: Cancel the author's pending publication schedule
+      description: |
+        Withdraws the caller's own pending publication schedule for
+        this post before it fires. The post stays exactly as it is (a
+        draft stays a draft). Cancelling needs authorship of the post
+        and nothing else, so an author whose `posts.publish` was
+        revoked after scheduling can still take their instruction
+        back. It never touches an operator's or the system's scheduled
+        action on the same post.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The schedule that was cancelled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostPublicationSchedule" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The post is not readable, or it has no pending author schedule.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -19039,6 +19182,57 @@ components:
           description: |
             ABSENT when `restricted` is true. Present, and complete, in
             every other case.
+    PostPublicationSchedule:
+      type: object
+      description: |
+        An author's standing instruction to publish one post (#1119,
+        ADR 0020). A narrow view of the scheduled_actions row the
+        instruction lives in: the generic fields (verb, target kind,
+        params) are fixed for this surface and are not repeated.
+      required: [id, post_id, scheduled_for, state, created_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        post_id: { type: string, format: uuid }
+        scheduled_for:
+          type: string
+          format: date-time
+          description: |
+            When the post becomes eligible to publish. It is carried out
+            on the scheduler's next normal pass after this time, not at
+            this exact second.
+        state:
+          type: string
+          enum: [pending, done, cancelled, failed]
+          # Pinned: see ScheduledAction.state.
+          x-enum-varnames:
+            - PostPublicationScheduleStatePending
+            - PostPublicationScheduleStateDone
+            - PostPublicationScheduleStateCancelled
+            - PostPublicationScheduleStateFailed
+        created_by:
+          type: integer
+          format: int64
+          description: The author who scheduled it; always the requesting user.
+        created_at: { type: string, format: date-time }
+
+    PostPublicationScheduleStatus:
+      type: object
+      required: [schedule]
+      properties:
+        schedule:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/PostPublicationSchedule"
+
+    PostPublicationScheduleRequest:
+      type: object
+      required: [scheduled_for]
+      properties:
+        scheduled_for:
+          type: string
+          format: date-time
+          description: Must be in the future.
+
     PostCreate:
       type: object
       required: [members]
@@ -20838,6 +21032,12 @@ components:
         state:
           type: string
           enum: [pending, done, cancelled, failed]
+          # Pinned for the same reason as the list filter above.
+          x-enum-varnames:
+            - ScheduledActionStatePending
+            - ScheduledActionStateDone
+            - ScheduledActionStateCancelled
+            - ScheduledActionStateFailed
         error:
           type: string
           nullable: true

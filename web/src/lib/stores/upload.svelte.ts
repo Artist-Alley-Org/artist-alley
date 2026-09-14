@@ -306,6 +306,20 @@ export interface PostComposeState {
    *  to. Publication is now one boolean on both sides. */
   draft: boolean;
   /**
+   * Publish later (#1119 sprint 21e): an ISO instant, or null for no
+   * schedule. Only meaningful with `draft: true`, and the create page
+   * sets both together: the post is made as a draft and THEN the
+   * standing instruction is recorded against it through
+   * `PUT /posts/{id}/publication-schedule`, which the scheduled-action
+   * engine carries out through the ordinary publication core.
+   *
+   * Two requests, deliberately, and the second may fail after the
+   * first succeeded. That outcome is `scheduleFailure` below, not an
+   * exception: the draft is real and persisted, so the honest report
+   * is "saved, not scheduled", never "nothing happened".
+   */
+  scheduledFor: string | null;
+  /**
    * The AI declaration for the WHOLE composition (#1167, ADR 0094).
    *
    * ⚠️ It lives here and not only on the rows, and that is a bug fix
@@ -416,6 +430,7 @@ class UploadState {
     tags: [],
     collectionId: null,
     draft: false,
+    scheduledFor: null,
     aiProvenance: null,
     thumbMode: 'member',
     thumbMemberRowId: null,
@@ -435,6 +450,19 @@ class UploadState {
   createdPostIds = $state<string[]>([]);
   composeBusy = $state(false);
   composeError = $state<string | null>(null);
+  /**
+   * The draft(s) that were created and then could NOT be scheduled
+   * (#1119 sprint 21e). Set by the last submit(); cleared at the START
+   * of the next one, like createdPostIds, so the caller has a window to
+   * read it after submit() resolves.
+   *
+   * ⛔ THIS IS NOT AN ERROR PATH. submit() still resolves true when this
+   * is set: the post exists, it is a draft, and retrying the submit
+   * would make a SECOND post around the same files. The recoverable
+   * state is the persisted draft, and the create page sends the artist
+   * there to schedule it from the editor.
+   */
+  scheduleFailure = $state<{ postId: string; message: string } | null>(null);
 
   /**
    * Surfaces waiting to hear that a publish landed (#1407).
@@ -877,6 +905,7 @@ class UploadState {
         await this.flushSelfLabels(row);
       }
       this.createdPostIds = [];
+      this.scheduleFailure = null;
       if (this.compose.enabled) {
         await this.createPosts(ready);
       }
@@ -989,6 +1018,7 @@ class UploadState {
       tags: [],
       collectionId: this.compose.collectionId, // preserve context across resets
       draft: false,
+      scheduledFor: null,
       aiProvenance: null,
       thumbMode: 'member',
       thumbMemberRowId: null,
@@ -1670,6 +1700,36 @@ class UploadState {
     // a full-page create flow that drops you back on an empty form has
     // thrown away the only thing you wanted.
     this.createdPostIds.push(data.id);
+
+    // Publish later (#1119 21e): the SECOND durable operation, against
+    // the post the first one just made. It is recorded per post, so in
+    // one-per-file mode each post carries its own instruction.
+    //
+    // ⛔ A failure here is caught, not thrown. Throwing would take
+    // submit() down its catch arm, which leaves the rows in place for
+    // a retry, and a retry would POST /posts again around the same
+    // files: one click, two drafts. The post is persisted and correct;
+    // what did not happen is recorded and reported, and the artist
+    // finishes the job from the draft itself.
+    if (c.draft && c.scheduledFor) {
+      try {
+        const { error: schedErr } = await api.PUT('/posts/{id}/publication-schedule', {
+          params: { path: { id: data.id } },
+          body: { scheduled_for: c.scheduledFor },
+        });
+        if (schedErr) {
+          this.scheduleFailure = {
+            postId: data.id,
+            message: extractError(schedErr) ?? t('upload.err_schedule'),
+          };
+        }
+      } catch (e) {
+        this.scheduleFailure = {
+          postId: data.id,
+          message: e instanceof Error ? e.message : t('upload.err_schedule'),
+        };
+      }
+    }
   }
 }
 

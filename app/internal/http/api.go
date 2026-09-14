@@ -1586,6 +1586,11 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// transaction as the federation activity, which is what the line
 	// above installs.
 	s.posts.SetWorkflow(workflow.NewService(pool, logger))
+	// The author's scheduled-publication surface asks the posts handler
+	// whether THIS caller may schedule THIS post (#1119 21e). The posts
+	// handler is the authority because the gates are publication.go's
+	// own; the scheduled-action handler owns the rows and nothing else.
+	s.scheduledActions.SetPostAuthority(s.posts)
 	s.social.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	s.messages.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	s.collections.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
@@ -3717,6 +3722,20 @@ func (s *apiServer) ListScheduledActions(ctx context.Context, req openapi.ListSc
 }
 func (s *apiServer) CancelScheduledAction(ctx context.Context, req openapi.CancelScheduledActionRequestObject) (openapi.CancelScheduledActionResponseObject, error) {
 	return s.scheduledActions.CancelScheduledAction(ctx, req)
+}
+
+// The author's own publication schedule (#1119 sprint 21e). Served by
+// the scheduled-action package because the rows are its rows, gated by
+// the posts handler because the authority is the post's: see
+// scheduledactions.PostAuthority and posts.Handler.PublicationScheduleGate.
+func (s *apiServer) GetPostPublicationSchedule(ctx context.Context, req openapi.GetPostPublicationScheduleRequestObject) (openapi.GetPostPublicationScheduleResponseObject, error) {
+	return s.scheduledActions.GetPostPublicationSchedule(ctx, req)
+}
+func (s *apiServer) SetPostPublicationSchedule(ctx context.Context, req openapi.SetPostPublicationScheduleRequestObject) (openapi.SetPostPublicationScheduleResponseObject, error) {
+	return s.scheduledActions.SetPostPublicationSchedule(ctx, req)
+}
+func (s *apiServer) CancelPostPublicationSchedule(ctx context.Context, req openapi.CancelPostPublicationScheduleRequestObject) (openapi.CancelPostPublicationScheduleResponseObject, error) {
+	return s.scheduledActions.CancelPostPublicationSchedule(ctx, req)
 }
 func (s *apiServer) ExportAuditEvents(ctx context.Context, req openapi.ExportAuditEventsRequestObject) (openapi.ExportAuditEventsResponseObject, error) {
 	return s.audit.ExportAuditEvents(ctx, req)

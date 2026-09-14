@@ -1410,6 +1410,21 @@ func (*PanicShim) LikePost(context.Context, openapi.LikePostRequestObject) (open
 	panic("PanicShim: LikePost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// CancelPostPublicationSchedule panics by default; test shims override.
+func (*PanicShim) CancelPostPublicationSchedule(context.Context, openapi.CancelPostPublicationScheduleRequestObject) (openapi.CancelPostPublicationScheduleResponseObject, error) {
+	panic("PanicShim: CancelPostPublicationSchedule called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetPostPublicationSchedule panics by default; test shims override.
+func (*PanicShim) GetPostPublicationSchedule(context.Context, openapi.GetPostPublicationScheduleRequestObject) (openapi.GetPostPublicationScheduleResponseObject, error) {
+	panic("PanicShim: GetPostPublicationSchedule called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// SetPostPublicationSchedule panics by default; test shims override.
+func (*PanicShim) SetPostPublicationSchedule(context.Context, openapi.SetPostPublicationScheduleRequestObject) (openapi.SetPostPublicationScheduleResponseObject, error) {
+	panic("PanicShim: SetPostPublicationSchedule called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // PublishPost panics by default; test shims override.
 func (*PanicShim) PublishPost(context.Context, openapi.PublishPostRequestObject) (openapi.PublishPostResponseObject, error) {
 	panic("PanicShim: PublishPost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

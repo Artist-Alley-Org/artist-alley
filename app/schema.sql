@@ -2725,7 +2725,9 @@ CREATE TABLE public.scheduled_actions (
     created_by bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     executed_at timestamp with time zone,
+    origin text DEFAULT 'generic'::text NOT NULL,
     CONSTRAINT scheduled_actions_action_check CHECK ((action = ANY (ARRAY['restrict'::text, 'delete'::text, 'change_state'::text, 'change_sensitivity'::text, 'notify'::text]))),
+    CONSTRAINT scheduled_actions_origin_check CHECK ((origin = ANY (ARRAY['generic'::text, 'author'::text]))),
     CONSTRAINT scheduled_actions_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'done'::text, 'cancelled'::text, 'failed'::text]))),
     CONSTRAINT scheduled_actions_target_kind_check CHECK ((target_kind = ANY (ARRAY['asset'::text, 'post'::text, 'collection'::text, 'user'::text])))
 );
@@ -5485,6 +5487,13 @@ CREATE INDEX saved_search_due_idx ON public.saved_search USING btree (last_run_a
 --
 
 CREATE INDEX saved_search_owner_idx ON public.saved_search USING btree (owner_user_ref, id);
+
+
+--
+-- Name: scheduled_actions_author_pending_post_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX scheduled_actions_author_pending_post_idx ON public.scheduled_actions USING btree (target_id) WHERE ((state = 'pending'::text) AND (origin = 'author'::text) AND (action = 'change_state'::text) AND (target_kind = 'post'::text));
 
 
 --

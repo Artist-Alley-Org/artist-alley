@@ -56,14 +56,20 @@
   // offered are the ones for that type. Files of different types in one
   // drop each get their own set.
   //
-  // ## Scheduling is NOT here, and its absence is deliberate
+  // ## Scheduling rides the scheduled-action engine (sprint 21e)
   //
   // #1119 says scheduled publish "rides the ADR 0020 scheduled-actions
-  // machinery". It does not, yet: every mutating executor opens with
-  // `assetTarget(a)` and refuses a post target, so a scheduled publish
-  // would enqueue cleanly and fail at fire time. Tracked as #1238. Not
-  // even a disabled control — an affordance that cannot work is worse
-  // than none.
+  // machinery", and since #1238 the engine's `change_state` arm reaches
+  // a post through the publication core. This page's third action makes
+  // the post as a DRAFT and then records the author's standing
+  // instruction against it (`PUT /posts/{id}/publication-schedule`); the
+  // reaper publishes it on its next pass after the chosen time. Two
+  // requests, and the second can fail after the first succeeded: see
+  // `scheduleFailure` below for why that is reported and never retried
+  // from here.
+  //
+  // The two-action path is untouched. Scheduling is a disclosure the
+  // artist opens; Publish and Save as draft are the same two buttons.
 
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -471,13 +477,46 @@
     !submitting && !upload.composeBusy && !upload.blockedByCompanions && ready.length > 0,
   );
 
-  async function publish(asDraft: boolean) {
+  // ── publish later (#1119 sprint 21e) ────────────────────────────
+  //
+  // The `datetime-local` control's value: local wall-clock, no zone.
+  // Converted to an instant at submit. The server refuses a time that
+  // is not in the future; `min` only stops the control offering one.
+  let scheduleAt = $state('');
+  let scheduleOpen = $state(false);
+  /** A draft that was saved and then could NOT be scheduled. Rendered
+   *  in place, with the way to the draft: the recoverable state is the
+   *  persisted post, and scheduling it again happens in its editor. A
+   *  retry from THIS page would make a second post around the same
+   *  files. */
+  let scheduleFailure = $state<{ postId: string; message: string } | null>(null);
+
+  function localNowForInput(): string {
+    const d = new Date();
+    d.setSeconds(0, 0);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  const canSchedule = $derived(canSubmit && scheduleAt !== '');
+
+  async function publish(asDraft: boolean, scheduledFor: string | null = null) {
     if (!canSubmit) return;
     upload.compose.draft = asDraft;
+    upload.compose.scheduledFor = scheduledFor;
+    scheduleFailure = null;
     submitting = true;
     try {
       const ok = await upload.submit();
       if (!ok) return;
+      // The draft exists and its schedule does not (#1119 21e). Stay
+      // here and say exactly that, with the draft one click away. The
+      // rows are gone (submit() reset them), so nothing on this page
+      // can make a second post by accident.
+      if (upload.scheduleFailure) {
+        scheduleFailure = upload.scheduleFailure;
+        return;
+      }
       // Go to what was just made. A full-page create flow that drops
       // you back on an empty form has thrown away the only thing you
       // wanted from it.
@@ -486,6 +525,13 @@
     } finally {
       submitting = false;
     }
+  }
+
+  function schedule() {
+    if (!canSchedule) return;
+    const when = new Date(scheduleAt);
+    if (Number.isNaN(when.getTime())) return;
+    void publish(true, when.toISOString());
   }
 </script>
 
@@ -980,13 +1026,33 @@
           </label>
         {/if}
 
-        <!-- Publish. Draft or now — NOT schedule (#1238). -->
+        <!-- Publish. Now, as a draft, or later (#1119 21e): the third is a
+             draft plus a standing instruction the scheduled-action engine
+             carries out, and it sits behind a disclosure so the two-action
+             path stays two actions. -->
         <div class="space-y-2 rounded border border-border p-3">
           <span class="block text-xs font-medium text-fg-muted">{t('create.publish_status')}</span>
           {#if upload.composeError}
             <p class="text-sm text-danger" role="alert" data-testid="create-error">
               {upload.composeError}
             </p>
+          {/if}
+          {#if scheduleFailure}
+            <div
+              role="alert"
+              data-testid="create-schedule-failed"
+              class="space-y-1 rounded border border-danger/40 bg-danger/5 p-2 text-sm text-fg"
+            >
+              <p class="font-medium">{t('create.schedule_failed_title')}</p>
+              <p class="text-xs text-fg-muted">{scheduleFailure.message}</p>
+              <a
+                href={`/posts/${scheduleFailure.postId}`}
+                data-testid="create-schedule-failed-open"
+                class="inline-block text-xs underline"
+              >
+                {t('create.schedule_failed_open')}
+              </a>
+            </div>
           {/if}
           <button
             type="button"
@@ -1007,6 +1073,35 @@
             {t('create.save_draft')}
           </button>
           <p class="text-xs text-fg-muted">{t('create.publish_help')}</p>
+          <details
+            bind:open={scheduleOpen}
+            data-testid="create-schedule"
+            class="rounded border border-border/60 px-2 py-1.5"
+          >
+            <summary class="cursor-pointer select-none text-xs text-fg-muted">
+              {t('create.schedule_summary')}
+            </summary>
+            <div class="mt-2 space-y-2">
+              <input
+                type="datetime-local"
+                bind:value={scheduleAt}
+                min={localNowForInput()}
+                aria-label={t('create.schedule_label')}
+                data-testid="create-schedule-at"
+                class="w-full max-w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg"
+              />
+              <button
+                type="button"
+                disabled={!canSchedule}
+                onclick={schedule}
+                data-testid="create-schedule-submit"
+                class="w-full rounded border border-border px-3 py-2 text-sm text-fg disabled:opacity-50"
+              >
+                {t('create.schedule_submit')}
+              </button>
+              <p class="text-xs text-fg-muted">{t('create.schedule_help')}</p>
+            </div>
+          </details>
         </div>
       </aside>
     </div>

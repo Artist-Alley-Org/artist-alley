@@ -3232,7 +3232,17 @@
     "collections_withheld": "It is also in {count} collections you cannot open.",
     "collections_withheld_one": "It is also in 1 collection you cannot open.",
     "collections_withheld_why": "We can tell you the number and nothing else. A collection you cannot open stays closed, including its name and its curator.",
-    "collection_owner_you": "Yours"
+    "collection_owner_you": "Yours",
+    "schedule_loading": "Checking for a scheduled publication...",
+    "schedule_load_error": "The scheduled publication for this post could not be loaded.",
+    "schedule_pending": "Scheduled to publish after {when}.",
+    "schedule_window": "It goes out on the next scheduler pass after that time, usually within a few minutes. Not to the second.",
+    "schedule_cancel": "Cancel scheduled publication",
+    "schedule_label": "Publish later, after",
+    "schedule_submit": "Schedule publication",
+    "schedule_invalid": "Pick a date and time.",
+    "schedule_failed": "This post could not be scheduled. Reload and try again.",
+    "schedule_cancel_failed": "The scheduled publication could not be cancelled. Reload and try again."
   },
   "shortcuts": {
     "title": "Keyboard shortcuts",
@@ -3507,6 +3517,7 @@
     "err_undecided_companions": "{n} file(s) in this upload still need an answer before you can publish.",
     "err_companions_pending": "Still working out which files belong to the model. One moment.",
     "err_create_post": "Failed to create post.",
+    "err_schedule": "The publication could not be scheduled.",
     "err_create_asset": "Failed to create asset.",
     "err_upload_failed": "Upload failed.",
     "err_network": "Network error.",
@@ -3786,7 +3797,13 @@
     "save_draft": "Save as draft",
     "publish_help": "A draft is visible only to you until you publish it.",
     "open_full_page": "Use the full page instead",
-    "media_type_unknown": "Other"
+    "media_type_unknown": "Other",
+    "schedule_summary": "Publish later",
+    "schedule_label": "Publish after",
+    "schedule_submit": "Save as draft and schedule",
+    "schedule_help": "Saved as a draft now and published on the next scheduler pass after the time you choose, usually within a few minutes. You can cancel from the post until then.",
+    "schedule_failed_title": "Your draft was saved, but scheduling it failed.",
+    "schedule_failed_open": "Open the draft to schedule it from there."
   },
   "batch": {
     "title": "Edit a field on the selection",

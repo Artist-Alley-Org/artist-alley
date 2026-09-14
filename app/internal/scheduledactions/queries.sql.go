@@ -11,6 +11,61 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelPendingAuthorPostPublication = `-- name: CancelPendingAuthorPostPublication :many
+UPDATE scheduled_actions
+SET state = 'cancelled'
+WHERE origin = 'author'
+  AND action = 'change_state'
+  AND target_kind = 'post'
+  AND target_id = $1
+  AND created_by = $2
+  AND state = 'pending'
+RETURNING id, action, target_kind, target_id, params, scheduled_for,
+          state, error, created_by, created_at, executed_at, origin
+`
+
+type CancelPendingAuthorPostPublicationParams struct {
+	TargetID  string `json:"target_id"`
+	CreatedBy *int64 `json:"created_by"`
+}
+
+// Cancels the caller's own pending author schedule for the post and
+// returns what it cancelled (zero rows = nothing pending). Guarded on
+// origin AND created_by, so a row somebody else made is invisible to
+// this statement even when it targets the same post.
+func (q *Queries) CancelPendingAuthorPostPublication(ctx context.Context, arg CancelPendingAuthorPostPublicationParams) ([]ScheduledAction, error) {
+	rows, err := q.db.Query(ctx, cancelPendingAuthorPostPublication, arg.TargetID, arg.CreatedBy)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ScheduledAction
+	for rows.Next() {
+		var i ScheduledAction
+		if err := rows.Scan(
+			&i.ID,
+			&i.Action,
+			&i.TargetKind,
+			&i.TargetID,
+			&i.Params,
+			&i.ScheduledFor,
+			&i.State,
+			&i.Error,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.ExecutedAt,
+			&i.Origin,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const cancelScheduledAction = `-- name: CancelScheduledAction :execrows
 UPDATE scheduled_actions
 SET state = 'cancelled'
@@ -31,7 +86,7 @@ func (q *Queries) CancelScheduledAction(ctx context.Context, id pgtype.UUID) (in
 
 const claimDueAction = `-- name: ClaimDueAction :one
 SELECT id, action, target_kind, target_id, params, scheduled_for,
-       state, error, created_by, created_at, executed_at
+       state, error, created_by, created_at, executed_at, origin
 FROM scheduled_actions
 WHERE state = 'pending' AND scheduled_for <= NOW()
 ORDER BY scheduled_for ASC
@@ -60,6 +115,7 @@ func (q *Queries) ClaimDueAction(ctx context.Context) (ScheduledAction, error) {
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.ExecutedAt,
+		&i.Origin,
 	)
 	return i, err
 }
@@ -78,13 +134,65 @@ func (q *Queries) CountDueActions(ctx context.Context) (int64, error) {
 	return value, err
 }
 
+const createAuthorPostPublication = `-- name: CreateAuthorPostPublication :one
+
+INSERT INTO scheduled_actions (action, target_kind, target_id, params, scheduled_for, created_by, origin)
+VALUES ('change_state', 'post', $1, $2, $3, $4, 'author')
+RETURNING id, action, target_kind, target_id, params, scheduled_for,
+          state, error, created_by, created_at, executed_at, origin
+`
+
+type CreateAuthorPostPublicationParams struct {
+	TargetID     string             `json:"target_id"`
+	Params       []byte             `json:"params"`
+	ScheduledFor pgtype.Timestamptz `json:"scheduled_for"`
+	CreatedBy    *int64             `json:"created_by"`
+}
+
+// ---------------------------------------------------------------------------
+// The author seam (#1119 sprint 21e). An author's own publication
+// schedule is an ordinary change_state/post row with origin = 'author';
+// every query here is scoped to that origin AND to the row's creator,
+// so this surface can neither see nor touch an operator's or the
+// system's instruction for the same post. See migration 00069 for the
+// partial unique index that keeps one pending author row per post.
+// ---------------------------------------------------------------------------
+// Inserts the author's standing instruction. The unique index
+// scheduled_actions_author_pending_post_idx raises 23505 when another
+// pending author row for the post exists; the Store maps that to
+// ErrAuthorScheduleConflict rather than checking first.
+func (q *Queries) CreateAuthorPostPublication(ctx context.Context, arg CreateAuthorPostPublicationParams) (ScheduledAction, error) {
+	row := q.db.QueryRow(ctx, createAuthorPostPublication,
+		arg.TargetID,
+		arg.Params,
+		arg.ScheduledFor,
+		arg.CreatedBy,
+	)
+	var i ScheduledAction
+	err := row.Scan(
+		&i.ID,
+		&i.Action,
+		&i.TargetKind,
+		&i.TargetID,
+		&i.Params,
+		&i.ScheduledFor,
+		&i.State,
+		&i.Error,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ExecutedAt,
+		&i.Origin,
+	)
+	return i, err
+}
+
 const createScheduledAction = `-- name: CreateScheduledAction :one
 
 
 INSERT INTO scheduled_actions (action, target_kind, target_id, params, scheduled_for, created_by)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, action, target_kind, target_id, params, scheduled_for,
-          state, error, created_by, created_at, executed_at
+          state, error, created_by, created_at, executed_at, origin
 `
 
 type CreateScheduledActionParams struct {
@@ -123,6 +231,7 @@ func (q *Queries) CreateScheduledAction(ctx context.Context, arg CreateScheduled
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.ExecutedAt,
+		&i.Origin,
 	)
 	return i, err
 }
@@ -239,9 +348,48 @@ func (q *Queries) GetAssetSensitivityDomain(ctx context.Context, id pgtype.UUID)
 	return i, err
 }
 
+const getPendingAuthorPostPublication = `-- name: GetPendingAuthorPostPublication :one
+SELECT id, action, target_kind, target_id, params, scheduled_for,
+       state, error, created_by, created_at, executed_at, origin
+FROM scheduled_actions
+WHERE origin = 'author'
+  AND action = 'change_state'
+  AND target_kind = 'post'
+  AND target_id = $1
+  AND created_by = $2
+  AND state = 'pending'
+LIMIT 1
+`
+
+type GetPendingAuthorPostPublicationParams struct {
+	TargetID  string `json:"target_id"`
+	CreatedBy *int64 `json:"created_by"`
+}
+
+// The one pending author schedule for a post, if the caller made it.
+func (q *Queries) GetPendingAuthorPostPublication(ctx context.Context, arg GetPendingAuthorPostPublicationParams) (ScheduledAction, error) {
+	row := q.db.QueryRow(ctx, getPendingAuthorPostPublication, arg.TargetID, arg.CreatedBy)
+	var i ScheduledAction
+	err := row.Scan(
+		&i.ID,
+		&i.Action,
+		&i.TargetKind,
+		&i.TargetID,
+		&i.Params,
+		&i.ScheduledFor,
+		&i.State,
+		&i.Error,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ExecutedAt,
+		&i.Origin,
+	)
+	return i, err
+}
+
 const getScheduledAction = `-- name: GetScheduledAction :one
 SELECT id, action, target_kind, target_id, params, scheduled_for,
-       state, error, created_by, created_at, executed_at
+       state, error, created_by, created_at, executed_at, origin
 FROM scheduled_actions
 WHERE id = $1
 `
@@ -261,13 +409,14 @@ func (q *Queries) GetScheduledAction(ctx context.Context, id pgtype.UUID) (Sched
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.ExecutedAt,
+		&i.Origin,
 	)
 	return i, err
 }
 
 const listScheduledActions = `-- name: ListScheduledActions :many
 SELECT id, action, target_kind, target_id, params, scheduled_for,
-       state, error, created_by, created_at, executed_at
+       state, error, created_by, created_at, executed_at, origin
 FROM scheduled_actions
 WHERE ($1::text IS NULL OR state = $1::text)
   AND ($2::timestamptz IS NULL
@@ -305,6 +454,7 @@ func (q *Queries) ListScheduledActions(ctx context.Context, arg ListScheduledAct
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.ExecutedAt,
+			&i.Origin,
 		); err != nil {
 			return nil, err
 		}

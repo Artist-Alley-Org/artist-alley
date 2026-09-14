@@ -53,7 +53,13 @@
   //     form CANNOT publish a draft or unpublish a published post. The
   //     publication block below is the shipped endpoint, called
   //     directly, with its own button and its own busy state.
-  //   * It does not schedule. That is #1238.
+  //   * It does not schedule FROM SAVE. Scheduling is its own act in the
+  //     publication block (#1119 sprint 21e): `PUT /posts/{id}/publication-
+  //     schedule` records a standing instruction the scheduled-action
+  //     engine carries out through the same publication core the
+  //     Publish button reaches. Save cannot touch it, and the pending
+  //     schedule shown there is read back from the server on every open,
+  //     never remembered from the request that made it.
   //   * It does not ADD the post to a collection. CollectionPicker
   //     already does that from the same menu, and this section is the
   //     other half of the sentence: what is holding this post, and what
@@ -62,6 +68,7 @@
   import { untrack } from 'svelte';
   import { api } from '$api/client';
   import { canDelete } from '$lib/deletable';
+  import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
   import Modal from './Modal.svelte';
   import PostCoverEditor from './PostCoverEditor.svelte';
@@ -214,7 +221,119 @@
     conflict = null;
     publishError = null;
     membershipError = null;
+    scheduleError = null;
+    scheduleAt = '';
     void loadMemberships(seeded.id);
+    void loadSchedule(seeded.id);
+  }
+
+  // ── SCHEDULED PUBLICATION (#1119 sprint 21e) ────────────────────────
+  //
+  // The author's OWN standing instruction, and nobody else's: the
+  // endpoint is authorship-gated, so the block is offered to the author
+  // only. `canPublish` above is wider (a global posts.admin may publish
+  // by hand) and is deliberately not the gate here.
+  //
+  // The pending schedule is READ from the server on the open edge and
+  // after every write, never kept from the request that made it. A
+  // schedule is a row that outlives this dialog, this page and this
+  // browser; what the dialog says about it has to be what the database
+  // says, or an author who scheduled from another tab sees nothing here
+  // and schedules twice.
+  interface Schedule {
+    id: string;
+    scheduled_for: string;
+    state: string;
+  }
+  let schedule = $state<Schedule | null>(null);
+  let scheduleLoading = $state(false);
+  let scheduleBusy = $state(false);
+  let scheduleError = $state<string | null>(null);
+  /** The `datetime-local` control's value: local wall-clock, no zone. */
+  let scheduleAt = $state('');
+
+  const isAuthor = $derived(!!auth.user && post.author_user_ref === auth.user.ref);
+
+  async function loadSchedule(postId: string) {
+    if (!untrack(() => isAuthor)) {
+      schedule = null;
+      return;
+    }
+    scheduleLoading = true;
+    try {
+      const { data, error: apiErr } = await api.GET('/posts/{id}/publication-schedule', {
+        params: { path: { id: postId } },
+      });
+      if (apiErr || !data) {
+        scheduleError = t('post_edit.schedule_load_error');
+        schedule = null;
+        return;
+      }
+      schedule = (data.schedule as Schedule | null) ?? null;
+    } catch {
+      scheduleError = t('post_edit.schedule_load_error');
+      schedule = null;
+    } finally {
+      scheduleLoading = false;
+    }
+  }
+
+  /** The earliest value the picker offers: now, in the control's own
+   *  local format. The server refuses anything not in the future; this
+   *  only stops the control from offering what would be refused. */
+  function localNowForInput(): string {
+    const d = new Date();
+    d.setSeconds(0, 0);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  async function submitSchedule() {
+    if (scheduleBusy || !scheduleAt) return;
+    const when = new Date(scheduleAt);
+    if (Number.isNaN(when.getTime())) {
+      scheduleError = t('post_edit.schedule_invalid');
+      return;
+    }
+    scheduleBusy = true;
+    scheduleError = null;
+    try {
+      const { error: apiErr } = await api.PUT('/posts/{id}/publication-schedule', {
+        params: { path: { id: seeded.id } },
+        body: { scheduled_for: when.toISOString() },
+      });
+      if (apiErr) {
+        scheduleError =
+          (apiErr as { error?: string } | undefined)?.error ?? t('post_edit.schedule_failed');
+      }
+    } catch {
+      scheduleError = t('post_edit.schedule_failed');
+    } finally {
+      scheduleBusy = false;
+      // Re-read either way: on a 409 the winner's schedule is what
+      // stands, and it is what the author should be looking at.
+      await loadSchedule(seeded.id);
+    }
+  }
+
+  async function cancelSchedule() {
+    if (scheduleBusy) return;
+    scheduleBusy = true;
+    scheduleError = null;
+    try {
+      const { error: apiErr } = await api.DELETE('/posts/{id}/publication-schedule', {
+        params: { path: { id: seeded.id } },
+      });
+      if (apiErr) {
+        scheduleError =
+          (apiErr as { error?: string } | undefined)?.error ?? t('post_edit.schedule_cancel_failed');
+      }
+    } catch {
+      scheduleError = t('post_edit.schedule_cancel_failed');
+    } finally {
+      scheduleBusy = false;
+      await loadSchedule(seeded.id);
+    }
   }
 
   // ── SEED ON THE OPEN EDGE, NOT ON EVERY PROP CHANGE (#1262) ───────
@@ -671,6 +790,63 @@
           <p role="alert" class="mt-1 text-xs text-danger" data-testid="post-edit-publish-error">
             {publishError}
           </p>
+        {/if}
+
+        <!-- SCHEDULED PUBLICATION (#1119 21e). Author only; rendered from
+             what the server holds. The copy names a window, not a second:
+             the engine fires on its next pass after the time. -->
+        {#if isAuthor}
+          <div class="mt-3 border-t border-border pt-3" data-testid="post-edit-schedule">
+            {#if scheduleLoading}
+              <p class="text-xs text-fg-muted" data-testid="post-edit-schedule-loading">
+                {t('post_edit.schedule_loading')}
+              </p>
+            {:else if schedule}
+              <p class="text-sm text-fg" data-testid="post-edit-schedule-pending">
+                {t('post_edit.schedule_pending', {
+                  when: new Date(schedule.scheduled_for).toLocaleString(),
+                })}
+              </p>
+              <p class="mt-1 text-xs text-fg-muted">{t('post_edit.schedule_window')}</p>
+              <button
+                type="button"
+                onclick={cancelSchedule}
+                disabled={scheduleBusy}
+                data-testid="post-edit-schedule-cancel"
+                class="mt-2 rounded border border-border-strong px-3 py-1.5 text-sm hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t('post_edit.schedule_cancel')}
+              </button>
+            {:else if post.draft}
+              <label class="block">
+                <span class="mb-1 block text-xs font-medium text-fg-muted">
+                  {t('post_edit.schedule_label')}
+                </span>
+                <input
+                  type="datetime-local"
+                  bind:value={scheduleAt}
+                  min={localNowForInput()}
+                  data-testid="post-edit-schedule-at"
+                  class="w-full max-w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg"
+                />
+              </label>
+              <button
+                type="button"
+                onclick={submitSchedule}
+                disabled={scheduleBusy || !scheduleAt}
+                data-testid="post-edit-schedule-submit"
+                class="mt-2 rounded border border-border-strong px-3 py-1.5 text-sm hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t('post_edit.schedule_submit')}
+              </button>
+              <p class="mt-1 text-xs text-fg-muted">{t('post_edit.schedule_window')}</p>
+            {/if}
+            {#if scheduleError}
+              <p role="alert" class="mt-1 text-xs text-danger" data-testid="post-edit-schedule-error">
+                {scheduleError}
+              </p>
+            {/if}
+          </div>
         {/if}
       </section>
     </div>
