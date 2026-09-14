@@ -3242,7 +3242,10 @@
     "schedule_submit": "Schedule publication",
     "schedule_invalid": "Pick a date and time.",
     "schedule_failed": "This post could not be scheduled. Reload and try again.",
-    "schedule_cancel_failed": "The scheduled publication could not be cancelled. Reload and try again."
+    "schedule_cancel_failed": "The scheduled publication could not be cancelled. Reload and try again.",
+    "comments": "Comments",
+    "comments_enabled_label": "Allow comments on this post",
+    "comments_help": "Turning comments off stops new comments and replies. Existing comments stay where they are."
   },
   "shortcuts": {
     "title": "Keyboard shortcuts",
@@ -3424,7 +3427,9 @@
     "edited_marker": "(edited)",
     "reply": "Reply",
     "reply_placeholder": "Reply…",
-    "user_ref_fallback": "user {ref}"
+    "user_ref_fallback": "user {ref}",
+    "disabled_note": "Comments are turned off for this post.",
+    "err_disabled": "Comments are turned off for this post, so this one was not posted."
   },
   "federation": {
     "banner_aria_label": "Encrypted federation status",
@@ -3803,7 +3808,10 @@
     "schedule_submit": "Save as draft and schedule",
     "schedule_help": "Saved as a draft now and published on the next scheduler pass after the time you choose, usually within a few minutes. You can cancel from the post until then.",
     "schedule_failed_title": "Your draft was saved, but scheduling it failed.",
-    "schedule_failed_open": "Open the draft to schedule it from there."
+    "schedule_failed_open": "Open the draft to schedule it from there.",
+    "comments_summary": "Comments",
+    "comments_enabled_label": "Allow comments on this post",
+    "comments_help": "On by default. Turn it off and nobody can comment on or reply to this post; you can change it later from the post."
   },
   "batch": {
     "title": "Edit a field on the selection",

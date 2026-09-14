@@ -7373,6 +7373,21 @@ paths:
         Top-level comment when `parent_id` is omitted; reply when set.
         Depth and root_id are computed server-side from the parent's
         row. Requires `posts.comment` capability (Base default).
+
+        THE POST'S OWN SETTING IS A SEPARATE GATE (#1119 sprint 21d).
+        When `Post.comments_enabled` is false the request is refused
+        with 409 and the stable error value `comments_disabled`, for a
+        top-level comment and a reply alike, and nothing is written: no
+        comment row, no `comment_count` change, no activity, no
+        notification, no @-mention. `system.admin` bypasses the
+        capability check as before and does NOT bypass this one; it is
+        the author's decision about their post, not a permission.
+
+        The refusal is evaluated AFTER the read gate, so an unreadable
+        post still answers 404 and its setting is never disclosed. It
+        is read under the post's row lock inside the insert
+        transaction, so a disable that has committed cannot be raced
+        by a comment that started earlier.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -7396,6 +7411,17 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The post does not accept comments. `error` is the stable
+            value `comments_disabled`. Nothing was written; the
+            thread, its count and every existing comment are as they
+            were. A client holding an older representation of the post
+            that still said `comments_enabled: true` should withdraw
+            its composer on this answer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /posts/{id}/whiteboards:
     parameters:
@@ -18728,6 +18754,7 @@ components:
         `cover_asset_id` is the one shown in feed/grid cards.
       required:
         [id, author_user_ref, title, description, visibility, draft,
+         comments_enabled,
          posted_at, like_count, comment_count, tags, members,
          created_at, updated_at]
       properties:
@@ -18869,6 +18896,31 @@ components:
             `published`. It is on the wire so a client never has to
             resolve a state UUID against `GET /workflow/states` to
             answer the one question the UI actually asks.
+        comments_enabled:
+          type: boolean
+          description: |
+            Whether this post accepts NEW ordinary comments and replies
+            (#1119 sprint 21d).
+
+            A SETTING OF THE POST, held independently by every post:
+            not a preference of its author, not a capability of the
+            reader, and not a workflow state. `true` for every post
+            that existed before the setting did, and for every post
+            created without saying otherwise.
+
+            CREATION ONLY. When `false`, `POST /posts/{id}/comments`
+            answers 409 `comments_disabled` for a top-level comment and
+            for a reply alike, and that is the whole effect: existing
+            comments are neither deleted nor hidden, `comment_count` is
+            what it was, and listing, deletion and moderation are
+            unchanged. Whiteboards (`POST /posts/{id}/whiteboards`) and
+            annotations are separate surfaces and are not gated by it.
+
+            Always present and never null: a client renders the
+            composer on `true` and the "comments are off" note on
+            `false`, with no third case to invent a meaning for.
+            Changed through `PATCH /posts/{id}` by whoever may edit the
+            post; holding `posts.comment` confers nothing here.
         state_id:
           type: string
           format: uuid
@@ -19331,6 +19383,17 @@ components:
             audited. Creating one already published requires the same
             `posts.publish` capability that endpoint does — omitting
             this field does not route around it.
+        comments_enabled:
+          type: boolean
+          default: true
+          description: |
+            Whether the new post accepts ordinary comments (#1119
+            sprint 21d). Omitted means `true`, which is what every post
+            created before the field existed got. An explicit `false`
+            makes a post whose thread refuses new comments and replies
+            from its first second; see `Post.comments_enabled` for
+            exactly what that does and does not do. Both explicit
+            values are stored as sent and survive a re-read.
         members:
           type: array
           minItems: 1
@@ -19447,6 +19510,17 @@ components:
             this one does not have to. Setting it alongside
             `cover_focal_x` / `cover_focal_y` is a 400 rather than a
             silent precedence rule.
+        comments_enabled:
+          type: boolean
+          description: |
+            Turn ordinary comments on or off for this post (#1119
+            sprint 21d). Absent keeps the stored value; `false` and
+            `true` are each a real write. The same authority as every
+            other field on this body (the author, a `posts.admin`, or
+            `system.admin`), and the same `if_unchanged_since` guard:
+            a stale save that carries this field is refused with the
+            rest of it, and nothing is written. See
+            `Post.comments_enabled` for what the setting does.
         tags:
           type: array
           items: { type: string, minLength: 1, maxLength: 64 }

@@ -837,6 +837,8 @@ type Post struct {
 	CoverFocalX *float64
 	// Vertical focal point for the post cover's square crop, as a FRACTION of the picture's height (0 = top edge, 1 = bottom edge, #1210). See cover_focal_x for the destination shape, why it is a fraction, why NULL means centre, why the two are constrained together, and why it must be painted from a contain rung.
 	CoverFocalY *float64
+	// Whether this post accepts NEW ordinary comments and replies (#1119 sprint 21d). A setting of the post, chosen by whoever may edit it: not a user preference (two posts by one author differ independently), not a capability (`posts.comment` says whether a caller may comment at all; this says whether THIS post takes one from anybody, and `system.admin` does not bypass it), and not a workflow state. NOT NULL because "unset" is not a product state; DEFAULT true because that is how every post behaved before the column existed. CREATION ONLY: false refuses POST /posts/{id}/comments with 409 `comments_disabled` and nothing else changes, so existing comments stay readable wherever the thread was readable, and listing, deletion and moderation are untouched. Whiteboards and annotations are separate paths and do not read this column. The comment-create transaction reads it FOR NO KEY UPDATE before inserting, so a committed disable is never raced by a check-then-insert.
+	CommentsEnabled bool
 }
 
 type PostAcl struct {

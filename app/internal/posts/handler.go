@@ -464,6 +464,13 @@ func (h *Handler) CreatePost(
 		return nil, err
 	}
 
+	// #1119 sprint 21d: whether the post takes ordinary comments.
+	// Omitted means enabled, which is what every post created before
+	// the field existed got; an explicit false is stored as sent. The
+	// field is a *bool on the wire precisely so that false and absent
+	// are different things here.
+	commentsEnabled := in.CommentsEnabled == nil || *in.CommentsEnabled
+
 	row, err := q.CreatePost(ctx, CreatePostParams{
 		AuthorUserRef:         id.UserRef,
 		Title:                 strOr(in.Title, ""),
@@ -475,6 +482,7 @@ func (h *Handler) CreatePost(
 		StateID:               stateID,
 		CoverFocalX:           in.CoverFocalX,
 		CoverFocalY:           in.CoverFocalY,
+		CommentsEnabled:       commentsEnabled,
 	})
 	if err != nil {
 		if isFKError(err, "posts_team_id_fkey") {
@@ -851,6 +859,12 @@ func (h *Handler) UpdatePost(
 		CoverFocalX:     in.CoverFocalX,
 		CoverFocalY:     in.CoverFocalY,
 		ClearCoverFocal: clearCoverFocal,
+		// #1119 sprint 21d: the comments setting rides the same PATCH,
+		// the same canMutatePost gate above and the same
+		// if_unchanged_since guard. Passed as the pointer it arrived
+		// as: the query COALESCEs a NULL to the stored value, so only a
+		// nil here means "not sent", and an explicit false is written.
+		CommentsEnabled: in.CommentsEnabled,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.UpdatePost404JSONResponse{
@@ -2556,10 +2570,15 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string, publ
 		PostedAt:      p.PostedAt.Time,
 		LikeCount:     p.LikeCount,
 		CommentCount:  p.CommentCount,
-		Tags:          append([]string{}, tags...),
-		CreatedAt:     p.CreatedAt.Time,
-		UpdatedAt:     p.UpdatedAt.Time,
-		Members:       make([]openapi.PostMember, 0, len(members)),
+		// #1119 sprint 21d: a property of the post, not of the reader,
+		// so it is safe in the cross-caller cache with the rest of
+		// this object. The column is NOT NULL, so there is no third
+		// value to translate.
+		CommentsEnabled: p.CommentsEnabled,
+		Tags:            append([]string{}, tags...),
+		CreatedAt:       p.CreatedAt.Time,
+		UpdatedAt:       p.UpdatedAt.Time,
+		Members:         make([]openapi.PostMember, 0, len(members)),
 	}
 	if p.CoverAssetID.Valid {
 		v := openapi_types.UUID(p.CoverAssetID.Bytes)
@@ -2623,16 +2642,17 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string, publ
 // (title + deletion metadata + a restore target).
 func deletedPostFromListRow(r ListPostsPageRow, publishedState pgtype.UUID) openapi.Post {
 	out := openapi.Post{
-		Id:            openapi_types.UUID(r.ID.Bytes),
-		AuthorUserRef: r.AuthorUserRef,
-		Title:         r.Title,
-		Visibility:    openapi.PostVisibility(r.Visibility),
-		Draft:         isDraftState(r.StateID, publishedState),
-		PostedAt:      r.PostedAt.Time,
-		CreatedAt:     r.CreatedAt.Time,
-		UpdatedAt:     r.UpdatedAt.Time,
-		Members:       []openapi.PostMember{},
-		Tags:          []string{},
+		Id:              openapi_types.UUID(r.ID.Bytes),
+		AuthorUserRef:   r.AuthorUserRef,
+		Title:           r.Title,
+		Visibility:      openapi.PostVisibility(r.Visibility),
+		Draft:           isDraftState(r.StateID, publishedState),
+		CommentsEnabled: r.CommentsEnabled,
+		PostedAt:        r.PostedAt.Time,
+		CreatedAt:       r.CreatedAt.Time,
+		UpdatedAt:       r.UpdatedAt.Time,
+		Members:         []openapi.PostMember{},
+		Tags:            []string{},
 	}
 	if r.DeletedAt.Valid {
 		dt := r.DeletedAt.Time

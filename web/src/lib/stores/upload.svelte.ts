@@ -320,6 +320,17 @@ export interface PostComposeState {
    */
   scheduledFor: string | null;
   /**
+   * Whether the post takes ordinary comments (#1119 sprint 21d).
+   *
+   * Defaults to true and is sent explicitly either way: the server
+   * stores exactly what it is told and its own default for an absent
+   * field is the same true, so the two paths cannot disagree. A
+   * setting of the POST, so it lives with the rest of the composition
+   * and not on any row: one post, one answer, and in one-per-file mode
+   * every post gets the same answer the artist gave once.
+   */
+  commentsEnabled: boolean;
+  /**
    * The AI declaration for the WHOLE composition (#1167, ADR 0094).
    *
    * ⚠️ It lives here and not only on the rows, and that is a bug fix
@@ -431,6 +442,7 @@ class UploadState {
     collectionId: null,
     draft: false,
     scheduledFor: null,
+    commentsEnabled: true,
     aiProvenance: null,
     thumbMode: 'member',
     thumbMemberRowId: null,
@@ -1019,6 +1031,7 @@ class UploadState {
       collectionId: this.compose.collectionId, // preserve context across resets
       draft: false,
       scheduledFor: null,
+      commentsEnabled: true,
       aiProvenance: null,
       thumbMode: 'member',
       thumbMemberRowId: null,
@@ -1686,6 +1699,7 @@ class UploadState {
       cover_asset_id: coverAssetId,
       cover_thumbnail_asset_id: coverThumbnailAssetId,
       draft: c.draft,
+      comments_enabled: c.commentsEnabled,
       members: memberIds,
       tags: c.tags.length ? c.tags : undefined,
       collection_id: c.collectionId ?? undefined,

@@ -1026,6 +1026,30 @@
           </label>
         {/if}
 
+        <!-- Comments (#1119 21d). On by default and behind a disclosure,
+             for the same reason "Publish later" is: an artist who does
+             nothing gets a post that takes comments, and the one who wants
+             it off opens this, unticks one box, and publishes as before.
+             It is a setting of the POST and is sent with the create, so
+             there is no second request that can fail after the first. -->
+        <details class="rounded border border-border" data-testid="create-comments">
+          <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-fg">
+            {t('create.comments_summary')}
+          </summary>
+          <div class="border-t border-border p-3">
+            <label class="flex cursor-pointer items-start gap-2 text-sm text-fg">
+              <input
+                type="checkbox"
+                bind:checked={upload.compose.commentsEnabled}
+                data-testid="create-comments-enabled"
+                class="mt-0.5 h-4 w-4 shrink-0 rounded border-border accent-accent"
+              />
+              <span>{t('create.comments_enabled_label')}</span>
+            </label>
+            <p class="mt-1 text-xs text-fg-muted">{t('create.comments_help')}</p>
+          </div>
+        </details>
+
         <!-- Publish. Now, as a draft, or later (#1119 21e): the third is a
              draft plus a standing instruction the scheduled-action engine
              carries out, and it sits behind a disclosure so the two-action

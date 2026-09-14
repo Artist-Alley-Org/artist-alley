@@ -105,6 +105,7 @@
     cover_asset_id?: string | null;
     cover_focal_x?: number | null;
     cover_focal_y?: number | null;
+    comments_enabled?: boolean;
     updated_at?: string;
   }
 
@@ -142,6 +143,13 @@
   let description = $state('');
   let visibility = $state<string>('org-only');
   let tags = $state<string[]>([]);
+  // Whether the post takes ordinary comments (#1119 sprint 21d). Seeded
+  // from the snapshot like everything else on the form and sent in the
+  // same PATCH, so it rides `if_unchanged_since` with the rest. Sent
+  // ONLY when it differs from the snapshot, for the reason coverBody's
+  // guards exist: a rename must not re-send a value a third party may
+  // have changed since the dialog opened.
+  let commentsEnabled = $state(true);
   let submitting = $state(false);
   let error = $state<string | null>(null);
 
@@ -214,6 +222,7 @@
     // host's post object, and `tags = [...tags, v]` is only safe because
     // nothing else holds the array it replaces.
     tags = [...(seeded.tags ?? [])];
+    commentsEnabled = seeded.comments_enabled ?? true;
     baselineUpdatedAt = seeded.updated_at ?? '';
     coverAssetId = resolveCover(seeded);
     framing = { x: seeded.cover_focal_x ?? null, y: seeded.cover_focal_y ?? null };
@@ -541,6 +550,7 @@
           tags,
           if_unchanged_since: baselineUpdatedAt || undefined,
           ...coverBody(),
+          ...commentsBody(),
         },
       });
       if (response.status === 409) {
@@ -606,6 +616,15 @@
     if (moved) return { cover_asset_id: coverAssetId };
     if (wasFramed) return { clear_cover_focal: true };
     return {};
+  }
+
+  /** The comments half of the PATCH body (#1119 sprint 21d): the
+   *  setting when the author changed it, nothing when they did not.
+   *  Compared against the SNAPSHOT, not the live prop, for the same
+   *  reason coverBody asks `seeded`. */
+  function commentsBody(): Record<string, unknown> {
+    const was = seeded.comments_enabled ?? true;
+    return commentsEnabled === was ? {} : { comments_enabled: commentsEnabled };
   }
 
   // The author clicked "keep my edits and save again": advance the
@@ -761,6 +780,25 @@
           />
         </div>
       </div>
+
+      <!-- COMMENTS (#1119 21d). A setting of the post, saved by the same
+           Save as the title: on means the thread takes new comments and
+           replies, off means it refuses them and keeps what it has. -->
+      <fieldset data-testid="post-edit-comments">
+        <legend class="mb-1 block text-xs font-medium text-fg-muted">
+          {t('post_edit.comments')}
+        </legend>
+        <label class="flex cursor-pointer items-start gap-2 rounded border border-border bg-surface px-3 py-2 text-sm text-fg">
+          <input
+            type="checkbox"
+            bind:checked={commentsEnabled}
+            data-testid="post-edit-comments-enabled"
+            class="mt-0.5 h-4 w-4 shrink-0 rounded border-border accent-accent"
+          />
+          <span>{t('post_edit.comments_enabled_label')}</span>
+        </label>
+        <p class="mt-1 text-xs text-fg-muted">{t('post_edit.comments_help')}</p>
+      </fieldset>
 
       <!-- PUBLICATION IS ITS OWN ACT, and the block says so in the copy
            as well as in the wiring. The button below calls the shipped
@@ -940,10 +978,10 @@
 
   {#snippet footer()}
     <!-- ONE COMMIT FOR THE FORM. Save applies the title, description,
-         visibility, tags, cover and framing in a SINGLE
-         `PATCH /posts/{id}` carrying `if_unchanged_since`. Publication
-         and membership are not in it, deliberately: neither is this
-         post's own data under this author's authority. -->
+         visibility, tags, cover, framing and the comments setting in a
+         SINGLE `PATCH /posts/{id}` carrying `if_unchanged_since`.
+         Publication and membership are not in it, deliberately: neither
+         is this post's own data under this author's authority. -->
     <button
       type="button"
       onclick={onclose}

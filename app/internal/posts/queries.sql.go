@@ -160,12 +160,14 @@ const createPost = `-- name: CreatePost :one
 
 INSERT INTO posts (
     author_user_ref, title, description, visibility, cover_asset_id,
-    cover_thumbnail_asset_id, team_id, state_id, cover_focal_x, cover_focal_y
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    cover_thumbnail_asset_id, team_id, state_id, cover_focal_x, cover_focal_y,
+    comments_enabled
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
           cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
           posted_at, like_count, comment_count,
-          origin_server_id, team_id, state_id, created_at, updated_at
+          origin_server_id, team_id, state_id, created_at, updated_at,
+          comments_enabled
 `
 
 type CreatePostParams struct {
@@ -179,6 +181,7 @@ type CreatePostParams struct {
 	StateID               pgtype.UUID
 	CoverFocalX           *float64
 	CoverFocalY           *float64
+	CommentsEnabled       bool
 }
 
 type CreatePostRow struct {
@@ -199,6 +202,7 @@ type CreatePostRow struct {
 	StateID               pgtype.UUID
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	CommentsEnabled       bool
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +219,10 @@ type CreatePostRow struct {
 // browse grid's square tile (#1210), as fractions of the ORIGINAL
 // picture. Both NULL means centred, which is what every post rendered
 // before the columns existed; the column CHECK refuses half a pair.
+// comments_enabled is the author's decision about whether the post
+// takes ordinary comments (#1119 sprint 21d). Always written, never
+// defaulted here: the handler resolves "omitted" to true itself, so the
+// column default is only ever exercised by writes that bypass it.
 func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreatePostRow, error) {
 	row := q.db.QueryRow(ctx, createPost,
 		arg.AuthorUserRef,
@@ -227,6 +235,7 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		arg.StateID,
 		arg.CoverFocalX,
 		arg.CoverFocalY,
+		arg.CommentsEnabled,
 	)
 	var i CreatePostRow
 	err := row.Scan(
@@ -247,6 +256,7 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		&i.StateID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CommentsEnabled,
 	)
 	return i, err
 }
@@ -270,7 +280,7 @@ SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
        cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
        posted_at, like_count, comment_count,
        origin_server_id, team_id, state_id, created_at, updated_at,
-       ai_provenance
+       ai_provenance, comments_enabled
 FROM posts
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -294,6 +304,7 @@ type GetPostRow struct {
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
 	AiProvenance          *string
+	CommentsEnabled       bool
 }
 
 // `ai_provenance` is DERIVED (#1167, ADR 0094) — maintained by the
@@ -327,6 +338,7 @@ func (q *Queries) GetPost(ctx context.Context, id pgtype.UUID) (GetPostRow, erro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AiProvenance,
+		&i.CommentsEnabled,
 	)
 	return i, err
 }
@@ -721,26 +733,28 @@ UPDATE posts SET
     cover_asset_id           = COALESCE($4,           cover_asset_id),
     cover_thumbnail_asset_id = COALESCE($5, cover_thumbnail_asset_id),
     state_id                 = COALESCE($6,                 state_id),
-    cover_focal_x            = CASE WHEN $7::BOOLEAN THEN NULL
-                                    WHEN $8::DOUBLE PRECISION IS NOT NULL
-                                         THEN $8::DOUBLE PRECISION
-                                    WHEN $4::UUID IS NOT NULL
-                                         AND $4::UUID IS DISTINCT FROM cover_asset_id
-                                         THEN NULL
-                                    ELSE cover_focal_x END,
-    cover_focal_y            = CASE WHEN $7::BOOLEAN THEN NULL
+    comments_enabled         = COALESCE($7::BOOLEAN, comments_enabled),
+    cover_focal_x            = CASE WHEN $8::BOOLEAN THEN NULL
                                     WHEN $9::DOUBLE PRECISION IS NOT NULL
                                          THEN $9::DOUBLE PRECISION
                                     WHEN $4::UUID IS NOT NULL
                                          AND $4::UUID IS DISTINCT FROM cover_asset_id
                                          THEN NULL
+                                    ELSE cover_focal_x END,
+    cover_focal_y            = CASE WHEN $8::BOOLEAN THEN NULL
+                                    WHEN $10::DOUBLE PRECISION IS NOT NULL
+                                         THEN $10::DOUBLE PRECISION
+                                    WHEN $4::UUID IS NOT NULL
+                                         AND $4::UUID IS DISTINCT FROM cover_asset_id
+                                         THEN NULL
                                     ELSE cover_focal_y END,
     updated_at               = NOW()
-WHERE id = $10 AND deleted_at IS NULL
+WHERE id = $11 AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
           cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
           posted_at, like_count, comment_count,
-          origin_server_id, team_id, state_id, created_at, updated_at
+          origin_server_id, team_id, state_id, created_at, updated_at,
+          comments_enabled
 `
 
 type UpdatePostParams struct {
@@ -750,6 +764,7 @@ type UpdatePostParams struct {
 	CoverAssetID          pgtype.UUID
 	CoverThumbnailAssetID pgtype.UUID
 	StateID               pgtype.UUID
+	CommentsEnabled       *bool
 	ClearCoverFocal       bool
 	CoverFocalX           *float64
 	CoverFocalY           *float64
@@ -774,6 +789,7 @@ type UpdatePostRow struct {
 	StateID               pgtype.UUID
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	CommentsEnabled       bool
 }
 
 // COALESCE-based partial update — NULL args keep current values.
@@ -805,6 +821,12 @@ type UpdatePostRow struct {
 //
 // Both axes read the same arms, so the pair can never half-clear into a
 // posts_cover_focal_check violation.
+//
+// comments_enabled (#1119 sprint 21d) is a plain COALESCE: the narg is
+// a nullable boolean, so an absent field keeps the stored value and an
+// explicit false is a real value, not an absence. The handler passes a
+// *bool for exactly that reason; a bare bool would read false as
+// "not sent" and the setting could never be turned off.
 func (q *Queries) UpdatePost(ctx context.Context, arg UpdatePostParams) (UpdatePostRow, error) {
 	row := q.db.QueryRow(ctx, updatePost,
 		arg.Title,
@@ -813,6 +835,7 @@ func (q *Queries) UpdatePost(ctx context.Context, arg UpdatePostParams) (UpdateP
 		arg.CoverAssetID,
 		arg.CoverThumbnailAssetID,
 		arg.StateID,
+		arg.CommentsEnabled,
 		arg.ClearCoverFocal,
 		arg.CoverFocalX,
 		arg.CoverFocalY,
@@ -837,6 +860,7 @@ func (q *Queries) UpdatePost(ctx context.Context, arg UpdatePostParams) (UpdateP
 		&i.StateID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CommentsEnabled,
 	)
 	return i, err
 }
