@@ -695,10 +695,22 @@ def dedupe_posts(posts: list[dict]) -> tuple[int, list[str]]:
     return before - len(posts), dup_ids
 
 
-def apply_manifest_reconcile(profile: list[dict], doc: dict) -> tuple[int, int]:
+def apply_manifest_reconcile(profile: list[dict],
+                             doc: dict) -> tuple[int, int, list[str]]:
     """Carry the archive share's advantage back into the profile (#1275).
 
-    Returns (added_records, filled_values).
+    Returns (added_records, filled_values, unknown_fill_ids).
+
+    ⚠️ A `fill` ENTRY NAMING AN ID THE PROFILE DOES NOT HOLD IS REPORTED
+    ON ITS OWN CHANNEL, NEVER SWALLOWED (#1328). It used to be a bare
+    `continue`, so a mistyped or retired id was indistinguishable from
+    a clean run. The caller decides what to do with the list: this pass
+    can only add, so skipping the entry cannot make the profile worse,
+    and the record it names is exactly what `manifest_guard.py` reports
+    as MISSING_RECORD at publish. That is why the caller treats it as a
+    report rather than a refusal on a normal run, while `--check` must
+    not call a profile clean over it. The counts keep their meaning:
+    an unknown entry fills nothing and adds nothing.
 
     ⛔ THIS PASS CAN ONLY EVER ADD. It writes a key the profile does not
     hold, or holds empty; it never replaces a value the profile already
@@ -733,9 +745,11 @@ def apply_manifest_reconcile(profile: list[dict], doc: dict) -> tuple[int, int]:
         n_added += 1
 
     filled = 0
+    unknown: list[str] = []
     for entry in doc.get("fill", ()):
         target = by_id.get(entry["id"])
         if target is None:
+            unknown.append(entry["id"])
             continue
         for key, val in entry.items():
             if key == "id":
@@ -752,14 +766,24 @@ def apply_manifest_reconcile(profile: list[dict], doc: dict) -> tuple[int, int]:
             if key not in target or _empty(target[key]):
                 target[key] = val
                 filled += 1
-    return n_added, filled
+    return n_added, filled, unknown
 
 
 def apply_staged_measurements(profile: list[dict],
-                              doc: list[dict]) -> tuple[int, int]:
+                              doc: list[dict]) -> tuple[int, int, list[str]]:
     """Make every record describe the bytes the dataset SHIPS (#1301).
 
-    Returns (records_corrected, hashes_recorded).
+    Returns (records_corrected, hashes_recorded, unknown_ids).
+
+    ⛔ AN ENTRY NAMING AN ID THE PROFILE DOES NOT HOLD IS A WRONG INPUT,
+    AND THE CALLER REFUSES ON IT (#1328). This document is the authority
+    for what the site ships, and `measure_staged.py emit` regenerates it
+    from exactly the profile it has to match; an id in it that the
+    profile lacks means the document was measured against a different
+    profile than the one being upgraded. The pass used to `continue`
+    past that in silence. It now returns the ids on their own channel;
+    the counts keep their meaning, and a known record that already
+    matches its entry is still a no-op.
 
     THE FIELD THIS SETTLES. `file_size_bytes` had two meanings depending
     on the root — the source file for a copied record, the origin
@@ -791,9 +815,11 @@ def apply_staged_measurements(profile: list[dict],
     """
     by_id = {a["id"]: a for a in profile}
     corrected = hashed = 0
+    unknown: list[str] = []
     for entry in doc:
         target = by_id.get(entry["id"])
         if target is None:
+            unknown.append(entry["id"])
             continue
         meta = target.setdefault("metadata", {})
         if target.get("file_size_bytes") != entry["bytes"]:
@@ -805,7 +831,16 @@ def apply_staged_measurements(profile: list[dict],
         if sha and meta.get("sha256") != sha:
             meta["sha256"] = sha
             hashed += 1
-    return corrected, hashed
+    return corrected, hashed, unknown
+
+
+def _name_ids(ids: list[str], cap: int = 8) -> str:
+    """`a, b, c` or `a, b, ..., h and 4 more`: enough to act on, never a
+    line nobody reads."""
+    shown = ", ".join(ids[:cap])
+    if len(ids) > cap:
+        shown += f" and {len(ids) - cap} more"
+    return shown
 
 
 def _empty(v) -> bool:
@@ -1002,13 +1037,15 @@ def main() -> int:
     # has already been through replacement, correction and merge — so
     # applying it before them would let a later pass overwrite the very
     # values it exists to restore.
-    n_reconciled, n_filled = apply_manifest_reconcile(profile, reconcile)
+    n_reconciled, n_filled, reconcile_unknown = \
+        apply_manifest_reconcile(profile, reconcile)
     # AFTER the reconcile, and last of all: the reconcile fills keys the
     # profile lacks, and one of the keys it can fill is `metadata.sha256`
     # on a pre-staged record. This pass is the one that knows whether
     # that hash describes the file the site actually ships, so it has to
     # be able to overwrite what the reconcile just put there.
-    n_staged, n_hashed = apply_staged_measurements(profile, staged)
+    n_staged, n_hashed, staged_unknown = \
+        apply_staged_measurements(profile, staged)
     n_deduped, dup_ids = dedupe_posts(posts)
     # AFTER the dedupe, and after every pass that can add a post. The
     # curation amends posts that already exist, so anything that creates
@@ -1038,6 +1075,22 @@ def main() -> int:
     # that nothing can say whether it went bad. Joining the whole list
     # would make that documented advisory fatal.
     problems += [f"curation {m}" for m in curation_missing]
+    # ⛔ AND A STAGED MEASUREMENT FOR A RECORD THE PROFILE DOES NOT HOLD
+    # (#1328). The document is the authority for the bytes the site
+    # ships and is emitted from the very profile it must match, so an
+    # id it names that the profile lacks is a wrong input, not a gap to
+    # step over. It has a tool-supported remedy, which the line names.
+    #
+    # The reconcile document's unknown ids deliberately do NOT join this
+    # list. That pass can only add, so a skipped entry cannot damage the
+    # profile, and the state it points at is adjudicated by
+    # manifest_guard.py at publish. They are reported on their own
+    # summary line below, and they keep --check from reporting clean.
+    problems += [f"staged measurement {aid}: the profile holds no record "
+                 f"with this id; staged-measurements.{args.site}.json was "
+                 f"measured against a different profile. Regenerate it with "
+                 f"measure_staged.py emit --profile <this profile> (#1328)"
+                 for aid in staged_unknown]
 
     print(f"site        : {args.site}", file=sys.stderr)
     print(f"replacements: {n_processed}/{len(reps)} records repointed at the "
@@ -1052,10 +1105,21 @@ def main() -> int:
           f"(+{n_posts} merged, -{n_deduped} duplicate id row(s))", file=sys.stderr)
     print(f"reconcile   : {n_filled} value(s) filled from the share (#1275)",
           file=sys.stderr)
+    # Its own summary line, beside the count of what worked, for the
+    # same reason the curation loss count has one: a warning tail is a
+    # shape a reader skims and an automated caller cannot see.
+    if reconcile_unknown:
+        print(f"reconcile   : {len(reconcile_unknown)} fill entry(ies) name "
+              f"an id the profile does not hold and were SKIPPED (#1328): "
+              f"{_name_ids(reconcile_unknown)}", file=sys.stderr)
     print(f"media_url   : {n_repaired} existing record(s) backfilled (#602)",
           file=sys.stderr)
     print(f"staged      : {n_staged} record(s) re-pointed at the bytes the "
           f"site ships, {n_hashed} hash(es) recorded (#1301)", file=sys.stderr)
+    if staged_unknown:
+        print(f"staged      : {len(staged_unknown)} entry(ies) name an id the "
+              f"profile does not hold (#1328): {_name_ids(staged_unknown)}",
+              file=sys.stderr)
     print(f"curation    : {n_curated_values} hand-made value(s) reapplied to "
           f"{n_curated} post(s) (#1309)", file=sys.stderr)
     # The loss count goes on its own summary line, beside the count of
@@ -1145,6 +1209,21 @@ def main() -> int:
             for msg in fired:
                 print(f"  - {msg}", file=sys.stderr)
             print("Run without --check.", file=sys.stderr)
+        # ⛔ A RECONCILE ENTRY THE PROFILE CANNOT PLACE IS NOT A "WOULD
+        # CHANGE" TERM, AND THE CHECK IS STILL NOT CLEAN (#1328). Running
+        # without --check would skip the entry again and change nothing,
+        # so it cannot share the list above or its remedy line. It gets
+        # its own verdict and its own remedy: fix the document, or the
+        # profile, and the guard says which record to look at.
+        if reconcile_unknown:
+            print(f"\nFAIL: manifest-reconcile.{args.site}.json fills "
+                  f"{len(reconcile_unknown)} id(s) the profile does not "
+                  f"hold: {_name_ids(reconcile_unknown)} (#1328)",
+                  file=sys.stderr)
+            print("The entries are skipped, so a run without --check does "
+                  "not clear this. Restore the record to the profile or "
+                  "drop the entry from the document.", file=sys.stderr)
+        if fired or reconcile_unknown:
             return 1
         print("\nOK: profile already reflects the upgrade.", file=sys.stderr)
         return 0

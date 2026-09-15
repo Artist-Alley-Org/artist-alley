@@ -19,8 +19,10 @@ need tests rather than comments.
 from __future__ import annotations
 
 import collections
+import contextlib
 import dataclasses
 import hashlib
+import io
 import json
 import re
 import struct
@@ -29,6 +31,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import zlib
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -3502,8 +3505,8 @@ class TestManifestReconcile(unittest.TestCase):
         doc = {"fill": [{"id": "a", "field_values": {"keep": "theirs",
                                                      "add": "new"},
                          "license": "CC0 1.0", "mature": False}]}
-        added, filled = up.apply_manifest_reconcile(profile, doc)
-        self.assertEqual((added, filled), (0, 2))
+        added, filled, unknown = up.apply_manifest_reconcile(profile, doc)
+        self.assertEqual((added, filled, unknown), (0, 2, []))
         self.assertEqual(profile[0]["field_values"], {"keep": "mine", "add": "new"})
         self.assertEqual(profile[0]["license"], "CC-BY 4.0")
         self.assertIs(profile[0]["mature"], False)
@@ -3515,8 +3518,8 @@ class TestManifestReconcile(unittest.TestCase):
         first = up.apply_manifest_reconcile(profile, doc)
         snapshot = json.loads(json.dumps(profile))
         second = up.apply_manifest_reconcile(profile, doc)
-        self.assertEqual(first, (1, 1))
-        self.assertEqual(second, (0, 0))
+        self.assertEqual(first, (1, 1, []))
+        self.assertEqual(second, (0, 0, []))
         self.assertEqual(profile, snapshot)
 
     def test_an_empty_value_counts_as_absent(self):
@@ -3524,15 +3527,352 @@ class TestManifestReconcile(unittest.TestCase):
                           description="")]
         doc = {"fill": [{"id": "a", "field_values": {"blank": "filled"},
                          "description": "written"}]}
-        _, filled = up.apply_manifest_reconcile(profile, doc)
+        _, filled, _ = up.apply_manifest_reconcile(profile, doc)
         self.assertEqual(filled, 2)
         self.assertEqual(profile[0]["field_values"]["blank"], "filled")
 
     def test_a_fill_naming_an_unknown_id_is_skipped_not_invented(self):
+        """Skipped, and since #1328 also NAMED: the id comes back on its
+        own channel so the caller can report it. Inventing a record from
+        a fill entry would still be wrong; the pass only ever adds from
+        `added`."""
         profile = [_asset("a", "images/a.png")]
-        _, filled = up.apply_manifest_reconcile(
+        _, filled, unknown = up.apply_manifest_reconcile(
             profile, {"fill": [{"id": "ghost", "field_values": {"k": "v"}}]})
-        self.assertEqual((len(profile), filled), (1, 0))
+        self.assertEqual((len(profile), filled, unknown), (1, 0, ["ghost"]))
+
+
+class TestUnknownIdsAreNotSkippedInSilence(unittest.TestCase):
+    """#1328. Two upgrade passes stepped over a document entry naming a
+    record the profile does not hold, and said nothing.
+
+    `apply_manifest_reconcile` and `apply_staged_measurements` both did
+    `target = by_id.get(entry["id"]); if target is None: continue`. A
+    mistyped or retired id produced a run that printed its counts, wrote
+    the profiles, exited 0, and left `--check` saying "OK: profile
+    already reflects the upgrade." Nothing about it was visible.
+
+    The two passes are NOT treated alike, and the tests below assert the
+    difference rather than a uniform refusal:
+
+      reconcile   the pass can only add, so a skipped entry cannot make
+                  the profile worse, and the record it names is what
+                  `manifest_guard.py` reports as MISSING_RECORD at
+                  publish. A normal run REPORTS the id on its own summary
+                  line and still writes. `--check` is NOT clean over it,
+                  and must not claim the pass "would change" the profile,
+                  because running without --check would skip it again.
+      staged      the document is the authority for the bytes the site
+                  ships and is emitted from the very profile it must
+                  match, so an id the profile lacks is a wrong input. It
+                  is a PROBLEM: exit 1, nothing written, in both modes.
+
+    Every case is driven through the real script as a subprocess so the
+    exit code and the stderr a caller would see are what is asserted.
+    """
+
+    HQ = "images/kenney-hq/2d-assets-brick-pack-brick-high-1-36a68e65-512.png"
+
+    def _site(self, td: Path, *, reconcile: dict | None = None,
+              staged: list[dict] | None = None) -> Path:
+        upgrades = td / "upgrades"
+        upgrades.mkdir(exist_ok=True)
+        reps = [{"id": "id-1", "old": "images/pack/a.png", "oldSize": 605,
+                 "new": self.HQ, "newSize": 8400}]
+        (upgrades / "kenney-hq-replacements.site_a.json").write_text(
+            json.dumps(reps), encoding="utf-8")
+        if reconcile is not None:
+            (upgrades / "manifest-reconcile.site_a.json").write_text(
+                json.dumps(reconcile), encoding="utf-8")
+        if staged is not None:
+            (upgrades / "staged-measurements.site_a.json").write_text(
+                json.dumps(staged), encoding="utf-8")
+
+        profile = [_asset("id-1", "images/pack/a.png"),
+                   _asset("id-2", "images/pack/b.png",
+                          field_values={"have": "yes"})]
+        up.apply_replacements(profile, reps)
+        posts = [{"id": "post-1", "asset_ids": ["id-1", "id-2"],
+                  "created_at": "2025-01-01T00:00:00Z",
+                  "updated_at": "2025-01-01T00:00:00Z"}]
+        # Written the way the script writes, so a run that changes
+        # nothing rewrites byte-identical files and the tests can say
+        # "unchanged" by comparing bytes.
+        up.dump(td / "assets.json", profile)
+        up.dump(td / "posts.json", posts)
+        return upgrades
+
+    def _run(self, td: Path, upgrades: Path, *extra: str):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "apply_upgrade.py"),
+             "--site", "site_a", "--upgrades", str(upgrades),
+             "--profile", str(td / "assets.json"),
+             "--posts", str(td / "posts.json"), *extra],
+            capture_output=True, text=True)
+
+    @staticmethod
+    def _bytes(td: Path) -> tuple[bytes, bytes]:
+        return ((td / "assets.json").read_bytes(),
+                (td / "posts.json").read_bytes())
+
+    @staticmethod
+    def _profile(td: Path) -> dict[str, dict]:
+        return {a["id"]: a for a in json.loads(
+            (td / "assets.json").read_text(encoding="utf-8"))}
+
+    KNOWN_FILL_NEW = {"id": "id-2", "field_values": {"added": "from-share"}}
+    KNOWN_FILL_NOOP = {"id": "id-2", "field_values": {"have": "yes"}}
+    GHOST_FILL = {"id": "ghost", "field_values": {"k": "v"}}
+    KNOWN_STAGED_NEW = {"id": "id-2", "file_path": "images/pack/b.png",
+                        "bytes": 700, "origin_bytes": 605}
+    KNOWN_STAGED_NOOP = {"id": "id-2", "file_path": "images/pack/b.png",
+                         "bytes": 605}
+    GHOST_STAGED = {"id": "ghost", "file_path": "videos/x.webm", "bytes": 1}
+
+    # -- reconcile: report, keep going --------------------------------
+
+    def test_reconcile_names_an_unknown_id_and_the_run_still_writes(self):
+        """One unknown among known. The known entry applies exactly as
+        before, the run exits 0 and writes, and the unknown id is on a
+        summary line beside the reconcile count."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, reconcile={
+                "fill": [self.KNOWN_FILL_NEW, self.GHOST_FILL]})
+            r = self._run(td, upgrades)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("1 value(s) filled from the share", r.stderr)
+            self.assertIn("ghost", r.stderr,
+                          "a fill entry for a record the profile does not "
+                          f"hold was skipped without a word:\n{r.stderr}")
+            self.assertIn("1 fill entry(ies) name an id the profile does "
+                          "not hold", r.stderr)
+            self.assertNotIn("PROBLEM", r.stderr)
+            self.assertEqual(self._profile(td)["id-2"]["field_values"],
+                             {"have": "yes", "added": "from-share"})
+
+    def test_reconcile_check_is_not_clean_over_an_unknown_id(self):
+        """Everything else is applied, so every "would change" term is
+        zero. The check must still fail, name the id, and NOT tell the
+        reader to run without --check, because that would not clear it."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, reconcile={
+                "fill": [self.KNOWN_FILL_NOOP, self.GHOST_FILL]})
+            r = self._run(td, upgrades, "--check")
+            self.assertEqual(r.returncode, 1,
+                             "--check called a profile clean while the "
+                             "reconcile document names a record it does "
+                             f"not hold:\n{r.stderr}")
+            self.assertNotIn("OK: profile already reflects the upgrade",
+                             r.stderr)
+            self.assertIn("ghost", r.stderr)
+            self.assertNotIn("would change it", r.stderr)
+            self.assertNotIn("Run without --check.", r.stderr)
+
+    # -- staged: refuse -----------------------------------------------
+
+    def test_staged_an_unknown_id_is_a_problem_and_nothing_is_written(self):
+        """One unknown among known. The known entry WOULD correct a byte
+        count, which is exactly why the write has to be refused: the
+        document was measured against some other profile."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, staged=[self.KNOWN_STAGED_NEW,
+                                              self.GHOST_STAGED])
+            before = self._bytes(td)
+            r = self._run(td, upgrades)
+            self.assertEqual(r.returncode, 1,
+                             "a staged measurement for a record the profile "
+                             "does not hold was applied around in silence:\n"
+                             + r.stderr)
+            self.assertIn("PROBLEM(S)", r.stderr)
+            self.assertIn("staged measurement ghost", r.stderr)
+            self.assertIn("measure_staged.py emit", r.stderr)
+            self.assertEqual(self._bytes(td), before,
+                             "the profiles were written despite the refusal")
+
+    def test_staged_check_fails_and_names_the_id(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, staged=[self.KNOWN_STAGED_NOOP,
+                                              self.GHOST_STAGED])
+            r = self._run(td, upgrades, "--check")
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("ghost", r.stderr)
+            self.assertNotIn("OK: profile already reflects the upgrade",
+                             r.stderr)
+
+    # -- every entry unknown --------------------------------------------
+
+    def test_all_entries_unknown(self):
+        """The degenerate document. Reconcile applies nothing and names
+        every id; staged refuses and lists every id. Both modes."""
+        ghosts_fill = [{"id": f"ghost-{i}", "field_values": {"k": "v"}}
+                       for i in range(3)]
+        ghosts_staged = [{"id": f"ghost-{i}", "file_path": f"v/{i}.webm",
+                          "bytes": 1} for i in range(3)]
+        names = [g["id"] for g in ghosts_fill]
+
+        with self.subTest("reconcile, normal run"), \
+                tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, reconcile={"fill": ghosts_fill})
+            r = self._run(td, upgrades)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("0 value(s) filled from the share", r.stderr)
+            self.assertIn("3 fill entry(ies) name an id the profile does "
+                          "not hold", r.stderr)
+            for n in names:
+                self.assertIn(n, r.stderr)
+            self.assertEqual(self._profile(td)["id-2"]["field_values"],
+                             {"have": "yes"})
+
+        with self.subTest("reconcile, --check"), \
+                tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, reconcile={"fill": ghosts_fill})
+            r = self._run(td, upgrades, "--check")
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertNotIn("OK: profile already reflects", r.stderr)
+            for n in names:
+                self.assertIn(n, r.stderr)
+
+        with self.subTest("staged, normal run"), \
+                tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, staged=ghosts_staged)
+            before = self._bytes(td)
+            r = self._run(td, upgrades)
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("3 PROBLEM(S)", r.stderr)
+            for n in names:
+                self.assertIn(f"staged measurement {n}", r.stderr)
+            self.assertEqual(self._bytes(td), before)
+
+        with self.subTest("staged, --check"), \
+                tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, staged=ghosts_staged)
+            r = self._run(td, upgrades, "--check")
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertNotIn("OK: profile already reflects", r.stderr)
+            for n in names:
+                self.assertIn(n, r.stderr)
+
+    # -- helper level: the channel itself -----------------------------
+
+    def test_the_staged_pass_returns_unknown_ids_beside_its_counts(self):
+        profile = [_asset("a", "images/a.png")]
+        corrected, hashed, unknown = up.apply_staged_measurements(
+            profile, [{"id": "a", "file_path": "images/a.png", "bytes": 9},
+                      {"id": "ghost", "file_path": "x", "bytes": 1}])
+        self.assertEqual((corrected, hashed, unknown), (1, 0, ["ghost"]))
+        self.assertEqual(profile[0]["file_size_bytes"], 9)
+
+
+class TestUnknownIdReportingLeavesTheCleanPathAlone(unittest.TestCase):
+    """#1328, the other half of "seen to refuse": documents that name
+    only records the profile holds behave exactly as before. Zero
+    entries print no line about unknowns; a known id with nothing to do
+    is a byte-identical no-op; several known entries all apply."""
+
+    def setUp(self):
+        self.base = TestUnknownIdsAreNotSkippedInSilence()
+
+    def test_zero_entry_documents_print_no_unknown_line(self):
+        for extra in ((), ("--check",)):
+            with self.subTest(extra=extra), \
+                    tempfile.TemporaryDirectory() as t:
+                td = Path(t)
+                upgrades = self.base._site(td, reconcile={"fill": []},
+                                           staged=[])
+                r = self.base._run(td, upgrades, *extra)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertNotIn("does not hold", r.stderr)
+                self.assertNotIn("#1328", r.stderr)
+                if extra:
+                    self.assertIn("OK: profile already reflects", r.stderr)
+
+    def test_known_ids_with_nothing_to_do_are_a_no_op(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self.base._site(
+                td, reconcile={"fill": [self.base.KNOWN_FILL_NOOP]},
+                staged=[self.base.KNOWN_STAGED_NOOP])
+            before = self.base._bytes(td)
+            r = self.base._run(td, upgrades)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("0 value(s) filled from the share", r.stderr)
+            self.assertIn("0 record(s) re-pointed", r.stderr)
+            self.assertNotIn("does not hold", r.stderr)
+            self.assertEqual(self.base._bytes(td), before)
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self.base._site(
+                td, reconcile={"fill": [self.base.KNOWN_FILL_NOOP]},
+                staged=[self.base.KNOWN_STAGED_NOOP])
+            r = self.base._run(td, upgrades, "--check")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("OK: profile already reflects", r.stderr)
+
+    def test_every_known_entry_applies_when_none_is_unknown(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self.base._site(
+                td,
+                reconcile={"fill": [
+                    {"id": "id-1", "description": "from the share"},
+                    self.base.KNOWN_FILL_NEW]},
+                staged=[self.base.KNOWN_STAGED_NEW,
+                        {"id": "id-1", "file_path": self.base.HQ,
+                         "bytes": 8400, "sha256": "ab" * 32}])
+            r = self.base._run(td, upgrades)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("2 value(s) filled from the share", r.stderr)
+            self.assertIn("1 record(s) re-pointed at the bytes the site "
+                          "ships, 1 hash(es) recorded", r.stderr)
+            self.assertNotIn("does not hold", r.stderr)
+            written = self.base._profile(td)
+            self.assertEqual(written["id-1"]["description"], "from the share")
+            self.assertEqual(written["id-1"]["metadata"]["sha256"], "ab" * 32)
+            self.assertEqual(written["id-2"]["file_size_bytes"], 700)
+            self.assertEqual(written["id-2"]["field_values"]["added"],
+                             "from-share")
+
+
+class TestShippedUpgradeDocumentsNameOnlyHeldRecords(unittest.TestCase):
+    """#1328, the corpus guard. Measured 2026-09-15 there are zero
+    unknown ids in any of the four documents, and these tests keep it
+    that way: they are not evidence the old code was broken, they stop
+    a latent condition from becoming permanent noise once it can be
+    seen. Shape follows the curation guard above."""
+
+    SITES = (("site_a", "studio-a"), ("site_b", "studio-b"))
+
+    def _held(self, studio: str) -> set[str]:
+        return {a["id"] for a in json.loads(
+            (PROFILES / f"{studio}.assets.json").read_text(encoding="utf-8"))}
+
+    def test_every_reconcile_fill_id_is_held_by_the_committed_profile(self):
+        for site, studio in self.SITES:
+            with self.subTest(site=site):
+                doc = json.loads((UPGRADES / f"manifest-reconcile.{site}.json")
+                                 .read_text(encoding="utf-8"))
+                have = self._held(studio)
+                missing = [e["id"] for e in doc.get("fill", ())
+                           if e["id"] not in have]
+                self.assertEqual(missing, [])
+
+    def test_every_staged_measurement_id_is_held_by_the_committed_profile(self):
+        for site, studio in self.SITES:
+            with self.subTest(site=site):
+                doc = json.loads(
+                    (UPGRADES / f"staged-measurements.{site}.json")
+                    .read_text(encoding="utf-8"))
+                have = self._held(studio)
+                missing = [e["id"] for e in doc if e["id"] not in have]
+                self.assertEqual(missing, [])
 
 
 class TestPostDeduplication(unittest.TestCase):
@@ -4031,6 +4371,152 @@ class TestProfileReadBack(unittest.TestCase):
                 seen |= set(entry) - known
         self.assertEqual(seen, set(sa.POST_ASSEMBLY_KEYS) & seen)
         self.assertTrue(seen, "the profiles carry no annotations at all")
+
+
+class TestRecomposeRefusesToOverwriteTheCorpus(unittest.TestCase):
+    """#1322. `--recompose-posts` replaced the authoritative corpus.
+
+    ADR 0098's ruling: `seed/profiles/*.posts.json` is the corpus the
+    project ships and is not reproducible from the asset profiles, since
+    `group_id` never left the source catalogue. Yet the command wrote
+    straight over `studio-a.posts.json`, `studio-b.posts.json`,
+    `dataset.posts.json` and every `--site` root's `posts.json`, with no
+    existence check: 1,103 posts for 863, 336 ids kept, 200 curated posts
+    left without a row. And its writes were interleaved per studio, so a
+    refusal decided mid-loop would have rewritten one studio anyway.
+
+    The guard is all-or-nothing and decided before the first write. Every
+    case here drives `main()` with argv against temporary copies of the
+    committed profiles; nothing touches `seed/profiles` or a site root.
+    """
+
+    POSTS = ("studio-a.posts.json", "studio-b.posts.json",
+             "dataset.posts.json")
+
+    @staticmethod
+    def _sha(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def _out(self, td: Path, *posts: str) -> Path:
+        out = td / "profiles"
+        out.mkdir()
+        for name in ("studio-a.assets.json", "studio-b.assets.json", *posts):
+            (out / name).write_bytes((PROFILES / name).read_bytes())
+        return out
+
+    def _run(self, *argv: str) -> tuple[int, str]:
+        err = io.StringIO()
+        with unittest.mock.patch.object(
+                sys, "argv", ["sanitize_and_assemble.py", *argv]), \
+                contextlib.redirect_stderr(err):
+            rc = sa.main()
+        return rc, err.getvalue()
+
+    def test_the_committed_layout_is_refused_and_every_profile_named(self):
+        with tempfile.TemporaryDirectory() as t:
+            out = self._out(Path(t), *self.POSTS)
+            before = {n: self._sha(out / n) for n in self.POSTS}
+            rc, err = self._run("--recompose-posts", "--out", str(out))
+            self.assertNotEqual(
+                rc, 0, "a recompose over the committed layout exited 0")
+            for n in self.POSTS:
+                self.assertIn(str(out / n), err,
+                              f"the refusal did not name {n}:\n{err}")
+                self.assertEqual(self._sha(out / n), before[n],
+                                 f"{n} was rewritten")
+
+    def test_one_existing_target_alone_refuses_the_whole_run(self):
+        """Any one of the three, on its own. The other two must still be
+        absent afterwards: a refusal that has already created them is
+        a partial run, not a refusal."""
+        for present in self.POSTS:
+            with self.subTest(present=present), \
+                    tempfile.TemporaryDirectory() as t:
+                out = self._out(Path(t), present)
+                before = self._sha(out / present)
+                rc, err = self._run("--recompose-posts", "--out", str(out))
+                self.assertEqual(rc, 2, err)
+                self.assertIn(str(out / present), err)
+                self.assertEqual(self._sha(out / present), before,
+                                 f"{present} was rewritten")
+                for other in self.POSTS:
+                    if other != present:
+                        self.assertFalse((out / other).exists(),
+                                         f"{other} was created")
+
+    def test_a_site_root_posts_json_alone_refuses_and_creates_no_profile(self):
+        """The fourth protected target is not under --out at all: it is
+        `posts.json` in a --site root whose basename names a studio, the
+        copy the Go seeder actually reads."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            out = self._out(td)
+            site = td / "site_a"
+            site.mkdir()
+            target = site / "posts.json"
+            target.write_bytes((PROFILES / "studio-a.posts.json").read_bytes())
+            before = self._sha(target)
+            rc, err = self._run("--recompose-posts", "--out", str(out),
+                                "--site", str(site))
+            self.assertEqual(rc, 2, err)
+            self.assertIn(str(target), err)
+            self.assertEqual(self._sha(target), before,
+                             "the site root's posts.json was overwritten")
+            for n in self.POSTS:
+                self.assertFalse((out / n).exists(), f"{n} was created")
+
+    def test_dry_run_reports_the_refusal_and_exits_the_same_way(self):
+        """populate_archive.py's rule, applied here: a dry run that passes
+        while a real run would be refused is worse than no dry run."""
+        with tempfile.TemporaryDirectory() as t:
+            out = self._out(Path(t), *self.POSTS)
+            before = {n: self._sha(out / n) for n in self.POSTS}
+            rc, err = self._run("--recompose-posts", "--out", str(out),
+                                "--dry-run")
+            self.assertEqual(rc, 2,
+                             "the dry run exited differently from the "
+                             f"refused real run:\n{err}")
+            for n in self.POSTS:
+                self.assertIn(str(out / n), err)
+                self.assertEqual(self._sha(out / n), before[n])
+
+
+class TestRecomposeIntoAnEmptyDirectoryStillWorks(unittest.TestCase):
+    """#1322, the legitimate use. A directory holding only the asset
+    profiles is what a rebuild is for, and the guard must not touch it:
+    the three posts profiles are written, and so is `posts.json` in a
+    --site root that names a studio, while a root that names no studio
+    gets nothing."""
+
+    def test_an_empty_output_directory_is_composed_and_written(self):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            out = td / "profiles"
+            out.mkdir()
+            for name in ("studio-a.assets.json", "studio-b.assets.json"):
+                (out / name).write_bytes((PROFILES / name).read_bytes())
+            site_a = td / "site_a"
+            site_a.mkdir()
+            other = td / "not-a-studio"
+            other.mkdir()
+            err = io.StringIO()
+            with unittest.mock.patch.object(
+                    sys, "argv", ["sanitize_and_assemble.py",
+                                  "--recompose-posts", "--out", str(out),
+                                  "--site", str(site_a),
+                                  "--site", str(other)]), \
+                    contextlib.redirect_stderr(err):
+                rc = sa.main()
+            self.assertEqual(rc, 0, err.getvalue())
+            for n in TestRecomposeRefusesToOverwriteTheCorpus.POSTS:
+                self.assertTrue((out / n).is_file(), f"{n} was not written")
+            self.assertTrue((site_a / "posts.json").is_file())
+            self.assertFalse((other / "posts.json").exists())
+            site_posts = json.loads(
+                (site_a / "posts.json").read_text(encoding="utf-8"))
+            studio_posts = json.loads(
+                (out / "studio-a.posts.json").read_text(encoding="utf-8"))
+            self.assertEqual(site_posts, studio_posts)
 
 
 class TestPostIdentity(unittest.TestCase):

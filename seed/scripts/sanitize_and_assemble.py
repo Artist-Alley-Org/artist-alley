@@ -1910,9 +1910,50 @@ def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
 # Main
 # -----------------------------------------------------------------------------
 
+RECOMPOSE_POSTS_NAMES = {"studio-a.assets.json": "studio-a.posts.json",
+                         "studio-b.assets.json": "studio-b.posts.json"}
+RECOMPOSE_SITE_BY_PROFILE = {"studio-a.assets.json": "site_a",
+                             "studio-b.assets.json": "site_b"}
+
+
+def recompose_targets(profiles: Path, sites: list[Path]) -> list[Path]:
+    """Every file a `--recompose-posts` run would write, in write order.
+
+    This is the list the guard in `recompose_posts` checks BEFORE the
+    first write, so it has to be derived from the same rules the writes
+    use: the two studio posts profiles and the combined dataset profile
+    under `profiles`, plus `posts.json` in every `--site` root whose
+    basename names a studio. Keeping it as one function means the guard
+    and the writer cannot drift apart.
+    """
+    targets: list[Path] = []
+    for assets_name, posts_name in RECOMPOSE_POSTS_NAMES.items():
+        targets.append(profiles / posts_name)
+        for site_root in sites:
+            if site_root.name == RECOMPOSE_SITE_BY_PROFILE[assets_name]:
+                targets.append(site_root / "posts.json")
+    targets.append(profiles / "dataset.posts.json")
+    return targets
+
+
 def recompose_posts(profiles: Path, sites: list[Path], dry_run: bool = False) -> int:
     """Regenerate posts IN PLACE from the already-assembled asset
     profiles, without the 12,871-row source CSV.
+
+    ⛔ IT REFUSES TO OVERWRITE AN EXISTING POSTS PROFILE (#1322). ADR
+    0098's ruling makes `seed/profiles/*.posts.json` the authoritative
+    corpus: it is grown by upgrade documents and is NOT reproducible from
+    the asset profiles, because `group_id`, the field the first
+    composition pass keys on, only ever existed in the source catalogue.
+    Measured 2026-08-27, running this over the committed layout replaced
+    863 posts with 1,103, kept 336 ids and left 200 hand-curated posts
+    without a row. So the command declines when ANY of the files it
+    would write already exists, decides that before the first write so
+    one studio is never rewritten while the other is refused, and does
+    so in --dry-run too: a dry run that passes while a real run would
+    destroy the corpus is worse than no dry run at all. There is no
+    force flag. A rebuild into an empty directory is the legitimate use
+    and still works.
 
     seed/profiles/studio-{a,b}.assets.json are serialised AssetRecords —
     the exact asset set each site ships (verified id-for-id against each
@@ -1927,11 +1968,27 @@ def recompose_posts(profiles: Path, sites: list[Path], dry_run: bool = False) ->
     siblings most likely to span it. Deriving per site means every post
     that is generated is a post that lands.
     """
-    out_names = {"studio-a.assets.json": "studio-a.posts.json",
-                 "studio-b.assets.json": "studio-b.posts.json"}
-    site_by_profile = {"studio-a.assets.json": "site_a",
-                       "studio-b.assets.json": "site_b"}
+    out_names = RECOMPOSE_POSTS_NAMES
+    site_by_profile = RECOMPOSE_SITE_BY_PROFILE
     combined: dict[str, dict[str, Any]] = {}
+
+    # ⛔ THE GUARD, before anything is read or written and regardless of
+    # --dry-run. All-or-nothing: one existing target refuses the whole
+    # run, so no other target is rewritten on the way to the refusal.
+    existing = [t for t in recompose_targets(profiles, sites) if t.exists()]
+    if existing:
+        verb = "would be refused" if dry_run else "refused"
+        print(f"error: --recompose-posts {verb}: it would overwrite "
+              f"{len(existing)} existing posts profile(s), and the committed "
+              f"posts profiles are the authoritative corpus, not a rebuild "
+              f"output (ADR 0098, #1322). Nothing was written. "
+              f"Existing target(s):", file=sys.stderr)
+        for t in existing:
+            print(f"  - {t}", file=sys.stderr)
+        print("A recompose only runs into a directory that holds no posts "
+              "profile. The corpus is maintained by upgrade documents; "
+              "regenerating it is not a repair.", file=sys.stderr)
+        return 2
 
     for assets_name, posts_name in out_names.items():
         src = profiles / assets_name
