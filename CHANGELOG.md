@@ -9,6 +9,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A post can turn comments off.** Whoever can edit a post can now decide whether it takes
+  comments, from the post editor or from the create page, where comments stay on unless you say
+  otherwise. Turning them off stops new comments and replies on that post; the comments already
+  there stay exactly where they are, and the thread says why nothing new can be added. If your
+  browser was still showing the composer when the setting changed, the server refuses the comment
+  and nothing is added, not even for a moment. Turning comments back on brings the composer and the
+  reply buttons back without leaving the page. Whiteboards on the post are not affected. Every post
+  that existed before this change has comments on (#1119, PR #1433).
+
 - **Publish later.** You can now schedule one of your own drafts to publish at a time you
   choose, from the post editor or from the create page. The pending time is shown in the post
   editor, where you can cancel it. The schedule is made in your name, and your right to publish is
