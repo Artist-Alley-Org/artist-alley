@@ -462,6 +462,30 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **Rebuilding the sample library's posts can no longer overwrite the shipped ones by accident.**
+  The rebuild command used to write straight over the committed post profiles and the site's
+  posts file, replacing 863 hand-maintained posts with 1,103 regenerated ones that share only
+  336 ids. It now refuses before writing anything if any of those files already exists, names
+  each one, and refuses the same way on a dry run. Rebuilding into an empty folder still works
+  (#1322, PR #1438).
+
+- **Two sample-data passes now say when a record they were told to update does not exist.** The
+  pass that carries values back from the published archive and the pass that records the bytes a
+  site actually ships both used to skip an unknown record in silence and report a clean run. A
+  missing record in the carry-back document is now reported on its own summary line and the run
+  continues; in check mode it fails the check and names the record. A missing record in the
+  shipped-bytes document stops the run before anything is written, because that document is
+  regenerated from the very profile it must match, so a mismatch means the wrong input. Both
+  shipped documents are now pinned by a test that fails if a record is removed without them
+  (#1328, PR #1438).
+
+- **Two seed issues closed on evidence rather than code.** The coding stack has had its test
+  fixtures seeded since 2026-08-28 and the full browser suite runs clean there from a fresh
+  checkout, so the report of six permanently failing specs no longer describes it (#1335). The
+  shipped post and asset titles carry no em dash in any committed profile, the guards that pin
+  that are green, and no post id moves; the dashed titles still visible on running stacks come
+  from the published archive, which is refreshed by the release-gated republish (#1338, #1319).
+
 - **Two kinds of metadata edit could deadlock each other, and one of them needed no batch at all.**
   Saving a metadata value rebuilds the searchable text of the file and then of every post that file
   appears in. Two writes could reach those posts in opposite orders and stop each other dead, so one
