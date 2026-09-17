@@ -297,7 +297,7 @@ administer (#939) — is slightly **narrower** under a filter than unfiltered. W
 Engine would break the count/filter equality; both clauses must widen together. **#1056** tracks
 it. The current behaviour errs narrow, which is the safe direction.
 
-#### 4d. A KIND IS SEARCHABLE VOCABULARY, amendment 2026-09-17 (#1417, sprint 24, PR #PRNUM)
+#### 4d. A KIND IS SEARCHABLE VOCABULARY, amendment 2026-09-17 (#1417, sprint 24, PR #1440)
 
 A person typing `ebook`, `sprite` or `video` into the ordinary search box could not find a post
 that contains that kind unless somebody had written the word into a title, description, tag or
