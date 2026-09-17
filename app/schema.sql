@@ -138,6 +138,9 @@ CREATE FUNCTION public.asset_changed_trigger() RETURNS trigger
 BEGIN
     IF (NEW.title IS DISTINCT FROM OLD.title)
        OR (NEW.description IS DISTINCT FROM OLD.description)
+       -- #1417: the document derives its kind from these two columns.
+       OR (NEW.asset_type IS DISTINCT FROM OLD.asset_type)
+       OR (NEW.file_extension IS DISTINCT FROM OLD.file_extension)
        OR (OLD.search_text IS NULL) THEN
         PERFORM rebuild_asset_search_text(NEW.id);
     END IF;
@@ -308,6 +311,213 @@ BEGIN
     RETURN OLD;
 END;
 $$;
+
+
+--
+-- Name: asset_view_kind(bigint, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_view_kind(asset_type bigint, file_extension text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+SELECT CASE
+            WHEN asset_type = 6 THEN 'archive'
+            WHEN asset_type = 11 THEN 'audiobook'
+            WHEN asset_type = 13 THEN 'sprite'
+            ELSE COALESCE(CASE regexp_replace(lower(btrim(file_extension)), '^\.', '')
+              WHEN 'epub' THEN 'ebook'
+              WHEN 'm4b' THEN 'audiobook'
+              WHEN 'aax' THEN 'audiobook'
+              WHEN 'jpg' THEN 'image'
+              WHEN 'jpeg' THEN 'image'
+              WHEN 'png' THEN 'image'
+              WHEN 'gif' THEN 'image'
+              WHEN 'webp' THEN 'image'
+              WHEN 'bmp' THEN 'image'
+              WHEN 'tiff' THEN 'image'
+              WHEN 'tif' THEN 'image'
+              WHEN 'avif' THEN 'image'
+              WHEN 'heic' THEN 'image'
+              WHEN 'heif' THEN 'image'
+              WHEN 'svg' THEN 'image'
+              WHEN 'hdr' THEN 'image'
+              WHEN 'exr' THEN 'image'
+              WHEN 'pic' THEN 'image'
+              WHEN 'cr2' THEN 'image'
+              WHEN 'nef' THEN 'image'
+              WHEN 'dng' THEN 'image'
+              WHEN 'arw' THEN 'image'
+              WHEN 'rw2' THEN 'image'
+              WHEN 'eps' THEN 'image'
+              WHEN 'ps' THEN 'image'
+              WHEN 'psd' THEN 'image'
+              WHEN 'psb' THEN 'image'
+              WHEN 'mobi' THEN 'image'
+              WHEN 'cbz' THEN 'image'
+              WHEN 'cbr' THEN 'image'
+              WHEN 'cb7' THEN 'image'
+              WHEN 'mp4' THEN 'video'
+              WHEN 'mov' THEN 'video'
+              WHEN 'mkv' THEN 'video'
+              WHEN 'webm' THEN 'video'
+              WHEN 'avi' THEN 'video'
+              WHEN 'wmv' THEN 'video'
+              WHEN 'mpg' THEN 'video'
+              WHEN 'mpeg' THEN 'video'
+              WHEN '3gp' THEN 'video'
+              WHEN 'flv' THEN 'video'
+              WHEN 'm4v' THEN 'video'
+              WHEN 'ts' THEN 'video'
+              WHEN 'lrv' THEN 'video'
+              WHEN 'insv' THEN 'video'
+              WHEN 'mts' THEN 'video'
+              WHEN 'm2ts' THEN 'video'
+              WHEN 'vob' THEN 'video'
+              WHEN 'f4v' THEN 'video'
+              WHEN 'mxf' THEN 'video'
+              WHEN 'mp3' THEN 'audio'
+              WHEN 'wav' THEN 'audio'
+              WHEN 'flac' THEN 'audio'
+              WHEN 'ogg' THEN 'audio'
+              WHEN 'oga' THEN 'audio'
+              WHEN 'm4a' THEN 'audio'
+              WHEN 'aac' THEN 'audio'
+              WHEN 'opus' THEN 'audio'
+              WHEN 'pdf' THEN 'pdf'
+              WHEN 'ttf' THEN 'font'
+              WHEN 'otf' THEN 'font'
+              WHEN 'ttc' THEN 'font'
+              WHEN 'otc' THEN 'font'
+              WHEN 'woff' THEN 'font'
+              WHEN 'woff2' THEN 'font'
+              WHEN 'glb' THEN '3d'
+              WHEN 'gltf' THEN '3d'
+              WHEN 'obj' THEN '3d'
+              WHEN 'fbx' THEN '3d'
+              WHEN 'blend' THEN '3d'
+              WHEN 'mview' THEN '3d'
+              WHEN 'dae' THEN '3d'
+              WHEN 'ply' THEN '3d'
+              WHEN 'stl' THEN '3d'
+              WHEN '3ds' THEN '3d'
+              WHEN 'x3d' THEN '3d'
+              WHEN 'wrl' THEN '3d'
+              WHEN 'usd' THEN '3d'
+              WHEN 'usda' THEN '3d'
+              WHEN 'usdc' THEN '3d'
+              WHEN 'usdz' THEN '3d'
+              WHEN 'abc' THEN '3d'
+              WHEN 'md2' THEN '3d'
+              WHEN 'md3' THEN '3d'
+              WHEN 'mdl' THEN '3d'
+              WHEN 'ms3d' THEN '3d'
+              WHEN 'mb' THEN '3d'
+              WHEN 'ma' THEN '3d'
+              WHEN 'max' THEN '3d'
+              WHEN 'txt' THEN 'doc'
+              WHEN 'log' THEN 'doc'
+              WHEN 'csv' THEN 'doc'
+              WHEN 'tsv' THEN 'doc'
+              WHEN 'md' THEN 'doc'
+              WHEN 'markdown' THEN 'doc'
+              WHEN 'mdx' THEN 'doc'
+              WHEN 'rst' THEN 'doc'
+              WHEN 'adoc' THEN 'doc'
+              WHEN 'org' THEN 'doc'
+              WHEN 'json' THEN 'doc'
+              WHEN 'jsonc' THEN 'doc'
+              WHEN 'yaml' THEN 'doc'
+              WHEN 'yml' THEN 'doc'
+              WHEN 'toml' THEN 'doc'
+              WHEN 'ini' THEN 'doc'
+              WHEN 'cfg' THEN 'doc'
+              WHEN 'conf' THEN 'doc'
+              WHEN 'env' THEN 'doc'
+              WHEN 'properties' THEN 'doc'
+              WHEN 'sh' THEN 'doc'
+              WHEN 'bash' THEN 'doc'
+              WHEN 'zsh' THEN 'doc'
+              WHEN 'fish' THEN 'doc'
+              WHEN 'ps1' THEN 'doc'
+              WHEN 'makefile' THEN 'doc'
+              WHEN 'mk' THEN 'doc'
+              WHEN 'dockerfile' THEN 'doc'
+              WHEN 'gitignore' THEN 'doc'
+              WHEN 'gitattributes' THEN 'doc'
+              WHEN 'py' THEN 'doc'
+              WHEN 'pyi' THEN 'doc'
+              WHEN 'rb' THEN 'doc'
+              WHEN 'lua' THEN 'doc'
+              WHEN 'pl' THEN 'doc'
+              WHEN 'pm' THEN 'doc'
+              WHEN 'js' THEN 'doc'
+              WHEN 'mjs' THEN 'doc'
+              WHEN 'cjs' THEN 'doc'
+              WHEN 'jsx' THEN 'doc'
+              WHEN 'tsx' THEN 'doc'
+              WHEN 'go' THEN 'doc'
+              WHEN 'rs' THEN 'doc'
+              WHEN 'java' THEN 'doc'
+              WHEN 'kt' THEN 'doc'
+              WHEN 'kts' THEN 'doc'
+              WHEN 'scala' THEN 'doc'
+              WHEN 'swift' THEN 'doc'
+              WHEN 'dart' THEN 'doc'
+              WHEN 'c' THEN 'doc'
+              WHEN 'h' THEN 'doc'
+              WHEN 'cpp' THEN 'doc'
+              WHEN 'cc' THEN 'doc'
+              WHEN 'cxx' THEN 'doc'
+              WHEN 'hpp' THEN 'doc'
+              WHEN 'hh' THEN 'doc'
+              WHEN 'm' THEN 'doc'
+              WHEN 'mm' THEN 'doc'
+              WHEN 'cs' THEN 'doc'
+              WHEN 'php' THEN 'doc'
+              WHEN 'hs' THEN 'doc'
+              WHEN 'erl' THEN 'doc'
+              WHEN 'ex' THEN 'doc'
+              WHEN 'exs' THEN 'doc'
+              WHEN 'clj' THEN 'doc'
+              WHEN 'cljs' THEN 'doc'
+              WHEN 'edn' THEN 'doc'
+              WHEN 'html' THEN 'doc'
+              WHEN 'htm' THEN 'doc'
+              WHEN 'css' THEN 'doc'
+              WHEN 'scss' THEN 'doc'
+              WHEN 'sass' THEN 'doc'
+              WHEN 'less' THEN 'doc'
+              WHEN 'vue' THEN 'doc'
+              WHEN 'svelte' THEN 'doc'
+              WHEN 'sql' THEN 'doc'
+              WHEN 'graphql' THEN 'doc'
+              WHEN 'gql' THEN 'doc'
+              WHEN 'xml' THEN 'doc'
+              WHEN 'plist' THEN 'doc'
+              WHEN 'patch' THEN 'doc'
+              WHEN 'diff' THEN 'doc'
+              WHEN 'zip' THEN 'archive'
+              WHEN 'jar' THEN 'archive'
+              WHEN 'war' THEN 'archive'
+              WHEN 'ear' THEN 'archive'
+              WHEN 'apk' THEN 'archive'
+              WHEN 'ipa' THEN 'archive'
+              WHEN '7z' THEN 'archive'
+              WHEN 'rar' THEN 'archive'
+              WHEN 'tar' THEN 'archive'
+              WHEN 'tgz' THEN 'archive'
+              WHEN 'tbz2' THEN 'archive'
+              WHEN 'txz' THEN 'archive'
+            END, 'placeholder')
+          END
+$$;
+
+
+--
+-- Name: FUNCTION asset_view_kind(asset_type bigint, file_extension text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.asset_view_kind(asset_type bigint, file_extension text) IS 'The SQL twin of viewkind.ForAsset (#1417, sprint 24): resolves an asset row to the badge kind its card draws, from asset_type and file_extension. The body is viewkind.KindSQL("") spliced verbatim by migration 00071 and pinned to the Go authority by two tests (a full-vocabulary oracle and a byte-equality drift guard). Change the vocabulary in app/internal/viewkind and cut a migration; never edit this body by hand. Consumed by rebuild_asset_search_text only; the two kind: filter arms render KindSQL inline.';
 
 
 --
@@ -754,7 +964,11 @@ BEGIN
         setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
         setweight(to_tsvector('english', COALESCE(description, '')), 'B') ||
         setweight(to_tsvector('english', ''), 'C') ||
-        setweight(to_tsvector('english', COALESCE(field_text, '')), 'D')
+        setweight(to_tsvector('english', COALESCE(field_text, '')), 'D') ||
+        -- #1417: the resolved kind is vocabulary. One lexeme at D, or
+        -- nothing at all when the resolver could not tell.
+        setweight(to_tsvector('english',
+            COALESCE(NULLIF(public.asset_view_kind(asset_type, file_extension), 'placeholder'), '')), 'D')
      WHERE id = p_asset_id;
 END; $$;
 
@@ -781,9 +995,21 @@ END; $$;
 CREATE FUNCTION public.rebuild_post_search_text(p_post_id uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-DECLARE asset_search TEXT; post_tag_text TEXT;
+DECLARE member_docs TSVECTOR; post_tag_text TEXT;
 BEGIN
-    SELECT COALESCE(string_agg(COALESCE(a.search_text::text, ''), ' '), '') INTO asset_search
+    -- THE ENTRY LOCK (00067). First statement, before any aggregate: the
+    -- document below is computed from three reads, and a row lock taken
+    -- after them would order the writes while still letting the value
+    -- be built from a world that had already moved.
+    PERFORM 1 FROM public.posts WHERE id = p_post_id FOR NO KEY UPDATE;
+
+    -- #1417: fold the member DOCUMENTS, not their text form. Serialising
+    -- a tsvector and re-tokenising it turns its position and weight
+    -- markers into lexemes (`1a`, `2a`, bare `3`); concatenation keeps
+    -- each lexeme as the lexeme it is. Ordered by member id so a rebuild
+    -- is deterministic whatever the membership order or the cover.
+    SELECT COALESCE(public.tsvector_agg(COALESCE(a.search_text, ''::tsvector) ORDER BY a.id), ''::tsvector)
+      INTO member_docs
       FROM post_assets pa JOIN assets a ON a.id = pa.asset_id
      WHERE pa.post_id = p_post_id
        AND a.deleted_at IS NULL
@@ -797,7 +1023,7 @@ BEGIN
         setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
         setweight(to_tsvector('english', COALESCE(description, '')), 'B') ||
         setweight(to_tsvector('english', COALESCE(post_tag_text, '')), 'C') ||
-        setweight(to_tsvector('english', COALESCE(asset_search, '')), 'D')
+        setweight(member_docs, 'D')
      WHERE id = p_post_id;
 END; $$;
 
@@ -1025,6 +1251,16 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: tsvector_agg(tsvector); Type: AGGREGATE; Schema: public; Owner: -
+--
+
+CREATE AGGREGATE public.tsvector_agg(tsvector) (
+    SFUNC = tsvector_concat,
+    STYPE = tsvector
+);
 
 
 SET default_tablespace = '';
