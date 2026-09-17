@@ -297,6 +297,78 @@ administer (#939) — is slightly **narrower** under a filter than unfiltered. W
 Engine would break the count/filter equality; both clauses must widen together. **#1056** tracks
 it. The current behaviour errs narrow, which is the safe direction.
 
+#### 4d. A KIND IS SEARCHABLE VOCABULARY, amendment 2026-09-17 (#1417, sprint 24, PR #1440)
+
+A person typing `ebook`, `sprite` or `video` into the ordinary search box could not find a post
+that contains that kind unless somebody had written the word into a title, description, tag or
+field. The structured `kind:` filter found it (#1190, #1251); free text did not, because an
+asset's resolved kind (the badge its card draws, `viewkind.ForAsset`) was not indexed vocabulary
+at all. On the seeded coding corpus 23 posts holding a public, ready epub were unreachable by
+the word `ebook`.
+
+**The kind is an ingredient of the asset document, at weight D, and reaches the post document
+through the existing eligible-member fold.** Migration 00071. The asset document is title A,
+description B, C empty, searchable active field text D, derived kind D. The post document is
+title A, description B, post tags C, member material D (the inherited kind among it). No live
+per-row predicate: a search reads one stored column on each entity, as before.
+
+**Vocabulary, all thirteen kinds enumerated.** Eleven are emitted as typed: `image`, `video`,
+`pdf`, `audio`, `font`, `sprite`, `3d`, `ebook`, `doc`, `audiobook`, `archive`. `placeholder`
+emits no lexeme: it is the resolver's "I could not tell", not a word anyone searches for.
+`sequence` is never produced for a single asset and there is no post-level derivation of it.
+Under the `english` configuration every emitted kind is one stable lexeme that round-trips
+through `plainto_tsquery` (`image` to `imag`, `archive` to `archiv`, the rest unchanged).
+Precedence, the three `asset_type` overrides, normalisation and the NULL/unknown collapse to
+`placeholder` carry over unchanged from the Go resolver.
+
+**`app/internal/viewkind` stays the sole authority, pinned two ways.** The trigger that builds
+the document runs inside Postgres, so a resident copy of the derivation is unavoidable:
+`public.asset_view_kind(asset_type, file_extension)`, a SQL function whose body is the text
+`viewkind.KindSQL("")` renders, spliced verbatim into 00071. It is a copy and not a second
+taxonomy because two tests hold it to the Go source: `posts.TestKindVocabulary_ResidentDerivationMatchesGo`
+drives the whole vocabulary, every override ref and every edge (NULL, unknown, an extension an
+earlier group already claimed, upper case, whitespace, a leading dot) through the resident
+function, through `KindSQL` in the same session and through `ForAsset`, and requires all three
+to agree; `posts.TestKindVocabulary_ResidentDerivationTextIsKindSQL` compares the stored body to
+the live rendering byte for byte. **The maintainer consequence: a vocabulary change is a Go edit
+plus a migration that re-splices the rendering.** A Go edit alone fails CI. The two `kind:`
+filter arms keep rendering `KindSQL` inline and are untouched.
+
+**The fold is corrected.** `rebuild_post_search_text` used to serialise each eligible member's
+tsvector to text and re-tokenise it. The text form carries position and weight markers
+(`'alpha':1A 'beta':2A 'gamma':3`), and the tokeniser turned those markers into lexemes: `1a`,
+`2a` and the bare position `3`. 384 posts on the coding corpus carried such words, and a search
+for `1a` returned them. (Weight D is the default and is never printed in the text form, so a
+D-weight lexeme at position 3 produced `3`, not `3d`; the junk is the A/B/C markers and the bare
+positions. D-weight lexemes were always present in asset documents, they simply carry no letter.)
+The fold is now a tsvector concatenation, `public.tsvector_agg` over the built-in
+`tsvector_concat`, ordered by member id so a rebuild is deterministic and inert to membership
+order and cover choice, then re-weighted to D as before. Search and browse read the same column;
+`ts_rank_cd` sees the same weights; nothing else about scoring changes.
+
+**The disclosure boundary does not move, and the authorised-member question is decided.** The
+post document stays caller-independent and folds only public, active, ready members (#883). An
+authorised caller's RESTRICTED member does not contribute its kind to the post's shared free
+text. Grounds: the card withholds a restricted member's kind (`facet/selection.go`), so the kind
+is withheld content, and §4c says withheld content belongs in the gated document, not in a
+public ingredient. That caller reaches the kind through `kind:` (per caller, #1190) and, newly,
+through direct asset search by derived kind, which composes `AssetSearchMatchSQL` and therefore
+`FieldsReadableSQL`: the owner finds their restricted epub by `ebook`, a stranger does not, and
+the stranger's count does not move. §4c's standing note that a genuinely public ingredient would
+need a reduced column is unchanged; the kind is not one.
+
+**Backfill, both directions, inline.** Up rebuilds every asset document under the new builder
+and every post document under the corrected fold, one pass each, with the per-asset post
+propagation suppressed (the transaction-local flag 00067 introduced) and an explicit ascending
+post pass discharging it; no install needs the admin reindex. Down restores the prior asset
+builder (00001), the prior post builder (00067, entry lock included) and the prior asset trigger,
+drops the aggregate and the derivation, and rebuilds every asset and post document under the
+restored functions. That brings the old fold semantics back, marker junk included, deliberately:
+stored documents must agree with the functions that maintain them, and no row may sit in a
+mixed-version state. `db.TestMigration00071_KindVocabulary_UpDownUp` walks v70, Up, Down, Up on
+real rows. The asset trigger also refreshes on `asset_type` / `file_extension`, which nothing on
+the wire updates today; a document that derives from a column follows that column.
+
 ### 5. Autocomplete via `pg_trgm` (B-2)
 
 - Extension `pg_trgm` added in migration 00022.
