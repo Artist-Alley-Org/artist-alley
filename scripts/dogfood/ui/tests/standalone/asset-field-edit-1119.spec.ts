@@ -96,6 +96,11 @@ async function makeAsset(request: APIRequestContext): Promise<string> {
   });
   expect(r.status(), `create asset → ${r.status()} ${await r.text()}`).toBe(201);
   const id = ((await r.json()) as { id: string }).id;
+  // Teardown ownership is registered the moment the row exists, BEFORE
+  // the wait below: a preview that fails or never settles makes the wait
+  // throw, and a throw that happened before the push would leave a live
+  // fixture row that afterAll never hard-deletes.
+  createdAssets.push(id);
   // The 201 is not a settled row (#1401). CreateAsset commits, enqueues
   // the preview job, then answers; the text pipeline that follows writes
   // `updated_at` again on MarkAssetProcessing, MergeAssetMetadata and
@@ -106,7 +111,6 @@ async function makeAsset(request: APIRequestContext): Promise<string> {
   // throws here instead, because its write history is a different one
   // and not the subject of any test in this file.
   await waitForAssetReady(request, id, { label: 'afe fixture asset' });
-  createdAssets.push(id);
   return id;
 }
 
@@ -909,4 +913,21 @@ test('C2: after ready, a save guarded on the creation-time updated_at is still r
   const row = (await now.json()) as { title: string; updated_at: string };
   expect(micros(body.updated_at), 'the 409 carries the current updated_at').toBe(micros(row.updated_at));
   expect(row.title, 'the refused save wrote nothing').not.toBe('C2 must never land');
+});
+
+test('A2: a FAILED preview makes makeAsset reject, and the row is still registered for teardown', async () => {
+  const before = createdAssets.length;
+  const double = readinessDouble(crypto.randomUUID(), ['failed']);
+
+  await expect(makeAsset(double as unknown as APIRequestContext)).rejects.toThrow(
+    /preview FAILED[\s\S]*processing_status: failed/,
+  );
+
+  expect(double.posts, 'the row was created before the wait could refuse it').toHaveLength(2);
+  expect(double.gets.map((g) => g.state)).toEqual(['failed']);
+  expect(
+    createdAssets.length,
+    'ownership is registered before the wait, so afterAll still hard-deletes the row',
+  ).toBe(before + 1);
+  expect(createdAssets[createdAssets.length - 1]).toBe(double.mintedId);
 });
