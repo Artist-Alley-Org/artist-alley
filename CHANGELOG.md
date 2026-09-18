@@ -9,6 +9,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Typing a kind of file finds it.** Searching for `ebook`, `video`, `sprite`, `3d`, `pdf`,
+  `audio`, `font`, `doc`, `audiobook`, `archive` or `image` in the ordinary search box now finds
+  the posts that contain a file of that kind and the files themselves, without anyone having
+  written the word into a title, description, tag or field. A post counts as containing a kind
+  through any of its files, not only its cover, and swapping the cover or reordering the files
+  changes nothing. A kind word ranks below a title, a description or a tag that carries the same
+  word. Files a person is not allowed to see contribute nothing to a post's search entry, so a
+  kind search cannot reveal that a post holds a restricted file; the structured kind filter keeps
+  working exactly as before and remains the way to find a restricted file you are allowed to see
+  (#1417, PR #1440).
+
 - **A post can turn comments off.** Whoever can edit a post can now decide whether it takes
   comments, from the post editor or from the create page, where comments stay on unless you say
   otherwise. Turning them off stops new comments and replies on that post; the comments already
@@ -461,6 +472,14 @@ where applicable, otherwise note "no-spec-impact."
   when picking a cover reflects what people will actually see (#1209, PR #1332).
 
 ### Internal
+
+- **The asset-edit browser tests no longer race the upload pipeline.** The dogfood fixture used
+  to hand the editor a freshly created file while the preview job was still updating it, so a
+  perfectly correct stale-write refusal turned into a red suite and stranded the eight tests behind
+  it, on three of four recent landings. The fixture now registers the file for cleanup, waits until
+  the preview pipeline reports the file ready, and only then returns; a failed preview or a
+  timeout is reported as itself. The product's stale-write guard is untouched, and a deliberately
+  stale save still gets refused (#1401, PR #1441).
 
 - **Rebuilding the sample library's posts can no longer overwrite the shipped ones by accident.**
   The rebuild command used to write straight over the committed post profiles and the site's
