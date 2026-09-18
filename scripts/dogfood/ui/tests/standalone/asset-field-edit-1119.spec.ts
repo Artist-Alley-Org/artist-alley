@@ -35,6 +35,7 @@ import { test, expect } from '../../helpers/test';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { loginAsAdminViaAPI, loginAsAdminViaUI } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
+import { waitForAssetReady } from '../../helpers/asset-ready';
 
 // Per-run codes. DELETE /fields SOFT-ARCHIVES and `code` is UNIQUE, so a
 // fixed code collides on the retry that a flake produces (#527).
@@ -95,6 +96,16 @@ async function makeAsset(request: APIRequestContext): Promise<string> {
   });
   expect(r.status(), `create asset → ${r.status()} ${await r.text()}`).toBe(201);
   const id = ((await r.json()) as { id: string }).id;
+  // The 201 is not a settled row (#1401). CreateAsset commits, enqueues
+  // the preview job, then answers; the text pipeline that follows writes
+  // `updated_at` again on MarkAssetProcessing, MergeAssetMetadata and
+  // MarkAssetReady. An editor opened off the bare 201 loads a baseline
+  // the worker is still moving, and the save 409s exactly as the guard
+  // (#549) is meant to. So the fixture returns only once the row is
+  // `ready`, which is the last of those writes; a `failed` preview
+  // throws here instead, because its write history is a different one
+  // and not the subject of any test in this file.
+  await waitForAssetReady(request, id, { label: 'afe fixture asset' });
   createdAssets.push(id);
   return id;
 }
@@ -689,3 +700,213 @@ test('MX-a: X saves while Y conflicts, independently, and Z is untouched', async
 // `applies_to`, so no asset on either instance HAS zero applicable
 // fields, and archiving them mid-suite to manufacture the state would
 // change the page under every other spec.
+
+// ---------------------------------------------------------------------------
+// #1401: the fixture waits for its pipeline
+//
+// The standalone suite went red on this file on three of four landing
+// pushes, always as a 409 from `PATCH /assets/{id}`. The product was
+// right each time: `makeAsset` returned on the bare 201, `openEdit`
+// loaded a baseline `updated_at`, and the text preview pipeline wrote
+// the row again (MarkAssetProcessing, MergeAssetMetadata, MarkAssetReady,
+// each `updated_at = now()`) between that load and the save. The repair
+// is in the fixture, not the guard: `makeAsset` now returns only once
+// the row reports `processing_status = ready`, the last of those writes.
+//
+// Three classes below. A1 drives the file-local fixture through a
+// scripted request double and is the deterministic fail-before-fix
+// case: on the pre-fix `makeAsset` it records ZERO readiness reads.
+// B1-B4 pin the helper's boundaries with injected timing. C1 and C2 go
+// through the real API and the real editor, and C2 is the load-bearing
+// proof that the guard itself is untouched.
+// ---------------------------------------------------------------------------
+
+/** A scripted response, the four members the fixture and the helper read. */
+function scripted(status: number, body: unknown) {
+  return {
+    ok: () => status >= 200 && status < 300,
+    status: () => status,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  };
+}
+
+/**
+ * A request double that answers `POST` twice (the upload, then the
+ * create) and `GET /api/v1/assets/{id}` from a queue of readiness
+ * states, holding the last state once the queue runs dry. Every GET is
+ * recorded so a test can say how many times readiness was asked for
+ * and what the last answer was.
+ */
+function readinessDouble(mintedId: string, states: Array<string | number>) {
+  const posts: string[] = [];
+  const gets: Array<{ url: string; state: string | number }> = [];
+  const queue = [...states];
+  return {
+    posts,
+    gets,
+    mintedId,
+    post: async (url: string) => {
+      posts.push(url);
+      return posts.length === 1
+        ? scripted(201, { hash: `afe-1401-hash-${mintedId}` })
+        : scripted(201, { id: mintedId });
+    },
+    get: async (url: string) => {
+      const next = queue.length > 1 ? (queue.shift() as string | number) : queue[0];
+      gets.push({ url, state: next });
+      // A number in the queue is a non-OK HTTP status with no body.
+      if (typeof next === 'number') return scripted(next, { error: `scripted ${next}` });
+      return scripted(200, { id: mintedId, processing_status: next, updated_at: '2026-01-01T00:00:00Z' });
+    },
+  };
+}
+
+/** Microseconds since the epoch, the precision the guard compares at. */
+function micros(iso: unknown): number {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/.exec(String(iso));
+  if (!m) throw new Error(`not an RFC 3339 timestamp: ${String(iso)}`);
+  const ms = Date.parse(`${m[1]}${m[3]}`);
+  const frac = (m[2] ?? '').padEnd(6, '0').slice(0, 6);
+  return ms * 1000 + Number(frac);
+}
+
+/** A real txt asset through the real API, with its creation-time `updated_at`. */
+async function createTxtAsset(request: APIRequestContext): Promise<{ id: string; updated_at: string }> {
+  const up = await request.post('/api/v1/storage/objects', {
+    data: Buffer.from(`afe 1401 ${Date.now()}-${Math.random()}`),
+    headers: { 'Content-Type': 'application/octet-stream', 'X-Content-Type': 'text/plain' },
+  });
+  expect(up.status()).toBe(201);
+  const { hash } = (await up.json()) as { hash: string };
+  const r = await request.post('/api/v1/assets', {
+    data: {
+      title: `AFE 1401 ${Date.now()}-${Math.random()}`,
+      asset_type: 2,
+      file_hash: hash,
+      file_extension: 'txt',
+    },
+  });
+  expect(r.status(), `create asset → ${r.status()} ${await r.text()}`).toBe(201);
+  const created = (await r.json()) as { id: string; updated_at: string };
+  createdAssets.push(created.id);
+  return created;
+}
+
+test('A1: makeAsset returns only after the asset has reported ready (#1401)', async () => {
+  const double = readinessDouble(crypto.randomUUID(), ['processing', 'processing', 'ready']);
+
+  const id = await makeAsset(double as unknown as APIRequestContext);
+
+  expect(double.posts, 'upload then create, nothing else').toHaveLength(2);
+  expect(
+    double.gets.length,
+    'the fixture must read readiness before returning; a 201 is not a settled row',
+  ).toBeGreaterThan(0);
+  for (const g of double.gets) expect(g.url).toBe(`/api/v1/assets/${double.mintedId}`);
+  expect(double.gets[double.gets.length - 1].state, 'the last readiness answer').toBe('ready');
+  expect(id).toBe(double.mintedId);
+});
+
+test('B1: the helper resolves with the ready representation after exactly two reads', async () => {
+  const double = readinessDouble(crypto.randomUUID(), ['processing', 'ready']);
+  const got = await waitForAssetReady(double, double.mintedId, { pollMs: 10, timeoutMs: 5_000 });
+  expect(got.processing_status).toBe('ready');
+  expect(got.id).toBe(double.mintedId);
+  expect(double.gets.map((g) => g.state)).toEqual(['processing', 'ready']);
+});
+
+test('B2: the helper refuses a FAILED preview at once, naming the state it saw', async () => {
+  const double = readinessDouble(crypto.randomUUID(), ['processing', 'failed']);
+  const started = Date.now();
+  await expect(
+    waitForAssetReady(double, double.mintedId, { pollMs: 10, timeoutMs: 30_000 }),
+  ).rejects.toThrow(/processing_status: failed/);
+  expect(Date.now() - started, 'failed is terminal; no waiting out the deadline').toBeLessThan(5_000);
+  expect(double.gets.map((g) => g.state)).toEqual(['processing', 'failed']);
+});
+
+test('B3: a row that never settles throws at the deadline with the last state, and the reads are bounded', async () => {
+  const double = readinessDouble(crypto.randomUUID(), ['processing']);
+  const pollMs = 50;
+  const timeoutMs = 250;
+  const started = Date.now();
+  await expect(
+    waitForAssetReady(double, double.mintedId, { pollMs, timeoutMs }),
+  ).rejects.toThrow(/never reached processing_status=ready[\s\S]*processing_status: processing/);
+  expect(Date.now() - started).toBeLessThan(timeoutMs + 1_000);
+  expect(double.gets.length).toBeGreaterThanOrEqual(2);
+  expect(double.gets.length).toBeLessThanOrEqual(Math.ceil(timeoutMs / pollMs) + 1);
+  for (const g of double.gets) expect(g.state).toBe('processing');
+});
+
+test('B4: a non-OK answer inside the deadline is tolerated and polling continues', async () => {
+  const double = readinessDouble(crypto.randomUUID(), [503, 'processing', 'ready']);
+  const got = await waitForAssetReady(double, double.mintedId, { pollMs: 10, timeoutMs: 5_000 });
+  expect(got.processing_status).toBe('ready');
+  expect(double.gets.map((g) => g.state)).toEqual([503, 'processing', 'ready']);
+});
+
+test('C1: a real txt asset moves updated_at after creation, and the editor opened after ready saves on the settled baseline', async ({
+  page,
+  request,
+}) => {
+  await loginAsAdminViaAPI(request);
+  const created = await createTxtAsset(request);
+
+  const ready = await waitForAssetReady(request, created.id, { label: 'C1 asset' });
+  expect(ready.processing_status).toBe('ready');
+  expect(
+    micros(ready.updated_at),
+    'the pipeline writes the row after the 201; the creation-time updated_at is not the settled one',
+  ).toBeGreaterThan(micros(created.updated_at));
+
+  await openEdit(page, created.id);
+
+  let sent: Record<string, unknown> | undefined;
+  page.on('request', (r) => {
+    if (r.url().includes(`/api/v1/assets/${created.id}`) && r.method() === 'PATCH') {
+      sent = JSON.parse(r.postData() ?? '{}') as Record<string, unknown>;
+    }
+  });
+  await page.locator(tid('asset-edit-title')).fill('C1 retitled on a settled baseline');
+
+  // Read the API's current updated_at right before the save. The body
+  // the page sends must carry exactly this value, at the precision the
+  // guard compares at: nothing moved the row between load and save.
+  const before = await request.get(`/api/v1/assets/${created.id}`);
+  const current = ((await before.json()) as { updated_at: string }).updated_at;
+
+  const patched = page.waitForResponse(
+    (r) => r.url().includes(`/api/v1/assets/${created.id}`) && r.request().method() === 'PATCH',
+  );
+  await page.locator(tid('asset-edit-save')).click();
+  const resp = await patched;
+  expect(resp.status(), `PATCH → ${resp.status()} ${await resp.text()}`).toBe(200);
+  expect(sent?.if_unchanged_since, 'the page sends its baseline as the guard token').toBeTruthy();
+  expect(micros(sent?.if_unchanged_since)).toBe(micros(current));
+
+  const after = await request.get(`/api/v1/assets/${created.id}`);
+  expect(((await after.json()) as { title: string }).title).toBe('C1 retitled on a settled baseline');
+});
+
+test('C2: after ready, a save guarded on the creation-time updated_at is still refused with 409', async ({
+  request,
+}) => {
+  await loginAsAdminViaAPI(request);
+  const created = await createTxtAsset(request);
+  const ready = await waitForAssetReady(request, created.id, { label: 'C2 asset' });
+  expect(ready.processing_status).toBe('ready');
+
+  const stale = await request.patch(`/api/v1/assets/${created.id}`, {
+    data: { title: 'C2 must never land', if_unchanged_since: created.updated_at },
+  });
+  expect(stale.status(), `stale PATCH → ${stale.status()} ${await stale.text()}`).toBe(409);
+  const body = (await stale.json()) as { error: string; updated_at: string };
+  expect(body.error).toContain('edited by someone else');
+
+  const now = await request.get(`/api/v1/assets/${created.id}`);
+  const row = (await now.json()) as { title: string; updated_at: string };
+  expect(micros(body.updated_at), 'the 409 carries the current updated_at').toBe(micros(row.updated_at));
+  expect(row.title, 'the refused save wrote nothing').not.toBe('C2 must never land');
+});
