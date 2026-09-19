@@ -888,3 +888,136 @@ wins over both.
   390px. `scroll-margin-bottom` on the page's controls reserves its height for every
   scroll-into-view the BROWSER performs (a focus, a tab, an anchor), not only the ones a test
   drives.
+
+## Amendment, 2026-09-19, after #1173 (sprint 25a)
+
+Two dimensions the owner types as verbs: `preview:missing` (`!nopreviews`) and `id:<uuid>`
+(`!list<uuid>,<uuid>,...`). ADR 0056's 4e amendment records why a verb is sugar and not a
+second vocabulary; this one records what the two dimensions are and the four rules they
+introduce.
+
+### 1. `preview:missing` is a previewable asset with no servable `col`, and status is not the contract
+
+A preview EXISTS when a `col` variant exists for the asset's file hash. That is what
+`preview_available` answers (ADR 0071; the variant EXISTS in `assets/handler.go` and
+`assets/list_page.go`), and the dimension negates exactly that EXISTS. `processing_status` is
+wrong in both directions and is never read: the video poster job writes `col` and deliberately
+does not touch status, so a `pending` video has a preview; every non-raster handler logs a fan
+failure, continues and marks the row `ready`, so a `ready` text or model asset can have none.
+Both counterexamples are fixture rows in `search/preview_dimension_test.go`.
+
+"Previewable" is derived from the router, not re-listed. `dispatch.PreviewableSQL` renders
+`dispatch.PreviewableExts()` (itself derived from `CanPreview` over the declared sets) with
+`Normalize`'s rule transcribed in the same order: `lower`, then strip one leading dot, no trim.
+`TestPreviewableSQL_MatchesCanPreview` drives every declared extension, case and leading-dot
+spellings, non-members, the empty string and NULL through Postgres and through Go and requires
+one answer; `assets.TestNeedsProcessing_MatchesCanPreview` holds the insert-time hand-written
+enumeration to the same authority over the same domain. Both were green on `dev` before this
+sprint touched anything.
+
+`missing` is the whole vocabulary. There is no `present`: the dimension exists to find what
+the pipeline did not produce, and a second spelling of "an ordinary asset" is a value every
+count would have to reconcile. Anything else is refused by `CanonicalValue` on the `filter=`
+path and the DSL path alike. Posts and collections fall through to unsatisfiable, the
+positive-narrowing direction the 18b amendment records.
+
+### 2. The predicate composes the PICTURE plane, and the field plane is not enough
+
+Every asset site ANDs `visibility.FieldsReadableSQL` on under an active filter. That is the
+FIELD plane, and it carries ADR 0064's mutation disjunct: a team-scoped `assets.admin` holder
+passes it for the assets they administer while being refused their bytes. Whether a picture
+exists is a fact about the bytes. A dimension gated by the field plane alone would answer that
+holder one bit of the binary plane per query, which is the `kind:` probe #1251 closed, one
+plane over.
+
+So the asset arm composes `visibility.PreviewReadableSQL`, the SQL twin of `PreviewReadable`
+held by `TestPreviewReadableSQL_MatchesGo`, inside its own predicate, from the `RenderContext`
+every site already supplies, and fails closed on an empty caller placeholder exactly as the
+`kind:` post arm does. It cannot widen: it is one more conjunct on a row the field plane had
+already admitted. `TestPreviewMissing_PicturePlaneNotFieldPlane` is the witness and it is
+non-vacuous by construction: the holder's UNFILTERED search returns the restricted row, the
+holder's `preview:missing` does not and their count does not move, and the owner and a
+`content.read.all` holder get it on both spellings.
+
+### 3. `id:<uuid>`: membership on each entity's own id, at most fifty distinct
+
+`assets.id`, `posts.id` and `collections.id` each compare to the bound UUID, so one UUID
+present in two tables under mixed types returns both rows; an unknown id matches nothing and
+is not an error; values OR; list order does not rank; the read rules decide visibility as for
+any filter, and a stranger's count does not move for a restricted member.
+
+**The bound follows from the canonical stored form.** A saved search stores `id:<uuid>` terms
+joined by ` AND `: 39 bytes per term and 5 per join, so 50 ids serialise to 2,195 bytes (the
+alias spells the same set in 1,854), under the parser's 4,096-byte cap with 1,901 bytes of
+composition headroom; 100 ids would need 4,395 bytes and could never replay. The rule stated
+exactly: the dimension's own 50-id canonical form always fits; the existing composed-DSL size
+validation (`dsl.Parse` of the composed string) stays authoritative when free text or other
+filters consume the rest of the budget; an oversized final expression is refused, never stored
+unreplayably. This does NOT claim that 50 ids plus arbitrary text always fits.
+
+**Enforced once, on the selection.** `Selection.Validate` counts distinct terms per dimension
+after `With` has collapsed duplicates; `ParseSelection` asks it for `filter=`,
+`SelectionFromDSL` asks it for the DSL (typed `id:` and `!list` alike, the alias having folded
+long before), and the bridge asks it over the UNION of what `filter=` and `dsl=` contributed,
+so a request that splits its ids across two parameters is bounded on the sum. `Selection.SQL`
+asks it again as its fail-closed second gate. 49 and 50 are accepted and 51 refused at all
+three entry paths; 52 raw entries collapsing to 50 distinct are accepted.
+
+### 4. A placement rule for these two, and flattening for everything else
+
+The 18a amendment above records that the compiler flattens filter terms regardless of the
+AND / OR / NOT they were written under, and that this is the accepted shape for the existing
+dimensions. That is not redesigned. The two new dimensions are different in kind: they are
+selections a reader makes about the result set, and under flattening `NOT preview:missing`
+would compile to the opposite of what it says. So `preview` and `id` are legal ONLY as
+top-level conjuncts. `walk` carries a positional context (true while every ancestor is an
+AndNode) and `walkFieldMatch` refuses a `topLevelOnly` dimension without it. The check runs on
+the RESOLVED dimension after alias folding, which is what makes `NOT !nopreviews` and
+`NOT preview:missing` fail with one message, and `cat OR !list<a>` and `cat OR id:<a>`
+likewise; `(cat OR dog) AND id:<a>` is accepted. The classification is `dsl.Field.topLevelOnly`,
+as short as facet's `conjunctive`, and sprint 25b adds `last` there and nowhere else.
+
+### 5. The pre-persistence contract, and its one authority
+
+A saved search may not persist a canonical query that execution will later reject. Before
+this amendment the create and patch handlers proved SYNTAX (`dsl.Parse`), while execution
+parses, compiles and bridges, and each later step refuses things the parse accepts: placement
+at compile, vocabulary and cardinality at the bridge. `NOT !nopreviews` therefore saved with a
+201 and would have failed on every coordinator tick.
+
+The authority is `search.CompileDSL`, ONE function that is the executor's own front half
+(parse, compile, bridge) and that `/search`, both suggestion endpoints, the saved executor and
+now the saved create and patch handlers all call. The handlers ask it of the composed string
+with the empty selection the executor passes, and persist only on success. There is
+deliberately no second list of rules in the handler: whatever `CompileDSL` learns to refuse
+next is refused before persistence on the same day. `ComposeDSL` canonicalises verbs before
+composing, so the column holds `preview:missing` and `(id:... AND id:...)` and never an alias;
+that is the one exception to the 18a rule that the expression is carried byte-for-byte, and it
+is confined to verb tokens by construction. Every rejected create in
+`saved/sprint25a_test.go` asserts the owner's row count unchanged, and the rejected patch
+asserts the stored row unchanged.
+
+### 6. One correction found on the way
+
+`runCollections` had no filter-only arm. #1157 gave assets and posts `(text OR TRUE)` for a
+text-less search and left the collection statements requiring `search_text @@` against the
+empty tsquery, which matches nothing. No caller could tell, because until now every dimension a
+collection can satisfy (`ai:`, `visibility:`) was reached from surfaces that also carry text.
+A bare `!list<collection id>` is the first text-less query that names a collection, and it
+returned the asset and the post and not the collection. The same OR-arm now sits beside the
+inline `@@` literal in all three collection statements, for the two reasons `runPosts` records.
+
+### 7. Consequences
+
+- Grammar: `preview`, `id` in the whitelist; verbs in `dsl/verbs.go`; `Canonicalize`;
+  `Placement` and `UnknownVerb` error kinds. Facet: two filter-only dimensions, `MaxIDTerms`,
+  `Validate`. Bridge: two table entries, `CompileDSL`. No new facet aggregator; `AllFacets`
+  stays at five. Saved search execution stays asset-only. No migration.
+- The facet package now imports `preview/dispatch` for the previewability twin. The direction
+  was open (nothing under dispatch imports search) and it is the only way to derive rather
+  than re-list.
+- Recorded and not changed: `CanPreview` strips up to TWO leading dots (`JobTypeForExt`
+  normalises and `Has` normalises again) where `Normalize`'s contract, `needsProcessing` and
+  the SQL twin strip one. Outside the documented contract, absent from the corpus, and left
+  for the owner to rule on; both parity guards scope their domain to the contract and say so.
+

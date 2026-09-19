@@ -415,7 +415,145 @@ const (
 	// invariant that a bucket's count equals what ticking it returns has
 	// nothing to promise until a bucket exists.
 	FacetWorkflowState FacetType = "workflow_state"
+
+	// FacetPreview narrows to assets WHOSE PREVIEW IS MISSING:
+	// `filter=preview:missing`, the typed form of the owner's
+	// `!nopreviews` (#1173, sprint 25a).
+	//
+	// # ⛔ "MISSING" IS DEFINED BY THE COLUMN THE CARD READS, NOT BY STATUS
+	//
+	// A preview exists when a servable `col` variant exists for the
+	// asset's file hash: that is what `preview_available` answers (ADR
+	// 0071, assets/handler.go's variant check) and it is the EXISTS this
+	// dimension negates. `processing_status` is NOT the contract, in
+	// both directions, and a dimension keyed on it would be wrong on
+	// real rows: the video poster job writes `col` and deliberately does
+	// not touch status, so a `pending` video HAS a preview; and every
+	// non-raster handler logs a fan failure, continues and marks the row
+	// `ready`, so a `ready` text or model asset can have NONE. The
+	// predicate reads the variant table and nothing else.
+	//
+	// # Previewability is DERIVED from the router, not re-listed
+	//
+	// "Missing" only means something for an asset the pipeline could
+	// have rendered; a `.bin` with no `col` is not a failure, it is a
+	// `.bin`. The predicate therefore ANDs [dispatch.PreviewableSQL],
+	// the SQL twin of `dispatch.CanPreview` derived from the same
+	// declared sets the router dispatches on, and a parity test holds
+	// the two to one answer. A hand-written extension list here would be
+	// the second taxonomy ADR 0093 decision 3 refuses.
+	//
+	// # ⛔ THE PICTURE PLANE, COMPOSED INSIDE THE PREDICATE
+	//
+	// Every asset site already ANDs `visibility.FieldsReadableSQL` on
+	// under an active filter, and that is the FIELD plane: it carries
+	// the ADR 0064 mutation disjunct, so a team-scoped `assets.admin`
+	// holder passes it for the assets they administer while being
+	// refused their bytes. Whether a picture exists is a fact about the
+	// BYTES, and answering it for such a caller would hand them one bit
+	// of the binary plane per query: the same probe #1251 closed for
+	// `kind:`. So this arm composes `visibility.PreviewReadableSQL`, the
+	// picture plane, inside its own EXISTS-shaped predicate, from the
+	// [RenderContext] every site already supplies, and fails CLOSED on
+	// an empty caller placeholder exactly as the `kind:` post arm does.
+	// It never widens: it is one more conjunct on a row the field plane
+	// had already admitted.
+	//
+	// # One value, and it is closed
+	//
+	// [PreviewMissing] is the vocabulary. There is deliberately no
+	// `present`: the dimension exists to find what the pipeline did not
+	// produce, and a `present` value would be a second spelling of "an
+	// ordinary asset" that every count would then have to reconcile.
+	// Anything else is refused in [FacetType.CanonicalValue] on both
+	// the `filter=` path and the DSL path.
+	//
+	// # ⛔ TOP-LEVEL ONLY, on the DSL side
+	//
+	// `NOT preview:missing` would flatten to `preview:missing` under the
+	// compiler's positional-blind walk and mean the opposite of what it
+	// says, so the DSL refuses this dimension anywhere but as a
+	// top-level AND term, on the alias and the typed spelling alike,
+	// because the check runs after the alias has folded. See
+	// dsl.Field.topLevelOnly. The `filter=` parameter has no boolean
+	// structure and needs no such rule.
+	//
+	// # Assets only, and filter-only
+	//
+	// A post and a collection have no file, so both arms fall through
+	// to ok=false and drop out of a preview-filtered page, the
+	// POSITIVE-NARROWING direction [FacetFileSize] records. No
+	// [Aggregator] and absent from [AllFacets]: a one-bucket rail is a
+	// toggle, and the control this dimension exists for is a typed verb.
+	FacetPreview FacetType = "preview"
+
+	// FacetID narrows to an EXPLICIT SET of rows named by their own ids
+	// (`filter=id:<uuid>`, repeated), the typed form of the owner's
+	// `!list<uuid>,<uuid>,...` (#1173, sprint 25a).
+	//
+	// # Membership is against each entity's OWN id column
+	//
+	// `assets.id`, `posts.id` and `collections.id` are each compared to
+	// the bound UUID, so the same UUID present in two tables under a
+	// mixed-type query returns both rows: the dimension says "this id",
+	// not "this asset". An id no table holds matches nothing, which is
+	// the correct answer and not an error: a saved list whose member
+	// was since deleted keeps naming it and returns the rest.
+	//
+	// # Its values combine with OR, and list order does not rank
+	//
+	// A row has exactly one id, so AND would return nothing forever:
+	// [FacetExtension]'s reading. The list is a SET; ranking stays with
+	// the engine (score, then id), and a caller who wants a particular
+	// order has the ids in hand.
+	//
+	// # Visibility is unchanged
+	//
+	// Naming a row's id is not a right to read it. The read rules every
+	// site ANDs on after this fragment decide as they do for any filter,
+	// so a restricted asset's id in a stranger's list contributes no hit
+	// and no count, and the count does not move: the no-oracle property
+	// the sensitivity rail established.
+	//
+	// # ⛔ AT MOST [MaxIDTerms] DISTINCT IDS, COUNTED AFTER COLLAPSE
+	//
+	// The bound follows from the CANONICAL STORED FORM. A saved search
+	// stores `id:<uuid>` terms joined by ` AND `, 39 bytes per term
+	// and 5 per join, so 50 ids serialise to 2,195 bytes (the alias
+	// spells the same set in 1,854), which sits under the DSL's 4,096-
+	// byte input cap with 1,901 bytes of composition headroom; 100 ids
+	// would need 4,395 and could never replay. So the dimension's own
+	// 50-id canonical form ALWAYS fits, and the existing composed-DSL
+	// size validation (dsl.Parse of the composed string, in the saved
+	// handler) stays authoritative when free text or other filters
+	// consume the rest of the budget. This does NOT claim that 50 ids
+	// plus arbitrary text always fits: an oversized final expression is
+	// refused by that cap, never stored unreplayably.
+	//
+	// The limit is enforced ONCE, on the [Selection], by
+	// [Selection.Validate], and every entry path (`filter=id:` through
+	// [ParseSelection], `id:` and `!list` through search.SelectionFromDSL
+	// alike) reaches it, so no spelling can carry more than another.
+	// [Selection.SQL] refuses an over-cardinality selection as
+	// unsatisfiable for the same fail-closed reason it re-checks values.
+	//
+	// # Filter-only
+	//
+	// No [Aggregator] and absent from [AllFacets]; `?facets=id` resolves
+	// and produces no bucket, as `collection` does.
+	FacetID FacetType = "id"
 )
+
+// PreviewMissing is the ONLY value of [FacetPreview]. Spelled here for
+// the facet layer's closed vocabulary; dsl.PreviewMissing is the same
+// literal on the parser side, and TestPreviewVocabulary_OneValue holds
+// them equal.
+const PreviewMissing = "missing"
+
+// MaxIDTerms is the largest number of DISTINCT [FacetID] values one
+// selection may carry. See [FacetID] for the byte arithmetic it follows
+// from.
+const MaxIDTerms = 50
 
 // The [FacetVisibility] value vocabulary — the five sharing tiers, in
 // the order the `posts_visibility_check` / `collections_visibility_check`
@@ -472,8 +610,8 @@ const (
 // the caller doesn't restrict via ?facets=...
 //
 // FacetCollection, FacetField, FacetAI, FacetKind, FacetVisibility,
-// FacetFileSize and FacetWorkflowState are deliberately absent — see
-// their docs.
+// FacetFileSize, FacetWorkflowState, FacetPreview and FacetID are
+// deliberately absent; see their docs.
 func AllFacets() []FacetType {
 	return []FacetType{FacetAssetType, FacetTag, FacetSensitivity, FacetOwner, FacetExtension}
 }
@@ -506,6 +644,10 @@ func ParseFacetType(s string) (FacetType, bool) {
 		return FacetFileSize, true
 	case "workflow_state":
 		return FacetWorkflowState, true
+	case "preview":
+		return FacetPreview, true
+	case "id":
+		return FacetID, true
 	}
 	return "", false
 }

@@ -261,6 +261,46 @@ func PreviewableExts() []string {
 	return out
 }
 
+// PreviewableSQL renders the SQL twin of [CanPreview] over expr, a SQL
+// expression yielding the extension column (#1173, sprint 25a).
+//
+// # Why a twin, and why it is derived rather than written
+//
+// `preview:missing` has to decide "is this a previewable asset" INSIDE a
+// WHERE clause, over every row the search considers, so there is no
+// per-row Go step to ask [CanPreview] in: the same exception under
+// which visibility's `*SQL` twins exist. The allowlist is
+// [PreviewableExts], which is itself derived from CanPreview over the
+// declared sets, so this fragment cannot name an extension the router
+// would refuse or omit one it would render. `needsProcessing` in the
+// assets package re-enumerates the same sets by hand and is held to
+// CanPreview by a guard; this is held to it by
+// TestPreviewableSQL_MatchesCanPreview, which drives every declared
+// extension, a set of non-members and the NULL/empty cases through
+// both and requires one answer.
+//
+// # The normalisation is [Normalize]'s, transcribed in the same order
+//
+// `lower`, then strip ONE leading dot, and nothing else: no btrim,
+// because CanPreview does not trim and a twin that trimmed would say
+// yes to `" png"` where the router says no. (viewkind.KindSQL trims
+// because ITS Go form trims; each twin mirrors its own authority.)
+//
+// The fragment is TOTAL: a NULL extension yields false, not NULL, so it
+// composes under NOT and inside CASE without three-valued surprises.
+// The literals are the sets' own bytes, which contain no quote; they
+// are escaped anyway because a splice that assumes is a splice that
+// will one day be wrong.
+func PreviewableSQL(expr string) string {
+	exts := PreviewableExts()
+	quoted := make([]string, 0, len(exts))
+	for _, e := range exts {
+		quoted = append(quoted, "'"+strings.ReplaceAll(e, "'", "''")+"'")
+	}
+	return "(" + expr + " IS NOT NULL AND regexp_replace(lower(" + expr +
+		`), '^\.', '') IN (` + strings.Join(quoted, ", ") + "))"
+}
+
 // Payload is the JSON body EVERY preview.* job carries, on the wire and
 // in every handler. It lives here — next to the router that decides
 // which handler reads it — because producer and consumer used to

@@ -1178,6 +1178,29 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cu
 
 	const collectionScoreExpr = `ts_rank_cd(c.search_text, plainto_tsquery('english', $1))`
 
+	// #1173 sprint 25a: the collection half of the FILTER-ONLY search,
+	// which #1157 gave assets and posts and not this arm. The reasoning
+	// is runPosts' verbatim: `plainto_tsquery('english', '')` is the
+	// empty tsquery and matches no row, so a text-less search must drop
+	// the text predicate rather than run it against nothing. A
+	// collection has no field-withholding tier, CollectionReadableSQL
+	// (visFrag) is its whole access story, so what is left when the
+	// text goes is `TRUE`, and visFrag, notDeleted and selFrag continue
+	// to carry the gate.
+	//
+	// Until now no caller could tell: the arm was unreachable text-less
+	// for every dimension a collection can satisfy (`ai:`,
+	// `visibility:`, and now `id:`), so a `!list<collection id>` with no
+	// words beside it, the way the owner types it, returned nothing
+	// from this table while the same list found the asset and the post.
+	// Spelled as an OR-arm beside the inline `@@` literal in all three
+	// statements, for the two reasons runPosts records (#1065's guard
+	// classifies the literal by its FROM; `$1` stays named in the COUNT).
+	collectionTextless := `FALSE`
+	if q.Text == "" && !q.Filters.Empty() {
+		collectionTextless = `TRUE`
+	}
+
 	// #1356 — the per-query maximum for this arm; see the long note in
 	// runAssets for why a paged request measures it and a first page
 	// reads it off the window. `$2` is the row limit and is referenced as
@@ -1191,7 +1214,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cu
 		sqlMax := `
 		SELECT COALESCE(MAX(` + collectionScoreExpr + `), 0)::FLOAT8
 		  FROM collections c
-		 WHERE c.search_text @@ plainto_tsquery('english', $1)
+		 WHERE (c.search_text @@ plainto_tsquery('english', $1) OR ` + collectionTextless + `)
 		   AND ($2::BIGINT IS NULL OR TRUE)` + notDeleted + visFrag + selFrag
 		var err error
 		maxScore, err = e.scalarFloat(ctx, sqlMax, baseArgs...)
@@ -1207,14 +1230,14 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cu
 		       c.created_at, c.updated_at, c.visibility,
 		       ` + collectionScoreExpr + ` AS score
 		  FROM collections c
-		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + selFrag + keysetFrag + `
+		 WHERE (c.search_text @@ plainto_tsquery('english', $1) OR ` + collectionTextless + `)` + notDeleted + visFrag + selFrag + keysetFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM collections c
-			 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + selFrag + `
+			 WHERE (c.search_text @@ plainto_tsquery('english', $1) OR ` + collectionTextless + `)` + notDeleted + visFrag + selFrag + `
 			 LIMIT $2
 		) x
 	`

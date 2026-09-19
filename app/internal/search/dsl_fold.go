@@ -48,15 +48,7 @@ func foldDSL(
 	into facet.Selection,
 	text string,
 ) (facet.Selection, string, error) {
-	parsed, err := dsl.Parse(input)
-	if err != nil {
-		return into, text, err
-	}
-	compiled, err := dsl.Compile(parsed)
-	if err != nil {
-		return into, text, err
-	}
-	sel, err := SelectionFromDSL(compiled.Filters, into)
+	compiled, sel, err := CompileDSL(input, into)
 	if err != nil {
 		return into, text, err
 	}
@@ -64,6 +56,48 @@ func foldDSL(
 		text = compiled.FreeText
 	}
 	return sel, text, nil
+}
+
+// CompileDSL is the ONE reading of a DSL string that every execution
+// path shares, and the ONE authority a persistence path consults before
+// storing one (#1173, sprint 25a).
+//
+// # ⛔ WHY IT IS A FUNCTION AND NOT A CONVENTION
+//
+// Execution has always been three steps, [dsl.Parse], [dsl.Compile] and
+// [SelectionFromDSL], and each step rejects things the one before it
+// accepts: the size cap and syntax at parse, placement at compile, value
+// vocabulary and cardinality at the bridge. The saved-search handler
+// used to call only the first, so a query the coordinator would refuse
+// on replay could be persisted without complaint: `NOT preview:missing`
+// would parse, be stored, and fail on every tick thereafter. The fix is
+// not a second list of rules in the handler, which is the "two
+// implementations that agree today" shape ADR 0093 decision 3 refuses;
+// but ONE function that both the four execution sites and the two
+// persistence sites call. A saved search therefore cannot persist a
+// canonical query that execution will later reject, because the check
+// IS the execution's own front half.
+//
+// `into` is whatever the `filter=` parameter already contributed; the
+// persistence sites pass the empty selection because the stored string
+// is the whole query. Errors are [dsl.DSLError] for anything the grammar
+// or the vocabulary refuses, and the parser's plain sentinels (size cap,
+// unterminated string) otherwise, so one error mapping serves every
+// caller.
+func CompileDSL(input string, into facet.Selection) (dsl.CompiledQuery, facet.Selection, error) {
+	parsed, err := dsl.Parse(input)
+	if err != nil {
+		return dsl.CompiledQuery{}, facet.Selection{}, err
+	}
+	compiled, err := dsl.Compile(parsed)
+	if err != nil {
+		return dsl.CompiledQuery{}, facet.Selection{}, err
+	}
+	sel, err := SelectionFromDSL(compiled.Filters, into)
+	if err != nil {
+		return dsl.CompiledQuery{}, facet.Selection{}, err
+	}
+	return compiled, sel, nil
 }
 
 // writeDSLError renders a compiler failure in the SAME shape `/search`

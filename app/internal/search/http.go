@@ -221,14 +221,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // parameter produced, and the compiled FREE TEXT — not the raw DSL
 // string — becomes the query's text.
 func (h *Handler) applyDSL(r *http.Request, query *Query, input string) error {
-	parsed, err := dsl.Parse(input)
-	if err != nil {
-		return err
-	}
-	compiled, err := dsl.Compile(parsed)
-	if err != nil {
-		return err
-	}
 	// #907 — the compiled field:value constraints, folded into the SAME
 	// selection the `filter=` parameter produced. The two compose: a
 	// caller can type `dsl=cat AND tag:sketch` and tick `extension: png`
@@ -238,7 +230,10 @@ func (h *Handler) applyDSL(r *http.Request, query *Query, input string) error {
 	// "we don't have a Filters plumbing at Engine layer today, so the
 	// compiled TSQuery is currently informational". It was accurate; the
 	// plumbing is below.
-	sel, err := SelectionFromDSL(compiled.Filters, query.Filters)
+	//
+	// #1173 sprint 25a: through [CompileDSL], the one reading every
+	// execution AND persistence path shares.
+	compiled, sel, err := CompileDSL(input, query.Filters)
 	if err != nil {
 		return err
 	}

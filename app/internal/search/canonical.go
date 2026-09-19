@@ -86,6 +86,14 @@ var dslFieldForFacet = map[facet.FacetType]dsl.Field{
 	// operator later deletes must stay REPRESENTABLE (it returns zero;
 	// it does not become unparseable).
 	facet.FacetWorkflowState: dsl.FieldWorkflowState,
+
+	// #1173 sprint 25a adds `preview:` and `id:`, both reachable from
+	// `/search`'s own URL and from the advanced page's free-text box (as
+	// `!nopreviews` / `!list…`, which fold onto these before the bridge
+	// sees them), so both are savable by construction. The canonical
+	// spelling is ALWAYS the typed one; a verb is never written back.
+	facet.FacetPreview: dsl.FieldPreview,
+	facet.FacetID:      dsl.FieldID,
 }
 
 // SelectionToDSL renders a [facet.Selection] as canonical DSL: every term
@@ -138,14 +146,30 @@ func SelectionToDSL(sel facet.Selection) (string, error) {
 // that ADDING the selection cannot change what the expression already
 // meant.
 //
-// # The N=0 case is byte-for-byte
+// # The N=0 case is byte-for-byte, EXCEPT for verbs
 //
 // With no selection the expression is returned untouched — not wrapped,
 // not normalised. A search with no filters therefore saves and replays
 // exactly as it did before this change, which is what makes the
 // browser regression's failure attributable to the filters alone.
+//
+// ⚠️ ONE EXCEPTION SINCE #1173 SPRINT 25a, and it is the whole of the
+// exception: a `!nopreviews` or `!list…` VERB inside the expression is
+// written in its canonical typed spelling (`preview:missing`,
+// `(id:… AND id:…)`) by [dsl.Canonicalize] before anything else
+// happens. A verb is input sugar with a defined canonical form, and the
+// column stores the canonical form: ADR 0093's 18a amendment says the
+// stored query is "the canonical form" and that reconstructing the
+// query means reconstructing all of it. Every byte that is NOT a verb
+// token is still carried through untouched, Canonicalize splices by
+// lexer offset and never enters a quoted phrase, so the opacity
+// argument above is unchanged for the expression proper.
 func ComposeDSL(expr string, sel facet.Selection) (string, error) {
 	filters, err := SelectionToDSL(sel)
+	if err != nil {
+		return "", err
+	}
+	expr, err = dsl.Canonicalize(expr)
 	if err != nil {
 		return "", err
 	}
@@ -221,9 +245,23 @@ func SelectionFromDSL(f dsl.Filters, into facet.Selection) (facet.Selection, err
 		{facet.FacetField, f.Fields},
 		{facet.FacetFileSize, f.FileSizes},
 		{facet.FacetWorkflowState, f.WorkflowStates},
+		{facet.FacetPreview, f.Previews},
+		{facet.FacetID, f.IDs},
 	} {
 		if err := add(pair.ft, pair.values); err != nil {
 			return facet.Selection{}, err
+		}
+	}
+	// #1173 sprint 25a: the whole-selection rules, asked of the UNION
+	// of what `filter=` contributed and what the DSL added, after every
+	// duplicate has collapsed. This is the same [facet.Selection.Validate]
+	// ParseSelection asks, which is what makes "at most 50 distinct ids"
+	// one bound through `!list`, `id:` and `filter=id:` alike, and one
+	// bound over a request that splits its ids across two parameters.
+	if err := into.Validate(); err != nil {
+		return facet.Selection{}, dsl.DSLError{
+			Kind:    dsl.SyntaxError,
+			Message: err.Error(),
 		}
 	}
 	return into, nil
