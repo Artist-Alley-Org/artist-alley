@@ -6,6 +6,7 @@ package facet
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/viewkind"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -43,6 +45,13 @@ import (
 //  3. optionally one [Aggregator] if it should also carry counts.
 //
 // No new wire parameter, no new handler branch, no `!bang` syntax.
+//
+// ⚠️ THE LAST CLAUSE HAS ONE DELIBERATE EXCEPTION SINCE #1173 SPRINT
+// 25a: the owner-required `!nopreviews` and `!list<ids>` are accepted by
+// the DSL parser, as SUGAR that folds onto `preview:missing` and `id:`
+// terms of THIS grammar before anything else sees them. There is still
+// no second executor and no second vocabulary; ADR 0056's sub-amendment
+// beside 4d records the exception and its bound.
 //
 // #910 SHIPPED AND THE CLAIM MOSTLY HELD — with two exceptions, recorded
 // here because the next dimension will hit whichever of them applies to
@@ -100,6 +109,13 @@ type Term struct {
 // `filter=` parameter. The handler maps it to 400.
 var ErrBadFilter = errors.New("facet: filter must be <dimension>:<value>")
 
+// ErrTooManyIDs is returned by [Selection.Validate], and therefore by
+// [ParseSelection] and search.SelectionFromDSL, when a selection names
+// more than [MaxIDTerms] distinct ids (#1173, sprint 25a). It wraps
+// [ErrBadFilter] so a handler that already maps that to 400 keeps doing
+// so without learning a new sentinel.
+var ErrTooManyIDs = fmt.Errorf("%w: at most %d distinct id values", ErrBadFilter, MaxIDTerms)
+
 // ParseSelection reads the repeated `filter=<dimension>:<value>` query
 // parameter into a Selection.
 //
@@ -151,7 +167,59 @@ func ParseSelection(raw []string) (Selection, error) {
 		}
 		s = s.With(ft, value)
 	}
+	// Cardinality is a property of the whole selection, so it is asked
+	// once the set is complete, after every duplicate has collapsed.
+	if err := s.Validate(); err != nil {
+		return Selection{}, err
+	}
 	return s, nil
+}
+
+// maxTerms is the largest number of DISTINCT values a dimension may
+// carry in one selection; 0 means unbounded (#1173, sprint 25a).
+//
+// A classification like [FacetType.conjunctive], and deliberately as
+// short: [FacetID] is the only bounded dimension, because it is the
+// only one whose value count is caller-chosen rather than drawn from a
+// vocabulary. See [FacetID] for the arithmetic that fixes the number.
+func (t FacetType) maxTerms() int {
+	if t == FacetID {
+		return MaxIDTerms
+	}
+	return 0
+}
+
+// Validate checks the whole-selection rules that no single term can
+// answer: today, only cardinality (#1173, sprint 25a).
+//
+// # ⛔ ONE PLACE, REACHED FROM EVERY ENTRY PATH
+//
+// [ParseSelection] calls it for `filter=`, and search.SelectionFromDSL
+// calls it for the DSL, the typed `id:` terms and the `!list` alias
+// alike, since the alias has folded onto `id:` long before the bridge
+// sees it. That is what makes the bound the SAME through all three
+// spellings: there is no second count to fall out of step with this
+// one. [Selection.SQL] asks it again as its fail-closed second gate,
+// because [Selection.With] is exported and error-free and a programmatic
+// caller can build a selection the parsers never saw.
+//
+// Counted over the selection's terms, which [Selection.With] has
+// already deduplicated, so 52 raw entries carrying two duplicates are
+// 50 distinct and pass.
+func (s Selection) Validate() error {
+	counts := make(map[FacetType]int, 2)
+	for _, t := range s.terms {
+		counts[t.Type]++
+	}
+	for ft, n := range counts {
+		if limit := ft.maxTerms(); limit > 0 && n > limit {
+			if ft == FacetID {
+				return ErrTooManyIDs
+			}
+			return fmt.Errorf("%w: at most %d %s values", ErrBadFilter, limit, string(ft))
+		}
+	}
+	return nil
 }
 
 // With returns a copy of s carrying one more term. Duplicate
@@ -514,6 +582,29 @@ func (t FacetType) CanonicalValue(v string) (string, bool) {
 		// [WorkflowStateNone], or `<domain>/<code>` with both halves
 		// non-empty. See [canonicalWorkflowState].
 		return canonicalWorkflowState(v)
+	case FacetPreview:
+		// #1173 sprint 25a: a CLOSED SET OF ONE. `missing` is the whole
+		// vocabulary; there is no `present` (see [FacetPreview]), and a
+		// tolerated unknown value would render a predicate that matches
+		// nothing under a label promising a narrowing, [FacetAI]'s
+		// reason, one value smaller. Folded and trimmed because the
+		// literal is this repository's, not caller text.
+		if strings.ToLower(strings.TrimSpace(v)) == PreviewMissing {
+			return PreviewMissing, true
+		}
+		return "", false
+	case FacetID:
+		// #1173 sprint 25a: a row id, canonicalised exactly as
+		// [FacetCollection]'s is and for the same two reasons: the value
+		// reaches a `::UUID` cast, and google/uuid accepts spellings
+		// (braced, hyphenless, upper case) that must collapse to ONE so
+		// that `{X}` and `x` are one term, one cache key and one entry
+		// against the cardinality bound.
+		id, err := uuid.Parse(strings.TrimSpace(v))
+		if err != nil {
+			return "", false
+		}
+		return id.String(), true
 	}
 	return v, true
 }
@@ -1310,6 +1401,14 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int, rc 
 	if len(s.terms) == 0 {
 		return "", nil, true
 	}
+	// Second gate on cardinality, for the reason the value gate below
+	// gives: [Selection.With] is exported and error-free, so a selection
+	// the parsers never validated can reach here. Fail CLOSED, "this
+	// entity matches nothing", rather than render a predicate the
+	// stored form could never replay (#1173, sprint 25a).
+	if err := s.Validate(); err != nil {
+		return "", nil, false
+	}
 	a := strings.TrimSpace(alias)
 	if a != "" {
 		a += "."
@@ -1983,6 +2082,69 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, sh 
 			                              AND fws.code = substr(` + p + `::TEXT,
 			                                    strpos(` + p + `::TEXT, '` + workflowStateSep + `') + 1))
 			         END)`, true
+		}
+	case FacetPreview:
+		// #1173 sprint 25a: "the pipeline produced no preview for this",
+		// as an ordinary predicate. Three conjuncts, each from the
+		// authority that already owns its question:
+		//
+		//   1. THE PICTURE PLANE: visibility.PreviewReadableSQL, the SQL
+		//      twin of PreviewReadable, composed from the render context
+		//      every site supplies. Whether a picture exists is a fact
+		//      about the bytes, and the FIELD plane the execution sites
+		//      AND on carries ADR 0064's mutation disjunct, which admits a
+		//      team-scoped assets.admin holder to the columns and
+		//      deliberately NOT to the picture. Left to the field plane
+		//      alone, this dimension would answer that holder one bit of
+		//      the binary plane per query. It fails CLOSED on an empty
+		//      caller placeholder, as the `kind:` post arm does, because
+		//      the zero Caller reads as "user zero" and is wider than
+		//      anonymous. It folds to nothing for system.admin and
+		//      content.read.all, who hold the plane already.
+		//   2. PREVIEWABLE: dispatch.PreviewableSQL, the router's own
+		//      allowlist rendered to SQL with the router's own
+		//      normalisation, never a list written here.
+		//   3. NO `col`: the negation of the exact EXISTS
+		//      `preview_available` reads (assets/handler.go,
+		//      assets/list_page.go). Never `processing_status`: a poster
+		//      writes `col` under `pending` and a fan failure marks a row
+		//      `ready` with none, so status is wrong in both directions.
+		//
+		// The placeholder holds the vocabulary's one literal and is read
+		// as a tautology-shaped comparison against it, because every term
+		// appends exactly one arg and pgx rejects a statement that does
+		// not name it; [FacetType.CanonicalValue] has already proven the
+		// bytes are `missing`.
+		if e == visibility.EntityAsset {
+			if rc.CallerArg == "" {
+				return "", false
+			}
+			return `(` + p + `::TEXT = '` + PreviewMissing + `'
+			          AND ` + dispatch.PreviewableSQL(a+`file_extension`) + `
+			          AND NOT EXISTS (SELECT 1 FROM storage_variants fpv
+			                           WHERE fpv.object_hash = ` + a + `file_hash
+			                             AND fpv.variant_key = 'col')` +
+				visibility.PreviewReadableSQL(strings.TrimSuffix(a, "."), rc.CallerArg, rc.Caller, rc.Caps) +
+				`)`, true
+		}
+		// A post is a set of members and a collection is a container;
+		// neither has a file the pipeline could have rendered, so both
+		// fall through to ok=false, the POSITIVE-NARROWING direction
+		// [FacetFileSize] records, and the reason a mixed-type
+		// `preview:missing` query returns only assets.
+	case FacetID:
+		// #1173 sprint 25a: "one of these rows", as an ordinary
+		// predicate on each entity's OWN id column. Cast on the
+		// placeholder, not the column, for [FacetCollection]'s reason:
+		// `id` is the primary key and casting it would give up the index.
+		// [FacetType.CanonicalValue] has already proven the value parses.
+		//
+		// All three entities answer, because an id is the one thing every
+		// entity has; the read rule each site ANDs on afterwards decides
+		// whether the caller may see the row it names.
+		switch e {
+		case visibility.EntityAsset, visibility.EntityPost, visibility.EntityCollection:
+			return a + `id = ` + p + `::UUID`, true
 		}
 	case FacetCollection:
 		// #910 — "search inside this collection", as an ordinary

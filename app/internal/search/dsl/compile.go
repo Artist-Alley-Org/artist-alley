@@ -168,6 +168,19 @@ type Filters struct {
 	// state, so two identities mean OR, and a plain assignment would
 	// keep the last and drop the first with no error and no log line.
 	WorkflowStates []string
+	// Previews are `preview:` values, carried WHOLE (#1173, sprint 25a).
+	// The only legal value is `missing`, and [facet.FacetType.CanonicalValue]
+	// is where that is decided; this slice only has to avoid destroying
+	// the term before it gets there.
+	Previews []string
+	// IDs are `id:` values, canonical lowercase hyphenated UUIDs when
+	// they arrived through `!list` and whatever the caller typed when
+	// they arrived as `id:`; the facet bridge canonicalises both (#1173,
+	// sprint 25a). Values OR: a row has exactly one id, so an AND over
+	// two of them returns nothing forever, which is [Extensions]' reason
+	// one slice over. Duplicates may survive here; the selection collapses
+	// them, and the cardinality rule counts distinct ids after that.
+	IDs []string
 
 	// Below are compiler-internal buckets consumed by the Engine's
 	// SQL renderer. Kept exported-lowercase so tests in this
@@ -185,7 +198,7 @@ func Compile(q Query) (CompiledQuery, error) {
 		return CompiledQuery{}, nil
 	}
 	c := &compiler{}
-	tsQ, err := c.walk(q.Root)
+	tsQ, err := c.walk(q.Root, true)
 	if err != nil {
 		return CompiledQuery{}, err
 	}
@@ -239,14 +252,22 @@ func (c *compiler) nextPlaceholder(v any) string {
 }
 
 // walk renders one AST node to a ts_query fragment. Recursive.
-func (c *compiler) walk(n Node) (string, error) {
+//
+// `top` is the POSITIONAL CONTEXT #1173 sprint 25a adds: true while
+// every ancestor of n is an AndNode (n is a top-level conjunct), false
+// once an OrNode or a NotNode has been passed through. It changes
+// nothing about how a fragment renders or how a filter is flattened;
+// it exists so [compiler.walkFieldMatch] can refuse a
+// [Field.topLevelOnly] dimension written under OR or NOT. Every other
+// dimension keeps the flattening ADR 0093 records.
+func (c *compiler) walk(n Node, top bool) (string, error) {
 	switch x := n.(type) {
 	case AndNode:
-		l, err := c.walk(x.Left)
+		l, err := c.walk(x.Left, top)
 		if err != nil {
 			return "", err
 		}
-		r, err := c.walk(x.Right)
+		r, err := c.walk(x.Right, top)
 		if err != nil {
 			return "", err
 		}
@@ -261,11 +282,11 @@ func (c *compiler) walk(n Node) (string, error) {
 		}
 		return "(" + l + ") && (" + r + ")", nil
 	case OrNode:
-		l, err := c.walk(x.Left)
+		l, err := c.walk(x.Left, false)
 		if err != nil {
 			return "", err
 		}
-		r, err := c.walk(x.Right)
+		r, err := c.walk(x.Right, false)
 		if err != nil {
 			return "", err
 		}
@@ -280,7 +301,7 @@ func (c *compiler) walk(n Node) (string, error) {
 		}
 		return "(" + l + ") || (" + r + ")", nil
 	case NotNode:
-		inner, err := c.walk(x.Inner)
+		inner, err := c.walk(x.Inner, false)
 		if err != nil {
 			return "", err
 		}
@@ -304,7 +325,7 @@ func (c *compiler) walk(n Node) (string, error) {
 		c.freeText = append(c.freeText, x.Text)
 		return "phraseto_tsquery('english', " + c.nextPlaceholder(x.Text) + ")", nil
 	case FieldMatchNode:
-		return c.walkFieldMatch(x)
+		return c.walkFieldMatch(x, top)
 	case SimilarToNode:
 		// Phase 1.16.B-3 — the compiler records the ID; the
 		// Service resolves it to an embedding + populates
@@ -326,7 +347,20 @@ func (c *compiler) walk(n Node) (string, error) {
 // walkFieldMatch renders a `field:value` node as either a
 // weight-restricted tsquery sub-expression (title / description /
 // body) or a Filter set-side effect (tag / owner / etc.).
-func (c *compiler) walkFieldMatch(m FieldMatchNode) (string, error) {
+//
+// `top` is [compiler.walk]'s positional context. A [Field.topLevelOnly]
+// dimension anywhere but a top-level conjunct is refused HERE, on the
+// resolved dimension, which is what makes the alias and the canonical
+// spelling fail identically: by the time a node reaches this function
+// `!nopreviews` has already become `preview:missing`.
+func (c *compiler) walkFieldMatch(m FieldMatchNode, top bool) (string, error) {
+	if m.Field.topLevelOnly() && !top {
+		return "", DSLError{
+			Kind: Placement,
+			Message: fmt.Sprintf("%s: is legal only as a top-level AND term; "+
+				"it cannot appear under NOT or OR", string(m.Field)),
+		}
+	}
 	switch m.Field {
 	case FieldTitle:
 		// Weighted-tsvector match against class A only. ts_query
@@ -379,6 +413,16 @@ func (c *compiler) walkFieldMatch(m FieldMatchNode) (string, error) {
 		// Opaque `<domain>/<code>` or `none`, straight through. See
 		// [FieldWorkflowState].
 		c.filters.WorkflowStates = append(c.filters.WorkflowStates, m.Value)
+		return "", nil
+	case FieldPreview:
+		// Opaque here; the facet layer's closed vocabulary decides. See
+		// [FieldPreview].
+		c.filters.Previews = append(c.filters.Previews, m.Value)
+		return "", nil
+	case FieldID:
+		// Opaque here; the facet layer canonicalises and counts. See
+		// [FieldID].
+		c.filters.IDs = append(c.filters.IDs, m.Value)
 		return "", nil
 	}
 	// Unreachable — parser's whitelist gate ensures every Field is

@@ -9,10 +9,13 @@
 //	query    := expr
 //	expr     := term (BOOL_OP term)*
 //	term     := NOT? factor
-//	factor   := LPAREN expr RPAREN | phrase | fieldMatch | freeText
+//	factor   := LPAREN expr RPAREN | phrase | fieldMatch | verb | freeText
 //	phrase   := STRING           // "quoted phrase"
 //	fieldMatch := IDENT COLON (STRING | WORD)
-//	freeText := WORD             // any bare token
+//	verb     := "!" WORD         // an alias that FOLDS to a fieldMatch
+//	                             // (or an AND chain of them) at parse
+//	                             // time; see verbs.go
+//	freeText := WORD             // any bare token not beginning with "!"
 //	BOOL_OP  := "AND" | "OR"     // Boolean operators; NOT is a
 //	                             // prefix modifier on term, not an
 //	                             // infix operator
@@ -20,7 +23,18 @@
 // Field whitelist (enforced at parse time; any other field → error):
 //
 //	title, description, body, tag, owner, type, sensitivity,
-//	extension, similar_to
+//	extension, similar_to, field, file_size, workflow_state,
+//	preview, id
+//
+// Verbs (#1173, sprint 25a): `!nopreviews` is `preview:missing` and
+// `!list<uuid>,<uuid>,...` is `id:<uuid> AND id:<uuid> AND ...`. A verb
+// is sugar over the typed grammar and nothing else: the parser folds it
+// into the node the canonical spelling produces, the compiler never
+// sees a verb, and [Canonicalize] writes the canonical spelling back
+// into a stored query. `preview` and `id` are legal only as top-level
+// AND terms; `NOT` or `OR` over either is a compile-time error on both
+// spellings. The remaining dimensions keep the flattening described in
+// [Filters].
 //
 // Compilation produces two things:
 //

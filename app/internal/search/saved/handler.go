@@ -121,16 +121,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	canonical, err := search.ComposeDSL(req.DSL, selection)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "filter_not_representable", "message": err.Error()})
-		return
-	}
-	// Validate the composed DSL now so an unparseable query never lands
-	// in the table + wedges the coordinator later. ⛔ The COMPOSED string,
-	// not the caller's expression: the stored value is what the executor
-	// will parse, and validating the half of it that was posted would
-	// leave the other half unchecked.
-	if _, err := dsl.Parse(canonical); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "dsl_parse_error", "message": err.Error()})
+		h.writeComposeError(w, err)
 		return
 	}
 	// ComposeDSL trims, so a body carrying only whitespace reaches here
@@ -138,6 +129,15 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	// could not run.
 	if canonical == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name_and_dsl_required"})
+		return
+	}
+	// Validate the composed DSL now so a query the coordinator would
+	// refuse never lands in the table + wedges it later. ⛔ The COMPOSED
+	// string, not the caller's expression: the stored value is what the
+	// executor will run, and validating the half of it that was posted
+	// would leave the other half unchecked. And ⛔ THE EXECUTOR'S OWN
+	// READING, not a parse alone (#1173, sprint 25a): see validateForExecution.
+	if !h.validateForExecution(w, canonical) {
 		return
 	}
 
@@ -165,6 +165,69 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, rowToJSON(row))
+}
+
+// validateForExecution is the PRE-PERSISTENCE CONTRACT (#1173, sprint
+// 25a): a saved search may not persist a canonical query that execution
+// will later reject. It writes the 400 and returns false on refusal.
+//
+// # ⛔ ONE AUTHORITY, AND IT IS THE EXECUTOR'S
+//
+// This used to be `dsl.Parse(canonical)`, which proves SYNTAX. The
+// executor ([Executor.Run]) does more than parse: it compiles, which is
+// where a top-level-only dimension under NOT or OR is refused, and it
+// bridges into a facet selection, which is where `preview:present` and
+// a 51st distinct id are refused. Each of those gaps was a row that
+// would save with a 201 and then fail on every coordinator tick.
+//
+// The fix is deliberately NOT a list of those rules written here. It is
+// [search.CompileDSL], the single function the executor itself calls,
+// asked the same question with the same empty selection the executor
+// passes. Whatever that function learns to refuse next is refused here
+// on the same day, because there is no second copy to update.
+//
+// The error shape mirrors /search: a typed [dsl.DSLError] renders as
+// `dsl_error` with its kind and message, and the parser's plain
+// sentinels, the byte cap among them, render as `dsl_parse_error`,
+// which is the code this path has always used for an unparseable
+// composed string.
+func (h *Handler) validateForExecution(w http.ResponseWriter, canonical string) bool {
+	if _, _, err := search.CompileDSL(canonical, facet.Selection{}); err != nil {
+		writeDSLFailure(w, err)
+		return false
+	}
+	return true
+}
+
+// writeComposeError renders a [search.ComposeDSL] failure. Two things
+// can fail there: a selection dimension with no DSL spelling
+// ([search.ErrDimensionNotRepresentable], the code this path has always
+// used), and since #1173 sprint 25a a malformed VERB in the expression,
+// which [dsl.Canonicalize] refuses with the parser's own error and is
+// rendered in the parser's own shape.
+func (h *Handler) writeComposeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, search.ErrDimensionNotRepresentable) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "filter_not_representable", "message": err.Error()})
+		return
+	}
+	writeDSLFailure(w, err)
+}
+
+// writeDSLFailure renders a DSL rejection in the SAME shape /search
+// does: a typed [dsl.DSLError] as `dsl_error` with its kind and message,
+// anything else (the byte cap, an unterminated string) as
+// `dsl_parse_error`, which is the code this path has always used for an
+// unparseable composed string.
+func writeDSLFailure(w http.ResponseWriter, err error) {
+	if de, ok := err.(dsl.DSLError); ok {
+		payload := map[string]any{"error": "dsl_error", "kind": int(de.Kind), "message": de.Message}
+		if len(de.ValidFields) > 0 {
+			payload["valid_fields"] = de.ValidFields
+		}
+		writeJSON(w, http.StatusBadRequest, payload)
+		return
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "dsl_parse_error", "message": err.Error()})
 }
 
 // --- list -----------------------------------------------------------------
@@ -225,10 +288,24 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.DSL != nil {
-		if _, err := dsl.Parse(*req.DSL); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "dsl_parse_error", "message": err.Error()})
+		// The same composer and the same validator the create path uses,
+		// so a patched query is stored in the same canonical form (verbs
+		// folded, #1173 sprint 25a) and cannot be stored in a shape the
+		// coordinator will refuse. An empty selection: a PATCH carries the
+		// whole query as one string.
+		canonical, err := search.ComposeDSL(*req.DSL, facet.Selection{})
+		if err != nil {
+			h.writeComposeError(w, err)
 			return
 		}
+		if canonical == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name_and_dsl_required"})
+			return
+		}
+		if !h.validateForExecution(w, canonical) {
+			return
+		}
+		req.DSL = &canonical
 	}
 	updated, err := h.Store.Update(r.Context(), row.ID, UpdateParams{
 		Name:                  req.Name,

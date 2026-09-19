@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/search"
-	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
@@ -81,24 +80,21 @@ func NewExecutor(pool *pgxpool.Pool, engine EngineRunner, fetcher *vector.Fetche
 // at execution time — the whole invariant this sub-phase is built
 // around.
 func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
-	parsed, err := dsl.Parse(row.DSL)
-	if err != nil {
-		return RunResult{}, fmt.Errorf("saved.Execute: parse dsl: %w", err)
-	}
-	compiled, err := dsl.Compile(parsed)
-	if err != nil {
-		return RunResult{}, fmt.Errorf("saved.Execute: compile dsl: %w", err)
-	}
-	// #1368 — the stored DSL is now the WHOLE query, filters included, so
+	// #1368, the stored DSL is the WHOLE query, filters included, so
 	// this conversion is what makes a replay narrow the way the page it
 	// was saved from narrowed. It can reject (a `field:` bound that is not
 	// a date), which is a stored row that cannot run rather than a
 	// transient failure — surfaced as an error so the coordinator logs it
 	// instead of quietly running the query WITHOUT the filter it could not
 	// read, which is the exact widening this issue is about.
-	selection, err := search.SelectionFromDSL(compiled.Filters, facet.Selection{})
+	//
+	// #1173 sprint 25a: through [search.CompileDSL], the SAME function
+	// the handler that stored this row consulted before storing it. That
+	// is the pre-persistence contract: a row this call would reject
+	// cannot have been written.
+	compiled, selection, err := search.CompileDSL(row.DSL, facet.Selection{})
 	if err != nil {
-		return RunResult{}, fmt.Errorf("saved.Execute: filters: %w", err)
+		return RunResult{}, fmt.Errorf("saved.Execute: dsl: %w", err)
 	}
 
 	// Build the Engine.Query with the owner as caller so

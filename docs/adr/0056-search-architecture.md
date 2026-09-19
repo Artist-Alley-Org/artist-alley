@@ -369,6 +369,33 @@ mixed-version state. `db.TestMigration00071_KindVocabulary_UpDownUp` walks v70, 
 real rows. The asset trigger also refreshes on `asset_type` / `file_extension`, which nothing on
 the wire updates today; a document that derives from a column follows that column.
 
+#### 4e. TWO OWNER-REQUIRED VERBS, AS SUGAR OVER THE TYPED GRAMMAR, amendment 2026-09-19 (#1173, sprint 25a)
+
+Decision 3 above says **"No `!bang` special syntax"**, and gives the reason: a second vocabulary
+is a second code path to keep honest. That reason is kept in full; the statement is superseded
+for exactly two aliases the owner requires and types today: `!nopreviews` and
+`!list<uuid>,<uuid>,...`. Before this amendment both lexed as one word each and reached
+`plainto_tsquery` as free text, so the advanced page answered an empty 200.
+
+**A verb is input sugar and nothing else.** The parser folds `!nopreviews` into the same
+`FieldMatchNode` that `preview:missing` produces, and `!list<a>,<b>` into the same
+left-associative AND chain that `(id:<a> AND id:<b>)` produces, before `parseFactor` returns.
+The compiler, the facet bridge, the placement rule, the serializer and the saved-search
+executor never see a verb; there is one AST shape, one dimension, and no second executor.
+`dsl.Canonicalize` writes a verb back in its typed spelling by lexer offset, so a stored query
+carries the dimension and not the alias, and a `"!nopreviews"` inside quotes stays a phrase.
+The verb registry is matched by name prefix, longest first; an unknown verb is an error naming
+the ones that exist, and `!last...` is deliberately unknown in 25a.
+
+**What decision 3 predicted, measured against this.** No new wire parameter, no new handler
+branch. Two `FacetType` constants, two `dimensionSQL` arms, one `Field` classification
+(`topLevelOnly`), one bridge entry each way, and a verb table of two rows. The grammar's
+extensibility claim holds; what it did not anticipate is that a dimension might need a
+placement rule, which ADR 0093's 25a amendment records.
+
+**Deferred to sprint 25b, and not decided here:** `!lastN`, recency ordering and any cursor
+payload change. This amendment changes nothing in section 1's cursor or `total_count` contract.
+
 ### 5. Autocomplete via `pg_trgm` (B-2)
 
 - Extension `pg_trgm` added in migration 00022.

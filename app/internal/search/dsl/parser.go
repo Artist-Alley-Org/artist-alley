@@ -73,7 +73,58 @@ const (
 	// added anywhere. The same machinery covers a code carrying
 	// whitespace, a quote or a backslash, which #897 permits.
 	FieldWorkflowState Field = "workflow_state"
+	// FieldPreview is the `preview:` dimension: a previewable asset with
+	// no servable `col` thumbnail (#1173, sprint 25a). Its only legal
+	// value is `missing`; `!nopreviews` is input sugar that folds onto
+	// exactly this node (see [foldVerb]).
+	//
+	// ⛔ THE VALUE IS NOT VALIDATED HERE, for [FieldField]'s reason:
+	// [facet.FacetType.CanonicalValue] is the single authority for the
+	// closed vocabulary, and it refuses everything but `missing` on both
+	// spellings. It IS placement-checked: see [Field.topLevelOnly].
+	FieldPreview Field = "preview"
+	// FieldID is the `id:` dimension: an explicit member of the result
+	// set, named by its own row id (#1173, sprint 25a). Values within
+	// the dimension OR, so `id:a AND id:b` is "either of these two", and
+	// `!list<a>,<b>` is input sugar that folds onto exactly that pair.
+	//
+	// ⛔ THE VALUE IS NOT VALIDATED HERE either: the alias fold parses
+	// each entry because it has to split the list, and
+	// [facet.FacetType.CanonicalValue] canonicalises the typed spelling.
+	// Both call google/uuid; neither carries a UUID grammar of its own.
+	// Cardinality (at most [facet.MaxIDTerms] distinct ids) is a property
+	// of the SELECTION and is enforced there, once, for every entry path.
+	FieldID Field = "id"
 )
+
+// topLevelOnly reports whether a dimension is legal ONLY as a top-level
+// conjunct of the query (#1173, sprint 25a).
+//
+// # ⛔ WHY SOME DIMENSIONS GET A PLACEMENT RULE AND THE REST KEEP FLATTENING
+//
+// [compiler.walk] pushes every `field:value` into a flat [Filters] set
+// as a side effect, regardless of the AND / OR / NOT it was written
+// under. ADR 0093's 2026-08-29 amendment records that as the accepted
+// contract for the existing dimensions: the combination rule is a
+// property of the DIMENSION, and a hand-written boolean over filters is
+// not something the round trip promises to preserve. That contract is
+// not redesigned here.
+//
+// The Sprint 25a dimensions are different in kind. `preview:missing`
+// and `id:<uuid>` are SELECTIONS a reader makes about the result set,
+// not properties they would ever want to negate or disjoin, and a
+// query that spelled `NOT preview:missing` would silently compile to
+// the opposite of what it says under flattening. So these are refused
+// anywhere but at the top level, and the check runs on the RESOLVED
+// dimension after alias folding, which is what makes `NOT !nopreviews`
+// and `NOT preview:missing` fail identically rather than one of them
+// slipping through as a different token.
+//
+// The list is a classification, like facet's `conjunctive`, and it is
+// deliberately short. Sprint 25b adds `last` here and nowhere else.
+func (f Field) topLevelOnly() bool {
+	return f == FieldPreview || f == FieldID
+}
 
 // AllFields is the whitelist. Exposed so error responses can list
 // every valid choice.
@@ -81,6 +132,7 @@ var AllFields = []Field{
 	FieldTitle, FieldDescription, FieldBody, FieldTag, FieldOwner,
 	FieldType, FieldSensitivity, FieldExtension, FieldSimilarTo,
 	FieldField, FieldFileSize, FieldWorkflowState,
+	FieldPreview, FieldID,
 }
 
 // ParseField normalises a case-insensitive identifier to its
@@ -112,6 +164,10 @@ func ParseField(s string) (Field, bool) {
 		return FieldFileSize, true
 	case "workflow_state":
 		return FieldWorkflowState, true
+	case "preview":
+		return FieldPreview, true
+	case "id":
+		return FieldID, true
 	}
 	return "", false
 }
@@ -288,6 +344,13 @@ func (p *parser) parseFactor() (Node, error) {
 		p.advance()
 		return PhraseNode{Text: t.Value}, nil
 	case TokWord:
+		// A word beginning with `!` is a VERB, never free text (#1173,
+		// sprint 25a). Checked BEFORE the colon look-ahead so `!list:a`
+		// is refused as a malformed verb rather than reaching
+		// parseFieldMatch as the unknown field "!list".
+		if strings.HasPrefix(t.Value, "!") {
+			return p.parseVerb()
+		}
 		// Look ahead for ':' — if present it's a field-match.
 		if p.pos+1 < len(p.tokens) && p.tokens[p.pos+1].Kind == TokColon {
 			return p.parseFieldMatch()
@@ -346,6 +409,15 @@ const (
 	UnknownField DSLErrorKind = iota
 	SyntaxError
 	SimilarToNotImplemented
+	// UnknownVerb is a `!word` the grammar has no verb for (#1173,
+	// sprint 25a). Its own kind, beside [UnknownField], so a client can
+	// tell "no such verb" from a syntax slip; the message lists the
+	// verbs that exist.
+	UnknownVerb
+	// Placement is a dimension written somewhere it is not legal: a
+	// top-level-only dimension beneath NOT or OR (#1173, sprint 25a).
+	// See [Field.topLevelOnly].
+	Placement
 )
 
 // DSLError is the typed error for parse + compile stages. Passed
