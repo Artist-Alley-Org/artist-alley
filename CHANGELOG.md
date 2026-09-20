@@ -9,6 +9,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Advanced Search understands three special verbs.** Typed into the advanced search's query
+  (the simple search bar is deliberately unchanged), `!nopreviews` finds files the preview
+  pipeline should have rendered but has no usable preview for, so an operator can see at a
+  glance what needs attention; `!list<id>,<id>,...` returns exactly the files, posts or
+  collections with those ids (up to 50), which is what makes a set of ids shareable as a
+  search; and `!lastN`, for example `!last500`, returns the newest N things across whatever
+  kinds the search covers, newest first, with every other word and filter in the same query
+  narrowing inside that recent set rather than reaching past it. Each verb is a plain
+  spelling of the ordinary typed grammar (`preview:missing`, `id:<uuid>`, `last:N`), so it
+  composes with every other filter, appears in the suggestion lists beside the query, and can
+  be saved and replayed like any other search. A `!last` search pages with its own cursor and
+  reports an exact count; a `!last` query cannot be combined with a similar-image search, and
+  says so. What a person may see is never widened by a verb: a file whose details are withheld
+  from you takes no place in your `!last` window and does not answer `!nopreviews`. (#1173,
+  PRs #1443, #1444)
 - **Typing a kind of file finds it.** Searching for `ebook`, `video`, `sprite`, `3d`, `pdf`,
   `audio`, `font`, `doc`, `audiobook`, `archive` or `image` in the ordinary search box now finds
   the posts that contain a file of that kind and the files themselves, without anyone having
