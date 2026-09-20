@@ -31,11 +31,13 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -45,6 +47,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector"
 	"github.com/mscrnt/artist-alley/app/internal/testdb"
@@ -799,6 +802,96 @@ func TestLastWindow_SimilarityIsOneDeterministicRefusal(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), contract["message"].(string)) {
 		t.Errorf("Engine.Run with a window and a hint: %v, want the same refusal", err)
+	}
+}
+
+// TestLastWindow_SimilarityRefusalDoesNotDependOnTheAnchor: the split
+// spelling is refused at CompileDSL, BEFORE the handler resolves the
+// anchor, so an anchor that is visible but has no embedding (which on
+// its own is the existing 404), or one the caller may not read, gets
+// the same 400 as the all-DSL spellings.
+func TestLastWindow_SimilarityRefusalDoesNotDependOnTheAnchor(t *testing.T) {
+	pool := coPool(t)
+	lwUsers(t, pool)
+	b := lwBase()
+	// Visible to everyone, deliberately NOT embedded.
+	unembedded := lwAsset(t, pool, uuid.New(), lwOwner, "unembedded anchor", "public", "png", b.Add(2*time.Second))
+	// Restricted: a stranger cannot read it, so it cannot anchor them.
+	restricted := lwAsset(t, pool, uuid.New(), lwOwner, "restricted anchor", "restricted", "png", b.Add(1*time.Second))
+
+	// (A) Positive control: the fixture reaches anchor resolution and
+	// gets the existing not-embedded answer.
+	alone := lwGet(t, pool, lwOwnerID(), url.Values{"dsl": {"similar_to:" + unembedded.String()}})
+	if alone.Status != http.StatusNotFound || alone.Body["error"] != "similar_to_asset_not_embedded" {
+		t.Fatalf("similar_to alone on an unembedded anchor → %d %v, want 404 similar_to_asset_not_embedded", alone.Status, alone.Body)
+	}
+	strangerAlone := lwGet(t, pool, lwStrangerID(), url.Values{"dsl": {"similar_to:" + restricted.String()}})
+	if strangerAlone.Status != http.StatusNotFound {
+		t.Fatalf("stranger's similar_to on a restricted anchor → %d %v, want the existing 404", strangerAlone.Status, strangerAlone.Body)
+	}
+
+	// (B) Every spelling, one contract, and never the 404.
+	type call struct {
+		name string
+		id   *auth.Identity
+		q    url.Values
+	}
+	calls := []call{
+		{"dsl=last:5 AND similar_to", lwOwnerID(), url.Values{"dsl": {"last:5 AND similar_to:" + unembedded.String()}}},
+		{"dsl=!last5 AND similar_to", lwOwnerID(), url.Values{"dsl": {"!last5 AND similar_to:" + unembedded.String()}}},
+		{"dsl=similar_to&filter=last:5", lwOwnerID(), url.Values{"dsl": {"similar_to:" + unembedded.String()}, "filter": {"last:5"}}},
+		{"dsl=similar_to word&filter=last:5", lwOwnerID(), url.Values{"dsl": {"similar_to:" + unembedded.String() + " " + lwPhrase}, "filter": {"last:5"}}},
+		{"stranger, restricted anchor, split", lwStrangerID(), url.Values{"dsl": {"similar_to:" + restricted.String()}, "filter": {"last:5"}}},
+		{"stranger, restricted anchor, all-DSL", lwStrangerID(), url.Values{"dsl": {"!last5 AND similar_to:" + restricted.String()}}},
+		{"unknown anchor, split", lwOwnerID(), url.Values{"dsl": {"similar_to:" + uuid.NewString()}, "filter": {"last:5"}}},
+	}
+	var contract map[string]any
+	for _, c := range calls {
+		r := lwGet(t, pool, c.id, c.q)
+		if r.Status != http.StatusBadRequest || r.Body["error"] != "dsl_error" {
+			t.Errorf("%s → %d %v, want 400 dsl_error (never the anchor's 404)", c.name, r.Status, r.Body)
+			continue
+		}
+		got := map[string]any{"kind": r.Body["kind"], "message": r.Body["message"]}
+		if contract == nil {
+			contract = got
+			continue
+		}
+		if got["kind"] != contract["kind"] || got["message"] != contract["message"] {
+			t.Errorf("%s produced %v, the first spelling produced %v; the contract must be one", c.name, got, contract)
+		}
+	}
+	if contract == nil {
+		t.Fatal("no contract captured")
+	}
+	if msg, _ := contract["message"].(string); !strings.Contains(msg, "similar_to") {
+		t.Errorf("contract message %q does not name the incompatibility", msg)
+	}
+}
+
+// TestCompileDSL_RefusesLastBesideSimilarityFromTheFilterParameter is
+// the shared seam directly: the compiled DSL carries the anchor and the
+// incoming selection carries the window, and the result is exactly the
+// one value.
+func TestCompileDSL_RefusesLastBesideSimilarityFromTheFilterParameter(t *testing.T) {
+	sel, err := facet.ParseSelection([]string{"last:5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := uuid.NewString()
+	_, _, err = CompileDSL("similar_to:"+anchor, sel)
+	var de dsl.DSLError
+	if !errors.As(err, &de) || !reflect.DeepEqual(de, dsl.ErrLastWithSimilarity) {
+		t.Fatalf("CompileDSL(similar_to, last:5) = %v, want exactly dsl.ErrLastWithSimilarity", err)
+	}
+	// Either fact alone passes the seam.
+	if _, _, err := CompileDSL("similar_to:"+anchor, facet.Selection{}); err != nil {
+		t.Errorf("similar_to alone: %v", err)
+	}
+	if _, got, err := CompileDSL(lwPhrase, sel); err != nil {
+		t.Errorf("text with a filter window: %v", err)
+	} else if _, ok := got.RecentWindow(); !ok {
+		t.Error("the filter window was lost through the bridge")
 	}
 }
 

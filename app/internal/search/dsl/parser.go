@@ -478,10 +478,13 @@ var (
 // The two terms can arrive in ONE string (`last:5 AND similar_to:<id>`,
 // either spelling), where [Compile] sees both and refuses, or SPLIT
 // across `dsl=similar_to:<id>` and `filter=last:5`, where no single
-// parse sees both and only the composed Query does. So search.Engine.Run
-// refuses again at its entry, and returns THIS value, so the HTTP edge
-// renders one 400 with one code, one kind and one message whichever
-// seam caught it. It is a [DSLError] value, so errors.As finds it
+// parse sees both. search.CompileDSL sees both once it has bridged the
+// compiled filters into the final selection, and refuses there BEFORE
+// the handler resolves the anchor, so the split spelling's answer never
+// depends on whether the anchor exists, is readable or is embedded; and
+// search.Engine.Run refuses again at its entry for programmatic callers.
+// All three return THIS value, so the HTTP edge renders one 400 with
+// one code, one kind and one message whichever seam caught it. It is a [DSLError] value, so errors.As finds it
 // through the executor's and the coordinator's wrapping too, and the
 // edge renders it with the branch it already has for compiler errors.
 var ErrLastWithSimilarity = DSLError{
