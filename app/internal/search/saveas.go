@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -149,6 +150,13 @@ func (h *SaveAsCollectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		if errors.Is(err, ErrEmptyQuery) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query_required"})
+			return
+		}
+		// #1173 sprint 25b: `last:` beside a similarity hint, refused
+		// at the engine's entry, rendered as the SAME dsl_error /search
+		// and the compiler produce. See dsl.ErrLastWithSimilarity.
+		if de := (dsl.DSLError{}); errors.As(err, &de) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "dsl_error", "kind": int(de.Kind), "message": de.Message})
 			return
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error"})

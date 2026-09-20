@@ -198,6 +198,17 @@ func keyForQuery(q Query) string {
 		sb.WriteString(q.Cursor.LastID.String())
 		sb.WriteByte(':')
 		sb.WriteString(string(q.Cursor.LastType))
+		// #1173 sprint 25b: and the cursor's ORDER and RECENCY KEY,
+		// which are execution inputs the engine reads exactly as it
+		// reads the score: two recent pages after different timestamps
+		// are two different pages, and a recent cursor and a relevance
+		// cursor at the same id are two different cuts. N and the recent
+		// mode itself are already in the key through the selection
+		// (`last:N` is a filter term, folded by Filters.CacheKey above).
+		sb.WriteByte(':')
+		sb.WriteString(string(q.Cursor.Order))
+		sb.WriteByte(':')
+		sb.WriteString(strconv.FormatInt(q.Cursor.LastRecency.UnixMicro(), 10))
 	}
 	sum := sha256.Sum256([]byte(sb.String()))
 	return hex.EncodeToString(sum[:])

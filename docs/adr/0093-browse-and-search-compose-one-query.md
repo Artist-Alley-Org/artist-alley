@@ -975,7 +975,8 @@ AndNode) and `walkFieldMatch` refuses a `topLevelOnly` dimension without it. The
 the RESOLVED dimension after alias folding, which is what makes `NOT !nopreviews` and
 `NOT preview:missing` fail with one message, and `cat OR !list<a>` and `cat OR id:<a>`
 likewise; `(cat OR dog) AND id:<a>` is accepted. The classification is `dsl.Field.topLevelOnly`,
-as short as facet's `conjunctive`, and sprint 25b adds `last` there and nowhere else.
+as short as facet's `conjunctive`, and sprint 25b added `last` there and nowhere else (see the
+amendment below).
 
 ### 5. The pre-persistence contract, and its one authority
 
@@ -1020,4 +1021,106 @@ inline `@@` literal in all three collection statements, for the two reasons `run
   normalises and `Has` normalises again) where `Normalize`'s contract, `needsProcessing` and
   the SQL twin strip one. Outside the documented contract, absent from the corpus, and left
   for the owner to rule on; both parity guards scope their domain to the contract and say so.
+
+## Amendment, 2026-09-19, after #1173 (sprint 25b)
+
+One dimension the owner types as a verb: `last:N` (`!lastN`), a recent window. ADR 0056's 4f
+amendment records the ordering mode, the cursor and the count; this one records what the
+dimension means and the four consequences it has for the one-query rule.
+
+### 1. `last:N` is the N newest eligible rows, globally across the searched types
+
+`last:3` over assets and posts is the three newest rows of the UNION of eligible assets and
+eligible posts, not three assets and three posts merged afterwards. The requested types define
+which arms participate; with no types, the normal all-types population, so a newer collection
+takes a slot beside an asset and a post. The window exists BEFORE free text and before every
+other dimension: those narrow INSIDE it, so if only the fourth-newest eligible row contains
+`zebra`, `last:3 zebra` returns nothing. `TestLastWindow_IsGlobalNotPerArm` and
+`TestLastWindow_TextNarrowsInsideTheWindow` are the witnesses, on rows.
+
+The predicate is an ordinary conjunct: "this row sorts at or before the N-th newest row of the
+union", with the N-th row's key computed once per statement by an uncorrelated subquery over
+the union of the requested arms and compared as one row value. The count statement splices the
+same predicate, so the count equals the rows.
+
+### 2. Single-valued, top-level only, one to ten thousand
+
+A row is in one window or it is not, and two windows have no combination rule that means
+anything, so `last` is the second bounded dimension after `id` and its bound is ONE:
+`facet.Selection.Validate` refuses a second distinct value on every entry path (`filter=`
+repeated, the typed chain, the alias, and a request that splits the two across `dsl=` and
+`filter=`), while an identical repeated value collapses. Placement is `topLevelOnly`, as the
+25a amendment promised; `NOT last:5` under flattening would mean its opposite. The range is
+1..`dsl.MaxLastWindow` (10,000): a BOUNDED-WINDOW and query-work contract, aligned with the
+engine's count budget so the two limits describe one notion of how much a request may ask the
+database to rank. It is not a claim that ordinary relevance pagination ends at 10,000. The
+value grammar is ONE function, `dsl.ParseLastWindow`, called by the alias fold and by the facet
+layer's `CanonicalValue`, so `!last0`, `last:0` and `filter=last:0` are one refusal and
+`last:05` canonicalises to `last:5`.
+
+### 3. `last` is an active selection, and the asset baseline is the field plane
+
+Every asset execution site applies `visibility.FieldsReadableSQL` under an active filter (the
+2026-08-12 decision, one dimension at a time since), and the window's asset arm carries that
+same plane: row plane, mature axis, field plane. The consequence, stated plainly because it is
+deliberately narrower than an unfiltered placeholder listing: a restricted asset a stranger may
+see only as a withheld placeholder does NOT consume one of that stranger's slots, while the same
+asset DOES consume a slot for its owner or a field-authorised caller. Posts rank under the post
+read rule with post capabilities and the post mature axis; collections under collection
+readability and soft-deletion. No policy is restated: the arms are rendered by the SAME
+functions the suggestion aggregators count with (`buildAssetVisibilityAppendedSQL`, the tag
+aggregator's post half, now `buildPostVisibilityAppendedSQL`, and a collection baseline beside
+them), so window and rail agree by construction.
+`TestLastWindow_RestrictedRowConsumesNoSlotForAStranger` is the witness.
+
+### 4. Clocks
+
+Assets and collections rank on `created_at`; posts rank on `posted_at`, the column the browse
+feed orders by, which an author may set apart from `created_at`. The post hit's public
+`created_at` is unchanged. `TestLastWindow_PostOrdersByPostedAtAndReportsCreatedAt` drives a
+post whose two clocks disagree.
+
+### 5. Suggestions: the global window first (rule A)
+
+The two suggestion endpoints take no `types=` (section 5 of the 18d amendment) and now form
+the all-three-type window FIRST, the one `/search` would form with no types, and each consumer
+then projects only the kinds it already aggregates: extension, asset type, sensitivity, owner
+and contributors project assets; tag projects assets and posts. A collection can therefore
+consume a slot even though nothing aggregates collections, which is what keeps a suggestion
+describing the query being built rather than a query the page will not run. No new
+aggregator, no `types=` on the endpoints. `TestLastWindow_SuggestionsProjectFromTheGlobalWindow`
+is the witness: under `last:2` whose window is a collection and a post, the extension and
+contributor lists are empty and the tag list is the post's alone.
+
+### 6. Saved searches stay asset-only
+
+A saved `!last3` stores the canonical `last:3` and replays under the executor's existing
+contract, which requests assets; the window is formed over the requested types, so a post
+newer than every asset takes no slot. `TestSavedSearch_LastSavesCanonicalAndReplaysAssetOnly`.
+
+### 7. The execution-context consequence
+
+`Selection.SQL` takes no context and a term binds one placeholder, while the window's arms are
+caller-dependent, bind arguments and need a context. Rather than widen that contract, each
+execution site (the three engine arms, `buildAssetPopulationSQL`, the tag aggregator's post
+half) renders the arms with the renderers it already calls, binds their arguments BEFORE the
+selection's, and hands the already-bound fragments in through `RenderContext.RecentArms`, the
+way `CallerArg` carries an already-bound placeholder. A site that supplies no arms gets an
+unsatisfiable dimension, the fail-closed direction the rest of the facet layer takes.
+
+### 8. Consequences
+
+- Grammar: `last` in the whitelist and in `topLevelOnly`; the verb in `dsl/verbs.go`;
+  `ParseLastWindow`, `MaxLastWindow`; an `Incompatible` error kind and `ErrLastWithSimilarity`.
+  Facet: one filter-only dimension, `maxTerms` of one, `RecentArm`, `RecentArms`,
+  `RecentRank`, `RecentClock`, `RenderContext.RecentArms`. Bridge: one table entry. Engine: the
+  recent order (ADR 0056, 4f). No new facet aggregator; `AllFacets` stays at five.
+- Migration 00072 adds `posts_recent_idx (posted_at DESC, id DESC) WHERE deleted_at IS NULL`,
+  the exact keyset the post arm orders and positions on for every tier the post read rule
+  admits; the existing post indexes are scoped to one author or to the public tier. No table
+  or column change, no backfill.
+- Recorded and not changed: save-as-collection executes `q` plus `filters` and stores its
+  `dsl` field as provenance only (a fact that predates this sprint), so the `last` with
+  `similar_to` refusal is mapped there but is reachable only through `/search` and the saved
+  create and patch gates.
 

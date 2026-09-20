@@ -183,10 +183,9 @@ func TestVerb_MalformedIsAnErrorNamingTheForm(t *testing.T) {
 		{"!list" + vA + ",not-a-uuid", "not a UUID"},
 		{"!bogus", "unknown verb"},
 		{"!", "unknown verb"},
-		// ⛔ PINNED UNKNOWN IN 25a. Sprint 25b registers `last` and flips
-		// this case to a parse; until then it must not silently be free
-		// text, which is what it was.
-		{"!last5", "unknown verb"},
+		// `!last5` was pinned unknown here in 25a; sprint 25b registered
+		// the verb and the parse is asserted in last_test.go. The
+		// unrelated unknown verbs above stay unknown.
 	} {
 		_, err := dsl.Parse(c.in)
 		if err == nil {

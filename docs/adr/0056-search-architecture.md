@@ -396,6 +396,73 @@ placement rule, which ADR 0093's 25a amendment records.
 **Deferred to sprint 25b, and not decided here:** `!lastN`, recency ordering and any cursor
 payload change. This amendment changes nothing in section 1's cursor or `total_count` contract.
 
+#### 4f. THE THIRD OWNER-REQUIRED VERB, AND A SECOND ORDER, amendment 2026-09-19 (#1173, sprint 25b)
+
+`!last<N>` is the third verb, registered in the same table under the same rule 4e records:
+input sugar that folds onto `last:N` before the parser returns, one node, one dimension, no
+second executor. What is new in kind is that `last` changes the ORDER of the page, which 4e
+deferred and which this sub-amendment decides. ADR 0093's 25b amendment records the
+dimension's semantics (the window is global across the requested types and every other term
+narrows inside it); this one records what the engine does with it.
+
+**A recent ordering mode, decided from the selection.** A query whose selection carries a
+`last:` term runs in the recent order; every other query runs in the relevance order exactly
+as before. Under the recent order each arm orders and keysets on its recency clock instead of
+`score DESC`, the cross-entity merge and the cursor cut sort on the same key, no per-arm score
+maximum is measured, and score never orders the page, text-less or not. Every relevance
+statement is byte-for-byte what it was: the window's arms bind no argument and render no
+fragment unless a `last:` term is present.
+
+**An effective recency key, distinct from the public `created_at`.** `Hit.CreatedAt` remains
+the entity's public creation timestamp on every entity, `posts.created_at` for posts, and is
+neither overwritten nor read by the recent order. The order reads a private, unmarshalled key
+set by every arm on every hit: `assets.created_at`, `collections.created_at`,
+`posts.posted_at`. A post an author back-dated orders by its `posted_at` and still reports the
+`created_at` it always reported. No public hit field was added.
+
+**The total order is `recency DESC, id DESC, type ASC`**, the hit type string order being the
+final tiebreak (`asset` before `collection` before `post`). It is spelled once, as a Go
+comparator in `search/recent.go`, and rendered in SQL through an integer rank
+(`facet.RecentRank`) that DESCENDS in type-string order so the whole tuple compares one way.
+The window's cutoff, the SQL keyset (`ROW(clock, id, rank) < ROW($ts, $id, $rank)`, one row
+comparison, no operator switch), the Go merge and the Go cursor cut are all derived from that
+one fact. The relevance `keysetFragment`'s `<`/`<=` rule encodes the relevance order's
+`type DESC` and is not reused.
+
+**Two cursor shapes, one codec.** Section 1's relevance cursor keeps its legacy bytes,
+`{"s":<score>,"i":"<uuid>","t":"<type>"}` with `s` always present, and every cursor minted
+before this amendment decodes as it always did: a cursor without a discriminator is a
+relevance cursor. A recent cursor is `{"o":"recent","ts":<unix microseconds>,"i":"<uuid>",
+"t":"<type>"}`: the discriminator, the recency key at the precision the column stores, the id
+and the type, no score. The two shapes are decided in `cursor.go`'s codec rather than by
+omitempty tags, so the legacy shape cannot drift by a field being added to the struct.
+
+**A cursor is only meaningful in the order that minted it.** Decoding validates STRUCTURE
+(base64, JSON, a known type, a known discriminator, a recent cursor carrying its timestamp, no
+timestamp without a discriminator). Whether the order FITS the query is knowable only after
+`dsl=` and `filter=` have folded into the final selection, so it is checked then at the HTTP
+edge and again, fail-closed, at `Engine.Run`'s entry for programmatic callers. A recent cursor
+on a relevance query, a relevance cursor on a recent query, a recent cursor missing its
+timestamp, an unknown discriminator and a malformed cursor are all `400 invalid_cursor`.
+The cache key folds the discriminator and the recency key beside the score, id and type it
+already carried; N and the mode itself reach the key through the selection.
+
+**The recent count is exact and never capped.** Inside a window `total_count` is the size of
+the narrowed window, at most N, at most `dsl.MaxLastWindow` (10,000, held equal to
+`TotalCountCap` by a test); the "10,000+" clamp of section 1 does not apply, and `last:10000`
+over a corpus of ten thousand eligible rows reports 10,000 with `total_count_capped: false`.
+The rule is one pure function, `assembleTotal(perTypeCount, recent)`, so the boundary is
+proven without a corpus. Relevance counting is unchanged.
+
+**`last` and `similar_to` are two orders for one query, and are refused as one error.** The
+compiler refuses the pair inside one DSL string, on both spellings; `Engine.Run` refuses it
+again at entry when the two arrived split across `dsl=similar_to:` and `filter=last:`, which no
+single parse can see; both return the same `dsl.ErrLastWithSimilarity` value, and `/search`
+and save-as render it as the same `400 dsl_error` with the same kind and message. Saved create
+and patch refuse the canonical combined query before persistence through the existing
+`CompileDSL` gate. Nothing about hybrid ranking without `last` changes; there is no by-image
+filter composition.
+
 ### 5. Autocomplete via `pg_trgm` (B-2)
 
 - Extension `pg_trgm` added in migration 00022.

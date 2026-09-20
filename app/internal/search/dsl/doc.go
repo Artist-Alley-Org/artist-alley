@@ -24,17 +24,18 @@
 //
 //	title, description, body, tag, owner, type, sensitivity,
 //	extension, similar_to, field, file_size, workflow_state,
-//	preview, id
+//	preview, id, last
 //
-// Verbs (#1173, sprint 25a): `!nopreviews` is `preview:missing` and
-// `!list<uuid>,<uuid>,...` is `id:<uuid> AND id:<uuid> AND ...`. A verb
-// is sugar over the typed grammar and nothing else: the parser folds it
-// into the node the canonical spelling produces, the compiler never
-// sees a verb, and [Canonicalize] writes the canonical spelling back
-// into a stored query. `preview` and `id` are legal only as top-level
-// AND terms; `NOT` or `OR` over either is a compile-time error on both
-// spellings. The remaining dimensions keep the flattening described in
-// [Filters].
+// Verbs (#1173, sprints 25a and 25b): `!nopreviews` is `preview:missing`,
+// `!list<uuid>,<uuid>,...` is `id:<uuid> AND id:<uuid> AND ...`, and
+// `!last<N>` is `last:N`. A verb is sugar over the typed grammar and
+// nothing else: the parser folds it into the node the canonical spelling
+// produces, the compiler never sees a verb, and [Canonicalize] writes the
+// canonical spelling back into a stored query. `preview`, `id` and `last`
+// are legal only as top-level AND terms; `NOT` or `OR` over any of them
+// is a compile-time error on both spellings. `last` beside `similar_to`
+// is refused as [ErrLastWithSimilarity]. The remaining dimensions keep
+// the flattening described in [Filters].
 //
 // Compilation produces two things:
 //

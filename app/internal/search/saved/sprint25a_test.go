@@ -384,7 +384,8 @@ func TestSavedSearch_ExecutionRejectsAreRefusedBeforePersistence(t *testing.T) {
 		{"51 split across dsl and filter", "!list" + strings.Join(fiftyOne[:26], ","), fiftyOneFilters[26:], "dsl_error"},
 		{"oversized composed DSL", oversized, nil, "dsl_parse_error"},
 		{"unknown verb", "!bogus", nil, "dsl_error"},
-		{"25b verb pinned unknown", "!last5", nil, "dsl_error"},
+		// `!last5` was pinned unknown here in 25a; sprint 25b registered
+		// it and sprint25b_test.go asserts the accepted create.
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			before := rig.rows()

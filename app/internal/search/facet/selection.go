@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
+	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
 	"github.com/mscrnt/artist-alley/app/internal/viewkind"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -47,11 +48,12 @@ import (
 // No new wire parameter, no new handler branch, no `!bang` syntax.
 //
 // ⚠️ THE LAST CLAUSE HAS ONE DELIBERATE EXCEPTION SINCE #1173 SPRINT
-// 25a: the owner-required `!nopreviews` and `!list<ids>` are accepted by
-// the DSL parser, as SUGAR that folds onto `preview:missing` and `id:`
-// terms of THIS grammar before anything else sees them. There is still
-// no second executor and no second vocabulary; ADR 0056's sub-amendment
-// beside 4d records the exception and its bound.
+// 25a: the owner-required `!nopreviews`, `!list<ids>` and (since 25b)
+// `!last<N>` are accepted by the DSL parser, as SUGAR that folds onto
+// `preview:missing`, `id:` and `last:` terms of THIS grammar before
+// anything else sees them. There is still no second executor and no
+// second vocabulary; ADR 0056's sub-amendments 4e and 4f record the
+// exception and its bound.
 //
 // #910 SHIPPED AND THE CLAIM MOSTLY HELD — with two exceptions, recorded
 // here because the next dimension will hit whichever of them applies to
@@ -116,6 +118,12 @@ var ErrBadFilter = errors.New("facet: filter must be <dimension>:<value>")
 // so without learning a new sentinel.
 var ErrTooManyIDs = fmt.Errorf("%w: at most %d distinct id values", ErrBadFilter, MaxIDTerms)
 
+// ErrLastNotSingle is returned by [Selection.Validate] when a selection
+// names more than one distinct `last:` window (#1173, sprint 25b). Same
+// wrapping and same reach as [ErrTooManyIDs]: `filter=last:3&filter=last:5`,
+// `last:3 AND last:5` and `!last3 !last5` are one refusal.
+var ErrLastNotSingle = fmt.Errorf("%w: last takes exactly one value", ErrBadFilter)
+
 // ParseSelection reads the repeated `filter=<dimension>:<value>` query
 // parameter into a Selection.
 //
@@ -179,12 +187,17 @@ func ParseSelection(raw []string) (Selection, error) {
 // carry in one selection; 0 means unbounded (#1173, sprint 25a).
 //
 // A classification like [FacetType.conjunctive], and deliberately as
-// short: [FacetID] is the only bounded dimension, because it is the
-// only one whose value count is caller-chosen rather than drawn from a
-// vocabulary. See [FacetID] for the arithmetic that fixes the number.
+// short. [FacetID] is bounded because it is the one dimension whose
+// value count is caller-chosen rather than drawn from a vocabulary; see
+// [FacetID] for the arithmetic that fixes the number. [FacetLast] is
+// bounded at ONE because a row is in a window or it is not, and two
+// windows have no combination rule (#1173, sprint 25b).
 func (t FacetType) maxTerms() int {
-	if t == FacetID {
+	switch t {
+	case FacetID:
 		return MaxIDTerms
+	case FacetLast:
+		return 1
 	}
 	return 0
 }
@@ -213,8 +226,11 @@ func (s Selection) Validate() error {
 	}
 	for ft, n := range counts {
 		if limit := ft.maxTerms(); limit > 0 && n > limit {
-			if ft == FacetID {
+			switch ft {
+			case FacetID:
 				return ErrTooManyIDs
+			case FacetLast:
+				return ErrLastNotSingle
 			}
 			return fmt.Errorf("%w: at most %d %s values", ErrBadFilter, limit, string(ft))
 		}
@@ -605,6 +621,20 @@ func (t FacetType) CanonicalValue(v string) (string, bool) {
 			return "", false
 		}
 		return id.String(), true
+	case FacetLast:
+		// #1173 sprint 25b: decimal digits, 1..dsl.MaxLastWindow, read by
+		// the ONE function the alias fold reads them with, so `!last0`,
+		// `last:0` and `filter=last:0` are one refusal and `last:05`
+		// canonicalises to the digits the fold would have produced. The
+		// value reaches a `LIMIT` clause, so an unvalidated one is the
+		// 22P02-shaped 500 this switch exists to prevent, and a tolerated
+		// out-of-range one would be a window that looks applied and is
+		// wider or emptier than what was typed.
+		n, ok := dsl.ParseLastWindow(strings.TrimSpace(v))
+		if !ok {
+			return "", false
+		}
+		return strconv.Itoa(n), true
 	}
 	return v, true
 }
@@ -1375,6 +1405,21 @@ type RenderContext struct {
 	// EMPTY MEANS "no caller was supplied", which is not the same as
 	// anonymous and is treated as a programming error — see the type doc.
 	CallerArg string
+
+	// RecentArms is the population a `last:` window ranks over (#1173,
+	// sprint 25b): one arm per entity the search asks for, each carrying
+	// that entity's baseline eligibility as a fragment the execution
+	// site rendered from the readability authorities it already applies,
+	// with every placeholder already bound in the calling statement.
+	// See [RecentArm] and the recent.go file comment for why the site
+	// renders them rather than this package.
+	//
+	// EMPTY MEANS "no window can be formed", and [FacetLast] then
+	// renders as UNSATISFIABLE for this entity, the fail-closed
+	// direction [CallerArg] takes: a site that forgot to supply the
+	// arms returns nothing under `last:N` rather than an unbounded set.
+	// Every other dimension ignores it.
+	RecentArms []RecentArm
 }
 
 // SQL renders the selection as a WHERE-clause suffix for entity e.
@@ -2146,6 +2191,15 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, sh 
 		case visibility.EntityAsset, visibility.EntityPost, visibility.EntityCollection:
 			return a + `id = ` + p + `::UUID`, true
 		}
+	case FacetLast:
+		// #1173 sprint 25b: "inside the N newest eligible rows of the
+		// requested union", as an ordinary predicate on this entity's
+		// clock and id against a cutoff the union computes once. The
+		// union's arms arrive already rendered and already bound in
+		// rc.RecentArms, and an entity the window was not formed over
+		// (or a site that supplied no arms) is unsatisfiable. See
+		// recent.go.
+		return recentWindowSQL(e, a, p, rc.RecentArms)
 	case FacetCollection:
 		// #910 — "search inside this collection", as an ordinary
 		// predicate rather than a second query path.

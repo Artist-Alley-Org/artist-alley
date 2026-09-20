@@ -181,6 +181,12 @@ type Filters struct {
 	// one slice over. Duplicates may survive here; the selection collapses
 	// them, and the cardinality rule counts distinct ids after that.
 	IDs []string
+	// Lasts are `last:` values, carried WHOLE (#1173, sprint 25b). At most
+	// one is legal, and that is a property of the SELECTION, decided by
+	// facet.Selection.Validate for every entry path; this slice only has
+	// to avoid destroying the term before it gets there, which is #1368's
+	// lesson one more time. The facet layer canonicalises the digits.
+	Lasts []string
 
 	// Below are compiler-internal buckets consumed by the Engine's
 	// SQL renderer. Kept exported-lowercase so tests in this
@@ -201,6 +207,14 @@ func Compile(q Query) (CompiledQuery, error) {
 	tsQ, err := c.walk(q.Root, true)
 	if err != nil {
 		return CompiledQuery{}, err
+	}
+	// #1173 sprint 25b: the all-DSL half of the incompatibility. Both
+	// terms are legal on their own and this is the first place that has
+	// seen the whole string. The split form (`dsl=similar_to:` beside
+	// `filter=last:`) is caught by the engine at execution, with the SAME
+	// value; see [ErrLastWithSimilarity].
+	if c.similarToAssetID != "" && len(c.filters.Lasts) > 0 {
+		return CompiledQuery{}, ErrLastWithSimilarity
 	}
 	// Emit hybrid-weight suggestion when similar_to appeared:
 	// pure-vector intent (weight 1.0) if the AST is a lone
@@ -423,6 +437,11 @@ func (c *compiler) walkFieldMatch(m FieldMatchNode, top bool) (string, error) {
 		// Opaque here; the facet layer canonicalises and counts. See
 		// [FieldID].
 		c.filters.IDs = append(c.filters.IDs, m.Value)
+		return "", nil
+	case FieldLast:
+		// Opaque here; the facet layer canonicalises and bounds the
+		// count. See [FieldLast].
+		c.filters.Lasts = append(c.filters.Lasts, m.Value)
 		return "", nil
 	}
 	// Unreachable — parser's whitelist gate ensures every Field is

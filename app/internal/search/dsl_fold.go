@@ -97,6 +97,23 @@ func CompileDSL(input string, into facet.Selection) (dsl.CompiledQuery, facet.Se
 	if err != nil {
 		return dsl.CompiledQuery{}, facet.Selection{}, err
 	}
+	// #1173 sprint 25b: `last` and `similar_to` are two orders for one
+	// query, and this is the first seam that sees BOTH facts for the
+	// SPLIT spelling (`dsl=similar_to:<id>&filter=last:5`): the compiled
+	// DSL carries the anchor, and the bridged selection carries the
+	// window the `filter=` parameter contributed. dsl.Compile refused
+	// the pair inside one string a step earlier; Engine.Run refuses it
+	// again, fail-closed, for programmatic callers. Refusing HERE is
+	// what makes the split spelling deterministic: the handler resolves
+	// the anchor (visibility lookup, embedding fetch) only after this
+	// returns, so the answer cannot depend on whether the anchor exists,
+	// is readable or is embedded. The same value on all three seams, so
+	// the wire contract is one.
+	if compiled.SimilarToAssetID != "" {
+		if _, recent := sel.RecentWindow(); recent {
+			return dsl.CompiledQuery{}, facet.Selection{}, dsl.ErrLastWithSimilarity
+		}
+	}
 	return compiled, sel, nil
 }
 

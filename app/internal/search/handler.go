@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector"
 )
 
@@ -117,7 +118,12 @@ func (s *Service) Execute(ctx context.Context, q Query) (QueryResult, error) {
 
 	res, err := s.engine.Run(ctx, q)
 	if err != nil {
-		if errors.Is(err, ErrEmptyQuery) {
+		// A caller mistake is recorded as such, not as an engine error:
+		// the empty query, and since #1173 sprint 25b a cursor in the
+		// wrong order or a window beside a similarity hint, both of which
+		// Run refuses before touching the database.
+		if errors.Is(err, ErrEmptyQuery) || errors.Is(err, ErrBadCursor) ||
+			errors.As(err, new(dsl.DSLError)) {
 			s.record(ResultBadRequest, time.Since(start))
 			return QueryResult{}, err
 		}
