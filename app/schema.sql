@@ -5663,6 +5663,13 @@ CREATE INDEX posts_public_feed_idx ON public.posts USING btree (posted_at DESC) 
 
 
 --
+-- Name: posts_recent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_recent_idx ON public.posts USING btree (posted_at DESC, id DESC) WHERE (deleted_at IS NULL);
+
+
+--
 -- Name: posts_search_text_gin; Type: INDEX; Schema: public; Owner: -
 --
 

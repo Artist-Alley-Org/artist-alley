@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/collections"
+	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
@@ -93,6 +94,31 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 	// Only a request carrying NONE of the three is empty.
 	if q.Text == "" && q.SimilarityHint == "" && q.Filters.Empty() {
 		return QueryResult{}, ErrEmptyQuery
+	}
+	// #1173 sprint 25b: THE RECENT ORDER'S TWO FAIL-CLOSED GATES, at the
+	// single door every execution goes through, so a programmatic caller
+	// (the saved executor, save-as, a test) gets the same refusal the
+	// HTTP edge gives.
+	//
+	// A cursor is meaningful only in the order that minted it: a recent
+	// cursor positions on a timestamp the relevance order never reads,
+	// and a relevance cursor positions on a score the recent order never
+	// reads. Either mismatch would silently serve page one again or an
+	// arbitrary cut, so it is refused as a bad cursor.
+	if err := checkCursorOrder(q); err != nil {
+		return QueryResult{}, err
+	}
+	// And a window cannot be ranked by similarity: `last:` and
+	// `similar_to:` are two orders for one query. The compiler refuses
+	// the pair inside one DSL string; this is the seam that sees them
+	// when they arrived split across `dsl=` and `filter=`. The SAME
+	// value, so the wire contract is one. SimilarityHintID is checked
+	// beside SimilarityHint because a caller could set the identifier
+	// (the cache-key half) without the embedding, and either alone
+	// means "this query ranks by proximity".
+	_, recent := q.Filters.RecentWindow()
+	if recent && (q.SimilarityHint != "" || q.SimilarityHintID != "") {
+		return QueryResult{}, dsl.ErrLastWithSimilarity
 	}
 	limit := q.Limit
 	if limit <= 0 {
@@ -175,12 +201,21 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 		armCursor = nil
 	}
 
+	// #1173 sprint 25b: the recent window, formed over the REQUESTED
+	// types (all three when none were named), handed to every arm so
+	// each renders the same union. nil in the relevance order, which
+	// leaves every relevance statement byte-for-byte what it was.
+	var win *recentWindow
+	if recent {
+		win = &recentWindow{types: types}
+	}
+
 	rawHits := make([]Hit, 0, perEntityLimit*len(types))
 	perTypeCount := make(map[HitType]int, len(types))
 	maxScoreByType := make(map[HitType]float64, len(types))
 
 	for _, t := range types {
-		hits, total, maxScore, err := e.runOne(ctx, t, q, perEntityLimit, armCursor)
+		hits, total, maxScore, err := e.runOne(ctx, t, q, perEntityLimit, armCursor, win)
 		if err != nil {
 			return QueryResult{}, fmt.Errorf("search: run %s: %w", t, err)
 		}
@@ -227,15 +262,25 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 
 	// Order by (normalised_score DESC, id DESC, type DESC) so
 	// the cursor's tie-breaker is a total order.
-	sort.SliceStable(rawHits, func(i, j int) bool {
-		if rawHits[i].NormalisedScore != rawHits[j].NormalisedScore {
-			return rawHits[i].NormalisedScore > rawHits[j].NormalisedScore
-		}
-		if rawHits[i].ID != rawHits[j].ID {
-			return rawHits[i].ID.String() > rawHits[j].ID.String()
-		}
-		return rawHits[i].Type > rawHits[j].Type
-	})
+	//
+	// #1173 sprint 25b: or, under `last:N`, by (recency DESC, id DESC,
+	// type ASC), the one comparator recent.go spells; score never
+	// orders a window, text-less or not.
+	if recent {
+		sort.SliceStable(rawHits, func(i, j int) bool {
+			return recentKeyOf(rawHits[i]).before(recentKeyOf(rawHits[j]))
+		})
+	} else {
+		sort.SliceStable(rawHits, func(i, j int) bool {
+			if rawHits[i].NormalisedScore != rawHits[j].NormalisedScore {
+				return rawHits[i].NormalisedScore > rawHits[j].NormalisedScore
+			}
+			if rawHits[i].ID != rawHits[j].ID {
+				return rawHits[i].ID.String() > rawHits[j].ID.String()
+			}
+			return rawHits[i].Type > rawHits[j].Type
+		})
+	}
 
 	// Apply the cursor cut — drop everything at-or-above the
 	// last-page position. The cursor was emitted from the prior
@@ -253,7 +298,13 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 		cut := *q.Cursor
 		filtered := rawHits[:0]
 		for _, h := range rawHits {
-			if cursorLess(h, cut) {
+			after := cursorLess(h, cut)
+			if recent {
+				// The recent cut: keep the hit when the cursor's key
+				// sorts before it, the same comparator the merge used.
+				after = recentKeyOfCursor(cut).before(recentKeyOf(h))
+			}
+			if after {
 				filtered = append(filtered, h)
 			}
 		}
@@ -269,23 +320,23 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 			LastID:    tail.ID,
 			LastType:  tail.Type,
 		}
+		if recent {
+			// A recent cursor carries the recency key and no score;
+			// EncodeCursor writes the shape from Order.
+			next = &Cursor{
+				Order:       OrderRecent,
+				LastRecency: tail.recency,
+				LastID:      tail.ID,
+				LastType:    tail.Type,
+			}
+		}
 		rawHits = rawHits[:limit]
 	}
 
 	// Total count: sum per-entity totals; cap flag if any entity
-	// reported a cap or the sum exceeded the cap.
-	totalCount := 0
-	capped := false
-	for _, c := range perTypeCount {
-		if c >= TotalCountCap {
-			capped = true
-		}
-		totalCount += c
-	}
-	if totalCount >= TotalCountCap {
-		capped = true
-		totalCount = TotalCountCap
-	}
+	// reported a cap or the sum exceeded the cap. Exact and uncapped
+	// inside a recent window; see assembleTotal.
+	totalCount, capped := assembleTotal(perTypeCount, recent)
 
 	return QueryResult{
 		Hits:             rawHits,
@@ -628,14 +679,19 @@ func cursorLess(h Hit, cut Cursor) bool {
 // `cur` is nil for the first page and for the hybrid path; see the
 // [keysetFragment] contract for what a non-nil cursor does to the
 // window, and Run for why hybrid does not use one.
-func (e *Engine) runOne(ctx context.Context, t HitType, q Query, limit int, cur *Cursor) ([]Hit, int, float64, error) {
+//
+// `win` is the recent window (#1173, sprint 25b), nil in the relevance
+// order. Under a window the arm orders and keysets on its recency clock,
+// renders the window's union from the arms `win` names, and measures no
+// score maximum.
+func (e *Engine) runOne(ctx context.Context, t HitType, q Query, limit int, cur *Cursor, win *recentWindow) ([]Hit, int, float64, error) {
 	switch t {
 	case HitTypeAsset:
-		return e.runAssets(ctx, q, limit, cur)
+		return e.runAssets(ctx, q, limit, cur, win)
 	case HitTypeCollection:
-		return e.runCollections(ctx, q, limit, cur)
+		return e.runCollections(ctx, q, limit, cur, win)
 	case HitTypePost:
-		return e.runPosts(ctx, q, limit, cur)
+		return e.runPosts(ctx, q, limit, cur, win)
 	}
 	return nil, 0, 0, fmt.Errorf("search: unknown hit type %q", t)
 }
@@ -733,7 +789,7 @@ var ErrEmptyQuery = errors.New("search: query text is required")
 // visibility.Predicate — see the shared package (Phase 1.16.B-2).
 // The base search_text @@ predicate stays inline; the visibility
 // AND clause is appended by the shared helper.
-func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor) ([]Hit, int, float64, error) {
+func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor, win *recentWindow) ([]Hit, int, float64, error) {
 	caller, caps := callerOf(q)
 	mut := mutCapsOf(q)
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
@@ -741,11 +797,16 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor)
 		return nil, 0, 0, err
 	}
 	// $1=query, $2=limit, $3=caller ref, $4=configured ladder,
-	// predicate args start at $5, and the facet selection's args
-	// continue after those.
+	// predicate args start at $5, then the recent window's arms (#1173
+	// sprint 25b, none in the relevance order), and the facet
+	// selection's args continue after those.
 	visFrag, visArgs := pred.ToSQL("", 4)
+	arms, armArgs, err := recentArms(ctx, q, win, 4+len(visArgs))
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	selFrag, selArgs, satisfiable := q.Filters.SQL(
-		visibility.EntityAsset, "assets", 4+len(visArgs), renderContextOf(q, "$3"))
+		visibility.EntityAsset, "assets", 4+len(visArgs)+len(armArgs), recentContextOf(q, "$3", arms))
 	if !satisfiable {
 		return nil, 0, 0, nil
 	}
@@ -908,10 +969,10 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor)
 	// statement is the off-by-one ADR 0063's placeholder discipline
 	// exists to avoid.
 	ladder := e.ladder(ctx)
-	predArgs := append(append([]any{}, visArgs...), selArgs...)
+	predArgs := append(append(append([]any{}, visArgs...), armArgs...), selArgs...)
 	baseArgs := append([]any{q.Text, limit, callerRefOf(q), ladder}, predArgs...)
 	var maxScore float64
-	if cur != nil {
+	if cur != nil && win == nil {
 		sqlMax := `
 		SELECT COALESCE(MAX(` + assetScoreExpr + `), 0)::FLOAT8
 		  FROM assets
@@ -925,8 +986,16 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor)
 			return nil, 0, 0, err
 		}
 	}
+	// #1173 sprint 25b: the order and the keyset follow the window:
+	// recency (created_at) under `last:N`, score otherwise. The two
+	// keysets are different functions on purpose; see recent.go.
+	orderBy := `score DESC, id DESC`
 	keysetFrag, keysetArgs := keysetFragment(HitTypeAsset, cur, maxScore,
 		assetScoreExpr, "id", 4+len(predArgs))
+	if win != nil {
+		orderBy = `created_at DESC, id DESC`
+		keysetFrag, keysetArgs = recentKeysetFragment(HitTypeAsset, cur, "created_at", "id", 4+len(predArgs))
+	}
 
 	sqlHits := `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
@@ -936,7 +1005,7 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor)
 		       ` + assetCardColumnsSQL("assets", "$4") + `
 		  FROM assets
 		 WHERE ` + matchFrag + visFrag + matureFrag + selFrag + keysetFrag + `
-		 ORDER BY score DESC, id DESC
+		 ORDER BY ` + orderBy + `
 		 LIMIT $2
 	`
 	sqlCount := `
@@ -1027,7 +1096,7 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor)
 		// fails the gate.
 		if !visibility.FieldsReadable(fr, caller, caps) {
 			hits = append(hits, withheldHit(Hit{
-				Type: HitTypeAsset, ID: id, RawScore: score,
+				Type: HitTypeAsset, ID: id, RawScore: score, recency: created,
 			}, ownerName))
 			continue
 		}
@@ -1044,6 +1113,7 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor)
 			UpdatedAt:      updated,
 			RawScore:       score,
 			ExtraJSON:      extra,
+			recency:        created,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -1056,8 +1126,10 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor)
 	// The first page's window BEGINS at the maximum — `ORDER BY score
 	// DESC` — so the denominator is the top row's raw score and needs no
 	// statement of its own. ⛔ That equality is a property of the ORDER
-	// BY directly above; a change to it has to move this too.
-	if cur == nil {
+	// BY directly above; a change to it has to move this too. Under a
+	// recent window the order is recency and no denominator is needed:
+	// score never orders the page (#1173, sprint 25b).
+	if cur == nil && win == nil {
 		for i := range hits {
 			if hits[i].RawScore > maxScore {
 				maxScore = hits[i].RawScore
@@ -1092,7 +1164,7 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int, cur *Cursor)
 // correct shape is a scoped placement lookup — the pattern
 // ListCollectionsPage already uses for its ?featured= filter — added
 // then, against a real consumer.
-func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cursor) ([]Hit, int, float64, error) {
+func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cursor, win *recentWindow) ([]Hit, int, float64, error) {
 	// #1164 — the WHOLE collection read rule, not the row plane alone.
 	//
 	// This used to compose `Filter(EntityCollection)`, which has no
@@ -1159,8 +1231,15 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cu
 	// conjunct. Passing "" says that rather than pointing at an arbitrary
 	// placeholder, and it fails CLOSED if a future dimension changes it —
 	// see facet.RenderContext.
+	// #1173 sprint 25b: the recent window's arms bind after the
+	// predicate's and before the selection's; none in the relevance
+	// order.
+	arms, armArgs, err := recentArms(ctx, q, win, 2+len(visArgs))
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	selFrag, selArgs, satisfiable := q.Filters.SQL(
-		visibility.EntityCollection, "c", 2+len(visArgs), renderContextOf(q, ""))
+		visibility.EntityCollection, "c", 2+len(visArgs)+len(armArgs), recentContextOf(q, "", arms))
 	if !satisfiable {
 		return nil, 0, 0, nil
 	}
@@ -1207,10 +1286,10 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cu
 	// a tautology so this statement names every argument it is bound
 	// with, without a LIMIT that would make the MAX a maximum over an
 	// arbitrary subset.
-	predArgs := append(append([]any{}, visArgs...), selArgs...)
+	predArgs := append(append(append([]any{}, visArgs...), armArgs...), selArgs...)
 	baseArgs := append([]any{q.Text, limit}, predArgs...)
 	var maxScore float64
-	if cur != nil {
+	if cur != nil && win == nil {
 		sqlMax := `
 		SELECT COALESCE(MAX(` + collectionScoreExpr + `), 0)::FLOAT8
 		  FROM collections c
@@ -1222,8 +1301,15 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cu
 			return nil, 0, 0, err
 		}
 	}
+	// #1173 sprint 25b: recency (created_at) order and keyset under a
+	// window; see runAssets.
+	orderBy := `score DESC, id DESC`
 	keysetFrag, keysetArgs := keysetFragment(HitTypeCollection, cur, maxScore,
 		collectionScoreExpr, "c.id", 2+len(predArgs))
+	if win != nil {
+		orderBy = `c.created_at DESC, c.id DESC`
+		keysetFrag, keysetArgs = recentKeysetFragment(HitTypeCollection, cur, "c.created_at", "c.id", 2+len(predArgs))
+	}
 
 	sqlHits := `
 		SELECT c.id, c.name, c.description, c.owner_user_ref, c.origin_server_id,
@@ -1231,7 +1317,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cu
 		       ` + collectionScoreExpr + ` AS score
 		  FROM collections c
 		 WHERE (c.search_text @@ plainto_tsquery('english', $1) OR ` + collectionTextless + `)` + notDeleted + visFrag + selFrag + keysetFrag + `
-		 ORDER BY score DESC, id DESC
+		 ORDER BY ` + orderBy + `
 		 LIMIT $2
 	`
 	sqlCount := `
@@ -1283,6 +1369,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cu
 			// visibility tier this hit contributes to it is parked in
 			// visByID below.
 			ExtraJSON: nil,
+			recency:   created,
 		})
 		visByID[id] = vis
 	}
@@ -1326,7 +1413,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cu
 	}
 	// See runAssets: the first page's window starts at the maximum, so
 	// the denominator is free there and measured on every page after it.
-	if cur == nil {
+	if cur == nil && win == nil {
 		for i := range hits {
 			if hits[i].RawScore > maxScore {
 				maxScore = hits[i].RawScore
@@ -1343,7 +1430,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int, cur *Cu
 // runs. Without it the predicate renders its `private` disjunct as
 // FALSE, and a moderator searching for a private post they can open from
 // the feed gets nothing back.
-func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor) ([]Hit, int, float64, error) {
+func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor, win *recentWindow) ([]Hit, int, float64, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityPost,
 		visibility.NewCaller(q.CallerUserRef), visibility.WithPostCaps(q.PostCaps))
 	if err != nil {
@@ -1363,8 +1450,15 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor) 
 	// MEMBERS, which do have such a tier, so its predicate carries the
 	// member gate INSIDE its own EXISTS. That is why this call passes a
 	// render context; see facet.RenderContext.
+	// #1173 sprint 25b: the recent window's arms bind after the
+	// predicate's and before the selection's; none in the relevance
+	// order.
+	arms, armArgs, err := recentArms(ctx, q, win, 3+len(visArgs))
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	selFrag, selArgs, satisfiable := q.Filters.SQL(
-		visibility.EntityPost, "posts", 3+len(visArgs), renderContextOf(q, "$3"))
+		visibility.EntityPost, "posts", 3+len(visArgs)+len(armArgs), recentContextOf(q, "$3", arms))
 	if !satisfiable {
 		return nil, 0, 0, nil
 	}
@@ -1440,7 +1534,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor) 
 		     LIMIT 1))`
 	const postScoreExpr = `ts_rank_cd(search_text, plainto_tsquery('english', $1))`
 
-	predArgs := append(append([]any{}, visArgs...), selArgs...)
+	predArgs := append(append(append([]any{}, visArgs...), armArgs...), selArgs...)
 	// The caller ref, or 0 for anonymous. ZERO IS THE SENTINEL AND IT IS
 	// LOAD-BEARING: MatureFilterSQL wraps it in NULLIF(…, 0) so an
 	// anonymous caller cannot match a row whose author column happens to
@@ -1459,7 +1553,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor) 
 	// because pgx rejects a statement bound with an argument it never
 	// names.
 	var maxScore float64
-	if cur != nil {
+	if cur != nil && win == nil {
 		sqlMax := `
 		SELECT COALESCE(MAX(` + postScoreExpr + `), 0)::FLOAT8
 		  FROM posts
@@ -1472,12 +1566,21 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor) 
 			return nil, 0, 0, err
 		}
 	}
+	// #1173 sprint 25b: a post's recency is `posted_at`, the column the
+	// browse feed orders by, NOT `created_at`; the hit's public
+	// created_at below is unchanged. Order and keyset follow the
+	// window; see runAssets.
+	orderBy := `score DESC, id DESC`
 	keysetFrag, keysetArgs := keysetFragment(HitTypePost, cur, maxScore,
 		postScoreExpr, "id", 3+len(predArgs))
+	if win != nil {
+		orderBy = `posted_at DESC, id DESC`
+		keysetFrag, keysetArgs = recentKeysetFragment(HitTypePost, cur, "posted_at", "id", 3+len(predArgs))
+	}
 
 	sqlHits := `
 		SELECT id, title, description, author_user_ref, origin_server_id,
-		       ` + coverAssetExpr + ` AS cover_asset_id, created_at, updated_at,
+		       ` + coverAssetExpr + ` AS cover_asset_id, created_at, updated_at, posted_at,
 		       like_count, comment_count,
 		       (SELECT COUNT(*) FROM post_assets pa
 		          JOIN assets pm ON pm.id = pa.asset_id AND pm.deleted_at IS NULL
@@ -1493,7 +1596,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor) 
 		   -- per statement is the off-by-one ADR 0063's placeholder
 		   -- discipline exists to avoid.
 		   AND ($3::BIGINT IS NULL OR TRUE)` + visFrag + matureFrag + selFrag + keysetFrag + `
-		 ORDER BY score DESC, id DESC
+		 ORDER BY ` + orderBy + `
 		 LIMIT $2
 	`
 	sqlCount := `
@@ -1528,12 +1631,13 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor) 
 			cover    *uuid.UUID
 			created  time.Time
 			updated  time.Time
+			posted   time.Time
 			likes    int64
 			comments int64
 			members  int64
 			score    float64
 		)
-		if err := rows.Scan(&id, &title, &descr, &author, &origin, &cover, &created, &updated,
+		if err := rows.Scan(&id, &title, &descr, &author, &origin, &cover, &created, &updated, &posted,
 			&likes, &comments, &members, &score); err != nil {
 			return nil, 0, 0, err
 		}
@@ -1549,6 +1653,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor) 
 			CreatedAt:      created,
 			UpdatedAt:      updated,
 			RawScore:       score,
+			recency:        posted,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -1595,7 +1700,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int, cur *Cursor) 
 	}
 	// See runAssets: the first page's window starts at the maximum, so
 	// the denominator is free there and measured on every page after it.
-	if cur == nil {
+	if cur == nil && win == nil {
 		for i := range hits {
 			if hits[i].RawScore > maxScore {
 				maxScore = hits[i].RawScore

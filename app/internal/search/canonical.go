@@ -94,6 +94,14 @@ var dslFieldForFacet = map[facet.FacetType]dsl.Field{
 	// spelling is ALWAYS the typed one; a verb is never written back.
 	facet.FacetPreview: dsl.FieldPreview,
 	facet.FacetID:      dsl.FieldID,
+
+	// #1173 sprint 25b adds `last:`, reachable from `/search`'s URL and
+	// from the free-text box as `!lastN`, which folds onto it. Savable by
+	// construction; the stored spelling is `last:N`, never the verb, and
+	// a saved search replays it asset-only under the executor's existing
+	// contract (the window is formed over the requested types, and the
+	// executor requests assets).
+	facet.FacetLast: dsl.FieldLast,
 }
 
 // SelectionToDSL renders a [facet.Selection] as canonical DSL: every term
@@ -247,6 +255,7 @@ func SelectionFromDSL(f dsl.Filters, into facet.Selection) (facet.Selection, err
 		{facet.FacetWorkflowState, f.WorkflowStates},
 		{facet.FacetPreview, f.Previews},
 		{facet.FacetID, f.IDs},
+		{facet.FacetLast, f.Lasts},
 	} {
 		if err := add(pair.ft, pair.values); err != nil {
 			return facet.Selection{}, err

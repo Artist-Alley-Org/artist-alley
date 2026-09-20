@@ -542,6 +542,68 @@ const (
 	// No [Aggregator] and absent from [AllFacets]; `?facets=id` resolves
 	// and produces no bucket, as `collection` does.
 	FacetID FacetType = "id"
+
+	// FacetLast narrows to a RECENT WINDOW: the N newest eligible rows,
+	// globally across the entity types the search asks for
+	// (`filter=last:N`), the typed form of the owner's `!lastN` (#1173,
+	// sprint 25b).
+	//
+	// # ⛔ THE WINDOW IS GLOBAL, NOT N PER ARM
+	//
+	// `last:3` over assets and posts is the three newest rows of the
+	// UNION, not three assets and three posts merged afterwards. Under
+	// ADR 0056 §1 the arms run separately, so the predicate cannot be
+	// "the N newest of this table": it is "this row sorts at or before
+	// the N-th newest row of the union of every requested arm", with
+	// the union's arms spelled by the execution site from the SAME
+	// readability authorities it already applies. See [RecentArm] and
+	// [RenderContext.RecentArms] for how the arms reach the renderer
+	// and why they are rendered by the site rather than here.
+	//
+	// # The window exists BEFORE every other term
+	//
+	// Free text and every other dimension narrow INSIDE the window: if
+	// only the fourth-newest eligible row contains `zebra`, `last:3
+	// zebra` returns nothing. That follows from the predicate being a
+	// conjunct like any other: the window subquery ranks the BASELINE
+	// population (readability alone) and the outer statement ANDs the
+	// rest onto rows that are inside it.
+	//
+	// # `last` is an ACTIVE selection, and the asset baseline is the field plane
+	//
+	// Every asset execution site applies `visibility.FieldsReadableSQL`
+	// under an active filter, and the window's asset arm carries that
+	// same plane. Consequence, stated plainly: a restricted asset that a
+	// stranger can see only as a withheld placeholder does NOT consume
+	// one of that stranger's N slots, while the same asset DOES consume
+	// a slot for its owner or a field-authorised caller. That is
+	// deliberately narrower than an unfiltered placeholder listing, and
+	// it is what keeps the rail's count under `last:N` equal to the set
+	// that ticking it returns: the facet asset population applies the
+	// field plane unconditionally (buildAssetVisibilityAppendedSQL).
+	//
+	// # Clocks
+	//
+	// Assets and collections rank on `created_at`; posts rank on
+	// `posted_at`, the column browse orders the feed by
+	// (posts/list_page.go). A post's public `created_at` is unchanged
+	// and is not the ordering key. See [RecentClock].
+	//
+	// # Single-valued, top-level only, range 1..[dsl.MaxLastWindow]
+	//
+	// A row is in one window or it is not, and two windows have no
+	// combination rule that means anything (`last:3 AND last:5` is
+	// neither the union nor the intersection anyone asked for), so
+	// [FacetType.maxTerms] is 1 and [Selection.Validate] refuses a second
+	// distinct value on every entry path. Placement is the DSL's rule
+	// (dsl.Field.topLevelOnly). The value grammar is ONE function,
+	// [dsl.ParseLastWindow], for the reason recorded there.
+	//
+	// # Filter-only
+	//
+	// No [Aggregator] and absent from [AllFacets]; the dimension changes
+	// what the existing aggregators COUNT OVER, never what they emit.
+	FacetLast FacetType = "last"
 )
 
 // PreviewMissing is the ONLY value of [FacetPreview]. Spelled here for
@@ -610,8 +672,8 @@ const (
 // the caller doesn't restrict via ?facets=...
 //
 // FacetCollection, FacetField, FacetAI, FacetKind, FacetVisibility,
-// FacetFileSize, FacetWorkflowState, FacetPreview and FacetID are
-// deliberately absent; see their docs.
+// FacetFileSize, FacetWorkflowState, FacetPreview, FacetID and FacetLast
+// are deliberately absent; see their docs.
 func AllFacets() []FacetType {
 	return []FacetType{FacetAssetType, FacetTag, FacetSensitivity, FacetOwner, FacetExtension}
 }
@@ -648,6 +710,8 @@ func ParseFacetType(s string) (FacetType, bool) {
 		return FacetPreview, true
 	case "id":
 		return FacetID, true
+	case "last":
+		return FacetLast, true
 	}
 	return "", false
 }
@@ -759,13 +823,38 @@ type Request struct {
 // zero context would make the post half unsatisfiable — silently
 // dropping every post-derived tag count from a rail whose whole
 // invariant is that its number equals what ticking it returns.
-func (r Request) renderContext() RenderContext {
-	return RenderContext{
+//
+// # The recent window's arms (#1173, sprint 25b)
+//
+// When the selection carries a `last:` term the context also carries
+// the three entities' baselines, rendered by [RecentArms] with
+// placeholders bound from offset+1, and the returned args must be
+// appended by the caller BEFORE the selection's own. All three
+// entities, always: a suggestion endpoint takes no `types=`, and rule A
+// (ADR 0093, 25b amendment) says the window is the one `/search` would
+// form with no types, formed FIRST, from which each consumer then
+// projects only the kinds it aggregates. A collection can therefore
+// consume a slot even though no consumer counts collections. Without a
+// `last:` term nothing is rendered and nothing is bound, so every other
+// selection's statements are byte-for-byte what they were.
+func (r Request) renderContext(ctx context.Context, offset int) (RenderContext, []any, error) {
+	rc := RenderContext{
 		Caller:       r.Caller,
 		Caps:         r.Caps,
 		MutationCaps: r.MutationCaps,
 		CallerArg:    strconv.FormatInt(r.Caller.UserRef, 10),
 	}
+	if _, ok := r.Selection.RecentWindow(); !ok {
+		return rc, nil, nil
+	}
+	arms, args, err := RecentArms(ctx, r, []visibility.EntityType{
+		visibility.EntityAsset, visibility.EntityCollection, visibility.EntityPost,
+	}, offset)
+	if err != nil {
+		return RenderContext{}, nil, err
+	}
+	rc.RecentArms = arms
+	return rc, args, nil
 }
 
 // DefaultAggregatorTimeout is the fallback if Request.Timeout is

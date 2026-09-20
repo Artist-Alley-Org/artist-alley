@@ -467,7 +467,9 @@ func TestIDList_PlacementAndMalformedAreRefusedAtTheWire(t *testing.T) {
 			t.Errorf("dsl=%q refused for the wrong reason: %v", in, r.Body)
 		}
 	}
-	for _, in := range []string{"!list", "!list:" + a, "!listjunk", "!list" + a + ",,", "!bogus", "!last5"} {
+	// `!last5` sat in this list through 25a as a pinned unknown verb;
+	// sprint 25b registered it (last_window_test.go).
+	for _, in := range []string{"!list", "!list:" + a, "!listjunk", "!list" + a + ",,", "!bogus"} {
 		r := idGet(t, pool, owner, url.Values{"dsl": {in}})
 		if r.Status != http.StatusBadRequest || r.Body["error"] != "dsl_error" {
 			t.Errorf("dsl=%q → %d %v, want 400 dsl_error", in, r.Status, r.Body)

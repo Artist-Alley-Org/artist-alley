@@ -31,6 +31,10 @@ func withheldHit(h Hit, ownerDisplayName string) Hit {
 		NormalisedScore:  h.NormalisedScore,
 		VectorScore:      h.VectorScore,
 		HybridScore:      h.HybridScore,
+		// The recency key survives for the reason the scores do: it is
+		// the recent order's sort key, computed after projection, and it
+		// is never marshalled (#1173, sprint 25b).
+		recency: h.recency,
 	}
 }
 

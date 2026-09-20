@@ -95,6 +95,21 @@ const (
 	// Cardinality (at most [facet.MaxIDTerms] distinct ids) is a property
 	// of the SELECTION and is enforced there, once, for every entry path.
 	FieldID Field = "id"
+	// FieldLast is the `last:` dimension: a RECENT WINDOW of the N newest
+	// eligible rows, globally across the searched entity types, inside
+	// which every other term narrows (#1173, sprint 25b). `!lastN` is
+	// input sugar that folds onto exactly this node.
+	//
+	// ⛔ THE VALUE IS VALIDATED BY ONE FUNCTION, [ParseLastWindow], which
+	// the alias fold calls here and [facet.FacetType.CanonicalValue]
+	// calls for the typed spelling and for `filter=last:`; the node
+	// carries whatever was typed and the facet bridge canonicalises it.
+	// It IS placement-checked: see [Field.topLevelOnly]. It is
+	// single-valued, and that is a property of the SELECTION, enforced
+	// there once for every entry path. It changes the ORDER of the
+	// result (recency, never score); the engine decides that from the
+	// selection, not from anything in this package.
+	FieldLast Field = "last"
 )
 
 // topLevelOnly reports whether a dimension is legal ONLY as a top-level
@@ -121,9 +136,11 @@ const (
 // slipping through as a different token.
 //
 // The list is a classification, like facet's `conjunctive`, and it is
-// deliberately short. Sprint 25b adds `last` here and nowhere else.
+// deliberately short. Sprint 25b added `last` here and nowhere else: a
+// recent window is the same kind of selection, and `NOT last:5` would
+// flatten to `last:5` and mean its opposite.
 func (f Field) topLevelOnly() bool {
-	return f == FieldPreview || f == FieldID
+	return f == FieldPreview || f == FieldID || f == FieldLast
 }
 
 // AllFields is the whitelist. Exposed so error responses can list
@@ -132,7 +149,7 @@ var AllFields = []Field{
 	FieldTitle, FieldDescription, FieldBody, FieldTag, FieldOwner,
 	FieldType, FieldSensitivity, FieldExtension, FieldSimilarTo,
 	FieldField, FieldFileSize, FieldWorkflowState,
-	FieldPreview, FieldID,
+	FieldPreview, FieldID, FieldLast,
 }
 
 // ParseField normalises a case-insensitive identifier to its
@@ -168,6 +185,8 @@ func ParseField(s string) (Field, bool) {
 		return FieldPreview, true
 	case "id":
 		return FieldID, true
+	case "last":
+		return FieldLast, true
 	}
 	return "", false
 }
@@ -418,6 +437,10 @@ const (
 	// top-level-only dimension beneath NOT or OR (#1173, sprint 25a).
 	// See [Field.topLevelOnly].
 	Placement
+	// Incompatible is two terms that are each legal and cannot be asked
+	// together: today only `last:` beside `similar_to:` (#1173, sprint
+	// 25b). See [ErrLastWithSimilarity] for why it is its own kind.
+	Incompatible
 )
 
 // DSLError is the typed error for parse + compile stages. Passed
@@ -435,3 +458,34 @@ var (
 	ErrParseUnexpected         = errors.New("dsl: unexpected token")
 	ErrSimilarToNotImplemented = errors.New("dsl: similar_to reserved for Phase 1.16.B-3")
 )
+
+// ErrLastWithSimilarity is the ONE error for "a recent window and a
+// similarity anchor in the same query" (#1173, sprint 25b).
+//
+// # Why they cannot compose
+//
+// `similar_to:` is a RANKING: the hybrid path re-scores assets by
+// embedding proximity after the arms return and cuts the page in Go.
+// `last:` is also a ranking: recency, never score, with the window
+// selected in SQL and the page cut on a recency keyset. A query cannot
+// be ordered two ways, and "similar within the newest N" is a different
+// feature (a by-image FILTER composed with a window) that nothing here
+// implements. Refusing is the honest answer; picking one order silently
+// would be a filter that looks applied and is not.
+//
+// # Why it is a value, and why the compiler and the engine both return it
+//
+// The two terms can arrive in ONE string (`last:5 AND similar_to:<id>`,
+// either spelling), where [Compile] sees both and refuses, or SPLIT
+// across `dsl=similar_to:<id>` and `filter=last:5`, where no single
+// parse sees both and only the composed Query does. So search.Engine.Run
+// refuses again at its entry, and returns THIS value, so the HTTP edge
+// renders one 400 with one code, one kind and one message whichever
+// seam caught it. It is a [DSLError] value, so errors.As finds it
+// through the executor's and the coordinator's wrapping too, and the
+// edge renders it with the branch it already has for compiler errors.
+var ErrLastWithSimilarity = DSLError{
+	Kind: Incompatible,
+	Message: "last: cannot be combined with similar_to:; a recent window is ordered by " +
+		"recency and a similarity search by proximity, and one query has one order",
+}

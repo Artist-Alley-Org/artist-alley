@@ -170,10 +170,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// #1173 sprint 25b: the cursor's order against the FINAL query's
+	// order, now that `dsl=` and `filter=` have both folded into the
+	// selection. DecodeCursor above validated structure only, because a
+	// recent cursor is fine on a recent query and wrong on a relevance
+	// one, and which of those this request is could not be known before
+	// this line. Engine.Run asks again, fail-closed, for callers that do
+	// not come through here.
+	if err := checkCursorOrder(query); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_cursor"})
+		return
+	}
+
 	res, err := h.Service.Execute(r.Context(), query)
 	if err != nil {
 		if errors.Is(err, ErrEmptyQuery) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query_required"})
+			return
+		}
+		// #1173 sprint 25b: the engine's own refusals of a composed
+		// query: an order mismatch it caught fail-closed, and `last:`
+		// beside a similarity hint that arrived split across `dsl=` and
+		// `filter=`. The second renders as the SAME dsl_error the
+		// compiler produces for the all-DSL spelling, so the wire
+		// contract is one whichever seam caught it.
+		if errors.Is(err, ErrBadCursor) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_cursor"})
+			return
+		}
+		if de := (dsl.DSLError{}); errors.As(err, &de) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "dsl_error", "kind": int(de.Kind), "message": de.Message})
 			return
 		}
 		if h.Logger != nil {
