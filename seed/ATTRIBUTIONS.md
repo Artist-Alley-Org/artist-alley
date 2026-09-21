@@ -232,6 +232,47 @@ motion, esports tournament, retro gaming console.
     and the twelve posts in
     [`seed/upgrades/generated-posts.site_a.json`](upgrades/generated-posts.site_a.json).
 
+- **Aurora R&D, authored in-house** (CC0 1.0): two plates under
+  `images/aurora-authored/`, produced by `seed/scripts/authored_plates.py`
+  (Python stdlib only, no image library) so the corpus can honestly carry
+  the two `ai_provenance` states the 45 images above cannot (#1290,
+  ADR 0094). Both carry `license: "CC0 1.0"`.
+  - `studio-colour-chart.png`, record `530cb8f1-1aa4-ab97-87e8-30ad58ac59fb`,
+    11,404 bytes, declares `ai_provenance: none`. A calibration chart: 24
+    colour patches, a 21-step greyscale ramp and corner registration
+    marks, every pixel placed by arithmetic in the script. No generative
+    model is involved at any point, which is what makes `none` a
+    statement of fact rather than a disclaimer. Its `attribution` names
+    Aurora R&D as authoring it in-house with no generative AI (the exact
+    string is on the record), and its
+    `metadata.acquisition_source` is
+    `"Authored in-house (deterministic plate generator, seed/scripts/authored_plates.py)"`.
+  - `reference-mood-board.png`, record `c4542a8f-c9a1-edfa-f2f4-1fea6ab84d96`,
+    1,290,128 bytes, declares `ai_provenance: assisted`. One of the
+    Stable Diffusion 3.5 Large plates listed above,
+    `images/aurora-generated/ref-colour-script.png` (record
+    `4d1c5235-32dd-5faa-8a71-3b5f1d3151df`, named as `MOOD_BOARD_SOURCE`
+    in the script), is downsampled into a panel and its palette strip is
+    sampled from that plate's own pixels; the swatch grid, rules and
+    registration marks around it are drawn by the script. Part of the
+    work came out of a generative model and part did not, so neither
+    `generated` nor `none` would be true of it. Its `attribution` names
+    Aurora R&D as authoring it in-house over an AI-generated plate (the
+    exact string is on the record), and its `metadata.acquisition_source`
+    is
+    `"Authored in-house (seed/scripts/authored_plates.py over a Stable Diffusion 3.5 Large plate)"`.
+  - "Aurora R&D" is the fictional studio this dataset simulates (see
+    **Studio simulation metadata** below). It is not a real company.
+  - The repository carries the recipe, not the bytes: the plates are
+    built once against the dataset source with
+    `python3 seed/scripts/authored_plates.py build` before a publish, and
+    the build is deterministic, so a rebuild is byte-identical and the
+    sizes above do not churn.
+  - Carried in the pipeline by
+    [`seed/upgrades/authored-assets.site_a.json`](upgrades/authored-assets.site_a.json)
+    and the two posts in
+    [`seed/upgrades/authored-posts.site_a.json`](upgrades/authored-posts.site_a.json).
+
 ### Reference material (community contributed)
 
 - **The Models Resource** (referenced game rips) — NOT included in this
@@ -243,8 +284,10 @@ motion, esports tournament, retro gaming console.
 `MANIFEST.json` carries an optional `ai_provenance` on an asset. It is
 the MAKER'S OWN DECLARATION about how the work was made, and the absence
 of the key means **nobody was asked** — not "no AI". Exactly 45 entries
-declare `generated`; every other entry omits the key entirely, which is
-the honest state for a corpus assembled before the field existed.
+declare `generated`, and the two authored plates above declare `none`
+and `assisted`, one each; every other entry omits the key entirely,
+which is the honest state for a corpus assembled before the field
+existed.
 
 **Why nothing else in the dataset declares it.** It was tried the other
 way first, and it was wrong. Two upgrade documents (`ai-declarations.site_a.json`
@@ -261,7 +304,9 @@ actually made** — which is why the 45 images above exist at all.
 `ai_provenance` is `"generated"` and the twelve posts that carry them
 (the eleven `<Team> — AI reference set` posts plus `Backplate study — AI
 plate beside a public-domain plate`); nothing else in the dataset
-references them.
+references them, except that the authored mood-board post
+(`155b61b8-9c9e-58ac-46fe-fcc79f338555`) pairs `ref-colour-script.png`
+with `reference-mood-board.png` and would keep only the latter.
 
 ## The `mature` label, and why these twelve
 

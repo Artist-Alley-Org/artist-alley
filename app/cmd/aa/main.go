@@ -51,6 +51,16 @@ func main() {
 		}
 		return
 	}
+	// `aa seed-verify ...` is the read-only counterpart of `aa seed`
+	// (#1319): did the catalogue materialize, value for value, under the
+	// seed's own provenance? Opens a pool and writes nothing.
+	if len(os.Args) > 1 && os.Args[1] == "seed-verify" {
+		if err := runSeedVerify(os.Args[2:]); err != nil {
+			slog.Error("seed-verify failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
 	// `aa rebuild-previews ...` re-enqueues preview jobs for existing
 	// assets with force set, so a renderer fix reaches the catalogue
 	// that predates it (#760). Enqueue-only; the server's worker pool

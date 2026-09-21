@@ -58,17 +58,19 @@ SEED_MODULES = [
     "resolve_media_urls",
     "sanitize_and_assemble",
     "studio_balance",
+    "verify_site",
 ]
 
 TEST_MODULE = "test_dataset_upgrade"
 
 # Floor, not a target. The suite held 150 tests when this gate landed,
 # 170 after sprint 14c, 179 after #1301's refusal tests, 241 after
-# sprint 14e and 265 after sprint 22's seed guards (#1322, #1328).
+# sprint 14e, 265 after sprint 22's seed guards (#1322, #1328) and 306
+# after sprint 23a's migration-aware guard and site verifier (#1319).
 # Raise it when a batch of tests lands; never lower it to
 # make a red run go green — a dropped test is the thing this number
 # exists to catch.
-MIN_TESTS = 255
+MIN_TESTS = 306
 
 
 def _summary(line: str) -> None:

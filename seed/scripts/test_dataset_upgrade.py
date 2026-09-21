@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -52,6 +53,7 @@ import populate_archive as pa       # noqa: E402
 import resolve_media_urls as rmu    # noqa: E402
 import sanitize_and_assemble as sa  # noqa: E402
 import studio_balance as sb         # noqa: E402
+import verify_site as vs            # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 UPGRADES = SCRIPTS.parent / "upgrades"
@@ -4632,6 +4634,774 @@ class TestPostIdentity(unittest.TestCase):
         self.assertEqual(len(moves), 2)
         self.assertTrue(mpi.check_safe(posts, moves),
                         "two rows deriving one id must be refused")
+
+
+# ---------------------------------------------------------------------------
+# #1319: a committed identity migration is not a deletion (ADR 0097)
+# ---------------------------------------------------------------------------
+
+def _post(pid, **kw):
+    """A posts.json row with the keys the guard descends into."""
+    # The title is NOT derived from the id: a moved record must be
+    # identical apart from its identity, or the fixture would carry an
+    # edit of its own.
+    base = {"id": pid, "title": "a post", "post_kind": "asset_group",
+            "asset_ids": ["a1"], "tags": ["t"], "field_values": {}, "metadata": {}}
+    base.update(kw)
+    return base
+
+
+def _moves(*pairs):
+    return [{"old_id": o, "new_id": n, "post_kind": "asset_group",
+             "title": f"post {o}", "members": 1} for o, n in pairs]
+
+
+def _publish_dry_run(tmp, source_posts, dest_posts, document, *, stem="fixture",
+                     extra_args=(), profile_field=None, write_document=True):
+    """Lay a posts profile and its migration document out the way the
+    repository holds them (`<root>/profiles/<stem>.posts.json` beside
+    `<root>/upgrades/post-id-migration.<stem>.json`) and run
+    populate_archive.py --dry-run over an empty assets profile, so the
+    only thing under test is the posts.json guard.
+
+    Only arguments that exist on `dev` before #1319 are used, which is
+    what lets the class-A tests below run UNCHANGED against the old code
+    and fail there for the old reason.
+    """
+    tmp = Path(tmp)
+    local = tmp / "local"
+    local.mkdir(exist_ok=True)
+    (local / "metadata.csv").write_text("file_path,title\n", encoding="utf-8")
+    (tmp / "internet").mkdir(exist_ok=True)
+    profiles = tmp / "profiles"
+    profiles.mkdir(exist_ok=True)
+    upgrades = tmp / "upgrades"
+    upgrades.mkdir(exist_ok=True)
+    dest = tmp / "dest"
+    dest.mkdir(exist_ok=True)
+    assets = profiles / f"{stem}.assets.json"
+    assets.write_text("[]", encoding="utf-8")
+    (dest / "MANIFEST.json").write_text("[]", encoding="utf-8")
+    posts = profiles / f"{stem}.posts.json"
+    posts.write_text(json.dumps(source_posts), encoding="utf-8")
+    (dest / "posts.json").write_text(json.dumps(dest_posts), encoding="utf-8")
+    if write_document and document is not None:
+        doc = {"_why": ["fixture"],
+               "profile": profile_field if profile_field is not None else posts.name,
+               "moves": document}
+        (upgrades / f"post-id-migration.{stem}.json").write_text(
+            json.dumps(doc), encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "populate_archive.py"),
+         "--local-source", str(local), "--internet-source", str(tmp / "internet"),
+         "--profile", str(assets), "--posts", str(posts), "--dest", str(dest),
+         "--dry-run", *extra_args],
+        capture_output=True, text=True)
+    return proc
+
+
+class TestMigrationAwareGuardCLI(unittest.TestCase):
+    """Class A, fail-before-fix (#1319). Run UNCHANGED against `dev` at
+    02739f6b these refuse with "WOULD LOSE: N record(s) deleted" because
+    the old guard reads every moved id as a deleted record; on the fixed
+    code the same invocation passes and reports N migrations.
+
+    The document is laid out where the fixed lookup expects it and the
+    invocation is the production one, `--posts <profile> --dry-run`, with
+    no new argument.
+    """
+
+    def test_an_identity_only_move_is_a_migration_not_a_loss(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(d, [_post("A2")], [_post("A")], _moves(("A", "A2")))
+        self.assertEqual(proc.returncode, 0,
+                         "an id the migration document moved was refused as a "
+                         f"deleted record:\n{proc.stderr}")
+        self.assertIn("migrated: 1 record(s)", proc.stderr)
+        self.assertNotIn("WOULD LOSE", proc.stderr)
+        self.assertNotIn("would add", proc.stderr,
+                         "the new id is the old record under a new name, not an addition")
+        self.assertNotIn("would change", proc.stderr,
+                         "the id transition must not be reported as an edit")
+        self.assertIn("nothing at the destination would be lost", proc.stderr)
+
+    def test_two_moves_beside_an_unmoved_record(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(
+                d, [_post("A2"), _post("B2"), _post("C")],
+                [_post("A"), _post("B"), _post("C")],
+                _moves(("A", "A2"), ("B", "B2")))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("migrated: 2 record(s)", proc.stderr)
+        self.assertNotIn("would add", proc.stderr)
+        self.assertNotIn("would change", proc.stderr)
+
+    def test_an_unrelated_missing_record_is_still_a_loss(self):
+        """D is not in the document, so D is deleted. Refused on both the
+        old and the new code; the fixed report additionally accounts for
+        the two moves instead of listing them as losses."""
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(
+                d, [_post("A2"), _post("B2"), _post("C")],
+                [_post("A"), _post("B"), _post("C"), _post("D")],
+                _moves(("A", "A2"), ("B", "B2")))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("MISSING_RECORD D", proc.stderr)
+        self.assertIn("migrated: 2 record(s)", proc.stderr,
+                      "the two recorded moves must be migrations, not losses")
+        self.assertIn("WOULD LOSE: 1 record(s) deleted", proc.stderr)
+
+    def test_content_lost_across_a_move_still_refuses(self):
+        """The move is recorded, but the new record lacks a value the old
+        one carried. A migration excuses the id and nothing else."""
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(
+                d, [_post("A2")], [_post("A", field_values={"k": "v"})],
+                _moves(("A", "A2")))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("MISSING_KEY A .field_values.k", proc.stderr,
+                      "the loss must be named as the dropped key, not as a "
+                      f"deleted record:\n{proc.stderr}")
+        self.assertIn("migrated: 1 record(s)", proc.stderr)
+        self.assertNotIn("MISSING_RECORD", proc.stderr)
+
+    def test_a_value_emptied_across_a_move_still_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(
+                d, [_post("A2", field_values={"k": ""})],
+                [_post("A", field_values={"k": "v"})],
+                _moves(("A", "A2")))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("EMPTIED_VALUE A .field_values.k", proc.stderr)
+        self.assertIn("migrated: 1 record(s)", proc.stderr)
+
+    def test_an_ordinary_edit_across_a_move_is_reported_not_refused(self):
+        """Title changed, id moved: one CHANGED_VALUE (the title) and no
+        change for the id. A count of 2 would mean the id transition was
+        reported as an edit."""
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(
+                d, [_post("A2", title="new")], [_post("A", title="old")],
+                _moves(("A", "A2")))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("migrated: 1 record(s)", proc.stderr)
+        self.assertIn("would change: 1 value(s)", proc.stderr)
+
+
+class TestMigrationWitnessFromCommittedInputs(unittest.TestCase):
+    """Class A, the real-data witness, built at test time from committed
+    inputs and no archive share: source = the committed posts profile,
+    destination = the same rows with every new id rewritten back to its
+    old id per the committed document (and, for studio-b, the four ids
+    the published site holds twice appended a second time). On `dev` the
+    guard reports 175 / 336 deleted records; fixed, 0 losses and 175 /
+    336 migrations, and no identity-key change.
+    """
+
+    # The four ids site_b's published posts.json carries twice. Supplied
+    # here as the fixture's shape, not read from the share.
+    SITE_B_TWICE = (
+        "81f57645-32f0-c0d0-e2a1-4eb5af1bfce7",
+        "7e6e18ee-4e2b-3109-9334-9e4107576ac1",
+        "a08d3d10-4100-a973-74c9-cc09ed94185a",
+        "3e74d6e4-50cb-b1ba-952a-c21d5ecb7dd4",
+    )
+
+    def _witness(self, stem, expected_moves, twice=()):
+        source = json.loads((PROFILES / f"{stem}.posts.json").read_text(encoding="utf-8"))
+        doc = json.loads((UPGRADES / f"post-id-migration.{stem}.json").read_text(encoding="utf-8"))
+        moves = doc["moves"]
+        self.assertEqual(len(moves), expected_moves)
+        back = {m["new_id"]: m["old_id"] for m in moves}
+        dest = []
+        for row in source:
+            row = json.loads(json.dumps(row))
+            row["id"] = back.get(row["id"], row["id"])
+            dest.append(row)
+        by_id = {r["id"]: r for r in dest}
+        for rid in twice:
+            self.assertIn(rid, by_id, f"{rid} is not a {stem} post")
+            dest.append(json.loads(json.dumps(by_id[rid])))
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(d, source, dest, moves, stem=stem)
+        self.assertEqual(proc.returncode, 0,
+                         f"{stem}: {expected_moves} recorded moves were refused as "
+                         f"deleted records:\n{proc.stderr[-2000:]}")
+        self.assertIn(f"migrated: {expected_moves} record(s)", proc.stderr)
+        self.assertNotIn("WOULD LOSE", proc.stderr)
+        self.assertNotIn("WOULD OVERWRITE A MEASUREMENT", proc.stderr)
+        self.assertNotIn("would add", proc.stderr,
+                         "every source id is either shared or a migration target")
+        self.assertNotIn("would change", proc.stderr,
+                         "rows differ only in id; an identity-key change would show here")
+        self.assertIn(f"destination {len(dest):,}", proc.stderr)
+
+    def test_studio_a_175_moves(self):
+        self._witness("studio-a", 175)
+
+    def test_studio_b_336_moves_with_the_four_twice_published_ids(self):
+        self._witness("studio-b", 336, twice=self.SITE_B_TWICE)
+
+    def test_manifest_verdicts_are_unchanged(self):
+        """Class B. The MANIFEST comparison takes no migration and must
+        judge exactly as before: one deleted record, one edit."""
+        profile = json.loads((PROFILES / "studio-a.assets.json").read_text(encoding="utf-8"))
+        dest = json.loads(json.dumps(profile))
+        dest[0]["title"] = dest[0]["title"] + " (published)"
+        dest.append({**dest[1], "id": "only-at-the-destination"})
+        cmp = mg.compare(profile, dest, "MANIFEST.json")
+        self.assertEqual([(x.kind, x.record_id) for x in cmp.losses],
+                         [(mg.MISSING_RECORD, "only-at-the-destination")])
+        self.assertEqual([(x.kind, x.key) for x in cmp.changes], [(mg.CHANGED_VALUE, "title")])
+        self.assertFalse(cmp.ok)
+
+
+class TestMigrationDocumentValidation(unittest.TestCase):
+    """Class C, branch-only: the document is validated one-to-one before
+    any comparison, and every defect refuses rather than half-applies."""
+
+    def _doc(self, moves, profile="x.posts.json"):
+        return {"_why": ["t"], "profile": profile, "moves": moves}
+
+    def test_many_to_one_is_refused_not_two_migrations(self):
+        with self.assertRaises(mg.MigrationError) as cm:
+            mg.parse_migration_document(self._doc(_moves(("A", "X"), ("B", "X"))),
+                                        source="doc", profile_name="x.posts.json")
+        msg = str(cm.exception)
+        self.assertIn("doc", msg)
+        for rid in ("A", "B", "X"):
+            self.assertIn(rid, msg)
+
+    def test_conflicting_targets_for_one_old_id_are_refused(self):
+        with self.assertRaises(mg.MigrationError) as cm:
+            mg.parse_migration_document(self._doc(_moves(("A", "X"), ("A", "Y"))), source="doc")
+        self.assertIn("two different targets", str(cm.exception))
+
+    def test_an_old_id_recorded_twice_is_refused(self):
+        with self.assertRaises(mg.MigrationError) as cm:
+            mg.parse_migration_document(self._doc(_moves(("A", "X"), ("A", "X"))), source="doc")
+        self.assertIn("recorded twice", str(cm.exception))
+
+    def test_an_uncomposed_chain_is_refused(self):
+        with self.assertRaises(mg.MigrationError) as cm:
+            mg.parse_migration_document(self._doc(_moves(("A", "B"), ("B", "C"))), source="doc")
+        self.assertIn("uncomposed chain", str(cm.exception))
+        self.assertIn("B", str(cm.exception))
+
+    def test_a_self_move_and_a_malformed_move_are_refused(self):
+        with self.assertRaises(mg.MigrationError):
+            mg.parse_migration_document(self._doc(_moves(("A", "A"))), source="doc")
+        with self.assertRaises(mg.MigrationError):
+            mg.parse_migration_document(self._doc([{"old_id": "A"}]), source="doc")
+        with self.assertRaises(mg.MigrationError):
+            mg.parse_migration_document(self._doc([{"old_id": "", "new_id": "B"}]), source="doc")
+        with self.assertRaises(mg.MigrationError):
+            mg.parse_migration_document({"profile": "x.posts.json", "moves": {}}, source="doc")
+        with self.assertRaises(mg.MigrationError):
+            mg.parse_migration_document({"profile": "x.posts.json"}, source="doc")
+        with self.assertRaises(mg.MigrationError):
+            mg.parse_migration_document([], source="doc")
+
+    def test_a_profile_naming_another_file_is_refused(self):
+        with self.assertRaises(mg.MigrationError) as cm:
+            mg.parse_migration_document(self._doc(_moves(("A", "B")), profile="studio-b.posts.json"),
+                                        source="doc", profile_name="studio-a.posts.json")
+        self.assertIn("studio-b.posts.json", str(cm.exception))
+        self.assertIn("studio-a.posts.json", str(cm.exception))
+        with self.assertRaises(mg.MigrationError):
+            mg.parse_migration_document({"moves": []}, source="doc")
+
+    def test_a_mapped_new_id_absent_from_the_source_is_refused(self):
+        m = mg.parse_migration_document(self._doc(_moves(("A", "Z"))), source="doc")
+        with self.assertRaises(mg.MigrationError) as cm:
+            mg.compare([_post("B")], [_post("A")], "posts", migration=m)
+        self.assertIn("Z", str(cm.exception))
+        self.assertIn("absent from the source", str(cm.exception))
+
+    def test_an_old_id_still_in_the_source_is_refused(self):
+        m = mg.parse_migration_document(self._doc(_moves(("A", "A2"))), source="doc")
+        with self.assertRaises(mg.MigrationError) as cm:
+            mg.compare([_post("A"), _post("A2")], [_post("A")], "posts", migration=m)
+        self.assertIn("still present in the source", str(cm.exception))
+
+    def test_malformed_json_refuses_naming_the_document(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "post-id-migration.x.json"
+            p.write_text('{"profile": "x.posts.json", "moves": [', encoding="utf-8")
+            with self.assertRaises(mg.MigrationError) as cm:
+                mg.load_migration_document(p, profile_name="x.posts.json")
+            self.assertIn(p.name, str(cm.exception))
+
+    def test_the_lookup_is_derived_from_the_posts_path(self):
+        self.assertEqual(
+            mg.migration_document_path(Path("/r/profiles/studio-a.posts.json")),
+            Path("/r/upgrades/post-id-migration.studio-a.json"))
+        self.assertIsNone(mg.migration_document_path(Path("/r/profiles/posts.json")))
+        self.assertIsNone(mg.migration_document_path(Path("/r/profiles/.posts.json")))
+        for stem in ("studio-a", "studio-b", "dataset"):
+            doc = mg.load_migration_document(
+                UPGRADES / f"post-id-migration.{stem}.json", profile_name=f"{stem}.posts.json")
+            posts = json.loads((PROFILES / f"{stem}.posts.json").read_text(encoding="utf-8"))
+            mg.validate_migration_against_source(doc.moves, (p["id"] for p in posts))
+
+    def test_a_migration_target_is_not_an_addition(self):
+        m = mg.parse_migration_document(self._doc(_moves(("A", "A2"))), source="doc")
+        cmp = mg.compare([_post("A2"), _post("N")], [_post("A")], "posts", migration=m)
+        self.assertEqual(cmp.migrated, [("A", "A2")])
+        self.assertEqual(cmp.records_migrated, 1)
+        self.assertEqual(cmp.added, ["N"])
+        self.assertEqual(cmp.losses, [])
+        self.assertTrue(cmp.ok)
+        report = mg.format_report(cmp)
+        self.assertIn("migrated: 1 record(s)", report)
+        self.assertIn("would add: 1 record(s)", report)
+
+    def test_a_plain_mapping_is_accepted_and_a_moved_measurement_keeps_its_class(self):
+        """The comparison across a move is the ordinary one: a corrupted
+        measurement on a staged root still refuses, an edit still passes."""
+        cmp = mg.compare([_post("A2", source_root="site", file_size_bytes=1)],
+                         [_post("A", source_root="site", file_size_bytes=2)],
+                         "posts", migration={"A": "A2"})
+        self.assertEqual([x.kind for x in cmp.losses], [mg.CORRUPTED_MEASUREMENT])
+        self.assertEqual(cmp.migrated, [("A", "A2")])
+
+    def test_duplicate_source_ids_stay_refused_with_a_migration(self):
+        m = mg.parse_migration_document(self._doc(_moves(("A", "A2"))), source="doc")
+        cmp = mg.compare([_post("A2"), _post("A2")], [_post("A")], "posts", migration=m)
+        self.assertEqual(cmp.duplicates, {"A2": 2})
+        self.assertFalse(cmp.ok)
+
+
+class TestMigrationAwareGuardCLIRefusals(unittest.TestCase):
+    """Class C, branch-only: the CLI wiring. A document that cannot be
+    used refuses non-overridably; an absent one is simply no evidence."""
+
+    def test_many_to_one_refuses_through_the_cli_and_no_flag_overrides_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(d, [_post("X")], [_post("A"), _post("B")],
+                                    _moves(("A", "X"), ("B", "X")),
+                                    extra_args=("--allow-regression",))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("many-to-one", proc.stderr)
+        self.assertNotIn("migrated:", proc.stderr)
+        self.assertNotIn("publishing anyway", proc.stderr)
+
+    def test_a_profile_mismatch_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(d, [_post("A2")], [_post("A")], _moves(("A", "A2")),
+                                    profile_field="studio-b.posts.json")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("studio-b.posts.json", proc.stderr)
+        self.assertIn("Refusing", proc.stderr)
+
+    def test_a_malformed_document_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "upgrades").mkdir()
+            (Path(d) / "upgrades" / "post-id-migration.fixture.json").write_text(
+                "{not json", encoding="utf-8")
+            proc = _publish_dry_run(d, [_post("A2")], [_post("A")], None)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("unreadable", proc.stderr)
+        self.assertIn("post-id-migration.fixture.json", proc.stderr)
+
+    def test_a_mapped_new_id_absent_from_the_source_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(d, [_post("B")], [_post("A")], _moves(("A", "Z")),
+                                    extra_args=("--allow-regression",))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("absent from the source", proc.stderr)
+
+    def test_an_absent_document_is_no_evidence_and_the_old_id_is_a_loss(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(d, [_post("A2")], [_post("A")], _moves(("A", "A2")),
+                                    write_document=False)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("no migration document at", proc.stderr)
+        self.assertIn("MISSING_RECORD A", proc.stderr)
+
+    def test_a_posts_file_not_named_stem_posts_json_gets_no_lookup(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            (tmp / "local").mkdir()
+            (tmp / "local" / "metadata.csv").write_text("file_path,title\n", encoding="utf-8")
+            (tmp / "internet").mkdir()
+            (tmp / "dest").mkdir()
+            (tmp / "dest" / "MANIFEST.json").write_text("[]", encoding="utf-8")
+            (tmp / "dest" / "posts.json").write_text(json.dumps([_post("A")]), encoding="utf-8")
+            (tmp / "assets.json").write_text("[]", encoding="utf-8")
+            (tmp / "posts.json").write_text(json.dumps([_post("A2")]), encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPTS / "populate_archive.py"),
+                 "--local-source", str(tmp / "local"), "--internet-source", str(tmp / "internet"),
+                 "--profile", str(tmp / "assets.json"), "--posts", str(tmp / "posts.json"),
+                 "--dest", str(tmp / "dest"), "--dry-run"],
+                capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("no migration document lookup", proc.stderr)
+
+    def test_the_override_reads_a_document_elsewhere_and_still_checks_profile(self):
+        """The optional override is for fixtures; it never relaxes the
+        `profile` check, and it is not what the class-A witnesses use."""
+        with tempfile.TemporaryDirectory() as d:
+            doc = Path(d) / "elsewhere.json"
+            doc.write_text(json.dumps({"profile": "fixture.posts.json",
+                                       "moves": _moves(("A", "A2"))}), encoding="utf-8")
+            proc = _publish_dry_run(d, [_post("A2")], [_post("A")], None,
+                                    extra_args=("--migration-document", str(doc)))
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("migrated: 1 record(s)", proc.stderr)
+            doc.write_text(json.dumps({"profile": "other.posts.json",
+                                       "moves": _moves(("A", "A2"))}), encoding="utf-8")
+            proc = _publish_dry_run(d, [_post("A2")], [_post("A")], None,
+                                    extra_args=("--migration-document", str(doc)))
+            self.assertEqual(proc.returncode, 2, proc.stderr)
+            proc = _publish_dry_run(d, [_post("A2")], [_post("A")], None,
+                                    extra_args=("--migration-document", str(Path(d) / "absent.json")))
+            self.assertEqual(proc.returncode, 2, proc.stderr)
+            self.assertIn("not a file", proc.stderr)
+
+    def test_duplicate_source_records_stay_non_overridable(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = _publish_dry_run(d, [_post("A2"), _post("A2")], [_post("A")],
+                                    _moves(("A", "A2")), extra_args=("--allow-regression",))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("DUPLICATE IDS", proc.stderr)
+        self.assertIn("not overridable", proc.stderr)
+
+
+# ---------------------------------------------------------------------------
+# #1319: the read-only site verifier
+# ---------------------------------------------------------------------------
+
+def _site_fixture(root, *, stem="fixture"):
+    """A profile pair, a site built exactly from it, and the preserved
+    files a publish must leave alone. Returns (profile, posts, site)."""
+    root = Path(root)
+    profiles = root / "profiles"
+    profiles.mkdir()
+    (root / "upgrades").mkdir()
+    site = root / "site"
+    (site / "images").mkdir(parents=True)
+    records = []
+    for i, size in enumerate((11404, 20)):
+        rel = f"images/plate-{i}.png"
+        (site / rel).write_bytes(b"\x89PNG" + bytes(size - 4))
+        records.append({"id": f"asset-{i}", "title": f"plate {i}", "file_path": rel,
+                        "file_size_bytes": size, "source_root": "local",
+                        "field_values": {"k": "v"}, "metadata": {}})
+    posts = [_post("p1"), _post("p2")]
+    profile_path = profiles / f"{stem}.assets.json"
+    posts_path = profiles / f"{stem}.posts.json"
+    profile_path.write_text(json.dumps(records), encoding="utf-8")
+    posts_path.write_text(json.dumps(posts), encoding="utf-8")
+    (site / "MANIFEST.json").write_text(json.dumps(records), encoding="utf-8")
+    (site / "posts.json").write_text(json.dumps(posts), encoding="utf-8")
+    (site / "posts.json.pre-1.bak").write_bytes(b"old posts")
+    (site / "images" / "MANIFEST.json.pre-2.bak").write_bytes(b"old manifest")
+    (site / "dataset-metadata.json").write_bytes(b'{"kaggle": true}')
+    (site / "kenney-hq-replacements.json").write_bytes(b"[]")
+    (site / "ATTRIBUTIONS.md").write_bytes(vs.REPO_ATTRIBUTIONS.read_bytes())
+    return profile_path, posts_path, site
+
+
+def _tree_digest(root):
+    out = {}
+    for p in sorted(Path(root).rglob("*")):
+        if p.is_file():
+            out[p.relative_to(root).as_posix()] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return out
+
+
+def _verdict(rep, name):
+    for v in rep.verdicts:
+        if v.name == name:
+            return v
+    raise AssertionError(f"no verdict named {name!r}; have {[v.name for v in rep.verdicts]}")
+
+
+class TestVerifySite(unittest.TestCase):
+    """Class C: every file-level assertion, positive and negative, on a
+    temp-directory site; a supplied expectation and a preservation
+    baseline fail on one altered byte; and "not compared" is said out
+    loud when there is nothing to compare against."""
+
+    def test_a_site_built_from_the_profile_verifies_and_says_what_it_did_not_compare(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile, posts, site = _site_fixture(d)
+            before = _tree_digest(site)
+            rep = vs.verify(profile, posts, site)
+            self.assertTrue(rep.ok, "\n".join(str(v) for v in rep.failed))
+            self.assertEqual(sorted(v.name for v in rep.not_compared),
+                             ["expectations", "preserved files"])
+            self.assertIn("NOT COMPARED", str(_verdict(rep, "preserved files")))
+            self.assertEqual(_verdict(rep, "ATTRIBUTIONS.md equals the repository copy").status, vs.PASS)
+            self.assertIn("not compared", rep.summary())
+            self.assertEqual(_tree_digest(site), before, "the verifier wrote into the site")
+
+    def test_counts_files_and_sizes_are_profile_derived(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile, posts, site = _site_fixture(d)
+            rows = json.loads((site / "posts.json").read_text())
+            (site / "posts.json").write_text(json.dumps(rows[:1]), encoding="utf-8")
+            rep = vs.verify(profile, posts, site)
+            self.assertEqual(_verdict(rep, "posts.json rows").status, vs.FAIL)
+            self.assertEqual(_verdict(rep, "posts.json distinct ids").status, vs.FAIL)
+            self.assertEqual(_verdict(rep, "posts.json guard: no loss").status, vs.PASS,
+                             "the site being behind the profile is not a loss")
+
+            (site / "images" / "plate-1.png").write_bytes(b"x" * 21)
+            (site / "images" / "plate-0.png").unlink()
+            rep = vs.verify(profile, posts, site)
+            v = _verdict(rep, "profile files present at the site")
+            self.assertEqual(v.status, vs.FAIL)
+            self.assertIn("plate-0.png", v.detail)
+            v = _verdict(rep, "recorded file_size_bytes match the bytes on disk")
+            self.assertEqual(v.status, vs.FAIL)
+            self.assertIn("plate-1.png", v.detail)
+            self.assertIn("on disk 21", v.detail)
+            self.assertFalse(rep.ok)
+
+    def test_the_guard_runs_profile_versus_site_with_the_migration_document(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile, posts, site = _site_fixture(d)
+            # The site still carries the old id; the document records the move.
+            (site / "posts.json").write_text(json.dumps([_post("p0"), _post("p2")]), encoding="utf-8")
+            rep = vs.verify(profile, posts, site)
+            self.assertEqual(_verdict(rep, "posts.json guard: no loss").status, vs.FAIL)
+            self.assertIn("MISSING_RECORD 1", _verdict(rep, "posts.json guard: no loss").detail)
+
+            doc = Path(d) / "upgrades" / "post-id-migration.fixture.json"
+            doc.write_text(json.dumps({"profile": "fixture.posts.json",
+                                       "moves": _moves(("p0", "p1"))}), encoding="utf-8")
+            rep = vs.verify(profile, posts, site)
+            self.assertEqual(_verdict(rep, "posts.json guard: no loss").status, vs.PASS)
+            self.assertEqual(_verdict(rep, "posts.json guard: migrated records").detail, "1")
+            self.assertIn("1 recorded move", _verdict(rep, "migration document").detail)
+
+            rep = vs.verify(profile, posts, site, expectations={"migrations": 1})
+            self.assertEqual(_verdict(rep, "migrations").status, vs.PASS)
+            rep = vs.verify(profile, posts, site, expectations={"migrations": 0})
+            self.assertEqual(_verdict(rep, "migrations").status, vs.FAIL)
+
+            doc.write_text("{bad", encoding="utf-8")
+            rep = vs.verify(profile, posts, site)
+            self.assertEqual(_verdict(rep, "migration document").status, vs.FAIL)
+            self.assertFalse(rep.ok)
+
+            # A corrupted measurement and a duplicate source id are their
+            # own verdicts.
+            records = json.loads(profile.read_text())
+            site_records = json.loads(json.dumps(records))
+            site_records[0]["source_root"] = "site"
+            site_records[0]["file_size_bytes"] = 11405
+            records[0]["source_root"] = "site"
+            profile.write_text(json.dumps(records + [records[1]]), encoding="utf-8")
+            (site / "MANIFEST.json").write_text(json.dumps(site_records), encoding="utf-8")
+            rep = vs.verify(profile, posts, site)
+            self.assertEqual(_verdict(rep, "MANIFEST.json guard: no corrupted measurement").status, vs.FAIL)
+            self.assertEqual(_verdict(rep, "MANIFEST.json guard: no duplicate source ids").status, vs.FAIL)
+
+    def test_site_specific_expectations_are_supplied_never_hard_wired(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile, posts, site = _site_fixture(d)
+            good = {"manifest_rows": 2, "manifest_ids": 2, "posts_rows": 2, "posts_ids": 2,
+                    "once": ["p1", "p2"]}
+            rep = vs.verify(profile, posts, site, expectations=good)
+            self.assertTrue(rep.ok, "\n".join(str(v) for v in rep.failed))
+            self.assertNotIn("expectations", [v.name for v in rep.not_compared])
+
+            rows = json.loads((site / "posts.json").read_text())
+            (site / "posts.json").write_text(json.dumps(rows + [rows[0]]), encoding="utf-8")
+            rep = vs.verify(profile, posts, site, expectations=good)
+            self.assertEqual(_verdict(rep, "posts_rows").status, vs.FAIL)
+            self.assertEqual(_verdict(rep, "posts_ids").status, vs.PASS)
+            v = _verdict(rep, "post p1 appears exactly once")
+            self.assertEqual(v.status, vs.FAIL)
+            self.assertIn("2 row(s)", v.detail)
+            self.assertEqual(_verdict(rep, "post p2 appears exactly once").status, vs.PASS)
+
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump({"manifest_rowz": 2}, f)
+            with self.assertRaises(ValueError):
+                vs.load_expectations(Path(f.name))
+            Path(f.name).unlink()
+
+    def test_the_preservation_baseline_fails_on_one_altered_byte(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile, posts, site = _site_fixture(d)
+            baseline = vs.record_baseline(site)
+            self.assertEqual(sorted(baseline["files"]),
+                             ["ATTRIBUTIONS.md", "dataset-metadata.json",
+                              "images/MANIFEST.json.pre-2.bak", "kenney-hq-replacements.json",
+                              "posts.json.pre-1.bak"])
+            rep = vs.verify(profile, posts, site, baseline=baseline)
+            v = _verdict(rep, "preserved files byte-equal to baseline")
+            self.assertEqual(v.status, vs.PASS, v.detail)
+            self.assertEqual(rep.not_compared and [x.name for x in rep.not_compared], ["expectations"])
+
+            (site / "posts.json.pre-1.bak").write_bytes(b"old postS")
+            (site / "kenney-hq-replacements.json").unlink()
+            (site / "new.bak").write_bytes(b"made by the publish")
+            rep = vs.verify(profile, posts, site, baseline=baseline)
+            v = _verdict(rep, "preserved files byte-equal to baseline")
+            self.assertEqual(v.status, vs.FAIL)
+            self.assertIn("posts.json.pre-1.bak", v.detail)
+            self.assertIn("kenney-hq-replacements.json", v.detail)
+            self.assertIn("new.bak", _verdict(rep, "preserved files not in the baseline").detail)
+            self.assertFalse(rep.ok)
+
+    def test_a_reference_directory_works_like_a_baseline(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile, posts, site = _site_fixture(d)
+            ref = Path(d) / "reference"
+            shutil.copytree(site, ref)
+            rep = vs.verify(profile, posts, site, reference=ref)
+            self.assertEqual(_verdict(rep, f"preserved files byte-equal to reference {ref}").status, vs.PASS)
+            (site / "dataset-metadata.json").write_bytes(b'{"kaggle": false}')
+            rep = vs.verify(profile, posts, site, reference=ref)
+            self.assertEqual(_verdict(rep, f"preserved files byte-equal to reference {ref}").status, vs.FAIL)
+
+    def test_attributions_must_equal_the_repository_copy(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile, posts, site = _site_fixture(d)
+            name = "ATTRIBUTIONS.md equals the repository copy"
+            (site / "ATTRIBUTIONS.md").write_bytes(vs.REPO_ATTRIBUTIONS.read_bytes() + b"\n")
+            rep = vs.verify(profile, posts, site)
+            self.assertEqual(_verdict(rep, name).status, vs.FAIL)
+            (site / "ATTRIBUTIONS.md").unlink()
+            rep = vs.verify(profile, posts, site)
+            self.assertEqual(_verdict(rep, name).status, vs.NOT_COMPARED)
+            rep = vs.verify(profile, posts, site, expectations={"require_attributions": True})
+            self.assertEqual(_verdict(rep, "ATTRIBUTIONS.md present at the site").status, vs.FAIL)
+
+    def test_the_verifier_refuses_a_partially_staged_copy(self):
+        """The staging drill's other half: the copy a failed publish left
+        behind does not verify, and the verdict names the file."""
+        with tempfile.TemporaryDirectory() as d:
+            local, profile, posts, _live, stage = _staging_world(d)
+            proc = _staging_publish(local, profile, posts, stage)
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            rep = vs.verify(profile, posts, stage)
+            self.assertFalse(rep.ok)
+            self.assertIn("zz-missing.png", _verdict(rep, "profile files present at the site").detail)
+            self.assertEqual(_verdict(rep, "MANIFEST.json rows").status, vs.PASS,
+                             "the root files were already replaced before the copy failed")
+
+    def test_the_cli_exits_nonzero_on_failure_and_refuses_a_baseline_inside_the_site(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile, posts, site = _site_fixture(d)
+            out = Path(d) / "baseline.json"
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(vs.main(["baseline", "--site", str(site),
+                                          "--out", str(site / "b.json")]), 2)
+                self.assertEqual(vs.main(["baseline", "--site", str(site), "--out", str(out)]), 0)
+            self.assertFalse((site / "b.json").exists())
+            argv = ["check", "--profile", str(profile), "--posts", str(posts),
+                    "--site", str(site), "--baseline", str(out)]
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(vs.main(argv), 0)
+            self.assertIn("RESULT: VERIFIED", buf.getvalue())
+            self.assertIn("NOT COMPARED", buf.getvalue())
+            (site / "images" / "plate-0.png").write_bytes(b"short")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(vs.main(argv), 1)
+            self.assertIn("RESULT: FAILED", buf.getvalue())
+            self.assertIn("FAIL", buf.getvalue())
+
+
+def _staging_world(root):
+    """A 'live' site with old root files, asset bytes and a `.bak`; a
+    sibling copy of it; and a profile whose sorted copy order ends in a
+    record whose source is missing. Shared by the characterization drill
+    and the verifier test. Returns (local, profile, posts, live, stage)."""
+    root = Path(root)
+    local = root / "local"
+    (local / "src").mkdir(parents=True)
+    (local / "metadata.csv").write_text("file_path,title\n", encoding="utf-8")
+    (root / "internet").mkdir()
+    (root / "profiles").mkdir()
+    (root / "upgrades").mkdir()
+    live = root / "live"
+    (live / "images").mkdir(parents=True)
+
+    def rec(i, size):
+        (local / "src" / f"p{i}.png").write_bytes(b"\x89PNG" + bytes(size - 4))
+        return {"id": f"asset-{i}", "title": f"plate {i}",
+                "file_path": f"images/p{i}.png", "source_path": f"src/p{i}.png",
+                "source_root": "local", "file_size_bytes": size,
+                "field_values": {}, "metadata": {}}
+
+    old = [rec(0, 16), rec(1, 24)]
+    for a in old:
+        (live / a["file_path"]).write_bytes((local / a["source_path"]).read_bytes())
+    (live / "MANIFEST.json").write_text(json.dumps(old), encoding="utf-8")
+    (live / "posts.json").write_text(json.dumps([_post("p1")]), encoding="utf-8")
+    (live / "posts.json.pre.bak").write_bytes(b"kept")
+    # The new profile: a changed plate 0, a new plate 2, and a last
+    # record (sorted by destination path) whose source is missing.
+    new = [rec(0, 32), old[1], rec(2, 8),
+           {"id": "asset-9", "title": "gone", "file_path": "images/zz-missing.png",
+            "source_path": "src/zz-missing.png", "source_root": "local",
+            "file_size_bytes": 5, "field_values": {}, "metadata": {}}]
+    profile = root / "profiles" / "fixture.assets.json"
+    posts = root / "profiles" / "fixture.posts.json"
+    profile.write_text(json.dumps(new), encoding="utf-8")
+    posts.write_text(json.dumps([_post("p1")]), encoding="utf-8")
+    stage = root / "stage"
+    shutil.copytree(live, stage)
+    return local, profile, posts, live, stage
+
+
+def _staging_publish(local, profile, posts, dest):
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "populate_archive.py"),
+         "--local-source", str(local), "--internet-source", str(local.parent / "internet"),
+         "--profile", str(profile), "--posts", str(posts), "--dest", str(dest)],
+        capture_output=True, text=True)
+
+
+class TestStagingCharacterization(unittest.TestCase):
+    """Characterization, not a #1319 regression: what a publish does to
+    a SIBLING copy versus the live tree when its last copy fails. Passes
+    on `dev` and on the branch; populate_archive.py's in-place write
+    order is not changed by #1319.
+
+    Against a sibling copy the failure is contained: the run exits 1,
+    the assets before the failing one are already recopied in the copy,
+    and the live tree is byte-identical to before (the verifier refusing
+    that copy is asserted in TestVerifySite, which is branch-only).
+    Against the live tree the same failure leaves it partially mutated
+    (root files already replaced), which is why the sibling staging
+    exists.
+    """
+
+    def test_a_failed_publish_against_a_sibling_copy_leaves_the_live_tree_untouched(self):
+        with tempfile.TemporaryDirectory() as d:
+            local, profile, posts, live, stage = _staging_world(d)
+            live_before = _tree_digest(live)
+            proc = _staging_publish(local, profile, posts, stage)
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertIn("MISSING", proc.stderr)
+            # Earlier assets were recopied into the COPY.
+            self.assertEqual((stage / "images" / "p0.png").stat().st_size, 32)
+            self.assertTrue((stage / "images" / "p2.png").is_file())
+            self.assertEqual(json.loads((stage / "MANIFEST.json").read_text())[0]["file_size_bytes"], 32)
+            # The live tree did not move.
+            self.assertEqual(_tree_digest(live), live_before)
+
+    def test_the_same_failure_against_the_live_tree_mutates_it_partially(self):
+        with tempfile.TemporaryDirectory() as d:
+            local, profile, posts, live, _stage = _staging_world(d)
+            live_before = _tree_digest(live)
+            proc = _staging_publish(local, profile, posts, live)
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            after = _tree_digest(live)
+            self.assertNotEqual(after, live_before, "the live tree was mutated by a failed run")
+            self.assertEqual(json.loads((live / "MANIFEST.json").read_text())[0]["file_size_bytes"], 32,
+                             "root files are replaced before the copy loop runs")
+            self.assertEqual(after["posts.json.pre.bak"], live_before["posts.json.pre.bak"])
 
 
 if __name__ == "__main__":

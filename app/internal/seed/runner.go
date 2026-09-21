@@ -1314,18 +1314,11 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 
 	inserted, skipped, madePublic := 0, 0, 0
 	for _, p := range cat.Posts {
-		// Resolve members from inserted assets (apply.py "any member" rule).
-		var members []pgtype.UUID
-		var coverManifestID string
-		for _, aid := range p.AssetIDs {
-			if sid, ok := r.assets[aid]; ok {
-				if len(members) == 0 {
-					coverManifestID = aid
-				}
-				members = append(members, sid)
-			}
-		}
-		if len(members) == 0 {
+		// The state this phase is about to write, gathered in ONE place
+		// so the drift comparison below and `aa seed-verify` (#1319)
+		// both read exactly the values the insert uses.
+		subject, ok := r.postSubjectFor(p, assetTiers)
+		if !ok {
 			skipped++
 			continue
 		}
@@ -1333,29 +1326,12 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			authorRef = r.adminRef
 		}
-		created, updated := r.rowTimes(p.CreatedAt, p.UpdatedAt)
-		cover := members[0]
-		vis := postVisibility(p, assetTiers[coverManifestID])
+		vis := subject.visibility
 		if vis == "public" {
 			madePublic++
 		}
-		collectionID := r.collections[p.CollectionName]
-		tags := dedupStrings(p.Tags)
-		// Captured HERE, from the values the insert is about to use, so
-		// the comparison below can never drift from the write it
-		// describes (#1320).
-		subject := postSubject{
-			title:           orDefault(p.Title, "Untitled"),
-			description:     p.Description,
-			visibility:      vis,
-			cover:           cover,
-			created:         created,
-			updated:         updated,
-			members:         members,
-			tags:            tags,
-			collection:      collectionID,
-			datesComparable: r.datesSurviveTheClamp(p.CreatedAt, p.UpdatedAt),
-		}
+		members := subject.members
+		tags := subject.tags
 		rowID := parseUUID(p.ID)
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
 			ID:            rowID,
@@ -1363,11 +1339,11 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 			Title:         subject.title,
 			Description:   subject.description,
 			Visibility:    vis,
-			CoverAssetID:  cover,
+			CoverAssetID:  subject.cover,
 			StateID:       r.postStates["published"],
 			TeamID:        r.teamIDForName(p.TeamName),
-			CreatedAt:     created,
-			UpdatedAt:     updated,
+			CreatedAt:     subject.created,
+			UpdatedAt:     subject.updated,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -1448,6 +1424,48 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		fmt.Print(msg)
 	}
 	return nil
+}
+
+// postSubjectFor is the state applyPosts WOULD write for one catalogue
+// post: members resolved from the inserted assets (apply.py's "any
+// member" rule), cover = first resolved member, visibility from the
+// post's own tier and its cover's, timestamps clamped, tags deduped,
+// collection by name. ok is false for a post with no resolvable member,
+// which applyPosts skips and which therefore has no row to compare.
+//
+// It exists as ONE function because two readers depend on these exact
+// values: the insert in applyPosts and the drift comparison beside it
+// (#1320), and now the read-only verifier (`aa seed-verify`, #1319),
+// which has to ask "what would the seed have written?" without writing.
+// Two computations of "the row this post gets" is one of them going
+// stale, which is the shape #1320 was filed about.
+func (r *Runner) postSubjectFor(p manifestPost, assetTiers map[string]string) (postSubject, bool) {
+	var members []pgtype.UUID
+	var coverManifestID string
+	for _, aid := range p.AssetIDs {
+		if sid, ok := r.assets[aid]; ok {
+			if len(members) == 0 {
+				coverManifestID = aid
+			}
+			members = append(members, sid)
+		}
+	}
+	if len(members) == 0 {
+		return postSubject{}, false
+	}
+	created, updated := r.rowTimes(p.CreatedAt, p.UpdatedAt)
+	return postSubject{
+		title:           orDefault(p.Title, "Untitled"),
+		description:     p.Description,
+		visibility:      postVisibility(p, assetTiers[coverManifestID]),
+		cover:           members[0],
+		created:         created,
+		updated:         updated,
+		members:         members,
+		tags:            dedupStrings(p.Tags),
+		collection:      r.collections[p.CollectionName],
+		datesComparable: r.datesSurviveTheClamp(p.CreatedAt, p.UpdatedAt),
+	}, true
 }
 
 // postVisibility decides a seeded post's visibility tier (#1176).
@@ -1536,19 +1554,35 @@ func postVisibility(p manifestPost, coverTier string) string {
 // Post ids are stableUUID-derived, so a re-run re-composes the same posts
 // and lands on SeedInsertPost's ON CONFLICT path rather than duplicating
 // the wall.
-func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogues) error {
-	// covered[collection name] = manifest asset ids already framed by a
-	// post PINNED IN THAT COLLECTION. Keyed on the collection because the
-	// same asset can be framed by a post filed elsewhere, and that post
-	// does not put it on this collection's wall.
+// backfillBundle is one collection post applyCollectionPostBackfill
+// composes: the bare assets of one collection sharing a group id (or a
+// single asset with none).
+type backfillBundle struct {
+	collection string
+	members    []manifestAsset
+}
+
+// backfillPostID is the stable id of the backfill post for one bundle
+// key. One function, so the phase that mints it and the verifier that
+// expects it cannot disagree.
+func backfillPostID(key string) uuid.UUID {
+	return stableUUID("collection-post-backfill", key)
+}
+
+// backfillCoverage is covered[collection name] = manifest asset ids
+// already framed by a post PINNED IN THAT COLLECTION. Keyed on the
+// collection because the same asset can be framed by a post filed
+// elsewhere, and that post does not put it on this collection's wall.
+//
+// Only posts that were actually INSERTED count (r.posts): applyPosts
+// skips a post whose members all fell out, and a skipped post frames
+// nothing.
+func (r *Runner) backfillCoverage(cat *catalogues) map[string]map[string]struct{} {
 	covered := make(map[string]map[string]struct{}, len(r.collections))
 	for _, p := range cat.Posts {
 		if p.CollectionName == "" {
 			continue
 		}
-		// Only posts that were actually INSERTED count. applyPosts skips a
-		// post whose members all fell out, and a skipped post frames
-		// nothing.
 		if _, ok := r.posts[p.ID]; !ok {
 			continue
 		}
@@ -1564,15 +1598,22 @@ func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogue
 			set[aid] = struct{}{}
 		}
 	}
+	return covered
+}
 
-	type bundle struct {
-		collection string
-		members    []manifestAsset
-	}
+// planCollectionPostBackfill is the EXACT set of backfill posts this
+// seeded state produces: only assets that materialized (r.assets), only
+// collections that resolve (r.collections), only assets no materialized
+// catalogue post covers in that collection, bundled by group id or
+// single asset. It is a pure derivation shared with `aa seed-verify`
+// (#1319), which has to know what the seed WOULD mint rather than what
+// it could: a superset would let a stale backfill post survive
+// verification.
+func (r *Runner) planCollectionPostBackfill(cat *catalogues, covered map[string]map[string]struct{}) ([]string, map[string]*backfillBundle) {
 	// Insertion order is the catalogue's, so the composed wall is stable
 	// across runs — a map range would shuffle titles and sort_order.
 	var order []string
-	index := make(map[string]*bundle)
+	index := make(map[string]*backfillBundle)
 	for _, a := range cat.Assets {
 		if a.CollectionName == "" {
 			continue
@@ -1594,12 +1635,19 @@ func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogue
 		}
 		b := index[key]
 		if b == nil {
-			b = &bundle{collection: a.CollectionName}
+			b = &backfillBundle{collection: a.CollectionName}
 			index[key] = b
 			order = append(order, key)
 		}
 		b.members = append(b.members, a)
 	}
+	return order, index
+}
+
+func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogues) error {
+	covered := r.backfillCoverage(cat)
+
+	order, index := r.planCollectionPostBackfill(cat, covered)
 
 	inserted, madePublic, bare := 0, 0, 0
 	for _, key := range order {
@@ -1636,7 +1684,7 @@ func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogue
 			description = fmt.Sprintf("%s working set for %s. %d assets pulled together for review.",
 				orDefault(first.TeamName, "Reference"), b.collection, len(b.members))
 		}
-		postID := stableUUID("collection-post-backfill", key)
+		postID := backfillPostID(key)
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
 			ID:            parseUUID(postID.String()),
 			AuthorUserRef: authorRef,

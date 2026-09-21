@@ -595,6 +595,50 @@ def resolve_model_companions(model_path: Path) -> list[str]:
     return [rel for rel in declared if (base / rel).is_file()]
 
 
+def load_posts_migration(args):
+    """The committed migration document for `--posts`, validated (#1319).
+
+    Returns a `manifest_guard.Migration`, None when there is no document
+    (no evidence, so the plain comparison runs and every old id is a
+    loss), or False after printing a refusal when the document exists
+    and cannot be used. False is a refusal, not an absence: an
+    unusable document must never quietly become "no migrations".
+
+    The document is located from the posts file alone, so the existing
+    `--posts <profile> --dry-run` invocation is sufficient:
+    `seed/profiles/<stem>.posts.json` maps to
+    `seed/upgrades/post-id-migration.<stem>.json`, and the document's
+    own `profile` field must name the posts file. `--migration-document`
+    overrides the location (for fixtures laid out elsewhere), never the
+    `profile` check.
+    """
+    override = getattr(args, "migration_document", None)
+    doc_path = override if override is not None else mg.migration_document_path(args.posts)
+    if doc_path is None:
+        print(f"  posts.json: no migration document lookup for {args.posts.name} "
+              f"(not named <stem>{mg.POSTS_PROFILE_SUFFIX}); every destination-only "
+              f"id counts as a loss", file=sys.stderr)
+        return None
+    if not doc_path.is_file():
+        if override is not None:
+            print(f"error: --migration-document {doc_path}: not a file", file=sys.stderr)
+            return False
+        print(f"  posts.json: no migration document at {doc_path}; every "
+              f"destination-only id counts as a loss", file=sys.stderr)
+        return None
+    try:
+        migration = mg.load_migration_document(doc_path, profile_name=args.posts.name)
+    except mg.MigrationError as e:
+        print(f"error: {e}\n"
+              "  Refusing: a migration document that cannot be validated is not "
+              "evidence, and \"unusable\" must not be read as \"no migrations\". "
+              "This is not overridable by --allow-regression.", file=sys.stderr)
+        return False
+    print(f"  posts.json: migration document {doc_path} ({len(migration.moves)} "
+          f"recorded move(s) for {migration.profile})", file=sys.stderr)
+    return migration
+
+
 def check_destination(args, profile: list[dict]) -> bool:
     """Compare the profile against what it is about to overwrite (#1275).
 
@@ -609,17 +653,23 @@ def check_destination(args, profile: list[dict]) -> bool:
     asset that disappears from the manifest.
     """
     print("\nchecking destination against the profile (#1275)", file=sys.stderr)
-    pairs = [("MANIFEST.json", profile, args.dest / "MANIFEST.json")]
+    # (label, source records, destination path, migration document).
+    # Only posts carry a migration: asset ids have never moved, and the
+    # MANIFEST comparison is byte-for-byte what it was before #1319.
+    pairs = [("MANIFEST.json", profile, args.dest / "MANIFEST.json", None)]
     if args.posts is not None:
         try:
             posts = json.loads(args.posts.read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:
             print(f"error: --posts {args.posts}: {e}", file=sys.stderr)
             return False
-        pairs.append(("posts.json", posts, args.dest / "posts.json"))
+        migration = load_posts_migration(args)
+        if migration is False:
+            return False
+        pairs.append(("posts.json", posts, args.dest / "posts.json", migration))
 
     verdicts = []
-    for label, source, dest_path in pairs:
+    for label, source, dest_path, migration in pairs:
         try:
             dest = mg.load_json_list(dest_path)
         except ValueError as e:
@@ -631,15 +681,25 @@ def check_destination(args, profile: list[dict]) -> bool:
                   "compared, and an uncomparable destination is not a safe "
                   "one to overwrite.", file=sys.stderr)
             return False
-        if dest is None:
-            print(f"  {label}: destination does not exist yet — first publish, "
-                  "nothing to lose", file=sys.stderr)
-            # Still worth reporting duplicates: a first publish can ship
-            # a coin toss just as easily as a re-publish can.
-            cmp = mg.compare(source, None, label)
-        else:
-            cmp = mg.compare(source, dest, label)
-            print(mg.format_report(cmp), file=sys.stderr)
+        try:
+            if dest is None:
+                print(f"  {label}: destination does not exist yet: first publish, "
+                      "nothing to lose", file=sys.stderr)
+                # Still worth reporting duplicates: a first publish can ship
+                # a coin toss just as easily as a re-publish can.
+                cmp = mg.compare(source, None, label, migration=migration)
+            else:
+                cmp = mg.compare(source, dest, label, migration=migration)
+                print(mg.format_report(cmp), file=sys.stderr)
+        except mg.MigrationError as e:
+            # The document disagrees with the profile it claims to
+            # describe. Not overridable: half a mapping is a guess, and
+            # a guess over published ids is how a wall gets duplicated.
+            print(f"error: {e}\n"
+                  "  Refusing: the migration document is not evidence for this "
+                  "profile. Fix the document (seed/scripts/migrate_post_ids.py "
+                  "writes it) rather than the destination.", file=sys.stderr)
+            return False
         verdicts.append(cmp)
 
     dup = [c for c in verdicts if c.duplicates]
@@ -703,6 +763,13 @@ def main() -> int:
                              "holding 859 (#572). Pass it.")
     parser.add_argument("--dest", required=True, type=Path,
                         help="Destination site directory under the archive")
+    parser.add_argument("--migration-document", type=Path, default=None,
+                        help="Override where the post-id migration document is "
+                             "read from (#1319). Normally NOT needed: it is "
+                             "located from --posts as "
+                             "seed/upgrades/post-id-migration.<stem>.json. The "
+                             "document's `profile` field must still name the "
+                             "--posts file. For fixtures laid out elsewhere.")
     parser.add_argument("--prune", action="store_true",
                         help="Delete files at <dest> not in the profile")
     parser.add_argument("--dry-run", action="store_true",
