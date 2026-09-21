@@ -1314,18 +1314,11 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 
 	inserted, skipped, madePublic := 0, 0, 0
 	for _, p := range cat.Posts {
-		// Resolve members from inserted assets (apply.py "any member" rule).
-		var members []pgtype.UUID
-		var coverManifestID string
-		for _, aid := range p.AssetIDs {
-			if sid, ok := r.assets[aid]; ok {
-				if len(members) == 0 {
-					coverManifestID = aid
-				}
-				members = append(members, sid)
-			}
-		}
-		if len(members) == 0 {
+		// The state this phase is about to write, gathered in ONE place
+		// so the drift comparison below and `aa seed-verify` (#1319)
+		// both read exactly the values the insert uses.
+		subject, ok := r.postSubjectFor(p, assetTiers)
+		if !ok {
 			skipped++
 			continue
 		}
@@ -1333,29 +1326,12 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			authorRef = r.adminRef
 		}
-		created, updated := r.rowTimes(p.CreatedAt, p.UpdatedAt)
-		cover := members[0]
-		vis := postVisibility(p, assetTiers[coverManifestID])
+		vis := subject.visibility
 		if vis == "public" {
 			madePublic++
 		}
-		collectionID := r.collections[p.CollectionName]
-		tags := dedupStrings(p.Tags)
-		// Captured HERE, from the values the insert is about to use, so
-		// the comparison below can never drift from the write it
-		// describes (#1320).
-		subject := postSubject{
-			title:           orDefault(p.Title, "Untitled"),
-			description:     p.Description,
-			visibility:      vis,
-			cover:           cover,
-			created:         created,
-			updated:         updated,
-			members:         members,
-			tags:            tags,
-			collection:      collectionID,
-			datesComparable: r.datesSurviveTheClamp(p.CreatedAt, p.UpdatedAt),
-		}
+		members := subject.members
+		tags := subject.tags
 		rowID := parseUUID(p.ID)
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
 			ID:            rowID,
@@ -1363,11 +1339,11 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 			Title:         subject.title,
 			Description:   subject.description,
 			Visibility:    vis,
-			CoverAssetID:  cover,
+			CoverAssetID:  subject.cover,
 			StateID:       r.postStates["published"],
 			TeamID:        r.teamIDForName(p.TeamName),
-			CreatedAt:     created,
-			UpdatedAt:     updated,
+			CreatedAt:     subject.created,
+			UpdatedAt:     subject.updated,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -1448,6 +1424,48 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		fmt.Print(msg)
 	}
 	return nil
+}
+
+// postSubjectFor is the state applyPosts WOULD write for one catalogue
+// post: members resolved from the inserted assets (apply.py's "any
+// member" rule), cover = first resolved member, visibility from the
+// post's own tier and its cover's, timestamps clamped, tags deduped,
+// collection by name. ok is false for a post with no resolvable member,
+// which applyPosts skips and which therefore has no row to compare.
+//
+// It exists as ONE function because two readers depend on these exact
+// values: the insert in applyPosts and the drift comparison beside it
+// (#1320), and now the read-only verifier (`aa seed-verify`, #1319),
+// which has to ask "what would the seed have written?" without writing.
+// Two computations of "the row this post gets" is one of them going
+// stale, which is the shape #1320 was filed about.
+func (r *Runner) postSubjectFor(p manifestPost, assetTiers map[string]string) (postSubject, bool) {
+	var members []pgtype.UUID
+	var coverManifestID string
+	for _, aid := range p.AssetIDs {
+		if sid, ok := r.assets[aid]; ok {
+			if len(members) == 0 {
+				coverManifestID = aid
+			}
+			members = append(members, sid)
+		}
+	}
+	if len(members) == 0 {
+		return postSubject{}, false
+	}
+	created, updated := r.rowTimes(p.CreatedAt, p.UpdatedAt)
+	return postSubject{
+		title:           orDefault(p.Title, "Untitled"),
+		description:     p.Description,
+		visibility:      postVisibility(p, assetTiers[coverManifestID]),
+		cover:           members[0],
+		created:         created,
+		updated:         updated,
+		members:         members,
+		tags:            dedupStrings(p.Tags),
+		collection:      r.collections[p.CollectionName],
+		datesComparable: r.datesSurviveTheClamp(p.CreatedAt, p.UpdatedAt),
+	}, true
 }
 
 // postVisibility decides a seeded post's visibility tier (#1176).

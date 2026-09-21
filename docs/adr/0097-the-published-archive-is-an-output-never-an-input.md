@@ -227,3 +227,45 @@ reports 0.
 was missing `field_values`; site_b was measured for `file_size_bytes` instead, one field was
 checked, and the finding was generalised from it. When two artifacts come off one pipeline, test the
 second for the **first one's** defect before reporting whatever the first probe happened to find.
+
+---
+
+## Amendment, 2026-09-21 (#1319, ADR 0098): a committed identity migration is not a deletion
+
+`manifest_guard.compare` keyed both sides by `id` and filed every destination id absent from the
+source as `MISSING_RECORD`. Two migrations (#1293, #1310; ADR 0098) had moved 511 post ids onto
+values derived from each post's own content, the published wall still carried the old ids, and so
+the guard read the pipeline's own work as a deletion. Measured read-only against the live share:
+`posts.json` reported **175** `MISSING_RECORD` on site_a and **336** on site_b, every one an
+`old_id` in `seed/upgrades/post-id-migration.studio-a.json` or `.studio-b.json` whose `new_id` the
+current profile holds, and **0** uncovered; `MANIFEST.json` reported 0 losses on both sites.
+Decision 1 refused a publish that would have lost nothing, and `--allow-regression` (Decision 4)
+was the only way through, which is the wrong tool: it waves through every loss, not the one thing
+that is not a loss.
+
+**A recorded identity migration is not a deletion, and the evidence is the committed document.**
+
+1. A destination record whose id is a recorded `old_id`, and whose `new_id` is present in the
+   source, is `MIGRATED_RECORD`: not a loss, not an addition, reported on its own line of the
+   report.
+2. The evidence is the pipeline's reconciliation document, `seed/upgrades/post-id-migration.<stem>.json`,
+   which `migrate_post_ids.py` writes for exactly this reader. It is located from the posts
+   profile alone (`<stem>.posts.json`), and its `profile` field must name the file being guarded.
+   Nothing is inferred: not from a title, not from a member set, not from a resemblance. An id
+   the document does not record stays `MISSING_RECORD`.
+3. The consumer validates the document one-to-one before it compares anything, and refuses
+   non-overridably when it cannot: unparseable; a missing or malformed move; a `profile` naming
+   another file; one `old_id` recorded twice; two `old_id` values landing on one `new_id`; an id
+   on both sides (an uncomposed chain); a mapped `new_id` the source does not hold; an `old_id`
+   the source still holds. An absent or invalid mapping is a loss, never a migration.
+4. Migration excuses nothing carried across the move. The moved record is compared against its
+   new self with **only the identity key excluded**: a `MISSING_KEY` or `EMPTIED_VALUE` across the
+   move refuses exactly as on an unmoved record, `CHANGED_VALUE` stays report-only, and the id
+   transition itself never surfaces as a change.
+5. Duplicate ambiguity still refuses, non-overridably, on either side: two source records under
+   one id (Decision 3), or two `old_id` values claiming one `new_id` in the document.
+
+Decisions 1 to 5 and the two measurement amendments above are untouched, and `MANIFEST.json`
+comparisons produce the verdicts they produced before. Witness, with the document consumed:
+site_a reports 175 migrations and 0 losses, site_b 336 and 0, with 0 identity-key changes on
+either, and the same `MANIFEST.json` verdicts as before (0 losses; 42 and 440 reported changes).

@@ -715,6 +715,52 @@ thing that touches a file. `seed/upgrades/post-id-migration.*.json` is
 the old→new mapping the ids moved along, kept so a publish can tell a
 migration from a loss (ADR 0097).
 
+**The publish guard reads that mapping (#1319).** `populate_archive.py`
+locates `seed/upgrades/post-id-migration.<stem>.json` from the `--posts`
+file it is given (`<stem>.posts.json`), checks the document's `profile`
+names that file, validates it one-to-one, and reports a destination id
+the document moved as `migrated` rather than as a deleted record. The
+content carried across a move is still guarded with only the id
+excluded; a document that cannot be validated refuses the run and no
+flag overrides that. No new argument is needed; the usual
+`--posts seed/profiles/studio-a.posts.json --dry-run` is the whole
+invocation.
+
+Verify a published site after the run, read-only, one verifier per
+surface:
+
+```bash
+# the files: counts, every named file at its recorded size, the guard
+# profile-versus-site, the preserved files against a baseline recorded
+# BEFORE staging, ATTRIBUTIONS.md against the repository copy
+python3 seed/scripts/verify_site.py baseline --site "$DATASETS/site_a" \
+    --out /tmp/site_a.baseline.json                   # before publishing
+python3 seed/scripts/verify_site.py check \
+    --profile seed/profiles/studio-a.assets.json \
+    --posts   seed/profiles/studio-a.posts.json \
+    --site    "$DATASETS/site_a" \
+    --expect  site_a.expect.json \
+    --baseline /tmp/site_a.baseline.json              # after publishing
+
+# the database: every profile field value present as the typed row the
+# seeder writes, under set_by='import'; no seed-owned row the profile
+# does not carry; other provenances (computed pixel dimensions, defaults,
+# edits) counted, never failed; posts by id and content; the three drop
+# counters recomputed
+docker compose run --rm --no-deps \
+    -v "$DATASETS/site_a:/seed/site:ro" -v "$PWD/seed:/seed/repo:ro" \
+    app seed-verify --site /seed/site --catalogue /seed/repo/profiles \
+    --migration /seed/repo/upgrades/post-id-migration.studio-a.json \
+    --expect-asset 530cb8f1-1aa4-ab97-87e8-30ad58ac59fb:none:11404 \
+    --expect-asset c4542a8f-c9a1-edfa-f2f4-1fea6ab84d96:assisted:1290128
+```
+
+`verify_site.py` prints every verdict in three classes, profile-derived,
+site-specific (only what `--expect` supplies: exact counts, `once` ids,
+`require_attributions`) and preservation, and a class it cannot check
+says "not compared" rather than passing. `aa seed-verify` exits non-zero
+on any failed invariant after printing them all. Both write nothing.
+
 ## What's not in here yet
 
 These are tracked as follow-ups:

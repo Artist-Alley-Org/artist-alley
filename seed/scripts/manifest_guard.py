@@ -101,6 +101,37 @@ no MANIFEST.json yet is a first publish and compares clean; a
 destination whose MANIFEST.json cannot be PARSED is refused, because
 "unreadable" must not be quietly treated as "empty".
 
+MIGRATED IDS ARE NOT DELETED RECORDS (#1319)
+---------------------------------------------
+Two migrations (#1293, #1310, ADR 0098) moved 511 post ids onto values
+derived from the post's own content. The published wall still holds the
+OLD ids, so a plain comparison reads every one of them as a record the
+profile deleted: 175 MISSING_RECORD on site_a and 336 on site_b, none of
+them a loss. The pipeline wrote a reconciliation document for exactly
+this reader, `seed/upgrades/post-id-migration.<stem>.json`, and until
+this section nothing read it.
+
+    MIGRATED_RECORD a destination id that is a recorded `old_id` whose
+                    `new_id` is present in the source. NOT a loss. The
+                    record is compared against its new self with the
+                    identity key excluded, so a value carried across
+                    the move is still guarded: MISSING_KEY and
+                    EMPTIED_VALUE across a move refuse exactly as they
+                    do on an unmoved record, and CHANGED_VALUE stays
+                    report-only.
+
+The evidence is the committed document and nothing else. A move is
+never inferred from a title, a member set or a resemblance; an id the
+document does not record stays MISSING_RECORD. And the document is
+validated one-to-one before any comparison, fail-closed: unparseable,
+a missing or malformed move, a `profile` that does not name the file
+being guarded, one old id recorded twice, two old ids landing on one
+new id, an id on both sides (an uncomposed chain), a new id the source
+does not hold, or an old id the source still holds. Every one of those
+refuses, none is overridable, and the message names the document and
+the ids. A document that is absent is not an error: it is simply no
+evidence, and the plain comparison runs.
+
 DUPLICATE IDS
 -------------
 A source holding two records under one id is refused before any
@@ -117,7 +148,7 @@ import json
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 # Keys whose values are dicts worth descending into. The losses this
 # guard exists to catch live one level down (`field_values`), so a
@@ -129,6 +160,14 @@ MISSING_KEY = "MISSING_KEY"
 EMPTIED_VALUE = "EMPTIED_VALUE"
 CHANGED_VALUE = "CHANGED_VALUE"
 CORRUPTED_MEASUREMENT = "CORRUPTED_MEASUREMENT"
+MIGRATED_RECORD = "MIGRATED_RECORD"
+
+# The committed reconciliation documents live beside the profiles:
+#   <root>/profiles/<stem>.posts.json  ->  <root>/upgrades/post-id-migration.<stem>.json
+# Repository-owned state, located from the posts file alone, so the
+# existing `--posts <profile>` invocation needs no new argument.
+MIGRATION_DOCUMENT_PREFIX = "post-id-migration."
+POSTS_PROFILE_SUFFIX = ".posts.json"
 
 # Roots whose bytes are staged at the destination with no reproducible
 # source to re-derive them from. Kept in step with
@@ -216,10 +255,19 @@ class Comparison:
     changes: list[Loss] = field(default_factory=list)
     added: list[str] = field(default_factory=list)
     duplicates: dict[str, int] = field(default_factory=dict)
+    # (old_id, new_id) for every destination record the migration
+    # document accounts for. Never a loss, never folded into `added`
+    # or `changes`; `migration_source` names the document for the report.
+    migrated: list[tuple[str, str]] = field(default_factory=list)
+    migration_source: str = ""
 
     @property
     def ok(self) -> bool:
         return not self.losses and not self.duplicates
+
+    @property
+    def records_migrated(self) -> int:
+        return len(self.migrated)
 
     @property
     def records_lost(self) -> int:
@@ -257,8 +305,20 @@ def _record_change(rid: str, key: str, dval: Any, src: dict, dst: dict,
         out.changes.append(Loss(CHANGED_VALUE, rid, key, dval))
 
 
-def _compare_record(rid: str, src: dict, dst: dict, out: Comparison) -> None:
+def _compare_record(rid: str, src: dict, dst: dict, out: Comparison,
+                    skip: frozenset[str] = frozenset()) -> None:
+    """Judge every key of the destination record against the source's.
+
+    `skip` holds the keys that are NOT compared. It carries exactly one
+    thing today: the identity key of a record whose id the migration
+    document moved, because the id transition is the migration itself
+    and reporting it as CHANGED_VALUE would say a move is an edit.
+    Nothing else is ever excluded; a value carried across a move is
+    guarded by the same rules as a value on an unmoved record.
+    """
     for key, dval in dst.items():
+        if key in skip:
+            continue
         if key not in src:
             if not is_empty(dval):
                 out.losses.append(Loss(MISSING_KEY, rid, key, dval))
@@ -281,17 +341,37 @@ def _compare_record(rid: str, src: dict, dst: dict, out: Comparison) -> None:
 
 
 def compare(source: Iterable[dict], dest: Iterable[dict] | None,
-            label: str, id_key: str = "id") -> Comparison:
+            label: str, id_key: str = "id",
+            migration: "Migration | Mapping[str, str] | None" = None) -> Comparison:
     """Compare what publishing `source` would do to `dest`.
 
     `dest` is None when the destination file does not exist yet — a
     first publish, which cannot lose anything.
+
+    `migration` is the validated old_id -> new_id mapping for THIS
+    source (a `Migration` from `load_migration_document`, or a plain
+    mapping). It is checked against the source before any record is
+    judged, and a mapping the source contradicts raises MigrationError
+    rather than comparing: a document that names a new id the source
+    does not hold is not evidence of anything. Absent, the comparison
+    is the plain one and every destination-only id is MISSING_RECORD.
     """
     src_list = list(source)
     out = Comparison(label=label, n_source=len(src_list))
 
     counts = Counter(r.get(id_key) for r in src_list)
     out.duplicates = {k: n for k, n in counts.items() if n > 1 and k is not None}
+
+    moves: dict[str, str] = {}
+    if migration is not None:
+        if isinstance(migration, Migration):
+            moves = migration.moves
+            out.migration_source = str(migration.path or "migration document")
+        else:
+            moves = dict(migration)
+            out.migration_source = "migration document"
+        validate_migration_against_source(
+            moves, (r.get(id_key) for r in src_list), source=out.migration_source)
 
     if dest is None:
         out.added = [str(r.get(id_key)) for r in src_list]
@@ -304,15 +384,154 @@ def compare(source: Iterable[dict], dest: Iterable[dict] | None,
     src_by_id = {r.get(id_key): r for r in src_list}
     dst_by_id = {r.get(id_key): r for r in dst_list}
 
+    # The identity key is excluded ONLY on a moved record, and only
+    # because the move is what the document records. Every other key
+    # of that record is judged exactly as on an unmoved one.
+    across_move = frozenset({id_key})
     for rid, drec in dst_by_id.items():
         srec = src_by_id.get(rid)
         if srec is None:
-            out.losses.append(Loss(MISSING_RECORD, str(rid)))
+            new_id = moves.get(rid)
+            if new_id is None:
+                out.losses.append(Loss(MISSING_RECORD, str(rid)))
+                continue
+            # validate_migration_against_source proved new_id is in the
+            # source, so this lookup cannot miss.
+            out.migrated.append((str(rid), str(new_id)))
+            _compare_record(str(rid), src_by_id[new_id], drec, out, skip=across_move)
             continue
         _compare_record(str(rid), srec, drec, out)
 
-    out.added = [str(r) for r in src_by_id if r not in dst_by_id]
+    # A migration's new id is the old record under a new name, not an
+    # addition: 863 = 686 shared + 175 migrated + 2 new on site_a.
+    landed = {new for _, new in out.migrated}
+    out.added = [str(r) for r in src_by_id if r not in dst_by_id and r not in landed]
     return out
+
+
+class MigrationError(ValueError):
+    """The migration document cannot be used as evidence.
+
+    Raised, never returned, for the same reason an unreadable
+    destination raises: "unusable" must not quietly become "no
+    migrations", because that would turn every moved id back into a
+    deleted record and refuse a correct publish, or (with a document
+    that was silently half-read) wave a real loss through.
+    """
+
+
+@dataclass(frozen=True)
+class Migration:
+    """A validated one-to-one old_id -> new_id mapping for one profile."""
+    moves: dict[str, str]
+    profile: str = ""
+    path: Path | None = None
+
+
+def migration_document_path(posts_path: Path) -> Path | None:
+    """Where the committed document for a posts profile lives, or None
+    when the file is not named `<stem>.posts.json`.
+
+    `<root>/profiles/<stem>.posts.json` -> `<root>/upgrades/post-id-migration.<stem>.json`,
+    which is where `migrate_post_ids.py` writes it. Derived from the
+    posts path alone so the existing `--posts` argument is sufficient,
+    and so a test can lay a fixture out the same way in a temp tree.
+    """
+    name = posts_path.name
+    if not name.endswith(POSTS_PROFILE_SUFFIX):
+        return None
+    stem = name[:-len(POSTS_PROFILE_SUFFIX)]
+    if not stem:
+        return None
+    return posts_path.resolve().parent.parent / "upgrades" / f"{MIGRATION_DOCUMENT_PREFIX}{stem}.json"
+
+
+def parse_migration_document(data: Any, *, source: str,
+                             profile_name: str | None = None) -> Migration:
+    """Validate a parsed document one-to-one, fail-closed.
+
+    Every check here is a refusal and none is overridable. The message
+    names the document (`source`) and the offending ids, so the fix is
+    to correct the committed document, never to skip it.
+    """
+    if not isinstance(data, dict):
+        raise MigrationError(f"{source}: expected an object with a `moves` list, "
+                             f"got {type(data).__name__}")
+    profile = data.get("profile")
+    if not isinstance(profile, str) or not profile:
+        raise MigrationError(f"{source}: missing `profile` (the posts file it describes)")
+    if profile_name is not None and profile != profile_name:
+        raise MigrationError(
+            f"{source}: describes profile {profile!r}, but the posts file being "
+            f"guarded is {profile_name!r}; refusing to apply one profile's moves "
+            f"to another")
+    moves = data.get("moves")
+    if not isinstance(moves, list):
+        raise MigrationError(f"{source}: `moves` must be a list, got "
+                             f"{type(moves).__name__}")
+    mapping: dict[str, str] = {}
+    targets: dict[str, str] = {}
+    for i, m in enumerate(moves):
+        if not isinstance(m, dict):
+            raise MigrationError(f"{source}: moves[{i}] is not an object")
+        old, new = m.get("old_id"), m.get("new_id")
+        if not isinstance(old, str) or not old or not isinstance(new, str) or not new:
+            raise MigrationError(f"{source}: moves[{i}] lacks a non-empty "
+                                 f"old_id/new_id (old_id={old!r}, new_id={new!r})")
+        if old == new:
+            raise MigrationError(f"{source}: {old} is recorded as moving to itself")
+        if old in mapping:
+            if mapping[old] == new:
+                raise MigrationError(f"{source}: old id {old} is recorded twice")
+            raise MigrationError(
+                f"{source}: old id {old} is recorded with two different targets, "
+                f"{mapping[old]} and {new}")
+        if new in targets:
+            raise MigrationError(
+                f"{source}: two old ids ({targets[new]} and {old}) both move to "
+                f"{new}; a many-to-one move cannot be authenticated")
+        mapping[old] = new
+        targets[new] = old
+    both = sorted(set(mapping) & set(targets))
+    if both:
+        raise MigrationError(
+            f"{source}: {len(both)} id(s) appear as both old_id and new_id "
+            f"(an uncomposed chain; migrate_post_ids.accumulate_moves composes "
+            f"them): {both[:5]}")
+    return Migration(moves=mapping, profile=profile)
+
+
+def load_migration_document(path: Path, *, profile_name: str | None = None) -> Migration:
+    """Read and validate a committed document. Raises MigrationError."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise MigrationError(f"{path}: unreadable ({e})") from e
+    m = parse_migration_document(data, source=str(path), profile_name=profile_name)
+    return Migration(moves=m.moves, profile=m.profile, path=path)
+
+
+def validate_migration_against_source(moves: "Mapping[str, str]",
+                                      source_ids: Iterable[Any],
+                                      source: str = "migration document") -> None:
+    """The document must agree with the profile it describes.
+
+    A new id the source does not hold means the document describes a
+    profile this is not; an old id the source still holds means the
+    migration was never applied to it. Either way the document is not
+    evidence for THIS publish, and using half of it would be guessing.
+    """
+    ids = set(source_ids)
+    absent = sorted(new for new in moves.values() if new not in ids)
+    if absent:
+        raise MigrationError(
+            f"{source}: {len(absent)} mapped new id(s) are absent from the "
+            f"source, so the document does not describe it: {absent[:5]}")
+    stale = sorted(old for old in moves if old in ids)
+    if stale:
+        raise MigrationError(
+            f"{source}: {len(stale)} old id(s) are still present in the source; "
+            f"the migration it records was not applied: {stale[:5]}")
 
 
 def load_json_list(path: Path) -> list[dict] | None:
@@ -372,6 +591,11 @@ def format_report(cmp: Comparison, sample: int = 12) -> str:
         lines.append("       Fix: python3 seed/scripts/measure_staged.py emit "
                      "--profile <profile> --site <site> --out "
                      "seed/upgrades/staged-measurements.<site>.json")
+    if cmp.migrated:
+        # Its own line, never folded into lose/add/change: a moved id is
+        # the same record under the name the pipeline gave it.
+        lines.append(f"    migrated: {len(cmp.migrated)} record(s) carried to a new "
+                     f"id per {cmp.migration_source or 'the migration document'}")
     if cmp.added:
         lines.append(f"    would add: {len(cmp.added)} record(s)")
     if cmp.changes:
