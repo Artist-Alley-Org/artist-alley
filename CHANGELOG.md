@@ -488,6 +488,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **Publishing the sample library can no longer refuse its own corrected posts, and a published
+  site can be checked before and after.** The publish guard treats a post id that the committed
+  migration documents moved on purpose as a move, comparing what the post carries across it,
+  rather than as a deleted record; a document that is malformed, ambiguous or promises an id the
+  profile does not hold still refuses, and duplicate ids still refuse with no override. Two
+  read-only checks were added for the operator: one compares a published site directory against
+  the profiles, supplied expectations and a recorded preservation baseline; the other compares a
+  seeded database against its catalogue, field value by typed field value, and fails when a
+  catalogue asset or post did not materialize under its own id. Nothing was published: this is the
+  tooling the owner-run republish will use (#1319, PR #1449).
+
 - **The asset-edit browser tests no longer race the upload pipeline.** The dogfood fixture used
   to hand the editor a freshly created file while the preview job was still updating it, so a
   perfectly correct stale-write refusal turned into a red suite and stranded the eight tests behind
