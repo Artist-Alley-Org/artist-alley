@@ -62,14 +62,18 @@ import (
 // are recomputed here read-only by the seeder's own rules, so the
 // verifier does not depend on a log line surviving.
 //
-// ⚠️ THE CONTENT-ADDRESS COLLAPSE. SeedInsertAsset's ON CONFLICT DO
-// NOTHING also catches the (owner_user_ref, file_hash) partial unique
-// index: a manifest entry whose bytes are identical to a sibling the
-// same owner already holds gets NO row of its own (measured on the
-// coding stack: site_a seeds 2,004 rows from 2,005 entries, deduped=1).
-// Its field values are therefore never written, by design. The verifier
-// recognises exactly that case, by hashing the site file and finding
-// the sibling row, and reports it; any other absent asset is a failure.
+// ⚠️ THE CONTENT-ADDRESS COLLAPSE IS DIAGNOSED, NEVER EXCUSED.
+// SeedInsertAsset's ON CONFLICT DO NOTHING also catches the
+// (owner_user_ref, file_hash) partial unique index: a manifest entry
+// whose bytes are identical to a sibling the same owner already holds
+// gets NO row of its own (measured on the coding stack: site_a seeds
+// 2,004 rows from 2,005 entries, deduped=1), and its field values are
+// never written. That explains the absence; it does not make the
+// profile materialize. The asset id, its declaration, its size and its
+// field values are all missing under that id, so the verifier FAILS the
+// asset and every one of its expected values, and adds the sibling as
+// the diagnosis. Whether a collapse may ever be accepted is a ruling
+// this package does not make: matching bytes are not approval.
 
 // VerifyOptions configures Verify.
 type VerifyOptions struct {
@@ -117,14 +121,15 @@ type VerifyReport struct {
 	Provenance     map[string]int // rows on catalogue assets by non-import set_by
 
 	// Assets and posts.
-	Assets          int // manifest entries
-	AssetsPresent   int
-	AssetsCollapsed int // absent because content-address deduped onto a sibling
-	Posts           int // catalogue posts
-	PostsPresent    int
-	PostsSkipped    int // catalogue posts with no resolvable member (the seed skips them)
-	LiveBackfill    int // live posts authored by applyCollectionPostBackfill
-	LiveExtra       int // live posts neither in the catalogue nor backfill
+	Assets           int // manifest entries
+	AssetsPresent    int
+	AssetsCollapsed  int // absent AND explained by a same-owner sibling holding the same bytes; still failures
+	Posts            int // catalogue posts
+	PostsPresent     int
+	PostsSkipped     int // catalogue posts with no resolvable member (the seed skips them; a failure here)
+	ExpectedBackfill int // backfill posts the seed would mint for this state, exactly
+	LiveBackfill     int // of those, live
+	LiveExtra        int // live posts neither in the catalogue nor an expected backfill
 }
 
 // OK reports whether every invariant held.
@@ -141,8 +146,8 @@ func (rep *VerifyReport) note(format string, args ...any) {
 // Summary is the one paragraph an operator reads.
 func (rep *VerifyReport) Summary() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "assets: %d in the manifest, %d present, %d collapsed by content address\n",
-		rep.Assets, rep.AssetsPresent, rep.AssetsCollapsed)
+	fmt.Fprintf(&b, "assets: %d in the manifest, %d present, %d absent (%d of them collapsed by content address onto a sibling; diagnosed, still failures)\n",
+		rep.Assets, rep.AssetsPresent, rep.Assets-rep.AssetsPresent, rep.AssetsCollapsed)
 	fmt.Fprintf(&b, "field values: %d expected from the profile, %d import rows found",
 		rep.ExpectedValues, rep.ImportRows)
 	if len(rep.Provenance) > 0 {
@@ -160,8 +165,8 @@ func (rep *VerifyReport) Summary() string {
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "seed.field.drops (recomputed): unknown_code=%d value_rejected=%d type_mismatch=%d\n",
 		rep.UnknownCode, rep.ValueRejected, rep.TypeMismatch)
-	fmt.Fprintf(&b, "posts: %d in the catalogue, %d present, %d skipped (no members); live extras: %d backfill, %d unexplained\n",
-		rep.Posts, rep.PostsPresent, rep.PostsSkipped, rep.LiveBackfill, rep.LiveExtra)
+	fmt.Fprintf(&b, "posts: %d in the catalogue, %d present, %d with no resolvable member; backfill: %d expected, %d live; %d unexplained live post(s)\n",
+		rep.Posts, rep.PostsPresent, rep.PostsSkipped, rep.ExpectedBackfill, rep.LiveBackfill, rep.LiveExtra)
 	if rep.OK() {
 		fmt.Fprintf(&b, "RESULT: VERIFIED (0 failed)\n")
 	} else {
@@ -261,7 +266,10 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 		return nil, err
 	}
 	var presentIDs []pgtype.UUID
-	collapsedValues := 0
+	// absent[a.ID] = the reason, for the field-value pass below: every
+	// expected value of an absent asset is a failure of its own, named,
+	// and stays in the expected population.
+	absent := map[string]string{}
 	for _, a := range cat.Assets {
 		row, ok := present[uuidString(parseUUID(a.ID))]
 		if !ok {
@@ -270,13 +278,15 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 				return nil, cerr
 			}
 			if sibling == "" {
+				absent[a.ID] = why
 				rep.fail("asset %s: absent from the database (%s)", a.ID, why)
 				continue
 			}
 			rep.AssetsCollapsed++
-			collapsedValues += len(a.FieldValues)
-			rep.note("asset %s: collapsed by content address onto %s (%s); its %d field value(s) are never written and are not expected",
+			absent[a.ID] = fmt.Sprintf("collapsed by content address onto %s: %s", sibling, why)
+			rep.fail("asset %s: absent from the database; SeedInsertAsset collapsed it by content address onto %s (%s), so its id, declaration, size and %d field value(s) did not materialize under this id",
 				a.ID, sibling, why, len(a.FieldValues))
+			rep.note("asset %s: collapse diagnosis, sibling %s (%s)", a.ID, sibling, why)
 			continue
 		}
 		rep.AssetsPresent++
@@ -293,9 +303,6 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 			}
 		}
 	}
-	if collapsedValues > 0 {
-		rep.note("%d field value(s) on collapsed assets are excluded from the expected set", collapsedValues)
-	}
 
 	// -- field values: rules A, B and C ----------------------------------
 	have, err := verifyLoadValues(ctx, pool, presentIDs)
@@ -303,10 +310,7 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 		return nil, err
 	}
 	for _, a := range cat.Assets {
-		assetID, ok := r.assets[a.ID]
-		if !ok {
-			continue
-		}
+		assetID, hasRow := r.assets[a.ID]
 		codes := make([]string, 0, len(a.FieldValues))
 		for c := range a.FieldValues {
 			codes = append(codes, c)
@@ -329,6 +333,11 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 				continue
 			}
 			rep.ExpectedValues++
+			if !hasRow {
+				rep.fail("asset %s field %s (%s): expected seed value %s did not materialize; the asset has no row of its own (%s)",
+					a.ID, code, fm.typ, dropValueRepr(raw), absent[a.ID])
+				continue
+			}
 			key := uuidString(assetID) + "/" + uuidString(fm.id)
 			row, ok := have[key]
 			if !ok {
@@ -393,8 +402,11 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 		canonical := uuidString(parseUUID(p.ID))
 		subject, ok := r.postSubjectFor(p, assetTiers)
 		if !ok {
+			// The seed skips such a post, so it never materializes. On a
+			// full-site acceptance that is a catalogue post the database
+			// does not hold, and a skip is not a pass.
 			rep.PostsSkipped++
-			rep.note("post %s: no resolvable member; the seed skips it", p.ID)
+			rep.fail("post %s: no resolvable member, so the seed skips it and the post does not materialize", p.ID)
 			continue
 		}
 		if !live[canonical] {
@@ -402,6 +414,10 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 			continue
 		}
 		rep.PostsPresent++
+		// Registered exactly as applyPosts registers an inserted or
+		// resumed post, so the backfill plan below sees the same coverage
+		// the seed saw.
+		r.posts[p.ID] = parseUUID(p.ID)
 		if row, ok := index.byID[canonical]; ok {
 			if diff := subject.compare(row); len(diff) > 0 {
 				rep.fail("post %s: the database row disagrees with the catalogue on %s",
@@ -409,14 +425,30 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 			}
 		}
 	}
-	backfill := verifyBackfillIDs(cat)
+	// The EXACT backfill population for this seeded state, derived by the
+	// same function applyCollectionPostBackfill runs: every one of these
+	// must be live, and a live post outside the catalogue must be one of
+	// them. A backfill-shaped id the current state would not mint (its
+	// asset covered, or never materialized) is a stale row, and stale
+	// rows reach the wall.
+	order, _ := r.planCollectionPostBackfill(cat, r.backfillCoverage(cat))
+	expectedBackfill := make(map[string]bool, len(order))
+	for _, key := range order {
+		id := backfillPostID(key).String()
+		expectedBackfill[id] = true
+		rep.ExpectedBackfill++
+		if live[id] {
+			rep.LiveBackfill++
+		} else {
+			rep.fail("post %s: expected collection backfill post (%s) is not live", id, backfillKeyLabel(key))
+		}
+	}
 	extras := make([]string, 0)
 	for id := range live {
 		if _, ok := catalogueIDs[id]; ok {
 			continue
 		}
-		if backfill[id] {
-			rep.LiveBackfill++
+		if expectedBackfill[id] {
 			continue
 		}
 		extras = append(extras, id)
@@ -424,7 +456,7 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 	sort.Strings(extras)
 	for _, id := range extras {
 		rep.LiveExtra++
-		rep.fail("post %s: live in the database but neither in the catalogue nor a collection backfill post", id)
+		rep.fail("post %s: live in the database but neither in the catalogue nor an expected collection backfill post for this seeded state", id)
 	}
 	for _, id := range opts.ExpectOnce {
 		canonical := uuidString(parseUUID(id))
@@ -603,26 +635,13 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// verifyBackfillIDs enumerates every post id applyCollectionPostBackfill
-// COULD have minted for this catalogue: the same key derivation over
-// every collection-bearing asset. A superset of what it inserted (a
-// covered asset never gets one), which is what is needed to classify a
-// live id as "the seed's own backfill" rather than "unexplained".
-func verifyBackfillIDs(cat *catalogues) map[string]bool {
-	out := map[string]bool{}
-	for _, a := range cat.Assets {
-		if a.CollectionName == "" {
-			continue
-		}
-		key := a.CollectionName + "\x00"
-		if gid := assetGroupID(a); gid != "" {
-			key += "g:" + gid
-		} else {
-			key += "a:" + a.ID
-		}
-		out[stableUUID("collection-post-backfill", key).String()] = true
+// backfillKeyLabel renders a bundle key for a message: the collection
+// and the group id or asset id it bundles.
+func backfillKeyLabel(key string) string {
+	if i := strings.IndexByte(key, 0); i >= 0 {
+		return "collection " + key[:i] + ", " + key[i+1:]
 	}
-	return out
+	return key
 }
 
 func verifyMigration(path string, live map[string]bool, catalogueIDs map[string]int, rep *VerifyReport) error {

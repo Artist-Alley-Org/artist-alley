@@ -612,10 +612,13 @@ func TestVerify_PostIdentityAndContent(t *testing.T) {
 
 // The content-address collapse: a manifest entry whose bytes are
 // identical to a sibling the same owner holds gets no row of its own
-// (SeedInsertAsset's owner+file_hash conflict). The verifier names it as
-// collapsed and does not call it missing; an entry whose bytes nothing
-// holds IS missing.
-func TestVerify_CollapsedAssetIsNotMissing(t *testing.T) {
+// (SeedInsertAsset's owner+file_hash conflict). The verifier DIAGNOSES
+// that (the failure and a note name the sibling and the reason) and
+// still FAILS: the profile asset did not materialize under its id, and
+// its field values stay in the expected population as unmaterialized
+// values rather than being subtracted. Matching bytes are not an
+// approval; an entry whose bytes nothing holds is simply missing.
+func TestVerify_CollapsedAssetIsDiagnosedAndStillFails(t *testing.T) {
 	f := newVerifyFixture(t)
 	ctx := context.Background()
 	backend, err := storagefs.New(t.TempDir())
@@ -625,6 +628,9 @@ func TestVerify_CollapsedAssetIsNotMissing(t *testing.T) {
 	svc := storage.NewService(backend, f.pool)
 	payload := []byte("aa1319 identical bytes " + f.salt)
 	sibling := f.newAsset("", int64(len(payload)))
+	// Outside any collection: an uncovered collection asset would
+	// legitimately expect a backfill post, which is not this test.
+	sibling.CollectionName = ""
 	up, err := svc.UploadOriginal(ctx, bytes.NewReader(payload), "image/png",
 		storage.PinRef{SubjectType: "asset", SubjectID: sibling.ID})
 	if err != nil {
@@ -670,10 +676,24 @@ func TestVerify_CollapsedAssetIsNotMissing(t *testing.T) {
 	}
 	rep := f.verify(VerifyOptions{})
 	if rep.AssetsCollapsed != 1 {
-		t.Errorf("collapsed assets %d, want 1", rep.AssetsCollapsed)
+		t.Errorf("collapsed assets %d, want 1 (the diagnosis)", rep.AssetsCollapsed)
 	}
-	mustNotContain(t, rep.Failures, collapsed.ID)
-	mustContain(t, rep.Failures, missing.ID, "absent from the database")
+	if rep.OK() {
+		t.Fatal("a collapsed profile asset must fail the acceptance run; RESULT: VERIFIED is impossible while one exists")
+	}
+	// The asset itself fails, and the failure carries the diagnosis.
+	mustContain(t, rep.Failures, collapsed.ID, "absent from the database", "collapsed it by content address", sibling.ID, "same owner, same bytes")
+	// Its field value stays in the expected population and is named as
+	// unmaterialized, with the same diagnosis.
+	mustContain(t, rep.Failures, collapsed.ID, f.code("text"), "did not materialize", sibling.ID)
+	if rep.ExpectedValues != 9 {
+		t.Errorf("expected values %d, want 9: the collapsed asset's value must not be subtracted from the expected population", rep.ExpectedValues)
+	}
+	if rep.ImportRows != 8 {
+		t.Errorf("import rows %d, want 8", rep.ImportRows)
+	}
+	// The plainly missing entry fails without a sibling.
+	mustContain(t, rep.Failures, missing.ID, "absent from the database", "no sibling holds those bytes")
 	found := false
 	for _, n := range rep.Notes {
 		if strings.Contains(n, collapsed.ID) && strings.Contains(n, sibling.ID) {
@@ -683,8 +703,108 @@ func TestVerify_CollapsedAssetIsNotMissing(t *testing.T) {
 	if !found {
 		t.Errorf("no note names the collapse %s -> %s:\n  %s", collapsed.ID, sibling.ID, strings.Join(rep.Notes, "\n  "))
 	}
-	if rep.ExpectedValues != 8 {
-		t.Errorf("expected values %d, want 8: a collapsed asset's values are never written and must not be expected", rep.ExpectedValues)
+}
+
+// insertLivePost writes a bare post row under id through the seeder's
+// own insert (no members, no subtree), the way a stale row from an
+// earlier seed sits on the wall, and registers its cleanup.
+func (f *verifyFixture) insertLivePost(id uuid.UUID) {
+	f.t.Helper()
+	f.newPost(id.String()) // registers cleanup; the returned catalogue entry is unused
+	at := pgtype.Timestamptz{Time: time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), Valid: true}
+	if _, err := New(f.pool).SeedInsertPost(context.Background(), SeedInsertPostParams{
+		ID: parseUUID(id.String()), AuthorUserRef: f.userRef, Title: "stale backfill",
+		Visibility: "org-only", CoverAssetID: f.assetID(0), CreatedAt: at, UpdatedAt: at,
+	}); err != nil {
+		f.t.Fatalf("SeedInsertPost: %v", err)
+	}
+}
+
+// backfillID is the exact id applyCollectionPostBackfill would mint for
+// a single (ungrouped) asset in the fixture's collection.
+func (f *verifyFixture) backfillID(assetID string) uuid.UUID {
+	return backfillPostID(f.collName + "\x00a:" + assetID)
+}
+
+// (A) A live post under the backfill id of an asset a catalogue post
+// already covers in that collection is stale: the current state would
+// not mint it, so it must fail as unexpected even though its id is one
+// the backfill COULD produce.
+func TestVerify_StaleBackfillForACoveredAssetIsUnexpected(t *testing.T) {
+	f := newVerifyFixture(t)
+	stale := f.backfillID(f.assets[0].ID)
+	f.insertLivePost(stale)
+	rep := f.verify(VerifyOptions{})
+	mustContain(t, rep.Failures, stale.String(), "live in the database but neither in the catalogue nor an expected collection backfill")
+	if rep.ExpectedBackfill != 0 || rep.LiveBackfill != 0 {
+		t.Errorf("expected backfill %d live %d, want 0 and 0: both assets are covered by the catalogue post", rep.ExpectedBackfill, rep.LiveBackfill)
+	}
+}
+
+// (B) A live post under the theoretical backfill id of an asset that
+// never materialized (absent from r.assets) is unexpected: the seeder
+// only bundles inserted assets.
+func TestVerify_BackfillForAnUnmaterializedAssetIsUnexpected(t *testing.T) {
+	f := newVerifyFixture(t)
+	ghost := manifestAsset{
+		ID: uuid.New().String(), AssetType: "image", Title: "ghost",
+		FilePath: "images/ghost.png", FileExtension: "png", FileSizeBytes: 5,
+		SensitivityTier: "public", ArchiveState: "active", OwnerUsername: f.username,
+		CollectionName: f.collName, CreatedAt: "2025-05-05T12:00:00Z", UpdatedAt: "2025-05-05T12:00:00Z",
+	}
+	f.assets = append(f.assets, ghost)
+	f.writeSite()
+	stale := f.backfillID(ghost.ID)
+	f.insertLivePost(stale)
+	rep := f.verify(VerifyOptions{})
+	mustContain(t, rep.Failures, ghost.ID, "absent from the database")
+	mustContain(t, rep.Failures, stale.String(), "live in the database but neither in the catalogue nor an expected collection backfill")
+	if rep.ExpectedBackfill != 0 {
+		t.Errorf("expected backfill %d, want 0: an unmaterialized asset gets no backfill", rep.ExpectedBackfill)
+	}
+}
+
+// (C) + (D) An uncovered, materialized collection asset gets exactly
+// one expected backfill post: live, the verifier accepts it; absent,
+// the verifier fails naming it.
+func TestVerify_ExpectedBackfillMustBeLive(t *testing.T) {
+	f := newVerifyFixture(t)
+	bare := f.newAsset("", 30) // in the collection, framed by no catalogue post
+	f.assets = append(f.assets, bare)
+	f.writeSite()
+	want := f.backfillID(bare.ID)
+
+	rep := f.verify(VerifyOptions{})
+	mustContain(t, rep.Failures, want.String(), "expected collection backfill post", "is not live")
+	if rep.ExpectedBackfill != 1 || rep.LiveBackfill != 0 {
+		t.Errorf("expected backfill %d live %d, want 1 and 0", rep.ExpectedBackfill, rep.LiveBackfill)
+	}
+
+	f.insertLivePost(want)
+	rep = f.verify(VerifyOptions{})
+	if own := f.ownFailures(rep); len(own) != 0 {
+		t.Fatalf("an expected, live backfill post produced failures:\n  %s", strings.Join(own, "\n  "))
+	}
+	if rep.ExpectedBackfill != 1 || rep.LiveBackfill != 1 {
+		t.Errorf("expected backfill %d live %d, want 1 and 1", rep.ExpectedBackfill, rep.LiveBackfill)
+	}
+}
+
+// (E) A catalogue post whose members cannot resolve never materializes;
+// on a full-site acceptance that is a failure naming the post, not an
+// informational skip.
+func TestVerify_ACataloguePostWithNoResolvableMemberFails(t *testing.T) {
+	f := newVerifyFixture(t)
+	orphan := f.newPost(uuid.New().String(), uuid.New().String())
+	f.posts = append(f.posts, orphan)
+	f.writeSite()
+	rep := f.verify(VerifyOptions{})
+	mustContain(t, rep.Failures, orphan.ID, "no resolvable member")
+	if rep.PostsSkipped != 1 {
+		t.Errorf("posts with no resolvable member %d, want 1", rep.PostsSkipped)
+	}
+	if rep.OK() {
+		t.Error("a catalogue post that did not materialize must fail the run")
 	}
 }
 

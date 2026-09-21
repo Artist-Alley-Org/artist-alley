@@ -1554,19 +1554,35 @@ func postVisibility(p manifestPost, coverTier string) string {
 // Post ids are stableUUID-derived, so a re-run re-composes the same posts
 // and lands on SeedInsertPost's ON CONFLICT path rather than duplicating
 // the wall.
-func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogues) error {
-	// covered[collection name] = manifest asset ids already framed by a
-	// post PINNED IN THAT COLLECTION. Keyed on the collection because the
-	// same asset can be framed by a post filed elsewhere, and that post
-	// does not put it on this collection's wall.
+// backfillBundle is one collection post applyCollectionPostBackfill
+// composes: the bare assets of one collection sharing a group id (or a
+// single asset with none).
+type backfillBundle struct {
+	collection string
+	members    []manifestAsset
+}
+
+// backfillPostID is the stable id of the backfill post for one bundle
+// key. One function, so the phase that mints it and the verifier that
+// expects it cannot disagree.
+func backfillPostID(key string) uuid.UUID {
+	return stableUUID("collection-post-backfill", key)
+}
+
+// backfillCoverage is covered[collection name] = manifest asset ids
+// already framed by a post PINNED IN THAT COLLECTION. Keyed on the
+// collection because the same asset can be framed by a post filed
+// elsewhere, and that post does not put it on this collection's wall.
+//
+// Only posts that were actually INSERTED count (r.posts): applyPosts
+// skips a post whose members all fell out, and a skipped post frames
+// nothing.
+func (r *Runner) backfillCoverage(cat *catalogues) map[string]map[string]struct{} {
 	covered := make(map[string]map[string]struct{}, len(r.collections))
 	for _, p := range cat.Posts {
 		if p.CollectionName == "" {
 			continue
 		}
-		// Only posts that were actually INSERTED count. applyPosts skips a
-		// post whose members all fell out, and a skipped post frames
-		// nothing.
 		if _, ok := r.posts[p.ID]; !ok {
 			continue
 		}
@@ -1582,15 +1598,22 @@ func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogue
 			set[aid] = struct{}{}
 		}
 	}
+	return covered
+}
 
-	type bundle struct {
-		collection string
-		members    []manifestAsset
-	}
+// planCollectionPostBackfill is the EXACT set of backfill posts this
+// seeded state produces: only assets that materialized (r.assets), only
+// collections that resolve (r.collections), only assets no materialized
+// catalogue post covers in that collection, bundled by group id or
+// single asset. It is a pure derivation shared with `aa seed-verify`
+// (#1319), which has to know what the seed WOULD mint rather than what
+// it could: a superset would let a stale backfill post survive
+// verification.
+func (r *Runner) planCollectionPostBackfill(cat *catalogues, covered map[string]map[string]struct{}) ([]string, map[string]*backfillBundle) {
 	// Insertion order is the catalogue's, so the composed wall is stable
 	// across runs — a map range would shuffle titles and sort_order.
 	var order []string
-	index := make(map[string]*bundle)
+	index := make(map[string]*backfillBundle)
 	for _, a := range cat.Assets {
 		if a.CollectionName == "" {
 			continue
@@ -1612,12 +1635,19 @@ func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogue
 		}
 		b := index[key]
 		if b == nil {
-			b = &bundle{collection: a.CollectionName}
+			b = &backfillBundle{collection: a.CollectionName}
 			index[key] = b
 			order = append(order, key)
 		}
 		b.members = append(b.members, a)
 	}
+	return order, index
+}
+
+func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogues) error {
+	covered := r.backfillCoverage(cat)
+
+	order, index := r.planCollectionPostBackfill(cat, covered)
 
 	inserted, madePublic, bare := 0, 0, 0
 	for _, key := range order {
@@ -1654,7 +1684,7 @@ func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogue
 			description = fmt.Sprintf("%s working set for %s. %d assets pulled together for review.",
 				orDefault(first.TeamName, "Reference"), b.collection, len(b.members))
 		}
-		postID := stableUUID("collection-post-backfill", key)
+		postID := backfillPostID(key)
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
 			ID:            parseUUID(postID.String()),
 			AuthorUserRef: authorRef,
