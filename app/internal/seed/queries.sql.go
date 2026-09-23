@@ -369,6 +369,17 @@ type SeedInsertAssetParams struct {
 // user) — the latter legitimately collapses one asset, matching the
 // product's content-address invariant.
 //
+// ⛔ WHICH MEANS THE CATALOGUE MUST NOT CONTAIN ONE (#1319). The index
+// is identity, not a preference: no DedupBehavior value relaxes it. Two
+// catalogue entries under one (owner, produced bytes) are not two
+// assets, they are one asset named twice, and the second entry's id,
+// declaration, size and field values are never written at all. A post
+// naming it loses that member without a word. The corpus retires the
+// loser onto a named survivor with an asset-collapse document
+// (seed/scripts/asset_collapse.py); this statement is deliberately left
+// permissive, because the resumed-run case needs it and the seeder
+// cannot tell the two apart.
+//
 // ⛔ THAT COLLAPSE IS WHY A DECLARATION IS NOT A PER-POST KNOB. One
 // asset row can be a member of MANY posts, so declaring a shared asset
 // `generated` moves every post containing it. A catalogue entry that
