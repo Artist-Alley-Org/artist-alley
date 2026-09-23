@@ -488,6 +488,27 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **The sample library no longer asks the application to store something it cannot store, and a
+  retirement has to prove itself.** One catalogue record described the same bytes under the same
+  owner as another record, which the application refuses by design, so that entry could never
+  become a row: its id, its declaration, its size and its typed values were dropped in silence and
+  a post that listed it quietly lost a member. That record is now retired onto its named survivor
+  through an explicit collapse document that states the survivor, the retired record verbatim,
+  every value the retirement gives up, the membership substitution it causes, and the hash of the
+  archive member it came from kept separate from the hash of the file the pipeline actually
+  produces. Two different questions are now answered in two places and labelled as such: the
+  repository-side pass checks the document's shape and that the profile is in exactly one of the
+  two states the document describes, before it is allowed to change what the ordinary upgrade
+  counts as drift, and the publish path separately re-derives the produced bytes from the sources
+  it is given and only then may report a record as an authenticated collapse instead of a deletion.
+  Evidence that is malformed, stale, or describes a state the files are not in stops the run before
+  anything is written or deleted, rather than being stepped over. A retired file is removed from a
+  staging copy only through that narrow authenticated path, checked against the recorded produced
+  hash, never through the broad prune. The seeder's own behaviour is unchanged and is now pinned by
+  tests covering two through five records collapsing onto one owner, the case where the first
+  member's bytes are missing, and identical bytes held by different owners, which stay two separate
+  files. Nothing was published by this work (#1319, PR #1451).
+
 - **Publishing the sample library can no longer refuse its own corrected posts, and a published
   site can be checked before and after.** The publish guard treats a post id that the committed
   migration documents moved on purpose as a move, comparing what the post carries across it,
