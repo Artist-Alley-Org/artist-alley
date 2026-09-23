@@ -370,7 +370,7 @@ def merge_added(profile: list[dict], added: list[dict],
 
     Returns (appended, repaired, appended_retired). `repaired` counts
     records that were ALREADY in the profile and gained a
-    `metadata.media_url` from the upgrade doc — see below.
+    `metadata.media_url` from the upgrade doc: see below.
 
     ⛔ A DOCUMENTED RETIRED ID IS STILL MERGED, AND COUNTED SEPARATELY.
     The historical `balance-assets.<site>.json` is not rewritten when a
@@ -1393,7 +1393,7 @@ def main() -> int:
             # "re-assembly would drop them" on every run.
             (n_assets - n_assets_retired,
              f"{n_assets - n_assets_retired} added asset(s) are not in the "
-             "profile — re-assembly would drop them"),
+             "profile; re-assembly would drop them"),
             # ⛔ THE RE-ADDED ROW IS NOT DRIFT IN THE COMMITTED PROFILE.
             # `merge_added` re-appends the retired record from the
             # historical balance document on EVERY run, so the merged
