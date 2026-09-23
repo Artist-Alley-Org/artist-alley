@@ -843,6 +843,21 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 			//                    and there is no row under this id, so
 			//                    skipping is right.
 			//
+			// ⛔ CORRECT PER ROW, AND STILL A CATALOGUE DEFECT WHEN THE
+			// TWO ENTRIES ARE MEANT TO BE DIFFERENT ASSETS (#1319). The
+			// collapse is right for a texture exported beside both the
+			// OBJ and the FBX of one model: one file, named twice. It is
+			// WRONG as a way to carry two catalogue records that each
+			// claim their own id, title, declaration and field values,
+			// because only one of them gets a row: the loser's values are
+			// never written, and `postSubjectFor` cannot resolve it, so
+			// the post naming it silently ships with one member fewer.
+			// Nothing here can tell the two cases apart, and nothing here
+			// should try: a catalogue MUST NOT contain a same-owner
+			// produced-byte duplicate, the seed verifier fails exactly
+			// that, and the corpus retires the loser by document
+			// (seed/scripts/asset_collapse.py, ADR 0097 COLLAPSED_RECORD).
+			//
 			// Treating both as "skip" is what made an incremental
 			// re-seed drop members: `applyPosts` resolves members from
 			// the map this loop fills, so a post added to the catalogue

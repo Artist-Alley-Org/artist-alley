@@ -89,6 +89,10 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import asset_collapse as ac  # noqa: E402
+
 # Every replacement asset comes from the Kenney All-in-1 pack, which is
 # CC0 across the board. Uniform by construction — asserted in the tests.
 HQ_LICENSE = "CC0 1.0"
@@ -360,16 +364,33 @@ def _composition(entry: dict) -> tuple:
     )
 
 
-def merge_added(profile: list[dict], added: list[dict]) -> tuple[int, int]:
+def merge_added(profile: list[dict], added: list[dict],
+                retired_ids: frozenset[str] = frozenset()) -> tuple[int, int, int]:
     """Append records absent from the profile, with copier provenance.
 
-    Returns (appended, repaired). `repaired` counts records that were
-    ALREADY in the profile and gained a `metadata.media_url` from the
-    upgrade doc — see below.
+    Returns (appended, repaired, appended_retired). `repaired` counts
+    records that were ALREADY in the profile and gained a
+    `metadata.media_url` from the upgrade doc — see below.
+
+    ⛔ A DOCUMENTED RETIRED ID IS STILL MERGED, AND COUNTED SEPARATELY.
+    The historical `balance-assets.<site>.json` is not rewritten when a
+    record is retired (it is the record of what the balance pass emitted,
+    and rewriting history to make a check pass is how evidence stops
+    being evidence), so this pass keeps re-appending the retired row on
+    every run. The obvious fix is to drop it from the merge INPUT, and
+    that is the wrong one: if the record never enters, the collapse
+    stage's Pending branch never gets to authenticate it against the
+    document's verbatim `retired_record`, and a stale document could then
+    suppress a record whose content had changed underneath it. So the
+    record is merged, authenticated, and removed by the collapse stage,
+    and only the DRIFT ACCOUNTING excludes it: `appended_retired` is the
+    count the caller subtracts, so `--check` stops calling an intentional
+    retirement a pass that "would change" the profile.
     """
     by_id = {e["id"]: e for e in profile}
     n = 0
     repaired = 0
+    n_retired = 0
     for a in added:
         existing = by_id.get(a["id"])
         if existing is not None:
@@ -394,7 +415,9 @@ def merge_added(profile: list[dict], added: list[dict]) -> tuple[int, int]:
             rec["source_path"] = rec["file_path"]
         profile.append(rec)
         n += 1
-    return n, repaired
+        if a["id"] in retired_ids:
+            n_retired += 1
+    return n, repaired, n_retired
 
 
 def apply_team_corrections(profile: list[dict],
@@ -511,15 +534,37 @@ def apply_ai_declarations(profile: list[dict],
     return out
 
 
-def merge_posts(posts: list[dict], added: list[dict]) -> int:
+def merge_posts(posts: list[dict], added: list[dict],
+                moved_post_ids: frozenset[str] = frozenset()) -> tuple[int, int]:
+    """Append posts absent from the posts profile.
+
+    Returns (appended, skipped_moved).
+
+    ⛔ `moved_post_ids` HOLDS ONLY THE IDS A COLLAPSE SUBSTITUTION MOVES.
+    A substitution that keeps the post's id (every `asset_group`, whose
+    id derives from the source group_id and not from membership) leaves
+    nothing to exclude: the post is already there under the same id and
+    this pass skips it anyway. A substitution that MOVES the id is
+    different, because the historical document still holds the post under
+    its old id, and re-adding it there would put the same post in the
+    profile twice, under two ids, with two memberships. That is not a
+    state the collapse stage could authenticate: it would be a third
+    state and a hard failure. Skipping is the only safe reading, and it
+    is counted so the reason is visible rather than inferred from a
+    number that did not move.
+    """
     have = {p["id"] for p in posts}
     n = 0
+    n_moved = 0
     for p in added:
         if p["id"] in have:
             continue
+        if p["id"] in moved_post_ids:
+            n_moved += 1
+            continue
         posts.append(json.loads(json.dumps(p)))
         n += 1
-    return n
+    return n, n_moved
 
 
 # `dev` and `demo` are aliases for studio-b and studio-a. The re-copy
@@ -695,11 +740,23 @@ def dedupe_posts(posts: list[dict]) -> tuple[int, list[str]]:
     return before - len(posts), dup_ids
 
 
-def apply_manifest_reconcile(profile: list[dict],
-                             doc: dict) -> tuple[int, int, list[str]]:
+def apply_manifest_reconcile(profile: list[dict], doc: dict,
+                             retired_ids: frozenset[str] = frozenset()
+                             ) -> tuple[int, int, int, list[str], list[str]]:
     """Carry the archive share's advantage back into the profile (#1275).
 
-    Returns (added_records, filled_values, unknown_fill_ids).
+    Returns (added_records, filled_values, filled_onto_retired,
+    unknown_fill_ids, retired_fill_ids).
+
+    ⚠️ A FILL NAMING A DOCUMENTED RETIRED ID IS "RETIRED", NOT "UNKNOWN".
+    `manifest-reconcile.<site>.json` is historical and is not rewritten
+    when a record is retired, so its entry for the retired id outlives
+    the record. An unknown fill id is a non-overridable FAIL, and it
+    should be: a mistyped id must not be stepped over. But a fill whose
+    id a collapse document names is accounted for, and reporting it as
+    unknown would make an intentional retirement indistinguishable from a
+    typo. They go on separate channels so the caller can refuse one and
+    report the other.
 
     ⚠️ A `fill` ENTRY NAMING AN ID THE PROFILE DOES NOT HOLD IS REPORTED
     ON ITS OWN CHANNEL, NEVER SWALLOWED (#1328). It used to be a bare
@@ -745,12 +802,19 @@ def apply_manifest_reconcile(profile: list[dict],
         n_added += 1
 
     filled = 0
+    filled_retired = 0
     unknown: list[str] = []
+    retired: list[str] = []
     for entry in doc.get("fill", ()):
         target = by_id.get(entry["id"])
+        is_retired = entry["id"] in retired_ids
         if target is None:
-            unknown.append(entry["id"])
+            if is_retired:
+                retired.append(entry["id"])
+            else:
+                unknown.append(entry["id"])
             continue
+        before_fill = filled
         for key, val in entry.items():
             if key == "id":
                 continue
@@ -766,7 +830,18 @@ def apply_manifest_reconcile(profile: list[dict],
             if key not in target or _empty(target[key]):
                 target[key] = val
                 filled += 1
-    return n_added, filled, unknown
+        # ⚠️ THE FILL IS STILL APPLIED, ONLY THE ACCOUNTING DIFFERS. The
+        # document's verbatim `retired_record` is the record as the whole
+        # pipeline produces it, reconcile fills included, so a record
+        # that skipped them would no longer match it and the collapse
+        # stage would refuse the run. What must not happen is these fills
+        # reading as unresolved drift on every single run: the record
+        # they land on is about to be retired, so "N values present at
+        # the share are absent in the profile" would be true forever and
+        # the gate could never come clean.
+        if is_retired:
+            filled_retired += filled - before_fill
+    return n_added, filled, filled_retired, unknown, retired
 
 
 def apply_staged_measurements(profile: list[dict],
@@ -851,10 +926,62 @@ def _empty(v) -> bool:
 
 def audit(profile: list[dict], posts: list[dict],
           replacements: list[dict], added_assets: list[dict],
-          added_posts: list[dict]) -> list[str]:
+          added_posts: list[dict],
+          collapse: ac.CollapseDocument = ac.EMPTY) -> list[str]:
     """Post-conditions. Every one of these has failed at least once."""
     problems: list[str] = []
     by_id = {e["id"]: e for e in profile}
+
+    # ⛔ THE RETIREMENT POST-CONDITIONS RUN AFTER CURATION, BECAUSE
+    # CURATION CAN WRITE MEMBERSHIP. `CURATABLE_FIELDS` includes
+    # `asset_ids` and 383 of the 841 entries carry it, so a curation
+    # entry could put a retired id back into a post after the collapse
+    # stage has already run and been reported clean. No entry names one
+    # today; that is a fact about the current document, not a property of
+    # the pipeline, and this is what turns it into one.
+    retired_ids = collapse.retired_ids
+    if retired_ids:
+        still = sorted(rid for rid in retired_ids if rid in by_id)
+        if still:
+            problems.append(
+                f"{len(still)} retired record(s) are still in the profile after "
+                f"the collapse stage ({_name_ids(still)}); the app cannot hold "
+                f"them beside their survivor and the seeder would drop them in "
+                f"silence")
+        for p in posts:
+            named = sorted(set(p.get("asset_ids") or ()) & retired_ids)
+            if named:
+                problems.append(
+                    f"post {p['id']} names retired asset(s) {_name_ids(named)}; "
+                    f"the record has no row on a seeded instance, so the post "
+                    f"would silently lose a member")
+        absent = sorted(sid for sid in collapse.survivor_ids if sid not in by_id)
+        if absent:
+            problems.append(
+                f"{len(absent)} collapse survivor(s) are not in the profile "
+                f"({_name_ids(absent)}); a retirement with no survivor is a "
+                f"deletion")
+
+    # ⚠️ A PARTIAL PROXY FOR THE INVARIANT THAT ACTUALLY BITES, AND IT IS
+    # LABELLED ONE. The app's live uniqueness key is
+    # `(owner_user_ref, file_hash)` over the PRODUCED bytes; this key is
+    # `(owner_username, metadata.source_archive.sha256, metadata.render.px)`,
+    # which needs neither pack nor pool and so can run here. Two records
+    # sharing it certainly share an input and a render size, which is how
+    # the one live collision was found. Two records can still produce
+    # identical bytes from different inputs, and this will not say so.
+    # The sufficient check is the publish guard, which hashes the files.
+    for key, ids in sorted(ac.proxy_collisions(profile).items()):
+        owner, sha, px = key
+        problems.append(
+            f"{len(ids)} records owned by {owner} share source_archive.sha256 "
+            f"{sha[:12]}… at render {px}px ({_name_ids(sorted(ids))}). They very "
+            f"likely produce identical bytes, and the app's "
+            f"(owner_user_ref, file_hash) index can hold only one of them: the "
+            f"others get no row, no field values, and vanish from any post that "
+            f"names them. Retire the losers with an asset-collapse document. "
+            f"(This key is a PARTIAL proxy for (owner, produced_byte_sha256); "
+            f"the produced bytes are hashed at publish.)")
 
     ids = [e["id"] for e in profile]
     if len(ids) != len(set(ids)):
@@ -883,6 +1010,13 @@ def audit(profile: list[dict], posts: list[dict],
                             f"{e.get('license')!r}, expected {HQ_LICENSE!r}")
 
     for a in added_assets:
+        # A documented retirement is the one legitimate reason for a
+        # merged record to be absent at the end of the run, and it is
+        # narrow: only an id the collapse document names, only after the
+        # stage authenticated the record it removed against the
+        # document's verbatim copy.
+        if a["id"] in retired_ids:
+            continue
         e = by_id.get(a["id"])
         if e is None:
             problems.append(f"added asset {a['id']} missing from profile")
@@ -945,7 +1079,8 @@ def audit(profile: list[dict], posts: list[dict],
     # An asset nobody posted is invisible on browse. Every added video
     # must be reachable.
     referenced = {aid for p in posts for aid in (p.get("asset_ids") or ())}
-    orphans = [a["id"] for a in added_assets if a["id"] not in referenced]
+    orphans = [a["id"] for a in added_assets
+               if a["id"] not in referenced and a["id"] not in retired_ids]
     if orphans:
         problems.append(f"{len(orphans)} added assets have no post and are "
                         f"unreachable on browse (e.g. {orphans[:2]})")
@@ -1017,6 +1152,27 @@ def main() -> int:
     staged = load(staged_doc) if staged_doc.is_file() else []
     curation_doc = args.upgrades / f"post-curation.{args.site}.json"
     curation = load(curation_doc) if curation_doc.is_file() else {}
+
+    # ⛔ LAYER A1, BEFORE THE DOCUMENT INFLUENCES ANY PASS. A document
+    # that is present and unusable is a REFUSAL, never an absence: it is
+    # the only record of which record may be removed and of what that
+    # removal costs, so "ignore it and continue" would let a run write a
+    # profile the document was supposed to govern. A document that is
+    # simply not there is no evidence, and every id stays where it is.
+    collapse_path = ac.collapse_document_in(args.upgrades, args.profile)
+    collapse = ac.EMPTY
+    if collapse_path is not None and collapse_path.is_file():
+        try:
+            collapse = ac.load_collapse_document(
+                collapse_path, profile_name=args.profile.name)
+        except ac.CollapseError as e:
+            print(f"error: {e}\n"
+                  "  Refusing before any pass: an asset-collapse document that "
+                  "cannot be validated is not evidence, and \"unusable\" must "
+                  "not be read as \"nothing to retire\". Nothing was written.",
+                  file=sys.stderr)
+            return 2
+
     profile = load(args.profile)
     posts = load(args.posts)
 
@@ -1030,15 +1186,17 @@ def main() -> int:
     # assertion covers it too.
     declared = apply_ai_declarations(profile, declarations)
     n_processed, n_modified, problems = apply_replacements(profile, reps)
-    n_assets, n_repaired = merge_added(profile, add_a)
-    n_posts = merge_posts(posts, add_p)
+    n_assets, n_repaired, n_assets_retired = merge_added(
+        profile, add_a, collapse.retired_ids)
+    n_posts, n_posts_moved = merge_posts(posts, add_p, collapse.moved_post_ids)
     # LAST of the asset passes. The reconcile document is the archive
     # share's advantage (#1275), and the share reflects a library that
     # has already been through replacement, correction and merge — so
     # applying it before them would let a later pass overwrite the very
     # values it exists to restore.
-    n_reconciled, n_filled, reconcile_unknown = \
-        apply_manifest_reconcile(profile, reconcile)
+    n_reconciled, n_filled, n_filled_retired, reconcile_unknown, \
+        reconcile_retired = apply_manifest_reconcile(
+            profile, reconcile, collapse.retired_ids)
     # AFTER the reconcile, and last of all: the reconcile fills keys the
     # profile lacks, and one of the keys it can fill is `metadata.sha256`
     # on a pre-staged record. This pass is the one that knows whether
@@ -1047,13 +1205,43 @@ def main() -> int:
     n_staged, n_hashed, staged_unknown = \
         apply_staged_measurements(profile, staged)
     n_deduped, dup_ids = dedupe_posts(posts)
+    # ⛔ LAYER A2 AND THE MUTATION, HERE AND NOT LAST (#1319).
+    #
+    # AFTER every pass that can introduce or duplicate the objects it
+    # judges: `merge_added` and `apply_manifest_reconcile` are how the
+    # retired record ENTERS a regenerated profile, `merge_posts` is how
+    # the affected post enters, and `dedupe_posts` decides which row of a
+    # duplicated id survives. Before all of those, a fresh assembly is
+    # legitimately holding neither object and is in neither state.
+    #
+    # BEFORE `apply_post_curation`, which is the ordering correction.
+    # That pass compares each entry's `pipeline_members` digest against
+    # the membership AS IT STANDS AT THAT MOMENT and appends a
+    # "membership has moved" advisory on a mismatch. With the collapse
+    # running after it, the digest would be compared against the OLD
+    # membership on every fresh assembly and this deliberate, documented,
+    # structurally authenticated substitution would print the advisory
+    # that exists to flag the UNdocumented kind. Running the stage first
+    # means the curation sees the corrected membership, its digest
+    # describes the corrected membership, and the advisory keeps its
+    # meaning: unrelated drift still fires it, and nothing is waived.
+    try:
+        collapsed = ac.apply_collapse(profile, posts, collapse)
+    except ac.CollapseError as e:
+        print(f"error: {e}\n"
+              "  Refusing before any deletion and before anything is written. A "
+              "collapse document may only convert Pending into Applied; a third "
+              "state means the data moved underneath the document, and "
+              "normalising it would delete or rewrite something nobody "
+              "authorised.", file=sys.stderr)
+        return 2
     # AFTER the dedupe, and after every pass that can add a post. The
     # curation amends posts that already exist, so anything that creates
     # or removes one has to have finished: curating a row the dedupe is
     # about to drop writes into a post that never ships.
     n_curated, n_curated_values, curation_missing, curation_advisories = \
         apply_post_curation(posts, curation)
-    problems += audit(profile, posts, reps, add_a, add_p)
+    problems += audit(profile, posts, reps, add_a, add_p, collapse)
     # A declaration naming an id this profile does not hold is a
     # PROBLEM, not a shrug. The failure it guards against is silent by
     # nature — the toggle keeps working, the wall keeps rendering, and
@@ -1100,14 +1288,39 @@ def main() -> int:
     for aid, outcome in declared:
         print(f"ai-declare  : {aid}  {outcome}", file=sys.stderr)
     print(f"assets      : {before_assets} -> {len(profile)} "
-          f"(+{n_assets} merged, +{n_reconciled} reconciled)", file=sys.stderr)
+          f"(+{n_assets} merged, +{n_reconciled} reconciled, "
+          f"-{collapsed.records_removed} retired)", file=sys.stderr)
     print(f"posts       : {before_posts} -> {len(posts)} "
           f"(+{n_posts} merged, -{n_deduped} duplicate id row(s))", file=sys.stderr)
-    print(f"reconcile   : {n_filled} value(s) filled from the share (#1275)",
-          file=sys.stderr)
+    print(f"reconcile   : {n_filled} value(s) filled from the share (#1275)"
+          + (f", {n_filled_retired} of them onto a record this run then "
+             f"retires" if n_filled_retired else ""), file=sys.stderr)
     # Its own summary line, beside the count of what worked, for the
     # same reason the curation loss count has one: a warning tail is a
     # shape a reader skims and an automated caller cannot see.
+    # ⭐ WHAT THIS LINE DOES AND DOES NOT PROVE. The stage is Layer A:
+    # the document is structurally valid and every object it names is in
+    # one of the two states it describes. Nothing here has seen a byte.
+    # The produced files are hashed at publish, by populate_archive.py,
+    # against the source roots it takes; that is the only place a
+    # retirement is source-authenticated.
+    if collapse.entries:
+        print(f"collapse    : {len(collapse.entries)} documented retirement(s) "
+              f"in {collapse_path.name}; structurally validated and "
+              f"state-checked (Layer A). {collapsed.records_removed} record(s) "
+              f"removed, {collapsed.posts_rewritten} post membership(s) "
+              f"rewritten, {collapsed.posts_renamed} post id(s) moved. "
+              f"Produced bytes are verified at publish, not here.",
+              file=sys.stderr)
+    if reconcile_retired:
+        print(f"reconcile   : {len(reconcile_retired)} fill entry(ies) name an "
+              f"intentionally retired record and were skipped: "
+              f"{_name_ids(reconcile_retired)}", file=sys.stderr)
+    if n_assets_retired or n_posts_moved:
+        print(f"collapse    : {n_assets_retired} historical merge row(s) and "
+              f"{n_posts_moved} historical post row(s) name a retired object; "
+              f"merged and authenticated, then retired, and excluded from drift",
+              file=sys.stderr)
     if reconcile_unknown:
         print(f"reconcile   : {len(reconcile_unknown)} fill entry(ies) name "
               f"an id the profile does not hold and were SKIPPED (#1328): "
@@ -1172,9 +1385,30 @@ def main() -> int:
              f"{n_modified} replacement record(s) disagree with "
              f"kenney-hq-replacements.{args.site}.json — a file_path, byte "
              "count, title or licence in the profile is stale (#1295)"),
-            (n_assets,
-             f"{n_assets} added asset(s) are not in the profile — "
-             "re-assembly would drop them"),
+            # ⛔ RETIRED IDS ARE EXCLUDED FROM THE COUNTED DRIFT, NOT
+            # FROM THE MERGE. The record is still merged and still
+            # authenticated against the document before it is removed
+            # (see merge_added); what is subtracted here is only the
+            # ACCOUNTING, so an intentional retirement stops reading as
+            # "re-assembly would drop them" on every run.
+            (n_assets - n_assets_retired,
+             f"{n_assets - n_assets_retired} added asset(s) are not in the "
+             "profile — re-assembly would drop them"),
+            # ⛔ THE RE-ADDED ROW IS NOT DRIFT IN THE COMMITTED PROFILE.
+            # `merge_added` re-appends the retired record from the
+            # historical balance document on EVERY run, so the merged
+            # state is always Pending for it and a term counting the
+            # merged state could never come clean. What the gate is
+            # asking is whether the COMMITTED profile still holds it, so
+            # the rows this run itself appended are subtracted. A post
+            # that still names the retired id is not subtracted: nothing
+            # re-adds a member to an existing post, so a Pending post IS
+            # committed drift.
+            (collapsed.pending_assets - n_assets_retired + collapsed.pending_posts,
+             f"{collapsed.pending_assets - n_assets_retired + collapsed.pending_posts} object(s) named by "
+             f"{collapse_path.name if collapse_path else 'the collapse document'} "
+             "are still in the Pending state: the retired record is in the "
+             "profile, or a post still names it (#1319)"),
             (n_posts,
              f"{n_posts} added post(s) are not in the posts profile — "
              "their assets would be unreachable on browse"),
@@ -1184,9 +1418,9 @@ def main() -> int:
             (n_reconciled,
              f"the share's reconcile document holds {n_reconciled} asset(s) "
              "the profile does not (#1275)"),
-            (n_filled,
-             f"{n_filled} value(s) present at the share are absent or empty "
-             "in the profile (#1275)"),
+            (n_filled - n_filled_retired,
+             f"{n_filled - n_filled_retired} value(s) present at the share are "
+             "absent or empty in the profile (#1275)"),
             (n_deduped,
              f"{n_deduped} post row(s) still share an id with another — "
              "one of each pair would silently never exist"),

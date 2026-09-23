@@ -74,10 +74,12 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
 
+import asset_collapse as ac
 import manifest_guard as mg
 
 # Source roots whose bytes already sit at the destination. The copier
@@ -639,7 +641,317 @@ def load_posts_migration(args):
     return migration
 
 
-def check_destination(args, profile: list[dict]) -> bool:
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _produced_file(root_name: str, source_path: str, sources: dict[str, Path],
+                   rec: dict, args, tmp: Path) -> tuple[Path | None, str]:
+    """Locate the PRODUCED file for one record under its own source root.
+
+    Returns (path, note) or (None, reason). The file is the one the
+    copier would stage: a kenney-hq pool render, a local file, a bundle
+    member. For `pack` the bundle is optional on a given machine, so the
+    member is extracted from the pack's own free CC0 zip and verified
+    against `metadata.source_archive.sha256` before it is used, which is
+    the same evidence rule the copier applies.
+    """
+    root = sources.get(root_name)
+    if root is not None:
+        candidate = root / source_path
+        if candidate.is_file():
+            return candidate, f"{root_name}:{source_path}"
+    if root_name != "pack":
+        return None, (f"no file at --{root_name}-source/{source_path}"
+                      if root is not None else
+                      f"--{root_name}-source was not given")
+    sa = (rec.get("metadata") or {}).get("source_archive") or {}
+    if not sa.get("url") or args.no_refetch:
+        return None, ("not under --pack-source and no re-fetchable "
+                      "metadata.source_archive")
+    dest = tmp / f"{abs(hash(source_path))}-{Path(source_path).name}"
+    ok, note = refetch_member(sa["url"], sa["member"], sa.get("sha256", ""), dest)
+    if not ok:
+        return None, f"pack member could not be authenticated: {note}"
+    return dest, f"pack zip member {sa['member']}"
+
+
+def authenticate_collapses(args, sources: dict[str, Path],
+                           profile: list[dict]):
+    """LAYER B. Source-authenticate every documented retirement, or refuse.
+
+    Returns a mapping retired_id -> {"survivor_id", "retired_record",
+    "entry"} for the entries that passed, `{}` when there is no document,
+    or False after printing a refusal.
+
+    ⛔ THIS IS THE ONLY PLACE A RETIREMENT IS AUTHENTICATED, AND IT IS
+    NOT THE SAME CLAIM LAYER A MAKES. `apply_upgrade.py` proves the
+    document is structurally valid and that the repository is in one of
+    the two states it describes; it runs where there is no pack, no pool
+    and no dataset source, so it has never seen a byte. Here the produced
+    files exist, so here is where the load-bearing fact is established:
+
+      * the survivor is in the SOURCE profile and the retired id is not;
+      * `acknowledged_losses` recomputes to exactly the recorded list
+        against the source's survivor record;
+      * both produced files are located under the root their own
+        `source_root` names, and they hash IDENTICALLY TO EACH OTHER
+        within this one build;
+      * that hash equals the document's `materialized_sha256`.
+
+    ⚠️ VERSION DRIFT REFUSES RATHER THAN PASSES. A png is byte
+    reproducible only within one sharp build (`kenney_hq.py` documents 24
+    site_a files differing in exactly 8 pHYs bytes across versions). The
+    equality between the two files is what proves the collision; the
+    absolute value is recorded so a toolchain change is visible, and a
+    mismatch refuses and names re-measurement. The IDAT-only reading
+    appears in the refusal as a diagnostic so an operator can tell a
+    metadata-chunk difference from different artwork. It is never an
+    acceptance path.
+
+    ⛔ AND IT NEVER THREADS THESE ROOTS BACK INTO `apply_upgrade.py`. The
+    assembler calls that script with no source roots and the required
+    guard suite runs on a runner that has none, so a byte check there
+    would either fail CI or be skipped, and a skipped validation is how a
+    waiver appears.
+    """
+    override = getattr(args, "collapse_document", None)
+    doc_path = override if override is not None else ac.collapse_document_path(args.profile)
+    if doc_path is None:
+        print(f"  MANIFEST.json: no collapse document lookup for "
+              f"{args.profile.name} (not named <stem>{ac.ASSETS_PROFILE_SUFFIX}); "
+              f"every destination-only id counts as a loss", file=sys.stderr)
+        return {}
+    if not doc_path.is_file():
+        if override is not None:
+            print(f"error: --collapse-document {doc_path}: not a file", file=sys.stderr)
+            return False
+        print(f"  MANIFEST.json: no collapse document at {doc_path}; every "
+              f"destination-only id counts as a loss", file=sys.stderr)
+        return {}
+    try:
+        doc = ac.load_collapse_document(doc_path, profile_name=args.profile.name)
+    except ac.CollapseError as e:
+        print(f"error: {e}\n"
+              "  Refusing: an asset-collapse document that cannot be validated "
+              "is not evidence, and \"unusable\" must not be read as \"nothing "
+              "was retired\". This is not overridable by --allow-regression.",
+              file=sys.stderr)
+        return False
+
+    by_id = {a.get("id"): a for a in profile}
+    problems: list[str] = []
+    authenticated: dict[str, dict] = {}
+    tmp = Path(tempfile.mkdtemp(prefix="aa-collapse-"))
+    try:
+        for e in doc.entries:
+            survivor = by_id.get(e.survivor_id)
+            if survivor is None:
+                problems.append(f"{e.retired_id}: survivor {e.survivor_id} is not "
+                                f"in the source profile")
+                continue
+            if e.retired_id in by_id:
+                problems.append(f"{e.retired_id}: still present in the source "
+                                f"profile, so the retirement this document "
+                                f"records was never applied to it")
+                continue
+            recomputed = ac.recompute_losses(e.retired_record, survivor)
+            if not ac.losses_equal(e.acknowledged_losses, recomputed):
+                problems.append(
+                    f"{e.retired_id}: acknowledged_losses ({len(e.acknowledged_losses)}) "
+                    f"disagrees with the recomputation against the source's "
+                    f"survivor ({len(recomputed)})")
+                continue
+            if survivor.get("source_root") != e.source_root:
+                problems.append(
+                    f"{e.retired_id}: the survivor's source_root is "
+                    f"{survivor.get('source_root')!r}, the document says "
+                    f"{e.source_root!r}; the two files would be looked for under "
+                    f"different roots and their equality would prove nothing")
+                continue
+            if survivor.get("owner_username") != e.owner_username:
+                problems.append(
+                    f"{e.retired_id}: the survivor is owned by "
+                    f"{survivor.get('owner_username')!r}, the document says "
+                    f"{e.owner_username!r}. Identity is per OWNER: two records "
+                    f"with identical bytes and different owners are legal and "
+                    f"are not a collision")
+                continue
+            paths = []
+            for label, rec, spath in (
+                    ("survivor", survivor, survivor.get("source_path") or ""),
+                    ("retired", e.retired_record, e.retired_source_path)):
+                p, note = _produced_file(e.source_root, spath, sources, rec, args, tmp)
+                if p is None:
+                    problems.append(f"{e.retired_id}: the {label} record's produced "
+                                    f"file could not be located ({note})")
+                    paths = []
+                    break
+                paths.append((label, p, note))
+            if not paths:
+                continue
+            (_, sp, snote), (_, rp, rnote) = paths
+            s_hash, r_hash = sha256_file(sp), sha256_file(rp)
+            if s_hash != r_hash:
+                problems.append(
+                    f"{e.retired_id}: the two produced files are NOT identical in "
+                    f"this build (survivor {snote} {s_hash[:12]}…, retired {rnote} "
+                    f"{r_hash[:12]}…). The whole claim is that they materialize to "
+                    f"one row; without that there is nothing to retire. "
+                    f"{_idat_note(sp, rp)}")
+                continue
+            if s_hash != e.materialized_sha256:
+                problems.append(
+                    f"{e.retired_id}: the produced files agree with each other "
+                    f"({s_hash[:12]}…) but not with the document's "
+                    f"materialized_sha256 ({e.materialized_sha256[:12]}…). A png is "
+                    f"byte reproducible only within one sharp build, so re-measure "
+                    f"and re-record rather than widening the check. "
+                    f"{_idat_note(sp, rp)}")
+                continue
+            authenticated[e.retired_id] = {
+                "survivor_id": e.survivor_id,
+                "retired_record": e.retired_record,
+                "entry": e,
+            }
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    if problems:
+        print(f"error: {doc_path}: {len(problems)} documented retirement(s) could "
+              f"not be source-authenticated:", file=sys.stderr)
+        for p in problems:
+            print(f"  - {p}", file=sys.stderr)
+        print("  Refusing. Each of these falls back to MISSING_RECORD, which is "
+              "what an unauthenticated retirement is: a record the destination "
+              "holds and this run would delete.", file=sys.stderr)
+        return False
+
+    if doc.entries:
+        print(f"  MANIFEST.json: collapse document {doc_path} "
+              f"({len(authenticated)} source-authenticated retirement(s) for "
+              f"{doc.profile}; produced bytes re-derived under "
+              f"{doc.pool_of_record.get('rasteriser')}, sharp "
+              f"{doc.pool_of_record.get('sharp')})", file=sys.stderr)
+    return authenticated
+
+
+def _idat_note(a: Path, b: Path) -> str:
+    """A DIAGNOSTIC for a refusal message, never an acceptance path.
+
+    Two pngs whose image data agrees and whose whole-file hashes do not
+    differ in a metadata chunk (a pHYs written by another libvips, for
+    instance), which is a different problem from two different pictures.
+    Saying which one an operator is looking at saves a bisect. It does
+    not make the run pass: the caller has already decided to refuse by
+    the time this is called.
+    """
+    try:
+        ia, ib = _idat_sha256(a), _idat_sha256(b)
+    except (OSError, ValueError) as e:
+        return f"(IDAT diagnostic unavailable: {e})"
+    if ia is None or ib is None:
+        return "(IDAT diagnostic unavailable: not a png)"
+    if ia == ib:
+        return ("DIAGNOSTIC ONLY: the IDAT streams are identical, so the "
+                "difference is in a metadata chunk, not in the picture. This is "
+                "not an acceptance path; re-render both under one toolchain and "
+                "re-record materialized_sha256.")
+    return "DIAGNOSTIC ONLY: the IDAT streams differ too, so these are different images."
+
+
+def _idat_sha256(path: Path) -> str | None:
+    data = path.read_bytes()
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    h = hashlib.sha256()
+    i = 8
+    while i + 8 <= len(data):
+        length = struct.unpack(">I", data[i:i + 4])[0]
+        kind = data[i + 4:i + 8]
+        if kind == b"IDAT":
+            h.update(data[i + 8:i + 8 + length])
+        i += 12 + length
+        if kind == b"IEND":
+            break
+    return h.hexdigest()
+
+
+def remove_retired_paths(args, collapses, wanted_dest_paths: set[str]) -> tuple[int, bool]:
+    """Delete exactly the produced files of source-authenticated retirements.
+
+    Returns (removed, ok). `ok` is False after a refusal, and a refusal
+    deletes nothing at all: the pass is all or nothing so an operator
+    never has to work out which half ran.
+
+    Three conditions, every one of them required, per path:
+
+      1. Layer B authenticated THAT entry. An unauthenticated retirement
+         has already refused the run long before this point.
+      2. The path belongs to no current record's destination path. A file
+         something still wants is not stale, whatever a document says.
+      3. The bytes at the path hash to the document's
+         `materialized_sha256`. If they do not, the file is not the one
+         the document describes and deleting it would destroy something
+         nobody enumerated.
+
+    ⛔ THIS IS NOT `--prune`, AND IT DELIBERATELY SHARES NO MACHINERY WITH
+    IT. `--prune` walks the whole destination and spares a keep-list of
+    exactly `metadata.csv`, `groups.csv` and `MANIFEST.json`, so it would
+    also delete `posts.json`, every `.bak`, `ATTRIBUTIONS.md` and
+    `dataset-metadata.json`. This pass never walks the tree: it visits
+    one named path per authenticated entry and nothing else, so there is
+    no breadth for it to be invoked with.
+    """
+    removed = 0
+    refusals: list[str] = []
+    planned: list[tuple[Path, str]] = []
+    for rid, info in sorted(collapses.items()):
+        entry = info["entry"]
+        rel = entry.retired_file_path
+        if rel in wanted_dest_paths:
+            refusals.append(f"{rid}: {rel} is still the destination path of a "
+                            f"record in this profile; refusing to remove a file "
+                            f"the run itself wants")
+            continue
+        target = args.dest / rel
+        if not target.is_file():
+            print(f"  retired path already absent: {rel}", file=sys.stderr)
+            continue
+        got = sha256_file(target)
+        if got != entry.materialized_sha256:
+            refusals.append(
+                f"{rid}: {rel} hashes {got[:12]}…, the document records "
+                f"{entry.materialized_sha256[:12]}…. The file at the retired path "
+                f"is not the one this document describes, so removing it would "
+                f"destroy bytes nobody enumerated. Re-measure rather than widen "
+                f"the rule.")
+            continue
+        planned.append((target, rel))
+
+    if refusals:
+        print(f"error: {len(refusals)} retired path(s) could not be removed:",
+              file=sys.stderr)
+        for r in refusals:
+            print(f"  - {r}", file=sys.stderr)
+        print("  Refusing, and nothing was deleted.", file=sys.stderr)
+        return 0, False
+
+    for target, rel in planned:
+        if args.dry_run:
+            print(f"  would remove retired path: {rel}", file=sys.stderr)
+        else:
+            target.unlink()
+            print(f"  removed retired path: {rel}", file=sys.stderr)
+        removed += 1
+    return removed, True
+
+
+def check_destination(args, profile: list[dict], collapses=None) -> bool:
     """Compare the profile against what it is about to overwrite (#1275).
 
     Returns True when the run may proceed. Prints the comparison either
@@ -657,6 +969,10 @@ def check_destination(args, profile: list[dict]) -> bool:
     # Only posts carry a migration: asset ids have never moved, and the
     # MANIFEST comparison is byte-for-byte what it was before #1319.
     pairs = [("MANIFEST.json", profile, args.dest / "MANIFEST.json", None)]
+    # Only the MANIFEST pair carries retirements: `asset-collapse` is an
+    # ASSET document, and the post whose membership it corrects is an
+    # ordinary CHANGED_VALUE on the posts side.
+    collapse_for = {"MANIFEST.json": collapses or {}}
     if args.posts is not None:
         try:
             posts = json.loads(args.posts.read_text(encoding="utf-8"))
@@ -687,9 +1003,17 @@ def check_destination(args, profile: list[dict]) -> bool:
                       "nothing to lose", file=sys.stderr)
                 # Still worth reporting duplicates: a first publish can ship
                 # a coin toss just as easily as a re-publish can.
-                cmp = mg.compare(source, None, label, migration=migration)
+                cmp = mg.compare(source, None, label, migration=migration,
+                                 collapses=collapse_for.get(label),
+                                 collapse_source=str(
+                                     getattr(args, "collapse_document", None)
+                                     or ac.collapse_document_path(args.profile) or ""))
             else:
-                cmp = mg.compare(source, dest, label, migration=migration)
+                cmp = mg.compare(source, dest, label, migration=migration,
+                                 collapses=collapse_for.get(label),
+                                 collapse_source=str(
+                                     getattr(args, "collapse_document", None)
+                                     or ac.collapse_document_path(args.profile) or ""))
                 print(mg.format_report(cmp), file=sys.stderr)
         except mg.MigrationError as e:
             # The document disagrees with the profile it claims to
@@ -770,6 +1094,13 @@ def main() -> int:
                              "seed/upgrades/post-id-migration.<stem>.json. The "
                              "document's `profile` field must still name the "
                              "--posts file. For fixtures laid out elsewhere.")
+    parser.add_argument("--collapse-document", type=Path, default=None,
+                        help="Override where the asset-collapse document is "
+                             "read from (#1319). Normally NOT needed: it is "
+                             "located from --profile as "
+                             "seed/upgrades/asset-collapse.<stem>.json. The "
+                             "document's `profile` field must still name the "
+                             "--profile file. For fixtures laid out elsewhere.")
     parser.add_argument("--prune", action="store_true",
                         help="Delete files at <dest> not in the profile")
     parser.add_argument("--dry-run", action="store_true",
@@ -825,7 +1156,19 @@ def main() -> int:
     # across 1,947 records, and running this script would have deleted
     # them without a word. `apply_upgrade.py` reconciles the profile;
     # this refuses the run when it has not been.
-    if not check_destination(args, profile):
+    # ⛔ LAYER B, BEFORE THE GUARD THAT CONSUMES IT. A retirement is
+    # source-authenticated here, with the source roots this script
+    # already takes: both produced files located, hashed, required equal
+    # to each other in this build and equal to the document's recorded
+    # value. Only then may the guard report COLLAPSED_RECORD instead of
+    # MISSING_RECORD. An unauthenticated retirement is a refusal, and a
+    # refusal is what the destination-holds-what-the-source-does-not case
+    # has always been.
+    collapses = authenticate_collapses(args, sources, profile)
+    if collapses is False:
+        return 2
+
+    if not check_destination(args, profile, collapses):
         return 2
 
     # Fail loudly and early rather than per-file. A profile that
@@ -1129,6 +1472,13 @@ def main() -> int:
             print(f"  ... {i+1:,}/{len(path_map):,} "
                   f"({bytes_copied / 2**20:.1f} MB)", file=sys.stderr)
 
+    retired_removed = 0
+    retired_ok = True
+    if collapses:
+        print(f"removing {len(collapses)} retired path(s) (#1319)", file=sys.stderr)
+        retired_removed, retired_ok = remove_retired_paths(
+            args, collapses, wanted_dest_paths)
+
     pruned = 0
     if args.prune and args.dest.is_dir():
         print(f"pruning files not in profile", file=sys.stderr)
@@ -1162,6 +1512,11 @@ def main() -> int:
     print(f"  missing:     {missing:,} (not found in source)", file=sys.stderr)
     print(f"  wrong size:  {wrong:,} (pre-staged bytes disagree with the "
           f"manifest #1301)", file=sys.stderr)
+    if collapses:
+        print(f"  retired:     {retired_removed:,} produced file(s) of "
+              f"source-authenticated retirements "
+              f"{'would be ' if args.dry_run else ''}removed (#1319)",
+              file=sys.stderr)
     if args.prune:
         print(f"  pruned:  {pruned:,} stale files removed", file=sys.stderr)
     if missing > 5:
@@ -1174,7 +1529,7 @@ def main() -> int:
     # not hold what its manifest says it holds. Exiting 0 on "the file is
     # there, it is simply not the one we describe" is the silent-success
     # shape this script has been bitten by twice (#604, #1301).
-    return 0 if (missing == 0 and wrong == 0) else 1
+    return 0 if (missing == 0 and wrong == 0 and retired_ok) else 1
 
 
 if __name__ == "__main__":

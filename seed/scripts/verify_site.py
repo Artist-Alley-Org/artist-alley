@@ -74,6 +74,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import asset_collapse as ac  # noqa: E402
 import manifest_guard as mg  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -99,6 +100,28 @@ NOT_COMPARED = "not compared"
 EXPECTATION_KEYS = frozenset({
     "manifest_rows", "manifest_ids", "posts_rows", "posts_ids",
     "migrations", "once", "require_attributions",
+    # #1319, the retirement keys.
+    #   collapses             how many retirements the committed
+    #                         asset-collapse document for this profile
+    #                         authorises. A count the operator states, so
+    #                         a document that grew an entry nobody
+    #                         expected fails here.
+    #   retired_paths_absent  true when every documented
+    #                         `retired_file_path` must be gone from the
+    #                         site. This is the Kaggle-tree rule: a
+    #                         retired file left in staging is uploaded.
+    #   same_owner_same_bytes how many groups of staged files share one
+    #                         owner AND identical bytes.
+    #
+    # ⚠️ `same_owner_same_bytes` IS A STAGED-STATE DIAGNOSTIC, NOT SOURCE
+    # AUTHORITY. It reads the DESTINATION, which ADR 0097 makes an output
+    # and never an input: it says what the published tree currently
+    # holds, and says nothing about whether two `hq`, `pack` or `local`
+    # records would produce identical bytes from their sources. Only the
+    # publish guard can answer that, by hashing the produced files under
+    # the source roots. A number here is a place to look, not a verdict
+    # on the catalogue.
+    "collapses", "retired_paths_absent", "same_owner_same_bytes",
 })
 
 SAMPLE = 8
@@ -159,6 +182,45 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+
+def staged_same_owner_same_bytes(manifest: list[dict], site: Path) -> dict[tuple, list[str]]:
+    """Groups of staged files sharing one owner AND identical bytes.
+
+    ⚠️ A DIAGNOSTIC ABOUT THE DESTINATION, AND NOTHING MORE. ADR 0097
+    makes the published tree an OUTPUT, so a reading taken from it can
+    describe what is currently staged and can never authorise a change to
+    the catalogue. It is here because the app's live uniqueness key is
+    `(owner_user_ref, file_hash)` over exactly these bytes, so a group of
+    two or more is a place a seeded instance will silently drop a row.
+    Whether the SOURCE would produce that collision again is a question
+    only the publish guard can answer, by hashing the produced files
+    under the source roots.
+
+    ⭐ Only files whose records agree on owner AND on `file_size_bytes`
+    are hashed. Identical bytes imply an identical length, so the
+    partition loses nothing and turns a whole-tree hash into a handful.
+    Cross-owner identical bytes are legal (they are the CAS dedup
+    fixture) and are never grouped.
+    """
+    buckets: dict[tuple, list[dict]] = {}
+    for rec in manifest:
+        rel = rec.get("file_path")
+        if not rel:
+            continue
+        p = site / rel
+        if not p.is_file():
+            continue
+        buckets.setdefault((rec.get("owner_username"), p.stat().st_size), []).append(rec)
+    groups: dict[tuple, list[str]] = {}
+    for (owner, size), recs in buckets.items():
+        if len(recs) < 2:
+            continue
+        for rec in recs:
+            digest = sha256_file(site / rec["file_path"])
+            groups.setdefault((owner, digest), []).append(str(rec.get("id")))
+    return {k: sorted(v) for k, v in groups.items() if len(v) > 1}
 
 
 def _sample(items: list, n: int = SAMPLE) -> str:
@@ -276,6 +338,7 @@ def _check_guard(rep: Report, label: str, cmp: mg.Comparison) -> None:
 
 def verify(profile_path: Path, posts_path: Path, site: Path, *,
            migration_path: Path | None = None,
+           collapse_path: Path | None = None,
            expectations: dict[str, Any] | None = None,
            baseline: dict[str, Any] | None = None,
            reference: Path | None = None,
@@ -327,6 +390,27 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
         rep.add(PROFILE_DERIVED, "posts.json guard: migrated records", INFO,
                 f"{posts_cmp.records_migrated}")
 
+    # #1319. Repository-local: the document is read and validated here,
+    # and that is ALL this proves. A retirement is source-authenticated
+    # at publish, by hashing the produced files under the source roots;
+    # a verifier that reads only the site could never do it, and a green
+    # tick here must not be mistaken for one.
+    collapse: ac.CollapseDocument = ac.EMPTY
+    cdoc = collapse_path if collapse_path is not None else ac.collapse_document_path(profile_path)
+    if cdoc is not None and cdoc.is_file():
+        try:
+            collapse = ac.load_collapse_document(cdoc, profile_name=profile_path.name)
+            rep.add(PROFILE_DERIVED, "collapse document", INFO,
+                    f"{cdoc} ({len(collapse.entries)} documented retirement(s); "
+                    f"structural only, produced bytes are authenticated at publish)")
+        except ac.CollapseError as e:
+            rep.add(PROFILE_DERIVED, "collapse document", FAIL, str(e))
+    elif collapse_path is not None:
+        rep.add(PROFILE_DERIVED, "collapse document", FAIL, f"{cdoc}: not a file")
+    else:
+        rep.add(PROFILE_DERIVED, "collapse document", INFO,
+                f"none at {cdoc}; no record is documented as retired")
+
     # -- site-specific -----------------------------------------------------
     if expectations is None:
         rep.add(SITE_SPECIFIC, "expectations", NOT_COMPARED, "no --expect supplied")
@@ -343,6 +427,25 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
             have = posts_cmp.records_migrated if posts_cmp is not None else None
             rep.check(SITE_SPECIFIC, "migrations", have == want,
                       f"site {have}, expected {want}")
+        if "collapses" in expectations:
+            want = expectations["collapses"]
+            rep.check(SITE_SPECIFIC, "collapses", len(collapse.entries) == want,
+                      f"document {len(collapse.entries)}, expected {want}")
+        if expectations.get("retired_paths_absent"):
+            still = [rel for rel in collapse.retired_paths if (site / rel).is_file()]
+            rep.check(SITE_SPECIFIC, "retired paths absent from the site", not still,
+                      f"{len(collapse.retired_paths)} documented path(s); "
+                      f"{len(still)} still present"
+                      + (f": {_sample(still)}" if still else ""))
+        if "same_owner_same_bytes" in expectations:
+            want = expectations["same_owner_same_bytes"]
+            groups = staged_same_owner_same_bytes(site_manifest, site)
+            rep.check(SITE_SPECIFIC, "same_owner_same_bytes", len(groups) == want,
+                      f"site {len(groups)}, expected {want} (STAGED-STATE "
+                      f"DIAGNOSTIC: it reads the destination and is not source "
+                      f"authority for hq, pack or local records)"
+                      + (f"; {_sample([f'{k[0]}/{k[1][:12]}:{v}' for k, v in sorted(groups.items())])}"
+                         if groups else ""))
         for rid in expectations.get("once", ()):
             n = sum(1 for r in site_posts if r.get("id") == rid)
             rep.check(SITE_SPECIFIC, f"post {rid} appears exactly once", n == 1,
@@ -424,6 +527,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
                 raise ValueError(f"{args.baseline}: baseline must be an object")
         rep = verify(args.profile, args.posts, args.site,
                      migration_path=args.migration_document,
+                     collapse_path=args.collapse_document,
                      expectations=expectations, baseline=baseline,
                      reference=args.reference, attributions=args.attributions)
     except (OSError, ValueError) as e:
@@ -464,10 +568,15 @@ def main(argv: list[str] | None = None) -> int:
                      help="override the post-id migration document location "
                           "(default: seed/upgrades/post-id-migration.<stem>.json "
                           "beside the profiles)")
+    chk.add_argument("--collapse-document", type=Path, default=None,
+                     help="override the asset-collapse document location "
+                          "(default: seed/upgrades/asset-collapse.<stem>.json "
+                          "beside the profiles)")
     chk.add_argument("--expect", type=Path, default=None,
                      help="site-specific expectations JSON: manifest_rows, manifest_ids, "
                           "posts_rows, posts_ids, migrations, once (list of ids), "
-                          "require_attributions")
+                          "require_attributions, collapses, retired_paths_absent, "
+                          "same_owner_same_bytes")
     chk.add_argument("--baseline", type=Path, default=None,
                      help="preservation baseline written by `baseline` before staging")
     chk.add_argument("--reference", type=Path, default=None,

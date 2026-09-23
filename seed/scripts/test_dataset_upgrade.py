@@ -41,6 +41,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import apply_upgrade as up          # noqa: E402
+import asset_collapse as ac         # noqa: E402
 import authored_plates as ap        # noqa: E402
 import audit_uncatalogued as au     # noqa: E402
 import kenney_hq as hq              # noqa: E402
@@ -58,6 +59,28 @@ import verify_site as vs            # noqa: E402
 SCRIPTS = Path(__file__).resolve().parent
 UPGRADES = SCRIPTS.parent / "upgrades"
 PROFILES = SCRIPTS.parent / "profiles"
+
+
+def _documented_retired_ids(profile_stem: str) -> frozenset[str]:
+    """Ids a committed asset-collapse document retires for one profile.
+
+    Empty when there is no document, which is the normal case: absence is
+    no evidence, so nothing is exempt from anything.
+    """
+    # An alias profile is a byte copy of its source, so it inherits its
+    # source's retirements. Resolving it here keeps the callers from
+    # each growing their own copy of the mapping.
+    for stem, alias in up.PROFILE_ALIASES:
+        if profile_stem == alias:
+            profile_stem = stem
+            break
+    path = UPGRADES / f"asset-collapse.{profile_stem}.json"
+    if not path.is_file():
+        return frozenset()
+    return ac.load_collapse_document(
+        path, profile_name=f"{profile_stem}.assets.json").retired_ids
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -343,12 +366,12 @@ class TestApplyUpgrade(unittest.TestCase):
     def test_merge_added_gives_prestaged_provenance(self):
         added = [_asset("vid-1", "videos/internet/x.mp4", asset_type="video",
                         source_path=None, source_root=None)]
-        n, repaired = up.merge_added(self.profile, added)
+        n, repaired, _ = up.merge_added(self.profile, added)
         self.assertEqual((n, repaired), (1, 0))
         rec = [e for e in self.profile if e["id"] == "vid-1"][0]
         self.assertEqual(rec["source_root"], up.SITE_SOURCE_ROOT)
         self.assertEqual(rec["source_path"], "videos/internet/x.mp4")
-        self.assertEqual(up.merge_added(self.profile, added), (0, 0),
+        self.assertEqual(up.merge_added(self.profile, added), (0, 0, 0),
                          "not idempotent")
 
     def test_merge_added_backfills_media_url_onto_an_already_merged_record(self):
@@ -364,14 +387,14 @@ class TestApplyUpgrade(unittest.TestCase):
                         source_path=None, source_root=None)]
         up.merge_added(self.profile, added)          # first merge, no media_url
         added[0]["metadata"]["media_url"] = "https://videos.pexels.com/video-files/1/1-hd.mp4"
-        n, repaired = up.merge_added(self.profile, added)
+        n, repaired, _ = up.merge_added(self.profile, added)
         self.assertEqual((n, repaired), (0, 1),
                          "an already-merged record did not pick up media_url")
         rec = [e for e in self.profile if e["id"] == "vid-1"][0]
         self.assertEqual(rec["metadata"]["media_url"],
                          "https://videos.pexels.com/video-files/1/1-hd.mp4")
         # and it must not keep re-reporting the same repair
-        self.assertEqual(up.merge_added(self.profile, added), (0, 0))
+        self.assertEqual(up.merge_added(self.profile, added), (0, 0, 0))
 
     def test_audit_catches_a_prestaged_record_with_no_media_url(self):
         """A pre-staged record with no direct URL is unrecoverable the
@@ -935,6 +958,7 @@ class TestCommittedUpgradeData(unittest.TestCase):
         about and the one nothing covered.
         """
         checked = 0
+        skipped = 0
         for site, profiles in self.PROFILE_FOR.items():
             doc = UPGRADES / f"balance-assets.{site}.json"
             if not doc.is_file():
@@ -945,11 +969,23 @@ class TestCommittedUpgradeData(unittest.TestCase):
             for name in profiles:
                 recs = {r["id"]: r for r in json.loads(
                     (PROFILES / f"{name}.assets.json").read_text())}
+                retired = _documented_retired_ids(name)
                 for row in rows:
+                    # ⛔ RETIREMENT-AWARE, NOT RETIREMENT-BLIND (#1319).
+                    # The balance document is NOT rewritten when a record
+                    # is retired: it is the record of what the pass
+                    # emitted, and editing it to make this test pass
+                    # would turn evidence into bookkeeping. So the row is
+                    # skipped, and ONLY when a collapse document names
+                    # it, which is what stops the exemption growing.
+                    if row["id"] in retired:
+                        skipped += 1
+                        continue
                     rec = recs.get(row["id"])
                     self.assertIsNotNone(
                         rec, f"{name}: balance row {row['id']} is in no "
-                             "profile, so nothing can ever check it")
+                             f"profile and no asset-collapse document retires "
+                             f"it, so nothing can ever check it")
                     self.assertEqual(
                         rec["file_size_bytes"], row["file_size_bytes"],
                         f"{name}: {row['file_path']} — the balance doc says "
@@ -957,6 +993,13 @@ class TestCommittedUpgradeData(unittest.TestCase):
                         f"{rec['file_size_bytes']:,} B")
                     checked += 1
         self.assertGreater(checked, 0, "this test checked nothing")
+        # The skipped rows are named by a document, so the exemption is
+        # bounded and visible rather than a hole the next edit widens.
+        expected_skips = sum(len(_documented_retired_ids(name))
+                             for profiles in self.PROFILE_FOR.values()
+                             for name in profiles)
+        self.assertEqual(skipped, expected_skips,
+                         "a row was skipped that no collapse document retires")
 
     def test_replacements_all_target_the_hq_pool(self):
         pool_names = {e["name"] for e in
@@ -1855,9 +1898,23 @@ class TestBalanceProvenance(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_every_record_is_reachable_on_browse(self):
+        """⛔ RETIREMENT-AWARE (#1319). A documented retired record is
+        deliberately in no post: it can never materialize beside its
+        survivor, and a post naming it would silently lose a member. The
+        exemption is exactly the documented set, asserted below, so it
+        cannot grow by accident."""
+        retired = _documented_retired_ids("studio-a")
         posted = {a for p in self.posts for a in p["asset_ids"]}
         orphans = [r["id"] for r in self.records if r["id"] not in posted]
-        self.assertEqual(orphans, [])
+        # ⚠️ NOT red-then-green, and deliberately not asserted as an
+        # equality. Both documents here are HISTORICAL and neither is
+        # rewritten by a retirement, so today the retired record is still
+        # named by the historical balance post and the exemption is
+        # unused. The assertion is a subset rule so that the first time
+        # it IS used, only a documented id may use it.
+        self.assertEqual(sorted(set(orphans) - retired), [],
+                         "a balance record is unreachable on browse and no "
+                         "asset-collapse document retires it")
 
     def test_the_pack_provenance_doc_covers_every_recipe_pack(self):
         recorded = {e["pack"] for e in json.loads(
@@ -2375,8 +2432,8 @@ class TestAIProvenance(unittest.TestCase):
                          .read_text(encoding="utf-8"))
         add_p = json.loads((UPGRADES / "generated-posts.site_a.json")
                            .read_text(encoding="utf-8"))
-        self.assertEqual(up.merge_added(entries, add), (0, 0))
-        self.assertEqual(up.merge_posts(posts, add_p), 0)
+        self.assertEqual(up.merge_added(entries, add), (0, 0, 0))
+        self.assertEqual(up.merge_posts(posts, add_p), (0, 0))
 
     def test_an_unknown_id_is_reported_rather_than_ignored(self):
         prof = [{"id": "a"}]
@@ -3170,7 +3227,7 @@ class TestPostCuration(unittest.TestCase):
         This test exists so that if anyone ever routes curation through
         `merge_posts`, something goes red instead of quiet."""
         posts = [self._post("p1", created_at="2025-01-01T00:00:00Z")]
-        n = up.merge_posts(posts, [self._post("p1", created_at="2026-06-06T00:00:00Z")])
+        n, _ = up.merge_posts(posts, [self._post("p1", created_at="2026-06-06T00:00:00Z")])
         self.assertEqual(n, 0)
         self.assertEqual(posts[0]["created_at"], "2025-01-01T00:00:00Z")
 
@@ -3507,7 +3564,7 @@ class TestManifestReconcile(unittest.TestCase):
         doc = {"fill": [{"id": "a", "field_values": {"keep": "theirs",
                                                      "add": "new"},
                          "license": "CC0 1.0", "mature": False}]}
-        added, filled, unknown = up.apply_manifest_reconcile(profile, doc)
+        added, filled, _, unknown, _ = up.apply_manifest_reconcile(profile, doc)
         self.assertEqual((added, filled, unknown), (0, 2, []))
         self.assertEqual(profile[0]["field_values"], {"keep": "mine", "add": "new"})
         self.assertEqual(profile[0]["license"], "CC-BY 4.0")
@@ -3520,8 +3577,8 @@ class TestManifestReconcile(unittest.TestCase):
         first = up.apply_manifest_reconcile(profile, doc)
         snapshot = json.loads(json.dumps(profile))
         second = up.apply_manifest_reconcile(profile, doc)
-        self.assertEqual(first, (1, 1, []))
-        self.assertEqual(second, (0, 0, []))
+        self.assertEqual(first, (1, 1, 0, [], []))
+        self.assertEqual(second, (0, 0, 0, [], []))
         self.assertEqual(profile, snapshot)
 
     def test_an_empty_value_counts_as_absent(self):
@@ -3529,7 +3586,7 @@ class TestManifestReconcile(unittest.TestCase):
                           description="")]
         doc = {"fill": [{"id": "a", "field_values": {"blank": "filled"},
                          "description": "written"}]}
-        _, filled, _ = up.apply_manifest_reconcile(profile, doc)
+        _, filled, _, _, _ = up.apply_manifest_reconcile(profile, doc)
         self.assertEqual(filled, 2)
         self.assertEqual(profile[0]["field_values"]["blank"], "filled")
 
@@ -3539,7 +3596,7 @@ class TestManifestReconcile(unittest.TestCase):
         a fill entry would still be wrong; the pass only ever adds from
         `added`."""
         profile = [_asset("a", "images/a.png")]
-        _, filled, unknown = up.apply_manifest_reconcile(
+        _, filled, _, unknown, _ = up.apply_manifest_reconcile(
             profile, {"fill": [{"id": "ghost", "field_values": {"k": "v"}}]})
         self.assertEqual((len(profile), filled, unknown), (1, 0, ["ghost"]))
 
@@ -3862,8 +3919,14 @@ class TestShippedUpgradeDocumentsNameOnlyHeldRecords(unittest.TestCase):
                 doc = json.loads((UPGRADES / f"manifest-reconcile.{site}.json")
                                  .read_text(encoding="utf-8"))
                 have = self._held(studio)
+                # ⛔ RETIREMENT-AWARE (#1319). The reconcile document is
+                # historical and is not rewritten when a record retires,
+                # so its entry for a retired id outlives the record. The
+                # exemption is exactly the documented set: a mistyped id
+                # still fails here, which is what #1328 is about.
+                retired = _documented_retired_ids(studio)
                 missing = [e["id"] for e in doc.get("fill", ())
-                           if e["id"] not in have]
+                           if e["id"] not in have and e["id"] not in retired]
                 self.assertEqual(missing, [])
 
     def test_every_staged_measurement_id_is_held_by_the_committed_profile(self):
@@ -3938,8 +4001,15 @@ class TestSiteAProfileIsNotBehindItsPublishedSite(unittest.TestCase):
         profile = {a["id"]: a
                    for a in json.loads((PROFILES / "studio-a.assets.json").read_text())}
         doc = json.loads((UPGRADES / "manifest-reconcile.site_a.json").read_text())
+        retired = _documented_retired_ids("studio-a")
         for entry in doc["fill"]:
             target = profile.get(entry["id"])
+            if target is None and entry["id"] in retired:
+                # The document is historical and keeps its entry for a
+                # record an asset-collapse document retired (#1319). It
+                # fills nothing, so the add-only property is trivially
+                # held; an id that is NOT documented still fails below.
+                continue
             self.assertIsNotNone(target, entry["id"])
             for key, val in entry.items():
                 if key == "id":
@@ -3960,8 +4030,11 @@ class TestSiteAProfileIsNotBehindItsPublishedSite(unittest.TestCase):
         assets = json.loads((PROFILES / "studio-a.assets.json").read_text())
         bare = [a["id"] for a in assets if not a.get("field_values")]
         self.assertEqual(bare, [], f"{len(bare)} asset(s) carry no field values")
-        # 2,005 reconciled from the share (#1275) + 2 authored plates (#1290)
-        self.assertEqual(len(assets), 2007)
+        # 2,005 reconciled from the share (#1275) + 2 authored plates
+        # (#1290), less the 1 record retired onto its survivor because it
+        # could never materialize beside it (#1319, ADR 0097).
+        self.assertEqual(len(assets), 2006)
+        self.assertEqual(len(_documented_retired_ids("studio-a")), 1)
 
     def test_the_extra_published_asset_is_in_the_profile(self):
         assets = {a["id"] for a in
@@ -5403,6 +5476,1268 @@ class TestStagingCharacterization(unittest.TestCase):
                              "root files are replaced before the copy loop runs")
             self.assertEqual(after["posts.json.pre.bak"], live_before["posts.json.pre.bak"])
 
+
+# ---------------------------------------------------------------------------
+# #1319: a record that can never materialize is retired by document
+# ---------------------------------------------------------------------------
+#
+# The defect: two catalogue records describing the same produced bytes
+# owned by one user. `(owner_user_ref, file_hash)` is the app's identity
+# and no DedupBehavior value relaxes it, so one of them gets no row, no
+# field values, and the post naming it silently loses a member.
+#
+# Everything below builds synthetic fixtures. Nothing here needs the
+# pack, the pool, the archive share or the network, because the required
+# guard suite runs on a runner that has none of them.
+
+SRC_SHA = "a" * 64
+SRC_SHA_2 = "b" * 64
+
+
+def _collapse_rec(rid, owner="priya.sharma", *, name=None, root="hq",
+                  src_sha=SRC_SHA, px=512, **over):
+    name = name or rid[:8]
+    rec = {
+        "id": rid,
+        "owner_username": owner,
+        "source_root": root,
+        "source_path": f"{name}.png",
+        "file_path": f"images/kenney-hq/{name}.png",
+        "file_size_bytes": 11,
+        "title": "Slide horizontal grey section wide (vector)",
+        "license": "CC0 1.0",
+        "archive_state": "active",
+        "field_values": {"rating": 4, "country": "ng"},
+        "metadata": {
+            "filename": f"{name}.png",
+            "render": {"px": px, "tool": "seed/scripts/rasterize_svg.mjs"},
+            "source_archive": {"member": f"Vector/{name}.svg", "sha256": src_sha},
+        },
+    }
+    rec.update(over)
+    return rec
+
+
+def _collapse_entry(retired, survivor, *, post_subs=(), mat=None, losses=None,
+                    **over):
+    entry = {
+        "retired_id": retired["id"],
+        "survivor_id": survivor["id"],
+        "owner_username": retired["owner_username"],
+        "source_root": retired["source_root"],
+        "retired_file_path": retired["file_path"],
+        "evidence": {
+            "source_sha256": retired["metadata"]["source_archive"]["sha256"],
+            "member": retired["metadata"]["source_archive"]["member"],
+            "render_px": retired["metadata"]["render"]["px"],
+            "materialized_sha256": mat or ("c" * 64),
+            "materialized_tool": "seed/scripts/rasterize_svg.mjs (sharp 0.35.4)",
+        },
+        "retired_record": json.loads(json.dumps(retired)),
+        "acknowledged_losses": (ac.recompute_losses(retired, survivor)
+                                if losses is None else losses),
+        "post_substitutions": list(post_subs),
+    }
+    entry.update(over)
+    return entry
+
+
+def _collapse_doc(entries, profile="studio-a.assets.json", **over):
+    doc = {
+        "_why": ["fixture"],
+        "profile": profile,
+        "pool_of_record": {
+            "pack": "Kenney Game Assets All-in-1",
+            "render_px": 512,
+            "rasteriser": "seed/scripts/rasterize_svg.mjs",
+            "sharp": "0.35.4",
+            "node": "v22.23.1",
+        },
+        "collapse": list(entries),
+    }
+    doc.update(over)
+    return doc
+
+
+def _sub(post_id, old, new, **over):
+    s = {"post_id": post_id, "old_members": list(old), "new_members": list(new)}
+    s.update(over)
+    return s
+
+
+RETIRED_ID = "5b26546f-9647-5175-24e3-a3a55532f310"
+SURVIVOR_ID = "05e1977d-cd90-e2ab-507a-4bb7322926c9"
+OTHER_ID = "4bb8fbc3-a67d-dcfa-b8b7-a1ff2d39ddc9"
+POST_ID = "a5b03a15-dd4a-445c-0ed4-6d27438806fa"
+POST_ID_2 = "9c8813f6-6e12-0f3c-bf30-6358efe73d14"
+
+
+class TestCollapseDocumentStructure(unittest.TestCase):
+    """LAYER A1: document-internal, before the document reaches any pass.
+
+    Every check is a refusal and none is overridable, for the same reason
+    the migration document's are: a document that cannot be validated is
+    not evidence, and "unusable" must never quietly become "nothing to
+    retire". That reading would let a run write a profile the document
+    was supposed to govern.
+    """
+
+    def setUp(self):
+        self.retired = _collapse_rec(RETIRED_ID)
+        self.survivor = _collapse_rec(SURVIVOR_ID, archive_state="draft")
+        self.doc = _collapse_doc([_collapse_entry(self.retired, self.survivor)])
+
+    def _parse(self, doc=None, **kw):
+        return ac.parse_collapse_document(doc or self.doc, source="fixture", **kw)
+
+    def _refuses(self, doc, fragment):
+        with self.assertRaises(ac.CollapseError) as cm:
+            ac.parse_collapse_document(doc, source="fixture")
+        self.assertIn(fragment, str(cm.exception))
+
+    def test_a_valid_document_parses(self):
+        doc = self._parse()
+        self.assertEqual(len(doc.entries), 1)
+        self.assertEqual(doc.retired_ids, frozenset({RETIRED_ID}))
+        self.assertEqual(doc.survivor_ids, frozenset({SURVIVOR_ID}))
+
+    def test_an_empty_collapse_list_is_a_legal_no_op(self):
+        """N=0. Absence of a retirement is never a failure, and it is
+        never permission either: nothing is retired."""
+        doc = self._parse(_collapse_doc([]))
+        self.assertEqual(doc.entries, ())
+        self.assertEqual(doc.retired_ids, frozenset())
+
+    def test_a_document_for_another_profile_is_refused(self):
+        with self.assertRaises(ac.CollapseError) as cm:
+            self._parse(profile_name="studio-b.assets.json")
+        self.assertIn("refusing to apply one profile's retirements", str(cm.exception))
+
+    def test_a_missing_pool_of_record_is_refused(self):
+        doc = _collapse_doc([_collapse_entry(self.retired, self.survivor)])
+        doc.pop("pool_of_record")
+        self._refuses(doc, "pool_of_record")
+
+    def test_a_pool_of_record_without_the_locked_toolchain_is_refused(self):
+        """A produced hash is only reproducible against the toolchain
+        that produced it, so a document that does not name one records a
+        number nobody can re-derive."""
+        for key in ("sharp", "node", "rasteriser"):
+            doc = _collapse_doc([_collapse_entry(self.retired, self.survivor)])
+            doc["pool_of_record"].pop(key)
+            with self.subTest(key=key):
+                self._refuses(doc, f"pool_of_record.{key}")
+
+    def test_the_two_hashes_may_not_be_the_same_value(self):
+        e = _collapse_entry(self.retired, self.survivor, mat=SRC_SHA)
+        self._refuses(_collapse_doc([e]), "both the source hash and the produced hash")
+
+    def test_a_malformed_hash_is_refused(self):
+        e = _collapse_entry(self.retired, self.survivor, mat="not-a-hash")
+        self._refuses(_collapse_doc([e]), "materialized_sha256 is not a sha256")
+
+    def test_a_retired_record_that_disagrees_with_the_evidence_is_refused(self):
+        rec = _collapse_rec(RETIRED_ID, src_sha=SRC_SHA_2)
+        e = _collapse_entry(rec, self.survivor)
+        e["evidence"]["source_sha256"] = SRC_SHA
+        self._refuses(_collapse_doc([e]), "source_archive.sha256")
+
+    def test_a_render_px_that_disagrees_with_the_record_is_refused(self):
+        e = _collapse_entry(self.retired, self.survivor)
+        e["evidence"]["render_px"] = 1024
+        self._refuses(_collapse_doc([e]), "render.px")
+
+    def test_an_unauthenticable_source_root_is_refused(self):
+        """A pre-staged root has no source to re-derive produced bytes
+        from, so a retirement on one could never reach Layer B and would
+        be a Layer-A claim wearing a publish tick."""
+        rec = _collapse_rec(RETIRED_ID, root="site")
+        self._refuses(_collapse_doc([_collapse_entry(rec, self.survivor)]),
+                      "has no reproducible source")
+
+    def test_retiring_a_record_onto_itself_is_refused(self):
+        e = _collapse_entry(self.retired, self.survivor)
+        e["survivor_id"] = e["retired_id"]
+        self._refuses(_collapse_doc([e]), "onto itself")
+
+    def test_one_id_retired_twice_is_refused(self):
+        e = _collapse_entry(self.retired, self.survivor)
+        self._refuses(_collapse_doc([e, json.loads(json.dumps(e))]), "retired twice")
+
+    def test_an_id_that_is_both_retired_and_a_survivor_is_refused(self):
+        third = _collapse_rec(OTHER_ID)
+        e1 = _collapse_entry(self.retired, self.survivor)
+        e2 = _collapse_entry(self.survivor, third)
+        self._refuses(_collapse_doc([e1, e2]),
+                      "both a retired id and a survivor")
+
+    def test_unsorted_acknowledged_losses_are_refused(self):
+        losses = ac.recompute_losses(self.retired, self.survivor)
+        e = _collapse_entry(self.retired, self.survivor,
+                            losses=list(reversed(losses)))
+        self._refuses(_collapse_doc([e]), "not sorted by path")
+
+    def test_a_substitution_that_changes_nothing_is_refused(self):
+        e = _collapse_entry(self.retired, self.survivor,
+                            post_subs=[_sub(POST_ID, [RETIRED_ID], [RETIRED_ID])])
+        self._refuses(_collapse_doc([e]), "changes nothing")
+
+    def test_a_substitution_that_keeps_the_retired_id_is_refused(self):
+        e = _collapse_entry(self.retired, self.survivor,
+                            post_subs=[_sub(POST_ID, [OTHER_ID, RETIRED_ID],
+                                            [OTHER_ID, RETIRED_ID, SURVIVOR_ID])])
+        self._refuses(_collapse_doc([e]), "still contains the retired id")
+
+    def test_a_substitution_that_drops_the_survivor_is_refused(self):
+        e = _collapse_entry(self.retired, self.survivor,
+                            post_subs=[_sub(POST_ID, [OTHER_ID, RETIRED_ID],
+                                            [OTHER_ID])])
+        self._refuses(_collapse_doc([e]), "does not contain the survivor")
+
+    def test_two_entries_may_not_substitute_one_post(self):
+        """A chained substitution cannot be authenticated: every object is
+        judged before any is applied, so the second entry's old_members
+        would describe a state the stage never sees. A post losing several
+        retired members is ONE substitution naming the final membership."""
+        third = _collapse_rec(OTHER_ID, src_sha=SRC_SHA_2)
+        survivor2 = _collapse_rec("77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+                                  src_sha=SRC_SHA_2)
+        e1 = _collapse_entry(self.retired, self.survivor,
+                             post_subs=[_sub(POST_ID, [OTHER_ID, RETIRED_ID],
+                                             [OTHER_ID, SURVIVOR_ID])])
+        e2 = _collapse_entry(third, survivor2,
+                             post_subs=[_sub(POST_ID, [OTHER_ID, SURVIVOR_ID],
+                                             [survivor2["id"], SURVIVOR_ID])])
+        self._refuses(_collapse_doc([e1, e2]), "substituted by two entries")
+
+    def test_an_unknown_key_is_refused(self):
+        e = _collapse_entry(self.retired, self.survivor)
+        e["also_delete"] = ["something"]
+        self._refuses(_collapse_doc([e]), "unknown key(s)")
+
+    def test_the_document_path_derives_from_the_profile(self):
+        got = ac.collapse_document_path(PROFILES / "studio-a.assets.json")
+        self.assertEqual(got, UPGRADES / "asset-collapse.studio-a.json")
+        self.assertIsNone(ac.collapse_document_path(Path("/x/posts.json")))
+
+    def test_an_unreadable_document_raises_rather_than_reading_as_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "asset-collapse.studio-a.json"
+            bad.write_text("{not json", encoding="utf-8")
+            with self.assertRaises(ac.CollapseError):
+                ac.load_collapse_document(bad)
+
+
+class TestCollapseLossesAreEnumerated(unittest.TestCase):
+    """The guard must not diff the retired record against the survivor and
+    call the result acceptable. The document carries the enumeration; both
+    layers recompute it and compare for EQUALITY."""
+
+    def test_a_conflicting_value_is_a_loss_and_the_survivor_wins(self):
+        retired = _collapse_rec(RETIRED_ID, archive_state="draft")
+        survivor = _collapse_rec(SURVIVOR_ID, archive_state="active")
+        losses = ac.recompute_losses(retired, survivor)
+        by_path = {x["path"]: x for x in losses}
+        self.assertEqual(by_path["archive_state"]["retired_value"], "draft")
+        self.assertEqual(by_path["archive_state"]["survivor_value"], "active")
+
+    def test_a_key_only_the_retired_record_has_is_dropped_and_enumerated(self):
+        retired = _collapse_rec(RETIRED_ID)
+        retired["field_values"]["production_notes"] = "kept nowhere"
+        survivor = _collapse_rec(SURVIVOR_ID)
+        by_path = {x["path"]: x for x in ac.recompute_losses(retired, survivor)}
+        self.assertIn("field_values.production_notes", by_path)
+        self.assertNotIn("survivor_value", by_path["field_values.production_notes"])
+
+    def test_a_key_only_the_survivor_has_is_kept_and_is_not_a_loss(self):
+        retired = _collapse_rec(RETIRED_ID)
+        survivor = _collapse_rec(SURVIVOR_ID)
+        survivor["field_values"]["copyright"] = "survivor only"
+        paths = {x["path"] for x in ac.recompute_losses(retired, survivor)}
+        self.assertNotIn("field_values.copyright", paths)
+
+    def test_identical_values_are_no_ops(self):
+        rec = _collapse_rec(RETIRED_ID)
+        self.assertEqual(ac.recompute_losses(rec, json.loads(json.dumps(rec))), [])
+
+    def test_losses_are_found_below_the_two_nested_levels_the_guard_descends(self):
+        retired = _collapse_rec(RETIRED_ID)
+        survivor = _collapse_rec(SURVIVOR_ID)
+        survivor["metadata"]["source_archive"]["member"] = "Vector/Other.svg"
+        paths = {x["path"] for x in ac.recompute_losses(retired, survivor)}
+        self.assertIn("metadata.source_archive.member", paths)
+
+    def test_the_committed_document_enumerates_exactly_what_it_would_lose(self):
+        """The real one, against the real survivor. This is the check that
+        fails the moment either record moves under the document."""
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-a.json",
+                                        profile_name="studio-a.assets.json")
+        by_id = {a["id"]: a for a in json.loads(
+            (PROFILES / "studio-a.assets.json").read_text(encoding="utf-8"))}
+        for e in doc.entries:
+            with self.subTest(retired=e.retired_id):
+                self.assertIn(e.survivor_id, by_id)
+                self.assertTrue(ac.losses_equal(
+                    e.acknowledged_losses,
+                    ac.recompute_losses(e.retired_record, by_id[e.survivor_id])))
+
+
+class TestCollapseState(unittest.TestCase):
+    """LAYER A2: exactly Pending or Applied, per object. A third state is a
+    hard failure and never a normalisation."""
+
+    def setUp(self):
+        self.retired = _collapse_rec(RETIRED_ID, archive_state="draft")
+        self.survivor = _collapse_rec(SURVIVOR_ID)
+        self.other = _collapse_rec(OTHER_ID)
+        self.sub = _sub(POST_ID, [OTHER_ID, RETIRED_ID], [OTHER_ID, SURVIVOR_ID])
+        self.doc = ac.parse_collapse_document(
+            _collapse_doc([_collapse_entry(self.retired, self.survivor,
+                                           post_subs=[self.sub])]),
+            source="fixture")
+
+    def _pending(self):
+        return ([json.loads(json.dumps(r)) for r in
+                 (self.other, self.survivor, self.retired)],
+                [{"id": POST_ID, "asset_ids": [OTHER_ID, RETIRED_ID]}])
+
+    def _applied(self):
+        return ([json.loads(json.dumps(r)) for r in (self.other, self.survivor)],
+                [{"id": POST_ID, "asset_ids": [OTHER_ID, SURVIVOR_ID]}])
+
+    def test_pending_is_recognised_and_converted(self):
+        profile, posts = self._pending()
+        res = ac.apply_collapse(profile, posts, self.doc)
+        self.assertEqual(res.states[0].asset_state, ac.PENDING)
+        self.assertEqual(res.records_removed, 1)
+        self.assertEqual(posts[0]["asset_ids"], [OTHER_ID, SURVIVOR_ID])
+        self.assertNotIn(RETIRED_ID, {a["id"] for a in profile})
+
+    def test_applied_is_an_idempotent_no_op(self):
+        profile, posts = self._applied()
+        before = json.dumps([profile, posts], sort_keys=True)
+        res = ac.apply_collapse(profile, posts, self.doc)
+        self.assertEqual(res.states[0].asset_state, ac.APPLIED)
+        self.assertEqual(res.records_removed, 0)
+        self.assertEqual(json.dumps([profile, posts], sort_keys=True), before)
+
+    def test_running_the_stage_twice_changes_nothing_the_second_time(self):
+        profile, posts = self._pending()
+        ac.apply_collapse(profile, posts, self.doc)
+        after_first = json.dumps([profile, posts], sort_keys=True)
+        ac.apply_collapse(profile, posts, self.doc)
+        self.assertEqual(json.dumps([profile, posts], sort_keys=True), after_first)
+
+    def test_a_changed_retired_record_fails_before_any_deletion(self):
+        profile, posts = self._pending()
+        profile[2]["title"] = "somebody edited this"
+        with self.assertRaises(ac.CollapseError) as cm:
+            ac.apply_collapse(profile, posts, self.doc)
+        self.assertIn("not the retired_record this document authorises",
+                      str(cm.exception))
+        self.assertIn(RETIRED_ID, {a["id"] for a in profile})
+
+    def test_an_absent_survivor_fails(self):
+        profile, posts = self._pending()
+        profile[:] = [a for a in profile if a["id"] != SURVIVOR_ID]
+        with self.assertRaises(ac.CollapseError) as cm:
+            ac.apply_collapse(profile, posts, self.doc)
+        self.assertIn("is not in the profile", str(cm.exception))
+        self.assertIn(RETIRED_ID, {a["id"] for a in profile})
+
+    def test_an_acknowledged_loss_list_that_disagrees_fails(self):
+        doc = ac.parse_collapse_document(
+            _collapse_doc([_collapse_entry(
+                self.retired, self.survivor, post_subs=[self.sub],
+                losses=ac.recompute_losses(self.retired, self.survivor)[:-1])]),
+            source="fixture")
+        profile, posts = self._pending()
+        with self.assertRaises(ac.CollapseError) as cm:
+            ac.apply_collapse(profile, posts, doc)
+        self.assertIn("acknowledged_losses", str(cm.exception))
+
+    def test_an_order_only_permutation_is_a_third_state(self):
+        """The membership comparisons are exact, order included. The
+        curation digest sorts, so it cannot stand in for this."""
+        profile, posts = self._pending()
+        posts[0]["asset_ids"] = [RETIRED_ID, OTHER_ID]
+        with self.assertRaises(ac.CollapseError) as cm:
+            ac.apply_collapse(profile, posts, self.doc)
+        self.assertIn("neither exactly the documented old_members", str(cm.exception))
+        self.assertIn(RETIRED_ID, {a["id"] for a in profile})
+
+    def test_an_extra_member_is_a_third_state(self):
+        profile, posts = self._pending()
+        posts[0]["asset_ids"] = [OTHER_ID, RETIRED_ID, SURVIVOR_ID]
+        with self.assertRaises(ac.CollapseError):
+            ac.apply_collapse(profile, posts, self.doc)
+
+    def test_an_absent_post_is_a_third_state(self):
+        profile, posts = self._pending()
+        posts.clear()
+        with self.assertRaises(ac.CollapseError):
+            ac.apply_collapse(profile, posts, self.doc)
+
+    def test_the_asset_may_be_applied_while_the_post_is_pending(self):
+        profile, posts = self._applied()
+        posts[0]["asset_ids"] = [OTHER_ID, RETIRED_ID]
+        res = ac.apply_collapse(profile, posts, self.doc)
+        self.assertEqual(res.states[0].asset_state, ac.APPLIED)
+        self.assertEqual(res.states[0].post_states[POST_ID], ac.PENDING)
+        self.assertEqual(posts[0]["asset_ids"], [OTHER_ID, SURVIVOR_ID])
+
+    def test_the_post_may_be_applied_while_the_asset_is_pending(self):
+        profile, posts = self._pending()
+        posts[0]["asset_ids"] = [OTHER_ID, SURVIVOR_ID]
+        res = ac.apply_collapse(profile, posts, self.doc)
+        self.assertEqual(res.states[0].asset_state, ac.PENDING)
+        self.assertEqual(res.states[0].post_states[POST_ID], ac.APPLIED)
+        self.assertEqual(res.records_removed, 1)
+
+    def test_a_later_third_state_prevents_an_earlier_deletion(self):
+        """Every entry is judged before any is applied. A stale document
+        whose second entry no longer matches must not delete the record
+        its first entry names."""
+        r2 = _collapse_rec("11111111-2222-3333-4444-555555555555", src_sha=SRC_SHA_2)
+        s2 = _collapse_rec("66666666-7777-8888-9999-aaaaaaaaaaaa", src_sha=SRC_SHA_2)
+        doc = ac.parse_collapse_document(
+            _collapse_doc([_collapse_entry(self.retired, self.survivor,
+                                           post_subs=[self.sub]),
+                           _collapse_entry(r2, s2)]),
+            source="fixture")
+        profile, posts = self._pending()
+        profile += [json.loads(json.dumps(s2)),
+                    dict(json.loads(json.dumps(r2)), title="edited")]
+        with self.assertRaises(ac.CollapseError):
+            ac.apply_collapse(profile, posts, doc)
+        self.assertIn(RETIRED_ID, {a["id"] for a in profile})
+
+    def test_n_of_five_collapses_to_one_survivor(self):
+        """N>=2 within one group. The survivor rule holds at every size,
+        and a post naming all of them keeps exactly the survivor."""
+        ids = ["1111aaaa-1111-1111-1111-111111111111",
+               "2222aaaa-2222-2222-2222-222222222222",
+               "3333aaaa-3333-3333-3333-333333333333",
+               "4444aaaa-4444-4444-4444-444444444444"]
+        survivor = _collapse_rec(SURVIVOR_ID)
+        retired = [_collapse_rec(i, archive_state="draft") for i in ids]
+        subs = []
+        entries = []
+        for r in retired:
+            entries.append(_collapse_entry(r, survivor, post_subs=[]))
+        doc_entries = entries
+        doc_entries[0]["post_substitutions"] = [
+            _sub(POST_ID, ids + [SURVIVOR_ID], [SURVIVOR_ID])]
+        for e in doc_entries[1:]:
+            e["post_substitutions"] = []
+        # Only one substitution may name a post, so the other three
+        # entries retire without touching it.
+        doc = ac.parse_collapse_document(_collapse_doc(doc_entries), source="fixture")
+        profile = [json.loads(json.dumps(survivor))] + \
+                  [json.loads(json.dumps(r)) for r in retired]
+        posts = [{"id": POST_ID, "asset_ids": ids + [SURVIVOR_ID]}]
+        res = ac.apply_collapse(profile, posts, doc)
+        self.assertEqual(res.records_removed, 4)
+        self.assertEqual([a["id"] for a in profile], [SURVIVOR_ID])
+        self.assertEqual(posts[0]["asset_ids"], [SURVIVOR_ID])
+        self.assertEqual(len(subs), 0)
+
+    def test_a_post_holding_both_survivor_and_retired_dedupes_to_one(self):
+        doc = ac.parse_collapse_document(
+            _collapse_doc([_collapse_entry(
+                self.retired, self.survivor,
+                post_subs=[_sub(POST_ID, [SURVIVOR_ID, RETIRED_ID], [SURVIVOR_ID])])]),
+            source="fixture")
+        profile, _ = self._pending()
+        posts = [{"id": POST_ID, "asset_ids": [SURVIVOR_ID, RETIRED_ID]}]
+        ac.apply_collapse(profile, posts, doc)
+        self.assertEqual(posts[0]["asset_ids"], [SURVIVOR_ID])
+
+    def test_a_substitution_can_move_the_post_id(self):
+        """A kind that DOES derive its id from membership records a
+        new_post_id; `asset_group` does not and omits it."""
+        moved = _sub(POST_ID, [OTHER_ID, RETIRED_ID], [OTHER_ID, SURVIVOR_ID],
+                     new_post_id=POST_ID_2)
+        doc = ac.parse_collapse_document(
+            _collapse_doc([_collapse_entry(self.retired, self.survivor,
+                                           post_subs=[moved])]),
+            source="fixture")
+        profile, posts = self._pending()
+        res = ac.apply_collapse(profile, posts, doc)
+        self.assertEqual(res.posts_renamed, 1)
+        self.assertEqual(posts[0]["id"], POST_ID_2)
+        self.assertEqual(doc.moved_post_ids, frozenset({POST_ID}))
+
+    def test_a_substitution_that_keeps_the_id_moves_nothing(self):
+        self.assertEqual(self.doc.moved_post_ids, frozenset())
+
+    def test_cross_owner_identical_bytes_are_never_a_collision(self):
+        """The CAS dedup fixture. Identity is per OWNER, so two records
+        with the same input and different owners are legal."""
+        a = _collapse_rec(RETIRED_ID, owner="priya.sharma")
+        b = _collapse_rec(SURVIVOR_ID, owner="chen.wei")
+        self.assertEqual(ac.proxy_collisions([a, b]), {})
+
+
+class TestProxyCollisionKeyIsPartial(unittest.TestCase):
+    """The key is NECESSARY but not SUFFICIENT for the real invariant,
+    which is `(owner, produced_byte_sha256)`, and it is documented that
+    way everywhere it is used."""
+
+    def test_records_with_no_source_archive_hash_are_not_keyed(self):
+        rec = _collapse_rec(RETIRED_ID)
+        rec["metadata"].pop("source_archive")
+        self.assertIsNone(ac.proxy_key(rec))
+        self.assertEqual(ac.proxy_collisions([rec, _collapse_rec(SURVIVOR_ID)]), {})
+
+    def test_the_same_input_at_a_different_render_size_is_not_a_collision(self):
+        a = _collapse_rec(RETIRED_ID, px=512)
+        b = _collapse_rec(SURVIVOR_ID, px=1024)
+        self.assertEqual(ac.proxy_collisions([a, b]), {})
+
+    def test_one_owner_one_input_one_size_is_a_collision(self):
+        a = _collapse_rec(RETIRED_ID)
+        b = _collapse_rec(SURVIVOR_ID)
+        groups = ac.proxy_collisions([a, b])
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(sorted(next(iter(groups.values()))), sorted([RETIRED_ID, SURVIVOR_ID]))
+
+
+class TestCommittedProfilesHoldNoSameOwnerDuplicate(unittest.TestCase):
+    """W1. No two records in a committed assets profile may share
+    `(owner_username, metadata.source_archive.sha256, metadata.render.px)`.
+
+    ⚠️ A PARTIAL PROXY, and the docstring says so on purpose. The app's
+    live key is `(owner_user_ref, file_hash)` over the PRODUCED bytes.
+    This one needs neither pack nor pool, so it runs on a CI runner that
+    has neither; two records sharing it certainly share an input and a
+    render size, which is how the one live collision was found, and two
+    records can still produce identical bytes from different inputs
+    without this saying a word. The sufficient check is the publish
+    guard, which hashes the produced files under the source roots.
+    """
+
+    PROFILES_UNDER_TEST = ("studio-a", "studio-b", "demo", "dev")
+
+    def test_no_committed_profile_holds_a_same_owner_input_duplicate(self):
+        for stem in self.PROFILES_UNDER_TEST:
+            profile = json.loads((PROFILES / f"{stem}.assets.json")
+                                 .read_text(encoding="utf-8"))
+            groups = ac.proxy_collisions(profile)
+            with self.subTest(profile=stem):
+                self.assertEqual(
+                    groups, {},
+                    f"{stem}.assets.json holds {len(groups)} group(s) of records "
+                    f"owned by one user that share a source archive hash and a "
+                    f"render size. The app can hold only one of each group: "
+                    f"retire the losers with an asset-collapse document.")
+
+    def test_the_check_is_looking_at_something(self):
+        """A guard nothing reaches is a guard that cannot fail. 895 of
+        studio-a's records carry the key this test is about."""
+        profile = json.loads((PROFILES / "studio-a.assets.json")
+                             .read_text(encoding="utf-8"))
+        keyed = [a for a in profile if ac.proxy_key(a) is not None]
+        self.assertGreater(len(keyed), 500, "the proxy key reached almost nothing")
+
+    def test_every_documented_survivor_is_in_the_profile(self):
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-a.json",
+                                        profile_name="studio-a.assets.json")
+        ids = {a["id"] for a in json.loads(
+            (PROFILES / "studio-a.assets.json").read_text(encoding="utf-8"))}
+        self.assertEqual(doc.survivor_ids - ids, set())
+        self.assertEqual(doc.retired_ids & ids, set())
+
+    def test_no_committed_post_names_a_retired_id(self):
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-a.json",
+                                        profile_name="studio-a.assets.json")
+        for stem in ("studio-a", "dataset"):
+            posts = json.loads((PROFILES / f"{stem}.posts.json")
+                               .read_text(encoding="utf-8"))
+            named = [p["id"] for p in posts
+                     if set(p.get("asset_ids") or ()) & doc.retired_ids]
+            with self.subTest(posts=stem):
+                self.assertEqual(named, [])
+
+    def test_site_b_has_no_collapse_document(self):
+        """The 13 same-owner byte groups observed in the published site_b
+        tree are OBSERVATIONS about a destination. ADR 0097 makes the
+        destination an output, so they authorise nothing until the source
+        evidence exists."""
+        self.assertFalse((UPGRADES / "asset-collapse.studio-b.json").exists())
+
+
+class TestRetirementAwareBalanceDocuments(unittest.TestCase):
+    """The historical documents are NOT rewritten when a record retires.
+
+    `balance-assets.site_a.json` is the record of what the balance pass
+    emitted, and editing it to make a check pass would turn evidence into
+    bookkeeping. The two tests that read it become retirement-aware
+    instead, and each asserts that every id it skipped is DOCUMENTED, so
+    the exemption cannot quietly grow.
+    """
+
+    def _doc(self):
+        return ac.load_collapse_document(UPGRADES / "asset-collapse.studio-a.json",
+                                         profile_name="studio-a.assets.json")
+
+    def test_the_balance_document_still_holds_the_retired_row(self):
+        rows = {r["id"] for r in json.loads(
+            (UPGRADES / "balance-assets.site_a.json").read_text(encoding="utf-8"))}
+        self.assertEqual(self._doc().retired_ids - rows, set(),
+                         "history was rewritten; the balance document is the "
+                         "record of what the pass emitted")
+
+    def test_the_reconcile_document_still_holds_the_retired_fill(self):
+        doc = json.loads((UPGRADES / "manifest-reconcile.site_a.json")
+                         .read_text(encoding="utf-8"))
+        fills = {e["id"] for e in doc.get("fill", ())}
+        self.assertEqual(self._doc().retired_ids - fills, set())
+
+    def test_a_retired_fill_is_classed_retired_and_not_unknown(self):
+        retired = _collapse_rec(RETIRED_ID)
+        profile = [_collapse_rec(SURVIVOR_ID)]
+        doc = {"fill": [{"id": RETIRED_ID, "mature": False},
+                        {"id": "99999999-9999-9999-9999-999999999999",
+                         "mature": False}]}
+        _, _, _, unknown, retired_ids = up.apply_manifest_reconcile(
+            profile, doc, frozenset({RETIRED_ID}))
+        self.assertEqual(retired_ids, [RETIRED_ID])
+        self.assertEqual(unknown, ["99999999-9999-9999-9999-999999999999"])
+
+    def test_a_merged_retired_row_is_counted_apart_from_ordinary_drift(self):
+        profile = [_collapse_rec(SURVIVOR_ID)]
+        added = [_collapse_rec(RETIRED_ID), _collapse_rec(OTHER_ID)]
+        n, _, n_retired = up.merge_added(profile, added, frozenset({RETIRED_ID}))
+        self.assertEqual((n, n_retired), (2, 1))
+        self.assertIn(RETIRED_ID, {a["id"] for a in profile},
+                      "the record must still ENTER, so the collapse stage can "
+                      "authenticate it before removing it")
+
+    def test_a_moved_post_id_is_not_resurrected_by_the_historical_document(self):
+        posts = [{"id": POST_ID_2, "asset_ids": [SURVIVOR_ID]}]
+        added = [{"id": POST_ID, "asset_ids": [RETIRED_ID]},
+                 {"id": "deadbeef-0000-0000-0000-000000000000", "asset_ids": []}]
+        n, n_moved = up.merge_posts(posts, added, frozenset({POST_ID}))
+        self.assertEqual((n, n_moved), (1, 1))
+        self.assertNotIn(POST_ID, {p["id"] for p in posts})
+
+
+class TestApplyUpgradeCollapseStage(unittest.TestCase):
+    """W5b and W5c, driven through the real CLI.
+
+    The fixtures reproduce the shape the live corpus is in: historical
+    balance documents that would re-add the retired record and re-add the
+    affected post, a reconcile fill naming it, and a curation entry whose
+    `pipeline_members` digest describes the CORRECTED membership.
+    """
+
+    RETIRED = _collapse_rec(RETIRED_ID, archive_state="draft")
+    SURVIVOR = _collapse_rec(SURVIVOR_ID)
+    OTHER = _collapse_rec(OTHER_ID, src_sha=SRC_SHA_2)
+
+    def _world(self, d: Path, *, applied: bool, doc=None, curation_digest=None,
+               extra_post=None, retired_record=None):
+        profiles = d / "profiles"
+        upgrades = d / "upgrades"
+        profiles.mkdir(parents=True, exist_ok=True)
+        upgrades.mkdir(parents=True, exist_ok=True)
+
+        old_members = [OTHER_ID, RETIRED_ID]
+        new_members = [OTHER_ID, SURVIVOR_ID]
+        sub = _sub(POST_ID, old_members, new_members, curation_pipeline_members={
+            "old": up._members_digest(old_members),
+            "new": up._members_digest(new_members)})
+        # ⚠️ THE DOCUMENT'S COPY IS THE RECORD AS THE WHOLE PIPELINE
+        # PRODUCES IT, reconcile fills included. That is what the live
+        # document holds, and it is what makes the fixture faithful: the
+        # balance row below carries no `mature`, the reconcile fill adds
+        # it, and the stage compares against the post-fill record.
+        post_fill = dict(json.loads(json.dumps(self.RETIRED)), mature=False)
+        entry = _collapse_entry(retired_record or post_fill, self.SURVIVOR,
+                                post_subs=[sub])
+        if retired_record is not None:
+            entry["acknowledged_losses"] = ac.recompute_losses(
+                retired_record, self.SURVIVOR)
+        (upgrades / "asset-collapse.studio-a.json").write_text(
+            json.dumps(doc if doc is not None else _collapse_doc([entry])),
+            encoding="utf-8")
+
+        profile = [json.loads(json.dumps(r)) for r in (self.OTHER, self.SURVIVOR)]
+        # The curated date is already on the post, so the curation pass
+        # is a no-op and the only drift term this fixture can fire is the
+        # one under test.
+        posts = [{"id": POST_ID, "asset_ids": list(new_members),
+                  "created_at": "2026-06-01T01:07:00Z"}]
+        if not applied:
+            profile.append(json.loads(json.dumps(self.RETIRED)))
+            posts[0]["asset_ids"] = list(old_members)
+        if extra_post is not None:
+            posts.append(extra_post)
+        # Written through the tool's own serialiser, so a byte-for-byte
+        # assertion below measures CONTENT and not indentation.
+        up.dump(profiles / "studio-a.assets.json", profile)
+        up.dump(profiles / "studio-a.posts.json", posts)
+
+        # The historical documents, exactly as the live corpus keeps them.
+        (upgrades / "kenney-hq-replacements.site_a.json").write_text("[]",
+                                                                     encoding="utf-8")
+        (upgrades / "balance-assets.site_a.json").write_text(
+            json.dumps([json.loads(json.dumps(self.RETIRED))]), encoding="utf-8")
+        (upgrades / "balance-posts.site_a.json").write_text(
+            json.dumps([{"id": POST_ID, "asset_ids": list(old_members)}]),
+            encoding="utf-8")
+        (upgrades / "manifest-reconcile.site_a.json").write_text(
+            json.dumps({"added": [], "fill": [{"id": RETIRED_ID, "mature": False}]}),
+            encoding="utf-8")
+        curate = [{"id": POST_ID,
+                   "pipeline_members": curation_digest or up._members_digest(new_members),
+                   "created_at": "2026-06-01T01:07:00Z"}]
+        if extra_post is not None:
+            curate.append({"id": extra_post["id"],
+                           "pipeline_members": up._members_digest([OTHER_ID]),
+                           "created_at": extra_post.get("created_at")})
+        (upgrades / "post-curation.site_a.json").write_text(
+            json.dumps({"curate": curate}), encoding="utf-8")
+        return profiles, upgrades
+
+    def _run(self, profiles: Path, upgrades: Path, *extra):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "apply_upgrade.py"),
+             "--site", "site_a", "--upgrades", str(upgrades),
+             "--profile", str(profiles / "studio-a.assets.json"),
+             "--posts", str(profiles / "studio-a.posts.json"), *extra],
+            capture_output=True, text=True)
+
+    @staticmethod
+    def _hashes(profiles: Path):
+        return {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(profiles.iterdir())}
+
+    ADVISORY = "membership has moved since the curation was recorded"
+
+    def test_a_fresh_pending_assembly_is_corrected_with_no_curation_advisory(self):
+        """W5c.1. The stage runs BEFORE the curation, so the digest is
+        compared against the corrected membership and this deliberate
+        substitution does not print the advisory that exists to flag the
+        UNdocumented kind."""
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=False)
+            r = self._run(profiles, upgrades)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            profile = json.loads((profiles / "studio-a.assets.json").read_text())
+            posts = json.loads((profiles / "studio-a.posts.json").read_text())
+            self.assertNotIn(RETIRED_ID, {a["id"] for a in profile})
+            self.assertEqual(posts[0]["asset_ids"], [OTHER_ID, SURVIVOR_ID])
+            self.assertNotIn(f"{POST_ID}: {self.ADVISORY}", r.stderr)
+
+    def test_an_applied_profile_is_a_no_op_with_no_curation_advisory(self):
+        """W5c.2."""
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=True)
+            before = self._hashes(profiles)
+            r = self._run(profiles, upgrades)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(self._hashes(profiles), before)
+            self.assertNotIn(f"{POST_ID}: {self.ADVISORY}", r.stderr)
+
+    def test_a_changed_retired_record_fails_before_any_deletion(self):
+        """W5c.3."""
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=False)
+            profile = json.loads((profiles / "studio-a.assets.json").read_text())
+            for a in profile:
+                if a["id"] == RETIRED_ID:
+                    a["title"] = "somebody edited this"
+            up.dump(profiles / "studio-a.assets.json", profile)
+            before = self._hashes(profiles)
+            r = self._run(profiles, upgrades)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("not the retired_record this document authorises", r.stderr)
+            self.assertEqual(self._hashes(profiles), before)
+            self.assertIn(RETIRED_ID, {a["id"] for a in json.loads(
+                (profiles / "studio-a.assets.json").read_text())})
+
+    def test_an_order_only_permutation_fails_and_writes_nothing(self):
+        """W5c.4, the order half."""
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=False)
+            posts = json.loads((profiles / "studio-a.posts.json").read_text())
+            posts[0]["asset_ids"] = [RETIRED_ID, OTHER_ID]
+            up.dump(profiles / "studio-a.posts.json", posts)
+            before = self._hashes(profiles)
+            r = self._run(profiles, upgrades)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("order included", r.stderr)
+            self.assertEqual(self._hashes(profiles), before)
+
+    def test_an_extra_member_fails_and_writes_nothing(self):
+        """W5c.4, the extra-member half."""
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=False)
+            posts = json.loads((profiles / "studio-a.posts.json").read_text())
+            posts[0]["asset_ids"] = [OTHER_ID, RETIRED_ID, SURVIVOR_ID]
+            up.dump(profiles / "studio-a.posts.json", posts)
+            before = self._hashes(profiles)
+            r = self._run(profiles, upgrades)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertEqual(self._hashes(profiles), before)
+
+    def test_two_consecutive_checks_on_the_applied_state_are_clean(self):
+        """W5c.5 and W5: the historical balance document still holds the
+        retired row, and the gate still comes clean twice."""
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=True)
+            for _ in range(2):
+                r = self._run(profiles, upgrades, "--check")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("OK: profile already reflects the upgrade", r.stderr)
+            rows = json.loads((upgrades / "balance-assets.site_a.json").read_text())
+            self.assertEqual([x["id"] for x in rows], [RETIRED_ID])
+
+    def test_unrelated_membership_drift_still_produces_the_advisory(self):
+        """W5c.6. The fix is not a broad waiver: a different curated post
+        whose membership moved for reasons the document does not name
+        still gets the existing advisory."""
+        other_post = {"id": POST_ID_2, "asset_ids": [SURVIVOR_ID],
+                      "created_at": "2026-06-02T01:07:00Z"}
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=False,
+                                             extra_post=other_post)
+            r = self._run(profiles, upgrades)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(f"{POST_ID_2}: {self.ADVISORY}", r.stderr)
+            self.assertNotIn(f"{POST_ID}: {self.ADVISORY}", r.stderr)
+
+    def test_a_malformed_document_stops_the_write(self):
+        """W5b. On dev the document is unknown, the run completes and
+        exits 0 with the retired record written. Here it refuses before
+        any mutation and leaves every file byte-identical."""
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=False)
+            doc = json.loads((upgrades / "asset-collapse.studio-a.json").read_text())
+            doc["collapse"][0]["acknowledged_losses"] = \
+                doc["collapse"][0]["acknowledged_losses"][:-1]
+            (upgrades / "asset-collapse.studio-a.json").write_text(json.dumps(doc))
+            before = self._hashes(profiles)
+            r = self._run(profiles, upgrades)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("acknowledged_losses", r.stderr)
+            self.assertEqual(self._hashes(profiles), before)
+
+    def test_an_unparseable_document_stops_the_write(self):
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=False)
+            (upgrades / "asset-collapse.studio-a.json").write_text("{nope")
+            before = self._hashes(profiles)
+            r = self._run(profiles, upgrades)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("unreadable", r.stderr)
+            self.assertEqual(self._hashes(profiles), before)
+
+    def test_a_document_for_another_profile_stops_the_write(self):
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=False)
+            doc = json.loads((upgrades / "asset-collapse.studio-a.json").read_text())
+            doc["profile"] = "studio-b.assets.json"
+            (upgrades / "asset-collapse.studio-a.json").write_text(json.dumps(doc))
+            before = self._hashes(profiles)
+            r = self._run(profiles, upgrades)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertEqual(self._hashes(profiles), before)
+
+    def test_a_curation_entry_that_re_adds_a_retired_id_is_a_problem(self):
+        """Curation CAN write membership, and it runs after the stage.
+        The post-condition is what turns "no entry does today" into a
+        property of the pipeline."""
+        with tempfile.TemporaryDirectory() as t:
+            profiles, upgrades = self._world(Path(t), applied=True)
+            doc = json.loads((upgrades / "post-curation.site_a.json").read_text())
+            doc["curate"][0]["asset_ids"] = [OTHER_ID, RETIRED_ID]
+            (upgrades / "post-curation.site_a.json").write_text(json.dumps(doc))
+            before = self._hashes(profiles)
+            r = self._run(profiles, upgrades)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("names retired asset", r.stderr)
+            self.assertEqual(self._hashes(profiles), before)
+
+    def test_the_committed_profiles_pass_the_retirement_gate_twice(self):
+        """W5, on the real corpus: two consecutive --check runs, both
+        sites, with every historical document untouched."""
+        for site, stem in (("site_a", "studio-a"), ("site_b", "studio-b")):
+            for run in (1, 2):
+                r = subprocess.run(
+                    [sys.executable, str(SCRIPTS / "apply_upgrade.py"),
+                     "--site", site, "--upgrades", str(UPGRADES),
+                     "--profile", str(PROFILES / f"{stem}.assets.json"),
+                     "--posts", str(PROFILES / f"{stem}.posts.json"), "--check"],
+                    capture_output=True, text=True)
+                with self.subTest(site=site, run=run):
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    self.assertIn("OK: profile already reflects the upgrade", r.stderr)
+
+
+class TestPublishAuthenticatesRetirement(unittest.TestCase):
+    """LAYER B (W4, W7): the produced files are hashed under the source
+    roots, and only then may the guard report COLLAPSED_RECORD.
+
+    The fixture's "produced files" are small synthetic blobs, so this runs
+    on a machine with no pack and no pool. What it exercises is the RULE:
+    the two files must hash identically to each other in this build and
+    equal the document's recorded value.
+    """
+
+    BYTES = b"produced-bytes"
+
+    def _world(self, d: Path, *, retired_bytes=None, mat=None, src_profile=None,
+               dest_records=None, stage_retired=True, doc=None):
+        root = Path(d)
+        for sub in ("profiles", "upgrades", "local", "internet", "hq", "dest"):
+            (root / sub).mkdir(parents=True, exist_ok=True)
+        (root / "local" / "metadata.csv").write_text("file_path\n", encoding="utf-8")
+
+        retired = _collapse_rec(RETIRED_ID, archive_state="draft")
+        survivor = _collapse_rec(SURVIVOR_ID)
+        mat_hash = mat or hashlib.sha256(self.BYTES).hexdigest()
+        entry = _collapse_entry(retired, survivor, mat=mat_hash)
+        (root / "upgrades" / "asset-collapse.studio-a.json").write_text(
+            json.dumps(doc if doc is not None else _collapse_doc([entry])),
+            encoding="utf-8")
+
+        profile = src_profile if src_profile is not None else [survivor]
+        (root / "profiles" / "studio-a.assets.json").write_text(
+            json.dumps(profile), encoding="utf-8")
+        (root / "profiles" / "studio-a.posts.json").write_text(
+            json.dumps([{"id": POST_ID, "asset_ids": [SURVIVOR_ID]}]),
+            encoding="utf-8")
+
+        (root / "hq" / survivor["source_path"]).write_bytes(self.BYTES)
+        (root / "hq" / retired["source_path"]).write_bytes(
+            self.BYTES if retired_bytes is None else retired_bytes)
+
+        dest = root / "dest"
+        (dest / "MANIFEST.json").write_text(
+            json.dumps(dest_records if dest_records is not None
+                       else [survivor, retired]), encoding="utf-8")
+        (dest / "posts.json").write_text(
+            json.dumps([{"id": POST_ID, "asset_ids": [SURVIVOR_ID]}]),
+            encoding="utf-8")
+        for rec, body in ((survivor, self.BYTES), (retired, self.BYTES)):
+            if rec is retired and not stage_retired:
+                continue
+            p = dest / rec["file_path"]
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(body)
+        return root
+
+    def _run(self, root: Path, *extra):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "populate_archive.py"),
+             "--local-source", str(root / "local"),
+             "--internet-source", str(root / "internet"),
+             "--hq-source", str(root / "hq"),
+             "--profile", str(root / "profiles" / "studio-a.assets.json"),
+             "--posts", str(root / "profiles" / "studio-a.posts.json"),
+             "--dest", str(root / "dest"), *extra],
+            capture_output=True, text=True)
+
+    @staticmethod
+    def _tree(root: Path):
+        return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(root.rglob("*")) if p.is_file()}
+
+    def test_an_authenticated_retirement_reports_collapsed_and_loses_nothing(self):
+        """W4 green: exactly one COLLAPSED_RECORD, 0 losses."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d))
+            r = self._run(root, "--dry-run")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(f"COLLAPSED_RECORD {RETIRED_ID} -> {SURVIVOR_ID}", r.stderr)
+            self.assertNotIn("MISSING_RECORD", r.stderr)
+            self.assertIn("nothing at the destination would be lost", r.stderr)
+
+    def test_no_document_leaves_the_destination_only_id_a_loss(self):
+        """Absence is never permission."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d))
+            (root / "upgrades" / "asset-collapse.studio-a.json").unlink()
+            r = self._run(root, "--dry-run")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn(f"MISSING_RECORD {RETIRED_ID}", r.stderr)
+
+    def test_produced_files_that_differ_refuse(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d), retired_bytes=b"different artwork")
+            r = self._run(root, "--dry-run")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("NOT identical in this build", r.stderr)
+            self.assertIn("diagnostic", r.stderr.lower())
+
+    def test_a_produced_hash_that_disagrees_with_the_document_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d), mat="d" * 64)
+            r = self._run(root, "--dry-run")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("materialized_sha256", r.stderr)
+            self.assertIn("re-measure", r.stderr)
+
+    def test_a_survivor_absent_from_the_source_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d), src_profile=[])
+            r = self._run(root, "--dry-run")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("is not in the source profile", r.stderr)
+
+    def test_a_retired_id_still_in_the_source_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d), src_profile=[
+                _collapse_rec(SURVIVOR_ID),
+                _collapse_rec(RETIRED_ID, archive_state="draft")])
+            r = self._run(root, "--dry-run")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("was never applied to it", r.stderr)
+
+    def test_a_stale_destination_predecessor_is_a_missing_record(self):
+        """The document describes a record the destination no longer
+        holds, so it is not evidence about the record it does hold."""
+        with tempfile.TemporaryDirectory() as d:
+            stale = _collapse_rec(RETIRED_ID, archive_state="draft")
+            stale["title"] = "an edit nobody enumerated"
+            root = self._world(Path(d), dest_records=[_collapse_rec(SURVIVOR_ID), stale])
+            r = self._run(root, "--dry-run")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn(f"MISSING_RECORD {RETIRED_ID}", r.stderr)
+
+    def test_an_unusable_document_refuses_rather_than_reading_as_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d))
+            (root / "upgrades" / "asset-collapse.studio-a.json").write_text("{nope")
+            r = self._run(root, "--dry-run")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("not overridable by --allow-regression", r.stderr)
+
+    def test_a_dry_run_reports_the_retired_path_and_deletes_nothing(self):
+        """W7, the dry-run half."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d))
+            before = self._tree(root / "dest")
+            r = self._run(root, "--dry-run")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("would remove retired path", r.stderr)
+            self.assertEqual(self._tree(root / "dest"), before)
+
+    def test_a_real_run_removes_exactly_the_retired_path(self):
+        """W7, the real half."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d))
+            retired_rel = _collapse_rec(RETIRED_ID)["file_path"]
+            before = set(self._tree(root / "dest"))
+            r = self._run(root)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            after = set(self._tree(root / "dest"))
+            self.assertEqual(before - after, {retired_rel})
+
+    def test_a_retired_path_with_the_wrong_bytes_refuses_and_deletes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d))
+            retired_rel = _collapse_rec(RETIRED_ID)["file_path"]
+            (root / "dest" / retired_rel).write_bytes(b"not what the document says")
+            r = self._run(root)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("is not the one this document describes", r.stderr)
+            self.assertTrue((root / "dest" / retired_rel).is_file())
+
+    def test_a_retired_path_a_current_record_still_wants_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d))
+            retired_rel = _collapse_rec(RETIRED_ID)["file_path"]
+            claimant = _collapse_rec("77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+                                     src_sha=SRC_SHA_2)
+            claimant["file_path"] = retired_rel
+            claimant["source_path"] = Path(retired_rel).name
+            (root / "hq" / claimant["source_path"]).write_bytes(self.BYTES)
+            (root / "profiles" / "studio-a.assets.json").write_text(
+                json.dumps([_collapse_rec(SURVIVOR_ID), claimant]), encoding="utf-8")
+            r = self._run(root)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("still the destination path of a record", r.stderr)
+            self.assertTrue((root / "dest" / retired_rel).is_file())
+
+    def test_the_override_locates_a_fixture_document(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d))
+            moved = root / "elsewhere.json"
+            (root / "upgrades" / "asset-collapse.studio-a.json").rename(moved)
+            r = self._run(root, "--dry-run", "--collapse-document", str(moved))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("COLLAPSED_RECORD", r.stderr)
+
+    def test_the_override_naming_no_file_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(Path(d))
+            r = self._run(root, "--dry-run", "--collapse-document",
+                          str(root / "nope.json"))
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("not a file", r.stderr)
+
+
+class TestManifestGuardCollapsedRecord(unittest.TestCase):
+    """`COLLAPSED_RECORD` is produced ONLY from a mapping the caller has
+    already source-authenticated, and it is never folded into another
+    number."""
+
+    def setUp(self):
+        self.retired = _collapse_rec(RETIRED_ID, archive_state="draft")
+        self.survivor = _collapse_rec(SURVIVOR_ID)
+        self.collapses = {RETIRED_ID: {"survivor_id": SURVIVOR_ID,
+                                       "retired_record": self.retired}}
+
+    def test_an_authenticated_retirement_is_not_a_loss(self):
+        cmp = mg.compare([self.survivor], [self.survivor, self.retired],
+                         "MANIFEST.json", collapses=self.collapses)
+        self.assertEqual(cmp.losses, [])
+        self.assertEqual(cmp.collapsed, [(RETIRED_ID, SURVIVOR_ID)])
+        self.assertTrue(cmp.ok)
+
+    def test_it_is_not_counted_as_an_addition_a_change_or_a_migration(self):
+        cmp = mg.compare([self.survivor], [self.survivor, self.retired],
+                         "MANIFEST.json", collapses=self.collapses)
+        self.assertEqual(cmp.added, [])
+        self.assertEqual(cmp.changes, [])
+        self.assertEqual(cmp.migrated, [])
+        self.assertEqual(cmp.records_collapsed, 1)
+
+    def test_it_gets_its_own_report_line(self):
+        cmp = mg.compare([self.survivor], [self.survivor, self.retired],
+                         "MANIFEST.json", collapses=self.collapses,
+                         collapse_source="asset-collapse.studio-a.json")
+        report = mg.format_report(cmp)
+        self.assertIn("collapsed: 1 record(s) retired onto a named survivor", report)
+        self.assertIn(f"{mg.COLLAPSED_RECORD} {RETIRED_ID} -> {SURVIVOR_ID}", report)
+
+    def test_a_destination_record_that_differs_falls_back_to_missing_record(self):
+        stale = json.loads(json.dumps(self.retired))
+        stale["field_values"]["rating"] = 5
+        cmp = mg.compare([self.survivor], [self.survivor, stale],
+                         "MANIFEST.json", collapses=self.collapses)
+        self.assertEqual([x.kind for x in cmp.losses], [mg.MISSING_RECORD])
+        self.assertEqual(cmp.collapsed, [])
+
+    def test_without_the_mapping_the_record_is_a_loss(self):
+        cmp = mg.compare([self.survivor], [self.survivor, self.retired],
+                         "MANIFEST.json")
+        self.assertEqual([x.kind for x in cmp.losses], [mg.MISSING_RECORD])
+
+    def test_an_unrelated_missing_record_is_still_a_loss(self):
+        other = _collapse_rec(OTHER_ID, src_sha=SRC_SHA_2)
+        cmp = mg.compare([self.survivor], [self.survivor, self.retired, other],
+                         "MANIFEST.json", collapses=self.collapses)
+        self.assertEqual([x.record_id for x in cmp.losses], [OTHER_ID])
+
+
+class TestVerifySiteRetirementExpectations(unittest.TestCase):
+    """`collapses`, `retired_paths_absent` and `same_owner_same_bytes`."""
+
+    def _site(self, d: Path, *, stage_retired=True):
+        root = Path(d)
+        (root / "profiles").mkdir(parents=True, exist_ok=True)
+        (root / "upgrades").mkdir(parents=True, exist_ok=True)
+        site = root / "site"
+        retired = _collapse_rec(RETIRED_ID, archive_state="draft")
+        survivor = _collapse_rec(SURVIVOR_ID)
+        (root / "upgrades" / "asset-collapse.studio-a.json").write_text(
+            json.dumps(_collapse_doc([_collapse_entry(retired, survivor)])),
+            encoding="utf-8")
+        (root / "profiles" / "studio-a.assets.json").write_text(
+            json.dumps([survivor]), encoding="utf-8")
+        posts = [{"id": POST_ID, "asset_ids": [SURVIVOR_ID]}]
+        (root / "profiles" / "studio-a.posts.json").write_text(
+            json.dumps(posts), encoding="utf-8")
+        site.mkdir(parents=True, exist_ok=True)
+        (site / "MANIFEST.json").write_text(json.dumps([survivor]), encoding="utf-8")
+        (site / "posts.json").write_text(json.dumps(posts), encoding="utf-8")
+        for rec in ((survivor, retired) if stage_retired else (survivor,)):
+            p = site / rec["file_path"]
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"produced-byte")
+        return root
+
+    def _verify(self, root: Path, expectations):
+        return vs.verify(root / "profiles" / "studio-a.assets.json",
+                         root / "profiles" / "studio-a.posts.json",
+                         root / "site", expectations=expectations,
+                         attributions=root / "nope.md")
+
+    def test_the_collapse_count_is_checked(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._site(Path(d), stage_retired=False)
+            rep = self._verify(root, {"collapses": 1})
+            self.assertEqual([v.status for v in rep.verdicts if v.name == "collapses"],
+                             [vs.PASS])
+            rep = self._verify(root, {"collapses": 2})
+            self.assertEqual([v.status for v in rep.verdicts if v.name == "collapses"],
+                             [vs.FAIL])
+
+    def test_a_retired_path_left_in_staging_fails(self):
+        """The Kaggle-tree rule: the uploader hands the whole directory
+        over, so a retired file still in staging is published."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._site(Path(d), stage_retired=True)
+            rep = self._verify(root, {"retired_paths_absent": True})
+            v = [x for x in rep.verdicts if x.name.startswith("retired paths")]
+            self.assertEqual([x.status for x in v], [vs.FAIL])
+
+    def test_a_clean_staging_tree_passes_the_retired_path_rule(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._site(Path(d), stage_retired=False)
+            rep = self._verify(root, {"retired_paths_absent": True})
+            v = [x for x in rep.verdicts if x.name.startswith("retired paths")]
+            self.assertEqual([x.status for x in v], [vs.PASS])
+
+    def test_same_owner_same_bytes_is_labelled_a_staged_state_diagnostic(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._site(Path(d), stage_retired=False)
+            rep = self._verify(root, {"same_owner_same_bytes": 0})
+            v = [x for x in rep.verdicts if x.name == "same_owner_same_bytes"][0]
+            self.assertEqual(v.status, vs.PASS)
+            self.assertIn("STAGED-STATE DIAGNOSTIC", v.detail)
+            self.assertIn("not source authority", v.detail)
+
+    def test_same_owner_same_bytes_counts_a_real_staged_group(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._site(Path(d), stage_retired=True)
+            site = root / "site"
+            retired = _collapse_rec(RETIRED_ID, archive_state="draft")
+            manifest = json.loads((site / "MANIFEST.json").read_text())
+            manifest.append(retired)
+            (site / "MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
+            groups = vs.staged_same_owner_same_bytes(manifest, site)
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(sorted(next(iter(groups.values()))),
+                             sorted([RETIRED_ID, SURVIVOR_ID]))
+
+    def test_cross_owner_identical_bytes_are_not_grouped(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._site(Path(d), stage_retired=True)
+            site = root / "site"
+            other = _collapse_rec(RETIRED_ID, owner="chen.wei", archive_state="draft")
+            manifest = json.loads((site / "MANIFEST.json").read_text()) + [other]
+            self.assertEqual(vs.staged_same_owner_same_bytes(manifest, site), {})
+
+    def test_an_unusable_document_fails_the_verifier(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._site(Path(d), stage_retired=False)
+            (root / "upgrades" / "asset-collapse.studio-a.json").write_text("{nope")
+            rep = self._verify(root, {"collapses": 1})
+            v = [x for x in rep.verdicts if x.name == "collapse document"][0]
+            self.assertEqual(v.status, vs.FAIL)
+
+    def test_an_unknown_expectation_key_is_still_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "e.json"
+            p.write_text(json.dumps({"collapsed": 1}), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                vs.load_expectations(p)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

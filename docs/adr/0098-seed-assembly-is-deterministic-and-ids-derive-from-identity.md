@@ -313,3 +313,48 @@ immediately after moving 618, to restore a capability with no callers.
 Determinism here was real, and the artifact it was a property of was not the artifact we ship. The
 question to ask of an invariant is not "is it true?" but "what breaks if it stops being true?" The
 answer here was nothing, and it took four sprints to ask.
+
+## Amendment, 2026-09-22 (#1319): the identity that materializes is the APP's
+
+This ADR settled which corpus is authoritative. It did not say what makes two records different
+records, and the pipeline's answer turns out not to be the app's.
+
+**The catalogue's identity is per SOURCE PATH.** A `local` id comes from the CSV `asset_id`
+(`sanitize_and_assemble.py`), a balance id from the pack member path (`studio_balance.py`). Two
+different pack members whose bytes are identical therefore mint two records, honestly, and the
+pipeline has no reason to notice.
+
+**The app's identity is `(owner_user_ref, file_hash)` over the PRODUCED bytes**, enforced by
+`idx_assets_owner_hash_unique` and not relaxable by any `DedupBehavior` value (ADR 0011). So the
+second of those two records never materializes: `SeedInsertAsset` ends in a bare
+`ON CONFLICT DO NOTHING`, the seeder counts a `deduped` and continues, the id never enters the
+runner's map, its field values are never written, and `postSubjectFor` cannot resolve it. A post
+naming it ships with one member fewer, silently.
+
+1. **The assembly-time uniqueness invariant is `(owner, produced_byte_sha256)`.** A catalogue that
+   holds two records under one such key does not hold two assets; it holds one asset named twice,
+   and it cannot be seeded as written.
+2. **`(owner_username, metadata.source_archive.sha256, metadata.render.px)` is a PARTIAL proxy for
+   it.** It needs neither pack nor pool, so it runs in the repository and on a CI runner that has
+   neither, and it is what found the one live collision. It is necessary and not sufficient: two
+   records can still produce identical bytes from different inputs without it saying a word. It is
+   documented as partial at every site that uses it, and the sufficient check is the publish
+   guard, which hashes the produced files under the source roots (ADR 0097's 2026-09-22
+   amendment).
+3. **Cross-owner identical bytes are legal and are not a collision.** Identity is per owner, and
+   the corpus keeps such a group on purpose as the content-addressed dedup fixture: two asset rows
+   over one storage object.
+4. **A membership-derived post id moves through the existing chained migration document.** When a
+   retirement changes a post's membership and that post's kind derives its id from membership, the
+   move is recorded as a `new_post_id` in the collapse document AND carried by
+   `seed/upgrades/post-id-migration.<stem>.json`, which accumulates. `asset_group` derives its id
+   from the source `group_id` and not from membership, so the one substitution this corpus needed
+   moved no post id at all, and the three migration documents are unchanged at 175, 336 and 478
+   moves.
+
+The ruling above stands: the committed corpus is the source of truth, and it is grown by upgrade
+documents. A retirement is one more such document, and the historical documents it contradicts
+(`balance-*`, `manifest-reconcile.*`) are NOT rewritten: they are the record of what each pass
+emitted, and editing them to make a check pass would turn evidence into bookkeeping. The passes
+that read them became retirement-aware instead, each asserting that every id it exempts is named
+by a committed document.

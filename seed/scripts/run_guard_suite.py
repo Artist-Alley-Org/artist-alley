@@ -46,6 +46,7 @@ SCRIPTS = Path(__file__).resolve().parent
 # loaded, which means knowing the names up front.
 SEED_MODULES = [
     "apply_upgrade",
+    "asset_collapse",
     "audit_uncatalogued",
     "authored_plates",
     "kenney_hq",
@@ -65,12 +66,18 @@ TEST_MODULE = "test_dataset_upgrade"
 
 # Floor, not a target. The suite held 150 tests when this gate landed,
 # 170 after sprint 14c, 179 after #1301's refusal tests, 241 after
-# sprint 14e, 265 after sprint 22's seed guards (#1322, #1328) and 306
-# after sprint 23a's migration-aware guard and site verifier (#1319).
+# sprint 14e, 265 after sprint 22's seed guards (#1322, #1328), 306
+# after sprint 23a's migration-aware guard and site verifier (#1319),
+# and 403 after the asset-collapse retirement landed 97 more (#1319):
+# the two Layer-A validation layers, the state machine, the publish-time
+# source authentication, COLLAPSED_RECORD, the narrow retired-path
+# removal and the verifier's three retirement keys. The Go preservation
+# tests that pin the seeder's same-owner behaviour are counted by
+# `scripts/test.sh`, not here.
 # Raise it when a batch of tests lands; never lower it to
 # make a red run go green — a dropped test is the thing this number
 # exists to catch.
-MIN_TESTS = 306
+MIN_TESTS = 403
 
 
 def _summary(line: str) -> None:

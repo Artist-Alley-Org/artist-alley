@@ -179,14 +179,25 @@ HTTP round-trips and the separate timestamp-backfill pass):
    collection membership + typed field values. A byte-identical asset
    the same owner already holds is collapsed by the
    `(owner_user_ref, file_hash)` unique index — the same refusal the
-   app gives a duplicate re-upload — so site_a's 1,947 manifest rows
-   yield **1,946** assets (see #339).
+   app gives a duplicate re-upload.
+
+   Measured 2026-09-22 on the committed corpus: `studio-a.assets.json`
+   holds **2,006** rows, all ids distinct, and carries **no** same-owner
+   produced-byte duplicate, so it yields **2,006** assets. It held one
+   such duplicate until #1319 retired it by document. The live
+   pre-republish `site_a/MANIFEST.json` is still the earlier build at
+   **2,005** rows; the profile is the source of truth (ADR 0098) and
+   those two converge at the next publish.
 8. **applyPosts** — post row + members (asset_ids) + tags + collection
    linkage. A post whose referenced assets were all dropped (dedup or
-   `--limit-per-extension`) is skipped; site_a lands **847** posts from
-   859 `posts.json` entries — 12 of those entries repeat an id already
-   seen (8 distinct ids, one of them five times), and a repeat inserts
-   once and is counted once.
+   `--limit-per-extension`) is skipped.
+
+   Measured 2026-09-22 on the committed corpus: `studio-a.posts.json`
+   holds **863** posts, all ids distinct (the duplicate-id rows #1275
+   describes are collapsed by `apply_upgrade.py`'s `dedupe_posts` pass
+   before the profile is written), and **0** of them lose every member,
+   so all 863 land. The live pre-republish `site_a/posts.json` is the
+   earlier build at 861.
 9. **applyComments** — forge a reviewer comment for each asset with
    non-empty `review_notes`, threaded onto the first post containing
    that asset. Deterministic comment UUID → idempotent.
@@ -255,12 +266,24 @@ the before-boot path is faster end-to-end.
 
 - **Don't drop Layer B from site_b.** That's the local dev set; it
   keeps the IP/personal content. Only site_a is Layer A only.
-- **Don't hand-dedupe the catalogue by content hash.** site_a + site_b
-  deliberately carry byte-identical files for CAS dedup testing.
-  `aa seed` inserts every catalogue asset and lets the storage layer +
-  the `(owner_user_ref, file_hash)` unique index collapse same-owner
-  duplicates exactly as a real re-upload would — that's the behaviour
-  under test, not something to pre-empt.
+- **Don't hand-dedupe CROSS-OWNER identical bytes.** site_a + site_b
+  deliberately carry byte-identical files owned by DIFFERENT users for
+  CAS dedup testing: two asset rows over one storage object, which is
+  the storage layer doing its job. That is the behaviour under test and
+  it must not be pre-empted.
+- **A SAME-OWNER produced-byte duplicate is a catalogue defect, and it
+  is retired by document.** It is the opposite case, and #1319 is what
+  separated them. Identity is `(owner_user_ref, file_hash)` and no
+  `DedupBehavior` value relaxes it (ADR 0011), so the second record can
+  never exist: no id, no declaration, no size, no field values, and the
+  post naming it silently ships with one member fewer. `aa seed` counts
+  it `deduped` and carries on; the verifier fails it and names the
+  survivor. The corpus retires the loser onto that survivor with
+  `seed/upgrades/asset-collapse.<stem>.json`, which enumerates every
+  value the retirement costs and whose produced bytes are re-derived
+  from the source roots at publish (`seed/scripts/asset_collapse.py`,
+  ADR 0097). Do not fix one by editing a profile or a historical
+  upgrade document by hand: the next assembly undoes it.
 - **Don't follow the `external_id` field.** It's the original CSV-row
   ID (`AA-XXXX`) — preserved as metadata; the primary key is the `id`
   UUID.
