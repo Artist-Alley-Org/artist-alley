@@ -52,13 +52,29 @@ func ValidDedupScope(s DedupScope) bool {
 // DedupBehavior controls what the upload handler does when the
 // scope query finds an existing asset.
 //
-//   - DedupBehaviorWarn (default): create the new asset row but
-//     also return a `duplicate_warning` field pointing at the
-//     existing asset id; UI surfaces a dialog.
+//   - DedupBehaviorWarn (default): the pre-check hit returns the
+//     EXISTING asset with a duplicate warning pointing at it; the UI
+//     surfaces a dialog. No second row is created.
 //   - DedupBehaviorBlock: refuse the upload with 409; existing
 //     asset id in the response so UI can navigate.
-//   - DedupBehaviorAllow: dedup lookup is skipped entirely;
-//     upload always succeeds without warnings.
+//   - DedupBehaviorAllow: the dedup lookup is skipped entirely.
+//
+// ⛔ NO VALUE HERE RELAXES IDENTITY, AND THE OLD DOC SAID IT DID. It
+// claimed warn would "create the new asset row" and that allow made the
+// "upload always succeed". Neither is true, and the difference matters
+// to anything that reasons about the catalogue: a second row for the
+// same (owner, bytes) CANNOT EXIST. `idx_assets_owner_hash_unique` is a
+// partial unique index on (owner_user_ref, file_hash) over live rows, so
+// with the pre-check skipped the INSERT simply raises 23505 and
+// handler.go's race-loser branch re-fetches and returns the EXISTING
+// asset through dedupResponse, exactly as the pre-check would have.
+// What these values choose is the RESPONSE SHAPE, never whether a second
+// row appears.
+//
+// This is also why a seed catalogue may not hold two records describing
+// the same produced bytes owned by one user: the second can never
+// materialize, and a post naming it silently loses a member. See
+// seed/scripts/asset_collapse.py and ADR 0011.
 type DedupBehavior string
 
 const (

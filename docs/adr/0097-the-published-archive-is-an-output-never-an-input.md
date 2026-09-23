@@ -269,3 +269,62 @@ Decisions 1 to 5 and the two measurement amendments above are untouched, and `MA
 comparisons produce the verdicts they produced before. Witness, with the document consumed:
 site_a reports 175 migrations and 0 losses, site_b 336 and 0, with 0 identity-key changes on
 either, and the same `MANIFEST.json` verdicts as before (0 losses; 42 and 440 reported changes).
+
+## Amendment, 2026-09-22 (#1319): a source-authenticated retirement is not a deletion either
+
+Two catalogue records can describe the same produced bytes owned by the same user. The app cannot
+hold both: asset identity is `(owner_user_ref, file_hash)`, enforced by
+`idx_assets_owner_hash_unique`, and no `DedupBehavior` value relaxes it (ADR 0011). One of the two
+therefore never materializes at all: no id, no declaration, no size, no field values, and the post
+naming it silently ships with one member fewer. On the committed site_a corpus there was exactly
+one such pair, both owned by `priya.sharma`, both rendered at 512 px from the same 918-byte Kenney
+vector, both 9,379 bytes.
+
+Removing the loser is a deletion at the destination, so Decision 1 refuses it and
+`--allow-regression` (Decision 4) is the only way through. That is the wrong tool for the same
+reason it was the wrong tool for a migrated id: it waves through every loss rather than the one
+thing that is not one.
+
+**A retirement that is authenticated against the SOURCE is not a deletion.**
+
+1. A destination record a validated collapse document retires onto a survivor the source holds is
+   `COLLAPSED_RECORD`: not a loss, not an addition, not a change, not a migration, on its own line
+   of the report.
+2. The evidence is the committed document, `seed/upgrades/asset-collapse.<stem>.json`, located
+   from the assets profile alone and naming it in its own `profile` field. It records one retired
+   id, one survivor, the owner, the retired file path, the source hash and render size, the
+   PRODUCED hash and the toolchain that produced it, the retired record verbatim, and every value
+   the retirement costs, enumerated rather than inferred.
+3. **Evidence is the produced artifact and never the destination.** The destination is an output,
+   so a reading taken from it can describe what is currently staged and can authorise nothing. At
+   publish, both records' produced files are located under the root their own `source_root` names,
+   hashed, and required to be identical TO EACH OTHER within one build and equal to the recorded
+   `materialized_sha256`. A png is byte-reproducible only within one sharp build, so the equality
+   between the two files is the load-bearing claim and the recorded absolute value is re-derived:
+   a mismatch refuses and names re-measurement. An IDAT-only comparison may appear in a refusal as
+   a diagnostic and is never an acceptance path.
+4. **Three hashes, never conflated.** `source_sha256` is the archive member before any render;
+   `materialized_sha256` is the file the pipeline ships; `assets.file_hash` is the uploaded
+   produced file and the app's live key. `metadata.source_archive.sha256` is not the app, content
+   or storage hash, and a staged png is never compared against an SVG member hash. The invariant
+   that matters is `(owner, produced_byte_sha256)`;
+   `(owner, source_archive.sha256, render.px)` is a cheap repository-only PROXY of it, necessary
+   but not sufficient, and is never described as complete.
+5. **Two layers, proving different things, named apart.** Layer A is repository-local and runs
+   where there is no pack, no pool and no dataset source: it validates the document structurally
+   and checks that each object is in one of exactly two states, Pending or Applied. A third state
+   is a hard failure, never a normalisation, and it fails before any deletion, so a stale document
+   can never remove data that changed underneath it. Layer B is the publish-time source
+   authentication in §3. **Layer A never authorises a publish**, and every report line says which
+   of the two it is speaking for.
+6. This is strictly narrower than Decision 4. `--allow-regression` accepts any loss at an
+   operator's word; a `COLLAPSED_RECORD` names one record, names its survivor, enumerates what is
+   lost, and re-derives the bytes. An unauthenticated retirement is `MISSING_RECORD` and refuses,
+   which is what it has always been. Absence of a document is not permission: every
+   destination-only id stays a loss.
+7. Removing the retired file from the destination is separate and narrow: only for an entry Layer
+   B authenticated, only when the path belongs to no current record, and only when the bytes at
+   that path hash to `materialized_sha256`. It is not `--prune`, shares none of its machinery, and
+   a hash mismatch refuses rather than deletes.
+
+Decisions 1 to 5 and every amendment above are untouched.

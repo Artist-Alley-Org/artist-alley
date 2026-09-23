@@ -132,6 +132,35 @@ refuses, none is overridable, and the message names the document and
 the ids. A document that is absent is not an error: it is simply no
 evidence, and the plain comparison runs.
 
+A SOURCE-AUTHENTICATED RETIREMENT IS NOT A DELETED RECORD (#1319)
+-----------------------------------------------------------------
+Two catalogue records can describe the same produced bytes owned by one
+user. The app's identity is `(owner_user_ref, file_hash)` and no
+`DedupBehavior` value relaxes it, so one of the two can never exist: it
+gets no row, no field values, and the post naming it silently loses a
+member. `asset_collapse.py` retires the loser by document, naming one
+survivor and enumerating every value the retirement costs.
+
+    COLLAPSED_RECORD  a destination id a validated collapse document
+                      retires onto a survivor the source holds. NOT a
+                      loss. Its own report line, never folded into
+                      losses, additions, changes or MIGRATED_RECORD.
+
+⛔ IT IS PRODUCED ONLY UNDER LAYER B, AND THIS MODULE CANNOT PRODUCE IT
+ALONE. `compare` accepts a mapping of retirements the CALLER has already
+source-authenticated: `populate_archive.py` locates both produced files
+under the source root the record names, hashes them, and requires them
+equal to each other within one build and equal to the document's
+`materialized_sha256`. The comparison here adds the last check, which is
+the only one that needs the destination: the record standing at the
+retired id must equal the document's verbatim `retired_record` on every
+key, nested included. A stale or altered predecessor is MISSING_RECORD,
+because a document that describes a record the destination no longer
+holds is not evidence about the record it does hold.
+
+A document that is absent is not an error and not permission: it is
+simply no evidence, and every destination-only id stays MISSING_RECORD.
+
 DUPLICATE IDS
 -------------
 A source holding two records under one id is refused before any
@@ -161,6 +190,7 @@ EMPTIED_VALUE = "EMPTIED_VALUE"
 CHANGED_VALUE = "CHANGED_VALUE"
 CORRUPTED_MEASUREMENT = "CORRUPTED_MEASUREMENT"
 MIGRATED_RECORD = "MIGRATED_RECORD"
+COLLAPSED_RECORD = "COLLAPSED_RECORD"
 
 # The committed reconciliation documents live beside the profiles:
 #   <root>/profiles/<stem>.posts.json  ->  <root>/upgrades/post-id-migration.<stem>.json
@@ -260,6 +290,12 @@ class Comparison:
     # or `changes`; `migration_source` names the document for the report.
     migrated: list[tuple[str, str]] = field(default_factory=list)
     migration_source: str = ""
+    # (retired_id, survivor_id) for every destination record a
+    # source-authenticated collapse document accounts for. Never a loss,
+    # never folded into `added`, `changes` or `migrated`;
+    # `collapse_source` names the document for the report.
+    collapsed: list[tuple[str, str]] = field(default_factory=list)
+    collapse_source: str = ""
 
     @property
     def ok(self) -> bool:
@@ -268,6 +304,10 @@ class Comparison:
     @property
     def records_migrated(self) -> int:
         return len(self.migrated)
+
+    @property
+    def records_collapsed(self) -> int:
+        return len(self.collapsed)
 
     @property
     def records_lost(self) -> int:
@@ -340,9 +380,23 @@ def _compare_record(rid: str, src: dict, dst: dict, out: Comparison,
             _record_change(rid, key, dval, src, dst, out)
 
 
+def _same_record(want: Mapping[str, Any], got: Mapping[str, Any]) -> bool:
+    """Whole-record equality, nested included, in both directions.
+
+    Deliberately not `_compare_record`: that one judges a source against
+    a destination and forgives a CHANGED_VALUE, which is exactly the
+    tolerance a retirement must not have. Here the question is whether
+    the destination holds the very record the document enumerated the
+    losses of, and anything short of identical means it does not.
+    """
+    return dict(want) == dict(got)
+
+
 def compare(source: Iterable[dict], dest: Iterable[dict] | None,
             label: str, id_key: str = "id",
-            migration: "Migration | Mapping[str, str] | None" = None) -> Comparison:
+            migration: "Migration | Mapping[str, str] | None" = None,
+            collapses: "Mapping[str, Mapping[str, Any]] | None" = None,
+            collapse_source: str = "") -> Comparison:
     """Compare what publishing `source` would do to `dest`.
 
     `dest` is None when the destination file does not exist yet — a
@@ -355,6 +409,19 @@ def compare(source: Iterable[dict], dest: Iterable[dict] | None,
     rather than comparing: a document that names a new id the source
     does not hold is not evidence of anything. Absent, the comparison
     is the plain one and every destination-only id is MISSING_RECORD.
+
+    `collapses` maps a retired id to `{"survivor_id", "retired_record"}`
+    for every retirement the CALLER has already source-authenticated
+    (Layer B: both produced files located under the root the record
+    names, hashed, equal to each other in one build and equal to the
+    document's `materialized_sha256`). This function adds the one check
+    that needs the destination, and it is strict: the destination record
+    must equal `retired_record` on every key, nested included. A stale or
+    altered predecessor falls through to MISSING_RECORD.
+
+    ⛔ Passing a mapping here is an ASSERTION that the bytes were checked.
+    Nothing in this module can make that check, so nothing in this module
+    may manufacture the mapping.
     """
     src_list = list(source)
     out = Comparison(label=label, n_source=len(src_list))
@@ -388,9 +455,24 @@ def compare(source: Iterable[dict], dest: Iterable[dict] | None,
     # because the move is what the document records. Every other key
     # of that record is judged exactly as on an unmoved one.
     across_move = frozenset({id_key})
+    retirements = dict(collapses or {})
+    if retirements:
+        out.collapse_source = collapse_source or "collapse document"
     for rid, drec in dst_by_id.items():
         srec = src_by_id.get(rid)
         if srec is None:
+            retired = retirements.get(rid)
+            if retired is not None:
+                # ⛔ The destination's record must be the one the document
+                # authorises, key for key. A document that describes a
+                # predecessor the destination no longer holds says nothing
+                # about the record it DOES hold, and retiring on that
+                # basis would delete data nobody enumerated.
+                if _same_record(retired.get("retired_record") or {}, drec):
+                    out.collapsed.append((str(rid), str(retired.get("survivor_id"))))
+                    continue
+                out.losses.append(Loss(MISSING_RECORD, str(rid)))
+                continue
             new_id = moves.get(rid)
             if new_id is None:
                 out.losses.append(Loss(MISSING_RECORD, str(rid)))
@@ -596,6 +678,20 @@ def format_report(cmp: Comparison, sample: int = 12) -> str:
         # the same record under the name the pipeline gave it.
         lines.append(f"    migrated: {len(cmp.migrated)} record(s) carried to a new "
                      f"id per {cmp.migration_source or 'the migration document'}")
+    if cmp.collapsed:
+        # ⛔ Its own line, never folded into lose/add/change/migrate. A
+        # retirement is the only case where a destination record
+        # legitimately has no successor under its own id, and it is
+        # SOURCE-AUTHENTICATED: the produced bytes were re-derived from
+        # the source roots for this run. Reporting it as anything else
+        # would either read as a loss the operator must override, or
+        # disappear into a number nobody inspects.
+        lines.append(f"    collapsed: {len(cmp.collapsed)} record(s) retired onto a "
+                     f"named survivor per {cmp.collapse_source or 'the collapse document'}")
+        for rid, sid in cmp.collapsed[:sample]:
+            lines.append(f"       {COLLAPSED_RECORD} {rid} -> {sid}")
+        if len(cmp.collapsed) > sample:
+            lines.append(f"       … and {len(cmp.collapsed) - sample} more")
     if cmp.added:
         lines.append(f"    would add: {len(cmp.added)} record(s)")
     if cmp.changes:

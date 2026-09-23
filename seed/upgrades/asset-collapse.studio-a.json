@@ -1,0 +1,234 @@
+{
+ "_why": [
+  "ONE CATALOGUE RECORD THAT CAN NEVER MATERIALIZE, RETIRED ONTO ITS SURVIVOR (#1319).",
+  "priya.sharma owns two records describing the same 9,379 produced bytes: the Blue and the Grey copy of one Kenney UI vector, which are the same 918 source bytes, rendered at the same 512 px. App identity is (owner_user_ref, file_hash) and no DedupBehavior value relaxes it, so the app can hold only one of them. The seeder's ON CONFLICT DO NOTHING drops the loser in silence, its field values are never written, and the post naming it loses a member.",
+  "THREE HASHES, NEVER CONFLATED. evidence.source_sha256 is the pack member BEFORE any render. evidence.materialized_sha256 is the PRODUCED png the pipeline ships, which is the value the app would hash. metadata.source_archive.sha256 is neither the app nor the storage hash and is never compared against a staged png.",
+  "The recorded produced hash is re-derived at publish, not trusted: a png is byte-reproducible only within one sharp build. The load-bearing claim is that the two produced files are EQUAL TO EACH OTHER in one build; a changed absolute value refuses and names re-measurement.",
+  "Losses are ENUMERATED here, never inferred. Both layers recompute the list from retired_record against the survivor and refuse on any disagreement, so the data cannot move under the document.",
+  "Written for #1319 sprint 23b. It authorises exactly one retirement on studio-a. site_b's observed same-owner byte groups are OBSERVATIONS on the published archive only and have no authoritative source evidence, so no site_b document exists."
+ ],
+ "profile": "studio-a.assets.json",
+ "pool_of_record": {
+  "pack": "Kenney Game Assets All-in-1",
+  "pack_version": "3.6.0",
+  "render_px": 512,
+  "rasteriser": "seed/scripts/rasterize_svg.mjs",
+  "sharp": "0.35.4",
+  "node": "v22.23.1",
+  "libvips": "8.18.6",
+  "_why": "The LOCKED toolchain, installed by a clean `npm ci` in seed/scripts from the committed package-lock.json, and the one the produced hash below was measured under."
+ },
+ "collapse": [
+  {
+   "_why": "Blue survives because it is the richer record: it carries field_values.copyright and field_values.production_notes that Grey never had, and it is `active`/`final` where Grey is `draft`/`in_review`.",
+   "retired_id": "5b26546f-9647-5175-24e3-a3a55532f310",
+   "survivor_id": "05e1977d-cd90-e2ab-507a-4bb7322926c9",
+   "owner_username": "priya.sharma",
+   "source_root": "hq",
+   "retired_file_path": "images/kenney-hq/ui-assets-ui-pack-slide-horizontal-grey-section-wide-10574eb5-512.png",
+   "evidence": {
+    "source_sha256": "67db3b47d6ca5b86cfdcbb5ae9d3346a0780bd9ecbb8290fbf6b50852bec10fb",
+    "member": "UI assets/UI Pack/Vector/Grey/slide_horizontal_grey_section_wide.svg",
+    "render_px": 512,
+    "materialized_sha256": "cf451b67296f083e391cf1f96a637050d3aae806b5e44c294129858085a13339",
+    "materialized_tool": "seed/scripts/rasterize_svg.mjs (sharp 0.35.4, node v22.23.1, libvips 8.18.6)",
+    "_why": "The survivor renders from UI assets/UI Pack/Vector/Blue/slide_horizontal_grey_section_wide.svg, which is the same 918 source bytes. Both produce the png hashed here, measured in one build."
+   },
+   "retired_record": {
+    "id": "5b26546f-9647-5175-24e3-a3a55532f310",
+    "asset_type": "image",
+    "title": "Slide horizontal grey section wide (vector)",
+    "description": "Raster asset for Project Echo, ui library. Source: Kenney 'UI Pack' (CC0).",
+    "file_path": "images/kenney-hq/ui-assets-ui-pack-slide-horizontal-grey-section-wide-10574eb5-512.png",
+    "source_root": "hq",
+    "source_path": "ui-assets-ui-pack-slide-horizontal-grey-section-wide-10574eb5-512.png",
+    "file_extension": "png",
+    "file_size_bytes": 9379,
+    "sensitivity_tier": "team",
+    "archive_state": "draft",
+    "owner_username": "priya.sharma",
+    "collection_name": "Project Echo",
+    "team_name": "UI",
+    "brand_workspace": "Echo",
+    "tags": [
+     "ui",
+     "widget",
+     "vector"
+    ],
+    "workflow_state": "in_review",
+    "metadata": {
+     "filename": "ui-assets-ui-pack-slide-horizontal-grey-section-wide-10574eb5-512.png",
+     "kind": "vector",
+     "license": "CC0 1.0",
+     "usage_rights": "All Use",
+     "acquisition_source": "Kenney.nl",
+     "attribution": "Kenney (kenney.nl)",
+     "group_id": "grp-bal-5b26546f",
+     "fetched_from": "https://kenney.nl/assets/ui-pack",
+     "source_archive": {
+      "url": "https://kenney.nl/media/pages/assets/ui-pack/f651646eab-1718203990/kenney_ui-pack.zip",
+      "member": "Vector/Grey/slide_horizontal_grey_section_wide.svg",
+      "sha256": "67db3b47d6ca5b86cfdcbb5ae9d3346a0780bd9ecbb8290fbf6b50852bec10fb"
+     },
+     "render": {
+      "px": 512,
+      "tool": "seed/scripts/rasterize_svg.mjs"
+     }
+    },
+    "field_values": {
+     "pipeline_stage": "Locked",
+     "version": "v1",
+     "revision_count": 4,
+     "rating": 5,
+     "engine_compatibility": "Unreal 5",
+     "target_platforms": [
+      "Mobile"
+     ],
+     "naming_compliant": true,
+     "texture_resolution": "512x512",
+     "color_space": "sRGB",
+     "production_area": "ui-icons",
+     "country": "ke",
+     "keywords": [
+      "illustration",
+      "photograph"
+     ]
+    },
+    "external_id": "P4-57648",
+    "review_notes": null,
+    "reviewer_username": "akira.tanaka",
+    "created_at": "2025-01-09T14:04:00Z",
+    "updated_at": "2025-01-09T14:04:00Z",
+    "last_reviewed_at": null,
+    "license": "CC0 1.0",
+    "attribution": "Kenney (kenney.nl)",
+    "layer": "A",
+    "studio": "a",
+    "balance_source": "UI assets/UI Pack/Vector/Grey/slide_horizontal_grey_section_wide.svg",
+    "mature": false
+   },
+   "acknowledged_losses": [
+    {
+     "path": "archive_state",
+     "retired_value": "draft",
+     "survivor_value": "active"
+    },
+    {
+     "path": "balance_source",
+     "retired_value": "UI assets/UI Pack/Vector/Grey/slide_horizontal_grey_section_wide.svg",
+     "survivor_value": "UI assets/UI Pack/Vector/Blue/slide_horizontal_grey_section_wide.svg"
+    },
+    {
+     "path": "created_at",
+     "retired_value": "2025-01-09T14:04:00Z",
+     "survivor_value": "2025-04-11T08:36:00Z"
+    },
+    {
+     "path": "external_id",
+     "retired_value": "P4-57648",
+     "survivor_value": "P4-20018"
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "ke",
+     "survivor_value": "ng"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Unreal 5",
+     "survivor_value": "All"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "illustration",
+      "photograph"
+     ],
+     "survivor_value": [
+      "event"
+     ]
+    },
+    {
+     "path": "field_values.naming_compliant",
+     "retired_value": true,
+     "survivor_value": false
+    },
+    {
+     "path": "field_values.pipeline_stage",
+     "retired_value": "Locked",
+     "survivor_value": "Greybox"
+    },
+    {
+     "path": "field_values.rating",
+     "retired_value": 5,
+     "survivor_value": 4
+    },
+    {
+     "path": "field_values.revision_count",
+     "retired_value": 4,
+     "survivor_value": 1
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/kenney-hq/ui-assets-ui-pack-slide-horizontal-grey-section-wide-10574eb5-512.png",
+     "survivor_value": "images/kenney-hq/ui-assets-ui-pack-slide-horizontal-grey-section-wide-0266581f-512.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "5b26546f-9647-5175-24e3-a3a55532f310",
+     "survivor_value": "05e1977d-cd90-e2ab-507a-4bb7322926c9"
+    },
+    {
+     "path": "metadata.filename",
+     "retired_value": "ui-assets-ui-pack-slide-horizontal-grey-section-wide-10574eb5-512.png",
+     "survivor_value": "ui-assets-ui-pack-slide-horizontal-grey-section-wide-0266581f-512.png"
+    },
+    {
+     "path": "metadata.group_id",
+     "retired_value": "grp-bal-5b26546f",
+     "survivor_value": "grp-bal-05e1977d"
+    },
+    {
+     "path": "metadata.source_archive.member",
+     "retired_value": "Vector/Grey/slide_horizontal_grey_section_wide.svg",
+     "survivor_value": "Vector/Blue/slide_horizontal_grey_section_wide.svg"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "ui-assets-ui-pack-slide-horizontal-grey-section-wide-10574eb5-512.png",
+     "survivor_value": "ui-assets-ui-pack-slide-horizontal-grey-section-wide-0266581f-512.png"
+    },
+    {
+     "path": "updated_at",
+     "retired_value": "2025-01-09T14:04:00Z",
+     "survivor_value": "2025-04-11T08:36:00Z"
+    },
+    {
+     "path": "workflow_state",
+     "retired_value": "in_review",
+     "survivor_value": "final"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "a5b03a15-dd4a-445c-0ed4-6d27438806fa",
+     "old_members": [
+      "4bb8fbc3-a67d-dcfa-b8b7-a1ff2d39ddc9",
+      "4c61df09-006a-0134-df58-3b4683be3e1e",
+      "5b26546f-9647-5175-24e3-a3a55532f310"
+     ],
+     "new_members": [
+      "4bb8fbc3-a67d-dcfa-b8b7-a1ff2d39ddc9",
+      "4c61df09-006a-0134-df58-3b4683be3e1e",
+      "05e1977d-cd90-e2ab-507a-4bb7322926c9"
+     ],
+     "curation_pipeline_members": {
+      "old": "61dabf92a842fce44622018e9b13093a192c05ce",
+      "new": "6e151587e2aa685db81fc375a503adf39f6bd232"
+     },
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded. post-curation.site_a.json's digest for this post moves with the membership."
+    }
+   ]
+  }
+ ]
+}
