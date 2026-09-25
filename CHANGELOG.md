@@ -488,6 +488,32 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **The sample library stops asking the application to store 22 records it cannot store, and 25 posts
+  get their missing members back.** The second seeded site's catalogue held 13 groups in which one
+  owner owned the same bytes more than once. The application keeps one row per owner per set of
+  bytes, so 22 of those records could never become rows: each arrived with no id, no declaration, no
+  size and no field values, and the 25 posts that listed them shipped 37 members short without
+  saying so. Those 22 are now retired onto named survivors through a collapse document that records,
+  for each one, the survivor, the retired record verbatim, every value the retirement gives up
+  including the empty and false ones, and the membership substitution it causes. The evidence is
+  labelled as the weaker kind it is: these files have no upstream copy left to rebuild from, so the
+  retired and surviving hashes are equal by definition, the document invents no member, no render
+  size and no source pool, and authority is a frozen copy taken before anything moved and re-hashed
+  against the record made when it was taken, never the archive agreeing with itself. The survivor is
+  the member the seeder reaches first, decided by a written rule rather than by whichever record
+  happened to materialize. The corrected catalogue holds 1,284 records instead of 1,306, its 767
+  posts stay 767 with none emptied, 132 affected memberships become 108, and the 12 posts whose id
+  is derived from what they contain have their new ids composed onto the existing migration chain
+  rather than replacing it, so the three migration documents keep their 175, 336 and 478 rows. The
+  same correction is applied to the other profile holding those posts, because a retired record may
+  not appear there either. One committed test that had been counting retirements for profiles with
+  no balance document to compare against is corrected rather than accommodated. The seed guard
+  suite's floor moved from 547 to 559.
+  ⚠️ This prerequisite changed the repository only. `metadata.csv` was not touched: the read-only
+  proof against the frozen copy shows the correction implies 1,206 data rows becoming 1,184 when the
+  owner-run operation runs, with `groups.csv` byte-identical. The live archive was read and never
+  written, nothing was published to Kaggle, and v0.11.0 is not tagged (#1319, PR #1455).
+
 - **The published archive is now the maintained dataset, and the publish path proves which tree it
   is reading.** The upstream source dataset the sample library was assembled from is retired, so
   for the records that have no other copy the archive itself is the authority, while the records
