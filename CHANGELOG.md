@@ -488,6 +488,27 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **The published archive is now the maintained dataset, and the publish path proves which tree it
+  is reading.** The upstream source dataset the sample library was assembled from is retired, so
+  for the records that have no other copy the archive itself is the authority, while the records
+  that can still be rebuilt from the Kenney pack keep their authority there and their known stale
+  sizes stay ordinary edits rather than corruption. Preserving is now something an operator asks
+  for in as many words: without it the publish still refuses to run without a source, and with it
+  the run says out loud that it is treating those records as preserved. A publish involves three
+  separate directories, the live site, the staging copy being written and a frozen snapshot taken
+  before anything moved, and the tooling now proves they really are three directories rather than
+  one pointed at twice, so the frozen copy can never be the live site or the tree being written.
+  The per-site `metadata.csv` can change only in the one way that was worked out in advance and
+  written down before any file was touched, and that plan is tied to the retirement document the
+  same run authenticates, so a plan that authorises even one row the document does not is refused
+  before anything is written; `groups.csv` may not change at all. A retirement now says which kind
+  of evidence stands behind it, a rebuildable file or a preserved one, and a preserved one is
+  believed only after the frozen snapshot is re-hashed against the record made when it was taken.
+  The two authored plates stay something a person builds and installs on purpose; the publisher
+  will not conjure them. The seed guard suite's floor moved from 403 to 547 across this work.
+  ⚠️ This prerequisite changed the repository only: it did not update the live archive, did not
+  publish anything to Kaggle, and did not tag or release v0.11.0 (#1319, PR #1453).
+
 - **The sample library no longer asks the application to store something it cannot store, and a
   retirement has to prove itself.** One catalogue record described the same bytes under the same
   owner as another record, which the application refuses by design, so that entry could never
