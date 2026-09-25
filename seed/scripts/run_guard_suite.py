@@ -56,6 +56,7 @@ SEED_MODULES = [
     "migrate_post_ids",
     "pexels_gameplay",
     "populate_archive",
+    "preserved_archive",
     "resolve_media_urls",
     "sanitize_and_assemble",
     "studio_balance",
@@ -71,13 +72,23 @@ TEST_MODULE = "test_dataset_upgrade"
 # and 403 after the asset-collapse retirement landed 97 more (#1319):
 # the two Layer-A validation layers, the state machine, the publish-time
 # source authentication, COLLAPSED_RECORD, the narrow retired-path
-# removal and the verifier's three retirement keys. The Go preservation
+# removal and the verifier's three retirement keys, and 513 after the
+# archive became the maintained dataset for preserved roots (#1319) landed
+# 110 more: the alias refusal, the metadata.csv expected-transform
+# contract, groups.csv preservation, the discriminated collapse evidence
+# (produced_source against preserved_archive), explicit preserved-root
+# mode, the frozen-snapshot Layer B with its manifest recomputation, and
+# the authored-plate install check, and 547 after the two corrections on
+# PR #1453 landed 34 more: the THREE-TREE path boundary (the live site is
+# neither the snapshot nor the staging tree, and evidence and scratch sit
+# outside all three) and the binding that ties a metadata.csv transform's
+# authority to the CURRENT collapse document. The Go preservation
 # tests that pin the seeder's same-owner behaviour are counted by
 # `scripts/test.sh`, not here.
 # Raise it when a batch of tests lands; never lower it to
 # make a red run go green — a dropped test is the thing this number
 # exists to catch.
-MIN_TESTS = 403
+MIN_TESTS = 547
 
 
 def _summary(line: str) -> None:

@@ -50,12 +50,19 @@ THREE CLASSES OF ASSERTION, KEPT DISTINCT IN THE OUTPUT
                     wrong after it. Without `--expect` the class reports
                     "not supplied".
 
-  preservation      Before/after: every `*.bak`, `dataset-metadata.json`
-                    and `kenney-hq-replacements.json` present at the site
-                    is byte-equal to an explicit baseline (`--baseline`,
-                    recorded before staging, or `--reference`, a
-                    directory holding the pre-publish copies), and the
-                    site's ATTRIBUTIONS.md equals the repository copy.
+  preservation      Before/after: every `*.bak`, `dataset-metadata.json`,
+                    `kenney-hq-replacements.json` and `groups.csv` present
+                    at the site is byte-equal to an explicit baseline
+                    (`--baseline`, recorded before staging, or
+                    `--reference`, a directory holding the pre-publish
+                    copies), and the site's ATTRIBUTIONS.md equals the
+                    repository copy. `metadata.csv` is preservation-owned
+                    too but is NOT exact-bytes, because a retirement
+                    legitimately removes its row: it is checked against the
+                    expected-transform document (`--csv-transform`, written
+                    before the publish by `preserved_archive.py`), which
+                    requires exactly the documented removals and every
+                    retained row byte-identical and in order.
                     Without a baseline the class reports "not compared".
                     It never reports "pass" for a comparison it did not
                     make: a green tick over an unmade check is the shape
@@ -76,13 +83,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import asset_collapse as ac  # noqa: E402
 import manifest_guard as mg  # noqa: E402
+import preserved_archive as pa  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO_ATTRIBUTIONS = SCRIPTS.parent / "ATTRIBUTIONS.md"
 
 # The files a publish must leave alone. `*.bak` is matched at any depth;
-# the two named files live at the site root.
-PRESERVED_NAMES = ("dataset-metadata.json", "kenney-hq-replacements.json")
+# the named files live at the site root.
+#
+# ⛔ `groups.csv` JOINED THIS SET (#1319). It needs no transformation: its
+# `asset_count` column is an ORIGINAL-DATASET fact that already disagrees
+# with the shipped subset. Measured on site_b, `grp-00219` states 8 and
+# ships 3, `grp-00215` states 8 and ships 2, and 262 of 1,047 rows disagree
+# in all. And no group loses its last shipped member to a retirement (0 of
+# 1,047 ship nothing). So the correct rule is the strictest one: the bytes
+# do not change. ⛔ DO NOT REINTERPRET OR REWRITE `asset_count`. It
+# describes the dataset the rows came from, not the cut this site ships,
+# and "correcting" it would overwrite a fact with a derivation.
+#
+# ⚠️ `metadata.csv` IS DELIBERATELY NOT HERE. A retirement legitimately
+# removes its row, so an exact-bytes rule would refuse the one change that
+# is correct. It is governed by the expected-transform document instead
+# (`preserved_archive.py`), which is narrower than a waiver in both
+# directions: exactly the documented rows leave and every other row
+# survives byte-identically, in order.
+PRESERVED_NAMES = ("dataset-metadata.json", "kenney-hq-replacements.json",
+                   pa.GROUPS_NAME)
 PRESERVED_GLOB = "*.bak"
 ATTRIBUTIONS_NAME = "ATTRIBUTIONS.md"
 
@@ -342,6 +368,7 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
            expectations: dict[str, Any] | None = None,
            baseline: dict[str, Any] | None = None,
            reference: Path | None = None,
+           csv_transform: Path | None = None,
            attributions: Path = REPO_ATTRIBUTIONS) -> Report:
     """Every verdict, in order; see the module docstring for the classes."""
     rep = Report()
@@ -396,15 +423,26 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
     # a verifier that reads only the site could never do it, and a green
     # tick here must not be mistaken for one.
     collapse: ac.CollapseDocument = ac.EMPTY
+    collapse_present: ac.CollapseDocument | None = None
+    collapse_raw: bytes | None = None
+    # ⛔ A DOCUMENT THAT EXISTS AND CANNOT BE VALIDATED IS NOT AN ABSENT ONE.
+    # Without this flag the binding verdict below would say "no collapse
+    # document exists", which is a different and much softer claim than "the
+    # document is unusable" and is exactly the reading this codebase refuses
+    # everywhere else.
+    collapse_unusable = False
     cdoc = collapse_path if collapse_path is not None else ac.collapse_document_path(profile_path)
     if cdoc is not None and cdoc.is_file():
         try:
+            collapse_raw = cdoc.read_bytes()
             collapse = ac.load_collapse_document(cdoc, profile_name=profile_path.name)
+            collapse_present = collapse
             rep.add(PROFILE_DERIVED, "collapse document", INFO,
                     f"{cdoc} ({len(collapse.entries)} documented retirement(s); "
                     f"structural only, produced bytes are authenticated at publish)")
         except ac.CollapseError as e:
             rep.add(PROFILE_DERIVED, "collapse document", FAIL, str(e))
+            collapse_unusable = True
     elif collapse_path is not None:
         rep.add(PROFILE_DERIVED, "collapse document", FAIL, f"{cdoc}: not a file")
     else:
@@ -469,6 +507,64 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
         rep.add(PRESERVATION, "preserved files", NOT_COMPARED,
                 f"{len(present)} preserved file(s) present; no --baseline or --reference")
 
+    # `metadata.csv` is preservation-owned but NOT exact-baseline: a
+    # retirement legitimately removes its row. The expected-transform
+    # document says which rows those are, and every other row must survive
+    # byte-identically and in order. ⛔ NOT COMPARED is reported as NOT
+    # COMPARED: a green tick over an unmade check is the shape of every
+    # silent failure this module exists for, and #1319 measured what that
+    # looks like: the regeneration wrote a HEADER-ONLY metadata.csv and
+    # nothing noticed, because nothing was looking.
+    site_csv = site / pa.CSV_NAME
+    if csv_transform is not None:
+        try:
+            doc = pa.load_csv_transform(csv_transform)
+            if not site_csv.is_file():
+                rep.add(PRESERVATION, f"{pa.CSV_NAME} is the documented transform",
+                        FAIL, f"absent at {site_csv}")
+            else:
+                refusals = pa.verify_csv_transform(doc, site_csv.read_bytes())
+                rep.check(PRESERVATION,
+                          f"{pa.CSV_NAME} is the documented transform",
+                          not refusals,
+                          (f"{doc['expected']['data_rows']} retained row(s), "
+                           f"{len(doc['removals'])} documented removal(s)")
+                          if not refusals else "; ".join(refusals[:3]))
+                # ⛔ AND THE VERIFIER CANNOT BLESS A TRANSFORM WHOSE AUTHORITY
+                # IS NOT THIS DOCUMENT'S. The removal recomputation needs the
+                # PRE-operation CSV and the site holds the post-operation one,
+                # so what is proved here is the identity half: the profile, the
+                # document digest, its entry count and its retirement set. A
+                # document that has moved since the transform was emitted fails
+                # here, which is what stops a stale transform being verified
+                # green after the fact.
+                bound = (["the collapse document for this profile exists but "
+                           "cannot be validated, so nothing authorises this "
+                           "transform. Unusable is not absent."]
+                         if collapse_unusable else pa.binding_refusals(
+                             doc, profile_name=profile_path.name,
+                             collapse_doc=collapse_present,
+                             collapse_raw=collapse_raw))
+                rep.check(PRESERVATION,
+                          f"{pa.CSV_NAME} transform is authorised by the "
+                          f"collapse document",
+                          not bound,
+                          "; ".join(bound[:3]) if bound else
+                          (f"{doc['profile']}, "
+                           + (f"document {doc[pa.COLLAPSE_BINDING_KEY]['sha256'][:12]}… "
+                              f"({doc[pa.COLLAPSE_BINDING_KEY]['entries']} entry(ies))"
+                              if doc.get(pa.COLLAPSE_BINDING_KEY)
+                              else "no collapse document, so no removal is authorised")))
+        except pa.PreservedError as e:
+            rep.add(PRESERVATION, f"{pa.CSV_NAME} is the documented transform",
+                    FAIL, str(e))
+    elif site_csv.is_file():
+        rep.add(PRESERVATION, f"{pa.CSV_NAME} is the documented transform",
+                NOT_COMPARED,
+                f"{site_csv} present; no --csv-transform. A preserved publish "
+                f"changes it only through that document (preserved_archive.py "
+                f"csv-transform)")
+
     site_attr = site / ATTRIBUTIONS_NAME
     require_attr = bool((expectations or {}).get("require_attributions", False))
     if site_attr.is_file():
@@ -529,7 +625,8 @@ def _cmd_check(args: argparse.Namespace) -> int:
                      migration_path=args.migration_document,
                      collapse_path=args.collapse_document,
                      expectations=expectations, baseline=baseline,
-                     reference=args.reference, attributions=args.attributions)
+                     reference=args.reference, csv_transform=args.csv_transform,
+                     attributions=args.attributions)
     except (OSError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -581,6 +678,11 @@ def main(argv: list[str] | None = None) -> int:
                      help="preservation baseline written by `baseline` before staging")
     chk.add_argument("--reference", type=Path, default=None,
                      help="directory holding pre-publish copies of the preserved files")
+    chk.add_argument("--csv-transform", type=Path, default=None,
+                     help="metadata.csv expected-transform document, written "
+                          "BEFORE the publish by `preserved_archive.py "
+                          "csv-transform`. Without it the metadata.csv verdict "
+                          "reports NOT COMPARED rather than passing.")
     chk.add_argument("--attributions", type=Path, default=REPO_ATTRIBUTIONS,
                      help="repository ATTRIBUTIONS.md the site copy must equal")
     chk.set_defaults(fn=_cmd_check)

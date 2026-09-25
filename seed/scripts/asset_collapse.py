@@ -40,6 +40,41 @@ that matters is `(owner, produced_byte_sha256)`;
 PROXY of it, necessary but not sufficient, and this module never
 describes the proxy as complete.
 
+TWO KINDS OF EVIDENCE, DISCRIMINATED BY `evidence.kind` (#1319)
+---------------------------------------------------------------
+The hashes above describe a record whose bytes we PRODUCED. `local` has
+no such bytes: the source dataset the profiles were built against has
+been permanently retired, and of 696 site_a and 552 site_b `local`
+records, ZERO carry `metadata.media_url` and ZERO carry
+`metadata.source_archive`. A `local` retirement could only satisfy the
+produced-source schema by FABRICATING a source hash, a member, a render
+size and a rasteriser it never had. So the schema says which claim it is
+making:
+
+  produced_source    `hq` and `pack`. Every requirement above, unchanged:
+                     source and materialized hashes that must DIFFER, a
+                     member, a render size, a tool, and both
+                     `retired_record` cross-checks. Layer B re-derives the
+                     bytes from an external source.
+
+  preserved_archive  `local`. A stable `retired_sha256` and
+                     `survivor_sha256` which must be EQUAL. That equality
+                     is the documented byte collapse. No member, no render
+                     size, no tool, no source-archive claim, because there
+                     is none to make. Layer B authenticates against a
+                     FROZEN PRE-OPERATION SNAPSHOT attested by an external
+                     manifest, never against the live or staged tree.
+
+⛔ `preserved_archive` IS THE WEAKER CLAIM AND IS NEVER DESCRIBED AS
+ANYTHING ELSE. It exists only because the owner ruled that the archive is
+now the maintained dataset for `local`. Its integrity is the snapshot
+manifest recomputation and nothing else; the archive agreeing with itself
+is not evidence, because a stale copy agrees with itself perfectly.
+
+⛔ `kind` IS REQUIRED AND HAS NO DEFAULT. An unlabelled entry is refused.
+A default would have to choose, and choosing `produced_source` would hand
+the stronger authority to an entry nobody labelled.
+
 TWO VALIDATION LAYERS, NAMED APART
 ----------------------------------
   Layer A  repository-local. It runs where there is no pack, no pool and
@@ -123,13 +158,49 @@ ASSETS_PROFILE_SUFFIX = ".assets.json"
 PENDING = "pending"
 APPLIED = "applied"
 
-# Roots whose bytes are copied from a source the profile is built
-# against, so a produced file EXISTS to be hashed at publish. A
-# pre-staged root ("site", "torrent_import", "internet") has no source to
-# authenticate against, so a retirement on one of those could never reach
-# Layer B and would be a Layer-A-only claim wearing a publish tick.
+# Roots a retirement can be authenticated for at all. A pre-staged root
+# ("site", "torrent_import", "internet") has no reproducible source AND no
+# preserved-snapshot standing, so a retirement on one of those could never
+# reach Layer B and would be a Layer-A-only claim wearing a publish tick.
 # Refusing it in A1 is the honest shape.
 AUTHENTICABLE_ROOTS = frozenset({"local", "hq", "pack"})
+
+# ⛔ TWO KINDS OF EVIDENCE, AND THEY ARE NOT INTERCHANGEABLE (#1319).
+#
+#   produced_source    the strong claim. Bytes are re-derived from a
+#                      source nobody in this pipeline controls: the Kenney
+#                      pack for `hq`, the attested `source_archive` member
+#                      for `pack`. Two produced files are located, hashed,
+#                      and required equal to each other in one build.
+#
+#   preserved_archive  the WEAKER claim, accepted only because the owner
+#                      ruled the archive is now the maintained dataset for
+#                      `local`. There is no source left to re-derive from:
+#                      of 696 site_a and 552 site_b `local` records, ZERO
+#                      carry `metadata.media_url` or
+#                      `metadata.source_archive`. Authority is a FROZEN
+#                      PRE-OPERATION SNAPSHOT, attested by an external
+#                      manifest that is recomputed immediately before use.
+#
+# ⛔ THE KIND IS REQUIRED AND THERE IS NO DEFAULT. A missing `kind` refuses.
+# A default branch would have to pick one, and picking `produced_source`
+# would hand the stronger authority to an unlabelled entry, which is
+# precisely the permissive arm that makes a guard worse than none.
+KIND_PRODUCED = "produced_source"
+KIND_PRESERVED = "preserved_archive"
+EVIDENCE_KINDS = (KIND_PRODUCED, KIND_PRESERVED)
+
+# Which roots each kind may claim. The boundary is per ROOT and it is
+# decided: `hq` and `pack` remain source-backed because they are still
+# externally reproducible, and the published trees already disagree with
+# the profiles on `file_size_bytes` for 1 (site_a) and 392 (site_b)
+# records, every one of them `hq`. Letting a `preserved_archive` entry
+# name `hq` would be a way to claim the weaker authority exactly where the
+# stronger one is available. Kept in step with
+# `manifest_guard.SOURCE_BACKED_ROOTS` and
+# `preserved_archive.PRESERVED_ROOTS`.
+PRODUCED_SOURCE_ROOTS = frozenset({"hq", "pack"})
+PRESERVED_ARCHIVE_ROOTS = frozenset({"local"})
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -140,6 +211,15 @@ _ENTRY_KEYS = ("retired_id", "survivor_id", "owner_username", "source_root",
                "acknowledged_losses", "post_substitutions")
 
 _POOL_KEYS = ("pack", "render_px", "rasteriser", "sharp", "node")
+
+# The evidence keys each kind owns. ⛔ THEY ARE DISJOINT ON PURPOSE. A
+# preserved entry carrying `materialized_sha256` is REFUSED rather than
+# ignored: an ignored field looks like it was honoured, and an operator
+# reading the document would believe a produced hash had been checked when
+# nothing had. The same applies in reverse.
+_PRODUCED_EVIDENCE_KEYS = ("source_sha256", "member", "render_px",
+                           "materialized_sha256", "materialized_tool")
+_PRESERVED_EVIDENCE_KEYS = ("retired_sha256", "survivor_sha256")
 
 
 class CollapseError(ValueError):
@@ -181,23 +261,56 @@ class PostSubstitution:
 
 @dataclass(frozen=True)
 class CollapseEntry:
+    """One retirement, discriminated by `kind`.
+
+    The produced-source fields and the preserved-archive fields are
+    mutually exclusive and A1 has already refused any entry that mixes
+    them, so a reader never has to work out which set is meaningful: ask
+    `kind`.
+    """
     retired_id: str
     survivor_id: str
     owner_username: str
     source_root: str
     retired_file_path: str
-    source_sha256: str
-    source_member: str
-    render_px: int
-    materialized_sha256: str
-    materialized_tool: str
+    kind: str
     retired_record: dict
     acknowledged_losses: tuple[dict, ...]
+    # produced_source only
+    source_sha256: str | None = None
+    source_member: str | None = None
+    render_px: int | None = None
+    materialized_sha256: str | None = None
+    materialized_tool: str | None = None
+    # preserved_archive only. Both name FILES, and A1 requires them EQUAL:
+    # that equality IS the documented byte collapse. ⚠️ This is the
+    # opposite of the produced-source rule, which requires
+    # `source_sha256 != materialized_sha256` because those two describe
+    # DIFFERENT bytes (a pack member before a render, and the render). The
+    # two rules live on different fields and must never be merged.
+    retired_sha256: str | None = None
+    survivor_sha256: str | None = None
     post_substitutions: tuple[PostSubstitution, ...] = ()
 
     @property
     def retired_source_path(self) -> str:
         return str(self.retired_record.get("source_path") or "")
+
+    @property
+    def is_preserved(self) -> bool:
+        return self.kind == KIND_PRESERVED
+
+    @property
+    def retired_bytes_sha256(self) -> str:
+        """The hash the file at `retired_file_path` must have before it is
+        removed, whichever kind established it.
+
+        For `produced_source` that is `materialized_sha256`: both produced
+        files hash to it, the retired one included. For
+        `preserved_archive` it is `retired_sha256`.
+        """
+        return (self.retired_sha256 if self.is_preserved
+                else self.materialized_sha256)
 
 
 @dataclass(frozen=True)
@@ -206,6 +319,21 @@ class CollapseDocument:
     pool_of_record: dict
     entries: tuple[CollapseEntry, ...] = ()
     path: Path | None = None
+
+    @property
+    def has_produced_source(self) -> bool:
+        """True when at least one entry claims produced-source evidence.
+
+        That presence is what makes `pool_of_record` load-bearing: a
+        produced hash is only reproducible against the toolchain that
+        produced it. A preserved-only document produces nothing, so a pool
+        on one describes nothing and is refused as meaningless.
+        """
+        return any(e.kind == KIND_PRODUCED for e in self.entries)
+
+    @property
+    def is_preserved_only(self) -> bool:
+        return bool(self.entries) and not self.has_produced_source
 
     @property
     def retired_ids(self) -> frozenset[str]:
@@ -431,27 +559,84 @@ def _parse_entry(raw: Any, i: int, source: str) -> CollapseEntry:
 
     ev = raw["evidence"]
     _require(isinstance(ev, dict), source, f"{where}.evidence is not an object")
-    src_sha = ev.get("source_sha256")
-    mat_sha = ev.get("materialized_sha256")
-    _require(isinstance(src_sha, str) and bool(_SHA256_RE.match(src_sha)), source,
-             f"{where}.evidence.source_sha256 is not a sha256: {src_sha!r}")
-    _require(isinstance(mat_sha, str) and bool(_SHA256_RE.match(mat_sha)), source,
-             f"{where}.evidence.materialized_sha256 is not a sha256: {mat_sha!r}")
-    _require(src_sha != mat_sha, source,
-             f"{where}.evidence records one value as both the source hash and the "
-             f"produced hash; they describe different bytes and conflating them is "
-             f"the mistake this document exists to prevent")
-    member = ev.get("member")
-    _require(isinstance(member, str) and member, source,
-             f"{where}.evidence.member is empty; a source hash with no member names "
-             f"no bytes")
-    px = ev.get("render_px")
-    _require(_positive_int(px), source,
-             f"{where}.evidence.render_px must be a positive int, got {px!r}")
-    tool = ev.get("materialized_tool")
-    _require(isinstance(tool, str) and tool, source,
-             f"{where}.evidence.materialized_tool is empty; a produced hash is only "
-             f"reproducible against the tool that produced it")
+    kind = ev.get("kind")
+    _require(kind in EVIDENCE_KINDS, source,
+             f"{where}.evidence.kind is {kind!r}; it must be one of "
+             f"{list(EVIDENCE_KINDS)}. There is NO default: the two kinds make "
+             f"different claims, and an unlabelled entry granted the stronger one "
+             f"would be authority nobody wrote down.")
+
+    # ⛔ THE WRONG KIND'S FIELDS ARE REFUSED, NEVER IGNORED. A preserved
+    # entry carrying `materialized_sha256` would look, to anyone reading
+    # the document, like a produced hash that had been checked. Nothing
+    # checks it, so the field must not be allowed to sit there.
+    own = (_PRODUCED_EVIDENCE_KEYS if kind == KIND_PRODUCED
+           else _PRESERVED_EVIDENCE_KEYS)
+    other = (_PRESERVED_EVIDENCE_KEYS if kind == KIND_PRODUCED
+             else _PRODUCED_EVIDENCE_KEYS)
+    trespass = sorted(k for k in other if k in ev)
+    _require(not trespass, source,
+             f"{where}.evidence declares kind={kind!r} but carries {trespass}, "
+             f"which belong to the other kind. Nothing validates them here, so "
+             f"they would be authority this entry does not have.")
+    unknown_ev = sorted(set(ev) - set(own) - {"kind", "_why"})
+    _require(not unknown_ev, source,
+             f"{where}.evidence holds unknown key(s) {unknown_ev} for "
+             f"kind={kind!r}")
+
+    src_sha = mat_sha = member = tool = None
+    px = None
+    ret_sha = sur_sha = None
+    if kind == KIND_PRODUCED:
+        _require(root in PRODUCED_SOURCE_ROOTS, source,
+                 f"{where}.source_root={root!r} is not source-backed, so its bytes "
+                 f"cannot be re-derived from an external source. "
+                 f"{KIND_PRODUCED} roots: {sorted(PRODUCED_SOURCE_ROOTS)}")
+        src_sha = ev.get("source_sha256")
+        mat_sha = ev.get("materialized_sha256")
+        _require(isinstance(src_sha, str) and bool(_SHA256_RE.match(src_sha)), source,
+                 f"{where}.evidence.source_sha256 is not a sha256: {src_sha!r}")
+        _require(isinstance(mat_sha, str) and bool(_SHA256_RE.match(mat_sha)), source,
+                 f"{where}.evidence.materialized_sha256 is not a sha256: {mat_sha!r}")
+        _require(src_sha != mat_sha, source,
+                 f"{where}.evidence records one value as both the source hash and "
+                 f"the produced hash; they describe different bytes and conflating "
+                 f"them is the mistake this document exists to prevent")
+        member = ev.get("member")
+        _require(isinstance(member, str) and member, source,
+                 f"{where}.evidence.member is empty; a source hash with no member "
+                 f"names no bytes")
+        px = ev.get("render_px")
+        _require(_positive_int(px), source,
+                 f"{where}.evidence.render_px must be a positive int, got {px!r}")
+        tool = ev.get("materialized_tool")
+        _require(isinstance(tool, str) and tool, source,
+                 f"{where}.evidence.materialized_tool is empty; a produced hash is "
+                 f"only reproducible against the tool that produced it")
+    else:
+        _require(root in PRESERVED_ARCHIVE_ROOTS, source,
+                 f"{where}.source_root={root!r} is not archive-authoritative, so "
+                 f"the weaker {KIND_PRESERVED} claim does not apply to it: its "
+                 f"bytes are still externally reproducible and must be "
+                 f"authenticated as {KIND_PRODUCED}. {KIND_PRESERVED} roots: "
+                 f"{sorted(PRESERVED_ARCHIVE_ROOTS)}")
+        ret_sha = ev.get("retired_sha256")
+        sur_sha = ev.get("survivor_sha256")
+        for name, v in (("retired_sha256", ret_sha), ("survivor_sha256", sur_sha)):
+            _require(isinstance(v, str) and bool(_SHA256_RE.match(v)), source,
+                     f"{where}.evidence.{name} is not a sha256: {v!r}")
+        # ⛔ EQUAL, AND THE OPPOSITE OF THE PRODUCED-SOURCE RULE ABOVE. There
+        # these two values had to DIFFER, because a pack member before a
+        # render is not the render. Here the whole claim is that the retired
+        # file and the survivor file are the SAME BYTES, which is what makes
+        # them one row in the app and what makes the retirement a collapse
+        # rather than a deletion. Different fields, opposite rules, never
+        # merged into one.
+        _require(ret_sha == sur_sha, source,
+                 f"{where}.evidence records retired_sha256 {ret_sha[:12]}… and "
+                 f"survivor_sha256 {sur_sha[:12]}…, which are DIFFERENT bytes. A "
+                 f"{KIND_PRESERVED} retirement claims the two files collapse to one "
+                 f"row; two different files are two records, not a collision.")
 
     rec = raw["retired_record"]
     _require(isinstance(rec, dict) and rec, source,
@@ -474,14 +659,23 @@ def _parse_entry(raw: Any, i: int, source: str) -> CollapseEntry:
     # same thing. This is the cheap half of the proxy invariant, and it
     # is checked here so a document cannot quietly describe a render the
     # record never declared.
-    _require(_nested(rec, "metadata", "source_archive", "sha256") == src_sha, source,
-             f"{where}.retired_record.metadata.source_archive.sha256 is "
-             f"{_nested(rec, 'metadata', 'source_archive', 'sha256')!r}, which "
-             f"disagrees with evidence.source_sha256")
-    _require(_nested(rec, "metadata", "render", "px") == px, source,
-             f"{where}.retired_record.metadata.render.px is "
-             f"{_nested(rec, 'metadata', 'render', 'px')!r}, which disagrees with "
-             f"evidence.render_px")
+    #
+    # ⛔ THESE TWO CROSS-CHECKS ARE PRODUCED-SOURCE ONLY, AND A PRESERVED
+    # ENTRY MUST NOT FAKE THEM. Measured on the committed profiles: of 696
+    # site_a and 552 site_b `local` records, ZERO carry
+    # `metadata.source_archive` at all. Demanding one would make a `local`
+    # retirement expressible only by INVENTING provenance for it, which is
+    # the whole reason the schema is discriminated.
+    if kind == KIND_PRODUCED:
+        _require(_nested(rec, "metadata", "source_archive", "sha256") == src_sha,
+                 source,
+                 f"{where}.retired_record.metadata.source_archive.sha256 is "
+                 f"{_nested(rec, 'metadata', 'source_archive', 'sha256')!r}, which "
+                 f"disagrees with evidence.source_sha256")
+        _require(_nested(rec, "metadata", "render", "px") == px, source,
+                 f"{where}.retired_record.metadata.render.px is "
+                 f"{_nested(rec, 'metadata', 'render', 'px')!r}, which disagrees "
+                 f"with evidence.render_px")
 
     losses = raw["acknowledged_losses"]
     _require(isinstance(losses, list), source,
@@ -525,9 +719,11 @@ def _parse_entry(raw: Any, i: int, source: str) -> CollapseEntry:
 
     return CollapseEntry(
         retired_id=rid, survivor_id=sid, owner_username=owner, source_root=root,
-        retired_file_path=path, source_sha256=src_sha, source_member=member,
-        render_px=px, materialized_sha256=mat_sha, materialized_tool=tool,
+        retired_file_path=path, kind=kind,
         retired_record=rec, acknowledged_losses=tuple(losses),
+        source_sha256=src_sha, source_member=member, render_px=px,
+        materialized_sha256=mat_sha, materialized_tool=tool,
+        retired_sha256=ret_sha, survivor_sha256=sur_sha,
         post_substitutions=parsed,
     )
 
@@ -556,22 +752,44 @@ def parse_collapse_document(data: Any, *, source: str,
                  f"describes profile {profile!r}, but the assets file being "
                  f"upgraded is {profile_name!r}; refusing to apply one profile's "
                  f"retirements to another")
-    pool = data.get("pool_of_record")
-    _require(isinstance(pool, dict), source,
-             "missing `pool_of_record` (what produced the bytes: pack, render_px, "
-             "rasteriser, and the LOCKED sharp and node versions actually used)")
-    for k in _POOL_KEYS:
-        _require(pool.get(k) not in (None, "", {}), source,
-                 f"pool_of_record.{k} is empty; a produced hash is only "
-                 f"reproducible against the toolchain that produced it")
-    _require(_positive_int(pool.get("render_px")), source,
-             f"pool_of_record.render_px must be a positive int, got "
-             f"{pool.get('render_px')!r}")
-
     entries_raw = data.get("collapse")
     _require(isinstance(entries_raw, list), source,
              f"`collapse` must be a list, got {type(entries_raw).__name__}")
     entries = tuple(_parse_entry(e, i, source) for i, e in enumerate(entries_raw))
+
+    # ⛔ `pool_of_record` IS REQUIRED BY THE PRESENCE OF A PRODUCED-SOURCE
+    # ENTRY, NOT BY THE DOCUMENT EXISTING. It records the toolchain a
+    # produced hash is only reproducible against. A preserved-only document
+    # produces nothing: the bytes were not rendered by us, they were
+    # PRESERVED, so a pool on one names a toolchain that had no part in
+    # the claim, and a field that describes nothing is refused rather than
+    # accepted as harmless. A MIXED document takes the stricter arm: one
+    # produced-source entry makes the pool load-bearing for that entry,
+    # and every entry is still validated only under its own kind.
+    has_produced = any(e.kind == KIND_PRODUCED for e in entries)
+    preserved_only = bool(entries) and not has_produced
+    pool = data.get("pool_of_record")
+    if preserved_only:
+        _require("pool_of_record" not in data, source,
+                 f"this document holds only {KIND_PRESERVED} entries, which record "
+                 f"no produced bytes, so `pool_of_record` describes nothing. "
+                 f"Refusing it rather than ignoring it: a pool that is never used "
+                 f"reads as a toolchain claim that was checked.")
+        pool = {}
+    elif has_produced or "pool_of_record" in data:
+        _require(isinstance(pool, dict), source,
+                 "missing `pool_of_record` (what produced the bytes: pack, "
+                 "render_px, rasteriser, and the LOCKED sharp and node versions "
+                 "actually used)")
+        for k in _POOL_KEYS:
+            _require(pool.get(k) not in (None, "", {}), source,
+                     f"pool_of_record.{k} is empty; a produced hash is only "
+                     f"reproducible against the toolchain that produced it")
+        _require(_positive_int(pool.get("render_px")), source,
+                 f"pool_of_record.render_px must be a positive int, got "
+                 f"{pool.get('render_px')!r}")
+    else:
+        pool = {}
 
     retired: set[str] = set()
     survivors: set[str] = set()

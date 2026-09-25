@@ -83,8 +83,20 @@ from pathlib import Path
 
 # Roots whose bytes are staged AT the destination with no local source to
 # copy from, so the destination is the only description of them there is.
-# Kept in step with populate_archive.PRESTAGED_ROOTS.
-PRESTAGED_ROOTS = frozenset({"torrent_import", "site"})
+# Kept in step with populate_archive.PRESTAGED_ROOTS (which unions
+# `preserved_archive.PRESERVED_ROOTS` in only when preserved mode is
+# EXPLICITLY asked for, because there the union changes what gets copied).
+#
+# ⛔ `local` IS ONE OF THESE NOW (#1319). Its source dataset
+# (`/mnt/d/Projects/unraid_management/artist-alley_dataset`) has been
+# permanently retired and no longer exists; the maintained copy is the
+# published archive. Measured on the committed profiles, 0 of 696 site_a
+# and 0 of 552 site_b `local` records carry a `metadata.media_url` or a
+# `metadata.source_archive`, so the destination is quite literally the only
+# description of those bytes there is, which is the definition above.
+# That makes `emit` record a sha256 for them, which is the attestation the
+# preserved model needs and which nothing produced before.
+PRESTAGED_ROOTS = frozenset({"torrent_import", "site", "local"})
 
 # `internet` has a source — the gitignored fetch cache — but what SHIPS
 # is a cut of it, and the shipped bytes are what the manifest must
@@ -93,7 +105,14 @@ MEASURABLE_ROOTS = PRESTAGED_ROOTS | {"internet"}
 
 # Roots copied from a reproducible source. The share may lag them, so a
 # disagreement means "the share is stale", never "the record is wrong".
-SOURCE_BACKED_ROOTS = frozenset({"local", "hq", "pack"})
+#
+# ⛔ MEASURED, NOT PREFERRED. The published trees already disagree with the
+# profiles on `file_size_bytes` for 1 record (site_a) and 392 (site_b),
+# every one of them `hq`, because the share holds an older pool build.
+# Those 393 MUST stay permitted. `local` has 0 disagreements today, which
+# is what makes moving it out of this set cost nothing and catch the next
+# one. Kept in step with `manifest_guard.SOURCE_BACKED_ROOTS`.
+SOURCE_BACKED_ROOTS = frozenset({"hq", "pack"})
 
 
 def sha256_of(path: Path) -> str:

@@ -27,6 +27,7 @@
    "source_root": "hq",
    "retired_file_path": "images/kenney-hq/ui-assets-ui-pack-slide-horizontal-grey-section-wide-10574eb5-512.png",
    "evidence": {
+    "kind": "produced_source",
     "source_sha256": "67db3b47d6ca5b86cfdcbb5ae9d3346a0780bd9ecbb8290fbf6b50852bec10fb",
     "member": "UI assets/UI Pack/Vector/Grey/slide_horizontal_grey_section_wide.svg",
     "render_px": 512,

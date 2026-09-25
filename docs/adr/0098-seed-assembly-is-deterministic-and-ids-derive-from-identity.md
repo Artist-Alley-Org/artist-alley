@@ -358,3 +358,43 @@ documents. A retirement is one more such document, and the historical documents 
 emitted, and editing them to make a check pass would turn evidence into bookkeeping. The passes
 that read them became retirement-aware instead, each asserting that every id it exempts is named
 by a committed document.
+
+## Amendment, 2026-09-24 (#1319): `local` assembly reproducibility now rests on the archive
+
+This ADR's determinism claim covered two different things, and only one of them still holds the way
+it was written.
+
+**A derived id is still a function of what identifies the thing.** Nothing about that changes. Every
+id rule, every reconciliation document and every ruling above stands.
+
+**But `local` assembly is no longer reproducible from a source tree, because there is no source
+tree.** The owner has permanently retired `/mnt/d/Projects/unraid_management/artist-alley_dataset`;
+it no longer exists. Re-running the assembler against it is not a thing that can be done, so "the
+same inputs produce the same outputs" cannot be demonstrated for `local` by rebuilding it. Measured
+on the committed profiles: of 696 site_a and 552 site_b `local` records, **0** carry
+`metadata.media_url`, **0** carry `metadata.source_archive`, and `metadata.sha256` appears on only
+**2**. There is nothing to re-derive the bytes from, and no attested upstream to compare against.
+
+So for `local` the reproducibility claim moves from RE-DERIVATION to PRESERVATION: the published
+archive under `/mnt/blackbox_archives/datasets/artist_alley` is the maintained copy, and the thing
+that can still be demonstrated is that its bytes are the bytes we recorded. ADR 0097's amendment of
+the same date carries the mechanism: a frozen pre-operation snapshot, an external path-to-sha256
+manifest recorded immediately after it is taken, and recomputation against that manifest immediately
+before the bytes are used as evidence.
+
+⛔ THIS IS A WEAKER CLAIM AND IS LABELLED AS ONE EVERYWHERE IT APPEARS. `preserved_archive` is not
+`produced_source`, and the two are separate `evidence.kind` values precisely so a reader never has to
+guess which one a retirement is resting on. Its integrity never comes from the archive agreeing with
+itself, because a stale copy agrees with itself perfectly.
+
+`hq` and `pack` keep the stronger claim and keep it unchanged. `hq` rebuilds from the Kenney pack
+through the committed `seed/upgrades/kenney-hq-pool.json` and `seed/scripts/rasterize_svg.mjs`;
+`pack` copies or extracts members verified against `metadata.source_archive.sha256`, which 378 of 378
+site_a `pack` records carry. Those two are still re-derivable, so for them nothing here applies.
+
+⚠️ The two authored plates are the one `local` case that remains reproducible in the original sense,
+and only because their input is archive-held: run against the archive's own
+`images/aurora-generated`, `seed/scripts/authored_plates.py` reproduces them byte-exactly at the
+sizes and hashes the committed `studio-a.assets.json` already records (`studio-colour-chart.png`
+11,404 B, `reference-mood-board.png` 1,290,128 B, verified 2026-09-24). That is determinism resting
+on a preserved input, which is exactly the distinction this amendment is drawing.

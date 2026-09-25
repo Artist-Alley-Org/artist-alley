@@ -50,12 +50,39 @@ WHAT THIS PRODUCES, AND WHY EACH LABEL IS TRUE OF IT
 
 ⚠️ THE REPO CARRIES THE RECIPE, NOT THE BYTES. Same as `kenney_hq.py
 build`: the dataset lives on the archive share and the pipeline is
-reproducible from the repo. Run this once against the dataset source
-before the next `populate_archive.py`:
+reproducible from the repo.
+
+⛔ THE INPUT IS AN ATTESTED SNAPSHOT AND THE OUTPUT IS EXTERNAL (#1319).
+The old recipe read and wrote `$DATASET_SRC`, and that source dataset has
+been permanently retired: the maintained copy is the published archive.
+Two rules follow, and neither is a convenience:
+
+  * `--generated-source` is the `images/aurora-generated` directory of a
+    FROZEN, MANIFEST-ATTESTED snapshot, not the live site. The mood board
+    samples those pixels, so they are an INPUT to a hash the profile
+    records; reading them from a tree that can change under the run makes
+    the output unreproducible and the claim unverifiable.
+  * `--out` is a scratch directory OUTSIDE every site tree. The plates are
+    then installed deliberately, as a separate step, and the install is
+    checked against the sizes and hashes the profile already records.
+    ⛔ `populate_archive.py` NEVER SYNTHESIZES THEM: a publish that can
+    manufacture the bytes it is about to attest has no independent
+    evidence left.
+
+    # attest the snapshot first (bytes only; mtimes prove nothing)
+    python3 seed/scripts/preserved_archive.py snapshot-manifest \\
+        --snapshot $FROZEN/site_a --out $EVIDENCE/site_a.snapshot-manifest.json
 
     python3 seed/scripts/authored_plates.py build \\
-        --generated-source $DATASET_SRC/aurora-generated \\
-        --out             $DATASET_SRC/aurora-authored
+        --generated-source $FROZEN/site_a/images/aurora-generated \\
+        --out              $SCRATCH/aurora-authored
+
+Measured 2026-09-24 against the archive's own `images/aurora-generated`,
+the two plates reproduce byte-exactly at the sizes and hashes the
+committed `studio-a.assets.json` already records:
+
+    studio-colour-chart.png     11,404 B  sha256 1495db50a28a55ba…
+    reference-mood-board.png 1,290,128 B  sha256 6fa8e7e7790b76fc…
 
 Deterministic: the same inputs produce byte-identical outputs, so a
 rebuild does not churn `file_size_bytes` in the profile.
@@ -68,10 +95,16 @@ needed it would be a plate generator nobody could run.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import struct
 import sys
 import zlib
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import preserved_archive as pa  # noqa: E402
 
 # The plate whose pixels the mood board samples. Named rather than
 # discovered, so the output cannot change because a directory listing
@@ -296,7 +329,9 @@ def build_mood_board(out: Path, generated_source: Path) -> int:
             f"error: {src_path} not found.\n"
             "  The mood board samples one of the #1260 Stable Diffusion plates —\n"
             "  that is what makes its `assisted` declaration true. Point\n"
-            "  --generated-source at the dataset's aurora-generated directory.")
+            "  --generated-source at the images/aurora-generated directory of a\n"
+            "  FROZEN, manifest-attested snapshot (#1319), not at the live site,\n"
+            "  whose bytes can change under the run.")
     sw, sh, spix = png_read_rgb(src_path)
 
     pix = canvas(W, H, (0x16, 0x18, 0x1A))
@@ -336,19 +371,190 @@ def build_mood_board(out: Path, generated_source: Path) -> int:
 
 PLATES = ("studio-colour-chart.png", "reference-mood-board.png")
 
+# Where an installed plate lives inside a site, relative to the site root.
+# The profile records carry this prefix, so the expectation is read FROM the
+# profile rather than restated here; this is only how the directory is found.
+INSTALL_DIR = "images/aurora-authored"
+
+
+def expected_plates(profile_path: Path) -> dict[str, tuple[int, str]]:
+    """filename -> (file_size_bytes, sha256) for the authored-plate records
+    the committed profile already carries.
+
+    ⛔ THE EXPECTATION IS THE PROFILE'S, NOT THIS MODULE'S. A constant here
+    would be a second opinion that could drift from the one the publish
+    guard and the seeder actually use, and the pair would then agree with
+    each other while disagreeing with the dataset.
+    """
+    prof = json.loads(profile_path.read_text(encoding="utf-8"))
+    out: dict[str, tuple[int, str]] = {}
+    for rec in prof:
+        fp = str(rec.get("file_path") or "")
+        if not fp.startswith(INSTALL_DIR + "/"):
+            continue
+        sha = (rec.get("metadata") or {}).get("sha256")
+        size = rec.get("file_size_bytes")
+        if not sha or not isinstance(size, int):
+            raise SystemExit(
+                f"error: {profile_path}: the authored-plate record {rec.get('id')} "
+                f"({fp}) declares no sha256 and/or no file_size_bytes, so an "
+                f"install cannot be checked against it. An unattested plate is "
+                f"not installable.")
+        out[Path(fp).name] = (size, sha)
+    return out
+
+
+def verify_install(directory: Path, want: dict[str, tuple[int, str]]) -> list[str]:
+    """Every way an installed plate set can fail to be the documented one.
+
+    EXACTLY the expected files, each at its declared size and hash. ⛔ An
+    UNEXPECTED file refuses too: the install hands a directory to the site
+    and then the Kaggle uploader hands the site to the world, so a third
+    output nobody enumerated would be published as studio work.
+    """
+    refusals: list[str] = []
+    if not directory.is_dir():
+        return [f"{directory} is not a directory"]
+    present = {p.name for p in sorted(directory.iterdir()) if p.is_file()}
+    for extra in sorted(present - set(want)):
+        refusals.append(f"{extra} is not one of the {len(want)} documented plates "
+                        f"{sorted(want)}; an output nobody enumerated would be "
+                        f"published as studio work")
+    for name, (size, sha) in sorted(want.items()):
+        f = directory / name
+        if not f.is_file():
+            refusals.append(f"{name} is absent")
+            continue
+        got = f.stat().st_size
+        if got != size:
+            refusals.append(f"{name} is {got:,} B, the profile declares {size:,} B")
+            continue
+        digest = hashlib.sha256(f.read_bytes()).hexdigest()
+        if digest != sha:
+            refusals.append(f"{name} is {got:,} B as declared but hashes "
+                            f"{digest[:12]}… where the profile declares "
+                            f"{sha[:12]}…. Same length, different pixels.")
+    return refusals
+
+
+def _cmd_verify(args) -> int:
+    """Check a built or installed plate set against the committed profile.
+
+    ⛔ THIS IS THE GATE THAT RUNS BEFORE A PUBLISH, NOT DURING ONE.
+    `populate_archive.py` never synthesizes the plates: a publish that can
+    manufacture the bytes it is about to attest has no independent evidence
+    left. So the bytes are built externally, checked here, installed, and
+    only then published.
+    """
+    want = expected_plates(args.profile)
+    if not want:
+        print(f"error: {args.profile} carries no {INSTALL_DIR}/ records, so there "
+              f"is nothing to verify an install against.", file=sys.stderr)
+        return 2
+    directory = args.dir
+    if args.site is not None:
+        directory = args.site / INSTALL_DIR
+    refusals = verify_install(directory, want)
+    if refusals:
+        print(f"⛔ {directory} is not the documented plate set "
+              f"({len(refusals)} refusal(s)):", file=sys.stderr)
+        for r in refusals:
+            print(f"  - {r}", file=sys.stderr)
+        return 1
+    for name, (size, sha) in sorted(want.items()):
+        print(f"  {name:28s} {size:>9,} B  {sha[:12]}…", file=sys.stderr)
+    print(f"{len(want)} plate(s) match the profile exactly", file=sys.stderr)
+    return 0
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=("build",))
-    ap.add_argument("--generated-source", required=True, type=Path,
-                    help="the dataset's aurora-generated/ directory (#1260). "
-                         "The mood board samples one of those plates, which is "
-                         "what makes its `assisted` declaration true.")
-    ap.add_argument("--out", required=True, type=Path,
-                    help="destination directory, e.g. $DATASET_SRC/aurora-authored")
+    ap.add_argument("command", choices=("build", "verify"))
+    ap.add_argument("--generated-source", type=Path, default=None,
+                    help="the images/aurora-generated directory of a FROZEN, "
+                         "manifest-attested snapshot (#1260, #1319). The mood "
+                         "board samples one of those plates, which is what makes "
+                         "its `assisted` declaration true, so it must not be read "
+                         "from a tree that can change under the run.")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="build: scratch destination directory OUTSIDE every site "
+                         "tree, e.g. $SCRATCH/aurora-authored. The plates are "
+                         "installed into a site as a separate, checked step; "
+                         "nothing synthesizes them during a publish.")
+    ap.add_argument("--snapshot", type=Path, default=None,
+                    help="build: the FROZEN pre-operation snapshot root. "
+                         "--generated-source must be inside it, which is what "
+                         "makes the sampled pixels attested.")
+    ap.add_argument("--live-site", type=Path, default=None,
+                    help="build: the live published site (same path as --staging "
+                         "for a direct publish)")
+    ap.add_argument("--staging", type=Path, default=None,
+                    help="build: the tree a publish writes")
+    ap.add_argument("--evidence", type=Path, action="append", default=[],
+                    help="build: an evidence path the scratch output must stay "
+                         "outside of. Repeatable.")
+    ap.add_argument("--dir", type=Path, default=None,
+                    help="verify: the directory holding the built or installed "
+                         "plates")
+    ap.add_argument("--site", type=Path, default=None,
+                    help=f"verify: a site root, whose {INSTALL_DIR}/ is checked")
+    ap.add_argument("--profile", type=Path, default=None,
+                    help="verify: the assets profile whose authored-plate records "
+                         "state the expected sizes and hashes")
     args = ap.parse_args()
+
+    if args.command == "verify":
+        if args.profile is None or (args.dir is None) == (args.site is None):
+            print("error: verify needs --profile and exactly one of --dir / --site",
+                  file=sys.stderr)
+            return 2
+        return _cmd_verify(args)
+    missing = [n for n, v in (("--out", args.out), ("--snapshot", args.snapshot),
+                              ("--live-site", args.live_site),
+                              ("--staging", args.staging)) if v is None]
+    if missing:
+        print(f"error: build needs {', '.join(missing)}.\n"
+              "  The plates are built OUTSIDE every site tree and installed as a "
+              "separate checked step, so the build has to know where those trees "
+              "are in order to prove its output is not inside one. ⛔ An "
+              "unprovable boundary must not read as a satisfied one; for a direct "
+              "publish pass the same path for --live-site and --staging.",
+              file=sys.stderr)
+        return 2
+
+    # ⛔ ALIAS REFUSAL. Writing the plates into the directory they sample
+    # would make the next build's input depend on the last build's output,
+    # and the recorded hashes would then describe a tree that produced
+    # itself.
+    if args.generated_source is None:
+        print("error: build needs --generated-source", file=sys.stderr)
+        return 2
+    if not pa.refuse_aliasing({"--generated-source": args.generated_source,
+                               "--out": args.out}):
+        return 2
+    # ⛔ AND THE SCRATCH OUTPUT SITS OUTSIDE ALL THREE OPERATION TREES AND
+    # OUTSIDE THE EVIDENCE. A directory inside live or staging would be
+    # published and pruned as if it were content; one inside the snapshot would
+    # be attested as if it were part of what the snapshot froze.
+    if not pa.refuse_operation(
+            live=args.live_site, staging=args.staging, snapshot=args.snapshot,
+            evidence={f"--evidence[{i}]": e for i, e in enumerate(args.evidence)},
+            scratch={"--out": args.out}):
+        return 2
+    # The sampled pixels are an INPUT to a hash the profile records, so they
+    # must come from the attested tree rather than from wherever the operator
+    # happened to point.
+    gen, snap = args.generated_source.resolve(), args.snapshot.resolve()
+    if not (gen == snap or gen.is_relative_to(snap)):
+        print(f"error: --generated-source {gen} is not inside --snapshot {snap}.\n"
+              "  The mood board samples those pixels, so they are an input to a "
+              "hash the profile records. Read from a tree that can change under "
+              "the run and the output is unreproducible and the claim "
+              "unverifiable.", file=sys.stderr)
+        return 2
+    args.out.mkdir(parents=True, exist_ok=True)
 
     n = build_colour_chart(args.out / PLATES[0])
     print(f"{PLATES[0]:28s} {n:>9,} B  ai_provenance=none", file=sys.stderr)
