@@ -54,14 +54,19 @@ mtimes are not integrity, because a CIFS tree can change under both.
 
 WHAT THIS MODULE OWNS
 ---------------------
-  1. ALIAS REFUSAL. Source and destination must be distinct trees, and
-     equality is not the only way to alias: a source that CONTAINS the
-     destination, or sits inside it, is the same defect. Resolved paths
-     only, so `..`, a symlink or a trailing slash cannot defeat it.
-  2. THE metadata.csv EXPECTED-TRANSFORM CONTRACT. A preserved publish
-     may not regenerate `metadata.csv` from the profile's source-path map
-     (see below), and it may not be waived either. It changes only in the
-     one way a document written BEFORE the operation says it may.
+  1. ALIAS REFUSAL, and the THREE-TREE OPERATION BOUNDARY. Source and
+     destination must be distinct trees, and equality is not the only way to
+     alias: a source that CONTAINS the destination, or sits inside it, is the
+     same defect. Resolved paths only, so `..`, a symlink or a trailing slash
+     cannot defeat it. On top of that, the live site, the staging tree and the
+     frozen snapshot are three DIFFERENT things and a check against the
+     destination alone does not separate them.
+  2. THE metadata.csv EXPECTED-TRANSFORM CONTRACT, BOUND TO THE COLLAPSE
+     DOCUMENT. A preserved publish may not regenerate `metadata.csv` from the
+     profile's source-path map (see below), and it may not be waived either.
+     It changes only in the one way a document written BEFORE the operation
+     says it may, and that document's authority is proved against the CURRENT
+     validated collapse document rather than against its own arithmetic.
   3. THE FROZEN-SNAPSHOT MANIFEST. Recomputation immediately before a
      preserved authentication, never a trust of the copy.
 
@@ -92,18 +97,40 @@ would be false the first time it ran. A record here is delimited by a
 newline OUTSIDE a quoted field and its bytes are copied through
 untouched.
 
+THREE TREES, AND EVERY COMMAND HAS TO NAME ALL THREE
+----------------------------------------------------
+⛔ THE FROZEN SNAPSHOT IS THE ONLY ACCEPTABLE SOURCE, FOR THE TRANSFORM
+AND FOR PRESERVED AUTHENTICATION ALIKE. Not the live site: it is not frozen,
+it can change under the run, and a transform whose "original" hash describes
+bytes nobody froze is a statement about nothing. Not the staging tree
+either: that is the tree the publish WRITES.
+
+  LIVE      the published site that serves. What the operation protects.
+  STAGING   `populate_archive --dest`, the tree the publish writes. In a
+            direct publish it IS live, which is allowed and must be stated.
+  SNAPSHOT  the FROZEN PRE-OPERATION copy, attested by an external manifest.
+
+Every command names all three so the boundary can be PROVED rather than
+documented: the snapshot must be neither of the other two (equal to or
+nested with, in either direction), evidence lands outside all three, and
+scratch lands outside all three and outside the evidence.
+⛔ An unprovable boundary must not read as a satisfied one, so a missing
+tree is a refusal.
+
 Usage
 -----
-    # BEFORE the operation, from the frozen pre-op CSV + the collapse document
-    python3 preserved_archive.py csv-transform \\
-        --site <frozen-snapshot-or-live-site> \\
-        --collapse-document seed/upgrades/asset-collapse.studio-a.json \\
-        --out <outside-every-site-tree>/site_a.csv-transform.json
-
     # immediately after taking the frozen snapshot
     python3 preserved_archive.py snapshot-manifest \\
-        --snapshot <frozen-snapshot> \\
-        --out <outside-the-snapshot>/site_a.snapshot-manifest.json
+        --snapshot $FROZEN/site_a \\
+        --live-site $LIVE/site_a --staging $STAGING/site_a \\
+        --out $EVIDENCE/site_a.snapshot-manifest.json
+
+    # BEFORE the operation, from the FROZEN pre-op CSV + the collapse document
+    python3 preserved_archive.py csv-transform \\
+        --snapshot $FROZEN/site_a \\
+        --live-site $LIVE/site_a --staging $STAGING/site_a \\
+        --collapse-document seed/upgrades/asset-collapse.studio-a.json \\
+        --out $EVIDENCE/site_a.csv-transform.json
 
     # read-only verification of a CSV against its transform document
     python3 preserved_archive.py verify-csv \\
@@ -204,6 +231,164 @@ def alias_refusals(paths: Mapping[str, Path | str | None], *,
     return out
 
 
+# ---------------------------------------------------------------------------
+# 1b. The THREE-TREE boundary of a preserved operation
+# ---------------------------------------------------------------------------
+#
+# ⛔ A PRESERVED OPERATION HAS THREE TREES AND THEY ARE ALL DIFFERENT THINGS.
+#
+#   LIVE      the published site that actually serves. It is what the
+#             operation is protecting, and it can change under the run.
+#   STAGING   `--dest`, the tree the publish WRITES. In the sibling-staging
+#             workflow it is a copy of live; in a direct publish it IS live.
+#   SNAPSHOT  the FROZEN PRE-OPERATION copy, attested by an external
+#             manifest. The only tree a `preserved_archive` retirement may
+#             be authenticated against.
+#
+# Checking the snapshot against the destination alone proves only that the
+# snapshot is not the tree being written. It does NOT stop the LIVE site
+# being passed as the snapshot while `--dest` points at staging: those two
+# paths are distinct, so a destination-only check accepts it, and the
+# authentication then rests on a tree that can change under the run and was
+# never frozen. Measured against this module's own first version: that run
+# exited 0, authenticated the retirement and deleted the retired file.
+#
+# ⛔ NO PATH-NAME HEURISTICS. Nothing here looks for `.preop`, `frozen`,
+# `snapshot` or any other substring in a directory name. A name is a label
+# an operator chooses and a typo silently disables; identity is the resolved
+# path and nothing else.
+
+LIVE_LABEL = "--live-site"
+STAGING_LABEL = "--dest"
+SNAPSHOT_LABEL = "--frozen-snapshot"
+
+
+def _pair_refusals(la: str, a: Path, lb: str, b: Path, why: str, *,
+                   equal_ok: bool = False) -> list[str]:
+    """Equality and containment, in both directions, on resolved paths."""
+    out: list[str] = []
+    if a == b:
+        if not equal_ok:
+            out.append(f"{la} and {lb} are the same path ({a}). {why}")
+        return out
+    if _contains(a, b):
+        out.append(f"{la} ({a}) CONTAINS {lb} ({b}). {why}")
+    elif _contains(b, a):
+        out.append(f"{lb} ({b}) CONTAINS {la} ({a}). {why}")
+    return out
+
+
+def operation_refusals(*, live: Path | str | None, staging: Path | str | None,
+                       snapshot: Path | str | None,
+                       evidence: Mapping[str, Path | str | None] = {},
+                       scratch: Mapping[str, Path | str | None] = {},
+                       require_snapshot: bool = True) -> list[str]:
+    """The full path boundary of a preserved operation. Fail closed.
+
+    ⛔ A MISSING TREE IS A REFUSAL, NOT A PASS. If the caller cannot say
+    where live is, the boundary cannot be proved, and an unprovable boundary
+    must not read as a satisfied one. That is the whole lesson of the hole
+    this function closes.
+
+    `live` and `staging` MAY be the same path: a direct publish writes into
+    the live tree, and that is a legitimate workflow. They may not be NESTED,
+    because a staging copy inside live would be published and pruned as if it
+    were content.
+
+    `require_snapshot=False` is for the one caller that legitimately has no
+    snapshot yet: a preserved publish whose collapse document holds no
+    `preserved_archive` entry authenticates nothing against one, so demanding
+    it there would refuse a correct run. ⛔ It relaxes only whether the
+    snapshot must be SUPPLIED. A snapshot that IS supplied is checked in full,
+    and the caller that actually authenticates against one
+    (`populate_archive._preserved_snapshot`) demands it unconditionally.
+
+    Every evidence path (the snapshot manifest, the CSV-transform document)
+    must lie outside ALL THREE trees: evidence stored inside a tree the
+    operation writes, or inside the tree it attests, is evidence the
+    operation can rewrite. Every scratch path must lie outside all three
+    trees AND outside every evidence path.
+    """
+    out: list[str] = []
+    needed = [(LIVE_LABEL, live), (STAGING_LABEL, staging)]
+    if require_snapshot:
+        needed.append((SNAPSHOT_LABEL, snapshot))
+    missing = [label for label, v in needed if v is None]
+    if missing:
+        return [f"{', '.join(missing)} not supplied, so the three-tree boundary "
+                f"of this operation cannot be proved. A boundary that cannot be "
+                f"proved is not a boundary that holds."]
+    lv, st = _resolved(live), _resolved(staging)
+    sn = _resolved(snapshot) if snapshot is not None else None
+
+    if sn is not None:
+        out += _pair_refusals(
+            SNAPSHOT_LABEL, sn, LIVE_LABEL, lv,
+            "A preserved retirement must be authenticated against a FROZEN "
+            "PRE-OPERATION snapshot. The live site is not frozen: it can change "
+            "under the run, and authenticating against it proves only that the "
+            "archive agrees with itself.")
+        out += _pair_refusals(
+            SNAPSHOT_LABEL, sn, STAGING_LABEL, st,
+            "The staging tree is the tree this run WRITES, so it cannot be the "
+            "evidence for what it writes.")
+    out += _pair_refusals(
+        LIVE_LABEL, lv, STAGING_LABEL, st,
+        "A staging tree nested in the live site would be published and pruned "
+        "as if it were content.", equal_ok=True)
+
+    trees = [(LIVE_LABEL, lv), (STAGING_LABEL, st)]
+    if sn is not None:
+        trees.append((SNAPSHOT_LABEL, sn))
+    ev = [(label, _resolved(v)) for label, v in evidence.items() if v is not None]
+    for label, path in ev:
+        for tlabel, tree in trees:
+            out += _pair_refusals(
+                label, path, tlabel, tree,
+                "Evidence about an operation must live outside every tree the "
+                "operation reads as authority or writes as output.")
+    for label, v in scratch.items():
+        if v is None:
+            continue
+        path = _resolved(v)
+        for tlabel, tree in trees:
+            out += _pair_refusals(
+                label, path, tlabel, tree,
+                "A scratch directory inside one of the operation's trees would "
+                "be published, pruned, or attested as if it were content.")
+        for elabel, epath in ev:
+            out += _pair_refusals(
+                label, path, elabel, epath,
+                "Scratch output must not sit inside the evidence it will be "
+                "checked against, nor hold it.")
+    # `dict.items()` order is stable, but a caller passing the same pair twice
+    # under different labels would duplicate a message. De-duplicate, keeping
+    # first occurrence, so the refusal list reads as a set of distinct facts.
+    seen: set[str] = set()
+    return [x for x in out if not (x in seen or seen.add(x))]
+
+
+def refuse_operation(*, live, staging, snapshot,
+                     evidence: Mapping[str, Path | str | None] = {},
+                     scratch: Mapping[str, Path | str | None] = {},
+                     require_snapshot: bool = True, stream=None) -> bool:
+    """Print and return False on any boundary violation; True when clean."""
+    stream = stream or sys.stderr
+    bad = operation_refusals(live=live, staging=staging, snapshot=snapshot,
+                             evidence=evidence, scratch=scratch,
+                             require_snapshot=require_snapshot)
+    if not bad:
+        return True
+    print(f"error: {len(bad)} preserved-operation path refusal(s):", file=stream)
+    for b in bad:
+        print(f"  - {b}", file=stream)
+    print("  Refusing. A preserved operation has three DISTINCT trees: the live "
+          "site, the staging tree it writes, and the frozen pre-operation "
+          "snapshot it authenticates against. Evidence and scratch live outside "
+          "all three.", file=stream)
+    return False
+
+
 def refuse_aliasing(paths: Mapping[str, Path | str | None], *,
                     equal_ok_within: Iterable[Iterable[str]] = (),
                     stream=None) -> bool:
@@ -270,6 +455,12 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def sha256_bytes(data: bytes) -> str:
+    """Public alias for the digest, so callers can ask "are these the
+    pre-operation bytes?" without reaching for a private helper."""
+    return _sha(data)
+
+
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as fh:
@@ -313,7 +504,9 @@ def read_csv(path: Path) -> tuple[bytes, bytes, list[bytes], list[str], int]:
 
 def build_csv_transform(csv_path: Path, *,
                         removals: Iterable[tuple[str, str]],
-                        site: Path | None = None) -> dict:
+                        site: Path | None = None,
+                        profile: str = "",
+                        collapse: dict | None = None) -> dict:
     """The expected-transform document, from the PRE-OPERATION CSV.
 
     `removals` is (file_path, retired_id) pairs, taken from the committed
@@ -382,6 +575,14 @@ def build_csv_transform(csv_path: Path, *,
         "version": TRANSFORM_VERSION,
         "site": str(_resolved(site)) if site is not None else "",
         "csv": CSV_NAME,
+        # ⛔ WHOSE RETIREMENTS AUTHORISE THIS. `profile` is the assets profile
+        # the removals belong to; `collapse_document` is the identity of the
+        # validated document they were derived from, or null when there is
+        # none. The publisher proves both against the document in hand before
+        # it writes a byte, because a transform's own arithmetic says nothing
+        # about which rows are ALLOWED to go.
+        "profile": profile,
+        COLLAPSE_BINDING_KEY: collapse,
         "original": {
             "sha256": _sha(blob),
             "bytes": len(blob),
@@ -450,6 +651,43 @@ def parse_csv_transform(data, *, source: str) -> dict:
     _require(ordered_digest(digests) == data["expected"]["ordered_digest"], source,
              "expected.ordered_digest does not match expected.row_digests; the "
              "document disagrees with itself")
+    _require(isinstance(data.get("profile"), str) and data["profile"], source,
+             "missing `profile` (the assets profile whose retirements these "
+             "removals belong to); without it the transform is authority about "
+             "nothing in particular")
+    _require(COLLAPSE_BINDING_KEY in data, source,
+             f"missing `{COLLAPSE_BINDING_KEY}` (the identity of the validated "
+             f"collapse document these removals are authorised by, or null when "
+             f"the profile has none). An absent key is not the same claim as an "
+             f"explicit null, and only the explicit one is a statement.")
+    binding = data[COLLAPSE_BINDING_KEY]
+    if binding is not None:
+        _require(isinstance(binding, dict), source,
+                 f"`{COLLAPSE_BINDING_KEY}` must be an object or null")
+        missing = [k for k in ("profile", "sha256", "entries", "retired_ids")
+                   if k not in binding]
+        _require(not missing, source,
+                 f"`{COLLAPSE_BINDING_KEY}` is missing {missing}")
+        _require(_hexish(binding["sha256"]), source,
+                 f"{COLLAPSE_BINDING_KEY}.sha256 is not a sha256: "
+                 f"{binding['sha256']!r}")
+        _require(isinstance(binding["entries"], int)
+                 and not isinstance(binding["entries"], bool)
+                 and binding["entries"] >= 0, source,
+                 f"{COLLAPSE_BINDING_KEY}.entries must be a non-negative int")
+        ids = binding["retired_ids"]
+        _require(isinstance(ids, list) and all(isinstance(i, str) and i for i in ids),
+                 source, f"{COLLAPSE_BINDING_KEY}.retired_ids must be a list of ids")
+        _require(list(ids) == sorted(ids), source,
+                 f"{COLLAPSE_BINDING_KEY}.retired_ids is not sorted; an unsorted "
+                 f"list could only be compared by re-sorting it, and a comparison "
+                 f"that normalises its input is not an equality check")
+        _require(len(set(ids)) == len(ids), source,
+                 f"{COLLAPSE_BINDING_KEY}.retired_ids names an id twice")
+        _require(binding["entries"] == len(ids), source,
+                 f"{COLLAPSE_BINDING_KEY} records {binding['entries']} entry(ies) "
+                 f"but {len(ids)} retired id(s)")
+
     removals = data.get("removals")
     _require(isinstance(removals, list), source, "`removals` must be a list")
     seen_fp: set[str] = set()
@@ -467,6 +705,14 @@ def parse_csv_transform(data, *, source: str) -> dict:
         _require(rid not in seen_rid, source, f"removals names {rid} twice")
         seen_fp.add(fp)
         seen_rid.add(rid)
+    if binding is not None:
+        named = set(binding["retired_ids"])
+        stray = sorted(r["retired_id"] for r in removals
+                       if r["retired_id"] not in named)
+        _require(not stray, source,
+                 f"{len(stray)} removal(s) name a retired_id the bound collapse "
+                 f"document does not hold ({stray[:3]}); a row can only be "
+                 f"removed by a retirement that document states")
     _require(data["original"]["data_rows"]
              == data["expected"]["data_rows"] + len(removals), source,
              f"the arithmetic does not close: {data['original']['data_rows']} "
@@ -621,6 +867,167 @@ def removals_from_collapse(doc) -> list[tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# 2b. Binding the transform to the CURRENT collapse document
+# ---------------------------------------------------------------------------
+#
+# ⛔ INTERNAL SELF-CONSISTENCY IS NOT AUTHORITY. A transform document states
+# its own before and after hashes, so a forged one that removes an extra row
+# and recomputes its own expectations is perfectly self-consistent and was
+# applied without complaint: measured against this module's own first
+# version, a transform authorising one row the collapse document never
+# mentioned dropped that row from the published CSV and the run exited 0.
+#
+# So the transform records the IDENTITY of the collapse document whose
+# retirements authorise it, and the publisher proves, before any write, that
+# the removals are EXACTLY the current document's retirements intersected
+# with the rows the frozen pre-operation CSV actually holds. Two independent
+# bindings, because they fail on different things:
+#
+#   the DIGEST catches a document that changed at all, including a change
+#   that leaves the removal set alone (a re-measured `materialized_sha256`,
+#   a new entry whose path has no CSV row). The transform's authority came
+#   from a document that was validated; if that document is not the one in
+#   hand, the authority is not either.
+#
+#   the RECOMPUTATION catches a transform whose removals disagree with the
+#   document in either direction: an extra row nobody retired, or a
+#   documented retirement whose row was quietly left in place.
+#
+# ⛔ NEITHER IS OPTIONAL AND ABSENCE IS NOT PERMISSION. A transform emitted
+# for a profile with no collapse document records that fact explicitly, and
+# the publisher refuses to use it where a document does exist.
+
+COLLAPSE_BINDING_KEY = "collapse_document"
+
+
+def collapse_binding(doc, raw: bytes) -> dict:
+    """The identity of the collapse document a transform is authorised by.
+
+    `sha256` is over the document BYTES, deliberately. A reformat or a
+    comment edit invalidates the transform and the operator re-emits it,
+    which costs one command; the alternative is a transform that keeps
+    claiming authority from a document it has not seen.
+    """
+    return {
+        "profile": doc.profile,
+        "sha256": _sha(raw),
+        "entries": len(doc.entries),
+        "retired_ids": sorted(e.retired_id for e in doc.entries),
+    }
+
+
+def authorized_removals(doc, csv_blob: bytes) -> list[dict]:
+    """The removals the CURRENT document authorises against these CSV bytes.
+
+    Every retirement whose `retired_file_path` is a row in the pre-operation
+    CSV, and nothing else. A retirement whose produced file has no CSV row
+    (every `hq` render, which is why site_a's transform is a zero-removal
+    one) authorises no removal at all.
+    """
+    header, rows = split_csv_records(csv_blob)
+    _fields, idx = _file_path_index(header)
+    present = set()
+    for row in rows:
+        f = record_fields(row)
+        if len(f) > idx:
+            present.add(f[idx])
+    return sorted(({FILE_PATH_COLUMN: path, "retired_id": rid}
+                   for path, rid in removals_from_collapse(doc)
+                   if path in present),
+                  key=lambda r: r[FILE_PATH_COLUMN])
+
+
+def binding_refusals(doc: dict, *, profile_name: str, collapse_doc,
+                     collapse_raw: bytes | None,
+                     csv_blob: bytes | None = None) -> list[str]:
+    """Prove a transform's authority comes from the CURRENT document.
+
+    `collapse_doc`/`collapse_raw` are None when no collapse document exists
+    for this profile. `csv_blob` is the PRE-OPERATION CSV; pass it in the
+    publish path, where the recomputation is possible. Omit it after the
+    write, where only the identity half can be checked.
+    """
+    out: list[str] = []
+    recorded = doc.get("profile")
+    if recorded != profile_name:
+        out.append(f"the transform was built for profile {recorded!r}, but this "
+                   f"run publishes {profile_name!r}. A transform is authority "
+                   f"about one profile's retirements and no other's.")
+    binding = doc.get(COLLAPSE_BINDING_KEY)
+
+    if collapse_doc is None:
+        if binding is not None:
+            out.append("this transform records a collapse document, but no "
+                       "collapse document exists for this profile. Its removals "
+                       "are authorised by nothing that is in hand.")
+        if doc.get("removals"):
+            out.append(f"this transform authorises {len(doc['removals'])} "
+                       f"removal(s) with no collapse document to authorise them")
+        return out
+
+    if binding is None:
+        out.append("this transform records NO collapse document, but one exists "
+                   "for this profile. Absence is not permission: a transform "
+                   "emitted without the document cannot carry its authority.")
+        return out
+
+    want = collapse_binding(collapse_doc, collapse_raw or b"")
+    if binding.get("sha256") != want["sha256"]:
+        out.append(
+            f"the transform was built from a collapse document hashing "
+            f"{str(binding.get('sha256'))[:12]}…; the document in hand hashes "
+            f"{want['sha256'][:12]}…. It is STALE: re-emit it from the current "
+            f"document rather than reusing one built against another.")
+    if binding.get("profile") != want["profile"]:
+        out.append(f"the transform's collapse document describes profile "
+                   f"{binding.get('profile')!r}, the one in hand describes "
+                   f"{want['profile']!r}")
+    if binding.get("retired_ids") != want["retired_ids"]:
+        extra = sorted(set(binding.get("retired_ids") or []) - set(want["retired_ids"]))
+        gone = sorted(set(want["retired_ids"]) - set(binding.get("retired_ids") or []))
+        out.append(f"the transform's retirement set disagrees with the current "
+                   f"document: {len(extra)} id(s) it names and the document does "
+                   f"not {extra[:3]}, {len(gone)} the document names and it does "
+                   f"not {gone[:3]}")
+    if binding.get("entries") != want["entries"]:
+        out.append(f"the transform records {binding.get('entries')!r} collapse "
+                   f"entry(ies); the document in hand holds {want['entries']}")
+
+    if csv_blob is not None:
+        try:
+            expect = authorized_removals(collapse_doc, csv_blob)
+        except PreservedError as e:
+            return out + [f"the pre-operation CSV cannot be read to recompute the "
+                          f"authorised removals ({e})"]
+        got = sorted(doc.get("removals") or [],
+                     key=lambda r: r.get(FILE_PATH_COLUMN, ""))
+        if got != expect:
+            ep = {r[FILE_PATH_COLUMN]: r["retired_id"] for r in expect}
+            gp = {r.get(FILE_PATH_COLUMN): r.get("retired_id") for r in got}
+            unauthorised = sorted(set(gp) - set(ep))
+            omitted = sorted(set(ep) - set(gp))
+            mismatched = sorted(k for k in set(ep) & set(gp) if ep[k] != gp[k])
+            bits = []
+            if unauthorised:
+                bits.append(f"{len(unauthorised)} row(s) the current document "
+                            f"does NOT retire: {unauthorised[:3]}")
+            if omitted:
+                bits.append(f"{len(omitted)} row(s) it DOES retire that this "
+                            f"transform leaves in place: {omitted[:3]}")
+            if mismatched:
+                bits.append(f"{len(mismatched)} row(s) tied to the wrong "
+                            f"retired_id: {mismatched[:3]}")
+            out.append(
+                "the transform's removals are not exactly the ones the current "
+                "collapse document authorises against the pre-operation CSV ("
+                + "; ".join(bits or ["ordering differs"]) + "). ⛔ A transform is "
+                "authority only for the retirements a validated document states; "
+                "its own internal consistency proves nothing about which rows may "
+                "go.")
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 3. The frozen-snapshot manifest
 # ---------------------------------------------------------------------------
 
@@ -711,48 +1118,73 @@ def recompute_snapshot(snapshot: Path, manifest: Mapping[str, str],
 # CLI
 # ---------------------------------------------------------------------------
 
-def _refuse_out_under(out: Path, site: Path, what: str) -> bool:
-    """Mirror `verify_site.py baseline`: evidence never lives inside the
-    tree it describes, because the operation rewrites that tree."""
-    o, s = _resolved(out), _resolved(site)
-    if _contains(s, o):
-        print(f"error: --out {o} is under {what} {s}; evidence about a tree must "
-              f"not live inside it", file=sys.stderr)
-        return False
-    return True
-
-
 def _cmd_csv_transform(args) -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import asset_collapse as ac  # local import: only this subcommand needs it
 
-    if not _refuse_out_under(args.out, args.site, "--site"):
+    # ⛔ THE INPUT IS THE FROZEN PRE-OPERATION SNAPSHOT, NOT THE LIVE SITE.
+    # The transform states what the CSV will become, and it is applied to the
+    # destination later; built from a tree that can change under the run, its
+    # "original" hash describes bytes nobody froze.
+    if not refuse_operation(live=args.live_site, staging=args.staging,
+                            snapshot=args.snapshot,
+                            evidence={"--out": args.out}):
         return 2
-    site = _resolved(args.site)
-    if not site.is_dir():
-        print(f"error: --site {site} is not a directory", file=sys.stderr)
+    snap = _resolved(args.snapshot)
+    if not snap.is_dir():
+        print(f"error: --snapshot {snap} is not a directory", file=sys.stderr)
         return 2
+    if (args.collapse_document is None) == (not args.no_collapse_document):
+        print("error: pass exactly one of --collapse-document <path> or "
+              "--no-collapse-document.\n"
+              "  A transform's removals are authorised by a validated collapse "
+              "document, and a profile that has none has to SAY so: an omitted "
+              "argument and a deliberate absence are different claims, and only "
+              "the deliberate one can be checked at publish time.",
+              file=sys.stderr)
+        return 2
+    binding = None
     removals: list[tuple[str, str]] = []
+    profile = args.profile
     if args.collapse_document is not None:
         try:
+            raw = args.collapse_document.read_bytes()
             doc = ac.load_collapse_document(args.collapse_document)
-        except ac.CollapseError as e:
+        except (OSError, ac.CollapseError) as e:
             print(f"error: {e}\n  Refusing: an asset-collapse document that "
                   f"cannot be validated is not evidence, and a transform built "
                   f"from it would not be either.", file=sys.stderr)
             return 2
+        if profile and doc.profile != profile:
+            print(f"error: --profile {profile!r} disagrees with the collapse "
+                  f"document's {doc.profile!r}", file=sys.stderr)
+            return 2
+        profile = doc.profile
+        binding = collapse_binding(doc, raw)
         removals = removals_from_collapse(doc)
+    if not profile:
+        print("error: --profile is required with --no-collapse-document (the "
+              "assets profile name these removals belong to)", file=sys.stderr)
+        return 2
     try:
-        out_doc = build_csv_transform(site / CSV_NAME, removals=removals, site=site)
+        out_doc = build_csv_transform(snap / CSV_NAME, removals=removals,
+                                      site=snap, profile=profile,
+                                      collapse=binding)
+        parse_csv_transform(out_doc, source="the document just built")
     except PreservedError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out_doc, indent=1) + "\n", encoding="utf-8")
-    print(f"recorded the expected transform of {site / CSV_NAME}: "
+    print(f"recorded the expected transform of {snap / CSV_NAME}: "
           f"{out_doc['original']['data_rows']} row(s) -> "
           f"{out_doc['expected']['data_rows']}, "
           f"{len(out_doc['removals'])} documented removal(s)", file=sys.stderr)
+    print(f"  authorised by {profile}"
+          + (f" via a collapse document hashing {binding['sha256'][:12]}… "
+             f"({binding['entries']} entry(ies))" if binding
+             else " with NO collapse document (0 removals may be authorised)"),
+          file=sys.stderr)
     if not out_doc["removals"]:
         print("  ZERO-REMOVAL transform: this metadata.csv must stay "
               "byte-identical. That is an expectation to enforce, not a case to "
@@ -762,7 +1194,9 @@ def _cmd_csv_transform(args) -> int:
 
 
 def _cmd_snapshot_manifest(args) -> int:
-    if not _refuse_out_under(args.out, args.snapshot, "--snapshot"):
+    if not refuse_operation(live=args.live_site, staging=args.staging,
+                            snapshot=args.snapshot,
+                            evidence={"--out": args.out}):
         return 2
     snap = _resolved(args.snapshot)
     if not snap.is_dir():
@@ -778,6 +1212,7 @@ def _cmd_snapshot_manifest(args) -> int:
 
 
 def _cmd_verify_csv(args) -> int:
+    """Read-only. No tree is written, so no boundary applies here."""
     try:
         doc = load_csv_transform(args.transform)
         blob = args.csv.read_bytes()
@@ -802,23 +1237,45 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    def three_trees(sp):
+        """⛔ ALL THREE, ALWAYS. A command that cannot say where the live site
+        and the staging tree are cannot prove its output lands outside them,
+        and an unprovable boundary must not read as a satisfied one. In a
+        direct publish --live-site and --staging are the same path, which is
+        allowed and has to be stated rather than inferred."""
+        sp.add_argument("--snapshot", required=True, type=Path,
+                        help="the FROZEN pre-operation snapshot")
+        sp.add_argument("--live-site", required=True, type=Path,
+                        help="the live published site (pass the same path as "
+                             "--staging for a direct publish)")
+        sp.add_argument("--staging", required=True, type=Path,
+                        help="the tree the publish writes (populate_archive's "
+                             "--dest)")
+
     t = sub.add_parser("csv-transform",
                        help="record the one way metadata.csv may change")
-    t.add_argument("--site", required=True, type=Path,
-                   help="the frozen pre-operation site (or the live site, read "
-                        "only) whose metadata.csv is the input")
+    three_trees(t)
     t.add_argument("--collapse-document", type=Path, default=None,
-                   help="committed asset-collapse document; its retirements are "
-                        "the only rows that may be removed")
+                   help="the committed asset-collapse document whose retirements "
+                        "authorise the removals. Its identity is recorded in the "
+                        "transform and re-proved at publish time.")
+    t.add_argument("--no-collapse-document", action="store_true",
+                   help="state explicitly that this profile has NO collapse "
+                        "document, so no removal may be authorised. Required "
+                        "instead of --collapse-document, never as well as it.")
+    t.add_argument("--profile", default="",
+                   help="assets profile name (e.g. studio-a.assets.json). Taken "
+                        "from the collapse document when one is given; required "
+                        "with --no-collapse-document.")
     t.add_argument("--out", required=True, type=Path,
-                   help="where to write it; never under --site")
+                   help="where to write it; never inside any of the three trees")
     t.set_defaults(fn=_cmd_csv_transform)
 
     s = sub.add_parser("snapshot-manifest",
                        help="attest a frozen snapshot, bytes only")
-    s.add_argument("--snapshot", required=True, type=Path)
+    three_trees(s)
     s.add_argument("--out", required=True, type=Path,
-                   help="where to write it; never under --snapshot")
+                   help="where to write it; never inside any of the three trees")
     s.set_defaults(fn=_cmd_snapshot_manifest)
 
     v = sub.add_parser("verify-csv", help="check a metadata.csv against its "

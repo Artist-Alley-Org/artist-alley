@@ -66,39 +66,90 @@ What that means for an operator running the publish tooling:
   outright. The published archive is the thing being written, so it cannot also
   be the thing being read as authority.
 
+#### Three trees, and every command names all three
+
+A preserved operation has **three** trees, and they are not interchangeable:
+
+| tree | what it is |
+|---|---|
+| `$LIVE/site_a` | the published site that serves. What the operation protects. |
+| `$STAGING/site_a` | `populate_archive --dest`, the tree the publish writes. In a direct publish it **is** live, which is allowed and has to be stated. |
+| `$FROZEN/site_a` | the **frozen pre-operation** copy, attested by an external hash manifest. |
+
+⛔ **The frozen snapshot is the only acceptable source** for the `metadata.csv`
+transform and for `preserved_archive` authentication alike. The live site is
+not frozen: it can change under the run, so authenticating against it proves
+only that the archive agrees with itself, and a transform whose "original"
+hash describes unfrozen bytes is a statement about nothing. Checking the
+snapshot against `--dest` alone does **not** catch this, which is why
+`--live-site` is required.
+
+Every command names all three trees so the boundary is **proved** rather than
+documented: the snapshot must be neither of the other two (equal to or nested
+with, in either direction), evidence lands outside all three, and scratch
+lands outside all three and outside the evidence. A missing tree is a
+refusal, because an unprovable boundary must not read as a satisfied one.
+
 ```bash
 # 1. attest a frozen snapshot, immediately after taking it (bytes only)
 python3 seed/scripts/preserved_archive.py snapshot-manifest \
-    --snapshot $FROZEN/site_a --out $EVIDENCE/site_a.snapshot-manifest.json
+    --snapshot $FROZEN/site_a \
+    --live-site $LIVE/site_a --staging $STAGING/site_a \
+    --out $EVIDENCE/site_a.snapshot-manifest.json
 
-# 2. record the ONE way metadata.csv may change, BEFORE the run
+# 2. record the ONE way metadata.csv may change, BEFORE the run, from the
+#    FROZEN CSV and the collapse document whose retirements authorise it
 python3 seed/scripts/preserved_archive.py csv-transform \
-    --site $FROZEN/site_a \
+    --snapshot $FROZEN/site_a \
+    --live-site $LIVE/site_a --staging $STAGING/site_a \
     --collapse-document seed/upgrades/asset-collapse.studio-a.json \
     --out $EVIDENCE/site_a.csv-transform.json
 
-# 3. publish
+# 3. build the authored plates externally, from the attested snapshot
+python3 seed/scripts/authored_plates.py build \
+    --generated-source $FROZEN/site_a/images/aurora-generated \
+    --snapshot $FROZEN/site_a \
+    --live-site $LIVE/site_a --staging $STAGING/site_a \
+    --evidence $EVIDENCE \
+    --out $SCRATCH/aurora-authored
+
+# 4. publish
 python3 seed/scripts/populate_archive.py --preserved-roots \
     --internet-source seed/internet-fetched \
     --hq-source $POOL --pack-source "$PACK" \
     --profile seed/profiles/studio-a.assets.json \
     --posts   seed/profiles/studio-a.posts.json \
     --csv-transform     $EVIDENCE/site_a.csv-transform.json \
+    --live-site         $LIVE/site_a \
     --frozen-snapshot   $FROZEN/site_a \
     --snapshot-manifest $EVIDENCE/site_a.snapshot-manifest.json \
-    --dest /mnt/blackbox_archives/datasets/artist_alley/site_a --dry-run
+    --dest $STAGING/site_a --dry-run
 
-# 4. verify, read only
+# 5. verify, read only
 python3 seed/scripts/verify_site.py check \
     --profile seed/profiles/studio-a.assets.json \
     --posts   seed/profiles/studio-a.posts.json \
-    --site    /mnt/blackbox_archives/datasets/artist_alley/site_a \
+    --site    $STAGING/site_a \
     --baseline $EVIDENCE/site_a.baseline.json \
     --csv-transform $EVIDENCE/site_a.csv-transform.json
 ```
 
-Every evidence document lives **outside** every site tree, and the emit
-commands refuse an `--out` under the tree they describe.
+Every evidence document lives **outside** all three trees, and the emit
+commands refuse an `--out` inside any of them.
+
+#### The transform's authority is the collapse document's
+
+⛔ **A transform's own arithmetic is not authority.** It states its own before
+and after hashes, so one that drops an extra row and recomputes its own
+expectations is perfectly self-consistent. Before any `metadata.csv` write the
+publisher proves that the transform's removals are **exactly** the current
+validated collapse document's retirements, intersected with the rows the
+frozen pre-operation CSV actually holds, and that the document it was built
+from is the document in hand (by content digest, profile and retirement set).
+A stale transform, a transform from another document or profile, an extra row
+nobody retired, and a documented retirement quietly left in place all refuse
+**before** anything is written. Re-emit the transform whenever the collapse
+document changes; it costs one command.
 
 The loader is **`aa seed`** — a subcommand of the app binary (#321).
 It writes **straight to postgres + the storage backend** via the app's

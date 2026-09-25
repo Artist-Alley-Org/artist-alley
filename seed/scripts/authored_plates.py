@@ -483,6 +483,18 @@ def main() -> int:
                          "tree, e.g. $SCRATCH/aurora-authored. The plates are "
                          "installed into a site as a separate, checked step; "
                          "nothing synthesizes them during a publish.")
+    ap.add_argument("--snapshot", type=Path, default=None,
+                    help="build: the FROZEN pre-operation snapshot root. "
+                         "--generated-source must be inside it, which is what "
+                         "makes the sampled pixels attested.")
+    ap.add_argument("--live-site", type=Path, default=None,
+                    help="build: the live published site (same path as --staging "
+                         "for a direct publish)")
+    ap.add_argument("--staging", type=Path, default=None,
+                    help="build: the tree a publish writes")
+    ap.add_argument("--evidence", type=Path, action="append", default=[],
+                    help="build: an evidence path the scratch output must stay "
+                         "outside of. Repeatable.")
     ap.add_argument("--dir", type=Path, default=None,
                     help="verify: the directory holding the built or installed "
                          "plates")
@@ -499,8 +511,17 @@ def main() -> int:
                   file=sys.stderr)
             return 2
         return _cmd_verify(args)
-    if args.out is None:
-        print("error: build needs --out", file=sys.stderr)
+    missing = [n for n, v in (("--out", args.out), ("--snapshot", args.snapshot),
+                              ("--live-site", args.live_site),
+                              ("--staging", args.staging)) if v is None]
+    if missing:
+        print(f"error: build needs {', '.join(missing)}.\n"
+              "  The plates are built OUTSIDE every site tree and installed as a "
+              "separate checked step, so the build has to know where those trees "
+              "are in order to prove its output is not inside one. ⛔ An "
+              "unprovable boundary must not read as a satisfied one; for a direct "
+              "publish pass the same path for --live-site and --staging.",
+              file=sys.stderr)
         return 2
 
     # ⛔ ALIAS REFUSAL. Writing the plates into the directory they sample
@@ -512,6 +533,26 @@ def main() -> int:
         return 2
     if not pa.refuse_aliasing({"--generated-source": args.generated_source,
                                "--out": args.out}):
+        return 2
+    # ⛔ AND THE SCRATCH OUTPUT SITS OUTSIDE ALL THREE OPERATION TREES AND
+    # OUTSIDE THE EVIDENCE. A directory inside live or staging would be
+    # published and pruned as if it were content; one inside the snapshot would
+    # be attested as if it were part of what the snapshot froze.
+    if not pa.refuse_operation(
+            live=args.live_site, staging=args.staging, snapshot=args.snapshot,
+            evidence={f"--evidence[{i}]": e for i, e in enumerate(args.evidence)},
+            scratch={"--out": args.out}):
+        return 2
+    # The sampled pixels are an INPUT to a hash the profile records, so they
+    # must come from the attested tree rather than from wherever the operator
+    # happened to point.
+    gen, snap = args.generated_source.resolve(), args.snapshot.resolve()
+    if not (gen == snap or gen.is_relative_to(snap)):
+        print(f"error: --generated-source {gen} is not inside --snapshot {snap}.\n"
+              "  The mood board samples those pixels, so they are an input to a "
+              "hash the profile records. Read from a tree that can change under "
+              "the run and the output is unreproducible and the claim "
+              "unverifiable.", file=sys.stderr)
         return 2
     args.out.mkdir(parents=True, exist_ok=True)
 

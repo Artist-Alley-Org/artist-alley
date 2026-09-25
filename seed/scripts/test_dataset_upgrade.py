@@ -6961,11 +6961,26 @@ class TestMetadataCsvTransform(unittest.TestCase):
     map, because the published column already holds DESTINATION paths).
     """
 
-    def _doc(self, blob, removals=()):
+    PROFILE = "studio-a.assets.json"
+
+    def _binding(self, removals):
+        """A synthetic collapse-document identity for a fixture transform.
+
+        The real one comes from `preserved_archive.collapse_binding`; these
+        tests exercise the CSV machinery, so they state an equivalent identity
+        rather than building a whole collapse document for each case."""
+        ids = sorted({rid for _p, rid in removals})
+        return {"profile": self.PROFILE, "sha256": "b" * 64,
+                "entries": len(ids), "retired_ids": ids}
+
+    def _doc(self, blob, removals=(), *, collapse=True):
+        removals = list(removals)
         with tempfile.TemporaryDirectory() as d:
             csvp = Path(d) / "metadata.csv"
             csvp.write_bytes(blob)
-            return pres.build_csv_transform(csvp, removals=removals)
+            return pres.build_csv_transform(
+                csvp, removals=removals, profile=self.PROFILE,
+                collapse=self._binding(removals) if collapse else None)
 
     # -- the byte-level filter -------------------------------------------
 
@@ -7153,10 +7168,53 @@ class TestMetadataCsvTransform(unittest.TestCase):
 
     def test_arithmetic_that_does_not_close_is_refused(self):
         doc = self._doc(_csv_bytes(_paths(10)))
-        doc["removals"] = [{"file_path": "x", "retired_id": "y"}]
+        # the id has to be one the binding names, or the stray check fires
+        # first; this case is about the row arithmetic and nothing else.
+        doc["removals"] = [{"file_path": "x", "retired_id": "r-1"}]
+        doc[pres.COLLAPSE_BINDING_KEY] = {"profile": self.PROFILE, "sha256": "b" * 64,
+                                          "entries": 1, "retired_ids": ["r-1"]}
         with self.assertRaises(pres.PreservedError) as cm:
             pres.parse_csv_transform(doc, source="fixture")
         self.assertIn("arithmetic does not close", str(cm.exception))
+
+    def test_a_removal_the_bound_document_does_not_hold_is_refused(self):
+        """⛔ THE STRUCTURAL HALF OF THE BINDING. A removal naming a
+        retired_id the bound document does not state cannot be a row that
+        document authorised, whatever the transform's own arithmetic says."""
+        paths = _paths(10)
+        doc = self._doc(_csv_bytes(paths), [(paths[2], "r-2")])
+        doc["removals"] = [{"file_path": paths[2], "retired_id": "someone-elses-id"}]
+        with self.assertRaises(pres.PreservedError) as cm:
+            pres.parse_csv_transform(doc, source="fixture")
+        self.assertIn("retired_id the bound collapse document does not hold",
+                      str(cm.exception))
+
+    def test_a_transform_with_no_profile_or_binding_key_is_refused(self):
+        """Absence is not an explicit null: a transform that says nothing
+        about its authority is refused rather than read as unbound."""
+        doc = self._doc(_csv_bytes(_paths(5)))
+        for key, fragment in (("profile", "missing `profile`"),
+                              (pres.COLLAPSE_BINDING_KEY,
+                               f"missing `{pres.COLLAPSE_BINDING_KEY}`")):
+            bad = json.loads(json.dumps(doc))
+            bad.pop(key)
+            with self.subTest(key=key):
+                with self.assertRaises(pres.PreservedError) as cm:
+                    pres.parse_csv_transform(bad, source="fixture")
+                self.assertIn(fragment, str(cm.exception))
+
+    def test_an_unsorted_or_duplicated_retirement_set_is_refused(self):
+        doc = self._doc(_csv_bytes(_paths(5)))
+        for ids, fragment in ((["b-2", "a-1"], "is not sorted"),
+                              (["a-1", "a-1"], "names an id twice")):
+            bad = json.loads(json.dumps(doc))
+            bad[pres.COLLAPSE_BINDING_KEY] = {
+                "profile": self.PROFILE, "sha256": "b" * 64,
+                "entries": len(ids), "retired_ids": ids}
+            with self.subTest(ids=ids):
+                with self.assertRaises(pres.PreservedError) as cm:
+                    pres.parse_csv_transform(bad, source="fixture")
+                self.assertIn(fragment, str(cm.exception))
 
     def test_an_unreadable_document_raises_rather_than_reading_as_empty(self):
         with tempfile.TemporaryDirectory() as d:
@@ -7180,12 +7238,17 @@ class TestMetadataCsvTransform(unittest.TestCase):
             site.mkdir()
             (site / "metadata.csv").write_bytes(_csv_bytes(_paths(5)))
             before = hashlib.sha256((site / "metadata.csv").read_bytes()).hexdigest()
+            trees = ["--snapshot", str(site), "--live-site", str(Path(d) / "live"),
+                     "--staging", str(Path(d) / "staging")]
             with contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(pres.main(["csv-transform", "--site", str(site),
-                                            "--out", str(site / "t.json")]), 2)
+                # evidence inside the tree it describes is still refused
+                self.assertEqual(pres.main(
+                    ["csv-transform", *trees, "--no-collapse-document",
+                     "--profile", self.PROFILE, "--out", str(site / "t.json")]), 2)
                 out = Path(d) / "t.json"
-                self.assertEqual(pres.main(["csv-transform", "--site", str(site),
-                                            "--out", str(out)]), 0)
+                self.assertEqual(pres.main(
+                    ["csv-transform", *trees, "--no-collapse-document",
+                     "--profile", self.PROFILE, "--out", str(out)]), 0)
                 self.assertEqual(pres.main(["verify-csv", "--transform", str(out),
                                             "--csv", str(site / "metadata.csv")]), 0)
             self.assertEqual(
@@ -7263,7 +7326,12 @@ class TestVerifierChecksTheCsvTransform(unittest.TestCase):
         posts.write_text("[]", encoding="utf-8")
         out = Path(d) / "t.json"
         with contextlib.redirect_stderr(io.StringIO()):
-            pres.main(["csv-transform", "--site", str(site), "--out", str(out)])
+            self.assertEqual(pres.main([
+                "csv-transform", "--snapshot", str(site),
+                "--live-site", str(Path(d) / "live"),
+                "--staging", str(Path(d) / "staging"),
+                "--no-collapse-document", "--profile", prof.name,
+                "--out", str(out)]), 0)
         return prof, posts, site, out
 
     NAME = "metadata.csv is the documented transform"
@@ -7655,18 +7723,31 @@ class TestPreservedRootModeIsExplicit(unittest.TestCase):
         p = dest / rec["file_path"]
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(local_bytes)
+        # THREE TREES. `live` is a separate sibling of the staging tree the
+        # publish writes, and the snapshot is a third frozen copy: the whole
+        # point of the boundary is that these are not interchangeable.
+        live = root / "live"
+        shutil.copytree(dest, live)
+        snapshot = root / "snapshot"
+        shutil.copytree(dest, snapshot)
         out = root / "evidence" / "site_a.csv-transform.json"
         with contextlib.redirect_stderr(io.StringIO()):
-            pres.main(["csv-transform", "--site", str(dest), "--out", str(out)])
+            self.assertEqual(pres.main([
+                "csv-transform", "--snapshot", str(snapshot),
+                "--live-site", str(live), "--staging", str(dest),
+                "--no-collapse-document",
+                "--profile", "studio-a.assets.json", "--out", str(out)]), 0)
         return root, out
 
-    def _run(self, root, *extra):
+    def _run(self, root, *extra, live=True):
+        args = ["--internet-source", str(root / "internet"),
+                "--profile", str(root / "profiles" / "studio-a.assets.json"),
+                "--posts", str(root / "profiles" / "studio-a.posts.json"),
+                "--dest", str(root / "dest")]
+        if live:
+            args += ["--live-site", str(root / "live")]
         return subprocess.run(
-            [sys.executable, str(SCRIPTS / "populate_archive.py"),
-             "--internet-source", str(root / "internet"),
-             "--profile", str(root / "profiles" / "studio-a.assets.json"),
-             "--posts", str(root / "profiles" / "studio-a.posts.json"),
-             "--dest", str(root / "dest"), *extra],
+            [sys.executable, str(SCRIPTS / "populate_archive.py"), *args, *extra],
             capture_output=True, text=True)
 
     @staticmethod
@@ -7852,7 +7933,7 @@ class TestPreservedArchiveLayerB(unittest.TestCase):
                stage_retired=True):
         root = Path(d)
         for sub in ("profiles", "upgrades", "internet", "dest", "snapshot",
-                    "evidence"):
+                    "live", "evidence"):
             (root / sub).mkdir(parents=True, exist_ok=True)
         retired = _pres_rec(RETIRED_ID, archive_state="draft")
         survivor = _pres_rec(SURVIVOR_ID)
@@ -7879,34 +7960,47 @@ class TestPreservedArchiveLayerB(unittest.TestCase):
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(PRESERVED_BYTES)
 
-        # The frozen snapshot: a separate tree holding both files.
+        # ⛔ THREE DISTINCT TREES. `live` is the published site, `dest` is the
+        # staging copy this run writes, and `snapshot` is the frozen pre-op
+        # copy the retirement is authenticated against. A boundary checked
+        # only against `dest` would accept `live` as the snapshot, which is
+        # the hole these fixtures exist to keep closed.
+        live = root / "live"
         snap = root / "snapshot"
-        for rec in (survivor, retired):
-            p = snap / rec["file_path"]
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_bytes(PRESERVED_BYTES if snapshot_bytes is None
-                          else snapshot_bytes)
+        for tree in (live, snap):
+            for rec in (survivor, retired):
+                p = tree / rec["file_path"]
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(PRESERVED_BYTES if (snapshot_bytes is None
+                                                  or tree is live)
+                              else snapshot_bytes)
+        shutil.copyfile(dest / pres.CSV_NAME, snap / pres.CSV_NAME)
+        shutil.copyfile(dest / pres.CSV_NAME, live / pres.CSV_NAME)
         manifest = root / "evidence" / "site_a.snapshot-manifest.json"
+        cdoc = root / "upgrades" / "asset-collapse.studio-a.json"
         with contextlib.redirect_stderr(io.StringIO()):
             pres.main(["snapshot-manifest", "--snapshot", str(snap),
+                       "--live-site", str(live), "--staging", str(dest),
                        "--out", str(manifest)])
         transform = root / "evidence" / "site_a.csv-transform.json"
         with contextlib.redirect_stderr(io.StringIO()):
-            pres.main(["csv-transform", "--site", str(dest),
-                       "--collapse-document",
-                       str(root / "upgrades" / "asset-collapse.studio-a.json"),
+            pres.main(["csv-transform", "--snapshot", str(snap),
+                       "--live-site", str(live), "--staging", str(dest),
+                       "--collapse-document", str(cdoc),
                        "--out", str(transform)])
         return root, transform, manifest
 
-    def _run(self, root, transform, *extra):
+    def _run(self, root, transform, *extra, live=True):
+        args = ["--preserved-roots",
+                "--internet-source", str(root / "internet"),
+                "--profile", str(root / "profiles" / "studio-a.assets.json"),
+                "--posts", str(root / "profiles" / "studio-a.posts.json"),
+                "--csv-transform", str(transform),
+                "--dest", str(root / "dest")]
+        if live:
+            args += ["--live-site", str(root / "live")]
         return subprocess.run(
-            [sys.executable, str(SCRIPTS / "populate_archive.py"),
-             "--preserved-roots",
-             "--internet-source", str(root / "internet"),
-             "--profile", str(root / "profiles" / "studio-a.assets.json"),
-             "--posts", str(root / "profiles" / "studio-a.posts.json"),
-             "--csv-transform", str(transform),
-             "--dest", str(root / "dest"), *extra],
+            [sys.executable, str(SCRIPTS / "populate_archive.py"), *args, *extra],
             capture_output=True, text=True)
 
     def _full(self, root, transform, manifest, *extra):
@@ -7960,10 +8054,8 @@ class TestPreservedArchiveLayerB(unittest.TestCase):
                     self.assertIn("needs both --frozen-snapshot and "
                                   "--snapshot-manifest", r.stderr)
 
-    def test_r6_authentication_from_the_live_or_staging_tree_refuses(self):
-        """⛔ THE TREE BEING PUBLISHED CANNOT BE THE EVIDENCE. Pointing the
-        snapshot at `--dest` is the destination as its own evidence, whether
-        that destination is the live site or a staging copy of it."""
+    def test_r6_authentication_from_the_staging_tree_refuses(self):
+        """⛔ THE TREE BEING PUBLISHED CANNOT BE THE EVIDENCE."""
         with tempfile.TemporaryDirectory() as d:
             root, transform, manifest = self._world(d)
             before = self._tree(root / "dest")
@@ -7971,8 +8063,124 @@ class TestPreservedArchiveLayerB(unittest.TestCase):
                           "--frozen-snapshot", str(root / "dest"),
                           "--snapshot-manifest", str(manifest))
             self.assertEqual(r.returncode, 2)
-            self.assertIn("aliasing refusal", r.stderr)
+            self.assertIn("preserved-operation path refusal", r.stderr)
+            self.assertIn("the tree this run WRITES", r.stderr)
             self.assertEqual(self._tree(root / "dest"), before)
+
+    def test_r6_authentication_from_the_LIVE_tree_refuses(self):
+        """⛔⛔ THE HOLE A DESTINATION-ONLY CHECK LEAVES OPEN. A preserved
+        operation has THREE trees, and live is neither the snapshot nor the
+        staging tree. Comparing the snapshot against `--dest` alone proves
+        only that it is not the tree being written: measured against the
+        first version of this work, passing the LIVE site as
+        `--frozen-snapshot` while `--dest` pointed at staging was ACCEPTED,
+        the retirement authenticated, and the retired file deleted. Live can
+        change under the run; it was never frozen."""
+        with tempfile.TemporaryDirectory() as d:
+            root, transform, manifest = self._world(d)
+            live, dest = root / "live", root / "dest"
+            self.assertNotEqual(live.resolve(), dest.resolve(),
+                                "the fixture must have live and staging as "
+                                "genuinely distinct sibling trees")
+            before = self._tree(dest)
+            r = self._run(root, transform, "--frozen-snapshot", str(live),
+                          "--snapshot-manifest", str(manifest))
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("preserved-operation path refusal", r.stderr)
+            self.assertIn("FROZEN", r.stderr)
+            self.assertIn("not frozen", r.stderr)
+            self.assertEqual(self._tree(dest), before,
+                             "a refusal must write nothing and delete nothing")
+
+    def test_all_six_snapshot_shapes_against_live_and_staging_refuse(self):
+        """The full boundary, as paths rather than as prose: equality and
+        containment in both directions, against BOTH other trees."""
+        live, staging, snap = Path("/a/live"), Path("/a/stage"), Path("/a/frozen")
+        cases = [
+            ("snapshot == live", live, staging, live),
+            ("snapshot under live", live, staging, live / "frozen"),
+            ("live under snapshot", snap / "live", staging, snap),
+            ("snapshot == staging", live, staging, staging),
+            ("snapshot under staging", live, staging, staging / "frozen"),
+            ("staging under snapshot", live, snap / "stage", snap),
+        ]
+        for label, lv, st, sn in cases:
+            with self.subTest(case=label):
+                bad = pres.operation_refusals(live=lv, staging=st, snapshot=sn)
+                self.assertTrue(bad, label)
+        # …and the clean three-tree case, plus a direct publish where live
+        # and staging are legitimately the same tree, both pass.
+        self.assertEqual(pres.operation_refusals(
+            live=live, staging=staging, snapshot=snap), [])
+        self.assertEqual(pres.operation_refusals(
+            live=live, staging=live, snapshot=snap), [])
+        # a staging tree NESTED in live is still refused
+        self.assertTrue(pres.operation_refusals(
+            live=live, staging=live / "stage", snapshot=snap))
+
+    def test_the_boundary_resists_dot_dot_symlinks_and_trailing_slashes(self):
+        """⛔ IDENTITY IS THE RESOLVED PATH, NEVER A NAME. `..`, a symlink and a
+        trailing slash all make two spellings of one tree look different, and a
+        boundary defeated by a spelling is not a boundary. And no check
+        anywhere looks for `frozen`, `.preop` or any other substring: a name is
+        a label an operator chooses and a typo silently disables."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            live, staging = root / "live", root / "staging"
+            for x in (live, staging):
+                x.mkdir()
+            # the same tree, spelled three ways
+            for spelling in (root / "x" / ".." / "live",
+                             Path(str(live) + "/"),
+                             root / "linked"):
+                if spelling.name == "linked":
+                    spelling.symlink_to(live)
+                with self.subTest(spelling=str(spelling)):
+                    bad = pres.operation_refusals(
+                        live=live, staging=staging, snapshot=spelling)
+                    self.assertTrue(bad, f"{spelling} is the live tree")
+            # a NAME that looks frozen is not evidence of anything
+            decoy = root / "live" / "site_a.preop.frozen.snapshot"
+            decoy.mkdir(parents=True)
+            self.assertTrue(pres.operation_refusals(
+                live=live, staging=staging, snapshot=decoy),
+                "a directory named like a snapshot, inside live, is still inside live")
+
+    def test_a_missing_live_site_refuses_rather_than_defaulting(self):
+        """⛔ A FALLBACK CANNOT TELL A DECISION FROM A TYPO. Defaulting live
+        to `--dest` would silently restore the hole for every operator who
+        forgot the flag in the staging workflow."""
+        with tempfile.TemporaryDirectory() as d:
+            root, transform, manifest = self._world(d)
+            r = self._run(root, transform, "--frozen-snapshot",
+                          str(root / "snapshot"), "--snapshot-manifest",
+                          str(manifest), live=False)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("requires --live-site", r.stderr)
+            self.assertIn("THREE distinct trees", r.stderr)
+
+    def test_evidence_inside_any_of_the_three_trees_refuses(self):
+        """D/E. The manifest and the transform are evidence ABOUT the
+        operation; stored inside a tree it writes or attests, they are
+        evidence the operation can rewrite."""
+        with tempfile.TemporaryDirectory() as d:
+            root, transform, manifest = self._world(d)
+            for tree in ("live", "dest", "snapshot"):
+                for label, src in (("--snapshot-manifest", manifest),
+                                   ("--csv-transform", transform)):
+                    with self.subTest(tree=tree, evidence=label):
+                        inside = root / tree / "evidence.json"
+                        shutil.copyfile(src, inside)
+                        extra = ["--frozen-snapshot", str(root / "snapshot"),
+                                 "--snapshot-manifest", str(manifest)]
+                        if label == "--snapshot-manifest":
+                            extra[-1] = str(inside)
+                            r = self._run(root, transform, *extra)
+                        else:
+                            r = self._run(root, inside, *extra)
+                        self.assertEqual(r.returncode, 2, r.stderr)
+                        self.assertIn("preserved-operation path refusal", r.stderr)
+                        inside.unlink()
 
     def test_a_snapshot_inside_the_destination_refuses(self):
         with tempfile.TemporaryDirectory() as d:
@@ -8040,8 +8248,11 @@ class TestPreservedArchiveLayerB(unittest.TestCase):
             victim = root / "snapshot" / _pres_rec(RETIRED_ID)["file_path"]
             victim.write_bytes(b"different artwork entirely")
             with contextlib.redirect_stderr(io.StringIO()):
-                pres.main(["snapshot-manifest", "--snapshot",
-                           str(root / "snapshot"), "--out", str(manifest)])
+                self.assertEqual(pres.main([
+                    "snapshot-manifest", "--snapshot", str(root / "snapshot"),
+                    "--live-site", str(root / "live"),
+                    "--staging", str(root / "dest"),
+                    "--out", str(manifest)]), 0)
             r = self._full(root, transform, manifest)
             self.assertEqual(r.returncode, 2)
             self.assertIn("DIFFERENT bytes", r.stderr)
@@ -8399,10 +8610,13 @@ class TestAuthoredPlateInstallIsChecked(unittest.TestCase):
         output, and the recorded hashes would describe a tree that produced
         itself."""
         with tempfile.TemporaryDirectory() as d:
-            gen = Path(d) / "aurora-generated"
-            gen.mkdir()
+            snap = Path(d) / "snapshot"
+            gen = snap / "images" / "aurora-generated"
+            gen.mkdir(parents=True)
             argv = ["build", "--generated-source", str(gen),
-                    "--out", str(gen / "out")]
+                    "--out", str(gen / "out"), "--snapshot", str(snap),
+                    "--live-site", str(Path(d) / "live"),
+                    "--staging", str(Path(d) / "staging")]
             with unittest.mock.patch.object(sys, "argv", ["authored_plates.py"] + argv), \
                     contextlib.redirect_stderr(io.StringIO()) as err:
                 rc = ap.main()
@@ -8428,7 +8642,7 @@ class TestAuthoredPlateInstallIsChecked(unittest.TestCase):
                   "reference-mood-board.png": b"board bytes here"}
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            for sub in ("profiles", "internet", "dest", "evidence"):
+            for sub in ("profiles", "internet", "dest", "snapshot", "evidence"):
                 (root / sub).mkdir(parents=True)
             recs = []
             for i, (name, body) in enumerate(sorted(bodies.items())):
@@ -8455,20 +8669,610 @@ class TestAuthoredPlateInstallIsChecked(unittest.TestCase):
                 p = dest / r["file_path"]
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_bytes(body)
+            live = root / "live"
+            shutil.copytree(dest, live)
+            shutil.copyfile(dest / pres.CSV_NAME,
+                            root / "snapshot" / pres.CSV_NAME)
             out = root / "evidence" / "t.json"
             with contextlib.redirect_stderr(io.StringIO()):
-                pres.main(["csv-transform", "--site", str(dest), "--out", str(out)])
+                self.assertEqual(pres.main([
+                    "csv-transform", "--snapshot", str(root / "snapshot"),
+                    "--live-site", str(live), "--staging", str(dest),
+                    "--no-collapse-document", "--profile",
+                    "studio-a.assets.json", "--out", str(out)]), 0)
             r = subprocess.run(
                 [sys.executable, str(SCRIPTS / "populate_archive.py"),
                  "--preserved-roots", "--internet-source", str(root / "internet"),
                  "--profile", str(root / "profiles" / "studio-a.assets.json"),
                  "--posts", str(root / "profiles" / "studio-a.posts.json"),
-                 "--csv-transform", str(out), "--dest", str(dest)],
+                 "--csv-transform", str(out), "--live-site", str(live),
+                 "--dest", str(dest)],
                 capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("missing:     0", r.stderr)
             self.assertIn("wrong size:  0", r.stderr)
             self.assertIn("preexisting: 2", r.stderr)
+
+
+class TestTransformAuthorityIsBoundToTheCurrentDocument(unittest.TestCase):
+    """⛔ INTERNAL SELF-CONSISTENCY IS NOT AUTHORITY.
+
+    A transform states its own before and after hashes, so a forged one that
+    drops an extra row and recomputes its own expectations is perfectly
+    self-consistent. Measured against the first version of this work: such a
+    transform removed a row no collapse document mentioned, the publish wrote
+    it, and the run exited 0. Two independent bindings close it, because they
+    fail on different things: the DIGEST catches a document that changed at
+    all, the RECOMPUTATION catches removals that disagree with it in either
+    direction.
+    """
+
+    def _world(self, d, *, doc=None):
+        """`doc` overrides the whole collapse document, because the wrapper
+        differs per kind: a preserved-only document carries NO pool_of_record
+        and a produced_source one requires it."""
+        root = Path(d)
+        for sub in ("profiles", "upgrades", "internet", "dest", "snapshot",
+                    "live", "evidence"):
+            (root / sub).mkdir(parents=True, exist_ok=True)
+        retired = _pres_rec(RETIRED_ID, archive_state="draft")
+        survivor = _pres_rec(SURVIVOR_ID)
+        if doc is None:
+            doc = _pres_doc([_pres_entry(retired, survivor)])
+        self.cdoc = root / "upgrades" / "asset-collapse.studio-a.json"
+        self.cdoc.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+        (root / "profiles" / "studio-a.assets.json").write_text(
+            json.dumps([survivor]), encoding="utf-8")
+        (root / "profiles" / "studio-a.posts.json").write_text("[]", encoding="utf-8")
+
+        rows = _paths(20) + [survivor["file_path"], retired["file_path"]]
+        dest = root / "dest"
+        (dest / "MANIFEST.json").write_text(json.dumps([survivor, retired]),
+                                            encoding="utf-8")
+        (dest / "posts.json").write_text("[]", encoding="utf-8")
+        (dest / pres.CSV_NAME).write_bytes(_csv_bytes(rows))
+        for rec in (survivor, retired):
+            p = dest / rec["file_path"]
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(PRESERVED_BYTES)
+        for tree in ("live", "snapshot"):
+            for rec in (survivor, retired):
+                p = root / tree / rec["file_path"]
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(PRESERVED_BYTES)
+            shutil.copyfile(dest / pres.CSV_NAME, root / tree / pres.CSV_NAME)
+        self.manifest = root / "evidence" / "m.json"
+        self.transform = root / "evidence" / "t.json"
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(pres.main([
+                "snapshot-manifest", "--snapshot", str(root / "snapshot"),
+                "--live-site", str(root / "live"), "--staging", str(dest),
+                "--out", str(self.manifest)]), 0)
+            self.assertEqual(pres.main([
+                "csv-transform", "--snapshot", str(root / "snapshot"),
+                "--live-site", str(root / "live"), "--staging", str(dest),
+                "--collapse-document", str(self.cdoc),
+                "--out", str(self.transform)]), 0)
+        self.good = json.loads(self.transform.read_text())
+        return root
+
+    def _run(self, root, *extra):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "populate_archive.py"),
+             "--preserved-roots", "--internet-source", str(root / "internet"),
+             "--profile", str(root / "profiles" / "studio-a.assets.json"),
+             "--posts", str(root / "profiles" / "studio-a.posts.json"),
+             "--csv-transform", str(self.transform),
+             "--live-site", str(root / "live"),
+             "--frozen-snapshot", str(root / "snapshot"),
+             "--snapshot-manifest", str(self.manifest),
+             "--dest", str(root / "dest"), *extra],
+            capture_output=True, text=True)
+
+    def _reexpect(self, doc, root):
+        """Re-derive the transform's own arithmetic so the forgery is
+        INTERNALLY CONSISTENT: that is the whole point of these cases."""
+        blob = (root / "snapshot" / pres.CSV_NAME).read_bytes()
+        header, rows = pres.split_csv_records(blob)
+        idx = pres.record_fields(header).index("file_path")
+        gone = {r["file_path"] for r in doc["removals"]}
+        kept = [r for r in rows if pres.record_fields(r)[idx] not in gone]
+        digs = [pres._sha(r) for r in kept]
+        after = header + b"".join(kept)
+        doc["expected"] = {"sha256": pres._sha(after), "bytes": len(after),
+                           "data_rows": len(kept),
+                           "ordered_digest": pres.ordered_digest(digs),
+                           "row_digests": digs}
+        self.transform.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+        return doc
+
+    @staticmethod
+    def _csv(root):
+        return (root / "dest" / pres.CSV_NAME).read_bytes()
+
+    # -- A: the honest case ------------------------------------------------
+
+    def test_a_valid_transform_and_the_matching_document_pass(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            self.assertEqual(len(self.good["removals"]), 1)
+            self.assertEqual(self.good["profile"], "studio-a.assets.json")
+            self.assertEqual(self.good[pres.COLLAPSE_BINDING_KEY]["retired_ids"],
+                             [RETIRED_ID])
+            r = self._run(root)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(pres.verify_csv_transform(self.good, self._csv(root)), [])
+
+    def test_the_binding_does_not_break_idempotency(self):
+        """⛔ THE RECOMPUTATION NEEDS THE PRE-OPERATION ROWS. Caught by running
+        the publish twice: on the second run the documented rows are already
+        gone, so intersecting the document's retirements with the rows present
+        comes back EMPTY and a naive recomputation refuses a correct no-op.
+        The identity half still holds there and the bytes are separately proved
+        to be the documented result, so the write path never loses the full
+        check."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            first = self._run(root)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertIn("wrote", first.stderr)
+            after_first = self._csv(root)
+            second = self._run(root)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertIn("already exactly the documented transform",
+                          second.stderr)
+            self.assertNotIn("not authorised", second.stderr)
+            self.assertEqual(self._csv(root), after_first,
+                             "the second run must write nothing")
+            third = self._run(root)
+            self.assertEqual(third.returncode, 0, third.stderr)
+            self.assertEqual(self._csv(root), after_first)
+
+    # -- B: an extra removal nobody authorised -----------------------------
+
+    def test_b_an_extra_removal_with_an_unknown_id_refuses_before_any_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            before = self._csv(root)
+            doc = json.loads(json.dumps(self.good))
+            doc["removals"] = sorted(
+                doc["removals"] + [{"file_path": _paths(1)[0],
+                                    "retired_id": OTHER_ID}],
+                key=lambda r: r["file_path"])
+            self._reexpect(doc, root)
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("retired_id the bound collapse document does not hold",
+                          r.stderr)
+            self.assertEqual(self._csv(root), before)
+
+    def test_b_a_real_id_pointed_at_the_wrong_row_refuses_before_any_write(self):
+        """⛔ THE 23rd ROW. The id is one the document really holds, so the
+        structural check passes and only the RECOMPUTATION against the
+        pre-operation CSV catches it."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            before = self._csv(root)
+            doc = json.loads(json.dumps(self.good))
+            doc["removals"] = [{"file_path": _paths(1)[0], "retired_id": RETIRED_ID}]
+            self._reexpect(doc, root)
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("not exactly the ones the current collapse document "
+                          "authorises", r.stderr)
+            self.assertIn("does NOT retire", r.stderr)
+            self.assertIn("Refusing before writing anything", r.stderr)
+            self.assertEqual(self._csv(root), before)
+
+    # -- C: a documented removal quietly left in place ---------------------
+
+    def test_c_a_transform_omitting_a_documented_removal_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            before = self._csv(root)
+            doc = json.loads(json.dumps(self.good))
+            doc["removals"] = []
+            self._reexpect(doc, root)
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("DOES retire that this transform leaves in place",
+                          r.stderr)
+            self.assertEqual(self._csv(root), before)
+
+    # -- D: a different document or profile --------------------------------
+
+    def test_d_a_transform_built_for_another_profile_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            doc = json.loads(json.dumps(self.good))
+            doc["profile"] = "studio-b.assets.json"
+            doc[pres.COLLAPSE_BINDING_KEY]["profile"] = "studio-b.assets.json"
+            self.transform.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("authority about one profile's retirements", r.stderr)
+
+    def test_d_a_transform_built_from_another_document_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            doc = json.loads(json.dumps(self.good))
+            doc[pres.COLLAPSE_BINDING_KEY]["sha256"] = "e" * 64
+            self.transform.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("It is STALE", r.stderr)
+
+    def test_d_a_retirement_set_that_disagrees_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            doc = json.loads(json.dumps(self.good))
+            doc[pres.COLLAPSE_BINDING_KEY]["retired_ids"] = sorted(
+                [RETIRED_ID, OTHER_ID])
+            doc[pres.COLLAPSE_BINDING_KEY]["entries"] = 2
+            self.transform.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("retirement set disagrees with the current document",
+                          r.stderr)
+
+    # -- E: a stale transform ---------------------------------------------
+
+    def test_e_a_stale_transform_after_the_document_changes_refuses(self):
+        """⛔ THE DIGEST IS OVER THE DOCUMENT BYTES ON PURPOSE. A comment edit
+        invalidates the transform and the operator re-emits it, which costs
+        one command; the alternative is a transform that keeps claiming
+        authority from a document it has not seen."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            before = self._csv(root)
+            doc = json.loads(self.cdoc.read_text())
+            doc["_why"].append("a later edit nobody re-emitted the transform for")
+            self.cdoc.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("It is STALE", r.stderr)
+            self.assertIn("re-emit it from the current document", r.stderr)
+            self.assertEqual(self._csv(root), before)
+
+    def test_a_transform_claiming_no_document_where_one_exists_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            doc = json.loads(json.dumps(self.good))
+            doc[pres.COLLAPSE_BINDING_KEY] = None
+            doc["removals"] = []
+            self._reexpect(doc, root)
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("Absence is not permission", r.stderr)
+
+    def test_a_transform_claiming_a_document_where_none_exists_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            self.cdoc.unlink()
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("authorised by nothing that is in hand", r.stderr)
+
+    # -- F: the site_a shape ----------------------------------------------
+
+    def test_f_the_zero_removal_case_remains_valid_and_bound(self):
+        """F. site_a: one `hq` retirement whose produced render has NO CSV
+        row, so the authorised removal set is EMPTY and the file must stay
+        byte-identical. The binding still has to hold; a zero-removal
+        transform is an expectation, not an exemption."""
+        with tempfile.TemporaryDirectory() as d:
+            hq_ret = _collapse_rec(RETIRED_ID, archive_state="draft")
+            hq_sur = _collapse_rec(SURVIVOR_ID)
+            root = self._world(d, doc=_collapse_doc([
+                _collapse_entry(hq_ret, hq_sur)]))
+            self.assertEqual(self.good["removals"], [])
+            self.assertEqual(self.good["expected"]["sha256"],
+                             self.good["original"]["sha256"])
+            self.assertEqual(self.good[pres.COLLAPSE_BINDING_KEY]["retired_ids"],
+                             [RETIRED_ID])
+            before = self._csv(root)
+            # `hq` needs its pack root, which this world has not got; the CSV
+            # binding is proved BEFORE Layer B, so the refusal is the pack
+            # one and the CSV is untouched either way.
+            r = self._run(root, "--dry-run")
+            self.assertNotIn("not authorised by the collapse document", r.stderr)
+            self.assertEqual(self._csv(root), before)
+            # and the transform itself verifies against the unchanged bytes
+            self.assertEqual(pres.verify_csv_transform(self.good, before), [])
+
+    def test_a_zero_removal_transform_still_refuses_a_changed_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            hq_ret = _collapse_rec(RETIRED_ID, archive_state="draft")
+            hq_sur = _collapse_rec(SURVIVOR_ID)
+            root = self._world(d, doc=_collapse_doc([
+                _collapse_entry(hq_ret, hq_sur)]))
+            blob = self._csv(root)
+            h, rows = pres.split_csv_records(blob)
+            self.assertTrue(pres.verify_csv_transform(
+                self.good, h + b"".join(rows[:-1])))
+
+    # -- the site_b shape, at its real scale -------------------------------
+
+    def test_the_site_b_shape_proves_exactly_its_22_retirements(self):
+        """The shape PR #2 will need, exercised through a REAL collapse
+        document rather than a synthetic binding: 22 retirements, all 22 paths
+        present in the CSV, 1,206 rows to 1,184.
+
+        Three things are proved at that scale, because an off-by-one in the
+        intersection would be invisible at N=1: exactly those 22 rows are the
+        authorised removals, no 23rd row is authorised, and no documented
+        retirement is omitted.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for sub in ("profiles", "upgrades", "internet", "dest", "snapshot",
+                        "live", "evidence"):
+                (root / sub).mkdir(parents=True)
+            # 22 retirements, each retiring one record onto a survivor
+            rows = _paths(1206)
+            entries, survivors = [], []
+            for i in range(22):
+                rid = f"{i:08d}-1111-2222-3333-444444444444"
+                sid = f"{i:08d}-5555-6666-7777-888888888888"
+                ret = _pres_rec(rid, name=f"retired{i}")
+                sur = _pres_rec(sid, name=f"survivor{i}")
+                # the retired record's produced file IS one of the CSV rows
+                ret["file_path"] = rows[i * 7]
+                sha = hashlib.sha256(f"bytes-{i}".encode()).hexdigest()
+                entries.append(_pres_entry(ret, sur, retired_sha=sha))
+                survivors.append(sur)
+            doc = _pres_doc(entries)
+            cdoc = root / "upgrades" / "asset-collapse.studio-a.json"
+            cdoc.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+            (root / "profiles" / "studio-a.assets.json").write_text(
+                json.dumps(survivors), encoding="utf-8")
+            (root / "dest" / pres.CSV_NAME).write_bytes(
+                _csv_bytes(rows, embed_newline_every=134))
+            shutil.copyfile(root / "dest" / pres.CSV_NAME,
+                            root / "snapshot" / pres.CSV_NAME)
+            out = root / "evidence" / "t.json"
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(pres.main([
+                    "csv-transform", "--snapshot", str(root / "snapshot"),
+                    "--live-site", str(root / "live"),
+                    "--staging", str(root / "dest"),
+                    "--collapse-document", str(cdoc), "--out", str(out)]), 0)
+            tdoc = pres.load_csv_transform(out)
+            self.assertEqual(tdoc["original"]["data_rows"], 1206)
+            self.assertEqual(tdoc["expected"]["data_rows"], 1184)
+            self.assertEqual(len(tdoc["removals"]), 22)
+
+            loaded = ac.load_collapse_document(cdoc)
+            blob = (root / "snapshot" / pres.CSV_NAME).read_bytes()
+            raw = cdoc.read_bytes()
+            # exactly those 22, against the real document
+            self.assertEqual(pres.binding_refusals(
+                tdoc, profile_name="studio-a.assets.json", collapse_doc=loaded,
+                collapse_raw=raw, csv_blob=blob), [])
+            self.assertEqual(
+                [r["file_path"] for r in tdoc["removals"]],
+                sorted(rows[i * 7] for i in range(22)))
+
+            # a 23rd row is not authorised
+            extra = json.loads(json.dumps(tdoc))
+            extra["removals"] = sorted(
+                extra["removals"] + [{"file_path": rows[3],
+                                      "retired_id": entries[0]["retired_id"]}],
+                key=lambda r: r["file_path"])
+            bad = pres.binding_refusals(
+                extra, profile_name="studio-a.assets.json", collapse_doc=loaded,
+                collapse_raw=raw, csv_blob=blob)
+            self.assertTrue(any("does NOT retire" in x for x in bad), bad)
+
+            # and none of the 22 may be omitted
+            for drop in (0, 11, 21):
+                short = json.loads(json.dumps(tdoc))
+                del short["removals"][drop]
+                bad = pres.binding_refusals(
+                    short, profile_name="studio-a.assets.json",
+                    collapse_doc=loaded, collapse_raw=raw, csv_blob=blob)
+                with self.subTest(dropped=drop):
+                    self.assertTrue(any("DOES retire" in x for x in bad), bad)
+
+            # the transform itself still applies byte-exactly, bare LFs included
+            after, refusals = pres.transform_csv(blob, tdoc)
+            self.assertEqual(refusals, [])
+            self.assertEqual(pres.verify_csv_transform(tdoc, after), [])
+            header, kept = pres.split_csv_records(after)
+            self.assertEqual(len(kept), 1184)
+
+    # -- G: the verifier ---------------------------------------------------
+
+    NAME = "metadata.csv transform is authorised by the collapse document"
+
+    def test_g_the_verifier_refuses_a_transform_whose_authority_moved(self):
+        """G. After the write the recomputation is impossible (the site holds
+        the POST-operation CSV), so the verifier proves the identity half. A
+        document that has moved since the transform was emitted fails here,
+        which is what stops a stale transform being blessed after the fact."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            r = self._run(root)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            prof = root / "profiles" / "studio-a.assets.json"
+            posts = root / "profiles" / "studio-a.posts.json"
+            with contextlib.redirect_stderr(io.StringIO()):
+                rep = vs.verify(prof, posts, root / "dest",
+                                collapse_path=self.cdoc,
+                                csv_transform=self.transform)
+            self.assertEqual(_verdict(rep, self.NAME).status, vs.PASS)
+            # the document moves; the same site and the same transform now fail
+            doc = json.loads(self.cdoc.read_text())
+            doc["_why"].append("moved after the publish")
+            self.cdoc.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                rep = vs.verify(prof, posts, root / "dest",
+                                collapse_path=self.cdoc,
+                                csv_transform=self.transform)
+            self.assertEqual(_verdict(rep, self.NAME).status, vs.FAIL)
+            self.assertFalse(rep.ok)
+
+    def test_g_an_unusable_document_is_not_read_as_an_absent_one(self):
+        """⛔ UNUSABLE IS NOT ABSENT. Without the distinction the verdict would
+        say "no collapse document exists", which is a softer and different
+        claim, and the transform's removals would look unauthorised-but-fine
+        rather than unauthorised-and-refused."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            self.cdoc.write_text("{nope", encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                rep = vs.verify(root / "profiles" / "studio-a.assets.json",
+                                root / "profiles" / "studio-a.posts.json",
+                                root / "dest", collapse_path=self.cdoc,
+                                csv_transform=self.transform)
+            v = _verdict(rep, self.NAME)
+            self.assertEqual(v.status, vs.FAIL)
+            self.assertIn("Unusable is not absent", v.detail)
+
+    def test_g_the_verifier_refuses_a_transform_for_another_profile(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            doc = json.loads(json.dumps(self.good))
+            doc["profile"] = "studio-b.assets.json"
+            self.transform.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                rep = vs.verify(root / "profiles" / "studio-a.assets.json",
+                                root / "profiles" / "studio-a.posts.json",
+                                root / "dest", collapse_path=self.cdoc,
+                                csv_transform=self.transform)
+            self.assertEqual(_verdict(rep, self.NAME).status, vs.FAIL)
+
+    # -- the emitter -------------------------------------------------------
+
+    def test_the_emitter_demands_an_explicit_document_or_an_explicit_absence(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            trees = ["--snapshot", str(root / "snapshot"),
+                     "--live-site", str(root / "live"),
+                     "--staging", str(root / "dest")]
+            out = root / "evidence" / "x.json"
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(pres.main(
+                    ["csv-transform", *trees, "--out", str(out)]), 2)
+            self.assertIn("exactly one of --collapse-document", err.getvalue())
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(pres.main(
+                    ["csv-transform", *trees, "--collapse-document", str(self.cdoc),
+                     "--no-collapse-document", "--out", str(out)]), 2)
+
+    def test_the_emitter_refuses_an_unusable_collapse_document(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            self.cdoc.write_text("{nope", encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(pres.main([
+                    "csv-transform", "--snapshot", str(root / "snapshot"),
+                    "--live-site", str(root / "live"),
+                    "--staging", str(root / "dest"),
+                    "--collapse-document", str(self.cdoc),
+                    "--out", str(root / "evidence" / "x.json")]), 2)
+            self.assertIn("would not be either", err.getvalue())
+
+
+class TestAuthoredPlateScratchBoundary(unittest.TestCase):
+    """F/G of correction 1. The plates are built OUTSIDE every operation tree.
+
+    ⛔ A scratch directory inside live or staging would be published and
+    pruned as if it were content; one inside the snapshot would be attested as
+    if it were part of what the snapshot froze; one inside the evidence would
+    sit in the very document set it is checked against.
+    """
+
+    def _world(self, d):
+        root = Path(d)
+        for sub in ("live", "staging", "snapshot", "evidence", "scratch"):
+            (root / sub).mkdir(parents=True)
+        gen = root / "snapshot" / "images" / "aurora-generated"
+        gen.mkdir(parents=True)
+        return root, gen
+
+    def _build(self, root, gen, out, *extra):
+        argv = ["build", "--generated-source", str(gen), "--out", str(out),
+                "--snapshot", str(root / "snapshot"),
+                "--live-site", str(root / "live"),
+                "--staging", str(root / "staging"), *extra]
+        with unittest.mock.patch.object(sys, "argv", ["authored_plates.py"] + argv), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            try:
+                rc = ap.main()
+            except SystemExit as e:
+                # `build_mood_board` raises SystemExit for a missing source
+                # plate. That is PAST every boundary check, which is what the
+                # accept-the-clean-case test is asserting.
+                return 0, err.getvalue() + str(e)
+        return rc, err.getvalue()
+
+    def test_f_scratch_under_live_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, gen = self._world(d)
+            rc, err = self._build(root, gen, root / "live" / "aurora-authored")
+            self.assertEqual(rc, 2)
+            self.assertIn("preserved-operation path refusal", err)
+
+    def test_g_scratch_under_staging_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, gen = self._world(d)
+            rc, err = self._build(root, gen, root / "staging" / "aurora-authored")
+            self.assertEqual(rc, 2)
+            self.assertIn("preserved-operation path refusal", err)
+
+    def test_scratch_under_the_snapshot_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, gen = self._world(d)
+            rc, err = self._build(root, gen, root / "snapshot" / "scratch")
+            self.assertEqual(rc, 2)
+            self.assertIn("preserved-operation path refusal", err)
+
+    def test_scratch_under_the_evidence_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, gen = self._world(d)
+            rc, err = self._build(root, gen, root / "evidence" / "scratch",
+                                  "--evidence", str(root / "evidence"))
+            self.assertEqual(rc, 2)
+            self.assertIn("preserved-operation path refusal", err)
+
+    def test_a_missing_tree_refuses_rather_than_skipping_the_check(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, gen = self._world(d)
+            argv = ["build", "--generated-source", str(gen),
+                    "--out", str(root / "scratch")]
+            with unittest.mock.patch.object(
+                    sys, "argv", ["authored_plates.py"] + argv), \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(ap.main(), 2)
+            self.assertIn("--snapshot, --live-site, --staging", err.getvalue())
+            self.assertIn("unprovable boundary", err.getvalue())
+
+    def test_a_generated_source_outside_the_snapshot_refuses(self):
+        """The sampled pixels are an INPUT to a hash the profile records, so
+        they must come from the attested tree."""
+        with tempfile.TemporaryDirectory() as d:
+            root, _gen = self._world(d)
+            loose = root / "elsewhere" / "aurora-generated"
+            loose.mkdir(parents=True)
+            rc, err = self._build(root, loose, root / "scratch")
+            self.assertEqual(rc, 2)
+            self.assertIn("is not inside --snapshot", err)
+
+    def test_a_clean_scratch_directory_is_accepted_and_the_build_runs(self):
+        """The boundary must not refuse the correct configuration: it gets
+        past every check and fails only on the missing source plate."""
+        with tempfile.TemporaryDirectory() as d:
+            root, gen = self._world(d)
+            _rc, err = self._build(root, gen, root / "scratch" / "aurora-authored")
+            self.assertNotIn("preserved-operation path refusal", err)
+            self.assertNotIn("is not inside --snapshot", err)
+            self.assertNotIn("build needs", err)
+            # it got as far as reading the source plate, which is past every
+            # boundary check: the colour chart was even written.
+            self.assertIn(ap.MOOD_BOARD_SOURCE, err)
+            self.assertTrue((root / "scratch" / "aurora-authored"
+                             / ap.PLATES[0]).is_file())
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

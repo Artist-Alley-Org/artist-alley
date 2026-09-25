@@ -78,13 +78,17 @@ TEST_MODULE = "test_dataset_upgrade"
 # contract, groups.csv preservation, the discriminated collapse evidence
 # (produced_source against preserved_archive), explicit preserved-root
 # mode, the frozen-snapshot Layer B with its manifest recomputation, and
-# the authored-plate install check. The Go preservation
+# the authored-plate install check, and 547 after the two corrections on
+# PR #1453 landed 34 more: the THREE-TREE path boundary (the live site is
+# neither the snapshot nor the staging tree, and evidence and scratch sit
+# outside all three) and the binding that ties a metadata.csv transform's
+# authority to the CURRENT collapse document. The Go preservation
 # tests that pin the seeder's same-owner behaviour are counted by
 # `scripts/test.sh`, not here.
 # Raise it when a batch of tests lands; never lower it to
 # make a red run go green — a dropped test is the thing this number
 # exists to catch.
-MIN_TESTS = 513
+MIN_TESTS = 547
 
 
 def _summary(line: str) -> None:

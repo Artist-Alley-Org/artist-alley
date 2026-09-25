@@ -72,8 +72,16 @@ from. `--preserved-roots` says so explicitly, and then:
   * A `preserved_archive` retirement is authenticated against
     `--frozen-snapshot`, whose hashes are RECOMPUTED against
     `--snapshot-manifest` immediately beforehand. ⛔ Never the live tree
-    and never the staging copy: a tree this run writes to cannot be the
-    evidence for what it writes.
+    and never the staging copy. Those are THREE distinct trees, so
+    `--live-site` is REQUIRED in preserved mode: comparing the snapshot
+    against `--dest` alone proves only that it is not the tree being written,
+    and leaves the live site acceptable as the snapshot while `--dest` points
+    at staging. Live is not frozen.
+  * The `--csv-transform` document's removals are proved, before any write,
+    to be EXACTLY the current collapse document's retirements intersected
+    with the rows the frozen pre-operation CSV holds. A transform's own
+    before-and-after arithmetic is self-consistent by construction and is
+    not authority for which rows may go.
 
 ⛔ THE MODE IS NEVER INFERRED. Omitting `--local-source` without
 `--preserved-roots` is still an error, because a fallback cannot tell a decision
@@ -95,9 +103,10 @@ Usage
         --profile seed/profiles/studio-a.assets.json \\
         --posts   seed/profiles/studio-a.posts.json \\
         --csv-transform $EVIDENCE/site_a.csv-transform.json \\
+        --live-site $LIVE/site_a \\
         --frozen-snapshot $FROZEN/site_a \\
         --snapshot-manifest $EVIDENCE/site_a.snapshot-manifest.json \\
-        --dest /mnt/blackbox_archives/datasets/artist_alley/site_a
+        --dest $STAGING/site_a
 
 Idempotent: files already present at the destination with matching size
 are skipped. Use --prune to delete files at the destination that aren't
@@ -759,13 +768,18 @@ def _preserved_snapshot(args):
     if not snap.is_dir():
         print(f"error: --frozen-snapshot not a directory: {snap}", file=sys.stderr)
         return False
-    # Belt and braces over main()'s alias refusal: this is the one check
-    # whose failure would make the destination its own evidence, so it is
-    # made again at the point of use rather than trusted from earlier.
-    if not pa.refuse_aliasing({"--frozen-snapshot": snap, "--dest": args.dest,
-                               "--snapshot-manifest": args.snapshot_manifest}):
-        print("  A preserved retirement authenticated from the tree being "
-              "published, live or staging, proves nothing at all.",
+    # Belt and braces over main()'s boundary check: this is the one check
+    # whose failure would authenticate a retirement against a tree nobody
+    # froze, so it is made again at the point of use rather than trusted
+    # from earlier. ⛔ AGAINST LIVE AS WELL AS AGAINST --dest: the live site
+    # and the staging tree are different trees, and the snapshot must be
+    # neither.
+    if not pa.refuse_operation(
+            live=args.live_site, staging=args.dest, snapshot=snap,
+            evidence={"--snapshot-manifest": args.snapshot_manifest,
+                      "--csv-transform": args.csv_transform}):
+        print("  A preserved retirement authenticated from the live site or "
+              "from the tree being published proves nothing at all.",
               file=sys.stderr)
         return False
     try:
@@ -779,8 +793,50 @@ def _preserved_snapshot(args):
     return snap, manifest
 
 
+def load_collapse(args):
+    """Resolve, read and validate the collapse document ONCE per run.
+
+    Returns `(path, document, raw_bytes)`, `None` when there is no document
+    (absence is not permission: every destination-only id then counts as a
+    loss), or `False` after printing a refusal.
+
+    ⛔ ONCE, AND SHARED. The CSV transform's authority is bound to a specific
+    document, and Layer B authenticates a document; if those were two
+    independent reads of the same path, nothing would prove they were the
+    same bytes. `raw_bytes` is what the binding digest is taken over, so the
+    document the transform claims and the document that authenticates are the
+    same object in memory.
+    """
+    override = getattr(args, "collapse_document", None)
+    doc_path = override if override is not None else ac.collapse_document_path(args.profile)
+    if doc_path is None:
+        print(f"  MANIFEST.json: no collapse document lookup for "
+              f"{args.profile.name} (not named <stem>{ac.ASSETS_PROFILE_SUFFIX}); "
+              f"every destination-only id counts as a loss", file=sys.stderr)
+        return None
+    if not doc_path.is_file():
+        if override is not None:
+            print(f"error: --collapse-document {doc_path}: not a file", file=sys.stderr)
+            return False
+        print(f"  MANIFEST.json: no collapse document at {doc_path}; every "
+              f"destination-only id counts as a loss", file=sys.stderr)
+        return None
+    try:
+        raw = doc_path.read_bytes()
+        doc = ac.load_collapse_document(doc_path, profile_name=args.profile.name)
+    except (OSError, ac.CollapseError) as e:
+        print(f"error: {e}\n"
+              "  Refusing: an asset-collapse document that cannot be validated "
+              "is not evidence, and \"unusable\" must not be read as \"nothing "
+              "was retired\". This is not overridable by --allow-regression.",
+              file=sys.stderr)
+        return False
+    return doc_path, doc, raw
+
+
 def authenticate_collapses(args, sources: dict[str, Path],
-                           profile: list[dict], *, preserved: bool = False):
+                           profile: list[dict], *, preserved: bool = False,
+                           collapse_loaded=None):
     """LAYER B. Source-authenticate every documented retirement, or refuse.
 
     Returns a mapping retired_id -> {"survivor_id", "retired_record",
@@ -818,29 +874,12 @@ def authenticate_collapses(args, sources: dict[str, Path],
     would either fail CI or be skipped, and a skipped validation is how a
     waiver appears.
     """
-    override = getattr(args, "collapse_document", None)
-    doc_path = override if override is not None else ac.collapse_document_path(args.profile)
-    if doc_path is None:
-        print(f"  MANIFEST.json: no collapse document lookup for "
-              f"{args.profile.name} (not named <stem>{ac.ASSETS_PROFILE_SUFFIX}); "
-              f"every destination-only id counts as a loss", file=sys.stderr)
-        return {}
-    if not doc_path.is_file():
-        if override is not None:
-            print(f"error: --collapse-document {doc_path}: not a file", file=sys.stderr)
-            return False
-        print(f"  MANIFEST.json: no collapse document at {doc_path}; every "
-              f"destination-only id counts as a loss", file=sys.stderr)
-        return {}
-    try:
-        doc = ac.load_collapse_document(doc_path, profile_name=args.profile.name)
-    except ac.CollapseError as e:
-        print(f"error: {e}\n"
-              "  Refusing: an asset-collapse document that cannot be validated "
-              "is not evidence, and \"unusable\" must not be read as \"nothing "
-              "was retired\". This is not overridable by --allow-regression.",
-              file=sys.stderr)
+    loaded = collapse_loaded
+    if loaded is False:
         return False
+    if loaded is None:
+        return {}
+    doc_path, doc, _raw = loaded
 
     by_id = {a.get("id"): a for a in profile}
     problems: list[str] = []
@@ -1246,7 +1285,7 @@ def check_destination(args, profile: list[dict], collapses=None) -> bool:
     return False
 
 
-def preserved_csv_plan(args):
+def preserved_csv_plan(args, collapse_loaded):
     """The ONE change `metadata.csv` may undergo in preserved mode.
 
     Returns (note, after_bytes) where `after_bytes` is None for an
@@ -1283,11 +1322,53 @@ def preserved_csv_plan(args):
               file=sys.stderr)
         return False
     blob = dest_csv.read_bytes()
+
+    # ⛔ THE BINDING, BEFORE ANY WRITE AND BEFORE THE "already applied"
+    # SHORTCUT. A transform states its own before and after hashes, so a
+    # forged one that drops an extra row and recomputes its own expectations
+    # is perfectly self-consistent. Measured against the first version of this
+    # file: such a transform removed a row no collapse document mentioned and
+    # the run exited 0. Internal arithmetic is not authority; the current
+    # validated document is.
+    #
+    # The recomputation is against the PRE-OPERATION bytes, which is what
+    # `blob` holds at this point: the authorised set is every retirement whose
+    # produced file has a row in that CSV, and nothing else.
+    collapse_doc = collapse_raw = None
+    if collapse_loaded not in (None, False):
+        _path, collapse_doc, collapse_raw = collapse_loaded
+    # ⚠️ THE RECOMPUTATION NEEDS THE PRE-OPERATION ROWS, so it runs only when
+    # the CSV in hand still IS the pre-operation CSV. On an idempotent re-run
+    # the documented rows are already gone, so intersecting the document's
+    # retirements with the rows present would come back empty and refuse a
+    # correct no-op. The identity half still holds there, and the bytes are
+    # separately proved to be exactly the documented result; that run writes
+    # nothing either way, so the write path always carries the full check.
+    pre_op = pa.sha256_bytes(blob) == doc["original"]["sha256"]
+    bound = pa.binding_refusals(doc, profile_name=args.profile.name,
+                                collapse_doc=collapse_doc,
+                                collapse_raw=collapse_raw,
+                                csv_blob=blob if pre_op else None)
+    if bound:
+        print(f"error: {args.csv_transform}: its removals are not authorised by "
+              f"the collapse document this run uses:", file=sys.stderr)
+        for r in bound:
+            print(f"  - {r}", file=sys.stderr)
+        print("  Refusing before writing anything. Re-emit the transform from "
+              "the CURRENT document:\n"
+              "    python3 seed/scripts/preserved_archive.py csv-transform "
+              "--snapshot <frozen> --live-site <live> --staging <dest> \\\n"
+              "        --collapse-document <asset-collapse.<stem>.json> --out "
+              "<evidence>/<site>.csv-transform.json", file=sys.stderr)
+        return False
+
     got = pa.sha256_file(dest_csv)
     if got == doc["expected"]["sha256"] and got != doc["original"]["sha256"]:
         print(f"  {pa.CSV_NAME}: already exactly the documented transform "
-              f"({doc['expected']['data_rows']:,} row(s)); nothing to do",
-              file=sys.stderr)
+              f"({doc['expected']['data_rows']:,} row(s)); nothing to do. The "
+              f"removal recomputation needs the pre-operation rows and they are "
+              f"already gone, so the collapse-document binding was proved by "
+              f"identity here; this run writes nothing.", file=sys.stderr)
         return ("already applied", None)
     after, refusals = pa.transform_csv(blob, doc)
     if refusals:
@@ -1341,6 +1422,14 @@ def main() -> int:
                              "mode: the published CSV is no longer regenerated "
                              "from the profile's source-path map, which matched 0 "
                              "of 907 site_a rows and wrote a header-only file.")
+    parser.add_argument("--live-site", type=Path, default=None,
+                        help="The LIVE published site. REQUIRED in preserved "
+                             "mode: a preserved operation has three distinct "
+                             "trees (live, the staging tree this run writes, and "
+                             "the frozen pre-operation snapshot), and without "
+                             "knowing where live is the run cannot prove the "
+                             "snapshot is not it. For a direct publish pass the "
+                             "same path as --dest.")
     parser.add_argument("--frozen-snapshot", type=Path, default=None,
                         help="A frozen pre-operation snapshot of the site. The "
                              "ONLY tree a preserved_archive retirement may be "
@@ -1437,10 +1526,40 @@ def main() -> int:
                   "and wrote a HEADER-ONLY file. It now changes only in the way a "
                   "document written BEFORE this run says it may:\n"
                   "    python3 seed/scripts/preserved_archive.py csv-transform "
-                  "--site <frozen-pre-op-site> \\\n"
-                  "        --collapse-document <asset-collapse.<stem>.json> "
-                  "--out <outside-every-site-tree>/<site>.csv-transform.json",
+                  "--snapshot <frozen> \\\n"
+                  "        --live-site <live> --staging <dest> "
+                  "--collapse-document <asset-collapse.<stem>.json> \\\n"
+                  "        --out <outside-all-three>/<site>.csv-transform.json",
                   file=sys.stderr)
+            return 2
+        if args.live_site is None:
+            print("error: --preserved-roots requires --live-site.\n"
+                  "  A preserved operation has THREE distinct trees: the live "
+                  "published site, the staging tree this run writes (--dest), "
+                  "and the frozen pre-operation snapshot a preserved retirement "
+                  "is authenticated against. Comparing the snapshot against "
+                  "--dest alone proves only that it is not the tree being "
+                  "written: it does NOT stop the LIVE site being passed as the "
+                  "snapshot while --dest points at staging, and that run "
+                  "authenticates against a tree nobody froze.\n"
+                  "  For a direct publish, pass the same path as --dest.",
+                  file=sys.stderr)
+            return 2
+        # ⛔ THE WHOLE BOUNDARY, BEFORE ANYTHING ELSE. Six shapes on the
+        # snapshot (equal to or nested with live, equal to or nested with
+        # staging), nesting between live and staging, and every evidence
+        # document outside all three.
+        # `require_snapshot=False` here ONLY: a preserved publish whose
+        # collapse document holds no `preserved_archive` entry authenticates
+        # nothing against a snapshot, so demanding one would refuse a correct
+        # run. A snapshot that IS supplied is checked in full, and
+        # `_preserved_snapshot` demands one unconditionally for the entries
+        # that need it.
+        if not pa.refuse_operation(
+                live=args.live_site, staging=args.dest,
+                snapshot=args.frozen_snapshot, require_snapshot=False,
+                evidence={"--snapshot-manifest": args.snapshot_manifest,
+                          "--csv-transform": args.csv_transform}):
             return 2
         print("PRESERVED-ROOT MODE (#1319): `local` is treated as "
               "ARCHIVE-AUTHORITATIVE / PRESERVED.", file=sys.stderr)
@@ -1501,9 +1620,16 @@ def main() -> int:
         if not src_csv.is_file():
             print(f"error: {pa.CSV_NAME} not found at {src_csv}", file=sys.stderr)
             return 2
+    # ⛔ ONE LOAD, SHARED BY THE TRANSFORM BINDING AND BY LAYER B. Two
+    # independent reads of the same path would prove nothing about them being
+    # the same bytes, which is exactly the gap the binding exists to close.
+    collapse_loaded = load_collapse(args)
+    if collapse_loaded is False:
+        return 2
+
     csv_plan = None
     if preserved:
-        csv_plan = preserved_csv_plan(args)
+        csv_plan = preserved_csv_plan(args, collapse_loaded)
         if csv_plan is False:
             return 2
 
@@ -1534,7 +1660,8 @@ def main() -> int:
     # refusal is what the destination-holds-what-the-source-does-not case
     # has always been.
     collapses = authenticate_collapses(args, sources, profile,
-                                       preserved=preserved)
+                                       preserved=preserved,
+                                       collapse_loaded=collapse_loaded)
     if collapses is False:
         return 2
 

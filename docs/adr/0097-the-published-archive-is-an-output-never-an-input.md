@@ -389,12 +389,40 @@ reads as one that was honoured.
 ⛔ A STALE COPY AGREES WITH ITSELF PERFECTLY. So `preserved_archive` authentication takes a FROZEN
 PRE-OPERATION SNAPSHOT plus an EXTERNAL path-to-sha256 manifest recorded immediately after that
 snapshot was taken, and the relevant snapshot hashes are RECOMPUTED against the manifest
-immediately before the comparison, every run. A mismatch refuses. Authentication from the live tree
-refuses and authentication from the staging copy refuses, because a tree the run writes to cannot be
-the evidence for what it writes. ⛔ Permissions and mtimes are NOT integrity proof: a CIFS tree can
-change under both, so only bytes count.
+immediately before the comparison, every run. A mismatch refuses. ⛔ Permissions and mtimes are NOT
+integrity proof: a CIFS tree can change under both, so only bytes count.
 
-### 4. Alias refusal, before any mutation and before any evidence is used
+### 4. THREE trees, and a destination-only check does not separate them
+
+A preserved operation has three trees and they are three different things:
+
+| tree | what it is |
+|---|---|
+| LIVE | the published site that serves. What the operation protects, and it can change under the run. |
+| STAGING | the tree the publish WRITES (`--dest`). In a direct publish it IS live, which is legitimate. |
+| SNAPSHOT | the FROZEN PRE-OPERATION copy, attested by an external manifest. |
+
+⛔ CHECKING THE SNAPSHOT AGAINST THE DESTINATION ALONE IS NOT ENOUGH, and this was measured rather
+than reasoned: the first implementation compared `--frozen-snapshot` only against `--dest` and the
+snapshot manifest, so passing the LIVE site as the snapshot while `--dest` pointed at a staging
+sibling was ACCEPTED. Those two paths are distinct, the alias check saw nothing, the retirement
+authenticated and the retired file was deleted. The authority then rested on a tree nobody froze.
+
+So the boundary is stated as paths and enforced in all six shapes: the snapshot may not equal,
+contain or sit inside LIVE, and may not equal, contain or sit inside STAGING. `--live-site` is
+REQUIRED in preserved mode and has NO default, because defaulting it to `--dest` would silently
+restore the hole for every operator who forgot the flag. Live and staging may be the same path (a
+direct publish) but may not be nested, because a staging copy inside live would be published and
+pruned as if it were content. Every evidence document (the snapshot manifest, the transform) lands
+outside all three trees, and the authored-plate scratch directory lands outside all three and
+outside the evidence. ⛔ NO PATH-NAME HEURISTICS: nothing looks for `frozen`, `.preop` or any other
+substring, because a name is a label an operator chooses and a typo silently disables. Identity is
+the resolved path.
+
+The transform's input is the FROZEN snapshot's `metadata.csv` for the same reason: a document whose
+"original" hash describes bytes nobody froze is a statement about nothing.
+
+### 4b. Alias refusal, before any mutation and before any evidence is used
 
 Equality is not the only way for a source to be the destination. A source that CONTAINS the
 destination, or sits inside it, reads bytes the run is about to write. Every path a run knows about
@@ -436,6 +464,37 @@ expectation to enforce rather than a case to skip.
 files: both use CRLF terminators and site_b's carries 9 BARE LFs inside quoted fields (1,216 LF
 bytes against 1,206 logical rows). A `csv`-module round trip would re-quote and re-terminate those,
 so "the retained rows are unchanged" would have been false the first time it ran.
+
+### 6b. And that document's authority is the COLLAPSE DOCUMENT's, not its own arithmetic
+
+⛔ INTERNAL SELF-CONSISTENCY IS NOT AUTHORITY, and this too was measured. A transform states its own
+before and after hashes, so the first implementation accepted a forged one that removed an extra row
+and recomputed its own expectations: the row was dropped from the published CSV and the run exited 0.
+Nothing tied the transform to the retirement set the publish was actually authenticating.
+
+So the transform records the IDENTITY of the collapse document it derives from (that document's
+profile, a sha256 over its BYTES, its entry count and its sorted retirement set), and before any
+`metadata.csv` write the publisher proves two things against the document in hand:
+
+1. IDENTITY. Same profile, same byte digest, same entry count, same retirement set. A digest over
+   the bytes is deliberately strict: a reformat or a comment edit invalidates the transform and the
+   operator re-emits it, which costs one command, where the alternative is a transform that keeps
+   claiming authority from a document it has not seen.
+2. RECOMPUTATION. The removals are EXACTLY the current document's retirements intersected with the
+   rows the frozen pre-operation CSV holds. An extra row nobody retired refuses; a documented
+   retirement whose row was quietly left in place refuses; a row tied to the wrong `retired_id`
+   refuses.
+
+The collapse document is loaded ONCE per run and shared by the binding and by Layer B: two
+independent reads of the same path would prove nothing about them being the same bytes. A profile
+with no collapse document records that explicitly (`collapse_document: null`) and may authorise no
+removal at all; an absent key is refused rather than read as an unbound transform, because absence is
+not permission. The verifier proves the identity half after the fact, which is what stops a stale
+transform being blessed green once the pre-operation CSV is gone.
+
+site_a's real shape is the ZERO-REMOVAL one and it is bound like any other: one `hq` retirement whose
+produced render has no CSV row, so the authorised removal set is EMPTY and the file must stay
+byte-identical at 907 rows.
 
 ### 7. Authored outputs are built externally and installed explicitly
 
