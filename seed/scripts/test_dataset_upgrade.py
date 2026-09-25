@@ -63,6 +63,29 @@ SCRIPTS = Path(__file__).resolve().parent
 UPGRADES = SCRIPTS.parent / "upgrades"
 PROFILES = SCRIPTS.parent / "profiles"
 
+# The 13 site_b survivors the deterministic rule selects (#1319): the member
+# earliest in profile (JSON) order, which is the row `applyAssets` reaches
+# first (app/internal/seed/runner.go:762), qualified by the readable-bytes
+# rule (:763-768). Pinned as LITERALS because the 22 losing records are no
+# longer in the corrected profile, so the choice cannot be re-derived from it,
+# and re-deriving it from the document would only prove the document agrees
+# with itself.
+SITE_B_SURVIVORS = (
+    ("chen.wei", "027d8a6a-3684-eb98-a058-a9a7e6ffd463"),
+    ("imani.williams", "543704bb-1c1f-2418-13df-625bb4d5aa3e"),
+    ("imani.williams", "d5fbcd12-ddec-76aa-eed6-747c9721ef47"),
+    ("imani.williams", "e943dc5d-4f93-f145-9d87-fb0f758cffb2"),
+    ("layla.hassan", "249308ea-a6b9-5477-4e96-45967cb085f6"),
+    ("layla.hassan", "997af954-cc46-ef5f-7e60-64b4f5af3e4c"),
+    ("layla.hassan", "dbb70039-9d4f-83cc-98b4-97a61f3556c2"),
+    ("maya.okonkwo", "034df3b9-671d-c292-32da-54f55d3d09ec"),
+    ("maya.okonkwo", "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd"),
+    ("maya.okonkwo", "e223b561-02f7-e6b4-ff4c-c1cd641dd1de"),
+    ("maya.okonkwo", "ecae6d74-5143-85de-56dc-a121be8a8db4"),
+    ("yuki.sato", "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10"),
+    ("yuki.sato", "4de4817a-80d6-c999-dbf5-7a400bdc7c88"),
+)
+
 
 def _documented_retired_ids(profile_stem: str) -> frozenset[str]:
     """Ids a committed asset-collapse document retires for one profile.
@@ -998,9 +1021,25 @@ class TestCommittedUpgradeData(unittest.TestCase):
         self.assertGreater(checked, 0, "this test checked nothing")
         # The skipped rows are named by a document, so the exemption is
         # bounded and visible rather than a hole the next edit widens.
-        expected_skips = sum(len(_documented_retired_ids(name))
-                             for profiles in self.PROFILE_FOR.values()
-                             for name in profiles)
+        #
+        # ⛔ THE EXPECTATION COUNTS (profile, BALANCE ROW) PAIRS, NOT
+        # RETIREMENTS. A retirement can only be skipped by the loop above if
+        # the balance document actually HOLDS that row, and site_b has no
+        # balance document at all (#572 is site_a only). Summing every
+        # profile's retirement count instead made the expectation a claim
+        # about documents this test never opens: it read 1 + 1 + 0 + 0 == 2
+        # while site_b retired nothing, and the first site_b retirement
+        # turned it into 46 against an unchanged 2. The loop's own key is
+        # the honest one, so the two cannot drift again.
+        expected_skips = 0
+        for site, profiles in self.PROFILE_FOR.items():
+            doc = UPGRADES / f"balance-assets.{site}.json"
+            if not doc.is_file():
+                continue
+            row_ids = {r["id"] for r in json.loads(doc.read_text())
+                       if r.get("source_root") == "hq"}
+            for name in profiles:
+                expected_skips += len(row_ids & _documented_retired_ids(name))
         self.assertEqual(skipped, expected_skips,
                          "a row was skipped that no collapse document retires")
 
@@ -5836,6 +5875,64 @@ class TestCollapseLossesAreEnumerated(unittest.TestCase):
         paths = {x["path"] for x in ac.recompute_losses(retired, survivor)}
         self.assertIn("metadata.source_archive.member", paths)
 
+    def test_a_retired_only_path_whose_value_is_FALSY_is_still_a_loss(self):
+        """⛔ THE DANGEROUS CASE, AND NOTHING COVERED IT.
+
+        `acknowledged_losses` must hold every retired leaf that does not
+        survive, including one whose value is `""`, `[]`, `{}`, `false`, `0`
+        or `null`. An enumeration built behind `if retired_value:` would drop
+        exactly these and still equal a recomputation built the same way, so
+        the two would agree and the loss would be invisible. Each falsy value
+        is asserted on its own, because a single `""` case would not catch a
+        guard that special-cased only the empty string.
+        """
+        for falsy in ("", [], {}, False, 0, None):
+            retired = _collapse_rec(RETIRED_ID)
+            retired["field_values"]["production_notes"] = falsy
+            survivor = _collapse_rec(SURVIVOR_ID)
+            survivor["field_values"].pop("production_notes", None)
+            losses = ac.recompute_losses(retired, survivor)
+            by_path = {x["path"]: x for x in losses}
+            with self.subTest(retired_value=repr(falsy)):
+                self.assertIn("field_values.production_notes", by_path,
+                              "a retired-only leaf was dropped because its value "
+                              "is falsy")
+                loss = by_path["field_values.production_notes"]
+                self.assertNotIn("survivor_value", loss)
+                self.assertEqual(loss["retired_value"], falsy)
+                self.assertIs(type(loss["retired_value"]), type(falsy))
+
+    def test_a_differing_path_whose_retired_value_is_FALSY_is_still_a_loss(self):
+        """The same hole one step over: the retired value is falsy and the
+        survivor holds a real one, so the row differs rather than being
+        retired-only. `null` against a string is the case the committed
+        site_b document actually carries."""
+        for falsy in ("", [], {}, False, 0, None):
+            retired = _collapse_rec(RETIRED_ID)
+            retired["review_notes"] = falsy
+            survivor = _collapse_rec(SURVIVOR_ID)
+            survivor["review_notes"] = "the survivor's note"
+            by_path = {x["path"]: x
+                       for x in ac.recompute_losses(retired, survivor)}
+            with self.subTest(retired_value=repr(falsy)):
+                self.assertIn("review_notes", by_path)
+                self.assertEqual(by_path["review_notes"]["retired_value"], falsy)
+                self.assertEqual(by_path["review_notes"]["survivor_value"],
+                                 "the survivor's note")
+
+    def test_a_falsy_value_that_is_UNCHANGED_is_still_not_a_loss(self):
+        """The other half of the same boundary. Falsy must not become a
+        synonym for "lost" either: an equal value is a no-op whatever it is,
+        and `0 == False` in Python, so the pair is checked by type too."""
+        for falsy in ("", [], {}, False, 0, None):
+            retired = _collapse_rec(RETIRED_ID)
+            retired["review_notes"] = falsy
+            survivor = _collapse_rec(SURVIVOR_ID)
+            survivor["review_notes"] = falsy
+            paths = {x["path"] for x in ac.recompute_losses(retired, survivor)}
+            with self.subTest(retired_value=repr(falsy)):
+                self.assertNotIn("review_notes", paths)
+
     def test_the_committed_document_enumerates_exactly_what_it_would_lose(self):
         """The real one, against the real survivor. This is the check that
         fails the moment either record moves under the document."""
@@ -6128,12 +6225,289 @@ class TestCommittedProfilesHoldNoSameOwnerDuplicate(unittest.TestCase):
             with self.subTest(posts=stem):
                 self.assertEqual(named, [])
 
-    def test_site_b_has_no_collapse_document(self):
-        """The 13 same-owner byte groups observed in the published site_b
-        tree are OBSERVATIONS about a destination. ADR 0097 makes the
-        destination an output, so they authorise nothing until the source
-        evidence exists."""
-        self.assertFalse((UPGRADES / "asset-collapse.studio-b.json").exists())
+    def test_site_b_has_a_preserved_only_collapse_document(self):
+        """⭐ THE PREMISE OF THE TEST THIS REPLACES IS GONE (#1319).
+
+        It used to assert site_b had NO document, because the 13 same-owner
+        byte groups were OBSERVATIONS about a destination and ADR 0097 made
+        the destination an output. The owner has since retired the old
+        `$DATASET_SRC`, and ADR 0097's 2026-09-24 amendment makes the
+        archive the MAINTAINED DATASET for `local`. So the evidence now
+        exists, under the WEAKER `preserved_archive` kind, and the document
+        is required rather than forbidden.
+        """
+        path = UPGRADES / "asset-collapse.studio-b.json"
+        self.assertTrue(path.is_file(), "the site_b collapse document is absent")
+        doc = ac.load_collapse_document(path, profile_name="studio-b.assets.json")
+        self.assertTrue(doc.is_preserved_only)
+        self.assertFalse(doc.has_produced_source)
+        # ⛔ A preserved-only document must carry NO pool_of_record: it
+        # produced nothing, so a pool would describe a toolchain with no part
+        # in the claim. The parser refuses one; this pins the committed file.
+        self.assertEqual(doc.pool_of_record, {})
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        self.assertNotIn("pool_of_record", raw)
+        self.assertEqual({e.kind for e in doc.entries}, {ac.KIND_PRESERVED})
+        self.assertEqual({e.source_root for e in doc.entries}, {"local"})
+        for e in doc.entries:
+            with self.subTest(retired=e.retired_id):
+                # No fabricated produced-source provenance, anywhere.
+                for absent in ("source_sha256", "materialized_sha256",
+                               "source_member", "render_px",
+                               "materialized_tool"):
+                    self.assertIsNone(getattr(e, absent), absent)
+                self.assertEqual(e.retired_sha256, e.survivor_sha256)
+                self.assertNotIn("source_archive", e.retired_record["metadata"])
+                self.assertNotIn("media_url", e.retired_record["metadata"])
+                self.assertNotIn("sha256", e.retired_record["metadata"])
+
+    def test_site_b_retires_exactly_the_twenty_two_that_cannot_materialize(self):
+        """13 groups over 35 records can hold 13 rows, so 22 records retire.
+
+        The counts are LITERAL. Deriving them from the document would make
+        the test unable to fail, which is the whole point of pinning a
+        reviewed corpus correction.
+        """
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-b.json",
+                                        profile_name="studio-b.assets.json")
+        self.assertEqual(len(doc.entries), 22)
+        self.assertEqual(len(doc.retired_ids), 22)
+        self.assertEqual(len(doc.survivor_ids), 13)
+        self.assertEqual(doc.retired_ids & doc.survivor_ids, set())
+        # Group sizes: 7 pairs, 4 triples, one 4 and one 5 -> 22 victims.
+        from collections import Counter
+        per_survivor = Counter(e.survivor_id for e in doc.entries)
+        self.assertEqual(sorted(Counter(per_survivor.values()).items()),
+                         [(1, 7), (2, 4), (3, 1), (4, 1)])
+        self.assertEqual(sum(per_survivor.values()), 22)
+
+    def test_site_b_survivor_choices_are_the_recorded_deterministic_ones(self):
+        """⛔ A SURVIVOR IS CHOSEN BY A RULE, NOT BY WHICHEVER MATERIALIZED.
+
+        The rule is the member earliest in profile (JSON) order, which is the
+        row `applyAssets` reaches first (app/internal/seed/runner.go:762),
+        qualified by the readable-bytes rule (:763-768). The 13 resulting
+        (owner, survivor) pairs are pinned as LITERALS: the losing records are
+        no longer in the profile, so the choice cannot be re-derived from the
+        corrected corpus, and a test that re-derived it from the document
+        would only prove the document agrees with itself.
+        """
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-b.json",
+                                        profile_name="studio-b.assets.json")
+        recorded = sorted({(e.owner_username, e.survivor_id) for e in doc.entries})
+        self.assertEqual(recorded, sorted(SITE_B_SURVIVORS))
+        self.assertEqual(len(recorded), 13)
+        # One survivor per group, and no group split across two of them.
+        by_owner_sha = {}
+        for e in doc.entries:
+            by_owner_sha.setdefault((e.owner_username, e.retired_sha256),
+                                    set()).add(e.survivor_id)
+        for key, survs in by_owner_sha.items():
+            with self.subTest(group=key[0]):
+                self.assertEqual(len(survs), 1,
+                                 "one group of identical bytes was retired onto "
+                                 "two different survivors")
+        self.assertEqual(len(by_owner_sha), 13)
+        ids = {a["id"] for a in json.loads(
+            (PROFILES / "studio-b.assets.json").read_text(encoding="utf-8"))}
+        self.assertEqual(doc.survivor_ids - ids, set(),
+                         "a survivor is not in the profile; a retirement with no "
+                         "survivor is a deletion")
+        self.assertEqual(doc.retired_ids & ids, set(),
+                         "a retired record is still in the profile")
+
+    def test_site_b_profile_holds_the_corrected_count_and_dev_is_the_same_bytes(self):
+        """1306 records, 22 of which could never hold a row, so 1284.
+
+        `dev.assets.json` is a byte alias of `studio-b.assets.json`, so the
+        correction has to reach it too or the dev corpus keeps seeding the
+        records the app cannot hold.
+        """
+        b = (PROFILES / "studio-b.assets.json").read_bytes()
+        d = (PROFILES / "dev.assets.json").read_bytes()
+        self.assertEqual(len(json.loads(b.decode("utf-8"))), 1284)
+        self.assertEqual(b, d, "dev.assets.json is not the byte alias it claims")
+
+    def test_no_committed_site_b_post_names_a_retired_id(self):
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-b.json",
+                                        profile_name="studio-b.assets.json")
+        for stem in ("studio-b", "dataset"):
+            posts = json.loads((PROFILES / f"{stem}.posts.json")
+                               .read_text(encoding="utf-8"))
+            named = [p["id"] for p in posts
+                     if set(p.get("asset_ids") or ()) & doc.retired_ids]
+            with self.subTest(posts=stem):
+                self.assertEqual(named, [])
+
+    def test_site_b_substitutions_are_the_committed_membership(self):
+        """25 posts, 132 members to 108, none emptied, no duplicate member.
+
+        ⛔ A POST IS NEVER LEFT WITH A MEMBER IT DOES NOT HAVE, and the
+        substitution is checked against the COMMITTED posts rather than
+        against the document's own arithmetic.
+        """
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-b.json",
+                                        profile_name="studio-b.assets.json")
+        posts = {p["id"]: p for p in json.loads(
+            (PROFILES / "studio-b.posts.json").read_text(encoding="utf-8"))}
+        subs = [s for e in doc.entries for s in e.post_substitutions]
+        self.assertEqual(len(subs), 25)
+        self.assertEqual(len({s.post_id for s in subs}), 25,
+                         "a post is substituted twice")
+        self.assertEqual(sum(len(s.old_members) for s in subs), 132)
+        self.assertEqual(sum(len(s.new_members) for s in subs), 108)
+        ids = {a["id"] for a in json.loads(
+            (PROFILES / "studio-b.assets.json").read_text(encoding="utf-8"))}
+        for s in subs:
+            with self.subTest(post=s.post_id):
+                self.assertTrue(s.new_members, "a post was emptied")
+                self.assertEqual(len(set(s.new_members)), len(s.new_members),
+                                 "the substitution created a duplicate member")
+                # The post is APPLIED: it sits at its applied id holding
+                # exactly the documented new membership, order included.
+                post = posts.get(s.applied_id)
+                self.assertIsNotNone(post, f"{s.applied_id} is not a committed post")
+                self.assertEqual(tuple(post["asset_ids"]), s.new_members)
+                if s.new_post_id:
+                    self.assertNotIn(s.post_id, posts,
+                                     "the pre-migration id is still a post")
+                # Every member resolves to a live record.
+                self.assertEqual(set(s.new_members) - ids, set())
+                # Unrelated members keep their relative order.
+                kept = [m for m in s.old_members if m in set(s.new_members)]
+                self.assertEqual(kept, [m for m in s.new_members if m in kept])
+
+    def test_site_b_membership_derived_post_ids_moved_and_chained(self):
+        """12 ids move and 13 stay, because the kinds differ.
+
+        `asset_group` derives its id from the source group_id, so a member
+        swap does not move it. `project_sprint` and `team_roundup` derive
+        theirs from MEMBERSHIP, so they do. ⛔ Each move is COMPOSED onto the
+        existing chain rather than appended: the published site holds the id
+        from the earlier migration, so a new row would make that earlier hop
+        look like a deleted record.
+        """
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-b.json",
+                                        profile_name="studio-b.assets.json")
+        posts = {p["id"]: p for p in json.loads(
+            (PROFILES / "studio-b.posts.json").read_text(encoding="utf-8"))}
+        subs = [s for e in doc.entries for s in e.post_substitutions]
+        moved = [s for s in subs if s.new_post_id]
+        stayed = [s for s in subs if not s.new_post_id]
+        self.assertEqual(len(moved), 12)
+        self.assertEqual(len(stayed), 13)
+        self.assertEqual({posts[s.post_id]["post_kind"] for s in stayed},
+                         {"asset_group"})
+        from collections import Counter
+        self.assertEqual(
+            Counter(posts[s.applied_id]["post_kind"] for s in moved),
+            Counter({"project_sprint": 7, "team_roundup": 5}))
+        self.assertEqual(doc.moved_post_ids, {s.post_id for s in moved})
+        # Each moved id is the one its own content derives, and the move is
+        # recorded in the accumulating migration document as a COMPOSED hop.
+        mig = json.loads((UPGRADES / "post-id-migration.studio-b.json")
+                         .read_text(encoding="utf-8"))
+        self.assertEqual(len(mig["moves"]), 336)
+        final = {m["new_id"] for m in mig["moves"]}
+        intermediate = {m["old_id"] for m in mig["moves"]}
+        for s in moved:
+            with self.subTest(post=s.applied_id):
+                self.assertEqual(mpi.derived_id(posts[s.applied_id]), s.applied_id)
+                self.assertIn(s.applied_id, final,
+                              "the post-collapse id is in no migration row, so a "
+                              "publish cannot tell the move from a deletion")
+                self.assertNotIn(s.post_id, intermediate,
+                                 "the pre-collapse id was left as a standalone "
+                                 "hop instead of being composed away")
+        # Every row still points at a post that exists.
+        self.assertEqual(final - set(posts), set())
+
+    def test_site_b_layer_a2_verdict_is_APPLIED_for_every_object(self):
+        """LAYER A2 on the real committed site_b data: every asset and every
+        post is Applied, so a re-run converts nothing and a third state has
+        already raised.
+
+        ⛔ `evaluate` RAISES on a third state, so this also proves the
+        corrected profile and posts are not in some half-applied shape that a
+        count comparison would read as settled.
+        """
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-b.json",
+                                        profile_name="studio-b.assets.json")
+        profile = json.loads(
+            (PROFILES / "studio-b.assets.json").read_text(encoding="utf-8"))
+        posts = json.loads(
+            (PROFILES / "studio-b.posts.json").read_text(encoding="utf-8"))
+        result = ac.evaluate(profile, posts, doc)
+        self.assertEqual(len(result.states), 22)
+        self.assertEqual(result.pending, 0)
+        self.assertEqual(result.pending_assets, 0)
+        self.assertEqual(result.pending_posts, 0)
+        for st in result.states:
+            with self.subTest(retired=st.entry.retired_id):
+                self.assertEqual(st.asset_state, ac.APPLIED)
+                self.assertEqual(set(st.post_states.values()) or {ac.APPLIED},
+                                 {ac.APPLIED})
+        # Applied is idempotent: applying again removes and rewrites nothing.
+        again = ac.apply_collapse(profile, posts, doc)
+        self.assertEqual(
+            (again.records_removed, again.posts_rewritten, again.posts_renamed),
+            (0, 0, 0))
+        self.assertEqual(len(profile), 1284)
+        self.assertEqual(len(posts), 767)
+
+    def test_site_b_a_changed_retired_record_refuses_before_any_deletion(self):
+        """⛔ A STALE DOCUMENT MUST NEVER DELETE DATA THAT MOVED. Put one
+        retired record back with a single field changed and the document must
+        refuse it as a third state rather than retire it again."""
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-b.json",
+                                        profile_name="studio-b.assets.json")
+        profile = json.loads(
+            (PROFILES / "studio-b.assets.json").read_text(encoding="utf-8"))
+        posts = json.loads(
+            (PROFILES / "studio-b.posts.json").read_text(encoding="utf-8"))
+        entry = doc.entries[0]
+        revived = json.loads(json.dumps(entry.retired_record))
+        revived["title"] = "changed under the document"
+        profile.append(revived)
+        with self.assertRaises(ac.CollapseError) as cm:
+            ac.evaluate(profile, posts, doc)
+        self.assertIn("not the retired_record this document authorises",
+                      str(cm.exception))
+        # Nothing was removed: the refusal happens before any mutation.
+        self.assertEqual(len(profile), 1285)
+
+    def test_site_b_losses_are_the_reviewed_enumeration(self):
+        """207 losses over 22 entries: 32 retired-only and 175 differing,
+        over 19 distinct paths, and every one equal to a recomputation."""
+        doc = ac.load_collapse_document(UPGRADES / "asset-collapse.studio-b.json",
+                                        profile_name="studio-b.assets.json")
+        by_id = {a["id"]: a for a in json.loads(
+            (PROFILES / "studio-b.assets.json").read_text(encoding="utf-8"))}
+        total = retired_only = differing = 0
+        paths = set()
+        for e in doc.entries:
+            with self.subTest(retired=e.retired_id):
+                self.assertIn(e.survivor_id, by_id)
+                self.assertTrue(ac.losses_equal(
+                    e.acknowledged_losses,
+                    ac.recompute_losses(e.retired_record, by_id[e.survivor_id])))
+            for loss in e.acknowledged_losses:
+                total += 1
+                paths.add(loss["path"])
+                if "survivor_value" in loss:
+                    differing += 1
+                else:
+                    retired_only += 1
+        self.assertEqual(total, 207)
+        self.assertEqual(retired_only, 32)
+        self.assertEqual(differing, 175)
+        self.assertEqual(len(paths), 19)
+        # ⛔ AT LEAST ONE REAL EMPTY-VALUED LOSS. A guard that dropped falsy
+        # retired values would still report 206 of these and read green.
+        empties = [loss for e in doc.entries for loss in e.acknowledged_losses
+                   if loss["retired_value"] in ("", [], {}, None)
+                   or loss["retired_value"] is False]
+        self.assertGreaterEqual(len(empties), 1)
 
 
 class TestRetirementAwareBalanceDocuments(unittest.TestCase):

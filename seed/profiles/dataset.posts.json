@@ -2299,9 +2299,7 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "27b4289a-f1de-e4d3-f752-16cc00192269",
-      "e223b561-02f7-e6b4-ff4c-c1cd641dd1de",
-      "e9867aaf-7d6c-48ba-1070-b14ee5bfe717"
+      "e223b561-02f7-e6b4-ff4c-c1cd641dd1de"
     ],
     "asset_types_in_post": [
       "image"
@@ -2457,9 +2455,7 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "2ba6ae50-09e1-dd46-a06b-3cea357aa3be",
-      "543704bb-1c1f-2418-13df-625bb4d5aa3e",
-      "9c2d94b2-358f-ca18-ff32-2bc3488e29dc"
+      "543704bb-1c1f-2418-13df-625bb4d5aa3e"
     ],
     "asset_types_in_post": [
       "image"
@@ -5992,8 +5988,7 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "027d8a6a-3684-eb98-a058-a9a7e6ffd463",
-      "9b8fd58b-c7ab-7095-ce0c-168d97ef76ff"
+      "027d8a6a-3684-eb98-a058-a9a7e6ffd463"
     ],
     "asset_types_in_post": [
       "image"
@@ -7389,9 +7384,7 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "d4564fc1-1304-237f-4902-e5db9d53ef2a",
-      "dbb70039-9d4f-83cc-98b4-97a61f3556c2",
-      "f3a8ec33-da14-a54b-4609-11cb81cb3b32"
+      "dbb70039-9d4f-83cc-98b4-97a61f3556c2"
     ],
     "asset_types_in_post": [
       "image"
@@ -7794,7 +7787,6 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "a09a3c6c-014d-cc3f-67bc-b932cca784b2",
       "ecae6d74-5143-85de-56dc-a121be8a8db4"
     ],
     "asset_types_in_post": [
@@ -8203,7 +8195,6 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "17dbe1ed-be85-1150-8b15-bd965f711b88",
       "d5fbcd12-ddec-76aa-eed6-747c9721ef47"
     ],
     "asset_types_in_post": [
@@ -9322,7 +9313,7 @@
     "layer": "B"
   },
   {
-    "id": "775e90f4-c51f-fe3f-426f-b1b771f4cce0",
+    "id": "dbf323f1-fe9f-5104-401f-3a9ede22407c",
     "title": "Art Research lock-in pass",
     "description": "Lock-In Pass for Art Research. Pulls work from Characters — audio, document, image.",
     "author_username": "layla.hassan",
@@ -9334,10 +9325,9 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "aef2d1c7-5550-f4bc-5593-a3bfee5dbefd",
+      "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd",
       "24fdb2e3-30b5-d8cd-fc0f-4d12ef68a979",
       "e45369cf-1b41-eae7-f1bc-f0c627afc43a",
-      "c5a588c7-0cd4-1e67-80a8-94426510ca2a",
       "3f5858b1-a7a8-8976-08fd-03f1a8bab587",
       "d887faba-7f61-0d8f-31f3-145a221e3567",
       "3ae50b01-b5a1-cb50-1770-687631909f1f",
@@ -9801,8 +9791,7 @@
       "rigged"
     ],
     "asset_ids": [
-      "249308ea-a6b9-5477-4e96-45967cb085f6",
-      "e4666283-8f38-55bf-c746-4aeebf244729"
+      "249308ea-a6b9-5477-4e96-45967cb085f6"
     ],
     "asset_types_in_post": [
       "image"
@@ -11952,7 +11941,7 @@
     "layer": "A"
   },
   {
-    "id": "1e174b24-c87b-871a-70a2-a42c210e6855",
+    "id": "f19eb62f-eb86-9425-6e33-fb7de1cb5d0a",
     "title": "Project Heroes sprint 13, part 1",
     "description": "Sprint 13 for Project Heroes. Pulls work from Characters — 3d, image.",
     "author_username": "layla.hassan",
@@ -11967,7 +11956,7 @@
     ],
     "asset_ids": [
       "e84de3b5-3cb6-7e00-2afd-0630b258cf82",
-      "50669420-6799-bd1f-8ec4-3844631d298c",
+      "997af954-cc46-ef5f-7e60-64b4f5af3e4c",
       "1e0e7900-1540-e535-60fa-02c7ce1adbdc",
       "71d0ace3-cb3c-efa8-23d2-64e21d81296b",
       "777dd659-9223-c507-e74b-98a80b13a307",
@@ -12637,7 +12626,6 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "d0d1bf02-5abb-6cfe-db12-ed252b0a2d8d",
       "e943dc5d-4f93-f145-9d87-fb0f758cffb2"
     ],
     "asset_types_in_post": [
@@ -14963,11 +14951,7 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "64821819-548c-0048-4bb0-5f1cb6c85e1b",
-      "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd",
-      "aef2d1c7-5550-f4bc-5593-a3bfee5dbefd",
-      "c5a588c7-0cd4-1e67-80a8-94426510ca2a",
-      "fe578c53-c152-40e7-0543-b28a0807f9bb"
+      "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd"
     ],
     "asset_types_in_post": [
       "image"
@@ -15654,7 +15638,6 @@
       "rigged"
     ],
     "asset_ids": [
-      "50669420-6799-bd1f-8ec4-3844631d298c",
       "997af954-cc46-ef5f-7e60-64b4f5af3e4c"
     ],
     "asset_types_in_post": [
@@ -16192,7 +16175,7 @@
     "layer": "B"
   },
   {
-    "id": "4427358e-bda3-72a7-1d49-a58558d79297",
+    "id": "37f342ab-c61b-c060-e786-0602899af2a1",
     "title": "Art Research milestone beta, part 2",
     "description": "Milestone Beta for Art Research. Pulls work from Characters, Environment — 3d, audio, document, image.",
     "author_username": "maya.okonkwo",
@@ -16211,7 +16194,7 @@
       "4be472e4-521f-20b2-7c49-6657d4fff5ac",
       "14a658a8-8a4d-9b2d-f54f-515539128f58",
       "be94b969-51ed-e7c5-fc99-15fc46ebbaf4",
-      "17dbe1ed-be85-1150-8b15-bd965f711b88",
+      "d5fbcd12-ddec-76aa-eed6-747c9721ef47",
       "8c44a1a6-f86e-66e7-a552-8379cb117baf",
       "a515f093-d78d-49df-14e9-9df1a8a09534"
     ],
@@ -20194,10 +20177,7 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "408880ca-0b1b-499e-0b26-1fc7108a2477",
-      "4d92527b-c67d-4a02-15ee-3e94ae9bf7a2",
-      "4de4817a-80d6-c999-dbf5-7a400bdc7c88",
-      "cf65cf1b-e881-f6aa-c524-d7b91b49c8a3"
+      "4de4817a-80d6-c999-dbf5-7a400bdc7c88"
     ],
     "asset_types_in_post": [
       "image"
@@ -21131,7 +21111,7 @@
     "layer": "A"
   },
   {
-    "id": "532e91b0-8eef-0e08-1005-80804abcd7b7",
+    "id": "c150b6d1-415d-e245-a2b2-3b5c72f44c1e",
     "title": "Environment sprint roundup, part 4",
     "description": "Environment team output across 3 project(s): Art Research, Project Jumpstart, Project Toybox. Mix of 3d, image.",
     "author_username": "tatiana.ivanova",
@@ -21153,7 +21133,7 @@
       "d4d0b6a0-3998-bcc7-3d86-ae22d44e17be",
       "92ae9fcc-51e6-cea3-46db-5cf8820174c1",
       "027d8a6a-3684-eb98-a058-a9a7e6ffd463",
-      "9c2d94b2-358f-ca18-ff32-2bc3488e29dc",
+      "543704bb-1c1f-2418-13df-625bb4d5aa3e",
       "0477ce13-808c-1161-da88-0b5a5d24b629"
     ],
     "asset_types_in_post": [
@@ -22863,9 +22843,7 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10",
-      "2650baa0-e4d7-c21f-b800-b112dfad039d",
-      "eb46a5d2-0008-7da8-52ac-d53964d1ae54"
+      "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10"
     ],
     "asset_types_in_post": [
       "image"
@@ -23688,8 +23666,7 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "034df3b9-671d-c292-32da-54f55d3d09ec",
-      "7d73babf-bf02-132b-2aab-373f2589abb4"
+      "034df3b9-671d-c292-32da-54f55d3d09ec"
     ],
     "asset_types_in_post": [
       "image"
@@ -24732,7 +24709,7 @@
     "layer": "A"
   },
   {
-    "id": "837dfc29-7c04-19f1-b618-4a86e6f91684",
+    "id": "aa4fea18-905f-c53f-92ea-444c0ceb1a10",
     "title": "Environment sprint roundup, part 5",
     "description": "Environment team output across 4 project(s): Art Research, Project Jumpstart, Project Toybox.... Mix of 3d, image.",
     "author_username": "hana.kim",
@@ -24759,7 +24736,7 @@
       "25934b13-3b6b-510a-cc93-522b066d254b",
       "92ae9fcc-51e6-cea3-46db-5cf8820174c1",
       "84a88b07-ae23-6bbc-5f43-498135815a0b",
-      "a09a3c6c-014d-cc3f-67bc-b932cca784b2",
+      "ecae6d74-5143-85de-56dc-a121be8a8db4",
       "dfd84963-c95e-0eca-4dea-7119038ffd3f",
       "ef204e0f-b5b8-722e-4ffa-b4d26ca24a52",
       "ece7e9e0-daa6-5a3d-05f8-ccdefe32559d"
@@ -26217,7 +26194,7 @@
     "layer": "B"
   },
   {
-    "id": "1f96fc1d-de14-177b-a31f-bba99e0d77fb",
+    "id": "5e11d5cc-fd89-8fe3-d17a-647019af2c02",
     "title": "Art Research sprint 12",
     "description": "Sprint 12 for Art Research. Pulls work from Characters, Environment — 3d, audio, image.",
     "author_username": "imani.williams",
@@ -26230,7 +26207,7 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "d4564fc1-1304-237f-4902-e5db9d53ef2a",
+      "dbb70039-9d4f-83cc-98b4-97a61f3556c2",
       "0b1de1fc-6a50-c8e2-02b5-10851234e7e4",
       "034df3b9-671d-c292-32da-54f55d3d09ec",
       "d5fbcd12-ddec-76aa-eed6-747c9721ef47",
@@ -31802,7 +31779,7 @@
     "layer": "B"
   },
   {
-    "id": "088f5b9f-4d22-67c3-a020-d5a2365a1666",
+    "id": "d8c99564-ed45-6119-4eb1-ee125657fc15",
     "title": "Environment sprint roundup, part 1",
     "description": "Environment team output across 2 project(s): Art Research, Project Toybox. Mix of 3d, image.",
     "author_username": "maya.okonkwo",
@@ -31823,8 +31800,7 @@
       "40864d05-fe16-5782-5701-a520085a779a",
       "dfd84963-c95e-0eca-4dea-7119038ffd3f",
       "b37ae6c6-d818-3a7b-103c-6f1d0f0463c8",
-      "17dbe1ed-be85-1150-8b15-bd965f711b88",
-      "9c2d94b2-358f-ca18-ff32-2bc3488e29dc"
+      "d5fbcd12-ddec-76aa-eed6-747c9721ef47"
     ],
     "asset_types_in_post": [
       "3d",
@@ -32888,7 +32864,7 @@
     "layer": "A"
   },
   {
-    "id": "c67f9a35-9c88-70e7-4fce-e3f1f8f66996",
+    "id": "ee1d2e79-67e4-a138-63de-aa23344e266b",
     "title": "Environment sprint roundup, part 7",
     "description": "Environment team output across 3 project(s): Art Research, Project Jumpstart, Project Toybox. Mix of 3d, audio, image.",
     "author_username": "sofia.hernandez",
@@ -32908,7 +32884,7 @@
     "asset_ids": [
       "40864d05-fe16-5782-5701-a520085a779a",
       "d445b692-c818-8967-fa22-5d58b6a88d21",
-      "2ba6ae50-09e1-dd46-a06b-3cea357aa3be",
+      "543704bb-1c1f-2418-13df-625bb4d5aa3e",
       "b176127f-5a60-4409-8f19-02dc3b7cd279",
       "25934b13-3b6b-510a-cc93-522b066d254b",
       "98f427ca-232a-dfe3-6570-7fc3b2490629",
@@ -33345,7 +33321,7 @@
     "layer": "A"
   },
   {
-    "id": "b8e11ad0-5c8e-27e8-6320-a6dbb2fdb735",
+    "id": "bbc77118-a2c5-0228-43b6-f00b743487da",
     "title": "Characters sprint roundup, part 5",
     "description": "Characters team output across 3 project(s): Art Research, Project Heroes, Project Zoo. Mix of 3d, audio, image.",
     "author_username": "layla.hassan",
@@ -33368,7 +33344,7 @@
       "68e9d2c1-7748-e4f9-20e1-59be6e989c41",
       "54a928b7-d881-f153-cb58-0ea16074cf5b",
       "12a5782d-42aa-5e55-3c93-c60e3da52937",
-      "c5a588c7-0cd4-1e67-80a8-94426510ca2a",
+      "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd",
       "3af4d19a-4479-9550-28dd-014e15a05135",
       "30ea549a-edf9-1b3d-25d4-de7cadfa6684",
       "7d73ba7a-c6c2-3b45-2503-58bdd12883c2",
@@ -34625,7 +34601,7 @@
     "layer": "A"
   },
   {
-    "id": "5f194392-9f12-9e8d-21ec-412d45c9f4db",
+    "id": "3a05ada2-bc7f-c614-b2a1-dba91dc61b30",
     "title": "Project Heroes polish week",
     "description": "Polish Week for Project Heroes. Pulls work from Characters — 3d, image.",
     "author_username": "imani.williams",
@@ -34639,13 +34615,13 @@
       "rigged"
     ],
     "asset_ids": [
-      "50669420-6799-bd1f-8ec4-3844631d298c",
+      "997af954-cc46-ef5f-7e60-64b4f5af3e4c",
       "0576921e-ca92-0b22-b21b-d2a267c0adec",
       "0146a059-6bec-3954-fe46-4a293ff84ac4",
       "7d73ba7a-c6c2-3b45-2503-58bdd12883c2",
       "1e0e7900-1540-e535-60fa-02c7ce1adbdc",
       "452356b9-e90d-7fc4-f4bd-f60f47b8e51f",
-      "e4666283-8f38-55bf-c746-4aeebf244729",
+      "249308ea-a6b9-5477-4e96-45967cb085f6",
       "9a1514b9-12a8-8922-b98e-26c34a0225fe",
       "2815a9e1-56da-2177-1941-c5d3e25f08fb"
     ],
@@ -36188,7 +36164,7 @@
     "layer": "B"
   },
   {
-    "id": "2cec8256-e532-a826-729b-f48b67c5d023",
+    "id": "befa85e8-4b7a-ef2f-7a56-e5defd26916a",
     "title": "Project Heroes review session",
     "description": "Review Session for Project Heroes. Pulls work from Characters — 3d, image.",
     "author_username": "layla.hassan",
@@ -36205,7 +36181,7 @@
       "1a19717f-e141-fdd2-efcb-91c287ffb4d6",
       "fa25ce5a-4004-f5d2-4f39-2ae17372e969",
       "aa416965-d2d4-7245-2074-6a373e53fe91",
-      "50669420-6799-bd1f-8ec4-3844631d298c",
+      "997af954-cc46-ef5f-7e60-64b4f5af3e4c",
       "b882db86-eea0-5c83-ea00-5197e11d8a94",
       "3766e608-02ff-2ca3-de6f-8917cd32c882",
       "1905503a-2d63-3356-b6c5-7d111e208ced",
@@ -37616,7 +37592,7 @@
     "layer": "B"
   },
   {
-    "id": "a065d76a-4cf8-1837-5685-3db421fd78f7",
+    "id": "b63d9ce9-aa98-b82c-b77f-38ee6f13a5d9",
     "title": "Art Research final review",
     "description": "Final Review for Art Research. Pulls work from Characters, Environment — audio, image.",
     "author_username": "hana.kim",
@@ -37629,7 +37605,7 @@
       "franchise:reference"
     ],
     "asset_ids": [
-      "9b8fd58b-c7ab-7095-ce0c-168d97ef76ff",
+      "027d8a6a-3684-eb98-a058-a9a7e6ffd463",
       "1126dc47-53f2-74b3-a56c-9a46a432a739",
       "6167526c-0ad7-ffc4-241c-9ad6666b7d7c",
       "a92efc74-7273-7897-d81b-19203d5b7374",

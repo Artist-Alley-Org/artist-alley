@@ -85,10 +85,20 @@ TEST_MODULE = "test_dataset_upgrade"
 # authority to the CURRENT collapse document. The Go preservation
 # tests that pin the seeder's same-owner behaviour are counted by
 # `scripts/test.sh`, not here.
+# 559 after the site_b same-owner preserved-archive correction added 12 net
+# (13 new, 1 replaced): the committed site_b collapse document is
+# preserved-only with 22 retirements over 13 groups, its 13 survivors are the
+# ones the deterministic profile-order rule selects, its 25 post
+# substitutions are the committed membership with the 12 membership-derived
+# ids composed onto the existing chain, its 207-loss enumeration equals a
+# recomputation entry for entry, its Layer A2 verdict is APPLIED throughout
+# and a changed retired record still refuses; plus the falsy-value loss
+# boundary, which nothing covered and which a `if retired_value:`
+# enumeration would have dropped in silence.
 # Raise it when a batch of tests lands; never lower it to
 # make a red run go green — a dropped test is the thing this number
 # exists to catch.
-MIN_TESTS = 547
+MIN_TESTS = 559
 
 
 def _summary(line: str) -> None:
