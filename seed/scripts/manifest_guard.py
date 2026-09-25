@@ -66,16 +66,22 @@ that way.
 `source_root` says where a record's bytes come from, and that decides
 which side did the weighing:
 
-  MEASURABLE_ROOTS ("site", "torrent_import", "internet")
+  MEASURABLE_ROOTS ("site", "torrent_import", "internet", "local")
       The bytes are staged AT the destination. There is no reproducible
       source to re-derive them from, so the destination IS the artifact
       and a source that disagrees is stale. CORRUPTED_MEASUREMENT, LOSS.
 
-  SOURCE_BACKED_ROOTS ("local", "hq", "pack")
+      ⛔ `local` MOVED HERE IN #1319, and it is a change of AUTHORITY.
+      Its source dataset has been permanently retired and the published
+      archive is now the maintained copy; 0 of 696 site_a and 0 of 552
+      site_b `local` records carry a media_url or a source_archive, so
+      there is nothing left to re-derive one from.
+
+  SOURCE_BACKED_ROOTS ("hq", "pack")
       The bytes are copied from a source the profile is built against —
-      a kenney-hq pool render, a local file. The SHARE can lag that
-      source, so a disagreement means "the published copy is old", not
-      "the record is wrong". CHANGED_VALUE, reported, never refused.
+      a kenney-hq pool render, an attested pack member. The SHARE can lag
+      that source, so a disagreement means "the published copy is old",
+      not "the record is wrong". CHANGED_VALUE, reported, never refused.
 
       Measured 2026-08-27 on a freshly built pool: all 656 of site_b's
       `hq` records match the PROFILE, and the share matches on only 264.
@@ -203,12 +209,34 @@ POSTS_PROFILE_SUFFIX = ".posts.json"
 # source to re-derive them from. Kept in step with
 # `measure_staged.MEASURABLE_ROOTS`, which is the tool that produces the
 # corrections this guard refuses to publish over.
-MEASURABLE_ROOTS = frozenset({"site", "torrent_import", "internet"})
+#
+# ⛔ `local` JOINED THIS SET (#1319), AND THAT IS A CHANGE OF AUTHORITY, NOT
+# A TIGHTENING. The source dataset `local` was copied from
+# (`/mnt/d/Projects/unraid_management/artist-alley_dataset`) has been
+# permanently retired and no longer exists, and the maintained datasets are
+# the published trees under `/mnt/blackbox_archives/datasets/artist_alley`.
+# Measured on the committed profiles: of 696 site_a and 552 site_b `local`
+# records, ZERO carry `metadata.media_url` and ZERO carry
+# `metadata.source_archive`, so there is nothing left to re-derive a
+# `local` byte count FROM. A disagreement there is therefore a corrupted
+# measurement and a refusal, not "the share is stale".
+MEASURABLE_ROOTS = frozenset({"site", "torrent_import", "internet", "local"})
 
 # Roots copied from a source the profile is built against. The published
 # copy may lag it, so the SOURCE is authoritative and a disagreement is a
 # stale publish rather than a wrong record.
-SOURCE_BACKED_ROOTS = frozenset({"local", "hq", "pack"})
+#
+# ⛔ `hq` AND `pack` STAY HERE, AND THE REASON IS MEASURED, NOT PREFERRED.
+# `hq` rebuilds from the Kenney pack through the committed
+# `seed/upgrades/kenney-hq-pool.json`; `pack` copies or extracts members
+# verified against `metadata.source_archive.sha256`, which 378 of 378
+# site_a `pack` records carry. And the published trees ALREADY disagree
+# with the profiles on `file_size_bytes` for 1 record (site_a) and 392
+# (site_b). Every single one of them is `hq`, because the share holds an
+# older pool build. Reclassifying `hq` would turn all 393 into
+# CORRUPTED_MEASUREMENT and refuse every publish. Kept in step with
+# `asset_collapse.PRODUCED_SOURCE_ROOTS`.
+SOURCE_BACKED_ROOTS = frozenset({"hq", "pack"})
 
 # Keys that describe bytes rather than state an opinion about them.
 # `metadata.origin_bytes` is what `metadata.media_url` serves; it too is

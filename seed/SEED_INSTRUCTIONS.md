@@ -28,6 +28,78 @@ See the manifest in the Kaggle dataset for the exact shape.
 The paths shown in the examples below are **one maintainer's local mounts**.
 Substitute your own — nothing here depends on those specific locations.
 
+### Where the maintained dataset lives (#1319)
+
+⛔ **The old source dataset is gone, and it is not coming back.** Maintainer
+docs and older scripts refer to a `$DATASET_SRC` tree at
+`/mnt/d/Projects/unraid_management/artist-alley_dataset`. It has been
+permanently retired and no longer exists. **The maintained datasets are the
+published trees** under `/mnt/blackbox_archives/datasets/artist_alley`
+(`site_a`, `site_b`), and for the `local` source root they are the **only**
+copy of the bytes: measured on the committed profiles, 0 of 696 site_a and 0 of
+552 site_b `local` records carry a `metadata.media_url` or a
+`metadata.source_archive`, so there is nothing to re-fetch or re-derive them
+from.
+
+Authority is per source root:
+
+| root | authority |
+|---|---|
+| `hq`, `pack` | the external Kenney pack / the attested `metadata.source_archive` member. Still re-derivable. |
+| `local` | **archive-authoritative (preserved)**: a frozen snapshot of the published tree, attested by an external hash manifest. |
+| `site`, `internet`, `torrent_import` | pre-staged at the destination, as before. |
+
+What that means for an operator running the publish tooling:
+
+* `populate_archive.py` needs **`--preserved-roots`** to treat `local` that
+  way, and the mode is **never inferred**. Omitting `--local-source` without
+  the flag is an error, because a fallback cannot tell a decision from a typo.
+* In that mode `--local-source` is **refused as meaningless**, and
+  `metadata.csv` is **never regenerated**. It changes only the way a
+  `--csv-transform` document written *before* the run says it may. Pointed at
+  the archive, the old regeneration matched 0 of 907 site_a rows and 0 of 1,206
+  site_b rows and wrote a header-only file.
+* `groups.csv` is left untouched and any byte change fails the preservation
+  check. ⛔ Do not "correct" its `asset_count`: it describes the original
+  dataset, not the cut a site ships.
+* A source root that **is**, contains, or sits inside `--dest` is refused
+  outright. The published archive is the thing being written, so it cannot also
+  be the thing being read as authority.
+
+```bash
+# 1. attest a frozen snapshot, immediately after taking it (bytes only)
+python3 seed/scripts/preserved_archive.py snapshot-manifest \
+    --snapshot $FROZEN/site_a --out $EVIDENCE/site_a.snapshot-manifest.json
+
+# 2. record the ONE way metadata.csv may change, BEFORE the run
+python3 seed/scripts/preserved_archive.py csv-transform \
+    --site $FROZEN/site_a \
+    --collapse-document seed/upgrades/asset-collapse.studio-a.json \
+    --out $EVIDENCE/site_a.csv-transform.json
+
+# 3. publish
+python3 seed/scripts/populate_archive.py --preserved-roots \
+    --internet-source seed/internet-fetched \
+    --hq-source $POOL --pack-source "$PACK" \
+    --profile seed/profiles/studio-a.assets.json \
+    --posts   seed/profiles/studio-a.posts.json \
+    --csv-transform     $EVIDENCE/site_a.csv-transform.json \
+    --frozen-snapshot   $FROZEN/site_a \
+    --snapshot-manifest $EVIDENCE/site_a.snapshot-manifest.json \
+    --dest /mnt/blackbox_archives/datasets/artist_alley/site_a --dry-run
+
+# 4. verify, read only
+python3 seed/scripts/verify_site.py check \
+    --profile seed/profiles/studio-a.assets.json \
+    --posts   seed/profiles/studio-a.posts.json \
+    --site    /mnt/blackbox_archives/datasets/artist_alley/site_a \
+    --baseline $EVIDENCE/site_a.baseline.json \
+    --csv-transform $EVIDENCE/site_a.csv-transform.json
+```
+
+Every evidence document lives **outside** every site tree, and the emit
+commands refuse an `--out` under the tree they describe.
+
 The loader is **`aa seed`** — a subcommand of the app binary (#321).
 It writes **straight to postgres + the storage backend** via the app's
 own service layer: no running server, no admin login, no HTTP. It reads
