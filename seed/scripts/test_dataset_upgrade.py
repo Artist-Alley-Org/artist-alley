@@ -1795,11 +1795,11 @@ class TestTitlePunctuationRule(unittest.TestCase):
             sa.normalize_title(f"Sintel {EM} full film (512kb stereo, ~13 min)"),
             "Sintel - full film (512kb stereo - ~13 min)")
 
-    def test_a_run_of_separators_is_one_separation(self):
-        """Not stated by the ruling, so pinned: "a, , b" divides two
-        things once, and "a - - b" would be a new tell."""
-        self.assertEqual(sa.normalize_title("a, , b"), "a - b")
-        self.assertEqual(sa.normalize_title(f"a,{EM}b"), "a-b")
+    def test_each_unspaced_repeat_is_its_own_separator(self):
+        """The rule applies to EACH comma and EACH em dash: two unspaced
+        separators are two hyphens, never collapsed into one."""
+        self.assertEqual(sa.normalize_title("a,,b"), "a--b")
+        self.assertEqual(sa.normalize_title(f"a{EM}{EM}b"), "a--b")
 
     def test_it_is_idempotent_and_never_doubles_a_space(self):
         samples = ["Sintel , full film (512kb stereo, ~13 min)",

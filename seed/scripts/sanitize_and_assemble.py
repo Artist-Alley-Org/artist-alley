@@ -808,25 +808,23 @@ def retitle_posts(posts: list[dict]) -> tuple[int, list[str]]:
 # data; no parser accepts it (see `_PART_SUFFIX`).
 _LEGACY_PART_SUFFIX = re.compile(r", part (\d+)$")
 
-# Any separator run as a title might have been written with: a comma or an
-# em dash, spaced or not. An embedded title was written into a post by a
+# Any single separator as a title might have been written with: a comma or
+# an em dash, spaced or not. An embedded title was written into a post by a
 # pass that may have re-punctuated it (the old `clean_dashes` turned
 # "Sintel \u2014 480p trailer" into "Sintel, 480p trailer" while the asset
-# kept "Sintel , 480p trailer"), so its separators are matched loosely and
-# everything else exactly.
-_ANY_SEPARATOR_RUN = r"\s*[,\u2014](?:\s*[,\u2014])*\s*"
+# kept "Sintel , 480p trailer"), so each of its separators is matched
+# loosely, one for one, and everything else exactly.
+_ANY_SEPARATOR = r"\s*[,\u2014]\s*"
 
 
 def _separated_span(source: str, separators: str) -> re.Pattern[str] | None:
-    """A pattern for `source` with each run of `separators` loosened to
-    `_ANY_SEPARATOR_RUN`. None when `source` holds no such separator,
-    because then there is nothing in it to correct."""
-    run = r"\s*[" + re.escape(separators) + r"](?:\s*[" + \
-        re.escape(separators) + r"])*\s*"
-    pieces = re.split(run, source)
+    """A pattern for `source` with each of its `separators` loosened to
+    `_ANY_SEPARATOR`, one for one. None when `source` holds no such
+    separator, because then there is nothing in it to correct."""
+    pieces = re.split(r"\s*[" + re.escape(separators) + r"]\s*", source)
     if len(pieces) < 2:
         return None
-    return re.compile(_ANY_SEPARATOR_RUN.join(re.escape(x) for x in pieces))
+    return re.compile(_ANY_SEPARATOR.join(re.escape(x) for x in pieces))
 
 
 def repunctuate_post_title(title: str, *, embedded: Iterable[str] = (),

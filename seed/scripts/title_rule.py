@@ -28,8 +28,6 @@ Descriptions, tags and other free text never go through it.
 
 from __future__ import annotations
 
-import re
-
 EM_DASH = "\u2014"
 
 # The characters an asset title may not hold. `apply_upgrade.merge_added`
@@ -38,35 +36,38 @@ EM_DASH = "\u2014"
 TITLE_SEPARATORS = "," + EM_DASH
 
 
-def _separator_run(separators: str) -> re.Pattern[str]:
-    cls = "[" + re.escape(separators) + "]"
-    # A RUN of separators is one separation: "a, , b" and "a,,b" each
-    # divide two things once, and turning them into "a - - b" or "a--b"
-    # would trade one tell for another. Whitespace on either side, and
-    # between the members of the run, belongs to the separator.
-    return re.compile(r"\s*" + cls + r"(?:\s*" + cls + r")*\s*")
-
-
-_RUNS: dict[str, re.Pattern[str]] = {}
-
-
 def normalize_title(text: str, separators: str = TITLE_SEPARATORS) -> str:
     """Replace every separator in `text` with an ASCII hyphen.
 
-    A separator that touches whitespace on either side becomes " - "
-    (and takes that whitespace with it, so no double space can form);
-    one that touches none becomes "-". Idempotent: the output holds none
-    of `separators`, so a second pass finds nothing to do.
+    Each comma and each em dash is its own separator and is judged on its
+    own: one that touches whitespace on either side becomes " - " and takes
+    the whitespace it touches with it, so no double space can form; one
+    that touches none becomes "-". So "a,,b" is two separators and reads
+    "a--b". Idempotent: the output holds none of `separators`, so a second
+    pass finds nothing to do.
     """
-    pattern = _RUNS.get(separators)
-    if pattern is None:
-        pattern = _RUNS[separators] = _separator_run(separators)
-
-    def repl(m: re.Match[str]) -> str:
-        spaced = any(ch.isspace() for ch in m.group(0))
-        return " - " if spaced else "-"
-
-    return pattern.sub(repl, text)
+    out = ""
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch not in separators:
+            out += ch
+            i += 1
+            continue
+        spaced = ((i > 0 and text[i - 1].isspace())
+                  or (i + 1 < n and text[i + 1].isspace()))
+        if not spaced:
+            out += "-"
+            i += 1
+            continue
+        # The whitespace before it is already in `out` (copied verbatim, or
+        # the trailing space of a spaced separator just before it); the
+        # whitespace after it is skipped. Either way it becomes one space.
+        out = out.rstrip() + " - "
+        i += 1
+        while i < n and text[i].isspace():
+            i += 1
+    return out
 
 
 def has_title_separator(text: str) -> bool:
