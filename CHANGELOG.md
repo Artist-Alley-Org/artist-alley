@@ -488,6 +488,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **Seeded titles lose their comma and em-dash separators in the repository.** Asset titles in the
+  committed sample library no longer carry a comma or an em dash: each one now reads with an ASCII hyphen,
+  so `Moby Dick , Herman Melville` becomes `Moby Dick - Herman Melville` and `Mono,wght` becomes
+  `Mono-wght`. Post titles change only where the separator was generated, such as the `, part 2` that told
+  two same-named posts apart and now reads ` - part 2`, or where they repeat an asset title that changed. A
+  comma someone writes on purpose in a post title is still allowed. The tools that build the library apply
+  the same rule to every asset title they write, without changing any record's id, and the upgrade pass now
+  refuses to merge an asset title carrying a comma or em dash rather than quietly rewriting it. 88 asset
+  titles and 1,137 post titles changed, no post id moved, and nothing else in those records changed.
+  ⚠️ This changes the repository only. The published sample library still shows the old titles until the
+  owner-run republish, and the archive's own title columns are the next slice of this work (#1459, #1460,
+  PR #1458).
+
 - **The sample library stops asking the application to store 22 records it cannot store, and 25 posts
   get their missing members back.** The second seeded site's catalogue held 13 groups in which one
   owner owned the same bytes more than once. The application keeps one row per owner per set of
