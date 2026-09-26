@@ -95,6 +95,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # drift — which is the #572 bug this loop exists to prevent.
 import apply_upgrade  # noqa: E402
 
+# The one title punctuation rule (#1319). Re-exported so the post-side
+# helpers below and their tests reach it through this module; it lives in
+# a leaf module because `apply_upgrade` stores a title too and this module
+# already imports `apply_upgrade`.
+from title_rule import (  # noqa: E402
+    EM_DASH, TITLE_SEPARATORS, has_title_separator, normalize_title)
+
 # -----------------------------------------------------------------------------
 # Studio split — by project
 # -----------------------------------------------------------------------------
@@ -555,13 +562,22 @@ _SUFFIX_RE = re.compile(
     r" \u2014 \d+[- ](?P<what>part set|asset bundle|assets|drops|cuts)$")
 _SPRINT_SUFFIX_RE = re.compile(r" \u2014 \d+ assets across \d+ team\(s\)$")
 
-_PART_SUFFIX = re.compile(r", part \d+$")
+# ⛔ THE FORMAT AND ITS PARSE CHANGE TOGETHER (#1319). The suffix was
+# `, part N` until the owner ruled that every generated separator in a
+# title is an ASCII hyphen. There is deliberately no fallback for the old
+# form: a sprint title still ending in `, part N` keeps the suffix glued
+# to its label, `derived_id` finds no such label and raises, and
+# `migrate_post_ids.py --check` exits 2. Stale data must fail loudly, not
+# half-parse.
+PART_SUFFIX_FORMAT = "{title} - part {n}"
+_PART_SUFFIX = re.compile(r" - part \d+$")
 
 
 def strip_part_suffix(title: str) -> str:
-    """Remove the `, part N` a title may have gained from
+    """Remove the ` - part N` a title may have gained from
     `disambiguate_titles`. Idempotent, and a no-op on a title that never
-    collided."""
+    collided. Only the TRAILING suffix goes: `X - Y - part 2` keeps its
+    inner hyphen, and `Moby Dick - Herman Melville` is left alone."""
     return _PART_SUFFIX.sub("", title)
 
 
@@ -598,22 +614,21 @@ REVISION_TITLES = {
 
 
 def clean_dashes(text: str) -> str:
-    """Drop the em dash from a title without dropping what it separated.
+    """Replace the em dash in a post title with an ASCII hyphen.
 
-    43 ASSET titles carry one — "Moby Dick — Herman Melville",
-    "DamagedHelmet — Khronos PBR test" — and they flow straight into the
-    solo, revision and video post titles, so a post-template fix alone
-    still leaves 37 site_a titles with a dash in them. In every one of
-    the 43 the dash separates a name from a qualifier, which is what a
-    comma does in a catalogue: the meaning survives and the tell does not.
+    This is `normalize_title` restricted to the em dash (#1319). An em
+    dash that touches whitespace becomes " - " and takes that whitespace
+    with it; an unspaced one becomes "-". So "Moby Dick \u2014 Herman
+    Melville" reads "Moby Dick - Herman Melville" and the separation
+    survives without the tell.
+
+    ⛔ IT NEVER TOUCHES A COMMA. This runs over EVERY post title, and a
+    comma an author wrote in a post title is legal. Asset titles lose
+    their commas where they are STORED (every asset-title writer calls
+    `normalize_title`), so a post embedding an asset title already
+    receives the hyphenated form and this pass has nothing to fix there.
     """
-    # ⚠️ THE SURROUNDING SPACES COME OFF FIRST. Replacing the character
-    # before the spaces leaves "Big Buck Bunny , 720p surround", which is
-    # a worse tell than the dash was.
-    return (text.replace(" \u2014 ", ", ")
-                .replace("\u2014 ", ", ")
-                .replace(" \u2014", ", ")
-                .replace("\u2014", ", "))
+    return normalize_title(text, EM_DASH)
 
 
 def disambiguate_titles(posts: list[dict]) -> int:
@@ -626,7 +641,8 @@ def disambiguate_titles(posts: list[dict]) -> int:
     and team.
 
     So the count is replaced rather than deleted, by the thing a person
-    reaches for instead: "part two". It is shorter than a byte count, it
+    reaches for instead: "part two", joined with " - " like every other
+    generated separator (#1319). It is shorter than a byte count, it
     does not repeat the `CardKindBadge count={memberCount}` sitting
     beside it on the card, and it is applied to the FINISHED document —
     the same function on the generator's output and on the committed one,
@@ -646,7 +662,7 @@ def disambiguate_titles(posts: list[dict]) -> int:
         # bare reads as an oversight beside fourteen numbered siblings,
         # and site_a really does have a fifteen-chunk family.
         for n, post in enumerate(sorted(group, key=lambda x: x["id"]), start=1):
-            post["title"] = f"{title}, part {n}"
+            post["title"] = PART_SUFFIX_FORMAT.format(title=title, n=n)
             renamed += 1
     return renamed
 
@@ -754,7 +770,8 @@ def retitle_posts(posts: list[dict]) -> tuple[int, list[str]]:
     # The asset titles the templates embed carried 43 em dashes of their
     # own, so a template-only fix still leaves 37 site_a post titles with
     # one. Applied after the per-kind pass, and to EVERY title, so a post
-    # this pass could not name still comes out clean.
+    # this pass could not name still comes out clean. It turns each dash
+    # into a hyphen and never touches a comma (#1319).
     for post in posts:
         cleaned = clean_dashes(post.get("title") or "")
         if cleaned != post.get("title"):
@@ -764,6 +781,102 @@ def retitle_posts(posts: list[dict]) -> tuple[int, list[str]]:
     # LAST, on the finished document (see disambiguate_titles).
     disambiguate_titles(posts)
     return changed, problems
+
+
+# -----------------------------------------------------------------------------
+# One-time punctuation correction of a COMPOSED posts document (#1319)
+# -----------------------------------------------------------------------------
+#
+# ⛔ A POST TITLE IS NOT AN ASSET TITLE, AND THE ASSET RULE IS NOT APPLIED
+# TO IT. A comma an author writes in a post title stays legal. What goes
+# is only what a MACHINE put there:
+#
+#   1. the `, part N` suffix `disambiguate_titles` used to append;
+#   2. a mechanical separator: a comma the old `clean_dashes` wrote where
+#      the source title (a committed post document) had an em dash;
+#   3. an inherited comma: one that arrived inside an embedded asset title
+#      whose own title now changes.
+#
+# Each needs its ORIGIN, so the caller supplies it: the em-dash source
+# title per post id, and every title each member asset has carried. A
+# comma with no origin is left exactly where it is. On the committed
+# corpus the result happens to equal `normalize_title` of the whole post
+# title, but only because no natural post comma exists there yet; that is
+# a coincidence of the data, not the rule.
+
+# The suffix's form before #1319. Read ONLY here, to convert committed
+# data; no parser accepts it (see `_PART_SUFFIX`).
+_LEGACY_PART_SUFFIX = re.compile(r", part (\d+)$")
+
+# Any single separator as a title might have been written with: a comma or
+# an em dash, spaced or not. An embedded title was written into a post by a
+# pass that may have re-punctuated it (the old `clean_dashes` turned
+# "Sintel \u2014 480p trailer" into "Sintel, 480p trailer" while the asset
+# kept "Sintel , 480p trailer"), so each of its separators is matched
+# loosely, one for one, and everything else exactly.
+_ANY_SEPARATOR = r"\s*[,\u2014]\s*"
+
+
+def _separated_span(source: str, separators: str) -> re.Pattern[str] | None:
+    """A pattern for `source` with each of its `separators` loosened to
+    `_ANY_SEPARATOR`, one for one. None when `source` holds no such
+    separator, because then there is nothing in it to correct."""
+    pieces = re.split(r"\s*[" + re.escape(separators) + r"]\s*", source)
+    if len(pieces) < 2:
+        return None
+    return re.compile(_ANY_SEPARATOR.join(re.escape(x) for x in pieces))
+
+
+def repunctuate_post_title(title: str, *, embedded: Iterable[str] = (),
+                           em_dash_source: str | None = None) -> str:
+    """The corrected form of one post title (#1319).
+
+    `em_dash_source` is the title a committed post document gave this
+    post, when that title holds an em dash: if the post title is that
+    title with its dashes turned into commas, it becomes that title with
+    its dashes turned into hyphens instead. `embedded` is every title a
+    member asset has carried; wherever one appears in the post title, it
+    is replaced by its `normalize_title` form. Nothing else is touched,
+    so a natural comma survives. Idempotent: a corrected title holds no
+    legacy suffix, and no loosened span can match a hyphen.
+    """
+    m = _LEGACY_PART_SUFFIX.search(title)
+    base, part = (title[:m.start()], m.group(1)) if m else (title, None)
+
+    if em_dash_source:
+        pat = _separated_span(em_dash_source, EM_DASH)
+        if pat is not None and pat.fullmatch(base):
+            base = clean_dashes(em_dash_source)
+
+    # Longest first, so a title that contains another is corrected whole.
+    for src in sorted(set(embedded), key=lambda t: (-len(t), t)):
+        pat = _separated_span(src, TITLE_SEPARATORS)
+        if pat is not None:
+            fixed = normalize_title(src)
+            base = pat.sub(lambda _m: fixed, base)
+
+    if part is None:
+        return base
+    return PART_SUFFIX_FORMAT.format(title=base, n=part)
+
+
+def repunctuate_posts(posts: list[dict], *,
+                      embedded_by_asset: dict[str, Iterable[str]],
+                      em_dash_sources: dict[str, str]) -> int:
+    """Apply `repunctuate_post_title` to every post in place, touching
+    `title` and nothing else. Returns how many titles changed."""
+    changed = 0
+    for post in posts:
+        old = post.get("title") or ""
+        embedded = [t for aid in (post.get("asset_ids") or ())
+                    for t in embedded_by_asset.get(aid, ())]
+        new = repunctuate_post_title(
+            old, embedded=embedded,
+            em_dash_source=em_dash_sources.get(post.get("id") or ""))
+        if new != old:
+            post["title"] = new
+            changed += 1
+    return changed
 
 
 # -----------------------------------------------------------------------------
@@ -969,7 +1082,10 @@ def transform_row(row: dict[str, str]) -> AssetRecord | None:
     return AssetRecord(
         id=stable_uuid("asset", row["asset_id"]),
         asset_type=asset_type,
-        title=(row.get("title") or "").strip() or row.get("filename", "untitled"),
+        # The id is the CSV's asset_id, so normalising the stored title
+        # cannot move it (#1319).
+        title=normalize_title(
+            (row.get("title") or "").strip() or row.get("filename", "untitled")),
         description=(row.get("description") or "").strip(),
         file_path=reorganize_path(asset_type, source_path),
         source_path=source_path,
@@ -1741,9 +1857,10 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
 
     # ⭐ THE SAME TWO PASSES THE COMMITTED DOCUMENT GETS (#1306), on the
     # finished list rather than inside each template — which is the only
-    # way "part two" can mean the same post in both. `clean_dashes`
-    # catches the em dashes that arrive inside an embedded ASSET title
-    # rather than from a template here.
+    # way "part two" can mean the same post in both. `clean_dashes` is
+    # the backstop for an em dash arriving from anywhere; an embedded
+    # ASSET title already arrives hyphenated, because every asset-title
+    # writer stores `normalize_title` of it (#1319).
     for post in posts:
         post["title"] = clean_dashes(post["title"])
     disambiguate_titles(posts)
@@ -1783,11 +1900,18 @@ def load_torrent_imports(json_path: Path) -> list[AssetRecord]:
         size = int(entry["file_size_bytes"])
         title = entry["name"]
         ext = Path(file_path).suffix.lstrip(".") or "bin"
+        # ⛔ THE ID IS DERIVED FROM THE RAW NAME, AND STAYS THAT WAY
+        # (#1319). No entry stores a `sha_seed`, so this hash of the
+        # manifest's own name IS the record's identity: all three
+        # committed torrent ids equal the one the em-dash name derives,
+        # and normalising first derives three different ids. The rule is
+        # applied to the STORED title only, after the id, the timestamps
+        # and the description have taken the raw name.
         sha_seed = entry.get("sha_seed") or hashlib.sha256(f"{title}|{size}".encode()).hexdigest()
         records.append(AssetRecord(
             id=stable_uuid("asset", "torrent", sha_seed),
             asset_type=asset_type,
-            title=title,
+            title=normalize_title(title),
             description=entry.get("notes", f"{title} — Blender Foundation open content."),
             file_path=file_path,
             source_path=file_path,
@@ -1855,7 +1979,9 @@ def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
         records.append(AssetRecord(
             id=stable_uuid("asset", "internet", entry.get("sha256", local_path)),
             asset_type=asset_type,
-            title=title,
+            # Stored title only (#1319): the id is the entry's hash or
+            # path, and the description keeps the name as fetched.
+            title=normalize_title(title),
             description=entry.get("notes", "") or f"{title} — public-safe reference content.",
             file_path=dest_path,
             source_path=local_path,

@@ -115,6 +115,11 @@ import struct
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from sanitize_and_assemble import title_collection_chunk  # noqa: E402
+from title_rule import normalize_title  # noqa: E402
+
 SEED_DIR = Path(__file__).resolve().parents[1]
 UPGRADES = SEED_DIR / "upgrades"
 PROFILES = SEED_DIR / "profiles"
@@ -643,7 +648,10 @@ def build_record(team: str, rule: dict, rel: str, pack_root: Path,
 
     kind_word = {"image": "Raster", "3d": "Model", "audio": "Audio",
                  "font": "Font"}.get(asset_type, "Asset")
-    title = title_from(rel) + (" (vector)" if rule["kind"] == "vector" else "")
+    # Stored title only (#1319): the id is the pack path `key`, and a
+    # pack filename may hold a comma the rule turns into a hyphen.
+    title = normalize_title(
+        title_from(rel) + (" (vector)" if rule["kind"] == "vector" else ""))
     desc = (f"{kind_word} asset for {rule['collection']}, "
             f"{team.lower()} library. Source: Kenney '{pack.split('/')[-1]}' "
             f"(CC0).")
@@ -756,7 +764,10 @@ def build_posts(records: list[dict]) -> list[dict]:
                 "studio": "a",
                 "tags": sorted({t for c in chunk for t in c["tags"]}),
                 "team_name": team,
-                "title": f"{collection}: {team} {label} — {len(chunk)} assets",
+                # The retired template ended in an em dash and a count
+                # (#1306). The committed profile titles are this
+                # formatter's output, so the generator uses it too.
+                "title": title_collection_chunk(collection, team, label),
                 "updated_at": anchor["updated_at"],
                 "workflow_state": anchor["workflow_state"],
             })

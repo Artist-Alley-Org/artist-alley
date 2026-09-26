@@ -60,6 +60,10 @@ SEED_MODULES = [
     "resolve_media_urls",
     "sanitize_and_assemble",
     "studio_balance",
+    # Imported by the four modules above that store an asset title, not by
+    # the test module directly; listed so a break in the one shared title
+    # rule is reported under its own name (#1319).
+    "title_rule",
     "verify_site",
 ]
 
@@ -95,10 +99,17 @@ TEST_MODULE = "test_dataset_upgrade"
 # and a changed retired record still refuses; plus the falsy-value loss
 # boundary, which nothing covered and which a `if retired_value:`
 # enumeration would have dropped in silence.
+# 594 after the title punctuation correction's repository slice (#1319)
+# added 35: the shared title rule, the committed-corpus checks (no asset
+# comma or em dash, no `, part N`, contiguous part families, mechanical and
+# inherited post separators, the ten pre-HQ source titles, the pinned
+# results), the formatter and parser pair, the six asset-title writers and
+# the torrent id order, the `merge_added` refusal, natural post comma
+# preservation, and the balance chunk template against all 230 posts.
 # Raise it when a batch of tests lands; never lower it to
 # make a red run go green — a dropped test is the thing this number
 # exists to catch.
-MIN_TESTS = 559
+MIN_TESTS = 594
 
 
 def _summary(line: str) -> None:
