@@ -92,6 +92,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import asset_collapse as ac  # noqa: E402
+from title_rule import has_title_separator, normalize_title  # noqa: E402
 
 # Every replacement asset comes from the Kenney All-in-1 pack, which is
 # CC0 across the board. Uniform by construction — asserted in the tests.
@@ -215,7 +216,10 @@ def title_for(pool_filename: str) -> str:
     stem = _HASH_SUFFIX_RE.sub("", stem)
     stem = _CATEGORY_PREFIX_RE.sub("", stem)
     title = stem.replace("-", " ").strip().capitalize()
-    return f"{title} (vector)" if is_vector else title
+    # The shared title rule (#1319). A pool filename is a slug, so this is
+    # a no-op on every committed record; it is here so a pool file whose
+    # name does carry a comma cannot store one.
+    return normalize_title(f"{title} (vector)" if is_vector else title)
 
 
 def load(path: Path):
@@ -364,8 +368,13 @@ def _composition(entry: dict) -> tuple:
     )
 
 
+class UnnormalizedTitle(ValueError):
+    """A newly merged asset record whose title breaks the title rule."""
+
+
 def merge_added(profile: list[dict], added: list[dict],
-                retired_ids: frozenset[str] = frozenset()) -> tuple[int, int, int]:
+                retired_ids: frozenset[str] = frozenset(),
+                sources: dict[str, str] | None = None) -> tuple[int, int, int]:
     """Append records absent from the profile, with copier provenance.
 
     Returns (appended, repaired, appended_retired). `repaired` counts
@@ -386,8 +395,28 @@ def merge_added(profile: list[dict], added: list[dict],
     and only the DRIFT ACCOUNTING excludes it: `appended_retired` is the
     count the caller subtracts, so `--check` stops calling an intentional
     retirement a pass that "would change" the profile.
+
+    ⛔ A NEW RECORD WHOSE TITLE HOLDS A COMMA OR AN EM DASH IS REFUSED,
+    NOT NORMALISED (#1319). An upgrade document is historical evidence:
+    rewriting its title here would make the profile disagree with the
+    document that claims to have produced it, and normalising silently
+    would hide that the document's writer skipped the title rule. So the
+    whole merge raises `UnnormalizedTitle` before a single record is
+    appended, naming each offending record and, when `sources` maps its
+    id to one, the document it came from. Records the profile already
+    holds are not new, so the repair branch below never refuses.
     """
     by_id = {e["id"]: e for e in profile}
+    refused = [a for a in added
+               if a["id"] not in by_id
+               and has_title_separator(a.get("title") or "")]
+    if refused:
+        lines = [f"  {(sources or {}).get(a['id'], '(upgrade document)')}: "
+                 f"{a['id']} {a.get('title')!r}" for a in refused]
+        raise UnnormalizedTitle(
+            f"{len(refused)} new asset record(s) carry a comma or an em dash "
+            "in their title, which the title rule forbids:\n"
+            + "\n".join(lines))
     n = 0
     repaired = 0
     n_retired = 0
@@ -1132,6 +1161,8 @@ def main() -> int:
     reps = load(args.upgrades / f"kenney-hq-replacements.{args.site}.json")
     add_a: list[dict] = []
     add_p: list[dict] = []
+    # Which document each added asset came from, so a refusal can name it.
+    add_a_source: dict[str, str] = {}
     for stem in DOC_SETS:
         a = args.upgrades / f"{stem}-assets.{args.site}.json"
         p = args.upgrades / f"{stem}-posts.{args.site}.json"
@@ -1139,7 +1170,10 @@ def main() -> int:
         # missing doc must mean "nothing to merge", not a crash — the
         # site_b arm of this script runs on every assembly.
         if a.is_file():
-            add_a += load(a)
+            records = load(a)
+            add_a += records
+            for rec in records:
+                add_a_source.setdefault(rec["id"], a.name)
         if p.is_file():
             add_p += load(p)
     corrections_doc = args.upgrades / f"team-corrections.{args.site}.json"
@@ -1186,8 +1220,16 @@ def main() -> int:
     # assertion covers it too.
     declared = apply_ai_declarations(profile, declarations)
     n_processed, n_modified, problems = apply_replacements(profile, reps)
-    n_assets, n_repaired, n_assets_retired = merge_added(
-        profile, add_a, collapse.retired_ids)
+    try:
+        n_assets, n_repaired, n_assets_retired = merge_added(
+            profile, add_a, collapse.retired_ids, add_a_source)
+    except UnnormalizedTitle as e:
+        print(f"error: {e}\n"
+              "  Refusing before anything is written. An upgrade document is "
+              "historical evidence and is not normalised here: fix the writer "
+              "that produced it and emit the record with a hyphenated title.",
+              file=sys.stderr)
+        return 2
     n_posts, n_posts_moved = merge_posts(posts, add_p, collapse.moved_post_ids)
     # LAST of the asset passes. The reconcile document is the archive
     # share's advantage (#1275), and the share reflects a library that

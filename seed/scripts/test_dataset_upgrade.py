@@ -1643,21 +1643,23 @@ class TestSeededTitlesReadAsWritten(unittest.TestCase):
     def test_the_dash_clean_takes_the_spaces_with_it(self):
         """⚠️ Replacing the character and leaving the spaces gives
         "Big Buck Bunny , 720p surround", which is a worse tell than the
-        dash was. This caught exactly that."""
+        dash was. This caught exactly that. Since #1319 the dash becomes
+        an ASCII hyphen, never a comma."""
         self.assertEqual(sa.clean_dashes("Big Buck Bunny \u2014 720p surround"),
-                         "Big Buck Bunny, 720p surround")
+                         "Big Buck Bunny - 720p surround")
         self.assertEqual(sa.clean_dashes("Ana (Overwatch \u2014 Support)"),
-                         "Ana (Overwatch, Support)")
-        self.assertNotIn(" ,", sa.clean_dashes("a \u2014 b \u2014 c"))
+                         "Ana (Overwatch - Support)")
+        self.assertEqual(sa.clean_dashes("a \u2014 b \u2014 c"), "a - b - c")
+        self.assertNotIn("  ", sa.clean_dashes("a \u2014 b \u2014 c"))
 
     def test_disambiguation_numbers_every_member_of_a_family(self):
         posts = [{"id": "c", "title": "Same"}, {"id": "a", "title": "Same"},
                  {"id": "b", "title": "Same"}, {"id": "d", "title": "Alone"}]
         sa.disambiguate_titles(posts)
         got = {p["id"]: p["title"] for p in posts}
-        self.assertEqual(got["a"], "Same, part 1")
-        self.assertEqual(got["b"], "Same, part 2")
-        self.assertEqual(got["c"], "Same, part 3")
+        self.assertEqual(got["a"], "Same - part 1")
+        self.assertEqual(got["b"], "Same - part 2")
+        self.assertEqual(got["c"], "Same - part 3")
         self.assertEqual(got["d"], "Alone",
                          "a title nothing collides with must be left alone")
 
@@ -1681,7 +1683,7 @@ class TestSeededTitlesReadAsWritten(unittest.TestCase):
                   "asset_ids": []}]
         sa.retitle_posts(posts)
         self.assertEqual(posts[0]["title"],
-                         "Cinematic test: Big Buck Bunny, 720p surround")
+                         "Cinematic test: Big Buck Bunny - 720p surround")
 
     def test_a_video_title_splits_on_the_FIRST_dash(self):
         """Its fixed wording is a PREFIX, so the opposite rule applies."""
@@ -1689,7 +1691,7 @@ class TestSeededTitlesReadAsWritten(unittest.TestCase):
                   "title": "Dailies \u2014 Sintel \u2014 480p trailer",
                   "asset_ids": []}]
         sa.retitle_posts(posts)
-        self.assertEqual(posts[0]["title"], "Dailies on Sintel, 480p trailer")
+        self.assertEqual(posts[0]["title"], "Dailies on Sintel - 480p trailer")
 
 
 class TestTitleParsersAreTheFormattersInverse(unittest.TestCase):
@@ -1715,13 +1717,13 @@ class TestTitleParsersAreTheFormattersInverse(unittest.TestCase):
             self.assertEqual(sa.sprint_label_from_title(project, title), label)
 
     def test_sprint_label_round_trips_through_disambiguation(self):
-        """A colliding title gains `, part N`, and the parse has to see
-        through it — this is exactly what went red."""
+        """A colliding title gains ` - part N` (#1319), and the parse has
+        to see through it. This is exactly what went red under #1306."""
         title = sa.title_project_sprint("Project Mirror", "milestone alpha")
         posts = [{"id": "a", "title": title}, {"id": "b", "title": title}]
         sa.disambiguate_titles(posts)
         for post in posts:
-            self.assertIn(", part ", post["title"])
+            self.assertIn(" - part ", post["title"])
             self.assertEqual(
                 sa.sprint_label_from_title("Project Mirror", post["title"]),
                 "milestone alpha")
@@ -1742,14 +1744,584 @@ class TestTitleParsersAreTheFormattersInverse(unittest.TestCase):
         self.assertIsNone(sa.sprint_label_from_title("", "anything"))
 
     def test_stripping_the_part_suffix_is_idempotent(self):
-        self.assertEqual(sa.strip_part_suffix("A title, part 12"), "A title")
+        self.assertEqual(sa.strip_part_suffix("A title - part 12"), "A title")
         self.assertEqual(
-            sa.strip_part_suffix(sa.strip_part_suffix("A title, part 12")),
+            sa.strip_part_suffix(sa.strip_part_suffix("A title - part 12")),
             "A title")
         self.assertEqual(sa.strip_part_suffix("A title"), "A title")
-        # ⚠️ Not a blanket "drop everything after the last comma".
-        self.assertEqual(sa.strip_part_suffix("Moby Dick, Herman Melville"),
-                         "Moby Dick, Herman Melville")
+        # ⚠️ Not a blanket "drop everything after the last hyphen".
+        self.assertEqual(sa.strip_part_suffix("Moby Dick - Herman Melville"),
+                         "Moby Dick - Herman Melville")
+        # ⛔ And no fallback for the retired comma form: stale data has
+        # to fail the label parse, not be quietly accepted.
+        self.assertEqual(sa.strip_part_suffix("A title, part 12"),
+                         "A title, part 12")
+
+
+# ---------------------------------------------------------------------------
+# #1319: titles lose their comma and em-dash separators (repository slice)
+# ---------------------------------------------------------------------------
+
+EM = "\u2014"
+_LEGACY_PART = re.compile(r", part \d+$")
+
+
+def _profile(name):
+    return json.loads((PROFILES / f"{name}.json").read_text(encoding="utf-8"))
+
+
+class TestTitlePunctuationRule(unittest.TestCase):
+    """The rule itself (#1319): a comma or em dash touching whitespace on
+    either side becomes " - ", one touching none becomes "-"."""
+
+    def test_the_four_em_dash_spacings_are_each_pinned(self):
+        self.assertEqual(sa.normalize_title(f"a {EM} b"), "a - b")
+        self.assertEqual(sa.normalize_title(f"a {EM}b"), "a - b")
+        self.assertEqual(sa.normalize_title(f"a{EM} b"), "a - b")
+        self.assertEqual(sa.normalize_title(f"a{EM}b"), "a-b")
+
+    def test_the_comma_spacings_are_each_pinned(self):
+        self.assertEqual(sa.normalize_title("a, b"), "a - b")
+        self.assertEqual(sa.normalize_title("a , b"), "a - b")
+        self.assertEqual(sa.normalize_title("a ,b"), "a - b")
+        self.assertEqual(sa.normalize_title("Sono Variablefont Mono,wght (font)"),
+                         "Sono Variablefont Mono-wght (font)")
+
+    def test_the_two_comma_sintel_title(self):
+        self.assertEqual(
+            sa.normalize_title("Sintel , full film (512kb stereo, ~13 min)"),
+            "Sintel - full film (512kb stereo - ~13 min)")
+        self.assertEqual(
+            sa.normalize_title(f"Sintel {EM} full film (512kb stereo, ~13 min)"),
+            "Sintel - full film (512kb stereo - ~13 min)")
+
+    def test_a_run_of_separators_is_one_separation(self):
+        """Not stated by the ruling, so pinned: "a, , b" divides two
+        things once, and "a - - b" would be a new tell."""
+        self.assertEqual(sa.normalize_title("a, , b"), "a - b")
+        self.assertEqual(sa.normalize_title(f"a,{EM}b"), "a-b")
+
+    def test_it_is_idempotent_and_never_doubles_a_space(self):
+        samples = ["Sintel , full film (512kb stereo, ~13 min)",
+                   f"a {EM} b {EM} c", "a  ,  b", f"x{EM}y, z", "plain",
+                   "Moby Dick - Herman Melville", ""]
+        for t in samples:
+            once = sa.normalize_title(t)
+            self.assertEqual(sa.normalize_title(once), once, t)
+            self.assertFalse(sa.has_title_separator(once), once)
+            if "  " not in t:
+                self.assertNotIn("  ", once, t)
+
+    def test_the_post_path_is_the_same_rule_restricted_to_the_em_dash(self):
+        """⛔ `clean_dashes` runs over every post title, and a comma an
+        author wrote there is legal, so it must never rewrite one."""
+        self.assertEqual(sa.clean_dashes("Notes, sketches and studies"),
+                         "Notes, sketches and studies")
+        self.assertEqual(sa.clean_dashes(f"Notes, sketches {EM} studies"),
+                         "Notes, sketches - studies")
+        for t in (f"a {EM} b", f"a{EM}b", f"a {EM}b"):
+            self.assertEqual(sa.clean_dashes(t), sa.normalize_title(t))
+
+
+class TestCommittedTitlePunctuation(unittest.TestCase):
+    """The committed profiles after the #1319 correction."""
+
+    ASSETS = ("studio-a", "studio-b", "demo", "dev")
+    POSTS = ("studio-a", "studio-b", "dataset")
+
+    def test_no_asset_title_holds_a_comma_or_an_em_dash(self):
+        bad = {}
+        for name in self.ASSETS:
+            n = sum(1 for a in _profile(f"{name}.assets")
+                    if "," in (a.get("title") or "")
+                    or EM in (a.get("title") or ""))
+            if n:
+                bad[name] = n
+        self.assertEqual(bad, {}, "asset titles holding a comma or em dash")
+
+    def test_no_post_title_ends_in_the_retired_comma_part_suffix(self):
+        bad = {}
+        for name in self.POSTS:
+            n = sum(1 for p in _profile(f"{name}.posts")
+                    if _LEGACY_PART.search(p["title"]))
+            if n:
+                bad[name] = n
+        self.assertEqual(bad, {}, "titles still ending in ', part N'")
+
+    def test_every_part_family_is_numbered_one_to_k(self):
+        """Every family reads " - part N" and counts 1..k with no gap and
+        no repeat. Not in id order: `disambiguate_titles` numbered by the
+        id each post held THEN, and later id migrations (#1310) moved
+        ids without renumbering, which is right, because a title must not
+        move with an id. The family counts are the denominator; a corpus
+        with no hyphen family at all must not pass by being empty."""
+        suffix = re.compile(r"^(?P<base>.*) - part (?P<n>\d+)$")
+        expected = {"studio-a": 45, "studio-b": 47, "dataset": 63}
+        got = {}
+        for name in self.POSTS:
+            posts = _profile(f"{name}.posts")
+            families = {}
+            for p in posts:
+                m = suffix.match(p["title"])
+                if m:
+                    families.setdefault(m["base"], []).append(
+                        (p["id"], int(m["n"])))
+            bare = {p["title"] for p in posts if not suffix.match(p["title"])}
+            for base, members in families.items():
+                ns = sorted(n for _, n in members)
+                self.assertEqual(ns, list(range(1, len(ns) + 1)),
+                                 f"{name}: {base!r}")
+                self.assertGreaterEqual(len(ns), 2, f"{name}: {base!r}")
+                self.assertNotIn(base, bare, f"{name}: {base!r}")
+            got[name] = len(families)
+        self.assertEqual(got, expected)
+
+    def _em_dash_sources(self):
+        out = {}
+        for stem in ("generated", "mature", "authored"):
+            for p in json.loads((UPGRADES / f"{stem}-posts.site_a.json")
+                                .read_text(encoding="utf-8")):
+                if f" {EM} " in p["title"]:
+                    out[p["id"]] = p["title"]
+        return out
+
+    def test_a_mechanical_separator_reads_as_the_rules_hyphen(self):
+        """R3a. A post whose committed source document titles it with an
+        em dash between two halves reads that title with the dash turned
+        into the rule's hyphen. The balance document's retired count
+        suffix is not one of these sources: those posts use the chunk
+        form (see TestBalanceTemplateMatchesCommitted)."""
+        sources = self._em_dash_sources()
+        bad, seen = {}, 0
+        for name in self.POSTS:
+            n = 0
+            for p in _profile(f"{name}.posts"):
+                src = sources.get(p["id"])
+                if src is None:
+                    continue
+                seen += 1
+                want = src.replace(f" {EM} ", " - ")
+                if sa.strip_part_suffix(p["title"]) != want:
+                    n += 1
+            if n:
+                bad[name] = n
+        self.assertEqual(seen, 15, "the denominator moved")
+        self.assertEqual(bad, {})
+
+    def test_every_embedded_member_title_is_the_corrected_one(self):
+        """R3b. Failing condition: rule(post) contains rule(member) while
+        the post title itself does not. So an embedded member title must
+        appear in its corrected form, and a comma the post's author wrote
+        anywhere else is never the subject."""
+        a = _profile("studio-a.assets")
+        b = _profile("studio-b.assets")
+        by_profile = {"studio-a": [a], "studio-b": [b], "dataset": [a, b]}
+        bad, embedded = {}, 0
+        for name in self.POSTS:
+            titles = {}
+            for records in by_profile[name]:
+                for r in records:
+                    titles.setdefault(r["id"], set()).add(r["title"])
+            n = 0
+            for p in _profile(f"{name}.posts"):
+                norm_post = sa.normalize_title(p["title"])
+                for aid in p["asset_ids"]:
+                    for t in titles.get(aid, ()):
+                        fixed = sa.normalize_title(t)
+                        if not t or fixed not in norm_post:
+                            continue
+                        if fixed in p["title"]:
+                            embedded += 1
+                        else:
+                            n += 1
+            if n:
+                bad[name] = n
+        self.assertGreater(embedded, 0, "no embedding found at all")
+        self.assertEqual(bad, {})
+
+    PRE_HQ_SOURCE_TITLES = {
+        "f72d6f4d-68f2-47b4-aa45-c98e927d81df":
+            "Card sketch (digital - stylus) and variants",
+        "db63a1d1-5835-3e00-c068-d00f109a9bd0":
+            "Color study: Switch Disabled sketch (digital - stylus)",
+        "5345de23-e2ff-b39e-f709-01b9fc75113a":
+            "Data Table sketch (digital - stylus) and variants - part 1",
+        "bf158ba2-c849-a10f-977d-823d3adb89f6":
+            "Data Table sketch (digital - stylus) and variants - part 2",
+        "f94121ab-9f60-8645-9644-0771d0567448":
+            "First draft of Radio Button Checked sketch (digital - stylus)",
+        "a6c9b0ae-555b-ac0b-4739-dea0623460e2":
+            "Lighting pass: Switch Disabled sketch (paper - pencil)",
+        "c7b99888-e9cc-44f0-7273-067d8b848f1d":
+            "Lighting pass: Switch Enabled sketch (digital - stylus)",
+        "dade7d7d-5730-6153-3bc6-8ae74c39722a":
+            "Review pass on Radio Button Checked sketch (digital - stylus)",
+        "f8dc5708-07a4-3c93-43b7-78aba8291531":
+            "Signing off on Radio Button Checked sketch (digital - stylus)",
+        "df829d74-b213-ccad-08f5-07c13ada36b5":
+            "Slider sketch (digital - stylus) and variants",
+    }
+
+    def test_titles_embedding_a_pre_hq_source_title_are_pinned(self):
+        """R3c. These ten embed a member's title from BEFORE the HQ rename,
+        and after the correction nothing in the repo records where their
+        comma came from, so the corrected values are pinned. A pin of
+        values, not an allowlist."""
+        for name in ("studio-b", "dataset"):
+            got = {p["id"]: p["title"] for p in _profile(f"{name}.posts")
+                   if p["id"] in self.PRE_HQ_SOURCE_TITLES}
+            self.assertEqual(got, self.PRE_HQ_SOURCE_TITLES, name)
+
+    def test_pinned_exact_results(self):
+        """R4."""
+        assets = {
+            ("studio-a", "a74f9231-347d-ee8a-e80b-5c966c5265f6"):
+                "Sono Variablefont Mono-wght (font)",
+            ("studio-a", "083f9159-1903-73c9-f0c1-52eef9884c24"):
+                "Sintel - full film (512kb stereo - ~13 min)",
+            ("studio-b", "8175e587-77c7-8db9-1f5e-c138f15ea19d"):
+                "Embark Collections Manager User's Guide - Part 1 (document)",
+            ("studio-b", "0dfff156-bb0a-6958-69ae-c2c861954391"):
+                "Card sketch (paper - pencil)",
+            ("studio-b", "f61ccbb9-bf6f-4e1f-a786-60b4829d47a1"):
+                "Ana (Overwatch - Support)",
+        }
+        posts = {
+            ("studio-a", "35985ec0-5421-9970-a429-a82f8051e8cb"):
+                "Dailies on Sintel - full film (512kb stereo - ~13 min)",
+            ("studio-a", "d52da9c9-2574-5eac-a92d-28a386bcf16d"):
+                "Animation - AI reference set",
+            ("studio-b", "5345de23-e2ff-b39e-f709-01b9fc75113a"):
+                "Data Table sketch (digital - stylus) and variants - part 1",
+            ("studio-b", "df829d74-b213-ccad-08f5-07c13ada36b5"):
+                "Slider sketch (digital - stylus) and variants",
+            ("studio-b", "f4ee67b0-a134-00b4-d7d9-3b21c9494f6c"):
+                "MTG Archive lock-in pass - part 2",
+            ("dataset", "f4ee67b0-a134-00b4-d7d9-3b21c9494f6c"):
+                "MTG Archive lock-in pass - part 2",
+            ("dataset", "8bc25946-966e-2bef-c329-420281485242"):
+                "Cinematics Q4 reel - part 2",
+        }
+        for kind, pins in (("assets", assets), ("posts", posts)):
+            cache = {}
+            for (name, rid), want in pins.items():
+                if name not in cache:
+                    cache[name] = {r["id"]: r["title"]
+                                   for r in _profile(f"{name}.{kind}")}
+                self.assertEqual(cache[name].get(rid), want, f"{name} {rid}")
+
+
+class TestPartSuffixPair(unittest.TestCase):
+    """R6. The formatter and its parse, including N >= 2 families."""
+
+    def test_no_suffix_recovers_the_label(self):
+        for label in sa.SPRINT_LABELS:
+            title = sa.title_project_sprint("MTG Archive", label)
+            self.assertEqual(sa.sprint_label_from_title("MTG Archive", title),
+                             label)
+
+    def test_families_of_two_and_three_number_every_member(self):
+        for size in (2, 3):
+            for label in ("lock-in pass", "milestone alpha"):
+                title = sa.title_project_sprint("MTG Archive", label)
+                posts = [{"id": f"id-{k}", "title": title}
+                         for k in range(size)]
+                sa.disambiguate_titles(posts)
+                got = sorted(p["title"] for p in posts)
+                self.assertEqual(
+                    got, [f"{title} - part {k}" for k in range(1, size + 1)])
+                for p in posts:
+                    self.assertEqual(
+                        sa.sprint_label_from_title("MTG Archive", p["title"]),
+                        label)
+            reel = sa.title_showreel("Q4 reel")
+            posts = [{"id": f"id-{k}", "title": reel} for k in range(size)]
+            sa.disambiguate_titles(posts)
+            for p in posts:
+                self.assertRegex(p["title"], r" - part \d+$")
+                self.assertEqual(sa.reel_label_from_title(p["title"]), "Q4 reel")
+
+    def test_only_the_trailing_suffix_is_stripped(self):
+        self.assertEqual(sa.strip_part_suffix("X - Y - part 2"), "X - Y")
+        self.assertEqual(sa.strip_part_suffix("Moby Dick - Herman Melville"),
+                         "Moby Dick - Herman Melville")
+
+    def _sprint(self, title):
+        return {"id": "p", "post_kind": "project_sprint",
+                "collection_name": "MTG Archive", "title": title,
+                "asset_ids": ["a1", "a2"], "studio": "b"}
+
+    def test_a_stale_comma_suffix_makes_derived_id_raise(self):
+        """⛔ No compatibility: stale data fails loudly."""
+        with self.assertRaises(mpi.Unresolvable):
+            mpi.derived_id(self._sprint("MTG Archive lock-in pass, part 1"))
+
+    def test_the_hyphen_suffix_derives_the_same_id_as_no_suffix(self):
+        bare = mpi.derived_id(self._sprint("MTG Archive lock-in pass"))
+        self.assertEqual(
+            mpi.derived_id(self._sprint("MTG Archive lock-in pass - part 1")),
+            bare)
+
+
+class TestAssetTitleWriters(unittest.TestCase):
+    """R8 and R9. Every writer that stores an asset title applies the
+    rule to the title it stores, and only after the id is derived."""
+
+    def test_the_local_csv_writer(self):
+        row = {"asset_id": "ast-test", "kind": "raster",
+               "file_size_bytes": "10", "file_path": "images/x/a.png",
+               "title": f"Card sketch (paper, pencil) {EM} v2",
+               "project": "Project Mirror", "team": "Art"}
+        rec = sa.transform_row(row)
+        self.assertEqual(rec.title, "Card sketch (paper - pencil) - v2")
+        self.assertEqual(rec.id, sa.stable_uuid("asset", "ast-test"))
+
+    def test_the_internet_writer(self):
+        name = f"Moby Dick {EM} Herman Melville, 1851"
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "MANIFEST.json").write_text(json.dumps({"assets": [
+                {"name": name, "path": "x/moby.txt", "size_bytes": 5,
+                 "asset_type": "document", "sha256": "ab" * 32}]}))
+            rec = sa.load_internet_assets(Path(d))[0]
+        self.assertEqual(rec.title, "Moby Dick - Herman Melville - 1851")
+        self.assertEqual(rec.id, sa.stable_uuid("asset", "internet", "ab" * 32))
+        self.assertEqual(rec.description,
+                         f"{name} {EM} public-safe reference content.")
+
+    def test_the_torrent_writer_on_a_synthetic_entry(self):
+        name = f"Foo {EM} bar, baz"
+        with tempfile.TemporaryDirectory() as d:
+            doc = Path(d) / "t.json"
+            doc.write_text(json.dumps({"assets": [
+                {"name": name, "file_path": "videos/torrent/x.mp4",
+                 "file_size_bytes": 5}]}))
+            rec = sa.load_torrent_imports(doc)[0]
+        self.assertEqual(rec.title, "Foo - bar - baz")
+        seed = hashlib.sha256(f"{name}|5".encode()).hexdigest()
+        self.assertEqual(rec.id, sa.stable_uuid("asset", "torrent", seed))
+        self.assertEqual(rec.description,
+                         f"{name} {EM} Blender Foundation open content.")
+
+    def test_the_committed_torrent_ids_derive_from_the_raw_name(self):
+        """R9. ⛔ No torrent entry stores a `sha_seed`, so the hash of the
+        manifest's own name IS the id. Normalising before the hash would
+        move all three, and this is the test that sees it."""
+        records = sa.load_torrent_imports(SCRIPTS / "torrent_imports.json")
+        self.assertEqual(len(records), 3)
+        raw = json.loads((SCRIPTS / "torrent_imports.json")
+                         .read_text(encoding="utf-8"))["assets"]
+        for name in ("studio-a", "studio-b"):
+            by_id = {a["id"]: a for a in _profile(f"{name}.assets")}
+            for rec, entry in zip(records, raw):
+                self.assertIn(rec.id, by_id, f"{name}: {entry['name']!r}")
+                committed = by_id[rec.id]
+                self.assertEqual(rec.title, committed["title"])
+                self.assertFalse(sa.has_title_separator(rec.title))
+                self.assertEqual(rec.description, committed["description"])
+                self.assertEqual(rec.description, entry["notes"])
+                moved = sa.stable_uuid("asset", "torrent", hashlib.sha256(
+                    f"{rec.title}|{entry['file_size_bytes']}".encode()
+                ).hexdigest())
+                self.assertNotEqual(moved, rec.id,
+                                    "the probe cannot tell the orders apart")
+
+    def test_the_pexels_writer(self):
+        video = {"id": 123, "user": {"name": "Doe, Jane"},
+                 "url": "https://www.pexels.com/video/123/", "duration": 5}
+        vf = {"width": 1280, "height": 720,
+              "link": "https://videos.pexels.com/x.mp4"}
+        spec = {"collection": "C", "team": "VFX", "tags": ["a"],
+                "why": "w", "q": "q"}
+        rec = px.build_record(video, vf, spec, 10)
+        self.assertEqual(rec["title"], "Pexels 123 Doe - Jane")
+        self.assertEqual(rec["id"], px.stable_uuid("asset", "pexels:123"))
+        self.assertEqual(px.build_post(rec)["title"], "Pexels 123 Doe - Jane")
+
+    def test_the_studio_balance_writer(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            rel = "Audio/impact, heavy.ogg"
+            (root / "Pack" / "Audio").mkdir(parents=True)
+            (root / "Pack" / rel).write_bytes(b"OggS" + b"\0" * 32)
+            rule = {"pack": "Pack", "kind": "bitmap", "collection": "C",
+                    "tags": ["t"]}
+            source = {"page": "https://kenney.nl/assets/x",
+                      "zip_url": "https://kenney.nl/x.zip"}
+            rec, _ = sb.build_record("Audio", rule, rel, root, source,
+                                     ["o"], ["r"], None)
+        self.assertEqual(rec["title"], "Impact - heavy")
+        self.assertEqual(rec["id"],
+                         sb.stable_uuid("asset", "kenney-allin1", f"Pack/{rel}"))
+
+    def test_the_hq_replacement_writer(self):
+        self.assertEqual(
+            up.title_for("2d-assets-brick-pack-brick,high-1-36a68e65-512.png"),
+            "Brick pack brick-high 1 (vector)")
+        profile = [_asset("id-1", "images/pack/a.png")]
+        up.apply_replacements(profile, [{
+            "id": "id-1", "old": "images/pack/a.png", "oldSize": 1,
+            "new": "images/kenney-hq/2d-assets-a, b-36a68e65-512.png",
+            "newSize": 2}])
+        self.assertEqual(profile[0]["title"], "A - b (vector)")
+        self.assertEqual(profile[0]["id"], "id-1")
+
+
+class TestMergeAddedRefusesUnnormalizedTitles(unittest.TestCase):
+    """R10. An upgrade document is historical evidence: a NEW record whose
+    title breaks the rule is refused, never normalised."""
+
+    def _site(self, td: Path, title: str):
+        upgrades = td / "upgrades"
+        upgrades.mkdir()
+        (upgrades / "kenney-hq-replacements.site_a.json").write_text("[]")
+        rec = _asset("new-1", "videos/internet/new.mp4")
+        rec["title"] = title
+        rec["metadata"] = {"media_url": "https://example.test/new.mp4",
+                           "fetched_from": "https://example.test/new"}
+        (upgrades / "added-assets.site_a.json").write_text(json.dumps([rec]))
+        (upgrades / "added-posts.site_a.json").write_text(json.dumps(
+            [{"id": "post-new", "asset_ids": ["new-1"], "title": "New"}]))
+        (td / "assets.json").write_text(json.dumps(
+            [_asset("id-1", "images/pack/a.png")]))
+        (td / "posts.json").write_text(json.dumps(
+            [{"id": "post-1", "asset_ids": ["id-1"], "title": "Old"}]))
+        return upgrades
+
+    def _run(self, td: Path, upgrades: Path):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "apply_upgrade.py"),
+             "--site", "site_a", "--upgrades", str(upgrades),
+             "--profile", str(td / "assets.json"),
+             "--posts", str(td / "posts.json")],
+            capture_output=True, text=True)
+
+    def _assert_refused(self, title):
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            upgrades = self._site(td, title)
+            before = {f: (td / f).read_bytes()
+                      for f in ("assets.json", "posts.json")}
+            r = self._run(td, upgrades)
+            self.assertNotEqual(r.returncode, 0,
+                                f"merged silently:\n{r.stderr}")
+            self.assertIn("new-1", r.stderr)
+            self.assertIn("added-assets.site_a.json", r.stderr)
+            for f, data in before.items():
+                self.assertEqual((td / f).read_bytes(), data,
+                                 f"{f} was written")
+
+    def test_a_new_record_titled_with_a_comma_is_refused(self):
+        self._assert_refused("Reference, new")
+
+    def test_a_new_record_titled_with_an_em_dash_is_refused(self):
+        self._assert_refused(f"Reference {EM} new")
+
+    def test_the_same_document_with_a_hyphen_merges(self):
+        """The control: the harness can succeed, so the refusals above
+        are about the title and nothing else."""
+        with tempfile.TemporaryDirectory() as t:
+            td = Path(t)
+            r = self._run(td, self._site(td, "Reference - new"))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            ids = {a["id"] for a in json.loads((td / "assets.json").read_text())}
+            self.assertIn("new-1", ids)
+
+    def test_a_record_the_profile_already_holds_is_not_refused(self):
+        """The repair branch is unaffected: a record already merged is not
+        new, whatever its title."""
+        existing = _asset("id-1", "images/pack/a.png")
+        existing["title"] = "Legacy, title"
+        profile = [existing]
+        doc = [{**_asset("id-1", "images/pack/a.png"), "title": "Legacy, title",
+                "metadata": {"media_url": "https://example.test/a.png"}}]
+        self.assertEqual(up.merge_added(profile, doc), (0, 1, 0))
+        self.assertEqual(profile[0]["title"], "Legacy, title")
+
+    def test_the_function_refuses_before_appending_anything(self):
+        profile = [_asset("id-1", "images/pack/a.png")]
+        good = {**_asset("ok-1", "images/x/ok.png"), "title": "Fine"}
+        bad = {**_asset("bad-1", "images/x/bad.png"), "title": "Not, fine"}
+        with self.assertRaises(up.UnnormalizedTitle) as cm:
+            up.merge_added(profile, [good, bad],
+                           sources={"bad-1": "balance-assets.site_a.json"})
+        self.assertIn("bad-1", str(cm.exception))
+        self.assertIn("balance-assets.site_a.json", str(cm.exception))
+        self.assertEqual([e["id"] for e in profile], ["id-1"])
+
+    def test_no_committed_upgrade_document_carries_a_refused_title(self):
+        """Every committed asset document keeps merging exactly as before."""
+        seen = 0
+        for site in ("site_a", "site_b"):
+            for stem in up.DOC_SETS:
+                path = UPGRADES / f"{stem}-assets.{site}.json"
+                if not path.is_file():
+                    continue
+                for rec in json.loads(path.read_text(encoding="utf-8")):
+                    seen += 1
+                    self.assertFalse("," in rec["title"] or EM in rec["title"],
+                                     f"{path.name}: {rec['id']}")
+        self.assertGreater(seen, 0)
+
+
+class TestNaturalPostCommaSurvives(unittest.TestCase):
+    """R11, preservation. These pass on the commit before #1319 as well;
+    they are here so the post path can never grow into a blind replace."""
+
+    TITLE = "Notes, sketches and studies"
+
+    def test_the_title_passes_are_no_ops_on_a_natural_comma(self):
+        self.assertEqual(sa.clean_dashes(self.TITLE), self.TITLE)
+        posts = [{"id": "1", "post_kind": "multi_asset", "title": self.TITLE,
+                  "asset_ids": []}]
+        sa.retitle_posts(posts)
+        self.assertEqual(posts[0]["title"], self.TITLE)
+        sa.disambiguate_titles(posts)
+        self.assertEqual(posts[0]["title"], self.TITLE)
+
+    def test_the_data_correction_leaves_a_natural_comma(self):
+        posts = [{"id": "1", "post_kind": "multi_asset", "title": self.TITLE,
+                  "asset_ids": ["a1"]}]
+        n = sa.repunctuate_posts(
+            posts, embedded_by_asset={"a1": ["Sintel , 480p trailer"]},
+            em_dash_sources={"1": f"Notes {EM} other studies"})
+        self.assertEqual(n, 0)
+        self.assertEqual(posts[0]["title"], self.TITLE)
+
+    def test_the_data_correction_fixes_only_what_has_an_origin(self):
+        """A natural comma beside an inherited one: only the inherited one
+        changes, which the asset rule applied to the whole title would
+        get wrong."""
+        title = "Notes, sketches on Sintel, 480p trailer, part 2"
+        got = sa.repunctuate_post_title(
+            title, embedded=["Sintel , 480p trailer"])
+        self.assertEqual(got, "Notes, sketches on Sintel - 480p trailer - part 2")
+        self.assertNotEqual(got, sa.normalize_title(title))
+        self.assertEqual(sa.repunctuate_post_title(got,
+                         embedded=["Sintel , 480p trailer"]), got)
+        self.assertEqual(
+            sa.repunctuate_post_title(
+                "Animation, AI reference set",
+                em_dash_source=f"Animation {EM} AI reference set"),
+            "Animation - AI reference set")
+
+
+class TestBalanceTemplateMatchesCommitted(unittest.TestCase):
+    """R13. The balance generator emits the chunk form the committed
+    profile carries, for every one of its 230 posts."""
+
+    def test_every_balance_post_title_is_the_committed_one(self):
+        records = json.loads((UPGRADES / "balance-assets.site_a.json")
+                             .read_text(encoding="utf-8"))
+        committed = {p["id"]: p["title"] for p in _profile("studio-a.posts")}
+        doc_ids = {p["id"] for p in json.loads(
+            (UPGRADES / "balance-posts.site_a.json").read_text(encoding="utf-8"))}
+        generated = sb.build_posts(records)
+        self.assertEqual({p["id"] for p in generated}, doc_ids)
+        self.assertEqual(len(generated), 230)
+        bad = [(p["title"], committed.get(p["id"])) for p in generated
+               if sa.strip_part_suffix(committed.get(p["id"]) or "")
+               != p["title"]]
+        self.assertEqual(bad, [], f"{len(bad)} of 230 disagree")
 
 
 class TestMeasureStagedRootPolicy(unittest.TestCase):
