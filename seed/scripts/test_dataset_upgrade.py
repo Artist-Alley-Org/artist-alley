@@ -7789,10 +7789,17 @@ CSV_FIELDS = (
 ).split(",")
 
 
-def _csv_bytes(paths, *, embed_newline_every=0, fields=CSV_FIELDS):
+def _csv_bytes(paths, *, embed_newline_every=0, fields=CSV_FIELDS,
+               titles=None, descriptions=None):
     """A metadata.csv in the published shape: CRLF terminators and, where
     asked, a BARE LF inside a quoted description, which is what site_b
-    actually ships and what a parse-and-rewrite would silently normalise."""
+    actually ships and what a parse-and-rewrite would silently normalise.
+
+    `titles` and `descriptions` map a row index to its value, for the
+    retitle cases; a cell is quoted exactly when CSV requires it, so a comma
+    title is quoted and an em dash title is not, as in the published files."""
+    titles = titles or {}
+    descriptions = descriptions or {}
     out = bytearray()
     out += (",".join(fields) + "\r\n").encode()
     for i, fp in enumerate(paths):
@@ -7800,11 +7807,11 @@ def _csv_bytes(paths, *, embed_newline_every=0, fields=CSV_FIELDS):
         row[fields.index("asset_id")] = f"a{i:05d}"
         row[fields.index("file_path")] = fp
         row[fields.index("filename")] = fp.rsplit("/", 1)[-1]
-        row[fields.index("title")] = f"plate {i}"
+        row[fields.index("title")] = titles.get(i, f"plate {i}")
         desc = f"row {i}"
         if embed_newline_every and i % embed_newline_every == 0:
             desc = f"row {i},\nsecond line"
-        row[fields.index("description")] = desc
+        row[fields.index("description")] = descriptions.get(i, desc)
         cells = []
         for c in row:
             cells.append(f'"{c}"' if ("," in c or "\n" in c or '"' in c) else c)
@@ -7814,6 +7821,12 @@ def _csv_bytes(paths, *, embed_newline_every=0, fields=CSV_FIELDS):
 
 def _paths(n, prefix="images/local"):
     return [f"{prefix}/p{i:05d}.png" for i in range(n)]
+
+
+# A groups.csv in the published shape, cut down: row identity `group_id`,
+# a `title` and the original-dataset `asset_count`, CRLF-terminated. Its one
+# title holds no separator, so its retitle document retitles nothing.
+GROUPS_FIXTURE = b"group_id,title,asset_count\r\ng1,Studio plates,8\r\n"
 
 
 class TestAliasRefusal(unittest.TestCase):
@@ -8203,8 +8216,13 @@ class TestMetadataCsvTransform(unittest.TestCase):
 
 
 class TestGroupsCsvIsPreservationOwned(unittest.TestCase):
-    """C6. `groups.csv` needs no transformation, so it gets the strictest
-    rule: the bytes do not change.
+    """C6. `groups.csv` is RETITLE-OWNED (ADR 0097 amendment, 2026-09-26).
+
+    It left the exact-bytes set because the owner ruled that its `title`
+    column holds no comma and no em dash, so its punctuated titles must
+    change. It is still recorded in every baseline and still compared
+    EXACTLY against it unless its retitle document is supplied: a change
+    with no document fails, as it always did.
 
     ⛔ `asset_count` IS NOT REINTERPRETED. It is an ORIGINAL-DATASET fact
     that already disagrees with the shipped subset. Measured on site_b,
@@ -8214,9 +8232,13 @@ class TestGroupsCsvIsPreservationOwned(unittest.TestCase):
     ship nothing, so a retirement never empties one.
     """
 
-    def test_groups_csv_is_in_the_exact_preservation_set(self):
-        self.assertIn(pres.GROUPS_NAME, vs.PRESERVED_NAMES)
+    def test_groups_csv_is_retitle_owned_and_still_baselined(self):
+        self.assertNotIn(pres.GROUPS_NAME, vs.PRESERVED_NAMES)
+        self.assertIn(pres.GROUPS_NAME, vs.RETITLE_OWNED_NAMES)
         self.assertNotIn(pres.CSV_NAME, vs.PRESERVED_NAMES)
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / pres.GROUPS_NAME).write_bytes(GROUPS_FIXTURE)
+            self.assertIn(pres.GROUPS_NAME, vs.record_baseline(Path(d))["files"])
 
     def test_a_changed_groups_csv_fails_the_baseline(self):
         with tempfile.TemporaryDirectory() as d:
@@ -8665,7 +8687,7 @@ class TestPreservedRootModeIsExplicit(unittest.TestCase):
         (dest / "posts.json").write_text("[]", encoding="utf-8")
         (dest / pres.CSV_NAME).write_bytes(
             _csv_bytes(_paths(rows) + [rec["file_path"]]))
-        (dest / pres.GROUPS_NAME).write_bytes(b"group_id,asset_count\r\ng1,8\r\n")
+        (dest / pres.GROUPS_NAME).write_bytes(GROUPS_FIXTURE)
         p = dest / rec["file_path"]
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(local_bytes)
@@ -8683,15 +8705,24 @@ class TestPreservedRootModeIsExplicit(unittest.TestCase):
                 "--live-site", str(live), "--staging", str(dest),
                 "--no-collapse-document",
                 "--profile", "studio-a.assets.json", "--out", str(out)]), 0)
+            # groups.csv changes only through its own retitle document, so
+            # a preserved publish of a site that holds one needs it.
+            self.assertEqual(pres.main([
+                "groups-transform", "--snapshot", str(snapshot),
+                "--live-site", str(live), "--staging", str(dest),
+                "--out", str(root / "evidence" / "site_a.groups-transform.json")]), 0)
         return root, out
 
-    def _run(self, root, *extra, live=True):
+    def _run(self, root, *extra, live=True, groups=True):
         args = ["--internet-source", str(root / "internet"),
                 "--profile", str(root / "profiles" / "studio-a.assets.json"),
                 "--posts", str(root / "profiles" / "studio-a.posts.json"),
                 "--dest", str(root / "dest")]
         if live:
             args += ["--live-site", str(root / "live")]
+        if groups and "--preserved-roots" in extra:
+            args += ["--groups-transform",
+                     str(root / "evidence" / "site_a.groups-transform.json")]
         return subprocess.run(
             [sys.executable, str(SCRIPTS / "populate_archive.py"), *args, *extra],
             capture_output=True, text=True)
@@ -8765,15 +8796,20 @@ class TestPreservedRootModeIsExplicit(unittest.TestCase):
             self.assertIn("CONTAINS", r.stderr)
 
     def test_the_documented_transform_is_applied_and_groups_csv_is_untouched(self):
+        """No removal and no retitle in either document: both files must stay
+        byte-identical and neither is rewritten."""
         with tempfile.TemporaryDirectory() as d:
             root, out = self._world(d)
             groups_before = (root / "dest" / pres.GROUPS_NAME).read_bytes()
             csv_before = (root / "dest" / pres.CSV_NAME).read_bytes()
             r = self._run(root, "--preserved-roots", "--csv-transform", str(out))
             self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertIn("ZERO-REMOVAL transform", r.stderr)
+            self.assertIn("removals and retitles as documented", r.stderr)
+            self.assertIn("0 documented removal(s), 0 documented retitle(s)",
+                          r.stderr)
             self.assertIn("nothing to write", r.stderr)
-            self.assertIn("preservation-owned, left untouched", r.stderr)
+            self.assertIn("groups.csv: applying the documented retitle", r.stderr)
+            self.assertIn("none removed, 0 documented retitle(s)", r.stderr)
             self.assertEqual((root / "dest" / pres.CSV_NAME).read_bytes(),
                              csv_before)
             self.assertEqual((root / "dest" / pres.GROUPS_NAME).read_bytes(),
@@ -8896,7 +8932,7 @@ class TestPreservedArchiveLayerB(unittest.TestCase):
         (dest / "MANIFEST.json").write_text(json.dumps([survivor, retired]),
                                             encoding="utf-8")
         (dest / "posts.json").write_text("[]", encoding="utf-8")
-        (dest / pres.GROUPS_NAME).write_bytes(b"group_id,asset_count\r\ng1,8\r\n")
+        (dest / pres.GROUPS_NAME).write_bytes(GROUPS_FIXTURE)
         rows = _paths(20) + [survivor["file_path"], retired["file_path"]]
         (dest / pres.CSV_NAME).write_bytes(_csv_bytes(rows))
         for rec in (survivor, retired):
@@ -8920,8 +8956,9 @@ class TestPreservedArchiveLayerB(unittest.TestCase):
                 p.write_bytes(PRESERVED_BYTES if (snapshot_bytes is None
                                                   or tree is live)
                               else snapshot_bytes)
-        shutil.copyfile(dest / pres.CSV_NAME, snap / pres.CSV_NAME)
-        shutil.copyfile(dest / pres.CSV_NAME, live / pres.CSV_NAME)
+        for name in (pres.CSV_NAME, pres.GROUPS_NAME):
+            shutil.copyfile(dest / name, snap / name)
+            shutil.copyfile(dest / name, live / name)
         manifest = root / "evidence" / "site_a.snapshot-manifest.json"
         cdoc = root / "upgrades" / "asset-collapse.studio-a.json"
         with contextlib.redirect_stderr(io.StringIO()):
@@ -8934,6 +8971,9 @@ class TestPreservedArchiveLayerB(unittest.TestCase):
                        "--live-site", str(live), "--staging", str(dest),
                        "--collapse-document", str(cdoc),
                        "--out", str(transform)])
+            pres.main(["groups-transform", "--snapshot", str(snap),
+                       "--live-site", str(live), "--staging", str(dest),
+                       "--out", str(root / "evidence" / "site_a.groups-transform.json")])
         return root, transform, manifest
 
     def _run(self, root, transform, *extra, live=True):
@@ -8942,6 +8982,8 @@ class TestPreservedArchiveLayerB(unittest.TestCase):
                 "--profile", str(root / "profiles" / "studio-a.assets.json"),
                 "--posts", str(root / "profiles" / "studio-a.posts.json"),
                 "--csv-transform", str(transform),
+                "--groups-transform",
+                str(root / "evidence" / "site_a.groups-transform.json"),
                 "--dest", str(root / "dest")]
         if live:
             args += ["--live-site", str(root / "live")]
@@ -10219,6 +10261,1176 @@ class TestAuthoredPlateScratchBoundary(unittest.TestCase):
             self.assertIn(ap.MOOD_BOARD_SOURCE, err)
             self.assertTrue((root / "scratch" / "aurora-authored"
                              / ap.PLATES[0]).is_file())
+
+
+# ---------------------------------------------------------------------------
+# The title retitle in both published CSVs (#1319, #1460; ADR 0097 amendment
+# of 2026-09-26)
+# ---------------------------------------------------------------------------
+#
+# Owner ruling: the `title` column of metadata.csv and groups.csv holds no
+# comma and no em dash. A preserved publish may retitle a surviving row, but
+# ONLY inside its title cell, ONLY as `title_rule.normalize_title` says, and
+# ONLY for the rows a recomputation from the frozen bytes requires.
+#
+# Everything here is synthetic, for the reason the fixtures above give: the
+# required guard suite runs where the archive share is not mounted. The
+# shapes reproduce the published files: CRLF terminators, site_b's bare LFs
+# inside quoted fields, comma titles quoted and em dash titles not, and the
+# real row counts. The real-copy check runs outside the suite, on copies.
+
+SONO_META = "Sono Variablefont Mono,wght (font)"
+SONO_GROUP = "Sono Variablefont Mono,wght"
+
+# The 28 columns of the published groups.csv, in order, copied VERBATIM from
+# site_a/groups.csv on 2026-09-26. It has NO file_path column: its row
+# identity is group_id.
+GROUPS_FIELDS = (
+    "group_id,title,team,project,franchise,source,owner,approver,status,"
+    "pipeline_stage,version,revision_count,rating,license,usage_rights,"
+    "confidentiality,attribution,target_platforms,naming_compliant,"
+    "external_id,is_published,archived_reason,tags,asset_count,created_at,"
+    "updated_at,last_reviewed_at,review_notes"
+).split(",")
+
+
+def _cell(c: str) -> str:
+    return f'"{c.replace(chr(34), chr(34) * 2)}"' if any(
+        x in c for x in ',\n"') else c
+
+
+def _groups_bytes(n, *, titles=None, counts=None, ids=None):
+    """A groups.csv in the published shape: CRLF, quoted multi-value cells
+    (`tags`, `target_platforms` hold commas in the real file), and an
+    `asset_count` that is an original-dataset fact."""
+    titles = titles or {}
+    counts = counts or {}
+    out = bytearray((",".join(GROUPS_FIELDS) + "\r\n").encode())
+    for i in range(n):
+        row = [""] * len(GROUPS_FIELDS)
+        row[0] = ids[i] if ids is not None else f"grp-{i:05d}"
+        row[1] = titles.get(i, f"Group {i}")
+        row[GROUPS_FIELDS.index("tags")] = "font, handwritten, typeface"
+        row[GROUPS_FIELDS.index("target_platforms")] = "PC, Console, Mobile"
+        row[GROUPS_FIELDS.index("asset_count")] = str(counts.get(i, i % 9 + 1))
+        out += (",".join(_cell(c) for c in row) + "\r\n").encode()
+    return bytes(out)
+
+
+def _meta_doc(blob, removals=()):
+    """A metadata.csv transform over `blob`, with a synthetic collapse
+    identity (the CSV machinery is what these cases exercise)."""
+    removals = list(removals)
+    ids = sorted({rid for _p, rid in removals})
+    binding = {"profile": "studio-a.assets.json", "sha256": "b" * 64,
+               "entries": len(ids), "retired_ids": ids}
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "metadata.csv"
+        p.write_bytes(blob)
+        return pres.build_csv_transform(p, removals=removals,
+                                        profile="studio-a.assets.json",
+                                        collapse=binding)
+
+
+def _groups_doc(blob):
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "groups.csv"
+        p.write_bytes(blob)
+        return pres.build_groups_transform(p)
+
+
+def _fields_by(blob, key):
+    header, rows = pres.split_csv_records(blob)
+    fields = pres.record_fields(header)
+    k = fields.index(key)
+    return fields, {pres.record_fields(r)[k]: (r, pres.record_fields(r))
+                    for r in rows}
+
+
+def _bare_lf(blob):
+    return blob.count(b"\n") - blob.count(b"\r\n")
+
+
+@dataclasses.dataclass(frozen=True)
+class _Kind:
+    """One of the two retitled files, so every shared refusal is proved on
+    both without writing each test twice."""
+    name: str
+    key: str
+    build: object
+    parse: object
+    apply: object
+    verify: object
+    recompute: object
+    sample: object
+
+
+def _meta_sample():
+    return _csv_bytes(_paths(30), embed_newline_every=7,
+                      titles={3: "Mono, bold", 11: f"Sintel {EM} full film",
+                              20: "a,,b"})
+
+
+def _groups_sample():
+    return _groups_bytes(30, titles={3: "Mono, bold", 11: f"Sintel {EM} full film",
+                                     20: "a,,b"})
+
+
+def _kinds():
+    """Built per call, not at import: a module-level table would turn one
+    missing attribute into an import error that hides every other test."""
+    return (
+        _Kind("metadata.csv", "file_path", _meta_doc, pres.parse_csv_transform,
+              pres.transform_csv, pres.verify_csv_transform,
+              lambda doc, blob: pres.retitle_recomputation_refusals(
+                  doc, blob, key_column="file_path",
+                  excluded={r["file_path"] for r in doc["removals"]}),
+              _meta_sample),
+        _Kind("groups.csv", "group_id", _groups_doc, pres.parse_groups_transform,
+              pres.transform_groups, pres.verify_groups_transform,
+              pres.groups_retitle_refusals, _groups_sample),
+    )
+
+
+def _reexpect(kind, doc, blob):
+    """Re-derive a forged document's own expectations so it is INTERNALLY
+    CONSISTENT. A forgery that disagrees with itself proves nothing; the
+    point of these cases is that self-consistency is not authority."""
+    after, refusals = kind.apply(blob, doc)
+    assert not refusals, refusals
+    _h, rows = pres.split_csv_records(after)
+    digs = [pres._sha(r) for r in rows]
+    doc["expected"] = {"sha256": pres._sha(after), "bytes": len(after),
+                       "data_rows": len(rows),
+                       "ordered_digest": pres.ordered_digest(digs),
+                       "row_digests": digs}
+    return after
+
+
+class TestTitleCellRetitle(unittest.TestCase):
+    """The byte-level edit: only the title cell's VALUE changes, and the cell
+    keeps its quoting."""
+
+    def test_a_quoted_title_cell_stays_quoted_and_nothing_else_moves(self):
+        row = b'a1,"Mono, bold",x,"d,\nline"\r\n'
+        out = pres.retitle_record(row, 1, "Mono - bold")
+        self.assertEqual(out, b'a1,"Mono - bold",x,"d,\nline"\r\n')
+
+    def test_an_unquoted_title_cell_stays_unquoted(self):
+        row = f"a1,Sintel {EM} full film,x\r\n".encode()
+        self.assertEqual(pres.retitle_record(row, 1, "Sintel - full film"),
+                         b"a1,Sintel - full film,x\r\n")
+
+    def test_the_terminator_is_given_back_exactly(self):
+        for term in (b"\r\n", b"\n", b""):
+            with self.subTest(term=term):
+                out = pres.retitle_record(b'a,"x,y",z' + term, 1, "x-y")
+                self.assertEqual(out, b'a,"x-y",z' + term)
+
+    def test_an_unquoted_cell_is_never_given_quotes_it_never_had(self):
+        with self.assertRaises(pres.PreservedError) as cm:
+            pres.retitle_record(b"a,plain,z\r\n", 1, "needs, quotes")
+        self.assertIn("quoting may not change", str(cm.exception))
+
+    def test_the_rule_identity_carries_version_and_behaviour(self):
+        ident = pres.title_rule_identity()
+        self.assertEqual(ident["name"], "title_rule.normalize_title")
+        self.assertEqual(ident["version"], pres.TITLE_RULE_VERSION)
+        self.assertEqual(ident["separators"], [",", EM])
+        # a rule whose behaviour changed moves the fingerprint even with the
+        # version left alone, so a forgotten bump cannot slip through
+        with unittest.mock.patch.object(pres, "normalize_title",
+                                        lambda t, *a, **k: t.replace(",", ";")):
+            self.assertNotEqual(pres.title_rule_identity()["fingerprint"],
+                                ident["fingerprint"])
+
+
+class TestMetadataCsvRetitle(unittest.TestCase):
+    """metadata.csv: removals FIRST, exactly as before, then the retitles of
+    the survivors."""
+
+    def _site_a_shape(self):
+        titles = {500: SONO_META}
+        return _csv_bytes(_paths(907), titles=titles), titles
+
+    def test_r1_the_site_a_shape_is_0_removals_and_1_retitle(self):
+        blob, _t = self._site_a_shape()
+        doc = _meta_doc(blob)
+        self.assertEqual(doc["removals"], [])
+        self.assertEqual(len(doc["retitles"]), 1)
+        rt = doc["retitles"][0]
+        self.assertEqual((rt["title_before"], rt["title_after"]),
+                         (SONO_META, "Sono Variablefont Mono-wght (font)"))
+        after, refusals = pres.transform_csv(blob, doc)
+        self.assertEqual(refusals, [])
+        self.assertEqual(pres.verify_csv_transform(doc, after, original=blob), [])
+        # 907 rows to 907, one row differs, only inside its title cell
+        h0, r0 = pres.split_csv_records(blob)
+        h1, r1 = pres.split_csv_records(after)
+        self.assertEqual(h0, h1)
+        self.assertEqual(len(r1), 907)
+        self.assertEqual([i for i, (a, b) in enumerate(zip(r0, r1)) if a != b], [500])
+        self.assertEqual(after.count(b"\r\n"), 908)
+        self.assertEqual(_bare_lf(after), 0)
+        tidx = pres.record_fields(h0).index("title")
+        f0, f1 = pres.record_fields(r0[500]), pres.record_fields(r1[500])
+        self.assertEqual(f0[:tidx] + f0[tidx + 1:], f1[:tidx] + f1[tidx + 1:])
+        self.assertIn(b'"Sono Variablefont Mono-wght (font)"', r1[500],
+                      "the quoted title cell keeps its quotes")
+        self.assertEqual(pres.csv_title_punctuation(after)["titles_with_separator"], 0)
+
+    def _site_b_shape(self, overlap=0):
+        paths = _paths(1206)
+        gone = list(range(100, 122))
+        comma = list(range(200, 200 + 46 * 5, 5))
+        dash = list(range(600, 600 + 6 * 7, 7))
+        titles = {i: f"Guide {i}, Part 1" for i in comma}
+        titles.update({i: f"Sintel {i} {EM} full film" for i in dash})
+        # `overlap` punctuated titles land on rows that are also removed
+        for i in gone[:overlap]:
+            titles[i] = f"Retired {i}, a plate"
+        blob = _csv_bytes(paths, embed_newline_every=134, titles=titles)
+        removals = [(paths[i], f"rid-{i}") for i in gone]
+        return blob, removals, paths
+
+    def test_r1_the_site_b_shape_is_22_removals_and_52_retitles(self):
+        blob, removals, _paths_ = self._site_b_shape()
+        self.assertEqual(blob.count(b"\r\n"), 1207)
+        self.assertEqual(_bare_lf(blob), 9)
+        doc = _meta_doc(blob, removals)
+        self.assertEqual(len(doc["removals"]), 22)
+        self.assertEqual(len(doc["retitles"]), 52)
+        self.assertEqual({r["file_path"] for r in doc["removals"]}
+                         & {r["file_path"] for r in doc["retitles"]}, set())
+        after, refusals = pres.transform_csv(blob, doc)
+        self.assertEqual(refusals, [])
+        self.assertEqual(pres.verify_csv_transform(doc, after, original=blob), [])
+        self.assertEqual(after.count(b"\r\n"), 1207 - 22)
+        self.assertEqual(_bare_lf(after), 9, "the bare LFs in other fields survive")
+        self.assertEqual(pres.csv_title_punctuation(after)["titles_with_separator"], 0)
+        self.assertEqual(pres.split_csv_records(after)[0],
+                         pres.split_csv_records(blob)[0])
+
+    def test_the_contract_does_not_rely_on_removals_and_titles_not_overlapping(self):
+        """Today site_b's removals and punctuated rows happen not to overlap.
+        With 5 that do, the removals are unchanged and those 5 need no
+        retitle: required = punctuated MINUS removed."""
+        blob, removals, _p = self._site_b_shape(overlap=5)
+        doc = _meta_doc(blob, removals)
+        self.assertEqual(len(doc["removals"]), 22)
+        self.assertEqual(len(doc["retitles"]), 52)  # 57 punctuated, 5 removed
+        after, _r = pres.transform_csv(blob, doc)
+        self.assertEqual(pres.verify_csv_transform(doc, after, original=blob), [])
+        self.assertNotIn(b"Retired 100", after)
+
+    def test_r2b_a_removed_punctuated_row_needs_no_retitle(self):
+        """R2b, through a REAL collapse document: the retired record's row
+        carries a comma title. The document authorises its removal, the
+        transform documents that removal and NO retitle for it, and the
+        final file holds the row nowhere."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for sub in ("snapshot", "live", "staging", "evidence", "upgrades"):
+                (root / sub).mkdir()
+            retired = _pres_rec(RETIRED_ID, archive_state="draft")
+            survivor = _pres_rec(SURVIVOR_ID)
+            cdoc = root / "upgrades" / "asset-collapse.studio-a.json"
+            cdoc.write_text(json.dumps(_pres_doc([_pres_entry(retired, survivor)])),
+                            encoding="utf-8")
+            rows = _paths(10) + [survivor["file_path"], retired["file_path"]]
+            blob = _csv_bytes(rows, titles={11: "Studio plate, retired copy",
+                                            4: "Mono, bold"})
+            (root / "snapshot" / "metadata.csv").write_bytes(blob)
+            out = root / "evidence" / "t.json"
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(pres.main([
+                    "csv-transform", "--snapshot", str(root / "snapshot"),
+                    "--live-site", str(root / "live"),
+                    "--staging", str(root / "staging"),
+                    "--collapse-document", str(cdoc), "--out", str(out)]), 0)
+            doc = pres.load_csv_transform(out)
+            self.assertEqual([r["file_path"] for r in doc["removals"]],
+                             [retired["file_path"]])
+            self.assertEqual([r["file_path"] for r in doc["retitles"]], [rows[4]])
+            collapse = ac.load_collapse_document(cdoc)
+            self.assertEqual(pres.binding_refusals(
+                doc, profile_name="studio-a.assets.json", collapse_doc=collapse,
+                collapse_raw=cdoc.read_bytes(), csv_blob=blob), [])
+            self.assertEqual(pres.metadata_retitle_refusals(
+                doc, blob, collapse_doc=collapse), [])
+            after, refusals = pres.transform_csv(blob, doc)
+            self.assertEqual(refusals, [])
+            self.assertEqual(pres.verify_csv_transform(doc, after, original=blob), [])
+            self.assertNotIn(retired["file_path"].encode(), after)
+            self.assertNotIn(b"retired copy", after)
+            self.assertEqual(pres.csv_title_punctuation(after)["titles_with_separator"], 0)
+
+    def test_r5_with_no_removal_and_no_retitle_the_file_is_byte_identical(self):
+        blob = _csv_bytes(_paths(50), embed_newline_every=7)
+        doc = _meta_doc(blob)
+        self.assertEqual((doc["removals"], doc["retitles"]), ([], []))
+        self.assertEqual(doc["expected"]["sha256"], doc["original"]["sha256"])
+        after, _r = pres.transform_csv(blob, doc)
+        self.assertEqual(after, blob)
+        self.assertEqual(pres.verify_csv_transform(doc, blob, original=blob), [])
+
+    def test_r5_with_one_retitle_only_that_row_differs(self):
+        blob = _csv_bytes(_paths(50), embed_newline_every=7, titles={9: "x, y"})
+        doc = _meta_doc(blob)
+        after, _r = pres.transform_csv(blob, doc)
+        _h, r0 = pres.split_csv_records(blob)
+        _h, r1 = pres.split_csv_records(after)
+        self.assertEqual([i for i, (a, b) in enumerate(zip(r0, r1)) if a != b], [9])
+        self.assertEqual(r1[9], r0[9].replace(b'"x, y"', b'"x - y"'))
+
+    def test_r7_a_description_with_a_comma_or_em_dash_is_untouched(self):
+        """Descriptions are OUT of scope: a row whose description holds a
+        comma and an em dash, but whose title holds neither, is
+        byte-identical and is not retitled."""
+        blob = _csv_bytes(_paths(20), descriptions={
+            5: "sketches, studies", 6: f"first {EM} second"}, titles={2: "a, b"})
+        doc = _meta_doc(blob)
+        self.assertEqual([r["file_path"] for r in doc["retitles"]], [_paths(20)[2]])
+        after, _r = pres.transform_csv(blob, doc)
+        _h, r0 = pres.split_csv_records(blob)
+        _h, r1 = pres.split_csv_records(after)
+        self.assertEqual((r1[5], r1[6]), (r0[5], r0[6]))
+        self.assertIn(EM.encode(), r1[6])
+
+    # -- metadata.csv-only refusals -----------------------------------------
+
+    def test_a_retitle_keyed_on_a_duplicate_file_path_refuses(self):
+        blob = _meta_sample()
+        doc = _meta_doc(blob)
+        doc["retitles"].insert(1, dict(doc["retitles"][0]))
+        with self.assertRaises(pres.PreservedError) as cm:
+            pres.parse_csv_transform(doc, source="fixture")
+        self.assertIn("names a file_path twice", str(cm.exception))
+        # and a CSV holding a duplicate file_path is refused before anything
+        # is keyed on it (today's refusal, which now keys the retitles too)
+        with self.assertRaises(pres.PreservedError) as cm:
+            _meta_doc(_csv_bytes(["images/a.png", "images/a.png"],
+                                 titles={0: "a, b"}))
+        self.assertIn("more than one row", str(cm.exception))
+
+    def test_a_retitle_on_an_unknown_file_path_refuses(self):
+        blob = _meta_sample()
+        doc = _meta_doc(blob)
+        doc["retitles"][0]["file_path"] = "images/local/zz-not-a-row.png"
+        doc["retitles"].sort(key=lambda r: r["file_path"])
+        pres.parse_csv_transform(doc, source="fixture")
+        after, refusals = pres.transform_csv(blob, doc)
+        self.assertEqual(after, b"")
+        self.assertTrue(any("name no surviving row" in r for r in refusals), refusals)
+        self.assertTrue(any("does not hold" in r
+                            for r in _kinds()[0].recompute(doc, blob)))
+
+    def test_a_row_documented_for_both_removal_and_retitle_refuses(self):
+        paths = _paths(12)
+        blob = _csv_bytes(paths, titles={4: "a, b"})
+        doc = _meta_doc(blob, [(paths[7], "rid-7")])
+        doc["removals"] = [{"file_path": paths[4], "retired_id": "rid-7"}]
+        with self.assertRaises(pres.PreservedError) as cm:
+            pres.parse_csv_transform(doc, source="fixture")
+        self.assertIn("BOTH removal and retitle", str(cm.exception))
+
+    def test_a_retitle_on_an_authorised_removal_refuses_even_unlisted(self):
+        """The forgery that trades a removal for a retitle: the collapse
+        document retires the row, the transform drops that removal and
+        retitles the row instead, and re-derives its own arithmetic so it is
+        internally consistent. The removal set is recomputed from the
+        COLLAPSE DOCUMENT, so the retitle is refused by name."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            retired = _pres_rec(RETIRED_ID, archive_state="draft")
+            survivor = _pres_rec(SURVIVOR_ID)
+            cdoc = root / "asset-collapse.studio-a.json"
+            cdoc.write_text(json.dumps(_pres_doc([_pres_entry(retired, survivor)])),
+                            encoding="utf-8")
+            collapse = ac.load_collapse_document(cdoc)
+            rows = _paths(6) + [retired["file_path"]]
+            blob = _csv_bytes(rows, titles={6: "Studio plate, retired copy"})
+            honest = _meta_doc(blob, pres.removals_from_collapse(collapse))
+            self.assertEqual(honest["retitles"], [])
+            self.assertEqual(pres.metadata_retitle_refusals(
+                honest, blob, collapse_doc=collapse), [])
+            forged = _meta_doc(blob)          # no removal at all ...
+            self.assertEqual(len(forged["retitles"]), 1)   # ... so it retitles
+            pres.parse_csv_transform(forged, source="fixture")
+            bad = pres.metadata_retitle_refusals(forged, blob, collapse_doc=collapse)
+            self.assertTrue(any("AUTHORISED REMOVAL SET" in r for r in bad), bad)
+
+
+class TestGroupsCsvRetitle(unittest.TestCase):
+    """groups.csv: a RETITLE-ONLY document keyed by group_id. No removal, no
+    asset_count change, and every punctuated row retitled."""
+
+    def test_r2_the_site_a_shape_is_1_retitle_on_grp_01965(self):
+        ids = [f"grp-{i:05d}" for i in range(1800, 1800 + 594)]
+        blob = _groups_bytes(594, ids=ids, titles={165: SONO_GROUP})
+        self.assertEqual(ids[165], "grp-01965")
+        doc = _groups_doc(blob)
+        self.assertEqual([(r["group_id"], r["title_after"]) for r in doc["retitles"]],
+                         [("grp-01965", "Sono Variablefont Mono-wght")])
+        after, refusals = pres.transform_groups(blob, doc)
+        self.assertEqual(refusals, [])
+        self.assertEqual(pres.verify_groups_transform(doc, after, original=blob), [])
+        self.assertEqual(after.count(b"\r\n"), 595)
+        self.assertEqual(_bare_lf(after), 0)
+        self._asset_counts_identical(blob, after)
+
+    def test_r2_the_site_b_shape_is_46_retitles(self):
+        titles = {i: f"Font {i}, Bold" for i in range(10, 10 + 42 * 20, 20)}
+        titles.update({i: f"Pack {i} {EM} vol 2" for i in range(900, 904)})
+        blob = _groups_bytes(1047, titles=titles)
+        doc = _groups_doc(blob)
+        self.assertEqual(len(doc["retitles"]), 46)
+        after, refusals = pres.transform_groups(blob, doc)
+        self.assertEqual(refusals, [])
+        self.assertEqual(pres.verify_groups_transform(doc, after, original=blob), [])
+        self.assertEqual(after.count(b"\r\n"), 1048)
+        self.assertEqual(pres.csv_title_punctuation(after)["titles_with_separator"], 0)
+        self._asset_counts_identical(blob, after)
+        # the retitle is keyed by group_id, never by file_path
+        self.assertTrue(all(set(r) == {"group_id", *pres.RETITLE_FIELDS}
+                            for r in doc["retitles"]))
+
+    def _asset_counts_identical(self, before, after):
+        _f, b = _fields_by(before, "group_id")
+        _f, a = _fields_by(after, "group_id")
+        idx = GROUPS_FIELDS.index("asset_count")
+        self.assertEqual({k: v[1][idx] for k, v in b.items()},
+                         {k: v[1][idx] for k, v in a.items()})
+
+    def test_building_from_a_duplicate_group_id_refuses(self):
+        blob = _groups_bytes(3, ids=["grp-1", "grp-2", "grp-1"], titles={0: "a, b"})
+        with self.assertRaises(pres.PreservedError) as cm:
+            _groups_doc(blob)
+        self.assertIn("more than one row", str(cm.exception))
+
+    def test_building_from_an_empty_group_id_refuses(self):
+        blob = _groups_bytes(3, ids=["grp-1", "", "grp-3"])
+        with self.assertRaises(pres.PreservedError) as cm:
+            _groups_doc(blob)
+        self.assertIn("EMPTY group_id", str(cm.exception))
+
+    def test_a_retitle_whose_group_id_does_not_exist_refuses(self):
+        blob = _groups_sample()
+        doc = _groups_doc(blob)
+        doc["retitles"][-1]["group_id"] = "grp-99999"
+        pres.parse_groups_transform(doc, source="fixture")
+        after, refusals = pres.transform_groups(blob, doc)
+        self.assertEqual(after, b"")
+        self.assertTrue(any("name no surviving row" in r for r in refusals), refusals)
+        self.assertTrue(any("does not hold" in r
+                            for r in pres.groups_retitle_refusals(doc, blob)))
+
+    def test_a_transform_keyed_on_file_path_refuses(self):
+        doc = _groups_doc(_groups_sample())
+        for r in doc["retitles"]:
+            r["file_path"] = r.pop("group_id")
+        with self.assertRaises(pres.PreservedError) as cm:
+            pres.parse_groups_transform(doc, source="fixture")
+        self.assertIn("group_id", str(cm.exception))
+
+    def test_any_row_removal_refuses(self):
+        blob = _groups_sample()
+        doc = _groups_doc(blob)
+        after, _r = pres.transform_groups(blob, doc)
+        h, rows = pres.split_csv_records(after)
+        refusals = pres.verify_groups_transform(doc, h + b"".join(rows[:-1]))
+        self.assertTrue(any("can never lose or gain a row" in r for r in refusals),
+                        refusals)
+        # and a document that even carries a removals section is refused
+        bad = json.loads(json.dumps(doc))
+        bad["removals"] = []
+        with self.assertRaises(pres.PreservedError) as cm:
+            pres.parse_groups_transform(bad, source="fixture")
+        self.assertIn("never remove a row", str(cm.exception))
+
+    def test_any_asset_count_change_refuses(self):
+        blob = _groups_sample()
+        doc = _groups_doc(blob)
+        after, _r = pres.transform_groups(blob, doc)
+        h, rows = pres.split_csv_records(after)
+        # row 5's asset_count is 6 (i % 9 + 1); "correct" it to 3
+        rows[5] = rows[5].replace(b",6,2026", b",3,2026") if b",6,2026" in rows[5] \
+            else rows[5].replace(b",6,,", b",3,,")
+        self.assertNotEqual(h + b"".join(rows), after, "the probe must change a byte")
+        refusals = pres.verify_groups_transform(doc, h + b"".join(rows))
+        self.assertTrue(any("asset_count CHANGED" in r for r in refusals), refusals)
+
+
+class TestRetitleRefusalsInBothFiles(unittest.TestCase):
+    """R3, the refusals shared by metadata.csv and groups.csv. Each case runs
+    on both files."""
+
+    def _each(self):
+        for kind in _kinds():
+            with self.subTest(file=kind.name):
+                blob = kind.sample()
+                doc = kind.build(blob)
+                self.assertEqual(len(doc["retitles"]), 3, "fixture has 3 punctuated")
+                yield kind, blob, doc
+
+    def test_a_surviving_punctuated_title_with_no_retitle_refuses(self):
+        for kind, blob, doc in self._each():
+            doc["retitles"].pop(0)
+            after = _reexpect(kind, doc, blob)     # internally consistent
+            kind.parse(doc, source="fixture")
+            self.assertTrue(any("have NO retitle" in r
+                                for r in kind.recompute(doc, blob)))
+            self.assertTrue(any("still hold a comma" in r
+                                for r in kind.verify(doc, after)))
+
+    def test_an_extra_retitle_of_a_clean_title_refuses(self):
+        for kind, blob, doc in self._each():
+            _f, by = _fields_by(blob, kind.key)
+            clean_key = sorted(k for k, (_r, f) in by.items()
+                               if "," not in f[_f.index("title")]
+                               and EM not in f[_f.index("title")])[0]
+            e = dict(doc["retitles"][0], **{kind.key: clean_key,
+                                            "title_before": "plain title",
+                                            "title_after": "plain title"})
+            bad = json.loads(json.dumps(doc))
+            bad["retitles"] = sorted(bad["retitles"] + [e], key=lambda r: r[kind.key])
+            with self.assertRaises(pres.PreservedError) as cm:
+                kind.parse(bad, source="fixture")
+            self.assertIn("holds no comma and no em dash", str(cm.exception))
+            # and the recomputation names it too, whatever the parse said
+            self.assertTrue(any("no comma and no em dash" in r
+                                for r in kind.recompute(bad, blob)))
+
+    def test_an_output_that_is_not_the_rule_output_refuses(self):
+        for kind, _blob, doc in self._each():
+            doc["retitles"][0]["title_after"] = "Mono; bold"
+            with self.assertRaises(pres.PreservedError) as cm:
+                kind.parse(doc, source="fixture")
+            self.assertIn("is not the title rule's output", str(cm.exception))
+
+    def _applied(self, kind, blob, doc):
+        after, refusals = kind.apply(blob, doc)
+        self.assertEqual(refusals, [])
+        self.assertEqual(kind.verify(doc, after, original=blob), [])
+        return after
+
+    def _retitled_row(self, kind, doc, after):
+        h, rows = pres.split_csv_records(after)
+        key = doc["retitles"][0][kind.key]
+        i = next(i for i, r in enumerate(rows) if key.encode() in r)
+        return h, rows, i
+
+    def test_a_changed_non_title_field_refuses(self):
+        for kind, blob, doc in self._each():
+            after = self._applied(kind, blob, doc)
+            h, rows, i = self._retitled_row(kind, doc, after)
+            f = pres.record_fields(rows[i])
+            victim = f[-1] if f[-1] else f[0]
+            changed = rows[i].replace(b",\r\n", b",X\r\n") if not f[-1] \
+                else rows[i].replace(victim.encode(), victim.encode() + b"X")
+            self.assertNotEqual(changed, rows[i], "the probe must change a byte")
+            rows[i] = changed
+            refusals = kind.verify(doc, h + b"".join(rows))
+            self.assertTrue(any("OUTSIDE the title cell" in r for r in refusals),
+                            refusals)
+
+    def test_changed_quoting_refuses_in_the_title_cell_and_elsewhere(self):
+        for kind, blob, doc in self._each():
+            after = self._applied(kind, blob, doc)
+            h, rows, i = self._retitled_row(kind, doc, after)
+            # the retitled title cell loses its quotes
+            unq = rows[i].replace(b'"Mono - bold"', b"Mono - bold")
+            self.assertNotEqual(unq, rows[i], "the probe must change a byte")
+            r1 = kind.verify(doc, h + b"".join(rows[:i] + [unq] + rows[i + 1:]))
+            self.assertTrue(r1)
+            # an untouched row gains quotes around a cell that had none
+            j = (i + 2) % len(rows)
+            first = pres.record_fields(rows[j])[0].encode()
+            quoted = rows[j].replace(first, b'"' + first + b'"', 1)
+            r2 = kind.verify(doc, h + b"".join(rows[:j] + [quoted] + rows[j + 1:]))
+            self.assertTrue(any("BYTE-IDENTICALLY" in r for r in r2), r2)
+
+    def test_a_changed_line_ending_or_bare_lf_refuses(self):
+        for kind, blob, doc in self._each():
+            after = self._applied(kind, blob, doc)
+            crlf_to_lf = after.replace(b"\r\n", b"\n", 2)
+            self.assertTrue(kind.verify(doc, crlf_to_lf))
+            if kind.name == "metadata.csv":
+                self.assertIn(b",\nsecond line", after)
+                lf_to_crlf = after.replace(b",\nsecond line", b",\r\nsecond line", 1)
+                self.assertTrue(kind.verify(doc, lf_to_crlf))
+
+    def test_a_malformed_retitles_section_refuses(self):
+        for kind, _blob, doc in self._each():
+            cases = []
+            missing = json.loads(json.dumps(doc))
+            del missing["retitles"][0]["row_sha256_after"]
+            cases.append((missing, "must hold exactly"))
+            not_list = json.loads(json.dumps(doc))
+            not_list["retitles"] = {"a": 1}
+            cases.append((not_list, "`retitles` must be a list"))
+            wrong_type = json.loads(json.dumps(doc))
+            wrong_type["retitles"][0]["title_before"] = 7
+            cases.append((wrong_type, "must be strings"))
+            absent = json.loads(json.dumps(doc))
+            del absent["retitles"]
+            cases.append((absent, "`retitles` must be a list"))
+            for bad, fragment in cases:
+                with self.assertRaises(pres.PreservedError) as cm:
+                    kind.parse(bad, source="fixture")
+                self.assertIn(fragment, str(cm.exception))
+
+    def test_a_mismatched_rule_version_refuses(self):
+        for kind, _blob, doc in self._each():
+            doc["title_rule"]["version"] = pres.TITLE_RULE_VERSION + 1
+            with self.assertRaises(pres.PreservedError) as cm:
+                kind.parse(doc, source="fixture")
+            self.assertIn("rule version", str(cm.exception))
+
+    def test_a_final_file_with_a_punctuated_surviving_title_refuses(self):
+        for kind, blob, doc in self._each():
+            after = self._applied(kind, blob, doc)
+            h, rows, i = self._retitled_row(kind, doc, after)
+            rows[i] = rows[i].replace(b'"Mono - bold"', b'"Mono, bold"')
+            refusals = kind.verify(doc, h + b"".join(rows))
+            self.assertTrue(any("still hold a comma" in r for r in refusals), refusals)
+
+    def test_a_transform_built_from_the_live_or_staging_tree_refuses(self):
+        for cmd, name, blob in (("csv-transform", "metadata.csv", _meta_sample()),
+                                ("groups-transform", "groups.csv", _groups_sample())):
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                for t in ("live", "staging"):
+                    (root / t).mkdir()
+                    (root / t / name).write_bytes(blob)
+                extra = (["--no-collapse-document", "--profile",
+                          "studio-a.assets.json"] if cmd == "csv-transform" else [])
+                for as_snapshot in ("live", "staging"):
+                    with self.subTest(cmd=cmd, snapshot=as_snapshot):
+                        err = io.StringIO()
+                        with contextlib.redirect_stderr(err):
+                            rc = pres.main([
+                                cmd, "--snapshot", str(root / as_snapshot),
+                                "--live-site", str(root / "live"),
+                                "--staging", str(root / "staging"), *extra,
+                                "--out", str(root / "t.json")])
+                        self.assertEqual(rc, 2)
+                        self.assertIn("preserved-operation path refusal",
+                                      err.getvalue())
+                        self.assertFalse((root / "t.json").exists())
+
+    def test_evidence_inside_a_tree_refuses_for_the_groups_document(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for t in ("live", "staging", "snapshot"):
+                (root / t).mkdir()
+            (root / "snapshot" / "groups.csv").write_bytes(_groups_sample())
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(pres.main([
+                    "groups-transform", "--snapshot", str(root / "snapshot"),
+                    "--live-site", str(root / "live"),
+                    "--staging", str(root / "staging"),
+                    "--out", str(root / "snapshot" / "g.json")]), 2)
+                self.assertEqual(pres.main([
+                    "groups-transform", "--snapshot", str(root / "snapshot"),
+                    "--live-site", str(root / "live"),
+                    "--staging", str(root / "staging"),
+                    "--out", str(root / "g.json")]), 0)
+
+    def test_a_snapshot_changed_after_attestation_refuses_to_build(self):
+        for cmd, name, blob in (("csv-transform", "metadata.csv", _meta_sample()),
+                                ("groups-transform", "groups.csv", _groups_sample())):
+            with self.subTest(cmd=cmd), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                for t in ("live", "staging", "snapshot", "evidence"):
+                    (root / t).mkdir()
+                (root / "snapshot" / name).write_bytes(blob)
+                trees = ["--snapshot", str(root / "snapshot"),
+                         "--live-site", str(root / "live"),
+                         "--staging", str(root / "staging")]
+                extra = (["--no-collapse-document", "--profile",
+                          "studio-a.assets.json"] if cmd == "csv-transform" else [])
+                man = root / "evidence" / "m.json"
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(pres.main(["snapshot-manifest", *trees,
+                                                "--out", str(man)]), 0)
+                    self.assertEqual(pres.main([cmd, *trees, *extra,
+                                                "--snapshot-manifest", str(man),
+                                                "--out", str(root / "ok.json")]), 0)
+                (root / "snapshot" / name).write_bytes(
+                    blob.replace(b"Mono, bold", b"Mono, BOLD"))
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(pres.main([cmd, *trees, *extra,
+                                                "--snapshot-manifest", str(man),
+                                                "--out", str(root / "t.json")]), 2)
+                self.assertIn("not frozen", err.getvalue())
+
+
+class TestPreservedPublishRetitles(unittest.TestCase):
+    """End to end through `populate_archive --preserved-roots`: both
+    documents are applied, the retitles are recomputed before any write, and
+    a groups.csv at the destination with no document is refused."""
+
+    def _world(self, d, *, meta_titles=None, groups_titles=None):
+        root = Path(d)
+        for sub in ("profiles", "internet", "dest", "evidence", "snapshot"):
+            (root / sub).mkdir(parents=True, exist_ok=True)
+        rec = _pres_rec(SURVIVOR_ID)
+        (root / "profiles" / "studio-a.assets.json").write_text(
+            json.dumps([rec]), encoding="utf-8")
+        (root / "profiles" / "studio-a.posts.json").write_text("[]", encoding="utf-8")
+        dest = root / "dest"
+        (dest / "MANIFEST.json").write_text(json.dumps([rec]), encoding="utf-8")
+        (dest / "posts.json").write_text("[]", encoding="utf-8")
+        rows = _paths(12) + [rec["file_path"]]
+        self.rec_row = 12
+        (dest / pres.CSV_NAME).write_bytes(_csv_bytes(
+            rows, embed_newline_every=5,
+            titles=meta_titles if meta_titles is not None else {3: "Mono, bold"}))
+        (dest / pres.GROUPS_NAME).write_bytes(_groups_bytes(
+            8, titles=groups_titles if groups_titles is not None
+            else {2: f"Pack {EM} vol 2", 6: SONO_GROUP}))
+        p = dest / rec["file_path"]
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(PRESERVED_BYTES)
+        live = root / "live"
+        shutil.copytree(dest, live)
+        for name in (pres.CSV_NAME, pres.GROUPS_NAME):
+            shutil.copyfile(dest / name, root / "snapshot" / name)
+        trees = ["--snapshot", str(root / "snapshot"), "--live-site", str(live),
+                 "--staging", str(dest)]
+        self.manifest = root / "evidence" / "m.json"
+        self.meta = root / "evidence" / "site_a.csv-transform.json"
+        self.groups = root / "evidence" / "site_a.groups-transform.json"
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(pres.main(["snapshot-manifest", *trees,
+                                        "--out", str(self.manifest)]), 0)
+            self.assertEqual(pres.main([
+                "csv-transform", *trees, "--no-collapse-document",
+                "--profile", "studio-a.assets.json",
+                "--snapshot-manifest", str(self.manifest),
+                "--out", str(self.meta)]), 0)
+            self.assertEqual(pres.main([
+                "groups-transform", *trees,
+                "--snapshot-manifest", str(self.manifest),
+                "--out", str(self.groups)]), 0)
+        return root
+
+    def _run(self, root, *extra, groups=True, manifest=True):
+        args = ["--preserved-roots", "--internet-source", str(root / "internet"),
+                "--profile", str(root / "profiles" / "studio-a.assets.json"),
+                "--posts", str(root / "profiles" / "studio-a.posts.json"),
+                "--csv-transform", str(self.meta),
+                "--live-site", str(root / "live"), "--dest", str(root / "dest")]
+        if groups:
+            args += ["--groups-transform", str(self.groups)]
+        if manifest:
+            args += ["--frozen-snapshot", str(root / "snapshot"),
+                     "--snapshot-manifest", str(self.manifest)]
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "populate_archive.py"), *args, *extra],
+            capture_output=True, text=True)
+
+    @staticmethod
+    def _tree(root):
+        return {p.relative_to(root).as_posix():
+                hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(root.rglob("*")) if p.is_file()}
+
+    def test_both_documents_are_applied_and_the_rerun_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            dest = root / "dest"
+            before = self._tree(dest)
+            dry = self._run(root, "--dry-run", manifest=True)
+            self.assertEqual(dry.returncode, 0, dry.stderr)
+            self.assertEqual(self._tree(dest), before, "a dry run writes nothing")
+            r = self._run(root, manifest=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("removals and retitles as documented", r.stderr)
+            self.assertIn("0 documented removal(s), 1 documented retitle(s)", r.stderr)
+            self.assertIn("none removed, 2 documented retitle(s)", r.stderr)
+            meta = (dest / pres.CSV_NAME).read_bytes()
+            groups = (dest / pres.GROUPS_NAME).read_bytes()
+            self.assertIn(b'"Mono - bold"', meta)
+            self.assertIn(b"Pack - vol 2", groups)
+            self.assertIn(b'"Sono Variablefont Mono-wght"', groups)
+            self.assertEqual(pres.verify_csv_transform(
+                pres.load_csv_transform(self.meta), meta,
+                original=(root / "snapshot" / pres.CSV_NAME).read_bytes()), [])
+            self.assertEqual(pres.verify_groups_transform(
+                pres.load_groups_transform(self.groups), groups,
+                original=(root / "snapshot" / pres.GROUPS_NAME).read_bytes()), [])
+            after = self._tree(dest)
+            again = self._run(root, manifest=True)
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertIn("already exactly the documented retitle", again.stderr)
+            self.assertEqual(self._tree(dest), after, "the rerun writes nothing")
+
+    def test_r6_a_title_that_differs_from_the_profile_is_never_synced(self):
+        """The profile record is titled "Studio plate"; its CSV row is titled
+        "plate 12". No comma, so it stays byte-identical on a run that DOES
+        write the file (row 3 is retitled)."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            _h, rows0 = pres.split_csv_records((root / "dest" / pres.CSV_NAME).read_bytes())
+            self.assertEqual(pres.record_fields(rows0[self.rec_row])[4], "plate 12")
+            r = self._run(root)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            _h, rows1 = pres.split_csv_records((root / "dest" / pres.CSV_NAME).read_bytes())
+            self.assertNotEqual(rows1[3], rows0[3])
+            self.assertEqual(rows1[self.rec_row], rows0[self.rec_row])
+            self.assertNotIn(b"Studio plate", b"".join(rows1))
+
+    def test_a_groups_csv_with_no_transform_document_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            before = self._tree(root / "dest")
+            r = self._run(root, groups=False)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("requires --groups-transform", r.stderr)
+            self.assertEqual(self._tree(root / "dest"), before)
+
+    def test_a_forged_groups_document_is_refused_by_the_recomputation(self):
+        """Drop one required retitle and re-derive the document's own
+        arithmetic: self-consistent, parses, and is refused at publish."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            doc = json.loads(self.groups.read_text())
+            doc["retitles"].pop(0)
+            _reexpect(_kinds()[1], doc, (root / "snapshot" / pres.GROUPS_NAME).read_bytes())
+            self.groups.write_text(json.dumps(doc), encoding="utf-8")
+            before = self._tree(root / "dest")
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("have NO retitle", r.stderr)
+            self.assertEqual(self._tree(root / "dest"), before)
+
+    def test_a_forged_metadata_document_is_refused_by_the_recomputation(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            doc = json.loads(self.meta.read_text())
+            doc["retitles"] = []
+            _reexpect(_kinds()[0], doc, (root / "snapshot" / pres.CSV_NAME).read_bytes())
+            self.meta.write_text(json.dumps(doc), encoding="utf-8")
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("have NO retitle", r.stderr)
+
+    def test_a_document_not_built_from_the_attested_snapshot_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            man = json.loads(self.manifest.read_text())
+            man["files"][pres.GROUPS_NAME] = "0" * 64
+            self.manifest.write_text(json.dumps(man), encoding="utf-8")
+            r = self._run(root, manifest=True)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("not built from the frozen snapshot", r.stderr)
+
+    def test_a_groups_document_inside_the_destination_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            inside = root / "dest" / "g.json"
+            shutil.copyfile(self.groups, inside)
+            self.groups = inside
+            r = self._run(root)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("--groups-transform", r.stderr)
+
+
+class TestTransformAttestationIsMandatory(unittest.TestCase):
+    """⛔ A TRANSFORM THAT CHANGES BYTES NEEDS THE ATTESTED FROZEN SNAPSHOT.
+
+    Found in review of the first version of this slice: the snapshot pair
+    was demanded only by a `preserved_archive` retirement. site_a's one
+    retirement is `produced_source`, so `_preserved_snapshot` is never
+    reached there, and its metadata.csv and groups.csv retitles were applied
+    with no `--frozen-snapshot` and no `--snapshot-manifest`: exit 0, bytes
+    changed, nothing proving they came from the attested snapshot.
+
+    This world is the site_a shape: one `hq` produced_source retirement whose
+    render has no CSV row (0 removals), one punctuated metadata.csv title and
+    one punctuated groups.csv title.
+    """
+
+    BYTES = b"produced-bytes"
+
+    def _world(self, d, *, meta_titles=None, groups_titles=None):
+        root = Path(d)
+        for sub in ("profiles", "upgrades", "internet", "hq", "dest",
+                    "snapshot", "evidence"):
+            (root / sub).mkdir(parents=True, exist_ok=True)
+        size = {"file_size_bytes": len(self.BYTES)}
+        retired = _collapse_rec(RETIRED_ID, archive_state="draft", **size)
+        survivor = _collapse_rec(SURVIVOR_ID, **size)
+        self.cdoc = root / "upgrades" / "asset-collapse.studio-a.json"
+        self.cdoc.write_text(json.dumps(_collapse_doc([_collapse_entry(
+            retired, survivor, mat=hashlib.sha256(self.BYTES).hexdigest())])),
+            encoding="utf-8")
+        self.assertFalse(any(e.is_preserved for e in
+                             ac.load_collapse_document(self.cdoc).entries),
+                         "the site_a shape has no preserved_archive retirement")
+        (root / "profiles" / "studio-a.assets.json").write_text(
+            json.dumps([survivor]), encoding="utf-8")
+        posts = json.dumps([{"id": POST_ID, "asset_ids": [SURVIVOR_ID]}])
+        (root / "profiles" / "studio-a.posts.json").write_text(posts, encoding="utf-8")
+        for rec in (survivor, retired):
+            (root / "hq" / rec["source_path"]).write_bytes(self.BYTES)
+        dest = root / "dest"
+        (dest / "MANIFEST.json").write_text(json.dumps([survivor, retired]),
+                                            encoding="utf-8")
+        (dest / "posts.json").write_text(posts, encoding="utf-8")
+        (dest / pres.CSV_NAME).write_bytes(_csv_bytes(
+            _paths(20), titles=({7: SONO_META} if meta_titles is None
+                                else meta_titles)))
+        (dest / pres.GROUPS_NAME).write_bytes(_groups_bytes(
+            6, titles=({4: SONO_GROUP} if groups_titles is None
+                       else groups_titles)))
+        for rec in (survivor, retired):
+            p = dest / rec["file_path"]
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(self.BYTES)
+        shutil.copytree(dest, root / "live")
+        for name in (pres.CSV_NAME, pres.GROUPS_NAME):
+            shutil.copyfile(dest / name, root / "snapshot" / name)
+        self.trees = ["--snapshot", str(root / "snapshot"),
+                      "--live-site", str(root / "live"), "--staging", str(dest)]
+        self.manifest = root / "evidence" / "site_a.snapshot-manifest.json"
+        self.meta = root / "evidence" / "site_a.csv-transform.json"
+        self.groups = root / "evidence" / "site_a.groups-transform.json"
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(pres.main(["snapshot-manifest", *self.trees,
+                                        "--out", str(self.manifest)]), 0)
+            self.assertEqual(pres.main(["csv-transform", *self.trees,
+                                        "--collapse-document", str(self.cdoc),
+                                        "--out", str(self.meta)]), 0)
+            self.assertEqual(pres.main(["groups-transform", *self.trees,
+                                        "--out", str(self.groups)]), 0)
+        return root
+
+    def _run(self, root, *extra):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "populate_archive.py"),
+             "--preserved-roots", "--internet-source", str(root / "internet"),
+             "--hq-source", str(root / "hq"),
+             "--profile", str(root / "profiles" / "studio-a.assets.json"),
+             "--posts", str(root / "profiles" / "studio-a.posts.json"),
+             "--csv-transform", str(self.meta),
+             "--groups-transform", str(self.groups),
+             "--live-site", str(root / "live"), "--dest", str(root / "dest"),
+             *extra], capture_output=True, text=True)
+
+    def _pair(self, root, which=("--frozen-snapshot", "--snapshot-manifest")):
+        vals = {"--frozen-snapshot": str(root / "snapshot"),
+                "--snapshot-manifest": str(self.manifest)}
+        return [x for flag in which for x in (flag, vals[flag])]
+
+    @staticmethod
+    def _tree(root):
+        return {p.relative_to(root).as_posix():
+                hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(root.rglob("*")) if p.is_file()}
+
+    def _refuses_unchanged(self, root, extra, *fragments):
+        before = self._tree(root / "dest")
+        r = self._run(root, *extra)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        for f in fragments:
+            self.assertIn(f, r.stderr)
+        self.assertEqual(self._tree(root / "dest"), before,
+                         "a refusal must write nothing and delete nothing")
+        return r
+
+    def test_the_site_a_shape_documents_one_retitle_in_each_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._world(d)
+            meta = pres.load_csv_transform(self.meta)
+            self.assertEqual((len(meta["removals"]), len(meta["retitles"])), (0, 1))
+            self.assertEqual(len(pres.load_groups_transform(self.groups)["retitles"]), 1)
+
+    def test_a_non_empty_metadata_transform_without_both_attestations_refuses(self):
+        for which in ((), ("--snapshot-manifest",), ("--frozen-snapshot",)):
+            with self.subTest(supplied=which), tempfile.TemporaryDirectory() as d:
+                root = self._world(d)
+                self._refuses_unchanged(
+                    root, self._pair(root, which),
+                    "this metadata.csv transform documents 0 removal(s) and 1 "
+                    "retitle(s)", "needs both --frozen-snapshot and "
+                    "--snapshot-manifest", "Refusing before writing anything")
+
+    def test_a_non_empty_groups_transform_without_both_attestations_refuses(self):
+        """metadata.csv is left EMPTY here, so the refusal is the groups one."""
+        for which in ((), ("--snapshot-manifest",), ("--frozen-snapshot",)):
+            with self.subTest(supplied=which), tempfile.TemporaryDirectory() as d:
+                root = self._world(d, meta_titles={})
+                self._refuses_unchanged(
+                    root, self._pair(root, which),
+                    "this groups.csv transform documents 0 removal(s) and 1 "
+                    "retitle(s)", "needs both --frozen-snapshot and "
+                    "--snapshot-manifest")
+
+    def test_with_both_attestations_valid_the_same_publish_succeeds(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            r = self._run(root, *self._pair(root))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(b'"Sono Variablefont Mono-wght (font)"',
+                          (root / "dest" / pres.CSV_NAME).read_bytes())
+            self.assertIn(b"Sono Variablefont Mono-wght",
+                          (root / "dest" / pres.GROUPS_NAME).read_bytes())
+
+    def test_a_manifest_that_attests_other_bytes_than_the_transform_refuses(self):
+        """The snapshot and its manifest agree with each other, but the
+        transform was built from bytes the manifest does not attest."""
+        for name in (pres.CSV_NAME, pres.GROUPS_NAME):
+            with self.subTest(file=name), tempfile.TemporaryDirectory() as d:
+                root = self._world(d)
+                snap = root / "snapshot" / name
+                snap.write_bytes(snap.read_bytes().replace(b"Group 1", b"Group X")
+                                 .replace(b"plate 1,", b"plate X,"))
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(pres.main(["snapshot-manifest", *self.trees,
+                                                "--out", str(self.manifest)]), 0)
+                self._refuses_unchanged(root, self._pair(root),
+                                        "not built from the frozen snapshot",
+                                        f"the {name} it was built from")
+
+    def test_a_snapshot_file_changed_after_the_manifest_refuses(self):
+        for name in (pres.CSV_NAME, pres.GROUPS_NAME):
+            with self.subTest(file=name), tempfile.TemporaryDirectory() as d:
+                root = self._world(d)
+                snap = root / "snapshot" / name
+                snap.write_bytes(snap.read_bytes() + b"tampered\r\n")
+                self._refuses_unchanged(root, self._pair(root),
+                                        "CHANGED after it was attested",
+                                        f"the {name} it was built from")
+
+    def test_empty_transforms_still_need_no_attestation(self):
+        """0 removals and 0 retitles: the files must stay byte-identical, and
+        that promise needs no snapshot, exactly as before."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d, meta_titles={}, groups_titles={})
+            csv_before = (root / "dest" / pres.CSV_NAME).read_bytes()
+            groups_before = (root / "dest" / pres.GROUPS_NAME).read_bytes()
+            r = self._run(root)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual((root / "dest" / pres.CSV_NAME).read_bytes(), csv_before)
+            self.assertEqual((root / "dest" / pres.GROUPS_NAME).read_bytes(),
+                             groups_before)
+
+
+
+class TestVerifySiteTitleRule(unittest.TestCase):
+    """R4. The publish-time title check, and the groups.csv verdict."""
+
+    def _site(self, d, *, manifest_titles, meta_titles, groups_titles):
+        site = Path(d) / "site"
+        (site / "images").mkdir(parents=True)
+        recs = []
+        for i, t in enumerate(manifest_titles):
+            recs.append({"id": f"a{i}", "source_root": "local", "title": t,
+                         "file_path": f"images/{i}.png", "file_size_bytes": 3,
+                         "field_values": {}, "metadata": {}})
+            (site / "images" / f"{i}.png").write_bytes(b"abc")
+        (site / "MANIFEST.json").write_text(json.dumps(recs), encoding="utf-8")
+        (site / "posts.json").write_text("[]", encoding="utf-8")
+        (site / pres.CSV_NAME).write_bytes(_csv_bytes(_paths(6), titles=meta_titles))
+        (site / pres.GROUPS_NAME).write_bytes(_groups_bytes(4, titles=groups_titles))
+        prof = Path(d) / "p.json"
+        prof.write_text(json.dumps(recs), encoding="utf-8")
+        posts = Path(d) / "q.json"
+        posts.write_text("[]", encoding="utf-8")
+        return prof, posts, site
+
+    NAMES = ("MANIFEST.json asset titles hold no comma or em dash",
+             "metadata.csv title column holds no comma or em dash",
+             "groups.csv title column holds no comma or em dash")
+
+    def test_r4_punctuated_titles_fail_and_corrected_ones_pass(self):
+        with tempfile.TemporaryDirectory() as d:
+            prof, posts, site = self._site(
+                d, manifest_titles=["a, b", f"c {EM} d", "clean"],
+                meta_titles={1: "x, y", 2: f"p {EM} q"}, groups_titles={0: "g, h"})
+            with contextlib.redirect_stderr(io.StringIO()):
+                rep = vs.verify(prof, posts, site)
+            for name in self.NAMES:
+                self.assertEqual(_verdict(rep, name).status, vs.FAIL, name)
+            self.assertIn("1 comma(s) and 1 em dash(es)",
+                          _verdict(rep, self.NAMES[0]).detail)
+            self.assertFalse(rep.ok)
+        with tempfile.TemporaryDirectory() as d:
+            prof, posts, site = self._site(
+                d, manifest_titles=["a - b", "c - d", "clean"],
+                meta_titles={1: "x - y"}, groups_titles={0: "g-h"})
+            with contextlib.redirect_stderr(io.StringIO()):
+                rep = vs.verify(prof, posts, site)
+            for name in self.NAMES:
+                self.assertEqual(_verdict(rep, name).status, vs.PASS, name)
+
+    def test_the_groups_verdict_uses_the_document_and_binds_to_the_baseline(self):
+        with tempfile.TemporaryDirectory() as d:
+            prof, posts, site = self._site(
+                d, manifest_titles=["clean"], meta_titles={},
+                groups_titles={1: "g, h"})
+            ref = Path(d) / "ref"
+            ref.mkdir()
+            shutil.copyfile(site / pres.GROUPS_NAME, ref / pres.GROUPS_NAME)
+            baseline = vs.record_baseline(site)
+            gdoc = Path(d) / "g.json"
+            gdoc.write_text(json.dumps(_groups_doc((site / pres.GROUPS_NAME).read_bytes())),
+                            encoding="utf-8")
+            # without the document a retitled groups.csv fails the exact baseline
+            after, _r = pres.transform_groups((site / pres.GROUPS_NAME).read_bytes(),
+                                              pres.load_groups_transform(gdoc))
+            (site / pres.GROUPS_NAME).write_bytes(after)
+            with contextlib.redirect_stderr(io.StringIO()):
+                rep = vs.verify(prof, posts, site, baseline=baseline)
+            self.assertEqual(_verdict(rep, "preserved files byte-equal to baseline").status,
+                             vs.FAIL)
+            # with it, the document governs, and it was built from the
+            # recorded pre-publish bytes
+            with contextlib.redirect_stderr(io.StringIO()):
+                rep = vs.verify(prof, posts, site, baseline=baseline,
+                                groups_transform=gdoc)
+            self.assertEqual(_verdict(rep, "preserved files byte-equal to baseline").status,
+                             vs.PASS)
+            self.assertEqual(_verdict(rep, vs.GROUPS_VERDICT).status, vs.PASS)
+            self.assertEqual(_verdict(
+                rep, "groups.csv retitle was built from the pre-publish bytes").status,
+                vs.PASS)
+            # and with the reference copy the verdict recomputes from it
+            with contextlib.redirect_stderr(io.StringIO()):
+                rep = vs.verify(prof, posts, site, reference=ref,
+                                groups_transform=gdoc)
+            self.assertEqual(_verdict(rep, vs.GROUPS_VERDICT).status, vs.PASS)
+            self.assertIn("recomputed from the reference copy",
+                          _verdict(rep, vs.GROUPS_VERDICT).detail)
+            # a document built from other bytes is not evidence about these
+            other = Path(d) / "other.json"
+            other.write_text(json.dumps(_groups_doc(_groups_bytes(4, titles={2: "o, p"}))),
+                             encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                rep = vs.verify(prof, posts, site, baseline=baseline,
+                                groups_transform=other)
+            self.assertEqual(_verdict(
+                rep, "groups.csv retitle was built from the pre-publish bytes").status,
+                vs.FAIL)
+
+    def test_the_cli_takes_the_groups_flag(self):
+        with tempfile.TemporaryDirectory() as d:
+            prof, posts, site = self._site(d, manifest_titles=["clean"],
+                                           meta_titles={}, groups_titles={})
+            gdoc = Path(d) / "g.json"
+            gdoc.write_text(json.dumps(_groups_doc((site / pres.GROUPS_NAME).read_bytes())),
+                            encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()) as out, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                rc = vs.main(["check", "--profile", str(prof), "--posts", str(posts),
+                              "--site", str(site), "--groups-transform", str(gdoc)])
+            self.assertEqual(rc, 0, out.getvalue())
+            self.assertIn(vs.GROUPS_VERDICT, out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

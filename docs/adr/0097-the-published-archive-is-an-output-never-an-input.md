@@ -512,3 +512,136 @@ CONTENT; the destination-holds-what-the-source-does-not refusal, the migration-a
 retirement-aware readings, `--allow-regression`'s narrowness, and the entire `produced_source`
 Layer B are unchanged. This amendment adds a second authority class and the evidence that class
 requires; it removes no guard.
+
+## Amendment, 2026-09-26 (#1319, #1460): a title retitle is the one other change a preserved CSV may undergo
+
+The owner ruled on 2026-09-25/26 that an asset title holds no comma and no em dash, and that this
+covers the `title` column of the published `metadata.csv` and `groups.csv` on both sites. The
+repository side landed first (#1459): every asset-title writer goes through the one shared rule,
+`seed/scripts/title_rule.py` `normalize_title`, where each comma or em dash touching whitespace
+becomes " - " and one touching none becomes "-". The published archive still carries the old
+titles, and the 2026-09-24 amendment above forbids changing them: section 5 preserves `groups.csv`
+exactly, and sections 6 and 6b keep every retained `metadata.csv` row byte-identical. This
+amendment extends that contract so the owner-run republish CAN retitle, under proof.
+
+Measured read-only on copies of the published files:
+
+| file | rows | punctuated titles | authorised removals |
+|---|---|---|---|
+| site_a `metadata.csv` | 907 | 1 (`Sono Variablefont Mono,wght (font)`) | 0 |
+| site_b `metadata.csv` | 1,206 | 52 (46 comma, 6 em dash) | 22 |
+| site_a `groups.csv` | 594 | 1 (`grp-01965`) | none can exist |
+| site_b `groups.csv` | 1,047 | 46 (42 comma, 4 em dash) | none can exist |
+
+Today site_b's 22 removals and its 52 punctuated rows do not overlap. The contract does not rely on
+that.
+
+Three things are OUT of scope and stay out: descriptions, tags and every other free-text column
+(a comma in a description is legal and its row stays byte-identical); `asset_count`; and any sync
+between CSV titles and profile titles. The CSV title is the source catalogue's own title, not the
+profile's (site_a 649 agree and 258 differ; site_b 524 agree, 660 differ and 22 have no record; the
+differences are the HQ renames), so a retitle only ever applies the rule to the title the row
+already has.
+
+### Section 5 is SUPERSEDED: `groups.csv` changes only by a retitle-only document
+
+`groups.csv` leaves the exact-bytes set. It changes only through a document of its own
+(`preserved_archive.py groups-transform`), produced BEFORE the operation from the frozen snapshot's
+`groups.csv`, and that document can do exactly one thing: retitle.
+
+- Every retitle is keyed by `group_id`. The file has no `file_path` column; `group_id` is its row
+  identity, measured unique and non-empty on both sites (594 of 594, 1,047 of 1,047), and the
+  builder refuses a duplicate or an empty one before anything is keyed on it. A document whose
+  retitles are keyed by anything else is refused.
+- No row is ever removed or added. The document carries no removals section, and verification
+  refuses any change in the row count.
+- The ban on rewriting `asset_count` STANDS. The document pins the column by an ordered digest,
+  and verification refuses any change to it by name.
+- Without the document `groups.csv` is still compared exactly against the preservation baseline, so
+  a change with no document still fails. A preserved publish refuses when the destination holds a
+  `groups.csv` and no `--groups-transform` is given.
+
+### Section 6 is NARROWED: a surviving row changes only inside a documented title cell
+
+Every row that survives the removals stays byte-identical EXCEPT inside the title cell of a
+documented retitle. The cell is located by byte and only its value is replaced: a quoted cell stays
+quoted, an unquoted one stays unquoted, and every other byte of the row, every line ending, and
+site_b's 9 bare LFs inside other quoted fields are copied through untouched. Verification now also
+refuses a surviving punctuated title with no retitle, a retitle of a title that holds no comma or
+em dash, an output that is not the rule's output for its input, a changed non-title field, changed
+quoting in any cell, and a changed line ending.
+
+site_a's zero-removal byte identity is superseded for its one documented retitle only: site_a is
+now 0 removals and 1 retitle, 907 rows to 907, and exactly one row differs, inside its title cell.
+The empty case keeps its guarantee: a document with no removal and no retitle still requires the
+file to be byte-identical.
+
+### Section 6c is ADDED: the retitle authority is RECOMPUTATION, and removal comes first
+
+Removals keep the collapse document's authority exactly as section 6b states it, and they are
+established FIRST. Nothing about removal changes.
+
+1. The required retitles of `metadata.csv` are exactly the frozen rows whose title holds a comma or
+   an em dash, MINUS the removals the collapse document authorises. A removed row is never
+   retitled, and a punctuated row that is legitimately removed needs no retitle. A row documented
+   for both removal and retitle is refused. A retitle on a row in the AUTHORISED removal set is
+   refused even when the transform lists no removal for it, because the removal set is recomputed
+   from the collapse document, not read from the transform.
+2. The required retitles of `groups.csv` are exactly every frozen punctuated row.
+3. The builder computes them from the frozen bytes with the shared rule, and the publisher computes
+   them again from the same pre-operation bytes before any write and requires exact agreement. A
+   document's own figures are never the authority, for the same reason section 6b gives for
+   removals: a forged document is self-consistent by construction.
+4. Each retitle records its key, the title before and after, and the row digest before and after.
+   The document records the rule's name, its version, and a fingerprint of its output on fixed
+   probes, so a rule whose behaviour changed without a version bump is refused as surely as a
+   mismatched version. Every `title_after` must equal `normalize_title(title_before)`.
+5. After the operation, with only the published bytes in hand, the verifier restores each
+   `title_before` into its cell and requires the frozen row digest back, which proves the row
+   differs only inside that cell. Given the frozen original (`verify-csv` and `verify-groups`
+   `--original`, or a `verify_site --reference` holding the pre-publish copies) it runs the full
+   recomputation too.
+6. The final file is checked on its bytes: every surviving title in both CSVs holds 0 commas and 0
+   em dashes.
+
+The transform documents carry `version` 2. Nothing emitted at version 1 was ever committed, so
+nothing needs to stay readable.
+
+### Sections 4 and 4b are EXTENDED to the new document
+
+The `groups.csv` retitle document is evidence exactly as the `metadata.csv` transform is. Its input
+is the FROZEN snapshot's `groups.csv`, never live and never staging; the builder takes all three
+trees and refuses the same six snapshot shapes; the document lands outside all three trees; and
+`--groups-transform` is in every alias-refusal and boundary list the publisher checks. Given a
+snapshot manifest, both builders recompute the snapshot file they read against it before building.
+
+⛔ AT PUBLISH THE ATTESTATION IS REQUIRED, and it is attached to the transform, not to a retirement
+kind. A transform that changes bytes (any documented removal or retitle in `metadata.csv`, any
+documented retitle in `groups.csv`) is refused before any write unless BOTH `--frozen-snapshot` and
+`--snapshot-manifest` are supplied, the transform's original hash equals the hash the manifest
+attests for that file, and the snapshot's copy of the file, re-hashed now, still matches the
+manifest. This was measured before it was written down: the first version demanded the snapshot pair
+only for a `preserved_archive` retirement, and site_a's one retirement is `produced_source`, so its
+retitles applied with neither argument and the run exited 0. Only an EMPTY transform (0 removals, 0
+retitles) needs no attestation, because it permits no byte to change.
+
+### A publish-time title check
+
+`verify_site.py` gains a title-rule class, always on: no asset title in `MANIFEST.json` and no cell
+of either CSV's `title` column holds a comma or an em dash. It reads the SITE, because that is what
+publishes.
+
+### No guard is removed
+
+Every refusal that existed still refuses: every `metadata.csv` transform check, the collapse
+binding (identity and recomputation), the three-tree boundary, alias refusal, the frozen-snapshot
+recomputation and the `asset_count` ban. This amendment adds one kind of permitted change, the
+evidence it requires, and the refusals that bound it.
+
+### What is untouched
+
+Decisions 1 to 5, and every amendment above except where this one supersedes section 5 and narrows
+section 6, stand as written. The profile remains authoritative for CONTENT; the
+destination-holds-what-the-source-does-not refusal, the migration-aware and retirement-aware
+readings, `--allow-regression`'s narrowness, the entire `produced_source` Layer B, and the removal
+authority of the collapse document are unchanged.

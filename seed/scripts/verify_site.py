@@ -50,23 +50,36 @@ THREE CLASSES OF ASSERTION, KEPT DISTINCT IN THE OUTPUT
                     wrong after it. Without `--expect` the class reports
                     "not supplied".
 
-  preservation      Before/after: every `*.bak`, `dataset-metadata.json`,
-                    `kenney-hq-replacements.json` and `groups.csv` present
-                    at the site is byte-equal to an explicit baseline
-                    (`--baseline`, recorded before staging, or
-                    `--reference`, a directory holding the pre-publish
-                    copies), and the site's ATTRIBUTIONS.md equals the
-                    repository copy. `metadata.csv` is preservation-owned
-                    too but is NOT exact-bytes, because a retirement
-                    legitimately removes its row: it is checked against the
-                    expected-transform document (`--csv-transform`, written
-                    before the publish by `preserved_archive.py`), which
-                    requires exactly the documented removals and every
-                    retained row byte-identical and in order.
+  preservation      Before/after: every `*.bak`, `dataset-metadata.json`
+                    and `kenney-hq-replacements.json` present at the site is
+                    byte-equal to an explicit baseline (`--baseline`,
+                    recorded before staging, or `--reference`, a directory
+                    holding the pre-publish copies), and the site's
+                    ATTRIBUTIONS.md equals the repository copy.
+                    `metadata.csv` is preservation-owned too but is NOT
+                    exact-bytes, because a retirement legitimately removes
+                    its row and a punctuated title is retitled: it is
+                    checked against the expected-transform document
+                    (`--csv-transform`, written before the publish by
+                    `preserved_archive.py`), which requires exactly the
+                    documented removals, exactly the documented title
+                    retitles, and every other byte identical and in order.
+                    `groups.csv` is exact-bytes against the baseline UNLESS
+                    its retitle document (`--groups-transform`) is given,
+                    and then it is checked against that document instead:
+                    only the title cell of a documented row may differ, no
+                    row leaves and `asset_count` never changes. A
+                    `--reference` holding the pre-publish CSVs adds the full
+                    recomputation from those bytes.
                     Without a baseline the class reports "not compared".
                     It never reports "pass" for a comparison it did not
                     make: a green tick over an unmade check is the shape
                     of every silent failure above.
+
+  title rule        Publish-time, always: no asset title in MANIFEST.json and
+                    no cell of the `title` column of `metadata.csv` or
+                    `groups.csv` holds a comma or an em dash (owner ruling,
+                    #1319). A CSV absent at the site is reported as info.
 """
 
 from __future__ import annotations
@@ -84,6 +97,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import asset_collapse as ac  # noqa: E402
 import manifest_guard as mg  # noqa: E402
 import preserved_archive as pa  # noqa: E402
+from title_rule import has_title_separator  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO_ATTRIBUTIONS = SCRIPTS.parent / "ATTRIBUTIONS.md"
@@ -91,15 +105,18 @@ REPO_ATTRIBUTIONS = SCRIPTS.parent / "ATTRIBUTIONS.md"
 # The files a publish must leave alone. `*.bak` is matched at any depth;
 # the named files live at the site root.
 #
-# ⛔ `groups.csv` JOINED THIS SET (#1319). It needs no transformation: its
-# `asset_count` column is an ORIGINAL-DATASET fact that already disagrees
-# with the shipped subset. Measured on site_b, `grp-00219` states 8 and
-# ships 3, `grp-00215` states 8 and ships 2, and 262 of 1,047 rows disagree
-# in all. And no group loses its last shipped member to a retirement (0 of
-# 1,047 ship nothing). So the correct rule is the strictest one: the bytes
-# do not change. ⛔ DO NOT REINTERPRET OR REWRITE `asset_count`. It
-# describes the dataset the rows came from, not the cut this site ships,
-# and "correcting" it would overwrite a fact with a derivation.
+# ⛔ `groups.csv` LEFT THIS SET (#1319, ADR 0097 amendment of 2026-09-26).
+# The owner ruled that its `title` column holds no comma and no em dash, so
+# its punctuated titles have to change, and an exact-bytes rule would refuse
+# the one change that is correct. It is RETITLE-OWNED instead: still
+# recorded in every baseline and still exact-bytes against it, UNLESS its
+# retitle document (`--groups-transform`) is supplied, and then only the
+# title cell of a documented row may differ. A groups.csv change with no
+# document therefore still fails. ⛔ DO NOT REINTERPRET OR REWRITE
+# `asset_count`, which the document pins by digest: it is an
+# ORIGINAL-DATASET fact (site_b `grp-00219` states 8 and ships 3; 262 of
+# 1,047 rows disagree), and "correcting" it would overwrite a fact with a
+# derivation.
 #
 # ⚠️ `metadata.csv` IS DELIBERATELY NOT HERE. A retirement legitimately
 # removes its row, so an exact-bytes rule would refuse the one change that
@@ -107,14 +124,15 @@ REPO_ATTRIBUTIONS = SCRIPTS.parent / "ATTRIBUTIONS.md"
 # (`preserved_archive.py`), which is narrower than a waiver in both
 # directions: exactly the documented rows leave and every other row
 # survives byte-identically, in order.
-PRESERVED_NAMES = ("dataset-metadata.json", "kenney-hq-replacements.json",
-                   pa.GROUPS_NAME)
+PRESERVED_NAMES = ("dataset-metadata.json", "kenney-hq-replacements.json")
+RETITLE_OWNED_NAMES = (pa.GROUPS_NAME,)
 PRESERVED_GLOB = "*.bak"
 ATTRIBUTIONS_NAME = "ATTRIBUTIONS.md"
 
 PROFILE_DERIVED = "profile-derived"
 SITE_SPECIFIC = "site-specific"
 PRESERVATION = "preservation"
+TITLE_RULE = "title rule"
 
 PASS = "pass"
 FAIL = "fail"
@@ -257,11 +275,14 @@ def _sample(items: list, n: int = SAMPLE) -> str:
 
 
 def preserved_files(root: Path) -> dict[str, Path]:
-    """Every preserved file present under `root`, keyed by site-relative path."""
+    """Every preserved or retitle-owned file present under `root`, keyed by
+    site-relative path. Retitle-owned files are baselined like the rest;
+    `verify` compares them exactly unless their retitle document governs
+    them."""
     out: dict[str, Path] = {}
     if not root.is_dir():
         return out
-    for name in PRESERVED_NAMES:
+    for name in (*PRESERVED_NAMES, *RETITLE_OWNED_NAMES):
         p = root / name
         if p.is_file():
             out[name] = p
@@ -369,6 +390,7 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
            baseline: dict[str, Any] | None = None,
            reference: Path | None = None,
            csv_transform: Path | None = None,
+           groups_transform: Path | None = None,
            attributions: Path = REPO_ATTRIBUTIONS) -> Report:
     """Every verdict, in order; see the module docstring for the classes."""
     rep = Report()
@@ -449,6 +471,9 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
         rep.add(PROFILE_DERIVED, "collapse document", INFO,
                 f"none at {cdoc}; no record is documented as retired")
 
+    # -- title rule ---------------------------------------------------------
+    _check_titles(rep, site_manifest, site)
+
     # -- site-specific -----------------------------------------------------
     if expectations is None:
         rep.add(SITE_SPECIFIC, "expectations", NOT_COMPARED, "no --expect supplied")
@@ -490,7 +515,11 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
                       f"{n} row(s)")
 
     # -- preservation ------------------------------------------------------
-    present = preserved_files(site)
+    # A retitle-owned file whose document is supplied is governed by that
+    # document, not by exact bytes; without the document it stays exact.
+    governed = {pa.GROUPS_NAME} if groups_transform is not None else set()
+    present = {k: v for k, v in preserved_files(site).items() if k not in governed}
+    recorded: dict[str, str] = {}
     if baseline is not None and reference is not None:
         rep.add(PRESERVATION, "baseline", FAIL, "give --baseline or --reference, not both")
     elif baseline is not None:
@@ -498,11 +527,15 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
         if not isinstance(files, dict):
             rep.add(PRESERVATION, "baseline", FAIL, "baseline has no `files` object")
         else:
-            _check_against(rep, site, {k: v for k, v in files.items() if k != ATTRIBUTIONS_NAME},
+            recorded = dict(files)
+            _check_against(rep, site, {k: v for k, v in files.items()
+                                       if k != ATTRIBUTIONS_NAME and k not in governed},
                            present, "baseline")
     elif reference is not None:
         ref_files = {rel: sha256_file(p) for rel, p in preserved_files(reference).items()}
-        _check_against(rep, site, ref_files, present, f"reference {reference}")
+        recorded = dict(ref_files)
+        _check_against(rep, site, {k: v for k, v in ref_files.items() if k not in governed},
+                       present, f"reference {reference}")
     else:
         rep.add(PRESERVATION, "preserved files", NOT_COMPARED,
                 f"{len(present)} preserved file(s) present; no --baseline or --reference")
@@ -523,12 +556,17 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
                 rep.add(PRESERVATION, f"{pa.CSV_NAME} is the documented transform",
                         FAIL, f"absent at {site_csv}")
             else:
-                refusals = pa.verify_csv_transform(doc, site_csv.read_bytes())
+                original = _reference_copy(reference, pa.CSV_NAME)
+                refusals = pa.verify_csv_transform(doc, site_csv.read_bytes(),
+                                                   original=original)
                 rep.check(PRESERVATION,
                           f"{pa.CSV_NAME} is the documented transform",
                           not refusals,
                           (f"{doc['expected']['data_rows']} retained row(s), "
-                           f"{len(doc['removals'])} documented removal(s)")
+                           f"{len(doc['removals'])} documented removal(s), "
+                           f"{len(doc['retitles'])} documented retitle(s)"
+                           + ("; recomputed from the reference copy"
+                              if original is not None else ""))
                           if not refusals else "; ".join(refusals[:3]))
                 # ⛔ AND THE VERIFIER CANNOT BLESS A TRANSFORM WHOSE AUTHORITY
                 # IS NOT THIS DOCUMENT'S. The removal recomputation needs the
@@ -565,6 +603,8 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
                 f"changes it only through that document (preserved_archive.py "
                 f"csv-transform)")
 
+    _check_groups(rep, site, groups_transform, reference, recorded)
+
     site_attr = site / ATTRIBUTIONS_NAME
     require_attr = bool((expectations or {}).get("require_attributions", False))
     if site_attr.is_file():
@@ -581,6 +621,96 @@ def verify(profile_path: Path, posts_path: Path, site: Path, *,
         rep.add(PRESERVATION, "ATTRIBUTIONS.md equals the repository copy", NOT_COMPARED,
                 "absent at the site (set require_attributions in --expect to demand it)")
     return rep
+
+
+def _reference_copy(reference: Path | None, name: str) -> bytes | None:
+    """The pre-publish copy of `name` in `--reference`, when it holds one.
+    With it a transform verdict recomputes from the frozen bytes."""
+    if reference is None:
+        return None
+    p = reference / name
+    return p.read_bytes() if p.is_file() else None
+
+
+GROUPS_VERDICT = f"{pa.GROUPS_NAME} is the documented retitle"
+
+
+def _check_groups(rep: Report, site: Path, groups_transform: Path | None,
+                  reference: Path | None, recorded: dict[str, str]) -> None:
+    """`groups.csv` against its retitle document, when one is supplied.
+
+    Without one, `groups.csv` stays in the exact-bytes comparison above, so
+    a change with no document still fails there. With one, the document
+    must also have been built from the bytes the baseline or reference
+    recorded before the publish: a document about other bytes is not
+    evidence about these.
+    """
+    site_groups = site / pa.GROUPS_NAME
+    if groups_transform is None:
+        if site_groups.is_file() and pa.GROUPS_NAME not in recorded:
+            rep.add(PRESERVATION, GROUPS_VERDICT, NOT_COMPARED,
+                    f"{site_groups} present; no --groups-transform and no "
+                    f"baseline recording it")
+        return
+    try:
+        doc = pa.load_groups_transform(groups_transform)
+    except pa.PreservedError as e:
+        rep.add(PRESERVATION, GROUPS_VERDICT, FAIL, str(e))
+        return
+    if not site_groups.is_file():
+        rep.add(PRESERVATION, GROUPS_VERDICT, FAIL, f"absent at {site_groups}")
+        return
+    original = _reference_copy(reference, pa.GROUPS_NAME)
+    refusals = pa.verify_groups_transform(doc, site_groups.read_bytes(),
+                                          original=original)
+    rep.check(PRESERVATION, GROUPS_VERDICT, not refusals,
+              (f"{doc['expected']['data_rows']} row(s), none removed, "
+               f"{len(doc['retitles'])} documented retitle(s), asset_count "
+               f"unchanged"
+               + ("; recomputed from the reference copy" if original is not None
+                  else ""))
+              if not refusals else "; ".join(refusals[:3]))
+    pre = recorded.get(pa.GROUPS_NAME)
+    if pre is not None:
+        rep.check(PRESERVATION,
+                  f"{pa.GROUPS_NAME} retitle was built from the pre-publish bytes",
+                  pre == doc["original"]["sha256"],
+                  f"recorded {pre[:12]}…, document built from "
+                  f"{doc['original']['sha256'][:12]}…")
+
+
+def _check_titles(rep: Report, site_manifest: list[dict], site: Path) -> None:
+    """No asset title holds a comma or an em dash: MANIFEST.json and both CSV
+    title columns (owner ruling, #1319). Read from the SITE, because that
+    is what publishes; a clean profile says nothing about a stale copy."""
+    bad = [(r.get("id"), r["title"]) for r in site_manifest
+           if isinstance(r.get("title"), str) and has_title_separator(r["title"])]
+    commas = sum(t.count(",") for _i, t in bad)
+    dashes = sum(t.count("\u2014") for _i, t in bad)
+    rep.check(TITLE_RULE, "MANIFEST.json asset titles hold no comma or em dash",
+              not bad,
+              f"{len(site_manifest)} record(s); {len(bad)} title(s) hold "
+              f"{commas} comma(s) and {dashes} em dash(es)"
+              + (f": {_sample([f'{i} {t!r}' for i, t in bad])}" if bad else ""))
+    for name in (pa.CSV_NAME, pa.GROUPS_NAME):
+        verdict = f"{name} title column holds no comma or em dash"
+        path = site / name
+        if not path.is_file():
+            # Nothing to check is not a pass either, so it is reported as
+            # information, the way an absent CSV is reported elsewhere here.
+            rep.add(TITLE_RULE, verdict, INFO,
+                    f"absent at {path}; there is no title column to check")
+            continue
+        try:
+            t = pa.csv_title_punctuation(path.read_bytes())
+        except (pa.PreservedError, UnicodeDecodeError) as e:
+            rep.add(TITLE_RULE, verdict, FAIL, f"cannot be read ({e})")
+            continue
+        rep.check(TITLE_RULE, verdict, t["titles_with_separator"] == 0,
+                  f"{t['rows']} row(s); {t['titles_with_separator']} title(s) "
+                  f"hold {t['commas']} comma(s) and {t['em_dashes']} em dash(es)"
+                  + (f": {_sample([repr(x) for x in t['sample']])}"
+                     if t["titles_with_separator"] else ""))
 
 
 def _check_against(rep: Report, site: Path, expected: dict[str, str],
@@ -626,6 +756,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
                      collapse_path=args.collapse_document,
                      expectations=expectations, baseline=baseline,
                      reference=args.reference, csv_transform=args.csv_transform,
+                     groups_transform=args.groups_transform,
                      attributions=args.attributions)
     except (OSError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
@@ -683,6 +814,11 @@ def main(argv: list[str] | None = None) -> int:
                           "BEFORE the publish by `preserved_archive.py "
                           "csv-transform`. Without it the metadata.csv verdict "
                           "reports NOT COMPARED rather than passing.")
+    chk.add_argument("--groups-transform", type=Path, default=None,
+                     help="groups.csv retitle document, written BEFORE the "
+                          "publish by `preserved_archive.py groups-transform`. "
+                          "Without it groups.csv is compared exactly against "
+                          "the baseline, so any change fails.")
     chk.add_argument("--attributions", type=Path, default=REPO_ATTRIBUTIONS,
                      help="repository ATTRIBUTIONS.md the site copy must equal")
     chk.set_defaults(fn=_cmd_check)
