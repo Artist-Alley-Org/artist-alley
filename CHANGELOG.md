@@ -498,8 +498,9 @@ where applicable, otherwise note "no-spec-impact."
   record of its checksums; without them the publish refuses before writing anything. The publish check now
   also refuses a title with a comma or an em dash in the manifest or in either spreadsheet. ADR 0097 records
   the change.
-  ⚠️ Nothing in the published library has changed yet. These corrections are applied by the owner-run
-  republish (#1460, PR #1462).
+  ⚠️ Nothing in the published library has changed yet. These corrections are enabled by the archive
+  contract shipped in #1460 / PR #1462, and are applied to the published library only by the owner-run
+  23b republish (#1319).
 
 - **Seeded titles lose their comma and em-dash separators in the repository.** Asset titles in the
   committed sample library no longer carry a comma or an em dash: each one now reads with an ASCII hyphen,
