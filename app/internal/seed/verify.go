@@ -62,6 +62,15 @@ import (
 // are recomputed here read-only by the seeder's own rules, so the
 // verifier does not depend on a log line surviving.
 //
+// ASSET TITLES ARE COMPARED LIKE POST TITLES (#1464). Every present
+// manifest asset's title must equal what applyAssets binds,
+// orDefault(title, "Untitled"), because SeedInsertAsset's ON CONFLICT
+// DO NOTHING means a reseed without --reset keeps whatever title an
+// earlier seed wrote. Separately, no seeded asset title may carry a
+// comma or an em dash; that holds even when the manifest agrees, which
+// is the case a pure equality check passes. An absent or collapsed
+// asset gets neither verdict: it has already failed as absent.
+//
 // ⚠️ THE CONTENT-ADDRESS COLLAPSE IS DIAGNOSED, NEVER EXCUSED.
 // SeedInsertAsset's ON CONFLICT DO NOTHING also catches the
 // (owner_user_ref, file_hash) partial unique index: a manifest entry
@@ -189,6 +198,7 @@ type migrationDocument struct {
 
 type verifyAssetRow struct {
 	id       pgtype.UUID
+	title    string
 	owner    *int64
 	hash     *string
 	size     *int64
@@ -301,6 +311,18 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 				rep.fail("asset %s: file_size_bytes is %d in the manifest and %s in the database",
 					a.ID, a.FileSizeBytes, optionalInt(row.size))
 			}
+		}
+		// The title, compared with the value the seeder binds
+		// (applyAssets writes orDefault(title, "Untitled")), and then
+		// checked on its own: a title the manifest and the database
+		// agree on can still carry a separator the owner ruled out.
+		if want := orDefault(a.Title, "Untitled"); row.title != want {
+			rep.fail("asset %s: title differs from the manifest: expected %q (the manifest title as the seeder binds it), the database holds %q",
+				a.ID, want, row.title)
+		}
+		if bad := forbiddenTitleChars(row.title); bad != "" {
+			rep.fail("asset %s: title %q contains a forbidden character (%s); a seeded asset title carries no comma and no em dash",
+				a.ID, row.title, bad)
 		}
 	}
 
@@ -532,13 +554,28 @@ func verifyLoadCollections(ctx context.Context, pool *pgxpool.Pool, r *Runner) e
 	return rows.Err()
 }
 
+// forbiddenTitleChars names the characters an asset title may not
+// carry, or "" when it carries none: the comma (U+002C) and the em
+// dash (U+2014), the two separators the title-punctuation ruling
+// retired. One title carrying both is named once, with both.
+func forbiddenTitleChars(title string) string {
+	var found []string
+	if strings.ContainsRune(title, ',') {
+		found = append(found, "comma U+002C")
+	}
+	if strings.ContainsRune(title, '\u2014') {
+		found = append(found, "em dash U+2014")
+	}
+	return strings.Join(found, " and ")
+}
+
 func verifyLoadAssets(ctx context.Context, pool *pgxpool.Pool, ids []pgtype.UUID) (map[string]verifyAssetRow, error) {
 	out := make(map[string]verifyAssetRow, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
 	rows, err := pool.Query(ctx,
-		`SELECT id, owner_user_ref, file_hash, file_size_bytes, ai_provenance
+		`SELECT id, title, owner_user_ref, file_hash, file_size_bytes, ai_provenance
 		   FROM assets WHERE deleted_at IS NULL AND id = ANY($1)`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list assets: %w", err)
@@ -546,7 +583,7 @@ func verifyLoadAssets(ctx context.Context, pool *pgxpool.Pool, ids []pgtype.UUID
 	defer rows.Close()
 	for rows.Next() {
 		var a verifyAssetRow
-		if err := rows.Scan(&a.id, &a.owner, &a.hash, &a.size, &a.declared); err != nil {
+		if err := rows.Scan(&a.id, &a.title, &a.owner, &a.hash, &a.size, &a.declared); err != nil {
 			return nil, fmt.Errorf("scan asset: %w", err)
 		}
 		out[uuidString(a.id)] = a
