@@ -11017,7 +11017,7 @@ class TestPreservedPublishRetitles(unittest.TestCase):
                 "--out", str(self.groups)]), 0)
         return root
 
-    def _run(self, root, *extra, groups=True, manifest=False):
+    def _run(self, root, *extra, groups=True, manifest=True):
         args = ["--preserved-roots", "--internet-source", str(root / "internet"),
                 "--profile", str(root / "profiles" / "studio-a.assets.json"),
                 "--posts", str(root / "profiles" / "studio-a.posts.json"),
@@ -11137,6 +11137,188 @@ class TestPreservedPublishRetitles(unittest.TestCase):
             r = self._run(root)
             self.assertEqual(r.returncode, 2)
             self.assertIn("--groups-transform", r.stderr)
+
+
+class TestTransformAttestationIsMandatory(unittest.TestCase):
+    """⛔ A TRANSFORM THAT CHANGES BYTES NEEDS THE ATTESTED FROZEN SNAPSHOT.
+
+    Found in review of the first version of this slice: the snapshot pair
+    was demanded only by a `preserved_archive` retirement. site_a's one
+    retirement is `produced_source`, so `_preserved_snapshot` is never
+    reached there, and its metadata.csv and groups.csv retitles were applied
+    with no `--frozen-snapshot` and no `--snapshot-manifest`: exit 0, bytes
+    changed, nothing proving they came from the attested snapshot.
+
+    This world is the site_a shape: one `hq` produced_source retirement whose
+    render has no CSV row (0 removals), one punctuated metadata.csv title and
+    one punctuated groups.csv title.
+    """
+
+    BYTES = b"produced-bytes"
+
+    def _world(self, d, *, meta_titles=None, groups_titles=None):
+        root = Path(d)
+        for sub in ("profiles", "upgrades", "internet", "hq", "dest",
+                    "snapshot", "evidence"):
+            (root / sub).mkdir(parents=True, exist_ok=True)
+        size = {"file_size_bytes": len(self.BYTES)}
+        retired = _collapse_rec(RETIRED_ID, archive_state="draft", **size)
+        survivor = _collapse_rec(SURVIVOR_ID, **size)
+        self.cdoc = root / "upgrades" / "asset-collapse.studio-a.json"
+        self.cdoc.write_text(json.dumps(_collapse_doc([_collapse_entry(
+            retired, survivor, mat=hashlib.sha256(self.BYTES).hexdigest())])),
+            encoding="utf-8")
+        self.assertFalse(any(e.is_preserved for e in
+                             ac.load_collapse_document(self.cdoc).entries),
+                         "the site_a shape has no preserved_archive retirement")
+        (root / "profiles" / "studio-a.assets.json").write_text(
+            json.dumps([survivor]), encoding="utf-8")
+        posts = json.dumps([{"id": POST_ID, "asset_ids": [SURVIVOR_ID]}])
+        (root / "profiles" / "studio-a.posts.json").write_text(posts, encoding="utf-8")
+        for rec in (survivor, retired):
+            (root / "hq" / rec["source_path"]).write_bytes(self.BYTES)
+        dest = root / "dest"
+        (dest / "MANIFEST.json").write_text(json.dumps([survivor, retired]),
+                                            encoding="utf-8")
+        (dest / "posts.json").write_text(posts, encoding="utf-8")
+        (dest / pres.CSV_NAME).write_bytes(_csv_bytes(
+            _paths(20), titles=({7: SONO_META} if meta_titles is None
+                                else meta_titles)))
+        (dest / pres.GROUPS_NAME).write_bytes(_groups_bytes(
+            6, titles=({4: SONO_GROUP} if groups_titles is None
+                       else groups_titles)))
+        for rec in (survivor, retired):
+            p = dest / rec["file_path"]
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(self.BYTES)
+        shutil.copytree(dest, root / "live")
+        for name in (pres.CSV_NAME, pres.GROUPS_NAME):
+            shutil.copyfile(dest / name, root / "snapshot" / name)
+        self.trees = ["--snapshot", str(root / "snapshot"),
+                      "--live-site", str(root / "live"), "--staging", str(dest)]
+        self.manifest = root / "evidence" / "site_a.snapshot-manifest.json"
+        self.meta = root / "evidence" / "site_a.csv-transform.json"
+        self.groups = root / "evidence" / "site_a.groups-transform.json"
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(pres.main(["snapshot-manifest", *self.trees,
+                                        "--out", str(self.manifest)]), 0)
+            self.assertEqual(pres.main(["csv-transform", *self.trees,
+                                        "--collapse-document", str(self.cdoc),
+                                        "--out", str(self.meta)]), 0)
+            self.assertEqual(pres.main(["groups-transform", *self.trees,
+                                        "--out", str(self.groups)]), 0)
+        return root
+
+    def _run(self, root, *extra):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "populate_archive.py"),
+             "--preserved-roots", "--internet-source", str(root / "internet"),
+             "--hq-source", str(root / "hq"),
+             "--profile", str(root / "profiles" / "studio-a.assets.json"),
+             "--posts", str(root / "profiles" / "studio-a.posts.json"),
+             "--csv-transform", str(self.meta),
+             "--groups-transform", str(self.groups),
+             "--live-site", str(root / "live"), "--dest", str(root / "dest"),
+             *extra], capture_output=True, text=True)
+
+    def _pair(self, root, which=("--frozen-snapshot", "--snapshot-manifest")):
+        vals = {"--frozen-snapshot": str(root / "snapshot"),
+                "--snapshot-manifest": str(self.manifest)}
+        return [x for flag in which for x in (flag, vals[flag])]
+
+    @staticmethod
+    def _tree(root):
+        return {p.relative_to(root).as_posix():
+                hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(root.rglob("*")) if p.is_file()}
+
+    def _refuses_unchanged(self, root, extra, *fragments):
+        before = self._tree(root / "dest")
+        r = self._run(root, *extra)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        for f in fragments:
+            self.assertIn(f, r.stderr)
+        self.assertEqual(self._tree(root / "dest"), before,
+                         "a refusal must write nothing and delete nothing")
+        return r
+
+    def test_the_site_a_shape_documents_one_retitle_in_each_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._world(d)
+            meta = pres.load_csv_transform(self.meta)
+            self.assertEqual((len(meta["removals"]), len(meta["retitles"])), (0, 1))
+            self.assertEqual(len(pres.load_groups_transform(self.groups)["retitles"]), 1)
+
+    def test_a_non_empty_metadata_transform_without_both_attestations_refuses(self):
+        for which in ((), ("--snapshot-manifest",), ("--frozen-snapshot",)):
+            with self.subTest(supplied=which), tempfile.TemporaryDirectory() as d:
+                root = self._world(d)
+                self._refuses_unchanged(
+                    root, self._pair(root, which),
+                    "this metadata.csv transform documents 0 removal(s) and 1 "
+                    "retitle(s)", "needs both --frozen-snapshot and "
+                    "--snapshot-manifest", "Refusing before writing anything")
+
+    def test_a_non_empty_groups_transform_without_both_attestations_refuses(self):
+        """metadata.csv is left EMPTY here, so the refusal is the groups one."""
+        for which in ((), ("--snapshot-manifest",), ("--frozen-snapshot",)):
+            with self.subTest(supplied=which), tempfile.TemporaryDirectory() as d:
+                root = self._world(d, meta_titles={})
+                self._refuses_unchanged(
+                    root, self._pair(root, which),
+                    "this groups.csv transform documents 0 removal(s) and 1 "
+                    "retitle(s)", "needs both --frozen-snapshot and "
+                    "--snapshot-manifest")
+
+    def test_with_both_attestations_valid_the_same_publish_succeeds(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d)
+            r = self._run(root, *self._pair(root))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(b'"Sono Variablefont Mono-wght (font)"',
+                          (root / "dest" / pres.CSV_NAME).read_bytes())
+            self.assertIn(b"Sono Variablefont Mono-wght",
+                          (root / "dest" / pres.GROUPS_NAME).read_bytes())
+
+    def test_a_manifest_that_attests_other_bytes_than_the_transform_refuses(self):
+        """The snapshot and its manifest agree with each other, but the
+        transform was built from bytes the manifest does not attest."""
+        for name in (pres.CSV_NAME, pres.GROUPS_NAME):
+            with self.subTest(file=name), tempfile.TemporaryDirectory() as d:
+                root = self._world(d)
+                snap = root / "snapshot" / name
+                snap.write_bytes(snap.read_bytes().replace(b"Group 1", b"Group X")
+                                 .replace(b"plate 1,", b"plate X,"))
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(pres.main(["snapshot-manifest", *self.trees,
+                                                "--out", str(self.manifest)]), 0)
+                self._refuses_unchanged(root, self._pair(root),
+                                        "not built from the frozen snapshot",
+                                        f"the {name} it was built from")
+
+    def test_a_snapshot_file_changed_after_the_manifest_refuses(self):
+        for name in (pres.CSV_NAME, pres.GROUPS_NAME):
+            with self.subTest(file=name), tempfile.TemporaryDirectory() as d:
+                root = self._world(d)
+                snap = root / "snapshot" / name
+                snap.write_bytes(snap.read_bytes() + b"tampered\r\n")
+                self._refuses_unchanged(root, self._pair(root),
+                                        "CHANGED after it was attested",
+                                        f"the {name} it was built from")
+
+    def test_empty_transforms_still_need_no_attestation(self):
+        """0 removals and 0 retitles: the files must stay byte-identical, and
+        that promise needs no snapshot, exactly as before."""
+        with tempfile.TemporaryDirectory() as d:
+            root = self._world(d, meta_titles={}, groups_titles={})
+            csv_before = (root / "dest" / pres.CSV_NAME).read_bytes()
+            groups_before = (root / "dest" / pres.GROUPS_NAME).read_bytes()
+            r = self._run(root)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual((root / "dest" / pres.CSV_NAME).read_bytes(), csv_before)
+            self.assertEqual((root / "dest" / pres.GROUPS_NAME).read_bytes(),
+                             groups_before)
+
 
 
 class TestVerifySiteTitleRule(unittest.TestCase):

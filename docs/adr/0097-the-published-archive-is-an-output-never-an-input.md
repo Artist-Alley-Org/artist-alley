@@ -612,10 +612,18 @@ nothing needs to stay readable.
 The `groups.csv` retitle document is evidence exactly as the `metadata.csv` transform is. Its input
 is the FROZEN snapshot's `groups.csv`, never live and never staging; the builder takes all three
 trees and refuses the same six snapshot shapes; the document lands outside all three trees; and
-`--groups-transform` is in every alias-refusal and boundary list the publisher checks. With a
-snapshot manifest, both builders recompute the snapshot file they read against it before building,
-and the publisher requires each transform's original hash to equal the hash the manifest attests
-for that file and re-hashes the snapshot copy.
+`--groups-transform` is in every alias-refusal and boundary list the publisher checks. Given a
+snapshot manifest, both builders recompute the snapshot file they read against it before building.
+
+⛔ AT PUBLISH THE ATTESTATION IS REQUIRED, and it is attached to the transform, not to a retirement
+kind. A transform that changes bytes (any documented removal or retitle in `metadata.csv`, any
+documented retitle in `groups.csv`) is refused before any write unless BOTH `--frozen-snapshot` and
+`--snapshot-manifest` are supplied, the transform's original hash equals the hash the manifest
+attests for that file, and the snapshot's copy of the file, re-hashed now, still matches the
+manifest. This was measured before it was written down: the first version demanded the snapshot pair
+only for a `preserved_archive` retirement, and site_a's one retirement is `produced_source`, so its
+retitles applied with neither argument and the run exited 0. Only an EMPTY transform (0 removals, 0
+retitles) needs no attestation, because it permits no byte to change.
 
 ### A publish-time title check
 

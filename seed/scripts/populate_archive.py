@@ -77,6 +77,12 @@ from. `--preserved-roots` says so explicitly, and then:
     first, exactly as before, then every punctuated row that survives
     them. Both documents' retitles are RECOMPUTED from the pre-operation
     bytes before any write, so neither document is its own authority.
+  * A transform that changes bytes (any removal or retitle) is applied
+    only with BOTH `--frozen-snapshot` and `--snapshot-manifest`: its
+    original hash must be the manifest's attestation for that file, and
+    the snapshot copy is re-hashed against the manifest. This hangs on the
+    transform, not on a `preserved_archive` retirement: site_a's only
+    retirement is `produced_source`.
   * A `preserved_archive` retirement is authenticated against
     `--frozen-snapshot`, whose hashes are RECOMPUTED against
     `--snapshot-manifest` immediately beforehand. ⛔ Never the live tree
@@ -1372,14 +1378,18 @@ def preserved_csv_plan(args, collapse_loaded):
               "<evidence>/<site>.csv-transform.json", file=sys.stderr)
         return False
 
+    # ⛔ A TRANSFORM THAT CHANGES BYTES NEEDS THE ATTESTED FROZEN SNAPSHOT,
+    # whatever kind of retirement the collapse document holds (site_a's is
+    # `produced_source`, which never reaches `_preserved_snapshot`).
+    if not _refuse_unattested(args, pa.CSV_NAME, doc, args.csv_transform):
+        return False
+
     # ⛔ THE RETITLES ARE RECOMPUTED, AFTER THE REMOVALS ARE PROVED. Required
     # = every punctuated row of the pre-operation CSV that survives the
     # removals the collapse document AUTHORISES (not the ones the transform
     # happens to list), by the shared title rule. Like the removal
     # recomputation it needs the pre-operation rows, so an idempotent re-run
     # proves the bytes instead, below.
-    if not _refuse_unattested(args, pa.CSV_NAME, doc, args.csv_transform):
-        return False
     retitled = (pa.metadata_retitle_refusals(doc, blob, collapse_doc=collapse_doc)
                 if pre_op else [])
     if retitled:
@@ -1429,15 +1439,42 @@ def preserved_csv_plan(args, collapse_loaded):
     return (note, after)
 
 
-def _attested_input(args, rel: str, doc: dict) -> list[str]:
-    """Tie a transform's "original" to the FROZEN SNAPSHOT's attestation.
+def transform_changes_bytes(doc: dict) -> bool:
+    """A NON-EMPTY transform: any documented removal or retitle. Only an
+    empty one (0 removals, 0 retitles) is a promise that the bytes stay
+    exactly as they are."""
+    return bool(doc.get("removals") or doc.get("retitles"))
 
-    With `--snapshot-manifest`, the bytes a transform was built from must be
-    the bytes the manifest attests for that file, and, with
-    `--frozen-snapshot`, the snapshot must still hold them. The frozen
-    snapshot is the only acceptable transform input; this proves it rather
-    than trusting the document's own "original" hash.
+
+def _attested_input(args, rel: str, doc: dict) -> list[str]:
+    """Prove a transform's "original" IS the attested FROZEN SNAPSHOT file.
+
+    ⛔ A NON-EMPTY TRANSFORM IS AUTHORITY ONLY OVER ATTESTED BYTES, AND THIS
+    IS ATTACHED TO THE TRANSFORM, NOT TO A RETIREMENT KIND. The frozen
+    snapshot is the only acceptable transform input (ADR 0097 sections 4
+    and 6c). Measured on the first version of this slice: the snapshot pair
+    was demanded only by a `preserved_archive` retirement, so site_a, whose
+    one retirement is `produced_source`, applied its metadata.csv and
+    groups.csv retitles with no snapshot and no manifest at all, and the
+    run exited 0. So a transform that documents any removal or retitle
+    needs BOTH `--frozen-snapshot` and `--snapshot-manifest`: its original
+    hash must equal the manifest's attestation for the file, and the
+    snapshot's copy is RE-HASHED against the manifest now.
+
+    An EMPTY transform changes nothing and needs no attestation; when a
+    manifest is supplied anyway it is still checked.
     """
+    changes = transform_changes_bytes(doc)
+    if changes and (args.frozen_snapshot is None or args.snapshot_manifest is None):
+        missing = [flag for flag, v in (("--frozen-snapshot", args.frozen_snapshot),
+                                        ("--snapshot-manifest", args.snapshot_manifest))
+                   if v is None]
+        return [f"this {rel} transform documents {len(doc.get('removals') or [])} "
+                f"removal(s) and {len(doc.get('retitles') or [])} retitle(s), so it "
+                f"needs both --frozen-snapshot and --snapshot-manifest "
+                f"({', '.join(missing)} not supplied). A transform that changes "
+                f"bytes is authority only over the attested frozen snapshot it was "
+                f"built from; without the pair nothing proves that."]
     if args.snapshot_manifest is None:
         return []
     try:
@@ -1461,18 +1498,23 @@ def _attested_input(args, rel: str, doc: dict) -> list[str]:
 
 
 def _refuse_unattested(args, rel: str, doc: dict, doc_path) -> bool:
-    """Print and return False when the transform's input is not the
-    attested frozen snapshot; True when it is, or when no manifest is
-    supplied (the snapshot is then not in play for this file)."""
+    """Print and return False when a transform may not be applied because its
+    input is not proved to be the attested frozen snapshot; True otherwise.
+    Runs BEFORE ANY WRITE, in --dry-run too."""
     bad = _attested_input(args, rel, doc)
     if not bad:
         return True
-    print(f"error: {doc_path}: the {rel} it was built from is not the attested "
-          f"frozen snapshot:", file=sys.stderr)
+    print(f"error: {doc_path}: the {rel} it was built from is not proved to be "
+          f"the attested frozen snapshot:", file=sys.stderr)
     for b in bad:
         print(f"  - {b}", file=sys.stderr)
     print("  Refusing before writing anything. The frozen snapshot is the only "
-          "acceptable transform input.", file=sys.stderr)
+          "acceptable transform input:\n"
+          "    python3 seed/scripts/preserved_archive.py snapshot-manifest "
+          "--snapshot <frozen> --live-site <live> --staging <dest> "
+          "--out <evidence>/<site>.snapshot-manifest.json\n"
+          "  then pass --frozen-snapshot <frozen> --snapshot-manifest "
+          "<evidence>/<site>.snapshot-manifest.json.", file=sys.stderr)
     return False
 
 
@@ -1604,15 +1646,21 @@ def main() -> int:
     parser.add_argument("--frozen-snapshot", type=Path, default=None,
                         help="A frozen pre-operation snapshot of the site. The "
                              "ONLY tree a preserved_archive retirement may be "
-                             "authenticated against. Never the live tree and "
-                             "never the staging copy.")
+                             "authenticated against, and the only acceptable "
+                             "transform input: REQUIRED, with --snapshot-manifest, "
+                             "whenever --csv-transform or --groups-transform "
+                             "documents any removal or retitle. Never the live "
+                             "tree and never the staging copy.")
     parser.add_argument("--snapshot-manifest", type=Path, default=None,
                         help="External path->sha256 manifest of --frozen-snapshot, "
                              "recorded immediately after the snapshot was taken "
                              "(`preserved_archive.py snapshot-manifest`). The "
                              "relevant hashes are RECOMPUTED against it "
                              "immediately before authentication; a mismatch "
-                             "refuses. Permissions and mtimes are not accepted as "
+                             "refuses. REQUIRED, with --frozen-snapshot, whenever a "
+                             "transform documents any removal or retitle: its "
+                             "original hash must be the one attested here. "
+                             "Permissions and mtimes are not accepted as "
                              "integrity proof.")
     parser.add_argument("--internet-source", required=True, type=Path,
                         help="Internet-fetched cache root (where source_root='internet' resolves)")
