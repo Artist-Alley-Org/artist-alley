@@ -14,6 +14,7 @@ package seed
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,25 +101,61 @@ func TestVerifyAssetTitle_NoManifestAssets(t *testing.T) {
 	assertTitleTotal(t, f.verify(VerifyOptions{}), 0)
 }
 
-// N=1, and its twin: an equal, unpunctuated title passes.
+// singleAssetManifest narrows the verifier's input to exactly ONE
+// present asset: the fixture's first asset, alone in MANIFEST.json, and
+// no catalogue posts (the fixture's post spans both assets). The
+// fixture's other rows stay in the database; the verifier only judges
+// what the manifest names. It asserts the boundary it creates, from the
+// file on disk and from the report, so an N=1 test cannot silently run
+// at N=2.
+func (f *verifyFixture) singleAssetManifest() {
+	f.t.Helper()
+	f.assets = f.assets[:1]
+	f.posts = nil
+	f.writeSite()
+	b, err := os.ReadFile(filepath.Join(f.siteRoot, "MANIFEST.json"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	var onDisk []manifestAsset
+	if err := json.Unmarshal(b, &onDisk); err != nil {
+		f.t.Fatal(err)
+	}
+	if len(onDisk) != 1 || onDisk[0].ID != f.assets[0].ID {
+		f.t.Fatalf("MANIFEST.json holds %d asset(s), want exactly 1 (%s)", len(onDisk), f.assets[0].ID)
+	}
+}
+
+func assertSinglePresentAsset(t *testing.T, rep *VerifyReport) {
+	t.Helper()
+	if rep.Assets != 1 || rep.AssetsPresent != 1 {
+		t.Fatalf("the verifier read %d manifest asset(s), %d present; want exactly 1 and 1", rep.Assets, rep.AssetsPresent)
+	}
+}
+
+// N=1: the manifest holds exactly one present asset whose database
+// title equals the seeder-bound manifest title. No title verdict.
 func TestVerifyAssetTitle_EqualUnpunctuatedTitlesPass(t *testing.T) {
 	f := newVerifyFixture(t)
+	f.singleAssetManifest()
 	rep := f.verify(VerifyOptions{})
-	for _, a := range f.assets {
-		assertTitleVerdicts(t, rep, a.ID, 0, 0)
-	}
+	assertSinglePresentAsset(t, rep)
+	assertTitleVerdicts(t, rep, f.assets[0].ID, 0, 0)
 	assertTitleTotal(t, rep, 0)
 }
 
-// N=1: a title edited in the database after the seed is exactly one
-// equality failure, naming the asset, the expected and the held value.
-// FAILS on the verifier before #1464, which reported this VERIFIED.
+// N=1: the manifest holds exactly one present asset, and its database
+// title was edited after the seed. Exactly one equality failure, naming
+// the asset, the expected and the held value; no punctuation verdict
+// and no other title verdict. FAILS on the verifier before #1464, which
+// reported this VERIFIED.
 func TestVerifyAssetTitle_OneEditedTitleFails(t *testing.T) {
 	f := newVerifyFixture(t)
+	f.singleAssetManifest()
 	f.setDBTitle(0, "edited after the seed")
 	rep := f.verify(VerifyOptions{})
+	assertSinglePresentAsset(t, rep)
 	assertTitleVerdicts(t, rep, f.assets[0].ID, 1, 0)
-	assertTitleVerdicts(t, rep, f.assets[1].ID, 0, 0)
 	assertTitleTotal(t, rep, 1)
 	mustContain(t, rep.Failures, f.assets[0].ID, titleEqualityMark,
 		`"`+f.assets[0].Title+`"`, `"edited after the seed"`)
