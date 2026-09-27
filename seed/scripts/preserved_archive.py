@@ -69,6 +69,20 @@ WHAT THIS MODULE OWNS
      validated collapse document rather than against its own arithmetic.
   3. THE FROZEN-SNAPSHOT MANIFEST. Recomputation immediately before a
      preserved authentication, never a trust of the copy.
+  4. THE TITLE RETITLE, in both CSVs (#1319, ADR 0097 amendment of
+     2026-09-26). Owner ruling: the `title` column of `metadata.csv` and of
+     `groups.csv` holds no comma and no em dash. A surviving row may differ
+     from its frozen bytes ONLY inside its title cell, and only as
+     `title_rule.normalize_title` says. The required retitles are
+     RECOMPUTED from the frozen pre-operation bytes by the builder and again
+     by the publisher; a document's own list is never the authority.
+       metadata.csv  removals FIRST, exactly as before (the collapse
+                     document), then every punctuated row that SURVIVES
+                     them. A removed row is never retitled; a row
+                     documented for both is refused.
+       groups.csv    a RETITLE-ONLY document of its own, keyed by
+                     `group_id`. It can never remove a row and never
+                     changes `asset_count`.
 
 ⛔ WHY THE CSV REGENERATION HAD TO GO RATHER THAN BE POINTED SOMEWHERE ELSE
 `populate_archive.py` keeps a CSV row only when its `file_path` is in the
@@ -132,9 +146,19 @@ Usage
         --collapse-document seed/upgrades/asset-collapse.studio-a.json \\
         --out $EVIDENCE/site_a.csv-transform.json
 
-    # read-only verification of a CSV against its transform document
+    # BEFORE the operation, from the FROZEN pre-op groups.csv (retitles only)
+    python3 preserved_archive.py groups-transform \\
+        --snapshot $FROZEN/site_a \\
+        --live-site $LIVE/site_a --staging $STAGING/site_a \\
+        --snapshot-manifest $EVIDENCE/site_a.snapshot-manifest.json \\
+        --out $EVIDENCE/site_a.groups-transform.json
+
+    # read-only verification of a CSV against its transform document;
+    # --original (the frozen pre-op file) adds the full recomputation
     python3 preserved_archive.py verify-csv \\
-        --transform <doc> --csv <site>/metadata.csv
+        --transform <doc> --csv <site>/metadata.csv [--original <frozen csv>]
+    python3 preserved_archive.py verify-groups \\
+        --transform <doc> --csv <site>/groups.csv [--original <frozen csv>]
 """
 
 from __future__ import annotations
@@ -148,6 +172,13 @@ import sys
 from pathlib import Path
 from typing import Iterable, Mapping
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# The ONE title rule, shared with every asset-title writer (Slice A). It
+# imports nothing from the seed tree, so importing it here makes no cycle.
+from title_rule import (TITLE_SEPARATORS, has_title_separator,  # noqa: E402
+                        normalize_title)
+
 # The roots the archive is authoritative for. `local` is the measured
 # case: no media_url, no source_archive, and the source tree is gone.
 PRESERVED_ROOTS = frozenset({"local"})
@@ -156,10 +187,39 @@ CSV_NAME = "metadata.csv"
 GROUPS_NAME = "groups.csv"
 
 TRANSFORM_KIND = "metadata-csv-transform"
-TRANSFORM_VERSION = 1
+GROUPS_TRANSFORM_KIND = "groups-csv-retitle"
+# 2: the retitle section and the title rule's identity (#1319, 2026-09-26).
+# Shared by both kinds. Nothing emitted at version 1 was ever committed
+# (transforms are produced at operation time into an evidence directory),
+# so nothing needs to stay readable.
+TRANSFORM_VERSION = 2
 SNAPSHOT_KIND = "frozen-snapshot-manifest"
 
 FILE_PATH_COLUMN = "file_path"
+GROUP_ID_COLUMN = "group_id"
+TITLE_COLUMN = "title"
+ASSET_COUNT_COLUMN = "asset_count"
+
+# The retitle entry, identical in both documents apart from its key.
+RETITLE_FIELDS = ("title_before", "title_after", "row_sha256_before",
+                  "row_sha256_after")
+
+# ⛔ THE RULE'S IDENTITY IS RECORDED, AND ITS BEHAVIOUR WITH IT. A version is
+# a label someone has to remember to bump; the fingerprint is the rule's
+# output on fixed probes, so a change to `title_rule.normalize_title` that
+# nobody versioned still invalidates every document built under the old
+# behaviour. Bump TITLE_RULE_VERSION whenever the fingerprint moves.
+TITLE_RULE_NAME = "title_rule.normalize_title"
+TITLE_RULE_VERSION = 1
+_TITLE_RULE_PROBES = (
+    "Sono Variablefont Mono,wght",
+    "Sintel , full film",
+    "Sintel \u2014 full film",
+    "a,,b",
+    "a\u2014\u2014b",
+    "lead, and trail ,",
+    "no separator at all",
+)
 
 _SHA256_HEX = 64
 
@@ -511,12 +571,20 @@ def build_csv_transform(csv_path: Path, *,
 
     `removals` is (file_path, retired_id) pairs, taken from the committed
     collapse document. A retirement whose `retired_file_path` has no row
-    here contributes no removal, which is how site_a's ZERO-REMOVAL
-    transform arises: its `metadata.csv` must stay byte-identical, 907
-    rows to 907, and that is an expectation to enforce rather than a case
+    here contributes no removal, which is how site_a has ZERO removals.
+
+    ⛔ REMOVAL FIRST, RETITLE SECOND, AND THE ORDER IS THE CONTRACT. The
+    removal set is fixed exactly as it always was, before any title is
+    looked at. The retitles are then every SURVIVING row whose title holds
+    a comma or an em dash, computed here by the shared rule rather than
+    accepted from anyone. A removed row is never retitled, and a punctuated
+    row that is legitimately removed needs no retitle. site_a's real shape
+    is 0 removals and 1 retitle; with neither, the file must stay
+    byte-identical, which is an expectation to enforce rather than a case
     to skip.
     """
     blob, header, rows, fields, idx = read_csv(csv_path)
+    tidx = _column_index(fields, TITLE_COLUMN, str(csv_path))
 
     # ⛔ CARDINALITY BEFORE KEYING ON IT. The removals are keyed by
     # `file_path`, so a duplicated one would make "the row this retired
@@ -559,14 +627,20 @@ def build_csv_transform(csv_path: Path, *,
             continue
         retained.append(row)
 
+    # Only now, over the survivors. The removal set above is final.
+    retained, retitles = _retitle_pass(retained, key_column=FILE_PATH_COLUMN,
+                                       key_idx=idx, title_idx=tidx)
+
     digests = [_sha(r) for r in retained]
     after = header + b"".join(retained)
     return {
         "_why": [
             "THE ONE WAY metadata.csv MAY CHANGE IN A PRESERVED PUBLISH (#1319).",
             "Produced BEFORE the operation from the frozen pre-op CSV and the "
-            "committed asset-collapse document. Exactly the rows named below "
-            "leave; every other row survives byte-identically and in order.",
+            "committed asset-collapse document. Exactly the rows named in "
+            "`removals` leave; then every surviving row whose title holds a "
+            "comma or an em dash is retitled by the shared title rule, and "
+            "only inside its title cell. Every other byte survives, in order.",
             "The published CSV is not regenerated from the profile's source-path "
             "map: its file_path column already holds DESTINATION paths, so the "
             "regeneration matched 0 rows and wrote a header-only file.",
@@ -594,6 +668,8 @@ def build_csv_transform(csv_path: Path, *,
             "sha256": _sha(header),
         },
         "removals": sorted(removed, key=lambda r: r[FILE_PATH_COLUMN]),
+        "title_rule": title_rule_identity(),
+        "retitles": retitles,
         "expected": {
             "sha256": _sha(after),
             "bytes": len(after),
@@ -614,11 +690,12 @@ def _hexish(v) -> bool:
             and all(c in "0123456789abcdef" for c in v))
 
 
-def parse_csv_transform(data, *, source: str) -> dict:
-    """Validate a transform document, fail closed."""
+def _parse_document_frame(data, source: str, *, kind: str) -> None:
+    """The frame both transform kinds share: kind, version, the original,
+    header and expected sections, and the self-consistency of the digests."""
     _require(isinstance(data, dict), source, "expected an object")
-    _require(data.get("kind") == TRANSFORM_KIND, source,
-             f"kind is {data.get('kind')!r}, not {TRANSFORM_KIND!r}")
+    _require(data.get("kind") == kind, source,
+             f"kind is {data.get('kind')!r}, not {kind!r}")
     _require(data.get("version") == TRANSFORM_VERSION, source,
              f"version is {data.get('version')!r}, not {TRANSFORM_VERSION}")
     for section, keys in (("original", ("sha256", "bytes", "data_rows")),
@@ -640,8 +717,6 @@ def parse_csv_transform(data, *, source: str) -> dict:
     _require(data["header"]["field_count"] == len(fields), source,
              f"header.field_count is {data['header']['field_count']!r} but "
              f"header.fields holds {len(fields)}")
-    _require(FILE_PATH_COLUMN in fields, source,
-             f"header.fields has no {FILE_PATH_COLUMN!r} column")
     digests = data["expected"]["row_digests"]
     _require(isinstance(digests, list) and all(_hexish(d) for d in digests), source,
              "expected.row_digests must be a list of sha256 digests")
@@ -651,6 +726,13 @@ def parse_csv_transform(data, *, source: str) -> dict:
     _require(ordered_digest(digests) == data["expected"]["ordered_digest"], source,
              "expected.ordered_digest does not match expected.row_digests; the "
              "document disagrees with itself")
+
+
+def parse_csv_transform(data, *, source: str) -> dict:
+    """Validate a metadata.csv transform document, fail closed."""
+    _parse_document_frame(data, source, kind=TRANSFORM_KIND)
+    _require(FILE_PATH_COLUMN in data["header"]["fields"], source,
+             f"header.fields has no {FILE_PATH_COLUMN!r} column")
     _require(isinstance(data.get("profile"), str) and data["profile"], source,
              "missing `profile` (the assets profile whose retirements these "
              "removals belong to); without it the transform is authority about "
@@ -718,6 +800,18 @@ def parse_csv_transform(data, *, source: str) -> dict:
              f"the arithmetic does not close: {data['original']['data_rows']} "
              f"original row(s) minus {len(removals)} removal(s) is not "
              f"{data['expected']['data_rows']}")
+    _require(TITLE_COLUMN in data["header"]["fields"], source,
+             f"header.fields has no {TITLE_COLUMN!r} column, so no retitle can "
+             f"be located")
+    retitles = _parse_retitle_section(data, source, key_column=FILE_PATH_COLUMN)
+    # ⛔ A ROW DOCUMENTED FOR BOTH IS REFUSED. Removal comes first and is
+    # final: a removed row has no title left to change, so a document naming
+    # one row twice is claiming two different things about it.
+    both = sorted({r[FILE_PATH_COLUMN] for r in retitles} & seen_fp)
+    _require(not both, source,
+             f"{len(both)} row(s) are documented for BOTH removal and retitle "
+             f"({both[:3]}). Removal is established first and a removed row is "
+             f"never retitled.")
     return data
 
 
@@ -764,22 +858,37 @@ def transform_csv(blob: bytes, doc: dict) -> tuple[bytes, list[str]]:
             f"{len(absent)} documented removal(s) have no row to remove "
             f"({absent[:5]}); the file is not in the state the document describes")
         return b"", refusals
+    # Removals are applied; only now are the survivors retitled.
+    retained, refusals = _apply_retitles(retained, doc, fields,
+                                         key_column=FILE_PATH_COLUMN)
+    if refusals:
+        return b"", refusals
     return header + b"".join(retained), refusals
 
 
-def verify_csv_transform(doc: dict, blob: bytes) -> list[str]:
+def verify_csv_transform(doc: dict, blob: bytes, *,
+                         original: bytes | None = None) -> list[str]:
     """Every way the bytes can fail to be the documented transform.
 
     ⛔ EVERY CHECK RUNS AND EVERY FAILURE IS REPORTED. Returning at the
     first refusal would make the second one invisible, and an operator
     who fixes one and re-runs deserves to have seen both.
+
+    `original` is the FROZEN PRE-OPERATION CSV. With it, the retitles are
+    RECOMPUTED from those bytes (the document's own list is not the
+    authority) and the bytes are proved to be exactly what the document
+    produces from them. Without it, every post-operation property is still
+    checked: each retitled row differs from its recorded pre-op digest
+    only inside its title cell, and no surviving title holds a comma or an
+    em dash.
     """
     refusals: list[str] = []
     exp = doc["expected"]
 
-    if _sha(blob) == doc["original"]["sha256"] and doc["removals"]:
+    if (_sha(blob) == doc["original"]["sha256"]
+            and (doc["removals"] or doc["retitles"])):
         refusals.append("these are still the PRE-OPERATION bytes: the documented "
-                        "removals have not been applied")
+                        "removals and retitles have not been applied")
 
     try:
         header, rows = split_csv_records(blob)
@@ -822,25 +931,8 @@ def verify_csv_transform(doc: dict, blob: bytes) -> list[str]:
                 f"document authorises and the file did not make is not a pass")
 
     got = [_sha(r) for r in rows]
-    want = list(exp["row_digests"])
-    if got != want:
-        if sorted(got) == sorted(want):
-            first = next((i for i, (a, b) in enumerate(zip(got, want)) if a != b),
-                         len(want))
-            refusals.append(
-                f"the retained rows are REORDERED: row {first} is not the one the "
-                f"document records there, and the multiset is unchanged. Order is "
-                f"part of the published artifact.")
-        else:
-            extra = sorted(set(got) - set(want))
-            gone = sorted(set(want) - set(got))
-            first = next((i for i, (a, b) in enumerate(zip(got, want)) if a != b),
-                         min(len(got), len(want)))
-            refusals.append(
-                f"the retained rows are not the documented ones: first difference "
-                f"at row {first}; {len(extra)} row(s) the document does not record "
-                f"and {len(gone)} recorded row(s) absent. A retained row must "
-                f"survive BYTE-IDENTICALLY; the document is not a summary of it.")
+    refusals += _row_digest_refusals(got, list(exp["row_digests"]),
+                                     noun="retained")
 
     if ordered_digest(got) != exp["ordered_digest"]:
         refusals.append(f"the ordered digest of the retained rows is "
@@ -852,6 +944,15 @@ def verify_csv_transform(doc: dict, blob: bytes) -> list[str]:
         refusals.append(f"the whole file hashes {whole[:12]}…, the document expects "
                         f"{exp['sha256'][:12]}… ({len(blob)} B against "
                         f"{exp['bytes']} B)")
+
+    refusals += _post_retitle_refusals(doc, header, rows,
+                                       key_column=FILE_PATH_COLUMN)
+    if original is not None:
+        refusals += _against_original(
+            doc, blob, original, transform_csv,
+            lambda: retitle_recomputation_refusals(
+                doc, original, key_column=FILE_PATH_COLUMN,
+                excluded={r[FILE_PATH_COLUMN] for r in doc["removals"]}))
     return refusals
 
 
@@ -1027,6 +1128,674 @@ def binding_refusals(doc: dict, *, profile_name: str, collapse_doc,
     return out
 
 
+def metadata_retitle_refusals(doc: dict, csv_blob: bytes, *,
+                              collapse_doc) -> list[str]:
+    """RECOMPUTE the metadata.csv retitles from the PRE-OPERATION bytes.
+
+    ⛔ THE REMOVAL SET COMES FROM THE COLLAPSE DOCUMENT, NOT FROM THE
+    TRANSFORM. The required retitles are the punctuated rows that survive
+    the AUTHORISED removals, so a retitle on a row that document retires is
+    refused even when the transform lists no removal for it: dropping the
+    removal and retitling the row instead would otherwise be a way to keep
+    a retired row in the published file.
+    """
+    try:
+        excluded = ({r[FILE_PATH_COLUMN]
+                     for r in authorized_removals(collapse_doc, csv_blob)}
+                    if collapse_doc is not None else set())
+    except PreservedError as e:
+        return [f"the pre-operation CSV cannot be read to recompute the "
+                f"required retitles ({e})"]
+    return retitle_recomputation_refusals(doc, csv_blob,
+                                          key_column=FILE_PATH_COLUMN,
+                                          excluded=excluded)
+
+
+# ---------------------------------------------------------------------------
+# 2c. The title retitle, shared by metadata.csv and groups.csv
+# ---------------------------------------------------------------------------
+#
+# ⛔ A SURVIVING ROW CHANGES ONLY INSIDE ITS TITLE CELL. The cell is located
+# BY BYTE and only its value is replaced: a quoted cell stays quoted, an
+# unquoted one stays unquoted, and every other byte of the record (every
+# other cell, every separator, the terminator, and site_b's 9 bare LFs
+# inside other quoted fields) is copied through untouched. A `csv`-module
+# round trip would re-quote and re-terminate the row, which is exactly what
+# the retained-rows rule was written to prevent.
+#
+# ⛔ AUTHORITY IS RECOMPUTATION. The builder computes the retitles from the
+# frozen bytes with the shared rule, and the publisher computes them again
+# from the same bytes and requires EXACT agreement. A document's own list,
+# however self-consistent, is never the authority for which rows change.
+
+def title_rule_identity() -> dict:
+    """The rule a retitle was computed under: its name, its version, the
+    characters it removes, and a fingerprint of its behaviour."""
+    probes = [[p, normalize_title(p)] for p in _TITLE_RULE_PROBES]
+    return {
+        "name": TITLE_RULE_NAME,
+        "version": TITLE_RULE_VERSION,
+        "separators": list(TITLE_SEPARATORS),
+        "fingerprint": _sha(json.dumps(probes, ensure_ascii=True).encode()),
+    }
+
+
+def _column_index(fields: list[str], column: str, source: str) -> int:
+    if column not in fields:
+        raise PreservedError(f"{source}: the CSV header has no {column!r} column. "
+                             f"Header: {fields}")
+    return fields.index(column)
+
+
+def _record_body(record: bytes) -> tuple[bytes, bytes]:
+    """(content, terminator). The terminator is whatever the record carried,
+    CRLF, bare LF or nothing, and is given back exactly."""
+    if record.endswith(b"\r\n"):
+        return record[:-2], b"\r\n"
+    if record.endswith(b"\n"):
+        return record[:-1], b"\n"
+    return record, b""
+
+
+def _cell_spans(body: bytes) -> list[tuple[int, int]]:
+    """(start, end) of every cell in one record's content, quotes included.
+
+    Strict on purpose: a cell this module rewrites has to be one whose
+    bytes it understands exactly. Text after a closing quote, or a quote
+    inside an unquoted cell, is refused rather than guessed at.
+    """
+    spans: list[tuple[int, int]] = []
+    i, n = 0, len(body)
+    while True:
+        start = i
+        if i < n and body[i] == 0x22:
+            i += 1
+            while True:
+                if i >= n:
+                    raise PreservedError("a quoted cell is not closed")
+                if body[i] == 0x22:
+                    if i + 1 < n and body[i + 1] == 0x22:
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                i += 1
+            if i < n and body[i] != 0x2C:
+                raise PreservedError("text follows a closing quote inside a cell")
+        else:
+            while i < n and body[i] != 0x2C:
+                if body[i] == 0x22:
+                    raise PreservedError("a quote appears inside an unquoted cell")
+                i += 1
+        spans.append((start, i))
+        if i >= n:
+            return spans
+        i += 1                       # the comma
+        if i == n:                   # a trailing comma opens one empty cell
+            spans.append((i, i))
+            return spans
+
+
+def _decode_cell(cell: bytes) -> str:
+    if cell[:1] == b'"':
+        return cell[1:-1].replace(b'""', b'"').decode("utf-8")
+    return cell.decode("utf-8")
+
+
+def retitle_record(record: bytes, title_idx: int, new_title: str) -> bytes:
+    """`record` with only its title cell's VALUE replaced, byte for byte.
+
+    ⛔ THE CELL KEEPS ITS QUOTING. A quoted cell is re-emitted quoted (with
+    `"` doubled, the only escape a quoted CSV cell has), an unquoted one
+    unquoted. A value an unquoted cell cannot carry is refused rather than
+    quietly given quotes it never had. Afterwards the record is re-parsed
+    and every other field must be what it was.
+    """
+    body, term = _record_body(record)
+    spans = _cell_spans(body)
+    if len(spans) <= title_idx:
+        raise PreservedError(f"the record has {len(spans)} cell(s), so it has no "
+                             f"title cell at index {title_idx}")
+    s, e = spans[title_idx]
+    cell = body[s:e]
+    before = record_fields(record)
+    if _decode_cell(cell) != before[title_idx]:
+        raise PreservedError("the title cell's bytes do not decode to the title "
+                             "the CSV parser reads from them")
+    if cell[:1] == b'"':
+        new_cell = b'"' + new_title.replace('"', '""').encode("utf-8") + b'"'
+    else:
+        if any(c in new_title for c in ',"\r\n'):
+            raise PreservedError(
+                f"the title cell is unquoted and {new_title!r} cannot be carried "
+                f"unquoted; the cell's quoting may not change")
+        new_cell = new_title.encode("utf-8")
+    out = body[:s] + new_cell + body[e:] + term
+    after = record_fields(out)
+    if (len(after) != len(before) or after[title_idx] != new_title
+            or any(a != b for i, (a, b) in enumerate(zip(after, before))
+                   if i != title_idx)):
+        raise PreservedError("replacing the title cell changed another field")
+    return out
+
+
+def _retitle_pass(rows: list[bytes], *, key_column: str, key_idx: int,
+                  title_idx: int) -> tuple[list[bytes], list[dict]]:
+    """(rows with every punctuated title retitled, the retitle entries).
+
+    The one computation behind a document's retitles, used by the builder
+    and again, from the same frozen bytes, by the recomputation.
+    """
+    after: list[bytes] = []
+    entries: list[dict] = []
+    for row in rows:
+        f = record_fields(row)
+        if len(f) <= max(key_idx, title_idx):
+            raise PreservedError(f"a data row has {len(f)} field(s), too few to "
+                                 f"hold its {key_column!r} and title cells")
+        before = f[title_idx]
+        if not has_title_separator(before):
+            after.append(row)
+            continue
+        new_title = normalize_title(before)
+        new_row = retitle_record(row, title_idx, new_title)
+        # The inverse has to hold, or the verifier could not prove a
+        # retitled row differs from its frozen bytes only in the title.
+        if retitle_record(new_row, title_idx, before) != row:
+            raise PreservedError(f"{f[key_idx]!r}: restoring the title does not "
+                                 f"give back the original row")
+        entries.append({key_column: f[key_idx],
+                        "title_before": before,
+                        "title_after": new_title,
+                        "row_sha256_before": _sha(row),
+                        "row_sha256_after": _sha(new_row)})
+        after.append(new_row)
+    return after, sorted(entries, key=lambda x: x[key_column])
+
+
+def _parse_retitle_section(data: dict, source: str, *, key_column: str) -> list:
+    _require(data.get("title_rule") == title_rule_identity(), source,
+             f"title_rule is {data.get('title_rule')!r}, but the rule in hand is "
+             f"{title_rule_identity()!r}. A retitle is authority only under the "
+             f"rule version that computed it; re-emit the document rather than "
+             f"reading it under another.")
+    retitles = data.get("retitles")
+    _require(isinstance(retitles, list), source, "`retitles` must be a list")
+    want_keys = {key_column, *RETITLE_FIELDS}
+    expected = set(data["expected"]["row_digests"])
+    keys: list[str] = []
+    for i, e in enumerate(retitles):
+        _require(isinstance(e, dict) and set(e) == want_keys, source,
+                 f"retitles[{i}] must hold exactly {sorted(want_keys)}, got "
+                 f"{sorted(e) if isinstance(e, dict) else e!r}")
+        k = e[key_column]
+        _require(isinstance(k, str) and k, source,
+                 f"retitles[{i}].{key_column} is empty or not a string")
+        before, after = e["title_before"], e["title_after"]
+        _require(isinstance(before, str) and isinstance(after, str), source,
+                 f"retitles[{i}] ({k}): title_before and title_after must be "
+                 f"strings")
+        _require(has_title_separator(before), source,
+                 f"retitles[{i}] ({k}): title_before {before!r} holds no comma "
+                 f"and no em dash, so it is not a required retitle")
+        _require(after == normalize_title(before), source,
+                 f"retitles[{i}] ({k}): title_after {after!r} is not the title "
+                 f"rule's output for {before!r}, which is "
+                 f"{normalize_title(before)!r}")
+        for d in ("row_sha256_before", "row_sha256_after"):
+            _require(_hexish(e[d]), source,
+                     f"retitles[{i}].{d} is not a sha256: {e[d]!r}")
+        _require(e["row_sha256_before"] != e["row_sha256_after"], source,
+                 f"retitles[{i}] ({k}): the row digest does not change")
+        _require(e["row_sha256_after"] in expected, source,
+                 f"retitles[{i}] ({k}): row_sha256_after is not among "
+                 f"expected.row_digests; the document disagrees with itself")
+        keys.append(k)
+    _require(len(set(keys)) == len(keys), source,
+             f"retitles names a {key_column} twice")
+    _require(keys == sorted(keys), source,
+             f"retitles is not sorted by {key_column}; an unsorted list could "
+             f"only be compared by re-sorting it")
+    return retitles
+
+
+def _apply_retitles(rows: list[bytes], doc: dict, fields: list[str], *,
+                    key_column: str) -> tuple[list[bytes], list[str]]:
+    """Apply the documented retitles to the SURVIVING pre-operation rows.
+
+    Every documented row must be present, be exactly the bytes the document
+    recorded before, and become exactly the bytes it recorded after.
+    """
+    try:
+        kidx, tidx = fields.index(key_column), fields.index(TITLE_COLUMN)
+    except ValueError:
+        return rows, [f"the header lacks {key_column!r} or {TITLE_COLUMN!r}, so "
+                      f"no retitle can be located"]
+    want = {e[key_column]: e for e in doc["retitles"]}
+    out: list[bytes] = []
+    hit: set[str] = set()
+    bad: list[str] = []
+    for row in rows:
+        f = record_fields(row)
+        e = want.get(f[kidx]) if len(f) > kidx else None
+        if e is None:
+            out.append(row)
+            continue
+        hit.add(f[kidx])
+        new = None
+        if _sha(row) == e["row_sha256_before"] and f[tidx] == e["title_before"]:
+            try:
+                new = retitle_record(row, tidx, e["title_after"])
+            except PreservedError:
+                new = None
+        if new is None or _sha(new) != e["row_sha256_after"]:
+            bad.append(f[kidx])
+            out.append(row)
+            continue
+        out.append(new)
+    refusals: list[str] = []
+    absent = sorted(set(want) - hit)
+    if absent:
+        refusals.append(f"{len(absent)} documented retitle(s) name no surviving "
+                        f"row ({absent[:5]}); the file is not in the state the "
+                        f"document describes")
+    if bad:
+        refusals.append(f"{len(bad)} documented retitle(s) do not turn the row's "
+                        f"recorded bytes into its recorded result ({bad[:5]})")
+    return out, refusals
+
+
+def _post_retitle_refusals(doc: dict, header: bytes, rows: list[bytes], *,
+                           key_column: str) -> list[str]:
+    """What the POST-operation bytes alone can prove about the retitles.
+
+    ⛔ AND THE FINAL FILE HOLDS NO SEPARATOR IN ANY SURVIVING TITLE. That is
+    the ruling itself, checked on the bytes, not inferred from the document.
+    """
+    fields = record_fields(header)
+    if key_column not in fields or TITLE_COLUMN not in fields:
+        return [f"the header has no {key_column!r} or {TITLE_COLUMN!r} column, "
+                f"so the retitles cannot be checked"]
+    kidx, tidx = fields.index(key_column), fields.index(TITLE_COLUMN)
+    by_key: dict[str, list[tuple[bytes, list[str]]]] = {}
+    punct: list[str] = []
+    for row in rows:
+        f = record_fields(row)
+        if len(f) <= max(kidx, tidx):
+            continue
+        by_key.setdefault(f[kidx], []).append((row, f))
+        if has_title_separator(f[tidx]):
+            punct.append(f"{f[kidx]} ({f[tidx]!r})")
+    out: list[str] = []
+    if punct:
+        out.append(f"{len(punct)} surviving title(s) still hold a comma or an em "
+                   f"dash ({punct[:3]}). No surviving title may hold either.")
+    absent, wrong_title, wrong_bytes, outside = [], [], [], []
+    for e in doc["retitles"]:
+        k = e[key_column]
+        hits = by_key.get(k, [])
+        if len(hits) != 1:
+            absent.append(k)
+            continue
+        row, f = hits[0]
+        if f[tidx] != e["title_after"]:
+            wrong_title.append(k)
+        if _sha(row) != e["row_sha256_after"]:
+            wrong_bytes.append(k)
+        try:
+            back = retitle_record(row, tidx, e["title_before"])
+        except PreservedError:
+            back = None
+        if back is None or _sha(back) != e["row_sha256_before"]:
+            outside.append(k)
+    if absent:
+        out.append(f"{len(absent)} documented retitle(s) have no single row in "
+                   f"the file ({absent[:3]})")
+    if wrong_title:
+        out.append(f"{len(wrong_title)} retitled row(s) do not carry the "
+                   f"documented title_after ({wrong_title[:3]})")
+    if wrong_bytes:
+        out.append(f"{len(wrong_bytes)} retitled row(s) are not the documented "
+                   f"bytes ({wrong_bytes[:3]})")
+    if outside:
+        out.append(f"{len(outside)} retitled row(s) do not give back their frozen "
+                   f"bytes when the title is restored ({outside[:3]}): they "
+                   f"differ OUTSIDE the title cell, or the cell's quoting "
+                   f"changed")
+    return out
+
+
+def retitle_recomputation_refusals(doc: dict, original: bytes, *,
+                                   key_column: str,
+                                   excluded: set[str] | frozenset[str]
+                                   ) -> list[str]:
+    """RECOMPUTE the required retitles from the FROZEN bytes; compare exactly.
+
+    `excluded` is the authorised removal set (metadata.csv) or empty
+    (groups.csv). Required = every row whose title holds a comma or an em
+    dash, minus `excluded`. The document must name exactly those rows, with
+    exactly the titles and digests the shared rule gives.
+    """
+    try:
+        header, rows = split_csv_records(original)
+        fields = record_fields(header)
+        kidx = _column_index(fields, key_column, "the pre-operation CSV")
+        tidx = _column_index(fields, TITLE_COLUMN, "the pre-operation CSV")
+        keys = [(record_fields(r) + [""] * (kidx + 1))[kidx] for r in rows]
+        survivors = [r for r, k in zip(rows, keys) if k not in excluded]
+        _after, want = _retitle_pass(survivors, key_column=key_column,
+                                     key_idx=kidx, title_idx=tidx)
+    except PreservedError as e:
+        return [f"the pre-operation CSV cannot be read to recompute the required "
+                f"retitles ({e})"]
+    wk = {e[key_column]: e for e in want}
+    gk = {e.get(key_column): e for e in doc.get("retitles") or []}
+    missing = sorted(set(wk) - set(gk))
+    extra = sorted(set(gk) - set(wk), key=str)
+    known = set(keys)
+    out: list[str] = []
+    if missing:
+        out.append(f"{len(missing)} surviving row(s) whose title holds a comma or "
+                   f"an em dash have NO retitle ({missing[:3]}); every one is "
+                   f"required")
+    removed = [k for k in extra if k in excluded]
+    unknown = [k for k in extra if k not in known]
+    plain = [k for k in extra if k in known and k not in excluded]
+    if removed:
+        out.append(f"{len(removed)} retitle(s) name a row in the AUTHORISED "
+                   f"REMOVAL SET ({removed[:3]}). Removal comes first and a "
+                   f"removed row is never retitled, whether or not this document "
+                   f"lists the removal.")
+    if unknown:
+        out.append(f"{len(unknown)} retitle(s) name a {key_column} the frozen "
+                   f"file does not hold ({unknown[:3]})")
+    if plain:
+        out.append(f"{len(plain)} retitle(s) name a row whose frozen title holds "
+                   f"no comma and no em dash ({plain[:3]}); only a punctuated "
+                   f"title may change")
+    mismatched = sorted(k for k in set(wk) & set(gk) if wk[k] != gk[k])
+    if mismatched:
+        out.append(f"{len(mismatched)} retitle(s) disagree with the recomputation "
+                   f"from the frozen bytes ({mismatched[:3]}); the document's "
+                   f"own figures are not the authority")
+    return out
+
+
+def _against_original(doc: dict, blob: bytes, original: bytes, apply_fn,
+                      recompute) -> list[str]:
+    """The full proof, when the frozen pre-operation bytes are in hand."""
+    if _sha(original) != doc["original"]["sha256"]:
+        return [f"the original supplied hashes {_sha(original)[:12]}…, but the "
+                f"document was built from {doc['original']['sha256'][:12]}…; it "
+                f"is not the frozen file this document describes"]
+    out: list[str] = []
+    after, refusals = apply_fn(original, doc)
+    if refusals:
+        out += refusals
+    elif after != blob:
+        out.append("the file is not the bytes this document produces from the "
+                   "frozen original")
+    return out + recompute()
+
+
+def _row_digest_refusals(got: list[str], want: list[str], *,
+                         noun: str) -> list[str]:
+    out: list[str] = []
+    if got != want:
+        if sorted(got) == sorted(want):
+            first = next((i for i, (a, b) in enumerate(zip(got, want)) if a != b),
+                         len(want))
+            out.append(
+                f"the {noun} rows are REORDERED: row {first} is not the one the "
+                f"document records there, and the multiset is unchanged. Order is "
+                f"part of the published artifact.")
+        else:
+            extra = sorted(set(got) - set(want))
+            gone = sorted(set(want) - set(got))
+            first = next((i for i, (a, b) in enumerate(zip(got, want)) if a != b),
+                         min(len(got), len(want)))
+            out.append(
+                f"the {noun} rows are not the documented ones: first difference "
+                f"at row {first}; {len(extra)} row(s) the document does not record "
+                f"and {len(gone)} recorded row(s) absent. A row must survive "
+                f"BYTE-IDENTICALLY apart from a documented title cell; the "
+                f"document is not a summary of it.")
+    return out
+
+
+def csv_title_punctuation(blob: bytes) -> dict:
+    """How many title cells of a CSV hold a comma or an em dash.
+
+    Read-only, for the publish-time title check in `verify_site`. Raises
+    PreservedError when the file has no `title` column: a check that cannot
+    find the column has not passed.
+    """
+    header, rows = split_csv_records(blob)
+    tidx = _column_index(record_fields(header), TITLE_COLUMN, "the CSV")
+    hits: list[str] = []
+    commas = dashes = 0
+    for row in rows:
+        f = record_fields(row)
+        t = f[tidx] if len(f) > tidx else ""
+        c, m = t.count(","), t.count("\u2014")
+        if c or m:
+            hits.append(t)
+            commas += c
+            dashes += m
+    return {"rows": len(rows), "titles_with_separator": len(hits),
+            "commas": commas, "em_dashes": dashes, "sample": hits[:5]}
+
+
+# ---------------------------------------------------------------------------
+# 2d. The groups.csv retitle-only document
+# ---------------------------------------------------------------------------
+#
+# ⛔ RETITLE ONLY. `groups.csv` can never remove a row: nothing retires a
+# group, and no group loses its last shipped member (0 of 1,047 on site_b
+# ship nothing). Its required retitles are EVERY punctuated row.
+#
+# ⛔ KEYED BY `group_id`, NEVER `file_path`. The file has no `file_path`
+# column at all; its row identity is `group_id`, measured unique and
+# non-empty on both sites (594 of 594, 1,047 of 1,047), and the builder
+# refuses a duplicate or an empty one before anything is keyed on it.
+#
+# ⛔ `asset_count` IS NEVER TOUCHED. It is an ORIGINAL-DATASET fact (ADR
+# 0097 section 5). The document records an ordered digest of the column,
+# so a change to it is refused by name rather than as an anonymous digest
+# mismatch.
+
+def _asset_count_digest(rows: list[bytes], aidx: int) -> str:
+    values = [(record_fields(r) + [""] * (aidx + 1))[aidx] for r in rows]
+    return _sha(json.dumps(values, ensure_ascii=True).encode())
+
+
+def _read_groups(path: Path) -> tuple[bytes, bytes, list[bytes], list[str]]:
+    try:
+        blob = path.read_bytes()
+    except OSError as e:
+        raise PreservedError(f"{path}: unreadable ({e})") from e
+    header, rows = split_csv_records(blob)
+    return blob, header, rows, record_fields(header)
+
+
+def build_groups_transform(csv_path: Path, *, site: Path | None = None) -> dict:
+    """The groups.csv retitle document, from the PRE-OPERATION file."""
+    blob, header, rows, fields = _read_groups(csv_path)
+    src = str(csv_path)
+    kidx = _column_index(fields, GROUP_ID_COLUMN, src)
+    tidx = _column_index(fields, TITLE_COLUMN, src)
+    aidx = _column_index(fields, ASSET_COUNT_COLUMN, src)
+
+    # ⛔ CARDINALITY BEFORE KEYING ON IT.
+    seen: dict[str, int] = {}
+    empty = 0
+    for row in rows:
+        f = record_fields(row)
+        if len(f) <= max(kidx, tidx, aidx):
+            raise PreservedError(
+                f"{src}: a data row has {len(f)} field(s), fewer than the "
+                f"{len(fields)}-field header reaches; the file is malformed")
+        if not f[kidx]:
+            empty += 1
+        seen[f[kidx]] = seen.get(f[kidx], 0) + 1
+    if empty:
+        raise PreservedError(
+            f"{src}: {empty} row(s) have an EMPTY {GROUP_ID_COLUMN}. A retitle is "
+            f"keyed on this column, so an empty one names no row.")
+    dupes = sorted(k for k, n in seen.items() if n > 1)
+    if dupes:
+        raise PreservedError(
+            f"{src}: {len(dupes)} {GROUP_ID_COLUMN} value(s) appear on more than "
+            f"one row ({dupes[:5]}). A retitle is keyed on this column, so a "
+            f"duplicate makes the row it names ambiguous.")
+
+    after_rows, retitles = _retitle_pass(rows, key_column=GROUP_ID_COLUMN,
+                                         key_idx=kidx, title_idx=tidx)
+    digests = [_sha(r) for r in after_rows]
+    after = header + b"".join(after_rows)
+    return {
+        "_why": [
+            "THE ONE WAY groups.csv MAY CHANGE IN A PRESERVED PUBLISH (#1319).",
+            "Produced BEFORE the operation from the frozen pre-op groups.csv. "
+            "Every row whose title holds a comma or an em dash is retitled by "
+            "the shared title rule, inside its title cell only. No row is "
+            "removed, asset_count is never changed, and every other byte "
+            "survives, in order.",
+        ],
+        "kind": GROUPS_TRANSFORM_KIND,
+        "version": TRANSFORM_VERSION,
+        "site": str(_resolved(site)) if site is not None else "",
+        "csv": GROUPS_NAME,
+        "original": {"sha256": _sha(blob), "bytes": len(blob),
+                     "data_rows": len(rows)},
+        "header": {"fields": fields, "field_count": len(fields),
+                   "sha256": _sha(header)},
+        "title_rule": title_rule_identity(),
+        "retitles": retitles,
+        "asset_count": {"column": ASSET_COUNT_COLUMN,
+                        "ordered_sha256": _asset_count_digest(rows, aidx)},
+        "expected": {
+            "sha256": _sha(after),
+            "bytes": len(after),
+            "data_rows": len(after_rows),
+            "ordered_digest": ordered_digest(digests),
+            "row_digests": digests,
+        },
+    }
+
+
+def parse_groups_transform(data, *, source: str) -> dict:
+    """Validate a groups retitle document, fail closed."""
+    _parse_document_frame(data, source, kind=GROUPS_TRANSFORM_KIND)
+    fields = data["header"]["fields"]
+    for col in (GROUP_ID_COLUMN, TITLE_COLUMN, ASSET_COUNT_COLUMN):
+        _require(col in fields, source, f"header.fields has no {col!r} column")
+    _require("removals" not in data, source,
+             "a groups.csv transform carries a `removals` section, but it can "
+             "never remove a row; it is retitle-only")
+    _require(data["original"]["data_rows"] == data["expected"]["data_rows"],
+             source,
+             f"expected.data_rows is {data['expected']['data_rows']!r} but the "
+             f"original holds {data['original']['data_rows']!r}; a groups.csv "
+             f"transform never removes or adds a row")
+    ac_blk = data.get("asset_count")
+    _require(isinstance(ac_blk, dict)
+             and ac_blk.get("column") == ASSET_COUNT_COLUMN
+             and _hexish(ac_blk.get("ordered_sha256")), source,
+             f"`asset_count` must be an object naming the {ASSET_COUNT_COLUMN!r} "
+             f"column and its ordered_sha256")
+    _parse_retitle_section(data, source, key_column=GROUP_ID_COLUMN)
+    return data
+
+
+def load_groups_transform(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise PreservedError(f"{path}: unreadable ({e})") from e
+    return parse_groups_transform(data, source=str(path))
+
+
+def transform_groups(blob: bytes, doc: dict) -> tuple[bytes, list[str]]:
+    """Apply the documented retitles to the PRE-OPERATION groups.csv."""
+    if _sha(blob) != doc["original"]["sha256"]:
+        return b"", [
+            f"groups.csv hashes {_sha(blob)[:12]}… but the transform document was "
+            f"built from {doc['original']['sha256'][:12]}…. The document is not "
+            f"evidence about these bytes; re-emit it from the frozen pre-op copy "
+            f"rather than widening the check."]
+    header, rows = split_csv_records(blob)
+    fields = record_fields(header)
+    if fields != doc["header"]["fields"]:
+        return b"", [f"the groups.csv header does not match the document's "
+                     f"{doc['header']['field_count']} field(s)"]
+    after, refusals = _apply_retitles(rows, doc, fields,
+                                      key_column=GROUP_ID_COLUMN)
+    if refusals:
+        return b"", refusals
+    return header + b"".join(after), []
+
+
+def groups_retitle_refusals(doc: dict, original: bytes) -> list[str]:
+    """RECOMPUTE the groups.csv retitles from the PRE-OPERATION bytes:
+    exactly every punctuated row, nothing excluded."""
+    return retitle_recomputation_refusals(doc, original,
+                                          key_column=GROUP_ID_COLUMN,
+                                          excluded=frozenset())
+
+
+def verify_groups_transform(doc: dict, blob: bytes, *,
+                            original: bytes | None = None) -> list[str]:
+    """Every way groups.csv can fail to be the documented retitle.
+
+    ⛔ EVERY CHECK RUNS AND EVERY FAILURE IS REPORTED, as for metadata.csv.
+    `original` (the frozen pre-op file) adds the recomputation.
+    """
+    refusals: list[str] = []
+    exp = doc["expected"]
+    if _sha(blob) == doc["original"]["sha256"] and doc["retitles"]:
+        refusals.append("these are still the PRE-OPERATION bytes: the documented "
+                        "retitles have not been applied")
+    try:
+        header, rows = split_csv_records(blob)
+    except PreservedError as e:
+        return refusals + [str(e)]
+    if _sha(header) != doc["header"]["sha256"]:
+        refusals.append(
+            f"the groups.csv header row changed: {_sha(header)[:12]}… against the "
+            f"documented {doc['header']['sha256'][:12]}…")
+    fields = record_fields(header)
+    if len(rows) != exp["data_rows"]:
+        refusals.append(
+            f"{len(rows)} data row(s), the document expects {exp['data_rows']}. "
+            f"groups.csv can never lose or gain a row.")
+    got = [_sha(r) for r in rows]
+    refusals += _row_digest_refusals(got, list(exp["row_digests"]), noun="groups.csv")
+    if ordered_digest(got) != exp["ordered_digest"]:
+        refusals.append(f"the ordered digest of the groups.csv rows is "
+                        f"{ordered_digest(got)[:12]}…, the document expects "
+                        f"{exp['ordered_digest'][:12]}…")
+    if _sha(blob) != exp["sha256"]:
+        refusals.append(f"the whole file hashes {_sha(blob)[:12]}…, the document "
+                        f"expects {exp['sha256'][:12]}… ({len(blob)} B against "
+                        f"{exp['bytes']} B)")
+    if ASSET_COUNT_COLUMN in fields:
+        now = _asset_count_digest(rows, fields.index(ASSET_COUNT_COLUMN))
+        if now != doc["asset_count"]["ordered_sha256"]:
+            refusals.append(
+                "asset_count CHANGED. It is an original-dataset fact and a "
+                "preserved publish never rewrites it (ADR 0097 section 5).")
+    else:
+        refusals.append(f"the header has no {ASSET_COUNT_COLUMN!r} column")
+    refusals += _post_retitle_refusals(doc, header, rows,
+                                       key_column=GROUP_ID_COLUMN)
+    if original is not None:
+        refusals += _against_original(
+            doc, blob, original, transform_groups,
+            lambda: groups_retitle_refusals(doc, original))
+    return refusals
+
+
 # ---------------------------------------------------------------------------
 # 3. The frozen-snapshot manifest
 # ---------------------------------------------------------------------------
@@ -1128,11 +1897,14 @@ def _cmd_csv_transform(args) -> int:
     # "original" hash describes bytes nobody froze.
     if not refuse_operation(live=args.live_site, staging=args.staging,
                             snapshot=args.snapshot,
-                            evidence={"--out": args.out}):
+                            evidence={"--out": args.out,
+                                      "--snapshot-manifest": args.snapshot_manifest}):
         return 2
     snap = _resolved(args.snapshot)
     if not snap.is_dir():
         print(f"error: --snapshot {snap} is not a directory", file=sys.stderr)
+        return 2
+    if not _snapshot_input_attested(args, snap, CSV_NAME):
         return 2
     if (args.collapse_document is None) == (not args.no_collapse_document):
         print("error: pass exactly one of --collapse-document <path> or "
@@ -1179,16 +1951,74 @@ def _cmd_csv_transform(args) -> int:
     print(f"recorded the expected transform of {snap / CSV_NAME}: "
           f"{out_doc['original']['data_rows']} row(s) -> "
           f"{out_doc['expected']['data_rows']}, "
-          f"{len(out_doc['removals'])} documented removal(s)", file=sys.stderr)
+          f"{len(out_doc['removals'])} documented removal(s), "
+          f"{len(out_doc['retitles'])} documented retitle(s)", file=sys.stderr)
     print(f"  authorised by {profile}"
           + (f" via a collapse document hashing {binding['sha256'][:12]}… "
              f"({binding['entries']} entry(ies))" if binding
              else " with NO collapse document (0 removals may be authorised)"),
           file=sys.stderr)
-    if not out_doc["removals"]:
-        print("  ZERO-REMOVAL transform: this metadata.csv must stay "
-              "byte-identical. That is an expectation to enforce, not a case to "
-              "skip.", file=sys.stderr)
+    print(f"  retitles recomputed from the frozen bytes by "
+          f"{TITLE_RULE_NAME} v{TITLE_RULE_VERSION}: every surviving title that "
+          f"holds a comma or an em dash, and nothing else", file=sys.stderr)
+    print("  removals and retitles as documented: every other byte of this "
+          "metadata.csv must stay identical"
+          + (", and with neither the whole file must stay byte-identical"
+             if not out_doc["removals"] and not out_doc["retitles"] else ""),
+          file=sys.stderr)
+    print(f"wrote {args.out}", file=sys.stderr)
+    return 0
+
+
+def _snapshot_input_attested(args, snap: Path, rel: str) -> bool:
+    """With --snapshot-manifest, recompute the snapshot's input file against
+    it before building anything from it. The transform's input is the
+    FROZEN snapshot, and a snapshot is only frozen if its bytes are still
+    the ones attested when it was taken."""
+    if args.snapshot_manifest is None:
+        return True
+    try:
+        manifest = load_snapshot_manifest(args.snapshot_manifest)
+    except PreservedError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return False
+    stale = recompute_snapshot(snap, manifest, [rel])
+    if stale:
+        print("error: the frozen snapshot does not match its manifest, so it is "
+              "not frozen and no transform may be built from it:",
+              file=sys.stderr)
+        for s in stale:
+            print(f"  - {s}", file=sys.stderr)
+        return False
+    return True
+
+
+def _cmd_groups_transform(args) -> int:
+    # ⛔ THE SAME THREE-TREE BOUNDARY AS metadata.csv. The input is the FROZEN
+    # snapshot's groups.csv; never the live site and never the staging tree.
+    if not refuse_operation(live=args.live_site, staging=args.staging,
+                            snapshot=args.snapshot,
+                            evidence={"--out": args.out,
+                                      "--snapshot-manifest": args.snapshot_manifest}):
+        return 2
+    snap = _resolved(args.snapshot)
+    if not snap.is_dir():
+        print(f"error: --snapshot {snap} is not a directory", file=sys.stderr)
+        return 2
+    if not _snapshot_input_attested(args, snap, GROUPS_NAME):
+        return 2
+    try:
+        out_doc = build_groups_transform(snap / GROUPS_NAME, site=snap)
+        parse_groups_transform(out_doc, source="the document just built")
+    except PreservedError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(out_doc, indent=1) + "\n", encoding="utf-8")
+    print(f"recorded the retitle transform of {snap / GROUPS_NAME}: "
+          f"{out_doc['original']['data_rows']} row(s), none removed, "
+          f"{len(out_doc['retitles'])} documented retitle(s) keyed by "
+          f"{GROUP_ID_COLUMN}; asset_count is never changed", file=sys.stderr)
     print(f"wrote {args.out}", file=sys.stderr)
     return 0
 
@@ -1211,15 +2041,16 @@ def _cmd_snapshot_manifest(args) -> int:
     return 0
 
 
-def _cmd_verify_csv(args) -> int:
+def _verify_cli(args, *, load, verify, what: str) -> int:
     """Read-only. No tree is written, so no boundary applies here."""
     try:
-        doc = load_csv_transform(args.transform)
+        doc = load(args.transform)
         blob = args.csv.read_bytes()
+        original = args.original.read_bytes() if args.original else None
     except (PreservedError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    refusals = verify_csv_transform(doc, blob)
+    refusals = verify(doc, blob, original=original)
     if refusals:
         print(f"⛔ {args.csv} is not the documented transform "
               f"({len(refusals)} refusal(s)):", file=sys.stderr)
@@ -1227,9 +2058,22 @@ def _cmd_verify_csv(args) -> int:
             print(f"  - {r}", file=sys.stderr)
         return 1
     print(f"{args.csv} is exactly the documented transform: "
-          f"{doc['expected']['data_rows']} retained row(s), "
-          f"{len(doc['removals'])} removal(s)", file=sys.stderr)
+          f"{doc['expected']['data_rows']} {what} row(s), "
+          f"{len(doc.get('removals', []))} removal(s), "
+          f"{len(doc['retitles'])} retitle(s)"
+          + ("; recomputed from the frozen original" if original is not None
+             else "; pass --original for the recomputation"), file=sys.stderr)
     return 0
+
+
+def _cmd_verify_csv(args) -> int:
+    return _verify_cli(args, load=load_csv_transform,
+                       verify=verify_csv_transform, what="retained")
+
+
+def _cmd_verify_groups(args) -> int:
+    return _verify_cli(args, load=load_groups_transform,
+                       verify=verify_groups_transform, what="groups.csv")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1267,9 +2111,25 @@ def main(argv: list[str] | None = None) -> int:
                    help="assets profile name (e.g. studio-a.assets.json). Taken "
                         "from the collapse document when one is given; required "
                         "with --no-collapse-document.")
+    t.add_argument("--snapshot-manifest", type=Path, default=None,
+                   help="the snapshot's external manifest; when given, the "
+                        "snapshot's metadata.csv is recomputed against it "
+                        "before anything is built from it")
     t.add_argument("--out", required=True, type=Path,
                    help="where to write it; never inside any of the three trees")
     t.set_defaults(fn=_cmd_csv_transform)
+
+    g = sub.add_parser("groups-transform",
+                       help="record the one way groups.csv may change "
+                            "(title retitles only)")
+    three_trees(g)
+    g.add_argument("--snapshot-manifest", type=Path, default=None,
+                   help="the snapshot's external manifest; when given, the "
+                        "snapshot's groups.csv is recomputed against it before "
+                        "anything is built from it")
+    g.add_argument("--out", required=True, type=Path,
+                   help="where to write it; never inside any of the three trees")
+    g.set_defaults(fn=_cmd_groups_transform)
 
     s = sub.add_parser("snapshot-manifest",
                        help="attest a frozen snapshot, bytes only")
@@ -1282,7 +2142,19 @@ def main(argv: list[str] | None = None) -> int:
                                           "transform document (read only)")
     v.add_argument("--transform", required=True, type=Path)
     v.add_argument("--csv", required=True, type=Path)
+    v.add_argument("--original", type=Path, default=None,
+                   help="the frozen pre-operation metadata.csv; adds the full "
+                        "recomputation of removals applied and retitles required")
     v.set_defaults(fn=_cmd_verify_csv)
+
+    vg = sub.add_parser("verify-groups", help="check a groups.csv against its "
+                                              "retitle document (read only)")
+    vg.add_argument("--transform", required=True, type=Path)
+    vg.add_argument("--csv", required=True, type=Path)
+    vg.add_argument("--original", type=Path, default=None,
+                    help="the frozen pre-operation groups.csv; adds the "
+                         "recomputation of the required retitles")
+    vg.set_defaults(fn=_cmd_verify_groups)
 
     args = ap.parse_args(argv)
     return args.fn(args)

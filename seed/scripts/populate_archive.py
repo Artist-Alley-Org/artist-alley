@@ -17,6 +17,7 @@ Layout produced under <dest>:
     ├── <type>/internet/<filename>    (internet-fetched content)
     ├── metadata.csv                  filtered + file_path rewritten
     ├── groups.csv                    filtered to groups touching site rows
+                                      (preserved mode: title retitles only)
     └── MANIFEST.json                 copy of studio-X.assets.json
 
 Each profile record carries:
@@ -68,7 +69,14 @@ from. `--preserved-roots` says so explicitly, and then:
     matched 0 of 907 site_a rows and 0 of 1,206 site_b rows and wrote a
     HEADER-ONLY file. It now changes only the way the `--csv-transform`
     document, written BEFORE the run, says it may.
-  * `groups.csv` is left untouched and is preservation-owned.
+  * `groups.csv` changes only through the `--groups-transform` document
+    (#1319, ADR 0097 amendment of 2026-09-26): a RETITLE-ONLY document
+    keyed by `group_id`. It never removes a row and never changes
+    `asset_count`; only the title cell of a documented row may differ.
+  * `metadata.csv`'s document carries its title retitles too: removals
+    first, exactly as before, then every punctuated row that survives
+    them. Both documents' retitles are RECOMPUTED from the pre-operation
+    bytes before any write, so neither document is its own authority.
   * A `preserved_archive` retirement is authenticated against
     `--frozen-snapshot`, whose hashes are RECOMPUTED against
     `--snapshot-manifest` immediately beforehand. ⛔ Never the live tree
@@ -103,6 +111,7 @@ Usage
         --profile seed/profiles/studio-a.assets.json \\
         --posts   seed/profiles/studio-a.posts.json \\
         --csv-transform $EVIDENCE/site_a.csv-transform.json \\
+        --groups-transform $EVIDENCE/site_a.groups-transform.json \\
         --live-site $LIVE/site_a \\
         --frozen-snapshot $FROZEN/site_a \\
         --snapshot-manifest $EVIDENCE/site_a.snapshot-manifest.json \\
@@ -777,7 +786,8 @@ def _preserved_snapshot(args):
     if not pa.refuse_operation(
             live=args.live_site, staging=args.dest, snapshot=snap,
             evidence={"--snapshot-manifest": args.snapshot_manifest,
-                      "--csv-transform": args.csv_transform}):
+                      "--csv-transform": args.csv_transform,
+                      "--groups-transform": args.groups_transform}):
         print("  A preserved retirement authenticated from the live site or "
               "from the tree being published proves nothing at all.",
               file=sys.stderr)
@@ -1362,6 +1372,27 @@ def preserved_csv_plan(args, collapse_loaded):
               "<evidence>/<site>.csv-transform.json", file=sys.stderr)
         return False
 
+    # ⛔ THE RETITLES ARE RECOMPUTED, AFTER THE REMOVALS ARE PROVED. Required
+    # = every punctuated row of the pre-operation CSV that survives the
+    # removals the collapse document AUTHORISES (not the ones the transform
+    # happens to list), by the shared title rule. Like the removal
+    # recomputation it needs the pre-operation rows, so an idempotent re-run
+    # proves the bytes instead, below.
+    if not _refuse_unattested(args, pa.CSV_NAME, doc, args.csv_transform):
+        return False
+    retitled = (pa.metadata_retitle_refusals(doc, blob, collapse_doc=collapse_doc)
+                if pre_op else [])
+    if retitled:
+        print(f"error: {args.csv_transform}: its retitles are not the ones the "
+              f"frozen pre-operation {pa.CSV_NAME} requires:", file=sys.stderr)
+        for r in retitled:
+            print(f"  - {r}", file=sys.stderr)
+        print("  Refusing before writing anything. A retitle is authority only "
+              "when it is exactly what the shared title rule computes from the "
+              "frozen bytes; re-emit the transform rather than editing it.",
+              file=sys.stderr)
+        return False
+
     got = pa.sha256_file(dest_csv)
     if got == doc["expected"]["sha256"] and got != doc["original"]["sha256"]:
         print(f"  {pa.CSV_NAME}: already exactly the documented transform "
@@ -1377,7 +1408,7 @@ def preserved_csv_plan(args, collapse_loaded):
         for r in refusals:
             print(f"  - {r}", file=sys.stderr)
         return False
-    check = pa.verify_csv_transform(doc, after)
+    check = pa.verify_csv_transform(doc, after, original=blob)
     if check:
         print(f"error: the transform this run would apply does not match the "
               f"document's own expectations. Refusing before writing anything:",
@@ -1387,14 +1418,146 @@ def preserved_csv_plan(args, collapse_loaded):
         return False
     note = (f"{doc['original']['data_rows']:,} row(s) -> "
             f"{doc['expected']['data_rows']:,}, "
-            f"{len(doc['removals'])} documented removal(s)")
-    if not doc["removals"]:
-        note += " (ZERO-REMOVAL transform: the bytes must not change at all)"
+            f"{len(doc['removals'])} documented removal(s), "
+            f"{len(doc['retitles'])} documented retitle(s); removals and "
+            f"retitles as documented, every other byte unchanged")
     if after == blob:
         # ⛔ NOTHING TO CHANGE MEANS NOTHING IS WRITTEN. Re-writing identical
         # bytes would move the mtime of a preservation-owned file on a share
-        # with no backup, for no gain. This is the site_a case: 907 rows to
-        # 907, 0 removals.
+        # with no backup, for no gain: no removal and no retitle.
+        return (note + "; already exactly that, nothing to write", None)
+    return (note, after)
+
+
+def _attested_input(args, rel: str, doc: dict) -> list[str]:
+    """Tie a transform's "original" to the FROZEN SNAPSHOT's attestation.
+
+    With `--snapshot-manifest`, the bytes a transform was built from must be
+    the bytes the manifest attests for that file, and, with
+    `--frozen-snapshot`, the snapshot must still hold them. The frozen
+    snapshot is the only acceptable transform input; this proves it rather
+    than trusting the document's own "original" hash.
+    """
+    if args.snapshot_manifest is None:
+        return []
+    try:
+        manifest = pa.load_snapshot_manifest(args.snapshot_manifest)
+    except pa.PreservedError as e:
+        return [f"{e}. A snapshot manifest that cannot be validated is not an "
+                f"attestation, and an unattested snapshot authenticates nothing."]
+    want = manifest.get(rel)
+    if want is None:
+        return [f"{rel} is not in the snapshot manifest, so nothing attests the "
+                f"bytes this transform was built from"]
+    out: list[str] = []
+    if want != doc["original"]["sha256"]:
+        out.append(f"the transform was built from {rel} bytes hashing "
+                   f"{doc['original']['sha256'][:12]}…, but the snapshot manifest "
+                   f"attests {want[:12]}…; it was not built from the frozen "
+                   f"snapshot")
+    if args.frozen_snapshot is not None:
+        out += pa.recompute_snapshot(args.frozen_snapshot, manifest, [rel])
+    return out
+
+
+def _refuse_unattested(args, rel: str, doc: dict, doc_path) -> bool:
+    """Print and return False when the transform's input is not the
+    attested frozen snapshot; True when it is, or when no manifest is
+    supplied (the snapshot is then not in play for this file)."""
+    bad = _attested_input(args, rel, doc)
+    if not bad:
+        return True
+    print(f"error: {doc_path}: the {rel} it was built from is not the attested "
+          f"frozen snapshot:", file=sys.stderr)
+    for b in bad:
+        print(f"  - {b}", file=sys.stderr)
+    print("  Refusing before writing anything. The frozen snapshot is the only "
+          "acceptable transform input.", file=sys.stderr)
+    return False
+
+
+def preserved_groups_plan(args):
+    """The ONE change `groups.csv` may undergo in preserved mode: its title
+    retitles, and nothing else.
+
+    Returns (note, after_bytes) where `after_bytes` is None when nothing is
+    to be written, or False after printing a refusal. ⛔ RUNS BEFORE ANY
+    WRITE, AND IN --dry-run TOO.
+
+    ⛔ A groups.csv AT THE DESTINATION WITH NO DOCUMENT IS REFUSED. The owner
+    ruling requires its punctuated titles to be retitled, so a publish that
+    leaves them would ship exactly what was ruled out, and one that changed
+    them without a document would have no evidence. Only a destination with
+    no groups.csv at all needs none.
+    """
+    dest_groups = args.dest / pa.GROUPS_NAME
+    if args.groups_transform is None:
+        if dest_groups.is_file():
+            print(f"error: --preserved-roots with a {pa.GROUPS_NAME} at the "
+                  f"destination requires --groups-transform.\n"
+                  f"  {pa.GROUPS_NAME} changes only through its retitle-only "
+                  f"document, produced BEFORE this run from the frozen pre-op "
+                  f"copy:\n"
+                  f"    python3 seed/scripts/preserved_archive.py groups-transform "
+                  f"--snapshot <frozen> \\\n"
+                  f"        --live-site <live> --staging <dest> "
+                  f"--out <outside-all-three>/<site>.groups-transform.json",
+                  file=sys.stderr)
+            return False
+        return ("absent at the destination, so there is nothing to retitle", None)
+    try:
+        doc = pa.load_groups_transform(args.groups_transform)
+    except pa.PreservedError as e:
+        print(f"error: {e}\n"
+              "  Refusing: a transform document that cannot be validated is not "
+              "evidence, and \"unusable\" must not be read as \"no expectations\".",
+              file=sys.stderr)
+        return False
+    if not dest_groups.is_file():
+        print(f"error: {dest_groups} is absent, but --groups-transform describes "
+              f"one. The document is evidence about bytes that are not here.",
+              file=sys.stderr)
+        return False
+    blob = dest_groups.read_bytes()
+    pre_op = pa.sha256_bytes(blob) == doc["original"]["sha256"]
+    if not _refuse_unattested(args, pa.GROUPS_NAME, doc, args.groups_transform):
+        return False
+    bad = pa.groups_retitle_refusals(doc, blob) if pre_op else []
+    if bad:
+        print(f"error: {args.groups_transform}: its retitles are not the ones the "
+              f"frozen pre-operation {pa.GROUPS_NAME} requires:", file=sys.stderr)
+        for r in bad:
+            print(f"  - {r}", file=sys.stderr)
+        print("  Refusing before writing anything; re-emit the document rather "
+              "than editing it.", file=sys.stderr)
+        return False
+    if (pa.sha256_bytes(blob) == doc["expected"]["sha256"] and not pre_op):
+        print(f"  {pa.GROUPS_NAME}: already exactly the documented retitle "
+              f"({len(doc['retitles'])} retitle(s)); nothing to do. The "
+              f"recomputation needs the pre-operation titles and they are already "
+              f"replaced, so the bytes were proved instead; this run writes "
+              f"nothing.", file=sys.stderr)
+        return ("already applied", None)
+    after, refusals = pa.transform_groups(blob, doc)
+    if refusals:
+        print(f"error: {args.groups_transform}: {pa.GROUPS_NAME} at the "
+              f"destination is not the file this document describes:",
+              file=sys.stderr)
+        for r in refusals:
+            print(f"  - {r}", file=sys.stderr)
+        return False
+    check = pa.verify_groups_transform(doc, after, original=blob)
+    if check:
+        print(f"error: the {pa.GROUPS_NAME} retitle this run would apply does not "
+              f"match the document's own expectations. Refusing before writing "
+              f"anything:", file=sys.stderr)
+        for r in check:
+            print(f"  - {r}", file=sys.stderr)
+        return False
+    note = (f"{doc['original']['data_rows']:,} row(s), none removed, "
+            f"{len(doc['retitles'])} documented retitle(s) keyed by "
+            f"{pa.GROUP_ID_COLUMN}; asset_count and every other byte unchanged")
+    if after == blob:
         return (note + "; already exactly that, nothing to write", None)
     return (note, after)
 
@@ -1422,6 +1585,14 @@ def main() -> int:
                              "mode: the published CSV is no longer regenerated "
                              "from the profile's source-path map, which matched 0 "
                              "of 907 site_a rows and wrote a header-only file.")
+    parser.add_argument("--groups-transform", type=Path, default=None,
+                        help="groups.csv retitle document, produced BEFORE this "
+                             "run by `preserved_archive.py groups-transform` from "
+                             "the frozen pre-op groups.csv. REQUIRED in preserved "
+                             "mode whenever the destination holds a groups.csv: "
+                             "it changes only by title retitles keyed by "
+                             "group_id, never loses a row and never changes "
+                             "asset_count (#1319).")
     parser.add_argument("--live-site", type=Path, default=None,
                         help="The LIVE published site. REQUIRED in preserved "
                              "mode: a preserved operation has three distinct "
@@ -1559,15 +1730,17 @@ def main() -> int:
                 live=args.live_site, staging=args.dest,
                 snapshot=args.frozen_snapshot, require_snapshot=False,
                 evidence={"--snapshot-manifest": args.snapshot_manifest,
-                          "--csv-transform": args.csv_transform}):
+                          "--csv-transform": args.csv_transform,
+                          "--groups-transform": args.groups_transform}):
             return 2
         print("PRESERVED-ROOT MODE (#1319): `local` is treated as "
               "ARCHIVE-AUTHORITATIVE / PRESERVED.", file=sys.stderr)
         print(f"  roots verified at the destination rather than copied: "
               f"{sorted(prestaged)}", file=sys.stderr)
         print("  metadata.csv changes ONLY through the expected-transform "
-              "document; it is never regenerated from the profile.",
-              file=sys.stderr)
+              "document (removals, then title retitles); it is never "
+              "regenerated from the profile. groups.csv changes ONLY through "
+              "its retitle document.", file=sys.stderr)
         print("  ⚠️  `preserved_archive` evidence is a WEAKER claim than "
               "`produced_source`. It rests on the frozen snapshot manifest "
               "recomputation, never on the archive agreeing with itself.",
@@ -1601,6 +1774,7 @@ def main() -> int:
             "--frozen-snapshot": args.frozen_snapshot,
             "--snapshot-manifest": args.snapshot_manifest,
             "--csv-transform": args.csv_transform,
+            "--groups-transform": args.groups_transform,
             "--profile": args.profile,
             "--posts": args.posts,
             "--collapse-document": args.collapse_document,
@@ -1627,10 +1801,13 @@ def main() -> int:
     if collapse_loaded is False:
         return 2
 
-    csv_plan = None
+    csv_plan = groups_plan = None
     if preserved:
         csv_plan = preserved_csv_plan(args, collapse_loaded)
         if csv_plan is False:
+            return 2
+        groups_plan = preserved_groups_plan(args)
+        if groups_plan is False:
             return 2
 
     print(f"loading profile {args.profile}", file=sys.stderr)
@@ -1724,26 +1901,26 @@ def main() -> int:
             safe_mkdir(args.dest / pd)
 
     if preserved:
-        # ⛔ NO REGENERATION AND NO FILTER. `metadata.csv` moves only the
-        # way the expected-transform document says, and `groups.csv` does
-        # not move at all: its `asset_count` is an original-dataset fact
-        # that already disagrees with the shipped subset (262 of site_b's
-        # 1,047 rows), no group loses its last shipped member, and it is
-        # preservation-owned in `verify_site.PRESERVED_NAMES`, so any byte
-        # change fails the ordinary preservation check.
-        note, after = csv_plan
-        print(f"{pa.CSV_NAME}: applying the documented transform ({note})",
-              file=sys.stderr)
-        if after is None:
-            pass
-        elif args.dry_run:
-            print(f"  would write {len(after):,} B to "
-                  f"{args.dest / pa.CSV_NAME}", file=sys.stderr)
-        else:
-            (args.dest / pa.CSV_NAME).write_bytes(after)
-            print(f"  wrote {len(after):,} B", file=sys.stderr)
-        print(f"{pa.GROUPS_NAME}: preservation-owned, left untouched",
-              file=sys.stderr)
+        # ⛔ NO REGENERATION AND NO FILTER. Each CSV moves only the way its
+        # document, written BEFORE this run, says. `metadata.csv`: the
+        # authorised removals, then the retitles of the survivors.
+        # `groups.csv`: its retitles and nothing else. Its `asset_count` is
+        # an original-dataset fact that already disagrees with the shipped
+        # subset (262 of site_b's 1,047 rows) and is never rewritten, and no
+        # group loses a row.
+        for name, plan, label in ((pa.CSV_NAME, csv_plan, "transform"),
+                                  (pa.GROUPS_NAME, groups_plan, "retitle")):
+            note, after = plan
+            print(f"{name}: applying the documented {label} ({note})",
+                  file=sys.stderr)
+            if after is None:
+                continue
+            if args.dry_run:
+                print(f"  would write {len(after):,} B to {args.dest / name}",
+                      file=sys.stderr)
+            else:
+                (args.dest / name).write_bytes(after)
+                print(f"  wrote {len(after):,} B", file=sys.stderr)
     else:
         # Filter + rewrite metadata.csv — keep rows whose original file_path
         # belongs to this site; rewrite the file_path column to the new layout

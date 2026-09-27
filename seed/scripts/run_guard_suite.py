@@ -106,10 +106,17 @@ TEST_MODULE = "test_dataset_upgrade"
 # results), the formatter and parser pair, the six asset-title writers and
 # the torrent id order, the `merge_added` refusal, natural post comma
 # preservation, and the balance chunk template against all 230 posts.
+# 640 after the title punctuation correction's archive slice (#1460) added
+# 46: the byte-level title-cell retitle, the metadata.csv retitles after the
+# removals (the site_a and site_b shapes, the overlap case, the removed
+# punctuated row, the empty and single cases, descriptions untouched), the
+# retitle-only groups.csv document keyed by group_id, the refusals shared by
+# both files, the publish-time recomputation and snapshot attestation, the
+# no-sync case, and verify_site's title rule and groups.csv verdict.
 # Raise it when a batch of tests lands; never lower it to
 # make a red run go green — a dropped test is the thing this number
 # exists to catch.
-MIN_TESTS = 594
+MIN_TESTS = 640
 
 
 def _summary(line: str) -> None:
