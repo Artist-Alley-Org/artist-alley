@@ -488,6 +488,20 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **The published sample library's own title columns can now be corrected, and only under proof.** The
+  library's two catalogue spreadsheets, `metadata.csv` and `groups.csv`, still show some titles with a comma
+  or an em dash. The republish can now correct exactly those title cells and nothing else. Every other value
+  and every other byte stays as it was, including quoting and line endings. The corrected title is worked out
+  again from a frozen copy taken before anything moved, rather than trusted from a document. Rows retired
+  from the library are removed first, exactly as before, and a removed row is never also retitled. The groups
+  spreadsheet can never lose a row or change its asset counts. Any change needs both the frozen copy and the
+  record of its checksums; without them the publish refuses before writing anything. The publish check now
+  also refuses a title with a comma or an em dash in the manifest or in either spreadsheet. ADR 0097 records
+  the change.
+  ⚠️ Nothing in the published library has changed yet. These corrections are enabled by the archive
+  contract shipped in #1460 / PR #1462, and are applied to the published library only by the owner-run
+  23b republish (#1319).
+
 - **Seeded titles lose their comma and em-dash separators in the repository.** Asset titles in the
   committed sample library no longer carry a comma or an em dash: each one now reads with an ASCII hyphen,
   so `Moby Dick , Herman Melville` becomes `Moby Dick - Herman Melville` and `Mono,wght` becomes
