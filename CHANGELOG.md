@@ -488,6 +488,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **The sample library's site_a feed keeps seven hand-made dates the republish would have reverted.**
+  The 2026-08-27 recovery of the hand-curated feed missed seven `updated_at` values: it skipped a
+  backup interval that also held real hand edits, and it could not see an edit made on one row of a
+  post id that briefly existed twice. The curation document now records all seven, including one
+  Pexels post that had no entry, and the site_a post profile carries them; nothing else in the
+  profile changed and no post id moved. The curation now holds 1,520 values across 842 posts. ADR
+  0098 records the corrected count; the decision to codify the hand edits is unchanged (#1469, PR
+  #1472).
+
 - **`aa seed-verify` now checks asset titles, as it already checked post titles.** For every asset
   in the site manifest that is present in the database, the seeded title must equal the title the
   seeder writes from the manifest (`Untitled` when the manifest title is blank). Separately, a seeded
