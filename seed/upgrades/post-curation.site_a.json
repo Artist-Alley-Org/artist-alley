@@ -31,11 +31,11 @@
   "  pre-feedcurate  -> pre-feedcurate2  created_at 823",
   "  pre-feedcurate2 -> pre-1217         created_at 794",
   "",
-  "⛔ ONE STEP IN THAT SEQUENCE IS NOT A CURATION PASS AND IS SKIPPED.",
+  "⛔ ONE STEP IN THAT SEQUENCE CARRIES THE #1293 DEDUPE, AND THE DEDUPE IS SKIPPED.",
   "pre-hero2c -> pre-feedcurate drops the row count from 859 to 847 while the id",
   "count stays at 847: it is the #1293 id-collision dedupe, not an edit. Walked as",
   "a curation pass it appears to change 6 titles, 8 memberships, 2 descriptions, 2",
-  "tag lists and 4 more values. It changes none of them. Those are simply the",
+  "tag lists and 4 more values on the colliding ids, none of them an edit: they are the",
   "values of whichever of two colliding rows survived, and the titles it would",
   "have pinned are the generated ones #1306 removed:",
   "",
@@ -44,6 +44,18 @@
   "",
   "Both sides of that are generator output. Codifying it would re-pin a machine",
   "title, em dash and all, onto an id that no longer collides.",
+  "",
+  "⛔ CORRECTED 2026-09-28 (#1469): THAT STEP IS NOT ONLY THE DEDUPE, AND A",
+  "DUPLICATED ID CAN HIDE AN EDIT. The recovery first skipped the whole",
+  "pre-hero2c -> pre-feedcurate interval, but it is also the hero2c pass: 16 posts",
+  "that never collided had created_at and updated_at edited there. 11 of them were",
+  "already codified through other passes. For 5, updated_at was touched only there:",
+  "3bf66f47, 76861d71, 7dbf99d6, 93cc2228 and f3cc20ed (a Pexels post, now curated",
+  "by an entry of its own). Separately, the hero pass edited updated_at on one of the",
+  "two colliding rows of 870c53fd and b7e211b5; comparing by id saw only the",
+  "untouched row, and the dedupe kept the edited one. Those 7 values are now",
+  "codified, so updated_at covers 297 posts: exactly those whose live value differs",
+  "from every pre-hero row, and no other.",
   "",
   "Nothing changed after `pre-1217`: the two later backups and the live file only",
   "ADD posts. So a post edited by several passes needs no conflict rule here, and",
@@ -1720,7 +1732,8 @@
     "64b2528f-fdc3-142b-8346-ea24163d8242",
     "ef4c8813-5b81-0450-85a9-886abbd8d7d9",
     "fc36350c-5838-c389-4db8-c1fb6161ebef"
-   ]
+   ],
+   "updated_at": "2026-07-27T12:00:00Z"
   },
   {
    "id": "3c33ebe4-74fe-157c-ed43-21cb87830be3",
@@ -3053,7 +3066,8 @@
     "49c29fde-22d4-33be-6fe8-a246860fdb10",
     "20ca2e4c-0b83-64d4-3def-eb36e640c673",
     "b6022474-3dd0-4e35-cac9-5ee83c36e115"
-   ]
+   ],
+   "updated_at": "2026-08-05T13:44:00Z"
   },
   {
    "id": "76a80d6a-aac8-67d7-a5e1-5a219c953e76",
@@ -3234,7 +3248,8 @@
     "8337bad6-b3c4-4f91-cb3a-daa9b746293b",
     "8554838c-0606-eba1-d728-3db9217694d0",
     "8a8137a0-7476-5fd3-8d16-421cb1704d00"
-   ]
+   ],
+   "updated_at": "2026-08-11T02:30:00Z"
   },
   {
    "id": "7dc0a7db-de0c-1334-fb54-0917875e21e2",
@@ -3525,7 +3540,8 @@
   {
    "id": "870c53fd-c452-29fa-71d4-916cb3201d4f",
    "pipeline_members": "997e30431e96401f756b55b53a990b7c4df4d5d8",
-   "created_at": "2026-06-23T04:10:00Z"
+   "created_at": "2026-06-23T04:10:00Z",
+   "updated_at": "2026-08-03T03:35:00Z"
   },
   {
    "id": "8721ec41-9e88-2781-e086-be3a4c9b2920",
@@ -3819,7 +3835,8 @@
   {
    "id": "93cc2228-1cb7-823e-f442-e507d08b0178",
    "pipeline_members": "26cbeb3de28bc525bd4b5872ba4824ae515fc654",
-   "created_at": "2026-11-23T04:57:00Z"
+   "created_at": "2026-11-23T04:57:00Z",
+   "updated_at": "2026-09-09T16:55:00Z"
   },
   {
    "id": "93f640b8-7c51-da88-4a4d-1ba6655e8cdc",
@@ -4992,7 +5009,8 @@
   {
    "id": "b7e211b5-0643-27a8-0185-ac5d2c212060",
    "pipeline_members": "2c6987b7a7c1e60eae0b6a52303f2ae59871f8cc",
-   "created_at": "2026-07-27T12:00:00Z"
+   "created_at": "2026-07-27T12:00:00Z",
+   "updated_at": "2026-05-10T11:51:08Z"
   },
   {
    "id": "b813bb30-4399-6466-5fd5-1f6bdcad7a60",
@@ -6666,6 +6684,11 @@
    "id": "f3bb9a13-58ea-0274-e8da-eedeefc234c1",
    "pipeline_members": "47f442497826a6ce8652f964d118c4640ce9f587",
    "created_at": "2026-01-24T06:50:00Z"
+  },
+  {
+   "id": "f3cc20ed-2f58-4254-a936-349d74b393f7",
+   "pipeline_members": "8fcbaaee5494cc283b0c911c4195514acb5c90d9",
+   "updated_at": "2026-10-03T07:00:00Z"
   },
   {
    "id": "f4593db7-07fc-32da-1566-044d518ae4da",

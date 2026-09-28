@@ -4032,6 +4032,84 @@ class TestPostCuration(unittest.TestCase):
         missing = [e["id"] for e in doc["curate"] if e["id"] not in have]
         self.assertEqual(missing, [])
 
+    # ⛔ #1469. The #1309 recovery missed seven hand-made `updated_at` values:
+    # it skipped the whole pre-hero2c -> pre-feedcurate interval, which was
+    # also the hero2c pass, and it compared by id, so an edit on one row of
+    # a duplicated id was invisible. Each id maps to (curated value, the
+    # assembler value the committed profile carried before #1469).
+    SEVEN_UPDATED_AT = {
+        "3bf66f47-443b-a7b7-33ce-6e9496911555": ("2026-07-27T12:00:00Z", "2026-05-14T18:52:05Z"),
+        "76861d71-e013-50c9-b8a1-b63d45aa704a": ("2026-08-05T13:44:00Z", "2026-04-25T13:24:12Z"),
+        "7dbf99d6-11e4-c43c-7791-b65117748a5d": ("2026-08-11T02:30:00Z", "2026-07-20T17:10:00Z"),
+        "870c53fd-c452-29fa-71d4-916cb3201d4f": ("2026-08-03T03:35:00Z", "2026-05-17T02:05:49Z"),
+        "93cc2228-1cb7-823e-f442-e507d08b0178": ("2026-09-09T16:55:00Z", "2026-05-14T18:52:05Z"),
+        "b7e211b5-0643-27a8-0185-ac5d2c212060": ("2026-05-10T11:51:08Z", "2026-04-20T21:25:26Z"),
+        "f3cc20ed-2f58-4254-a936-349d74b393f7": ("2026-10-03T07:00:00Z", "2026-07-27T12:00:00Z"),
+    }
+    # sha256 of `studio-a.posts.json` as committed before #1469. The
+    # preservation test rebuilds those bytes from today's file by putting
+    # only the seven values back, so ANY other change fails it.
+    PROFILE_BEFORE_1469_SHA256 = (
+        "6bfb4325221f884eb52ce68149dee04bfdf3b84eba09d197683fd508c3c480cc")
+
+    def _shipped(self):
+        doc = json.loads((UPGRADES / "post-curation.site_a.json")
+                         .read_text(encoding="utf-8"))
+        posts = json.loads(
+            (PROFILES / "studio-a.posts.json").read_text(encoding="utf-8"))
+        return doc, posts
+
+    def test_the_shipped_document_codifies_the_seven_missed_dates(self):
+        doc, _ = self._shipped()
+        by_id = {e["id"]: e for e in doc["curate"]}
+        for pid, (curated, _) in self.SEVEN_UPDATED_AT.items():
+            self.assertIn(pid, by_id, f"{pid} has no curation entry")
+            self.assertEqual(by_id[pid].get("updated_at"), curated, pid)
+
+    def test_the_profile_carries_the_seven_curated_dates(self):
+        _, posts = self._shipped()
+        by_id = {p["id"]: p for p in posts}
+        for pid, (curated, _) in self.SEVEN_UPDATED_AT.items():
+            self.assertEqual(by_id[pid]["updated_at"], curated, pid)
+
+    def test_the_pexels_entry_is_bound_to_its_membership(self):
+        """f3cc20ed had no entry at all. Its entry names only the date, and
+        its `pipeline_members` digest must be the membership it is applied
+        to, or the pass would report it as moved on every run."""
+        doc, posts = self._shipped()
+        pid = "f3cc20ed-2f58-4254-a936-349d74b393f7"
+        entry = next((e for e in doc["curate"] if e["id"] == pid), None)
+        self.assertIsNotNone(entry, f"{pid} has no curation entry")
+        self.assertEqual(set(entry), {"id", "pipeline_members", "updated_at"})
+        post = next(p for p in posts if p["id"] == pid)
+        self.assertEqual(entry["pipeline_members"],
+                         up._members_digest(post["asset_ids"]))
+        _, _, missing, advisories = up.apply_post_curation(
+            json.loads(json.dumps(posts)), doc)
+        self.assertEqual([m for m in missing if pid in m], [])
+        self.assertEqual([a for a in advisories if pid in a], [])
+
+    def test_the_shipped_document_totals(self):
+        doc, _ = self._shipped()
+        counts = collections.Counter(
+            k for e in doc["curate"] for k in up.CURATABLE_FIELDS if k in e)
+        self.assertEqual(len(doc["curate"]), 842)
+        self.assertEqual(sum(counts.values()), 1520)
+        self.assertEqual(dict(counts),
+                         {"created_at": 840, "updated_at": 297, "asset_ids": 383})
+
+    def test_1469_changed_exactly_seven_dates_and_nothing_else(self):
+        _, posts = self._shipped()
+        by_id = {p["id"]: p for p in posts}
+        for pid, (curated, before) in self.SEVEN_UPDATED_AT.items():
+            self.assertEqual(by_id[pid]["updated_at"], curated, pid)
+            by_id[pid]["updated_at"] = before
+        rebuilt = (json.dumps(posts, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
+        self.assertEqual(hashlib.sha256(rebuilt).hexdigest(),
+                         self.PROFILE_BEFORE_1469_SHA256,
+                         "studio-a.posts.json differs from its pre-#1469 bytes "
+                         "in something other than the seven curated dates")
+
 
 class TestCurationLossStopsTheRun(unittest.TestCase):
     """#1324. The pipeline drops hand curation and exits 0.
