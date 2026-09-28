@@ -118,10 +118,14 @@ TEST_MODULE = "test_dataset_upgrade"
 # on the site_a shape (a produced_source-only collapse document) for each
 # missing argument, a manifest attesting other bytes, a snapshot changed
 # after its manifest, the valid pair, and the empty transform that needs none.
+# 652 after the site_a curation completion (#1469) added 5: the seven missed
+# `updated_at` values in the shipped document and in the profile, the new
+# Pexels entry bound to its membership digest, the document totals, and a
+# byte check that the profile changed in those seven dates and nothing else.
 # Raise it when a batch of tests lands; never lower it to
 # make a red run go green — a dropped test is the thing this number
 # exists to catch.
-MIN_TESTS = 647
+MIN_TESTS = 652
 
 
 def _summary(line: str) -> None:

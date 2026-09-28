@@ -398,3 +398,28 @@ and only because their input is archive-held: run against the archive's own
 sizes and hashes the committed `studio-a.assets.json` already records (`studio-colour-chart.png`
 11,404 B, `reference-mood-board.png` 1,290,128 B, verified 2026-09-24). That is determinism resting
 on a preserved input, which is exactly the distinction this amendment is drawing.
+
+## Amendment, 2026-09-28 (#1469): the curation recovery missed seven dates, and the count above is corrected
+
+The 2026-08-27 amendment says `post-curation.site_a.json` holds **1,513 values across 841 posts**.
+That count is corrected to **1,520 values across 842 posts**: `created_at` 840, `updated_at` **297**,
+`asset_ids` 383. The Sprint 23b read-only preflight found seven hand-made `updated_at` values the
+recovery had not captured, so a republish would have reverted them. Two defects in the recovery walk
+caused it:
+
+1. **The `pre-hero2c -> pre-feedcurate` interval was skipped whole** as the #1293 id-collision dedupe.
+   The dedupe did happen there, but the interval was also the hero2c pass: 16 posts that never
+   collided had `created_at` and `updated_at` edited in it. Eleven of those were already codified
+   through other passes; for five (`3bf66f47`, `76861d71`, `7dbf99d6`, `93cc2228`, and the Pexels post
+   `f3cc20ed`, which now has an entry of its own), `updated_at` was touched only there.
+2. **An edit on one row of a duplicated id was invisible to an id-only comparison.** The hero pass
+   set `updated_at` on one of the two colliding rows of `870c53fd` and `b7e211b5`; the recovery saw the
+   untouched row, and the dedupe kept the edited one.
+
+With those seven codified, `updated_at` covers exactly the 297 posts whose live value differs from
+every `pre-hero` row, which is the figure #1309 measured, and nothing outside it.
+
+**The decision is unchanged.** The owner's ruling (*"I like the handmade edits. Codify them."*) and the
+rule this ADR recorded both stand: the backup chain says WHICH `(post, field)` a human touched, and the
+live file says the value that was chosen. The recovery applied that rule to too little of the chain.
+No post id moves, and site_b and the dataset profile are untouched: the curation is site_a's own.
