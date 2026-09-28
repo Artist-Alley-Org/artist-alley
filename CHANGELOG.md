@@ -488,6 +488,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **`aa seed-verify` now checks asset titles, as it already checked post titles.** For every asset
+  in the site manifest that is present in the database, the seeded title must equal the title the
+  seeder writes from the manifest (`Untitled` when the manifest title is blank). Separately, a seeded
+  asset title that carries a comma or an em dash fails, even when the manifest agrees, with one
+  failure per asset naming the characters. Absent and collapsed assets keep their existing verdict
+  and get no extra title verdict. Before this, a database whose asset titles were stale, edited or
+  still punctuated was reported verified; a reseed without `--reset` keeps an earlier title, so that
+  case was reachable. No flag, summary line or result form changed (#1464, PR #1466).
+
 - **The published sample library's own title columns can now be corrected, and only under proof.** The
   library's two catalogue spreadsheets, `metadata.csv` and `groups.csv`, still show some titles with a comma
   or an em dash. The republish can now correct exactly those title cells and nothing else. Every other value
