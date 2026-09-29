@@ -660,8 +660,9 @@ decide it per root; the copier now implements that decision.
 
 ### The rule
 
-The record's `file_size_bytes` is the oracle for every copied-root decision, and a record without a
-positive one fails the run.
+The rule covers the three copied roots it names, `internet`, `hq` and `pack`. For them the record's
+`file_size_bytes` is the oracle for every decision, and a record without a positive one fails the
+run. It makes no new decision for any other root that reaches the copier.
 
 - **`internet` is destination-authoritative.** The shipped file is the artifact. A destination at the
   recorded size is kept even when the cache holds a different file, because the cache holds the
@@ -674,8 +675,6 @@ positive one fails the run.
   recovery path, and it is the existing authenticated one: `refetch_member`, which checks the member
   against the recorded `source_archive.sha256` before writing, now runs whether or not a destination
   is present, and a record whose `source_archive` cannot authenticate a re-fetch fails.
-- `local`, when it is not preserved, reaches the copier as a source-backed root and follows the same
-  rule, as the 2026-08-27 table groups it.
 
 ### Authority is not the same as being pre-staged
 
