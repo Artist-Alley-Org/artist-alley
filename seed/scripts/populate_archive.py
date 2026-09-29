@@ -154,6 +154,13 @@ import preserved_archive as pa
 # copy FROM. See the handling in the copy loop for what each means.
 PRESTAGED_ROOTS = frozenset({"torrent_import", "site"})
 
+# Copied roots whose SHIPPED destination is authoritative (ADR 0097, the
+# 2026-08-27 table). This is an authority rule, not a pre-staged one: an
+# `internet` record still reaches the copy path, because its cache can fill
+# an absent destination, but when the cache holds different origin bytes the
+# destination already in place is the file the dataset ships (#1474).
+DESTINATION_AUTHORITATIVE_ROOTS = frozenset({"internet"})
+
 # ⛔ PRESERVED-ROOT MODE IS EXPLICIT AND IS NEVER AN IMPLICIT FALLBACK
 # (#1319). `local` joins the pre-staged roots ONLY when `--preserved-roots`
 # is passed. A missing `--local-source` without the flag is still an error:
@@ -2074,6 +2081,17 @@ def main() -> int:
     items = sorted(path_map.items(), key=lambda x: x[1])  # sort by dest path
     preexisting = 0
     wrong = 0
+    kept = 0
+    refused = 0
+    would_refetch = 0
+
+    def refuse(root: str, dest_rel: str, why: str) -> None:
+        # Every refusal is named, in a dry run and a real run alike: a
+        # dry run is the gate the real run is reconciled against (#1474).
+        nonlocal refused
+        refused += 1
+        print(f"  REFUSE [{root}]: {dest_rel}: {why}", file=sys.stderr)
+
     for i, ((root, source_path), dest_rel) in enumerate(items):
         # PRE-STAGED roots: the bytes already live at the destination and
         # have no LOCAL source to copy from, so verify rather than copy.
@@ -2173,24 +2191,68 @@ def main() -> int:
                       file=sys.stderr)
             continue
 
+        # ── A COPIED ROOT: the record decides, by its root's authority (#1474) ──
+        # `want` is the record's `file_size_bytes`, and it is the oracle for
+        # every decision below. The copier used to compare the destination
+        # with the SOURCE and never with the record, so on 2026-09-28 it
+        # replaced four correctly trimmed site_a `internet` videos with the
+        # larger downloads in the internet cache, and it accepted `hq` and
+        # `pack` destinations that nothing had authenticated.
+        #
+        # Authority is per root (ADR 0097, the 2026-08-27 table and the
+        # 2026-09-24 amendment). `internet` is destination-authoritative: the
+        # shipped file IS the artifact, and the cache holds the origin
+        # download (`metadata.origin_bytes`), which may be a different file.
+        # Every other root that reaches this point (`hq`, `pack`, and `local`
+        # when it is not preserved) is source-backed: its destination is
+        # downstream output and never authenticates itself.
+        rec = by_dest.get(dest_rel) or {}
+        dest_file = args.dest / dest_rel
+        want = rec.get("file_size_bytes")
+        if (not isinstance(want, int) or isinstance(want, bool)
+                or want <= 0):
+            refuse(root, dest_rel, f"the record has no positive "
+                   f"file_size_bytes ({want!r}), so nothing can be checked "
+                   "against it")
+            continue
+        dest_size = dest_file.stat().st_size if dest_file.is_file() else None
+        dest_ok = dest_size == want
+        dest_desc = ("destination absent" if dest_size is None
+                     else f"destination {dest_size:,} B")
+
         src_root = sources.get(root)
         src_file = (src_root / source_path) if src_root else None
         if src_file is None or not src_file.is_file():
-            # #572 — bundle-sourced records carry the pack's free CC0 zip
-            # plus the member path and its sha256, so an absent bundle is
-            # a download rather than a hole. Same shape as #602's
-            # media_url branch: only for records that would otherwise
-            # fail, so a run over a mounted bundle does no network I/O.
-            rec = by_dest.get(dest_rel) or {}
+            if root in DESTINATION_AUTHORITATIVE_ROOTS:
+                # An absent SOURCE is not an absent ASSET. The internet cache
+                # is gitignored and routinely not present on a machine that
+                # already has a populated site; the destination is the
+                # artifact, so a file at the record's byte count stands.
+                if dest_ok:
+                    preexisting += 1
+                    continue
+                missing += 1
+                print(f"  MISSING [{root}]: {dest_rel}: no source file and "
+                      f"no destination at the recorded {want:,} B "
+                      f"({dest_desc})", file=sys.stderr)
+                continue
+            # #572: a `pack` record can be recovered from the pack's free zip,
+            # but only through `refetch_member`, which authenticates the
+            # member against the recorded sha256 before anything is written.
+            # A destination that merely exists, or merely has the right size,
+            # is not that evidence.
             sa = (rec.get("metadata") or {}).get("source_archive") or {}
-            dest_file = args.dest / dest_rel
-            if (root == "pack" and sa.get("url") and not args.no_refetch
-                    and not args.dry_run):
-                if dest_file.is_file() and dest_file.stat().st_size > 0:
-                    skipped += 1
+            complete = all(isinstance(sa.get(k), str) and sa.get(k)
+                           for k in ("url", "member", "sha256"))
+            if root == "pack" and complete and not args.no_refetch:
+                print(f"  REFETCH [{root}]: {dest_rel} (member "
+                      f"{sa['member']} of {sa['url'].rsplit('/', 1)[-1]}, "
+                      f"{dest_desc})", file=sys.stderr)
+                if args.dry_run:
+                    would_refetch += 1
                     continue
                 ok, note = refetch_member(sa["url"], sa["member"],
-                                          sa.get("sha256", ""), dest_file)
+                                          sa["sha256"], dest_file)
                 if ok:
                     refetched += 1
                     bytes_copied += dest_file.stat().st_size
@@ -2199,39 +2261,59 @@ def main() -> int:
                     continue
                 print(f"  REFETCH FAILED [{root}]: {dest_rel} — {note}",
                       file=sys.stderr)
-            # An absent SOURCE is not an absent ASSET. The internet cache
-            # is gitignored and routinely not present on a machine that
-            # already has a populated site; reporting 58 fully-staged
-            # videos as MISSING and exiting 1 is the same
-            # unavailable-is-not-absent confusion that makes a dropped
-            # mount look like data loss. Gated on the manifest's own byte
-            # count, so a genuinely short or wrong file still fails.
-            want = (rec or {}).get("file_size_bytes")
-            if (dest_file.is_file() and want
-                    and dest_file.stat().st_size == want):
-                preexisting += 1
+            if dest_ok:
+                # The case this issue closes: a destination at the recorded
+                # size used to be accepted here for every root. For a
+                # source-backed root it is downstream output with nothing to
+                # authenticate it.
+                if root == "pack":
+                    why = ("the authenticated re-fetch failed"
+                           if complete and not args.no_refetch else
+                           "--no-refetch forbids the authenticated re-fetch"
+                           if complete else
+                           "metadata.source_archive cannot authenticate a "
+                           "re-fetch (it needs url, member and sha256)")
+                else:
+                    why = f"there is no source file under --{root}-source"
+                refuse(root, dest_rel, f"{why}; a destination at the "
+                       f"recorded {want:,} B cannot authenticate itself")
                 continue
             missing += 1
-            if missing <= 5:
-                hint = ("" if root != "pack" else
-                        " — pass --pack-source <bundle>, or let the "
-                        "metadata.source_archive re-fetch handle it")
-                print(f"  MISSING [{root}]: {source_path}{hint}",
-                      file=sys.stderr)
+            hint = ("" if root != "pack" else
+                    " — pass --pack-source <bundle>, or let the "
+                    "metadata.source_archive re-fetch handle it")
+            print(f"  MISSING [{root}]: {source_path}: no source file and no "
+                  f"destination at the recorded {want:,} B ({dest_desc})"
+                  f"{hint}", file=sys.stderr)
             continue
-        dest_file = args.dest / dest_rel
-        already = (dest_file.is_file()
-                   and dest_file.stat().st_size == src_file.stat().st_size)
-        if already:
+
+        src_size = src_file.stat().st_size
+        if dest_ok and src_size == want:
             skipped += 1
-        elif args.dry_run:
-            copied += 1
-            bytes_copied += src_file.stat().st_size
+        elif dest_ok and root in DESTINATION_AUTHORITATIVE_ROOTS:
+            # The shipped file is already in place. The source here is the
+            # origin download, which is not the file the dataset ships.
+            kept += 1
+            print(f"  KEEP [{root}]: {dest_rel} (destination at the "
+                  f"recorded {want:,} B is the shipped file; the source is "
+                  f"{src_size:,} B)", file=sys.stderr)
+        elif dest_ok:
+            refuse(root, dest_rel, f"the source is {src_size:,} B but the "
+                   f"record says {want:,} B; the record disagrees with its "
+                   "own source, so re-measure the source of truth (for "
+                   "`hq`, kenney_hq.py sizes) rather than ship either file")
+        elif src_size != want:
+            refuse(root, dest_rel, f"the source is {src_size:,} B and the "
+                   f"record says {want:,} B ({dest_desc}); there is no file "
+                   "here that the record describes")
         else:
-            safe_mkdir(dest_file.parent)
-            shutil.copyfile(src_file, dest_file)
+            print(f"  COPY [{root}]: {dest_rel} (record {want:,} B, source "
+                  f"{src_size:,} B, {dest_desc})", file=sys.stderr)
             copied += 1
-            bytes_copied += src_file.stat().st_size
+            bytes_copied += src_size
+            if not args.dry_run:
+                safe_mkdir(dest_file.parent)
+                shutil.copyfile(src_file, dest_file)
 
         # Companions run even when the MODEL was skipped (#572). They used
         # to sit inside the copy branch, so a model already present at the
@@ -2259,6 +2341,8 @@ def main() -> int:
             wanted_dest_paths.add(comp_rel)  # survive --prune
             if comp_dest.is_file() and comp_dest.stat().st_size == comp_src.stat().st_size:
                 continue
+            print(f"  COPY COMPANION [{root}]: {comp_rel} (source "
+                  f"{comp_src.stat().st_size:,} B)", file=sys.stderr)
             if args.dry_run:
                 companions_copied += 1
                 bytes_copied += comp_src.stat().st_size
@@ -2307,8 +2391,15 @@ def main() -> int:
     print(f"  skipped:     {skipped:,} (already present, same size)", file=sys.stderr)
     print(f"  preexisting: {preexisting:,} (pre-staged — bytes already in place)",
           file=sys.stderr)
+    print(f"  kept:        {kept:,} (internet: the shipped file is in place; "
+          f"the source is the origin download #1474)", file=sys.stderr)
     print(f"  refetched:   {refetched:,} (downloaded from metadata.media_url #602 / source_archive #572)",
           file=sys.stderr)
+    if args.dry_run:
+        print(f"  would refetch: {would_refetch:,} (source_archive members, "
+              f"authenticated only by the real run #572)", file=sys.stderr)
+    print(f"  refused:     {refused:,} (copied-root records whose record, "
+          f"source and destination do not agree #1474)", file=sys.stderr)
     print(f"  missing:     {missing:,} (not found in source)", file=sys.stderr)
     print(f"  wrong size:  {wrong:,} (pre-staged bytes disagree with the "
           f"manifest #1301)", file=sys.stderr)
@@ -2320,7 +2411,8 @@ def main() -> int:
     if args.prune:
         print(f"  pruned:  {pruned:,} stale files removed", file=sys.stderr)
     if missing > 5:
-        print(f"  (first 5 missing logged above)", file=sys.stderr)
+        print(f"  (every copied-root MISSING is logged above; pre-staged "
+              f"ones show the first 5)", file=sys.stderr)
     if wrong > 5:
         print(f"  (first 5 wrong-size logged above)", file=sys.stderr)
 
@@ -2329,7 +2421,8 @@ def main() -> int:
     # not hold what its manifest says it holds. Exiting 0 on "the file is
     # there, it is simply not the one we describe" is the silent-success
     # shape this script has been bitten by twice (#604, #1301).
-    return 0 if (missing == 0 and wrong == 0 and retired_ok) else 1
+    return 0 if (missing == 0 and wrong == 0 and refused == 0
+                 and retired_ok) else 1
 
 
 if __name__ == "__main__":

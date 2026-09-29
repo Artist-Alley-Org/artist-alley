@@ -45,9 +45,14 @@ Authority is per source root:
 
 | root | authority |
 |---|---|
-| `hq`, `pack` | the external Kenney pack / the attested `metadata.source_archive` member. Still re-derivable. |
+| `hq`, `pack` | the external Kenney pack / the attested `metadata.source_archive` member. Still re-derivable. The destination never authenticates itself: a record that disagrees with its source fails the run, and a missing source fails it too, except that `pack` can recover through the authenticated `source_archive` re-fetch. |
 | `local` | **archive-authoritative (preserved)**: a frozen snapshot of the published tree, attested by an external hash manifest. |
-| `site`, `internet`, `torrent_import` | pre-staged at the destination, as before. |
+| `internet` | **destination-authoritative**: the shipped file at the destination is the artifact. The internet cache (`--internet-source`) holds the origin download and fills a destination only when that download is the recorded size, so a trimmed file already in place is kept. This is an authority rule, not pre-staging: the copier still reads the cache for `internet`. |
+| `site`, `torrent_import` | pre-staged at the destination, as before: there is no source, so the bytes are verified where they sit. |
+
+Every file `populate_archive.py` would copy, re-fetch, keep or refuse is named
+in its output, in a dry run exactly as in a real run, so a dry run's copy set
+can be reconciled path by path before the real run (#1474).
 
 What that means for an operator running the publish tooling:
 
