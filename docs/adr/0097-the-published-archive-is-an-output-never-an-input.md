@@ -645,3 +645,58 @@ section 6, stand as written. The profile remains authoritative for CONTENT; the
 destination-holds-what-the-source-does-not refusal, the migration-aware and retirement-aware
 readings, `--allow-regression`'s narrowness, the entire `produced_source` Layer B, and the removal
 authority of the collapse document are unchanged.
+
+## Amendment, 2026-09-29 (#1474): the copier decides a copied root by its record, under the root's authority
+
+The owner-run operation of 2026-09-28 stopped because `populate_archive.py` replaced four correctly
+trimmed site_a `internet` videos in staging with the larger downloads in the internet cache. The
+copier decided "already present" by comparing the destination's size with the SOURCE's, and never
+consulted the record's `file_size_bytes`. It also accepted `hq` and `pack` destinations that nothing
+had authenticated: a source-absent destination at the recorded size was kept for every root, and a
+source-absent `pack` destination of any non-empty size skipped the re-fetch.
+
+Nothing about authority changes here. The 2026-08-27 table and the 2026-09-24 amendment already
+decide it per root; the copier now implements that decision.
+
+### The rule
+
+The rule covers the three copied roots it names, `internet`, `hq` and `pack`. For them the record's
+`file_size_bytes` is the oracle for every decision, and a record without a positive one fails the
+run. It makes no new decision for any other root that reaches the copier.
+
+- **`internet` is destination-authoritative.** The shipped file is the artifact. A destination at the
+  recorded size is kept even when the cache holds a different file, because the cache holds the
+  origin download (`metadata.origin_bytes`); a file is copied from the cache only when the cache
+  file is the recorded size; and with the cache absent, a destination at the recorded size stands.
+- **`hq` and `pack` are source-backed.** Their destination is downstream output and never
+  authenticates itself. A record that disagrees with its own source fails the run, whatever the
+  destination holds: the remedy is to re-measure the source of truth, never to ship either file. A
+  missing source fails a destination that the record would otherwise accept. `pack` alone has a
+  recovery path, and it is the existing authenticated one: `refetch_member`, which checks the member
+  against the recorded `source_archive.sha256` before writing, now runs whether or not a destination
+  is present, and a record whose `source_archive` cannot authenticate a re-fetch fails.
+
+### Authority is not the same as being pre-staged
+
+"The destination is the artifact" for `internet` is an AUTHORITY rule. It does not make `internet` a
+member of the copier's pre-staged roots (`site`, `torrent_import`, and preserved `local`), whose
+bytes have no source at all. An `internet` record still has a cache that can fill an absent
+destination; what this rule decides is that when the cache holds different origin bytes, the
+shipped destination already in place wins.
+
+### No hash policy is added
+
+The copy decision stays a byte-count decision. A record's hash means something different per root
+(the download for `internet`, the SVG member for an `hq` render, the member for `pack`), so no hash
+is compared to a shipped file here. The only hash involved is the one `refetch_member` already
+checks.
+
+### The dry run names the work
+
+Every copy, companion copy, keep, re-fetch and refusal is reported by path, with the same decision
+text in a dry run and a real run, so the copy set can be reconciled path by path before the real
+run. A dry run reports a re-fetch it would attempt and does not fail on it, because only the real
+run can learn whether the member authenticates.
+
+Decisions 1 to 5 and every amendment above stand as written.
+

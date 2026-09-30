@@ -2858,6 +2858,304 @@ class TestAbsentSourceIsNotAbsentAsset(unittest.TestCase):
         self.assertIn("MISSING", proc.stderr)
 
 
+
+class TestCopiedRootAuthority(unittest.TestCase):
+    """#1474. A copied root is decided by its RECORD, under its root's
+    authority (ADR 0097, the 2026-08-27 table and the 2026-09-24 amendment).
+
+    The copier compared the destination with the SOURCE and never with the
+    record, so on 2026-09-28 it replaced four correctly trimmed site_a
+    `internet` videos with the larger downloads in the internet cache. It
+    also accepted `hq` and `pack` destinations nothing had authenticated.
+    `internet` is destination-authoritative; `hq` and `pack` are
+    source-backed, and their destination never authenticates itself.
+    """
+
+    DECISIONS = ("COPY", "COPY COMPANION", "KEEP", "REFETCH", "REFUSE")
+
+    @staticmethod
+    def _zip(path: Path, members: dict) -> None:
+        import zipfile as zf
+        with zf.ZipFile(path, "w") as z:
+            for name, data in members.items():
+                z.writestr(name, data)
+
+    def _serve(self, directory):
+        handler = partial(SimpleHTTPRequestHandler, directory=str(directory))
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        return f"http://127.0.0.1:{httpd.server_address[1]}"
+
+    def _world(self, d, records):
+        """Each record: root, name, and optionally want (file_size_bytes;
+        omitted means absent), src and dest bytes (None means no file),
+        and extra metadata. Files land at <root>/<name> on both sides."""
+        d = Path(d)
+        (d / "local").mkdir(parents=True)
+        (d / "local" / "metadata.csv").write_text("file_path,title\n",
+                                                   encoding="utf-8")
+        for sub in ("internet", "hq", "pack", "dest"):
+            (d / sub).mkdir()
+        profile = []
+        for i, r in enumerate(records):
+            rel = f"{r['root']}/{r['name']}"
+            if r.get("src") is not None:
+                (d / r["root"] / r["name"]).write_bytes(r["src"])
+            if r.get("dest") is not None:
+                (d / "dest" / rel).parent.mkdir(parents=True, exist_ok=True)
+                (d / "dest" / rel).write_bytes(r["dest"])
+            rec = {"id": f"rec-{i}", "asset_type": "image", "file_path": rel,
+                   "source_root": r["root"], "source_path": r["name"],
+                   "file_extension": r["name"].rsplit(".", 1)[-1],
+                   "metadata": {"filename": r["name"], **r.get("metadata", {})}}
+            if "want" in r:
+                rec["file_size_bytes"] = r["want"]
+            profile.append(rec)
+        (d / "profile.json").write_text(json.dumps(profile), encoding="utf-8")
+        return d
+
+    def _run(self, d, *extra):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "populate_archive.py"),
+             "--local-source", str(d / "local"),
+             "--internet-source", str(d / "internet"),
+             "--hq-source", str(d / "hq"), "--pack-source", str(d / "pack"),
+             "--profile", str(d / "profile.json"), "--dest", str(d / "dest"),
+             *extra],
+            capture_output=True, text=True)
+
+    @staticmethod
+    def _assets(d):
+        """The asset files alone: a real run also writes MANIFEST.json and
+        metadata.csv before its file loop, which is not what these tests
+        are about."""
+        return {k: v for k, v in _tree_digest(d / "dest").items()
+                if k not in ("MANIFEST.json", "metadata.csv", "groups.csv",
+                             "posts.json")}
+
+    @staticmethod
+    def _lines(text, kind):
+        return sorted(re.findall(rf"^  {kind} \[\w+\]: ([^\s:]+)", text, re.M))
+
+    def _decisions(self, text):
+        return sorted(l.strip() for l in text.splitlines()
+                      if re.match(r"  (COPY|COPY COMPANION|KEEP|REFETCH|REFUSE) \[",
+                                  l))
+
+    def test_n5_the_trimmed_internet_files_stay_and_the_valid_copies_happen(self):
+        """The site_a shape, twice over, so a fix for one candidate cannot
+        pass: two trimmed videos whose cache holds the larger download."""
+        with tempfile.TemporaryDirectory() as d:
+            d = self._world(d, [
+                {"root": "internet", "name": "a.mp4", "want": 100,
+                 "dest": b"A" * 100, "src": b"a" * 300,
+                 "metadata": {"origin_bytes": 300}},
+                {"root": "internet", "name": "b.webm", "want": 150,
+                 "dest": b"B" * 150, "src": b"b" * 400,
+                 "metadata": {"origin_bytes": 400}},
+                {"root": "internet", "name": "c.jpg", "want": 50,
+                 "src": b"c" * 50},
+                {"root": "hq", "name": "d.png", "want": 80,
+                 "dest": b"old" * 5, "src": b"d" * 80},
+                {"root": "hq", "name": "e.png", "want": 60,
+                 "dest": b"e" * 60, "src": b"e" * 60},
+            ])
+            before = _tree_digest(d / "dest")
+            dry = self._run(d, "--dry-run")
+            self.assertEqual(dry.returncode, 0, dry.stderr)
+            self.assertEqual(_tree_digest(d / "dest"), before)
+            self.assertEqual(self._lines(dry.stderr, "COPY"),
+                             ["hq/d.png", "internet/c.jpg"])
+            real = self._run(d)
+            self.assertEqual(real.returncode, 0, real.stderr)
+            dest = d / "dest"
+            self.assertEqual((dest / "internet/a.mp4").read_bytes(), b"A" * 100)
+            self.assertEqual((dest / "internet/b.webm").read_bytes(), b"B" * 150)
+            self.assertEqual((dest / "internet/c.jpg").read_bytes(), b"c" * 50)
+            self.assertEqual((dest / "hq/d.png").read_bytes(), b"d" * 80)
+            self.assertEqual((dest / "hq/e.png").read_bytes(), b"e" * 60)
+            self.assertEqual(self._lines(real.stderr, "KEEP"),
+                             ["internet/a.mp4", "internet/b.webm"])
+
+    def test_an_hq_record_that_disagrees_with_its_pool_refuses(self):
+        """Keeping the destination would ship bytes the pool no longer
+        produces; copying would contradict the manifest."""
+        with tempfile.TemporaryDirectory() as d:
+            d = self._world(d, [{"root": "hq", "name": "x.png", "want": 80,
+                                 "dest": b"x" * 80, "src": b"y" * 90}])
+            proc = self._run(d)
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertEqual(self._lines(proc.stderr, "REFUSE"), ["hq/x.png"])
+            self.assertEqual((d / "dest/hq/x.png").read_bytes(), b"x" * 80)
+
+    def test_a_trimmed_internet_file_cannot_come_from_the_cache(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = self._world(d, [{"root": "internet", "name": "t.mp4",
+                                 "want": 100, "src": b"t" * 300,
+                                 "metadata": {"origin_bytes": 300}}])
+            proc = self._run(d)
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertEqual(self._lines(proc.stderr, "REFUSE"),
+                             ["internet/t.mp4"])
+            self.assertFalse((d / "dest/internet/t.mp4").exists())
+
+    def test_a_pack_record_matching_neither_file_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = self._world(d, [{"root": "pack", "name": "p.png", "want": 50,
+                                 "dest": b"p" * 40, "src": b"q" * 60}])
+            proc = self._run(d)
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertEqual(self._lines(proc.stderr, "REFUSE"), ["pack/p.png"])
+            self.assertEqual((d / "dest/pack/p.png").read_bytes(), b"p" * 40)
+
+    def test_a_record_with_no_positive_size_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = self._world(d, [
+                {"root": "hq", "name": "n.png", "dest": b"n" * 20,
+                 "src": b"n" * 20},
+                {"root": "internet", "name": "z.jpg", "want": 0,
+                 "dest": b"z" * 20, "src": b"z" * 20},
+            ])
+            before = self._assets(d)
+            proc = self._run(d)
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertEqual(self._lines(proc.stderr, "REFUSE"),
+                             ["hq/n.png", "internet/z.jpg"])
+            self.assertEqual(self._assets(d), before)
+
+    def test_the_dry_run_names_every_action_and_matches_the_real_run(self):
+        """Copies, companion copies, keeps, re-fetches and refusals each get
+        a line, and the dry run's decisions are the real run's decisions."""
+        member = b"member-bytes" * 4
+        # The companion model and its siblings are added beside the
+        # _world records, since a model names files _world does not know.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            served = root / "served"
+            served.mkdir()
+            self._zip(served / "pack.zip", {"Models/m.glb": member})
+            base = self._serve(served)
+            w = self._world(root / "w", [
+                {"root": "hq", "name": "stale.png", "want": 30,
+                 "dest": b"s" * 10, "src": b"S" * 30},
+                {"root": "pack", "name": "bad.png", "want": 50,
+                 "dest": b"p" * 40, "src": b"q" * 60},
+                {"root": "internet", "name": "cut.mp4", "want": 20,
+                 "dest": b"C" * 20, "src": b"c" * 70,
+                 "metadata": {"origin_bytes": 70}},
+                {"root": "pack", "name": "m.glb", "want": len(member),
+                 "dest": b"m" * len(member), "metadata": {"source_archive": {
+                     "url": f"{base}/pack.zip", "member": "Models/m.glb",
+                     "sha256": hashlib.sha256(member).hexdigest()}}},
+            ])
+            model = json.dumps({"buffers": [{"uri": "scene.bin"}],
+                                "images": [{"uri": "tex.png"}]}).encode()
+            (w / "internet" / "scene.gltf").write_bytes(model)
+            (w / "internet" / "scene.bin").write_bytes(b"buffer-bytes")
+            (w / "internet" / "tex.png").write_bytes(b"texture-bytes")
+            (w / "dest" / "internet").mkdir(parents=True, exist_ok=True)
+            (w / "dest" / "internet" / "scene.gltf").write_bytes(model)
+            prof = json.loads((w / "profile.json").read_text())
+            prof.append({"id": "rec-model", "asset_type": "3d",
+                         "file_path": "internet/scene.gltf",
+                         "source_root": "internet", "source_path": "scene.gltf",
+                         "file_extension": "gltf", "file_size_bytes": len(model),
+                         "metadata": {"filename": "scene.gltf"}})
+            (w / "profile.json").write_text(json.dumps(prof), encoding="utf-8")
+
+            before = _tree_digest(w / "dest")
+            dry = self._run(w, "--dry-run")
+            self.assertEqual(_tree_digest(w / "dest"), before,
+                             "a dry run must write nothing")
+            self.assertEqual(self._lines(dry.stderr, "COPY"), ["hq/stale.png"])
+            self.assertEqual(self._lines(dry.stderr, "COPY COMPANION"),
+                             ["internet/scene.bin", "internet/tex.png"])
+            self.assertEqual(self._lines(dry.stderr, "KEEP"), ["internet/cut.mp4"])
+            self.assertEqual(self._lines(dry.stderr, "REFETCH"), ["pack/m.glb"])
+            self.assertEqual(self._lines(dry.stderr, "REFUSE"), ["pack/bad.png"])
+            self.assertIn("copied:      1 files", dry.stderr)
+            self.assertIn("companions:  2 ", dry.stderr)
+
+            real = self._run(w)
+            self.assertEqual(self._decisions(dry.stderr),
+                             self._decisions(real.stderr))
+            self.assertEqual(dry.returncode, real.returncode)
+            self.assertEqual(real.returncode, 1, real.stderr)
+            self.assertIn("REFETCHED [pack]: pack/m.glb", real.stderr)
+
+    def test_n3_a_source_absent_destination_stands_only_for_internet(self):
+        """Under --no-refetch, a destination at the recorded size is
+        accepted for `internet` alone: an `hq` or `pack` destination is
+        downstream output and cannot authenticate itself."""
+        with tempfile.TemporaryDirectory() as d:
+            d = self._world(d, [
+                {"root": "internet", "name": "i.jpg", "want": 30,
+                 "dest": b"i" * 30},
+                {"root": "hq", "name": "h.png", "want": 30, "dest": b"h" * 30},
+                {"root": "hq", "name": "present.png", "want": 5,
+                 "dest": b"k" * 5, "src": b"k" * 5},
+                {"root": "pack", "name": "k.png", "want": 30,
+                 "dest": b"k" * 30, "metadata": {"source_archive": {
+                     "url": "http://127.0.0.1:9/pack.zip", "member": "k.png",
+                     "sha256": "0" * 64}}},
+            ])
+            before = self._assets(d)
+            proc = self._run(d, "--no-refetch")
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertEqual(self._lines(proc.stderr, "REFUSE"),
+                             ["hq/h.png", "pack/k.png"])
+            self.assertNotIn("internet/i.jpg", proc.stderr)
+            self.assertEqual(self._assets(d), before)
+
+    def test_a_pack_refetch_over_a_present_destination_is_authenticated(self):
+        member = b"real-member" * 3
+        for sha, ok in ((hashlib.sha256(member).hexdigest(), True),
+                        (hashlib.sha256(b"something else").hexdigest(), False)):
+            with self.subTest(hash_matches=ok), \
+                    tempfile.TemporaryDirectory() as d:
+                served = Path(d) / "served"
+                served.mkdir()
+                self._zip(served / "pack.zip", {"Models/r.glb": member})
+                base = self._serve(served)
+                w = self._world(Path(d) / "w", [
+                    {"root": "pack", "name": "r.glb", "want": len(member),
+                     "dest": b"z" * len(member), "metadata": {"source_archive": {
+                         "url": f"{base}/pack.zip", "member": "Models/r.glb",
+                         "sha256": sha}}}])
+                proc = self._run(w)
+                got = (w / "dest/pack/r.glb").read_bytes()
+                if ok:
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertIn("REFETCHED [pack]: pack/r.glb", proc.stderr)
+                    self.assertEqual(got, member)
+                else:
+                    self.assertEqual(proc.returncode, 1, proc.stderr)
+                    self.assertEqual(self._lines(proc.stderr, "REFUSE"),
+                                     ["pack/r.glb"])
+                    self.assertEqual(got, b"z" * len(member))
+
+    def test_n2_a_pack_refetch_that_cannot_authenticate_refuses(self):
+        """Re-fetch allowed, but the record cannot authenticate one: no
+        source_archive at all, and one with a url but no sha256. The
+        destination's size is not evidence, and nothing is downloaded."""
+        with tempfile.TemporaryDirectory() as d:
+            d = self._world(d, [
+                {"root": "pack", "name": "none.png", "want": 30,
+                 "dest": b"n" * 30},
+                {"root": "pack", "name": "nosha.png", "want": 30,
+                 "dest": b"s" * 30, "metadata": {"source_archive": {
+                     "url": "http://127.0.0.1:9/pack.zip",
+                     "member": "nosha.png"}}},
+            ])
+            before = self._assets(d)
+            proc = self._run(d)
+            self.assertNotEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(self._lines(proc.stderr, "REFUSE"),
+                             ["pack/none.png", "pack/nosha.png"])
+            self.assertNotIn("REFETCH", proc.stderr)
+            self.assertEqual(self._assets(d), before)
+
 class TestPexelsAdditions(unittest.TestCase):
     """The #675 regression — a licence claim scoped to one site, fixed in
     the output and left in the inputs — must not come back in new data."""
@@ -7482,6 +7780,16 @@ class TestPublishAuthenticatesRetirement(unittest.TestCase):
 
     BYTES = b"produced-bytes"
 
+    def _rec(self, rid, **over):
+        # The record describes the file this world stages. `_collapse_rec`
+        # defaults `file_size_bytes` to 11 for the Layer A document tests;
+        # here the survivor is copied from the pool, and since #1474 the
+        # copier checks every copied file against its record, so a record
+        # that does not describe BYTES would fail the run for a reason this
+        # class is not about.
+        over.setdefault("file_size_bytes", len(self.BYTES))
+        return _collapse_rec(rid, **over)
+
     def _world(self, d: Path, *, retired_bytes=None, mat=None, src_profile=None,
                dest_records=None, stage_retired=True, doc=None):
         root = Path(d)
@@ -7489,8 +7797,8 @@ class TestPublishAuthenticatesRetirement(unittest.TestCase):
             (root / sub).mkdir(parents=True, exist_ok=True)
         (root / "local" / "metadata.csv").write_text("file_path\n", encoding="utf-8")
 
-        retired = _collapse_rec(RETIRED_ID, archive_state="draft")
-        survivor = _collapse_rec(SURVIVOR_ID)
+        retired = self._rec(RETIRED_ID, archive_state="draft")
+        survivor = self._rec(SURVIVOR_ID)
         mat_hash = mat or hashlib.sha256(self.BYTES).hexdigest()
         entry = _collapse_entry(retired, survivor, mat=mat_hash)
         (root / "upgrades" / "asset-collapse.studio-a.json").write_text(
@@ -7584,8 +7892,8 @@ class TestPublishAuthenticatesRetirement(unittest.TestCase):
     def test_a_retired_id_still_in_the_source_refuses(self):
         with tempfile.TemporaryDirectory() as d:
             root = self._world(Path(d), src_profile=[
-                _collapse_rec(SURVIVOR_ID),
-                _collapse_rec(RETIRED_ID, archive_state="draft")])
+                self._rec(SURVIVOR_ID),
+                self._rec(RETIRED_ID, archive_state="draft")])
             r = self._run(root, "--dry-run")
             self.assertEqual(r.returncode, 2)
             self.assertIn("was never applied to it", r.stderr)
@@ -7594,9 +7902,9 @@ class TestPublishAuthenticatesRetirement(unittest.TestCase):
         """The document describes a record the destination no longer
         holds, so it is not evidence about the record it does hold."""
         with tempfile.TemporaryDirectory() as d:
-            stale = _collapse_rec(RETIRED_ID, archive_state="draft")
+            stale = self._rec(RETIRED_ID, archive_state="draft")
             stale["title"] = "an edit nobody enumerated"
-            root = self._world(Path(d), dest_records=[_collapse_rec(SURVIVOR_ID), stale])
+            root = self._world(Path(d), dest_records=[self._rec(SURVIVOR_ID), stale])
             r = self._run(root, "--dry-run")
             self.assertEqual(r.returncode, 2)
             self.assertIn(f"MISSING_RECORD {RETIRED_ID}", r.stderr)
@@ -7623,7 +7931,7 @@ class TestPublishAuthenticatesRetirement(unittest.TestCase):
         """W7, the real half."""
         with tempfile.TemporaryDirectory() as d:
             root = self._world(Path(d))
-            retired_rel = _collapse_rec(RETIRED_ID)["file_path"]
+            retired_rel = self._rec(RETIRED_ID)["file_path"]
             before = set(self._tree(root / "dest"))
             r = self._run(root)
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -7633,7 +7941,7 @@ class TestPublishAuthenticatesRetirement(unittest.TestCase):
     def test_a_retired_path_with_the_wrong_bytes_refuses_and_deletes_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             root = self._world(Path(d))
-            retired_rel = _collapse_rec(RETIRED_ID)["file_path"]
+            retired_rel = self._rec(RETIRED_ID)["file_path"]
             (root / "dest" / retired_rel).write_bytes(b"not what the document says")
             r = self._run(root)
             self.assertEqual(r.returncode, 1)
@@ -7643,14 +7951,14 @@ class TestPublishAuthenticatesRetirement(unittest.TestCase):
     def test_a_retired_path_a_current_record_still_wants_refuses(self):
         with tempfile.TemporaryDirectory() as d:
             root = self._world(Path(d))
-            retired_rel = _collapse_rec(RETIRED_ID)["file_path"]
-            claimant = _collapse_rec("77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+            retired_rel = self._rec(RETIRED_ID)["file_path"]
+            claimant = self._rec("77777777-8888-9999-aaaa-bbbbbbbbbbbb",
                                      src_sha=SRC_SHA_2)
             claimant["file_path"] = retired_rel
             claimant["source_path"] = Path(retired_rel).name
             (root / "hq" / claimant["source_path"]).write_bytes(self.BYTES)
             (root / "profiles" / "studio-a.assets.json").write_text(
-                json.dumps([_collapse_rec(SURVIVOR_ID), claimant]), encoding="utf-8")
+                json.dumps([self._rec(SURVIVOR_ID), claimant]), encoding="utf-8")
             r = self._run(root)
             self.assertEqual(r.returncode, 1)
             self.assertIn("still the destination path of a record", r.stderr)

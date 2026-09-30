@@ -122,10 +122,17 @@ TEST_MODULE = "test_dataset_upgrade"
 # `updated_at` values in the shipped document and in the profile, the new
 # Pexels entry bound to its membership digest, the document totals, and a
 # byte check that the profile changed in those seven dates and nothing else.
+# 661 after the copied-root authority fix (#1474) added 9: the N=5 site_a
+# shape with two trimmed `internet` files kept, an `hq` record disagreeing
+# with its pool, a trimmed `internet` file with no destination, a `pack`
+# record matching neither file, records with no positive size, dry-run
+# listing and parity with companions, the N=3 source-absent boundary, an
+# authenticated `pack` re-fetch over a present destination (both hash
+# outcomes), and the N=2 `pack` records that cannot authenticate one.
 # Raise it when a batch of tests lands; never lower it to
 # make a red run go green — a dropped test is the thing this number
 # exists to catch.
-MIN_TESTS = 652
+MIN_TESTS = 661
 
 
 def _summary(line: str) -> None:
