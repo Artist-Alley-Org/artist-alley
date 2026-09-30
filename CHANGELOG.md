@@ -488,6 +488,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **Republishing the sample library can no longer swap a trimmed video for its full-length download.**
+  The copier that stages the published library decided whether a file was already in place by comparing
+  it with its source copy, never with the size the library records. On 2026-09-28 that replaced four
+  correctly trimmed site_a videos in staging with the larger downloads in the local cache, and the staging
+  check caught it before anything was published. The copier now checks `internet`, `hq` and `pack` files
+  against the record's size, by who is authoritative for each: a downloaded video already at its recorded
+  size is kept, `hq` and `pack` files never vouch for themselves (a record that disagrees with its source
+  fails the run, and a missing `pack` file is recovered only through the hash-checked download), and a
+  record with no size fails. Every file it would copy, keep, re-download or refuse is now named in the
+  output, the same in a dry run as in a real run, so the copy set can be checked before anything is
+  written. ADR 0097 records the rule (#1474, PR #1476).
+
 - **The sample library's site_a feed keeps seven hand-made dates the republish would have reverted.**
   The 2026-08-27 recovery of the hand-curated feed missed seven `updated_at` values: it skipped a
   backup interval that also held real hand edits, and it could not see an edit made on one row of a
