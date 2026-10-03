@@ -1,9 +1,9 @@
 # Artist Alley — Demo Studio Seed (Layer A): Attributions
 
-This dataset bundles content from many sources, every one of them
-open-source, public-domain, or Creative Commons. This document is the
-canonical attribution list — required by the CC-BY-SA 4.0 aggregate
-license under which the dataset is published.
+This dataset bundles content from many sources under several licenses.
+It is published under **no single aggregate license**: each source's own
+terms apply, as set out in **Aggregate license** below. This document is
+the canonical attribution list for those sources.
 
 If you redistribute this dataset (in whole or in part), you must
 preserve this file and provide attribution to every source whose
