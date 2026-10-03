@@ -488,6 +488,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **The published sample library's site_a now carries the corrected catalogue.** On 2026-10-03 the
+  owner-run republish replaced the published site_a with a staged copy built from the frozen
+  pre-operation snapshot, the committed profiles and the archive contract: 2,006 assets and 863 posts,
+  the corrected titles and dates, the retired duplicate removed, and the two authored plates installed.
+  The swap was one scripted rename pair. Before it, the staged copy was checked byte for byte against an
+  independently rebuilt expected tree, seeded and verified, and rehearsed against `main`'s nightly and
+  `dev`'s UI suites; after it, the published site_a passed the full verification again, read the same
+  through every client path, and seeded cleanly. site_b, the private federation fixture, was not
+  changed. The previous site_a is kept, unchanged, as the rollback copy until the later publication
+  cutoff. Nothing was published to Kaggle, and no version bump, licensing audit, release merge or tag
+  has happened (#1319).
+
 - **Republishing the sample library can no longer swap a trimmed video for its full-length download.**
   The copier that stages the published library decided whether a file was already in place by comparing
   it with its source copy, never with the size the library records. On 2026-09-28 that replaced four
@@ -528,9 +540,9 @@ where applicable, otherwise note "no-spec-impact."
   record of its checksums; without them the publish refuses before writing anything. The publish check now
   also refuses a title with a comma or an em dash in the manifest or in either spreadsheet. ADR 0097 records
   the change.
-  ⚠️ Nothing in the published library has changed yet. These corrections are enabled by the archive
-  contract shipped in #1460 / PR #1462, and are applied to the published library only by the owner-run
-  23b republish (#1319).
+  These corrections are enabled by the archive contract shipped in #1460 / PR #1462. The owner-run 23b
+  republish applied them to the published site_a on 2026-10-03; site_b, the private federation fixture,
+  is unchanged by design (#1319).
 
 - **Seeded titles lose their comma and em-dash separators in the repository.** Asset titles in the
   committed sample library no longer carry a comma or an em dash: each one now reads with an ASCII hyphen,
@@ -541,9 +553,9 @@ where applicable, otherwise note "no-spec-impact."
   the same rule to every asset title they write, without changing any record's id, and the upgrade pass now
   refuses to merge an asset title carrying a comma or em dash rather than quietly rewriting it. 88 asset
   titles and 1,137 post titles changed, no post id moved, and nothing else in those records changed.
-  ⚠️ This changes the repository only. The published sample library still shows the old titles until the
-  owner-run republish, and the archive's own title columns are the next slice of this work (#1459, #1460,
-  PR #1458).
+  This changed the repository first. The owner-run republish carried the corrected titles into the
+  published site_a on 2026-10-03, and the archive's own title columns followed in the next slice of this
+  work (#1459, #1460, PR #1458).
 
 - **The sample library stops asking the application to store 22 records it cannot store, and 25 posts
   get their missing members back.** The second seeded site's catalogue held 13 groups in which one
@@ -654,8 +666,9 @@ where applicable, otherwise note "no-spec-impact."
   failures that were reported there are gone, and a zero-failure full browser run was recorded
   on it before this sprint landed, so the report no longer describes it (#1335). The
   shipped post and asset titles carry no em dash in any committed profile, the guards that pin
-  that are green, and no post id moves; the dashed titles still visible on running stacks come
-  from the published archive, which is refreshed by the release-gated republish (#1338, #1319).
+  that are green, and no post id moves; the dashed titles that were visible on running stacks came
+  from the published archive, which the owner-run republish refreshed for site_a on 2026-10-03
+  (#1338, #1319).
 
 - **Two kinds of metadata edit could deadlock each other, and one of them needed no batch at all.**
   Saving a metadata value rebuilds the searchable text of the file and then of every post that file
