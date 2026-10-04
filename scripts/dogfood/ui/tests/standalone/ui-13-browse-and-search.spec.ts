@@ -262,6 +262,58 @@ test.describe('UI-13 browse + search', () => {
     );
   }
 
+  /** A term whose UNSCOPED search answers posts AND something else (#1483).
+   *
+   *  A word off a post title proves the word is in a post title, nothing
+   *  more. The kind-chip test needs a result set the Posts chip can
+   *  actually narrow: when the term matches posts only, `types=post`
+   *  correctly changes nothing and the test's own anti-vacuity check
+   *  fails before Back is ever exercised. So, like `seededAssetTerm`,
+   *  the candidate is CONFIRMED against the endpoint the page drives.
+   *
+   *  The probe is the /search page's own first request (`limit=25`, `q`,
+   *  no `types`), and it reads each hit's `type`. Any non-post hit on that
+   *  first page is rendered as an /assets/ or /collections/ tile, which a
+   *  post-scoped result can never contain, so the two fingerprints must
+   *  differ.
+   *
+   *  ⛔ NOT `types_matched`. That field echoes the REQUESTED types and
+   *  defaults to all of them, so an unscoped query reports every kind
+   *  whatever matched, and a probe built on it would accept every term.
+   *
+   *  Candidates are tried in wall order and the first that qualifies is
+   *  used. If none does, this fails with every candidate's counts rather
+   *  than skipping: a skipped test is not a passing one. */
+  async function seededMixedKindTerm(page: import('@playwright/test').Page) {
+    const { terms, n } = await wallWords(page, 24);
+    const tried: string[] = [];
+    for (const term of terms) {
+      const kinds = await page.evaluate(async (q: string) => {
+        const params = new URLSearchParams({ limit: '25' });
+        params.set('q', q);
+        const r = await fetch(`/api/v1/search?${params.toString()}`, {
+          credentials: 'include',
+        });
+        if (!r.ok) return { status: r.status, post: 0, asset: 0, collection: 0 };
+        const hits = ((await r.json()).hits ?? []) as { type?: string }[];
+        const count = (t: string) => hits.filter((h) => h.type === t).length;
+        return { status: r.status, post: count('post'), asset: count('asset'), collection: count('collection') };
+      }, term);
+      const line =
+        `${term}: post=${kinds.post} asset=${kinds.asset} collection=${kinds.collection}` +
+        (kinds.status === 200 ? '' : ` (HTTP ${kinds.status})`);
+      tried.push(line);
+      const qualifies = kinds.post > 0 && kinds.asset + kinds.collection > 0;
+      console.log(`[#1483 mixed-kind term] ${qualifies ? 'CHOSEN  ' : 'rejected'} ${line}`);
+      if (qualifies) return term;
+    }
+    throw new Error(
+      `none of the ${terms.length} candidate words off ${n} rendered post titles has an ` +
+        'unscoped first page holding both a post and an asset or collection, so the Posts ' +
+        `chip could not narrow any of them. Candidates tried: ${tried.join('; ')}.`,
+    );
+  }
+
   /** Scroll the result list down past the navbar's auto-hide threshold
    *  and then back up until the navbar is on screen again. Returns the
    *  offset the page ends at, which the caller uses only to confirm the
@@ -741,7 +793,7 @@ test.describe('UI-13 browse + search', () => {
   // in the OLD entry's snapshot.
   test('Back out of a kind chip restores the unscoped result set', async ({ page }) => {
     await page.goto('/');
-    const [term] = await seededTerms(page);
+    const term = await seededMixedKindTerm(page);
     const tiles = page.locator(
       'main a[href^="/assets/"], main a[href^="/posts/"], main a[href^="/collections/"]',
     );

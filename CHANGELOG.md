@@ -358,6 +358,12 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Changed
 
+- **Development only: the browse-and-search test that backs out of a kind chip now picks a search term
+  it can actually test.** It used to take a word off a post title, so when that word matched posts
+  only, narrowing to posts changed nothing and the test failed before it reached the step it guards.
+  It now confirms the term returns both a post and an asset or collection. No effect on the running
+  product (#1483).
+
 - **Collections hold posts, not loose files.** Dropping a file into a collection used to publish
   it there with no title and no framing, and no moment where the artist decided it was ready.
   Uploading into a collection now composes a post, and the two endpoints that could pin a bare
