@@ -24,8 +24,8 @@
     "postinstall": "svelte-kit sync && (test -f ${AA_OPENAPI_SPEC:-../app/api/openapi.yaml} && npm run generate:api || echo 'openapi.yaml not found yet; skipping API codegen')"
   },
   "devDependencies": {
-    "@sveltejs/adapter-static": "^3.0.10",
-    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/adapter-static": "^4.0.0",
+    "@sveltejs/kit": "^3.0.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "^7.0.1",
