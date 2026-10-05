@@ -7,6 +7,8 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+## [v0.11.0] - 2026-10-05 - Making and describing work
+
 ### Added
 
 - **Advanced Search understands three special verbs.** Typed into the advanced search's query
