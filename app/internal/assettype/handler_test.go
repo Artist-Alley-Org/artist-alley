@@ -18,6 +18,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // TestListAssetTypes_Live exercises the handler at the
@@ -31,7 +32,7 @@ func TestListAssetTypes_Live(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ensureAssetTypeSeed(t, ctx, pool)
 
 	h := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -82,7 +83,7 @@ func TestListAssetTypes_HTTP(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ensureAssetTypeSeed(t, ctx, pool)
 
 	// The StrictServerInterface now spans every endpoint group; we
@@ -151,7 +152,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

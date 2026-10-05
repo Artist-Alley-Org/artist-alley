@@ -14,6 +14,12 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import SearchBar from '$components/SearchBar.svelte';
+  import {
+    commitTarget,
+    commitIsInPlace,
+    consumesGlobalQuery,
+    type CommitTerm,
+  } from '$lib/search/commitTarget';
   import { chromeScroll } from '$stores/chromeScroll.svelte';
   import MobileNavDrawer from '$components/MobileNavDrawer.svelte';
   import NavUploadButton from '$components/NavUploadButton.svelte';
@@ -27,6 +33,7 @@
   import ExploreMenu from '$components/ExploreMenu.svelte';
   import CardTooltip from '$components/CardTooltip.svelte';
   import ToastHost from '$components/ToastHost.svelte';
+  import SelectionBar from '$components/SelectionBar.svelte';
 
   let { children } = $props();
 
@@ -123,29 +130,6 @@
     searchValue = urlQuery;
   });
 
-  /** Does the route at `pathname` render a result feed keyed off the
-   *  global `q`?
-   *
-   *  This is a question about the SURFACE, not a list of paths that
-   *  happen to be special, which is why it is a predicate and not a
-   *  `pathname === '/' || pathname === '/search'` chain. A surface that
-   *  consumes `q` is refined in place; every other surface is left in
-   *  place and the user is taken to one that does. Adding the next one
-   *  — #910's search-within-a-collection is the queued example — is a
-   *  line in this function and nothing else.
-   *
-   *  `/search` qualifies since #850: it stopped being a different kind
-   *  of page (its own text rows beside a facet rail) and became a
-   *  result feed rendering the same cards through the same ContentGrid,
-   *  with its own chrome on top. Before this it was treated as "some
-   *  other page", so typing a refinement into the nav box on the one
-   *  surface built for refining a search navigated you AWAY from it to
-   *  browse — ~250ms after the last keystroke, taking your focus and
-   *  your scroll position with it (#1053). */
-  function consumesGlobalQuery(pathname: string): boolean {
-    return pathname === '/' || pathname === '/search';
-  }
-
   /** Which corpus a commit from the nav box will actually be executed
    *  against (#1155).
    *
@@ -168,21 +152,26 @@
       : ('browse' as const),
   );
 
-  async function handleSearch(q: string) {
-    const trimmed = q.trim();
-    // On a result surface (browse, /search), keep the user in place and
-    // update the query string — the page re-runs its own search off the
-    // URL. From any other page (account, admin, post detail, etc.),
-    // navigate TO the browse page with the query — the search input is
-    // global per `feedback_navbar_search_always_visible` and submitting
-    // from a non-result surface should land the user on a result feed.
-    const inPlace = consumesGlobalQuery(page.url.pathname);
-    const target = inPlace ? new URL(page.url) : new URL('/', page.url);
-    if (trimmed === '') {
-      target.searchParams.delete('q');
-    } else {
-      target.searchParams.set('q', trimmed);
-    }
+  /** Execute a commit from the nav box.
+   *
+   *  The destination is computed by `commitTarget` rather than here, so
+   *  that #1077's acceptance can be asserted on the resulting URL — see
+   *  that module for the two kinds of commit and where each one lands.
+   *  This function is the side effect and nothing else.
+   *
+   *  `term` is present only for a picked suggestion that carries a
+   *  dimension (today, a tag). Free text — typing plus Enter, the clear
+   *  button, Escape, a history row — arrives with it undefined and is
+   *  routed exactly as it always was.
+   *
+   *  Focus and scroll are kept when the user is not being moved to a
+   *  different surface, which is a question about the TARGET rather than
+   *  about the current page: picking a tag from `/account` lands on
+   *  browse and should scroll to the top, while picking one on browse
+   *  should not. */
+  async function handleSearch(q: string, term?: CommitTerm) {
+    const target = commitTarget(page.url, q, term);
+    const inPlace = commitIsInPlace(page.url, target);
     await goto(target.pathname + target.search, { keepFocus: inPlace, noScroll: inPlace });
   }
 
@@ -525,9 +514,12 @@
     `position: sticky; top: 0` inside <main> now pins to the chrome's
     bottom edge while the chrome is up and to the top of the viewport
     once it has hidden — with no JS and no magic offset, because the box
-    itself moved. #1113's sticky teams rail is built on exactly that,
-    and the browse page's SelectionBar stops pinning underneath the
-    navbar as a side effect.
+    itself moved. #1113's sticky teams rail is built on exactly that.
+
+    (The browse page's SelectionBar used to be the other beneficiary
+    named here. It is no longer a sticky descendant of anything: it
+    moved to the shell as a fixed bar in #1119, because a selection
+    that survives navigation cannot have its only handle on one page.)
   -->
   <!-- `data-testid` because `main` alone is not a unique handle on this
        app. /admin/integrations/api embeds Scalar's API reference, a Vue
@@ -577,6 +569,15 @@
        itself to the right host at push time (a viewer dialog occupies
        the top layer, where a body-level node is invisible). -->
   <ToastHost />
+
+  <!-- The selection's count / Clear / batch action (#515, #1119). ONE
+       instance for the whole app, same reasoning as CardTooltip and
+       ToastHost, and here it is load-bearing rather than tidy: the
+       selection store is a global singleton that survives navigation,
+       ten surfaces can add to it, and a per-page mount left every
+       surface but browse with a selection nobody could see, clear or
+       act on. It renders nothing while the selection is empty. -->
+  <SelectionBar />
 
   {#if !!auth.user}
     <!-- Upload modal + drop overlay are gated on auth: only signed-in

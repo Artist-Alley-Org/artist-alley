@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import hashlib
 import json
 import os
@@ -85,7 +86,21 @@ from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# For PROFILE_ALIASES only. The alias mapping belongs beside the pass that
+# invalidates it, and spelling it out a second time here is how the two
+# drift — which is the #572 bug this loop exists to prevent.
+import apply_upgrade  # noqa: E402
+
+# The one title punctuation rule (#1319). Re-exported so the post-side
+# helpers below and their tests reach it through this module; it lives in
+# a leaf module because `apply_upgrade` stores a title too and this module
+# already imports `apply_upgrade`.
+from title_rule import (  # noqa: E402
+    EM_DASH, TITLE_SEPARATORS, has_title_separator, normalize_title)
 
 # -----------------------------------------------------------------------------
 # Studio split — by project
@@ -358,6 +373,81 @@ def stable_uuid(*parts: str) -> str:
     return f"{d[0:8]}-{d[8:12]}-{d[12:16]}-{d[16:20]}-{d[20:32]}"
 
 
+# -----------------------------------------------------------------------------
+# Post identity (#1293)
+# -----------------------------------------------------------------------------
+#
+# ADR 0098: "A derived id must be a function of what distinguishes the
+# thing it names. An input that merely ACCOMPANIES the thing — an anchor,
+# a sample's extremum, a dominant value — does not identify it and must
+# not be the whole key."
+#
+# The three narrative passes built their id from the sample's ANCHOR: the
+# most-recent member. A team's genuinely most-recent asset lands in many
+# samples, so several roundups — different membership, different titles —
+# derived the same id:
+#
+#     studio-a.posts.json   873 rows under 861 ids
+#     studio-b.posts.json   771 rows under 767 ids
+#
+# and every colliding pair disagreed: "— 7 drops" beside "— 5 drops"
+# beside "— 8 drops" under one id.
+#
+# ⛔ The consequence is a DISAPPEARANCE, not a duplicate. `aa seed` keys
+# on the stable id, so of n colliding rows exactly one survives and the
+# rest can never be seeded.
+#
+# What distinguishes one roundup from another is its MEMBERSHIP, so
+# membership is the key. `label` and `reel_label` stay in front of it
+# because they are not redundant: a project holding exactly five assets
+# yields the same five-member sample on every sweep, and only the label
+# tells those posts apart.
+#
+# ⭐ These live at module level so `migrate_post_ids.py` calls the SAME
+# function the assembler does. A migration that reimplements the key is a
+# second definition of identity, and the two drift.
+
+def roundup_post_id(team_name: str, asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "roundup", team_name, *sorted(asset_ids))
+
+
+def sprint_post_id(project_name: str, label: str, asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "sprint", project_name, label, *sorted(asset_ids))
+
+
+def showreel_post_id(studio_key: str, reel_label: str,
+                     asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "showreel", studio_key, reel_label,
+                       *sorted(asset_ids))
+
+
+# A bundle keyed on its anchor is the same defect one step removed, and
+# #1310 is the correctness half rather than the live-hazard half:
+# measured on the committed profile, 863 rows under 863 distinct ids and
+# ZERO collisions, because the bundle loop partitions its cluster into
+# DISJOINT chunks and two bundles therefore cannot share an anchor.
+#
+# ⭐ What it is instead is UNSTABLE. The anchor is the chunk's most
+# recent member, so it says nothing about the other members: re-chunk the
+# cluster and a bundle keeps its id while its membership changes under
+# it, or loses it to a neighbour. One asset added to a cluster re-cut
+# every chunk boundary after it and moved every id that followed.
+#
+# Membership alone is the key here, with no cluster name in front of it:
+# clusters partition the asset pool and chunks partition a cluster, so no
+# two bundles can share a member and no two can collide. Adding
+# `(collection, team, asset_type)` would only make the id move when a
+# member's collection was renamed, which is not a change of identity.
+def bundle_post_id(asset_ids: Iterable[str]) -> str:
+    return stable_uuid("post", "bundle", *sorted(asset_ids))
+
+
+SPRINT_LABELS = ("sprint 12", "sprint 13", "sprint 14", "milestone alpha",
+                 "milestone beta", "review session", "lock-in pass",
+                 "polish week", "final review", "ship gate")
+REEL_LABELS = ("Q3 reel", "Q4 reel")
+
+
 def stable_int(n: int, *parts: str) -> int:
     """Deterministic int in [0, n) from the same namespace as stable_uuid.
     Used for per-item flavour picks so composition never depends on RNG
@@ -371,6 +461,422 @@ def stable_int(n: int, *parts: str) -> int:
         h.update(b"\x00")
         h.update(str(p).encode())
     return int.from_bytes(h.digest()[:8], "big") % n
+
+
+# -----------------------------------------------------------------------------
+# Post titles (#1306)
+# -----------------------------------------------------------------------------
+#
+# ⛔ NO EM DASHES, AND NO GENERATED COUNTS.
+#
+# Measured on the shipped `studio-a.posts.json`: 863 posts, 781 of them
+# (90%) containing an em dash and 580 (67%) ending in a count the
+# generator produced — "— 4 assets", "— 6 drops", "— 2-part set". Nobody
+# writes a title that way, and the count is already on the card:
+# `PostCard.svelte` renders `CardKindBadge count={memberCount}` right
+# beside it, so the suffix repeated chrome sitting an inch away.
+#
+# ⛔ THE COUNT WAS ALSO LOAD-BEARING, WHICH IS WHY THIS IS NOT A DELETION.
+# Removing it outright collapses 128 studio-a titles into 44 groups and
+# 111 studio-b titles into 44 — three separate "Project Echo: Audio audio
+# bundle" posts, three "VFX sprint roundup" posts, and so on, because the
+# number was the only thing telling one chunk from the next. Each of
+# those templates therefore gains the LEAD ASSET instead, which is both
+# what a person would actually name the post after and a stronger
+# discriminator than a count: chunks are disjoint, so their leads differ
+# even when their sizes collide.
+#
+# Every function here is shared by the generator and by the in-place
+# retitle pass, so there is one definition of each title rather than a
+# template and a migration that can drift apart.
+
+# ⚠️ NEITHER OF THESE CLAIMS COMPLETENESS, deliberately. "…, the full
+# set" reads as a contradiction the moment `disambiguate_titles` has to
+# append "part 2" to it, and it did: two site_b groups share an anchor
+# title. The generator's own descriptions already call these "variants
+# and siblings kept together" and "assets across N types, delivered
+# together", so the titles say that instead.
+def title_group_set(anchor_title: str) -> str:
+    return f"{anchor_title} and variants"
+
+
+def title_group_bundle(anchor_title: str) -> str:
+    return f"{anchor_title} and siblings"
+
+
+def title_collection_chunk(collection: str, team: str, theme: str) -> str:
+    return f"{collection}: {team} {theme}"
+
+
+def title_solo(flavor: str, asset_title: str) -> str:
+    return f"{flavor[:1].upper()}{flavor[1:]}: {asset_title}"
+
+
+def title_team_roundup(team_name: str) -> str:
+    return f"{team_name} sprint roundup"
+
+
+def title_project_sprint(project_name: str, label: str) -> str:
+    return f"{project_name} {label}"
+
+
+def title_showreel(reel_label: str) -> str:
+    return f"Cinematics {reel_label}"
+
+
+# ⛔ THE INVERSES BELONG BESIDE THE FORMATTERS (#1306).
+#
+# `migrate_post_ids.derived_id` recovers a sprint `label` and a
+# `reel_label` FROM THE TITLE, because neither is stored anywhere else on
+# the post, and feeds them straight into `sprint_post_id` /
+# `showreel_post_id`. So a title format change is an identity concern for
+# exactly two post kinds, and #1306 broke the parse the moment it
+# retired the em dash — caught by `migrate_post_ids.py --check`, which
+# the guard suite runs.
+#
+# ⚠️ The ids do NOT move: the label recovered is the same label, so the
+# derivation's inputs are unchanged. What moved was the parser's ability
+# to find it. Keeping the inverse next to the formatter is what stops the
+# next title edit from being a silent id migration instead of a loud
+# parse failure.
+
+SOLO_FLAVORS = {
+    "image": ["new render", "color study", "lighting pass", "reference plate", "concept sketch"],
+    "3d": ["model drop", "topology pass", "PBR test", "WIP turntable", "asset ship"],
+    "audio": ["audio drop", "sfx test", "ambient bed", "score sketch", "VO take"],
+    "video": ["cinematic test", "edit pass", "previs sweep", "playblast", "shot reference"],
+    "document": ["briefing", "style guide", "pipeline note", "research doc", "spec draft"],
+    "font": ["type sample", "kerning check", "char set test", "weight comparison"],
+    "comic": ["storyboard panel", "page rough", "layout pass"],
+}
+
+# Flat, for the inverse: a solo title is "{asset} \u2014 {flavor}" and the
+# asset title can hold a dash of its own, so the only safe way to find
+# the split is to know what the flavours ARE.
+ALL_SOLO_FLAVORS = frozenset(
+    f for flavors in SOLO_FLAVORS.values() for f in flavors) | {"asset drop"}
+
+# The generated suffixes every retired template ended in. A closed
+# vocabulary: anything outside it is REPORTED rather than guessed at.
+_SUFFIX_RE = re.compile(
+    r" \u2014 \d+[- ](?P<what>part set|asset bundle|assets|drops|cuts)$")
+_SPRINT_SUFFIX_RE = re.compile(r" \u2014 \d+ assets across \d+ team\(s\)$")
+
+# ⛔ THE FORMAT AND ITS PARSE CHANGE TOGETHER (#1319). The suffix was
+# `, part N` until the owner ruled that every generated separator in a
+# title is an ASCII hyphen. There is deliberately no fallback for the old
+# form: a sprint title still ending in `, part N` keeps the suffix glued
+# to its label, `derived_id` finds no such label and raises, and
+# `migrate_post_ids.py --check` exits 2. Stale data must fail loudly, not
+# half-parse.
+PART_SUFFIX_FORMAT = "{title} - part {n}"
+_PART_SUFFIX = re.compile(r" - part \d+$")
+
+
+def strip_part_suffix(title: str) -> str:
+    """Remove the ` - part N` a title may have gained from
+    `disambiguate_titles`. Idempotent, and a no-op on a title that never
+    collided. Only the TRAILING suffix goes: `X - Y - part 2` keeps its
+    inner hyphen, and `Moby Dick - Herman Melville` is left alone."""
+    return _PART_SUFFIX.sub("", title)
+
+
+def sprint_label_from_title(project_name: str, title: str) -> str | None:
+    """Inverse of `title_project_sprint`. None when it does not match."""
+    head = strip_part_suffix(title)
+    prefix = f"{project_name} "
+    if not project_name or not head.startswith(prefix):
+        return None
+    return head[len(prefix):]
+
+
+def reel_label_from_title(title: str) -> str | None:
+    """Inverse of `title_showreel`. None when it does not match."""
+    head = strip_part_suffix(title)
+    prefix = "Cinematics "
+    if not head.startswith(prefix):
+        return None
+    return head[len(prefix):]
+
+
+# Keyed by the post_kind the generator writes, so the retitle pass and
+# the generator cannot disagree about which wording belongs to which post.
+VIDEO_TITLES = {
+    "dailies": "Dailies on {title}",
+    "cinematic_cut": "Cinematic cut of {title}",
+}
+
+REVISION_TITLES = {
+    "draft": "First draft of {title}",
+    "review": "Review pass on {title}",
+    "ship": "Signing off on {title}",
+}
+
+
+def clean_dashes(text: str) -> str:
+    """Replace the em dash in a post title with an ASCII hyphen.
+
+    This is `normalize_title` restricted to the em dash (#1319). An em
+    dash that touches whitespace becomes " - " and takes that whitespace
+    with it; an unspaced one becomes "-". So "Moby Dick \u2014 Herman
+    Melville" reads "Moby Dick - Herman Melville" and the separation
+    survives without the tell.
+
+    ⛔ IT NEVER TOUCHES A COMMA. This runs over EVERY post title, and a
+    comma an author wrote in a post title is legal. Asset titles lose
+    their commas where they are STORED (every asset-title writer calls
+    `normalize_title`), so a post embedding an asset title already
+    receives the hyphenated form and this pass has nothing to fix there.
+    """
+    return normalize_title(text, EM_DASH)
+
+
+def disambiguate_titles(posts: list[dict]) -> int:
+    """Number the posts that would otherwise share a title.
+
+    ⛔ THIS IS WHAT MAKES DROPPING THE COUNTS SAFE. The generated count
+    was load-bearing: 128 studio-a titles and 111 studio-b titles
+    collapse into 44 groups each without it, because a chunk's size was
+    the only thing telling it from the next chunk of the same collection
+    and team.
+
+    So the count is replaced rather than deleted, by the thing a person
+    reaches for instead: "part two", joined with " - " like every other
+    generated separator (#1319). It is shorter than a byte count, it
+    does not repeat the `CardKindBadge count={memberCount}` sitting
+    beside it on the card, and it is applied to the FINISHED document —
+    the same function on the generator's output and on the committed one,
+    so the two cannot disagree about which post is part two.
+
+    Ordering is by post id, which is derived from membership and is
+    therefore stable across a re-assembly; iteration order is not.
+    """
+    by_title: dict[str, list[dict]] = {}
+    for p in posts:
+        by_title.setdefault(p.get("title") or "", []).append(p)
+    renamed = 0
+    for title, group in by_title.items():
+        if len(group) < 2:
+            continue
+        # ⚠️ EVERY member is numbered, including the first. Leaving one
+        # bare reads as an oversight beside fourteen numbered siblings,
+        # and site_a really does have a fifteen-chunk family.
+        for n, post in enumerate(sorted(group, key=lambda x: x["id"]), start=1):
+            post["title"] = PART_SUFFIX_FORMAT.format(title=title, n=n)
+            renamed += 1
+    return renamed
+
+
+def retitle_posts(posts: list[dict]) -> tuple[int, list[str]]:
+    """Re-title an ALREADY COMPOSED posts document in place (#1306).
+
+    Returns (changed, problems).
+
+    ⚠️ WHY THIS EXISTS RATHER THAN A RECOMPOSE. The shipped
+    `studio-a.posts.json` is not this module's output: a recompose emits
+    1,103 posts where the committed file holds 863, and `apply_upgrade`
+    already records that the two disagree on `created_at` for 840 of 861
+    shared ids. That divergence is its own issue (#1309); resolving it
+    here would hide a 240-post change inside a copy edit. So the
+    generator's wording is fixed above and applied to the existing
+    composition here, leaving membership, ids and timestamps untouched.
+
+    Every wording comes from the same helper the generator calls, so the
+    two cannot drift.
+    """
+    changed = 0
+    problems: list[str] = []
+    for post in posts:
+        kind = post.get("post_kind") or ""
+        old = post.get("title") or ""
+        coll = post.get("collection_name") or ""
+        team = post.get("team_name") or ""
+        new = None
+
+        # ⛔ DISPATCH ON THE TITLE'S OWN SHAPE, NOT ON `post_kind`.
+        # The two disagree in the committed data: 228 posts carry
+        # `post_kind: "asset_group"` while their title was written by the
+        # collection-chunk template ("Project Echo: Animation art drop
+        # — 4 assets"). Trusting the kind turned those into "..., the
+        # full set, part 15", which is both wrong about the post and
+        # nonsense to read. The suffix is what the generator actually
+        # produced, so it is what the inverse reads.
+        m = _SUFFIX_RE.search(old)
+        sprint = _SPRINT_SUFFIX_RE.search(old)
+        if m:
+            head = old[:m.start()]
+            what = m.group("what")
+            if what == "part set":
+                new = title_group_set(head)
+            elif what == "asset bundle":
+                new = title_group_bundle(head)
+            elif what == "drops":
+                new = title_team_roundup(
+                    head[:-len(" sprint roundup")]
+                    if head.endswith(" sprint roundup") else head)
+            elif what == "cuts":
+                label = reel_label_from_title(head)
+                new = title_showreel(label) if label is not None else head
+            elif what == "assets":
+                prefix = f"{coll}: {team} "
+                if coll and team and head.startswith(prefix):
+                    new = title_collection_chunk(coll, team,
+                                                 head[len(prefix):])
+                else:
+                    new = head
+        elif sprint:
+            head = old[:sprint.start()]
+            label = sprint_label_from_title(coll, head)
+            new = (title_project_sprint(coll, label)
+                   if label is not None else head)
+        elif kind == "solo_showcase":
+            # The flavour is a SUFFIX, so this splits on the LAST dash:
+            # an asset title carrying a dash of its own would otherwise
+            # be cut in half. Matched against the known flavours rather
+            # than "whatever follows the dash", so an asset title that
+            # merely looks like one cannot be mistaken for it.
+            head, sep, tail = old.rpartition(" — ")
+            if sep and tail in ALL_SOLO_FLAVORS:
+                new = title_solo(tail, head)
+        else:
+            # The prefix templates: their fixed wording comes FIRST, so
+            # they split on the first dash rather than the last.
+            pre_head, pre_sep, pre_tail = old.partition(" — ")
+            if pre_sep and kind.startswith("video_"):
+                tmpl = VIDEO_TITLES.get(kind[len("video_"):])
+                if tmpl:
+                    new = tmpl.format(title=pre_tail)
+            elif pre_sep and kind.startswith("revision_"):
+                tmpl = REVISION_TITLES.get(kind[len("revision_"):])
+                if tmpl:
+                    new = tmpl.format(title=pre_tail)
+
+        if new is None:
+            # ⛔ A post this pass cannot name is REPORTED, never left
+            # to be noticed later on the wall. Silently keeping the old
+            # title is how "zero em dashes" becomes a claim about the
+            # posts the pass happened to understand.
+            if "—" in old:
+                problems.append(
+                    f"{kind or '(no kind)'}: no template matched {old!r}; "
+                    "it falls through to the dash clean below, which is "
+                    "correct for a hand-written title but would hide a "
+                    "template this pass has stopped recognising")
+            continue
+        if new != old:
+            post["title"] = new
+            changed += 1
+
+    # The asset titles the templates embed carried 43 em dashes of their
+    # own, so a template-only fix still leaves 37 site_a post titles with
+    # one. Applied after the per-kind pass, and to EVERY title, so a post
+    # this pass could not name still comes out clean. It turns each dash
+    # into a hyphen and never touches a comma (#1319).
+    for post in posts:
+        cleaned = clean_dashes(post.get("title") or "")
+        if cleaned != post.get("title"):
+            post["title"] = cleaned
+            changed += 1
+
+    # LAST, on the finished document (see disambiguate_titles).
+    disambiguate_titles(posts)
+    return changed, problems
+
+
+# -----------------------------------------------------------------------------
+# One-time punctuation correction of a COMPOSED posts document (#1319)
+# -----------------------------------------------------------------------------
+#
+# ⛔ A POST TITLE IS NOT AN ASSET TITLE, AND THE ASSET RULE IS NOT APPLIED
+# TO IT. A comma an author writes in a post title stays legal. What goes
+# is only what a MACHINE put there:
+#
+#   1. the `, part N` suffix `disambiguate_titles` used to append;
+#   2. a mechanical separator: a comma the old `clean_dashes` wrote where
+#      the source title (a committed post document) had an em dash;
+#   3. an inherited comma: one that arrived inside an embedded asset title
+#      whose own title now changes.
+#
+# Each needs its ORIGIN, so the caller supplies it: the em-dash source
+# title per post id, and every title each member asset has carried. A
+# comma with no origin is left exactly where it is. On the committed
+# corpus the result happens to equal `normalize_title` of the whole post
+# title, but only because no natural post comma exists there yet; that is
+# a coincidence of the data, not the rule.
+
+# The suffix's form before #1319. Read ONLY here, to convert committed
+# data; no parser accepts it (see `_PART_SUFFIX`).
+_LEGACY_PART_SUFFIX = re.compile(r", part (\d+)$")
+
+# Any single separator as a title might have been written with: a comma or
+# an em dash, spaced or not. An embedded title was written into a post by a
+# pass that may have re-punctuated it (the old `clean_dashes` turned
+# "Sintel \u2014 480p trailer" into "Sintel, 480p trailer" while the asset
+# kept "Sintel , 480p trailer"), so each of its separators is matched
+# loosely, one for one, and everything else exactly.
+_ANY_SEPARATOR = r"\s*[,\u2014]\s*"
+
+
+def _separated_span(source: str, separators: str) -> re.Pattern[str] | None:
+    """A pattern for `source` with each of its `separators` loosened to
+    `_ANY_SEPARATOR`, one for one. None when `source` holds no such
+    separator, because then there is nothing in it to correct."""
+    pieces = re.split(r"\s*[" + re.escape(separators) + r"]\s*", source)
+    if len(pieces) < 2:
+        return None
+    return re.compile(_ANY_SEPARATOR.join(re.escape(x) for x in pieces))
+
+
+def repunctuate_post_title(title: str, *, embedded: Iterable[str] = (),
+                           em_dash_source: str | None = None) -> str:
+    """The corrected form of one post title (#1319).
+
+    `em_dash_source` is the title a committed post document gave this
+    post, when that title holds an em dash: if the post title is that
+    title with its dashes turned into commas, it becomes that title with
+    its dashes turned into hyphens instead. `embedded` is every title a
+    member asset has carried; wherever one appears in the post title, it
+    is replaced by its `normalize_title` form. Nothing else is touched,
+    so a natural comma survives. Idempotent: a corrected title holds no
+    legacy suffix, and no loosened span can match a hyphen.
+    """
+    m = _LEGACY_PART_SUFFIX.search(title)
+    base, part = (title[:m.start()], m.group(1)) if m else (title, None)
+
+    if em_dash_source:
+        pat = _separated_span(em_dash_source, EM_DASH)
+        if pat is not None and pat.fullmatch(base):
+            base = clean_dashes(em_dash_source)
+
+    # Longest first, so a title that contains another is corrected whole.
+    for src in sorted(set(embedded), key=lambda t: (-len(t), t)):
+        pat = _separated_span(src, TITLE_SEPARATORS)
+        if pat is not None:
+            fixed = normalize_title(src)
+            base = pat.sub(lambda _m: fixed, base)
+
+    if part is None:
+        return base
+    return PART_SUFFIX_FORMAT.format(title=base, n=part)
+
+
+def repunctuate_posts(posts: list[dict], *,
+                      embedded_by_asset: dict[str, Iterable[str]],
+                      em_dash_sources: dict[str, str]) -> int:
+    """Apply `repunctuate_post_title` to every post in place, touching
+    `title` and nothing else. Returns how many titles changed."""
+    changed = 0
+    for post in posts:
+        old = post.get("title") or ""
+        embedded = [t for aid in (post.get("asset_ids") or ())
+                    for t in embedded_by_asset.get(aid, ())]
+        new = repunctuate_post_title(
+            old, embedded=embedded,
+            em_dash_source=em_dash_sources.get(post.get("id") or ""))
+        if new != old:
+            post["title"] = new
+            changed += 1
+    return changed
 
 
 # -----------------------------------------------------------------------------
@@ -426,6 +932,64 @@ class AssetRecord:
     # special", when the truth is that every asset carries a label and
     # almost all of them are false.
     mature: bool = False
+
+
+# Keys that downstream tooling ANNOTATES onto an already-assembled
+# profile. They are not part of the assembly schema — nothing in
+# `derive_posts` reads them — but they are part of the file on disk, so
+# reading a profile back has to know they are legitimate:
+#
+#   replaced_source_path  apply_upgrade.py, on every HQ replacement
+#   ai_provenance         apply_upgrade.py, on the twelve declared rows
+#   balance_source        studio_balance.py, on every rebalanced record
+#
+# Before this list existed, `AssetRecord(**entry)` raised
+#
+#     TypeError: AssetRecord.__init__() got an unexpected keyword
+#                argument 'replaced_source_path'
+#
+# on the FIRST record carrying one, which meant `--recompose-posts`
+# could not read the very profiles this script writes. The assembler had
+# been unable to re-derive posts from its own output for as long as the
+# annotations have existed.
+#
+# ⛔ The fix is a named allow-list, not `{k: v for k, v in entry.items()
+# if k in FIELDS}`. Silently dropping unknown keys would swallow a typo
+# and a genuinely new field alike; naming them means the next tool that
+# adds one gets told to come here and say so.
+POST_ASSEMBLY_KEYS = frozenset({
+    "replaced_source_path",
+    "ai_provenance",
+    "balance_source",
+})
+
+
+def asset_records_from_profile(raw: list[dict[str, Any]],
+                               source: Path | str) -> list[AssetRecord]:
+    """Rebuild AssetRecords from a serialised profile.
+
+    Raises ValueError naming the offending key if the profile carries a
+    field that is neither part of AssetRecord nor a known post-assembly
+    annotation — a profile shape nothing understands is a bug to report,
+    not a record to guess at.
+    """
+    known = {f.name for f in dataclasses.fields(AssetRecord)}
+    unknown: dict[str, int] = defaultdict(int)
+    records: list[AssetRecord] = []
+    for entry in raw:
+        for key in entry:
+            if key not in known and key not in POST_ASSEMBLY_KEYS:
+                unknown[key] += 1
+        records.append(AssetRecord(**{k: v for k, v in entry.items() if k in known}))
+    if unknown:
+        listed = ", ".join(f"{k} ({n} record(s))" for k, n in sorted(unknown.items()))
+        raise ValueError(
+            f"{source}: profile carries key(s) the assembler does not know: "
+            f"{listed}. Add the field to AssetRecord if assembly should read "
+            f"it, or to POST_ASSEMBLY_KEYS if it is an annotation applied "
+            f"after assembly."
+        )
+    return records
 
 
 def parse_int(s: str) -> int | None:
@@ -518,7 +1082,10 @@ def transform_row(row: dict[str, str]) -> AssetRecord | None:
     return AssetRecord(
         id=stable_uuid("asset", row["asset_id"]),
         asset_type=asset_type,
-        title=(row.get("title") or "").strip() or row.get("filename", "untitled"),
+        # The id is the CSV's asset_id, so normalising the stored title
+        # cannot move it (#1319).
+        title=normalize_title(
+            (row.get("title") or "").strip() or row.get("filename", "untitled")),
         description=(row.get("description") or "").strip(),
         file_path=reorganize_path(asset_type, source_path),
         source_path=source_path,
@@ -758,13 +1325,37 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     into single-asset posts — 73% of site_a's feed. There is no
     post-count target any more: the shape follows the data.
 
-    Deterministic: passes 1-3 derive every choice from stable_uuid /
-    stable_int over asset ids, so composition does not depend on
-    iteration or RNG call order.
-    """
-    import random
-    rng = random.Random("artist-alley.posts.v2")
+    ⭐ Deterministic, and LOCALLY so (#1296). Every choice is derived
+    from stable_uuid / stable_int over asset ids, so composition depends
+    on neither iteration order nor RNG call order.
 
+    Passes 3-5 used to draw from a shared `random.Random("artist-alley.
+    posts.v2")`. Seeding it made the function reproducible over an
+    IDENTICAL pool, which is what a naive determinism test would check
+    and pass. It did not make it stable under a local edit, because a
+    seeded stream is a SEQUENCE: change how many draws an earlier
+    iteration takes — by adding one asset to one team — and every draw
+    after it re-sequences. Measured on site_a before this change,
+    dropping a single audio asset:
+
+        65 post ids disappeared and 67 appeared.
+        ONE of the 65 actually contained the dropped asset.
+        The other 64 were collateral: unrelated teams, unrelated
+        projects, plus 38 surviving posts whose membership changed and
+        19 whose titles changed.
+
+    `stable_int`'s own docstring had already named this ("a seeded
+    Random() re-sequences every downstream draw when an earlier pass
+    changes, which silently rewrites unrelated posts") and passes 1-2
+    were converted for exactly that reason; passes 3-5 were not. They
+    are now, so a change confined to one team moves that team's posts
+    and nothing else.
+
+    ⛔ Do not reintroduce a shared RNG here. If a pass needs a pick,
+    derive it with `stable_int` from the identity of what is being
+    picked FOR — team name, project name, sweep index — never from a
+    stream whose position depends on everything that ran before it.
+    """
     # Group assets by (team, project) for related-asset lookup
     by_team_project: dict[tuple[str, str], list[AssetRecord]] = defaultdict(list)
     by_team: dict[str, list[AssetRecord]] = defaultdict(list)
@@ -833,6 +1424,40 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
             return next(iter(studios))
         return "shared"
 
+    def _pick(pool: list[AssetRecord], lo: int, hi: int,
+              *key: str) -> list[AssetRecord]:
+        """A subset of `pool` of size in [lo, hi], chosen without an RNG.
+
+        Replaces `rng.sample(pool, rng.randint(lo, hi))`. Both the size
+        and the membership come from `stable_int` over `key` plus each
+        candidate's own id, so the result is a pure function of (this
+        pool, this key) — nothing about what else the caller assembled
+        before or after can move it.
+
+        Returned in id order, so `asset_ids` is stable too: the old
+        `rng.sample` returned draw order, which is why 388 posts in the
+        published dataset differ from the profile in `asset_ids` while
+        only 5 differ in membership as a SET.
+        """
+        hi = min(hi, len(pool))
+        lo = min(lo, hi)
+        size = lo + stable_int(hi - lo + 1, "pick-size", *key)
+        ranked = sorted(pool, key=lambda a: (stable_int(1 << 32, "pick", *key, a.id), a.id))
+        return sorted(ranked[:size], key=lambda a: a.id)
+
+    def _anchor(members: list[AssetRecord]) -> AssetRecord:
+        """The member a post is dated and attributed by: the most recent,
+        ties broken by id.
+
+        The `, x.id` is not decoration. `max(members, key=updated_at)`
+        alone resolves a tie by position in the list, so two members
+        sharing a timestamp made the post's `created_at`, author and
+        workflow state depend on member ORDER — and `created_at` sets
+        `posted_at` and is read by the fixture sweep's deletion
+        predicate (ADR 0098).
+        """
+        return max(members, key=lambda x: (x.updated_at, x.id))
+
     # ---------------------------------------------------------------------
     # Pass 1: group_id sibling sets — the authoritative composition (#565)
     # ---------------------------------------------------------------------
@@ -865,17 +1490,17 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         if len(members) < 2:
             loose.extend(members)
             continue
-        anchor = max(members, key=lambda x: (x.updated_at, x.id))
+        anchor = _anchor(members)
         types_in_post = sorted({a.asset_type for a in members})
         collection = _dominant(members, "collection_name")
         team = _dominant(members, "team_name")
         if len(types_in_post) == 1:
-            title = f"{anchor.title} — {len(members)}-part set"
+            title = title_group_set(anchor.title)
             desc = (f"{len(members)}-piece {types_in_post[0]} set from "
                     f"{collection}, owned by {team}. Variants and siblings "
                     f"kept together as one delivery.")
         else:
-            title = f"{anchor.title} — {len(members)}-asset bundle"
+            title = title_group_bundle(anchor.title)
             desc = (f"{team} bundle for {collection}: {len(members)} assets "
                     f"across {', '.join(types_in_post)}, delivered together.")
         posts.append(_post(
@@ -918,13 +1543,19 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         loose_clusters[(a.collection_name, a.team_name, a.asset_type)].append(a)
 
     solo_pool: list[AssetRecord] = []
-    size_idx = 0
     for key in sorted(loose_clusters):
         cluster = sorted(loose_clusters[key], key=lambda x: (x.created_at, x.id))
         n_bundle = int(len(cluster) * LOOSE_BUNDLE_SHARE)
         to_bundle, rest = cluster[:n_bundle], cluster[n_bundle:]
         solo_pool.extend(rest)
 
+        # The 3/4/5 size cycle restarts for every cluster. It used to be
+        # a counter shared across ALL clusters, which coupled them: one
+        # asset added to the first cluster shifted its chunk count by
+        # one, and every later cluster then re-chunked at different
+        # boundaries. Per-cluster, a change stays inside the cluster it
+        # was made in (#1296).
+        size_idx = 0
         i = 0
         while i < len(to_bundle):
             size = BUNDLE_SIZES[size_idx % len(BUNDLE_SIZES)]
@@ -935,16 +1566,16 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
                 # A trailing single is a solo post, not a "bundle of one".
                 solo_pool.extend(chunk)
                 continue
-            anchor = max(chunk, key=lambda x: (x.updated_at, x.id))
+            anchor = _anchor(chunk)
             collection, team, atype = key
             types_in_post = sorted({a.asset_type for a in chunk})
             theme = theme_by_type.get(atype, atype)
-            title = f"{collection}: {team} {theme} — {len(chunk)} assets"
+            title = title_collection_chunk(collection, team, theme)
             desc = (f"{team} working set for {collection}. "
                     f"{len(chunk)} {atype} assets pulled together for review.")
             posts.append(_post(
                 members=chunk,
-                id=stable_uuid("post", "bundle", anchor.id),
+                id=bundle_post_id(a.id for a in chunk),
                 title=title,
                 description=desc,
                 author_username=anchor.owner_username,
@@ -962,15 +1593,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     # ---------------------------------------------------------------------
     # Pass 3: solo showcase posts for the genuinely standalone remainder
     # ---------------------------------------------------------------------
-    showcase_solo_titles = {
-        "image": ["new render", "color study", "lighting pass", "reference plate", "concept sketch"],
-        "3d": ["model drop", "topology pass", "PBR test", "WIP turntable", "asset ship"],
-        "audio": ["audio drop", "sfx test", "ambient bed", "score sketch", "VO take"],
-        "video": ["cinematic test", "edit pass", "previs sweep", "playblast", "shot reference"],
-        "document": ["briefing", "style guide", "pipeline note", "research doc", "spec draft"],
-        "font": ["type sample", "kerning check", "char set test", "weight comparison"],
-        "comic": ["storyboard panel", "page rough", "layout pass"],
-    }
+    showcase_solo_titles = SOLO_FLAVORS
 
     for asset in sorted(solo_pool, key=lambda x: x.id):
         title_options = showcase_solo_titles.get(asset.asset_type, ["asset drop"])
@@ -981,7 +1604,7 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         posts.append(_post(
             members=[asset],
             id=stable_uuid("post", "solo", asset.id),
-            title=f"{asset.title} — {flavor}",
+            title=title_solo(flavor, asset.title),
             description=desc_lead,
             author_username=asset.owner_username,
             collection_name=asset.collection_name,
@@ -1001,11 +1624,11 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     # target (this used to be 350) manufactures single-asset posts and is
     # exactly what buried the real multi-asset work.
     revision_stages = [
-        ("draft", "Draft drop — {title}",
+        ("draft", REVISION_TITLES["draft"],
          "First-pass draft of {title}. Open for early feedback."),
-        ("review", "Review pass — {title}",
+        ("review", REVISION_TITLES["review"],
          "Review pass on {title}. Notes from {owner} attached in the thread."),
-        ("ship", "Ship gate — {title}",
+        ("ship", REVISION_TITLES["ship"],
          "Locking in {title}. Sign-off from approver: {reviewer}."),
     ]
     high_rated = sorted(
@@ -1046,106 +1669,109 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     # Periodic "this sprint's <team> output" posts. ~3-4 per team per
     # studio. Pulls assets across projects within the team.
     roundup_target = 60
-    teams_pool = list(by_team.keys())
-    rng.shuffle(teams_pool)
-    for team_name in teams_pool * 5:  # multiple sweeps for variety
+    ROUNDUP_SWEEPS = 5
+    # Sorted, not shuffled. The shuffle drew from the shared RNG and its
+    # result depended on `by_team`'s insertion order, which is the order
+    # of the asset list — so the pool order, and with it every roundup,
+    # moved whenever the caller's list did. Sorted team names are a
+    # property of the teams, not of how the assets happened to arrive.
+    teams_pool = sorted(by_team)
+    # Flat sweep order, so the target check below still breaks out of the
+    # whole pass the way it did when the pool was `teams_pool * 5`.
+    for sweep, team_name in ((s, t) for s in range(ROUNDUP_SWEEPS) for t in teams_pool):
         if len([p for p in posts if p.get("post_kind") == "team_roundup"]) >= roundup_target:
             break
-        team_assets = [a for a in by_team[team_name] if a.id]
+        team_assets = sorted((a for a in by_team[team_name] if a.id),
+                             key=lambda x: x.id)
         if len(team_assets) < 5:
             continue
-        sample_size = rng.randint(5, min(10, len(team_assets)))
-        sample = rng.sample(team_assets, sample_size)
-        # Anchor = the most-recent asset for the team
-        anchor = max(sample, key=lambda x: x.updated_at)
+        sample = _pick(team_assets, 5, 10, "roundup", team_name, str(sweep))
+        anchor = _anchor(sample)
         types_in_post = sorted({a.asset_type for a in sample})
         projects_in_post = sorted({a.collection_name for a in sample})
 
-        title = f"{team_name} sprint roundup — {len(sample)} drops"
+        title = title_team_roundup(team_name)
         desc = (f"{team_name} team output across {len(projects_in_post)} project(s): "
                 f"{', '.join(projects_in_post[:3])}"
                 f"{'...' if len(projects_in_post) > 3 else ''}. "
                 f"Mix of {', '.join(types_in_post)}.")
 
-        posts.append({
-            "id": stable_uuid("post", "roundup", team_name, anchor.id),
-            "title": title,
-            "description": desc,
-            "author_username": anchor.owner_username,
+        posts.append(_post(
+            members=sample,
+            id=roundup_post_id(team_name, (a.id for a in sample)),
+            title=title,
+            description=desc,
+            author_username=anchor.owner_username,
             # A roundup spans projects, but leaving collection_name NULL
             # meant the post landed in no collection at all and made the
             # collection pages look emptier than the data is (#565). File
             # it under the project it draws from most.
-            "collection_name": _dominant(sample, "collection_name"),
-            "team_name": team_name,
-            "brand_workspace": None,
-            "tags": sorted({t for a in sample for t in (a.tags or [])}),
-            "asset_ids": [a.id for a in sample],
-            "asset_types_in_post": types_in_post,
-            "is_mixed_type": len(types_in_post) > 1,
-            "post_kind": "team_roundup",
-            "workflow_state": anchor.workflow_state,
-            "sensitivity_tier": "team",
-            "created_at": anchor.created_at,
-            "updated_at": max(a.updated_at for a in sample),
-            "studio": anchor.studio,
-            "layer": "A" if all(a.layer == "A" for a in sample) else "B",
-        })
+            collection_name=_dominant(sample, "collection_name"),
+            team_name=team_name,
+            brand_workspace=None,
+            tags=sorted({t for a in sample for t in (a.tags or [])}),
+            post_kind="team_roundup",
+            workflow_state=anchor.workflow_state,
+            sensitivity_tier="team",
+            created_at=anchor.created_at,
+            studio=anchor.studio,
+        ))
 
     # ---------------------------------------------------------------------
     # Pass 4: Project sprint / milestone posts (5-10 assets, same project,
     #         varied teams)
     # ---------------------------------------------------------------------
     project_target = 80
-    projects_pool = list(by_project.keys())
-    rng.shuffle(projects_pool)
-    sprint_labels = ["sprint 12", "sprint 13", "sprint 14", "milestone alpha",
-                     "milestone beta", "review session", "lock-in pass",
-                     "polish week", "final review", "ship gate"]
-    sprint_idx = 0
-    for project_name in projects_pool * 6:
+    PROJECT_SWEEPS = 6
+    projects_pool = sorted(by_project)
+    sprint_labels = SPRINT_LABELS
+    for sweep, project_name in ((s, p) for s in range(PROJECT_SWEEPS) for p in projects_pool):
         if len([p for p in posts if p.get("post_kind") == "project_sprint"]) >= project_target:
             break
-        proj_assets = by_project[project_name]
+        proj_assets = sorted(by_project[project_name], key=lambda x: x.id)
         if len(proj_assets) < 5:
             continue
-        sample_size = rng.randint(5, min(10, len(proj_assets)))
-        sample = rng.sample(proj_assets, sample_size)
-        anchor = max(sample, key=lambda x: x.updated_at)
+        sample = _pick(proj_assets, 5, 10, "sprint", project_name, str(sweep))
+        anchor = _anchor(sample)
         types_in_post = sorted({a.asset_type for a in sample})
         teams_in_post = sorted({a.team_name for a in sample})
 
-        label = sprint_labels[sprint_idx % len(sprint_labels)]
-        sprint_idx += 1
-        title = f"{project_name} {label} — {len(sample)} assets across {len(teams_in_post)} team(s)"
+        # The label used to come from a counter incremented once per
+        # EMITTED post, shared across every project — so a project that
+        # stopped qualifying re-labelled every sprint post after it. It
+        # is now a function of the project and the sweep: each project
+        # starts the label list at its own offset (so the ten labels are
+        # all used across the dataset rather than only the first six)
+        # and walks it one step per sweep.
+        label = sprint_labels[
+            (stable_int(len(sprint_labels), "sprint-label", project_name) + sweep)
+            % len(sprint_labels)
+        ]
+        title = title_project_sprint(project_name, label)
         desc = (f"{label.title()} for {project_name}. "
                 f"Pulls work from {', '.join(teams_in_post[:3])}"
                 f"{'...' if len(teams_in_post) > 3 else ''} — "
                 f"{', '.join(types_in_post)}.")
 
-        posts.append({
-            "id": stable_uuid("post", "sprint", project_name, label, anchor.id),
-            "title": title,
-            "description": desc,
-            "author_username": anchor.owner_username,
-            "collection_name": project_name,
+        posts.append(_post(
+            members=sample,
+            id=sprint_post_id(project_name, label, (a.id for a in sample)),
+            title=title,
+            description=desc,
+            author_username=anchor.owner_username,
+            collection_name=project_name,
             # A sprint spans teams, but a NULL team_name left these posts
             # unattributable in team views (#565 — 24 such posts on
             # site_a). Credit the team that contributed most of the sample.
-            "team_name": _dominant(sample, "team_name"),
-            "brand_workspace": anchor.brand_workspace,
-            "tags": sorted({t for a in sample for t in (a.tags or [])}),
-            "asset_ids": [a.id for a in sample],
-            "asset_types_in_post": types_in_post,
-            "is_mixed_type": len(types_in_post) > 1,
-            "post_kind": "project_sprint",
-            "workflow_state": "in_review",
-            "sensitivity_tier": "team",
-            "created_at": anchor.created_at,
-            "updated_at": max(a.updated_at for a in sample),
-            "studio": anchor.studio,
-            "layer": "A" if all(a.layer == "A" for a in sample) else "B",
-        })
+            team_name=_dominant(sample, "team_name"),
+            brand_workspace=anchor.brand_workspace,
+            tags=sorted({t for a in sample for t in (a.tags or [])}),
+            post_kind="project_sprint",
+            workflow_state="in_review",
+            sensitivity_tier="team",
+            created_at=anchor.created_at,
+            studio=anchor.studio,
+        ))
 
     # ---------------------------------------------------------------------
     # Pass 5: Video boost — videos are scarce in the dataset, so give each
@@ -1157,11 +1783,12 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
     # padding-with-singles that buried the real multi-asset work, so it is
     # cut to two framings (#565).
     # ---------------------------------------------------------------------
-    videos = [a for a in assets if a.asset_type == "video"]
+    videos = sorted((a for a in assets if a.asset_type == "video"),
+                    key=lambda x: x.id)
     video_post_templates = [
-        ("dailies",      "Dailies — {title}",
+        ("dailies",      VIDEO_TITLES["dailies"],
          "Today's video pass on {project}. Reviewing pacing, color, and continuity."),
-        ("cinematic_cut", "Cinematic cut — {title}",
+        ("cinematic_cut", VIDEO_TITLES["cinematic_cut"],
          "Latest cinematic cut for {project}. Compositing and grade approaching final."),
     ]
     for video in videos:
@@ -1195,35 +1822,48 @@ def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
         if len(studio_videos) < 2:
             continue
         # Two reels per studio (sample variations) so feeds feel populated
-        for reel_idx, reel_label in enumerate(["Q3 reel", "Q4 reel"]):
-            sample_size = min(len(studio_videos), rng.randint(3, 5))
-            sample = rng.sample(studio_videos, sample_size)
-            anchor = sample[0]
-            posts.append({
-                "id": stable_uuid("post", "showreel", studio_key, reel_label, anchor.id),
-                "title": f"Cinematics {reel_label} — {sample_size} cuts",
-                "description": (f"Studio cinematics roundup. {sample_size} pieces bundled for "
-                               f"the {reel_label.lower()} screening — see for pacing references "
-                               f"and stylistic consistency across active projects."),
-                "author_username": anchor.owner_username,
-                "collection_name": _dominant(sample, "collection_name"),
-                "team_name": "Marketing Art",
-                "brand_workspace": None,
-                "tags": sorted({t for v in sample for t in (v.tags or [])}) + ["cinematic", "showreel"],
-                "asset_ids": [v.id for v in sample],
-                "asset_types_in_post": ["video"],
-                "is_mixed_type": False,
-                "post_kind": "cinematics_showreel",
-                "workflow_state": "approved",
-                "sensitivity_tier": "team",
-                "created_at": anchor.created_at,
-                "updated_at": max(v.updated_at for v in sample),
-                "studio": studio_key,
-                "layer": "A" if all(v.layer == "A" for v in sample) else "B",
-            })
+        for reel_label in REEL_LABELS:
+            sample = _pick(studio_videos, 3, 5, "showreel", studio_key, reel_label)
+            # Was `sample[0]` — the first DRAW, which is only meaningful
+            # while the sample comes out of an RNG in draw order. The
+            # post is dated by its most recent member like every other
+            # multi-asset post.
+            anchor = _anchor(sample)
+            posts.append(_post(
+                members=sample,
+                id=showreel_post_id(studio_key, reel_label, (v.id for v in sample)),
+                title=title_showreel(reel_label),
+                description=(f"Studio cinematics roundup. {len(sample)} pieces bundled for "
+                             f"the {reel_label.lower()} screening — see for pacing references "
+                             f"and stylistic consistency across active projects."),
+                author_username=anchor.owner_username,
+                collection_name=_dominant(sample, "collection_name"),
+                team_name="Marketing Art",
+                brand_workspace=None,
+                tags=sorted({t for v in sample for t in (v.tags or [])}) + ["cinematic", "showreel"],
+                post_kind="cinematics_showreel",
+                workflow_state="approved",
+                sensitivity_tier="team",
+                created_at=anchor.created_at,
+                studio=studio_key,
+            ))
 
-    # Sort by created_at for interlaced feed appearance
-    posts.sort(key=lambda p: p["created_at"])
+    # Sort by created_at for interlaced feed appearance. `, p["id"]` makes
+    # it a TOTAL order: `created_at` alone leaves ties resolved by the
+    # order the passes happened to append in, so two posts sharing a
+    # timestamp could swap places between runs without a single input
+    # changing.
+    posts.sort(key=lambda p: (p["created_at"], p["id"]))
+
+    # ⭐ THE SAME TWO PASSES THE COMMITTED DOCUMENT GETS (#1306), on the
+    # finished list rather than inside each template — which is the only
+    # way "part two" can mean the same post in both. `clean_dashes` is
+    # the backstop for an em dash arriving from anywhere; an embedded
+    # ASSET title already arrives hyphenated, because every asset-title
+    # writer stores `normalize_title` of it (#1319).
+    for post in posts:
+        post["title"] = clean_dashes(post["title"])
+    disambiguate_titles(posts)
     return posts
 
 
@@ -1260,11 +1900,18 @@ def load_torrent_imports(json_path: Path) -> list[AssetRecord]:
         size = int(entry["file_size_bytes"])
         title = entry["name"]
         ext = Path(file_path).suffix.lstrip(".") or "bin"
+        # ⛔ THE ID IS DERIVED FROM THE RAW NAME, AND STAYS THAT WAY
+        # (#1319). No entry stores a `sha_seed`, so this hash of the
+        # manifest's own name IS the record's identity: all three
+        # committed torrent ids equal the one the em-dash name derives,
+        # and normalising first derives three different ids. The rule is
+        # applied to the STORED title only, after the id, the timestamps
+        # and the description have taken the raw name.
         sha_seed = entry.get("sha_seed") or hashlib.sha256(f"{title}|{size}".encode()).hexdigest()
         records.append(AssetRecord(
             id=stable_uuid("asset", "torrent", sha_seed),
             asset_type=asset_type,
-            title=title,
+            title=normalize_title(title),
             description=entry.get("notes", f"{title} — Blender Foundation open content."),
             file_path=file_path,
             source_path=file_path,
@@ -1332,7 +1979,9 @@ def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
         records.append(AssetRecord(
             id=stable_uuid("asset", "internet", entry.get("sha256", local_path)),
             asset_type=asset_type,
-            title=title,
+            # Stored title only (#1319): the id is the entry's hash or
+            # path, and the description keeps the name as fetched.
+            title=normalize_title(title),
             description=entry.get("notes", "") or f"{title} — public-safe reference content.",
             file_path=dest_path,
             source_path=local_path,
@@ -1387,9 +2036,50 @@ def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
 # Main
 # -----------------------------------------------------------------------------
 
+RECOMPOSE_POSTS_NAMES = {"studio-a.assets.json": "studio-a.posts.json",
+                         "studio-b.assets.json": "studio-b.posts.json"}
+RECOMPOSE_SITE_BY_PROFILE = {"studio-a.assets.json": "site_a",
+                             "studio-b.assets.json": "site_b"}
+
+
+def recompose_targets(profiles: Path, sites: list[Path]) -> list[Path]:
+    """Every file a `--recompose-posts` run would write, in write order.
+
+    This is the list the guard in `recompose_posts` checks BEFORE the
+    first write, so it has to be derived from the same rules the writes
+    use: the two studio posts profiles and the combined dataset profile
+    under `profiles`, plus `posts.json` in every `--site` root whose
+    basename names a studio. Keeping it as one function means the guard
+    and the writer cannot drift apart.
+    """
+    targets: list[Path] = []
+    for assets_name, posts_name in RECOMPOSE_POSTS_NAMES.items():
+        targets.append(profiles / posts_name)
+        for site_root in sites:
+            if site_root.name == RECOMPOSE_SITE_BY_PROFILE[assets_name]:
+                targets.append(site_root / "posts.json")
+    targets.append(profiles / "dataset.posts.json")
+    return targets
+
+
 def recompose_posts(profiles: Path, sites: list[Path], dry_run: bool = False) -> int:
     """Regenerate posts IN PLACE from the already-assembled asset
     profiles, without the 12,871-row source CSV.
+
+    ⛔ IT REFUSES TO OVERWRITE AN EXISTING POSTS PROFILE (#1322). ADR
+    0098's ruling makes `seed/profiles/*.posts.json` the authoritative
+    corpus: it is grown by upgrade documents and is NOT reproducible from
+    the asset profiles, because `group_id`, the field the first
+    composition pass keys on, only ever existed in the source catalogue.
+    Measured 2026-08-27, running this over the committed layout replaced
+    863 posts with 1,103, kept 336 ids and left 200 hand-curated posts
+    without a row. So the command declines when ANY of the files it
+    would write already exists, decides that before the first write so
+    one studio is never rewritten while the other is refused, and does
+    so in --dry-run too: a dry run that passes while a real run would
+    destroy the corpus is worse than no dry run at all. There is no
+    force flag. A rebuild into an empty directory is the legitimate use
+    and still works.
 
     seed/profiles/studio-{a,b}.assets.json are serialised AssetRecords —
     the exact asset set each site ships (verified id-for-id against each
@@ -1404,11 +2094,27 @@ def recompose_posts(profiles: Path, sites: list[Path], dry_run: bool = False) ->
     siblings most likely to span it. Deriving per site means every post
     that is generated is a post that lands.
     """
-    out_names = {"studio-a.assets.json": "studio-a.posts.json",
-                 "studio-b.assets.json": "studio-b.posts.json"}
-    site_by_profile = {"studio-a.assets.json": "site_a",
-                       "studio-b.assets.json": "site_b"}
+    out_names = RECOMPOSE_POSTS_NAMES
+    site_by_profile = RECOMPOSE_SITE_BY_PROFILE
     combined: dict[str, dict[str, Any]] = {}
+
+    # ⛔ THE GUARD, before anything is read or written and regardless of
+    # --dry-run. All-or-nothing: one existing target refuses the whole
+    # run, so no other target is rewritten on the way to the refusal.
+    existing = [t for t in recompose_targets(profiles, sites) if t.exists()]
+    if existing:
+        verb = "would be refused" if dry_run else "refused"
+        print(f"error: --recompose-posts {verb}: it would overwrite "
+              f"{len(existing)} existing posts profile(s), and the committed "
+              f"posts profiles are the authoritative corpus, not a rebuild "
+              f"output (ADR 0098, #1322). Nothing was written. "
+              f"Existing target(s):", file=sys.stderr)
+        for t in existing:
+            print(f"  - {t}", file=sys.stderr)
+        print("A recompose only runs into a directory that holds no posts "
+              "profile. The corpus is maintained by upgrade documents; "
+              "regenerating it is not a repair.", file=sys.stderr)
+        return 2
 
     for assets_name, posts_name in out_names.items():
         src = profiles / assets_name
@@ -1416,7 +2122,11 @@ def recompose_posts(profiles: Path, sites: list[Path], dry_run: bool = False) ->
             print(f"error: {src} not found", file=sys.stderr)
             return 2
         raw = json.loads(src.read_text(encoding="utf-8"))
-        assets = [AssetRecord(**a) for a in raw]
+        try:
+            assets = asset_records_from_profile(raw, src)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
         posts = derive_posts(assets)
         combined.update({p["id"]: p for p in posts})
 
@@ -1720,7 +2430,7 @@ def apply_dataset_upgrade(out: Path) -> int:
     # and none of the checks would have noticed, because nothing compares
     # an alias to its source. Re-copy after the upgrade so an alias is an
     # alias (#572).
-    for stem, alias in (("studio-a", "demo"), ("studio-b", "dev")):
+    for stem, alias in apply_upgrade.PROFILE_ALIASES:
         src, dst = out / f"{stem}.assets.json", out / f"{alias}.assets.json"
         if src.is_file():
             shutil.copyfile(src, dst)

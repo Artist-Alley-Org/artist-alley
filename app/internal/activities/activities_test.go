@@ -18,6 +18,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // All tests in this file are integration tests against the live
@@ -29,7 +30,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -112,7 +113,7 @@ func TestRecordActivity_RejectsBadActivityType(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	tx, _ := pool.Begin(ctx)
 	defer tx.Rollback(ctx)
 
@@ -137,7 +138,7 @@ func TestRecordActivity_RejectsBadObjectKind(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	tx, _ := pool.Begin(ctx)
 	defer tx.Rollback(ctx)
 
@@ -179,7 +180,7 @@ func TestRecordActivity_RoundTrips(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	w := activities.NewWriter(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ref, _, actorURI := fixtureUser(t, ctx, pool)
@@ -238,7 +239,7 @@ func TestRecordActivity_Idempotent(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	w := activities.NewWriter(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ref, _, actorURI := fixtureUser(t, ctx, pool)
@@ -292,7 +293,7 @@ func TestRecordActivity_RollbackDropsRow(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	w := activities.NewWriter(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ref, _, actorURI := fixtureUser(t, ctx, pool)
@@ -335,7 +336,7 @@ func TestRecordActivity_PreservesPayload(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	w := activities.NewWriter(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ref, _, actorURI := fixtureUser(t, ctx, pool)
@@ -416,7 +417,7 @@ func TestRecordActivity_InvalidatesActorOutboxCache(t *testing.T) {
 	ctx := t.Context()
 
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	reg := cache.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	defer reg.Stop()

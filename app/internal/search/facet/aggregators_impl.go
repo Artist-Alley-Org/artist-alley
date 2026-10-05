@@ -141,9 +141,24 @@ func buildAssetVisibilityAppendedSQL(
 // existence. See that method for the rule.
 //
 // satisfiable=false means the selection names a dimension assets do not
-// have. No dimension is post-only today so it cannot fire, but the
-// caller honours it rather than assuming — the fail-closed direction
-// costs one branch and survives the next dimension.
+// have, and the caller honours it rather than assuming — the
+// fail-closed direction.
+//
+// ⚠️ IT FIRES NOW. This used to read "no dimension is post-only today so
+// it cannot fire", which was true when written and stopped being true
+// with [FacetVisibility] (#1251 slice 2): an asset has no sharing tier,
+// so a selection naming one makes every asset aggregator — and tagAgg's
+// asset half beneath it — return nothing rather than a count taken
+// without the filter. That is the intended answer for a POSITIVE
+// narrowing, and it is the branch that produces it, so the branch was
+// never the speculative part. The claim about its reachability was.
+//
+// The lesson 6c-i left is the one to check the next dimension against:
+// application, not just definition. `kind` needed a render context
+// threaded through here or a caller who ticked it lost every post-derived
+// tag count with no error; `visibility` needs this branch to be honoured
+// on both halves or a tier-filtered rail would count assets no tier
+// could contain.
 func buildAssetPopulationSQL(
 	ctx context.Context,
 	req Request,
@@ -154,12 +169,83 @@ func buildAssetPopulationSQL(
 	if err != nil {
 		return "", nil, false, err
 	}
+	// #1173 sprint 25b: the recent window's arms bind BETWEEN the
+	// baseline's args and the selection's, and only under a `last:`
+	// term; see Request.renderContext.
+	rc, rcArgs, err := req.renderContext(ctx, offset+len(args))
+	if err != nil {
+		return "", nil, false, err
+	}
+	args = append(args, rcArgs...)
 	selFrag, selArgs, ok := req.Selection.ForFacet(own).SQL(
-		visibility.EntityAsset, "a", offset+len(args))
+		visibility.EntityAsset, "a", offset+len(args), rc)
 	if !ok {
 		return "", nil, false, nil
 	}
 	return frag + selFrag, append(args, selArgs...), true, nil
+}
+
+// buildPostVisibilityAppendedSQL composes the POST baseline an aggregate
+// must respect: the whole post read rule with the caller's post
+// capabilities (#873), and the mature axis on the derived `posts.mature`
+// column (#1117, ADR 0090 §4). The tag aggregator's post half is made of
+// exactly this, and since #1173 sprint 25b so is the post arm of a
+// recent window, which is why it is one function rather than the inline
+// composition it used to be: two spellings of the post baseline would be
+// two populations under one label.
+//
+// The caller ref is inlined as a literal for the reason
+// buildAssetVisibilityAppendedSQL gives. `alias` is the post table's
+// alias in the calling statement.
+func buildPostVisibilityAppendedSQL(
+	ctx context.Context,
+	caller visibility.Caller,
+	postCaps visibility.PostCaps,
+	sysAdmin bool,
+	mature visibility.MatureViewer,
+	alias string,
+	offset int,
+) (string, []any, error) {
+	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller, visibility.WithPostCaps(postCaps))
+	if err != nil {
+		return "", nil, err
+	}
+	frag, args := pred.ToSQL(alias, offset)
+	// #1117: the mature conjunct on the POST half, reading the derived
+	// `posts.mature` column (ADR 0090 §4). Without it a tag applied only
+	// to mature posts keeps its bucket on a disqualified viewer's rail,
+	// and the count IS the disclosure: the tag's existence and its size
+	// are both facts about content that viewer was not shown. The owner
+	// column is `author_user_ref` here, which is why MatureFilterSQL
+	// takes it as a parameter rather than assuming the asset spelling.
+	frag += visibility.MatureFilterSQL(alias, visibility.MatureOwnerColPost,
+		strconv.FormatInt(caller.UserRef, 10), mature, sysAdmin)
+	return frag, args, nil
+}
+
+// buildCollectionVisibilitySQL composes the COLLECTION baseline for a
+// recent window (#1173, sprint 25b): [visibility.CollectionReadableSQL],
+// the whole collection read rule (row plane for everyone, empty for a
+// system.admin), plus the soft-delete corpus constraint that search's
+// runCollections states inline for the same reason (#1164): the admin
+// arm is the empty fragment by design, so without this line a window
+// formed for an admin would rank tombstoned collections.
+//
+// No aggregator counts collections, so this exists only for the window;
+// it is here beside the other two baselines so the three arms of one
+// union are spelled in one file from one family of authorities.
+func buildCollectionVisibilitySQL(
+	ctx context.Context,
+	caller visibility.Caller,
+	checker visibility.CapabilityChecker,
+	alias string,
+	offset int,
+) (string, []any, error) {
+	frag, args, err := visibility.CollectionReadableSQL(ctx, alias, caller, checker, offset)
+	if err != nil {
+		return "", nil, err
+	}
+	return frag + " AND " + alias + ".deleted_at IS NULL", args, nil
 }
 
 // assetTypeAgg counts assets grouped by their asset_type ref +
@@ -366,29 +452,26 @@ func (tagAgg) Aggregate(ctx context.Context, pool *pgxpool.Pool, req Request) ([
 	}
 
 	// The post half. Placeholders continue after the asset half's, so
-	// the two branches share $1 (the query text) and nothing else.
-	postPred, err := visibility.Filter(ctx, visibility.EntityPost, req.Caller,
-		visibility.WithPostCaps(req.PostCaps))
+	// the two branches share $1 (the query text) and nothing else. The
+	// baseline (read rule with post caps, mature axis) is
+	// buildPostVisibilityAppendedSQL, the one spelling of it.
+	postOffset := 1 + len(assetArgs)
+	postFrag, postArgs, err := buildPostVisibilityAppendedSQL(ctx, req.Caller, req.PostCaps,
+		req.Caps.SystemAdmin, req.Mature, "p", postOffset)
 	if err != nil {
 		return nil, err
 	}
-	postOffset := 1 + len(assetArgs)
-	postFrag, postArgs := postPred.ToSQL("p", postOffset)
+	// #1173 sprint 25b: the recent window's arms, bound between the
+	// baseline's args and the selection's, only under a `last:` term.
+	postRC, postRCArgs, err := req.renderContext(ctx, postOffset+len(postArgs))
+	if err != nil {
+		return nil, err
+	}
+	postArgs = append(postArgs, postRCArgs...)
 	postSelFrag, postSelArgs, postOK := req.Selection.ForFacet(FacetTag).SQL(
-		visibility.EntityPost, "p", postOffset+len(postArgs))
+		visibility.EntityPost, "p", postOffset+len(postArgs), postRC)
 	postFrag += postSelFrag
 	postArgs = append(postArgs, postSelArgs...)
-	// #1117 — the mature conjunct on the POST half, reading the derived
-	// `posts.mature` column (ADR 0090 §4). Without it a tag applied only
-	// to mature posts keeps its bucket on a disqualified viewer's rail,
-	// and the count IS the disclosure: the tag's existence and its size
-	// are both facts about content that viewer was not shown. The owner
-	// column is `author_user_ref` here, which is why MatureFilterSQL
-	// takes it as a parameter rather than assuming the asset spelling.
-	//
-	// Caller ref inlined as a literal, matching the asset half.
-	postFrag += visibility.MatureFilterSQL("p", visibility.MatureOwnerColPost,
-		strconv.FormatInt(req.Caller.UserRef, 10), req.Mature, req.Caps.SystemAdmin)
 
 	branches := make([]string, 0, 2)
 	queryArgs := []any{req.QueryText}

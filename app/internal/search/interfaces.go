@@ -46,8 +46,19 @@ func ParseHitType(s string) (HitType, bool) {
 // engine. The HTTP handler builds one from the request query
 // string; tests construct freely.
 type Query struct {
-	// Text is the free-text search query. Empty text is rejected
-	// upstream — /search requires a query.
+	// Text is the free-text search query, and it is OPTIONAL.
+	//
+	// ⚠️ This comment used to read "empty text is rejected upstream —
+	// /search requires a query", and it has been wrong since #1157. What
+	// counts as a search is decided in ONE place, [Engine.Run], because
+	// that is the only place that can see all three of text, similarity
+	// hint and facet selection; the upstream copy at the HTTP edge was
+	// DELETED rather than widened, precisely so the two could not come to
+	// disagree (ADR 0070 / #1023). A query carrying a filter and no text
+	// is a complete question — "everything at pipeline stage Final" is
+	// the primary thing an advanced search page exists to ask — and it
+	// returns a normal result body. Only a request with none of the three
+	// gets ErrEmptyQuery.
 	Text string
 
 	// Types is the set of entity kinds to search. Empty slice
@@ -218,24 +229,70 @@ type Query struct {
 	SimilarityThreshold float64
 }
 
+// CursorOrder names which total order a cursor is positioned in.
+type CursorOrder string
+
+const (
+	// OrderRelevance is the original order, `score DESC, id DESC,
+	// type DESC`. It is the ZERO value, and it is deliberately spelled
+	// as the empty string on the wire: a relevance cursor carries no
+	// discriminator, so every cursor minted before #1173 sprint 25b
+	// decodes exactly as it always did. See [Cursor].
+	OrderRelevance CursorOrder = ""
+	// OrderRecent is the `last:N` order, `recency DESC, id DESC, type
+	// ASC` (#1173, sprint 25b). Spelled `recent` on the wire.
+	OrderRecent CursorOrder = "recent"
+)
+
 // Cursor is the opaque pagination cursor. Serialised to base64-
 // encoded JSON before it crosses the wire so clients treat it as
 // opaque.
+//
+// # Two orders, one struct, two wire shapes (#1173, sprint 25b)
+//
+// A relevance cursor is `{"s":<score>,"i":"<uuid>","t":"<type>"}`, the
+// byte shape ADR 0056 §1 fixed and every client since has carried back
+// verbatim; nothing about it changed, including that `s` is always
+// present (a filter-only search scores every row 0 and its cursor says
+// so). A recent cursor is `{"o":"recent","ts":<unix microseconds>,
+// "i":"<uuid>","t":"<type>"}`: the discriminator, the recency key at
+// the precision Postgres stores it, then the same id and type. The two
+// shapes are decided in cursor.go's codec, not by omitempty tags, so
+// the legacy shape cannot drift by a field being added here.
+//
+// A cursor is only meaningful in the order that minted it, and the
+// engine refuses one presented to a query of the other order (see
+// [ErrCursorOrder]).
 type Cursor struct {
+	// Order is which total order this cursor is positioned in. The
+	// zero value is [OrderRelevance].
+	Order CursorOrder
+
 	// LastScore is the normalised score of the last hit on the
 	// previous page — the next page starts at rows scoring at
-	// most this value.
-	LastScore float64 `json:"s"`
+	// most this value. Relevance order only.
+	LastScore float64
+
+	// LastRecency is the effective recency of the last hit on the
+	// previous page: `created_at` for an asset or a collection,
+	// `posted_at` for a post. Recent order only; microsecond precision,
+	// which is what the column stores and what the wire carries.
+	LastRecency time.Time
 
 	// LastID is the UUID of the last hit on the previous page.
-	// Tie-breaker for rows scoring identically.
-	LastID uuid.UUID `json:"i"`
+	// Tie-breaker for rows scoring (or dated) identically.
+	LastID uuid.UUID
 
 	// LastType is the HitType of the last hit on the previous
 	// page. Third tie-breaker so ordering is total across mixed
-	// entity types.
-	LastType HitType `json:"t"`
+	// entity types. Relevance order breaks the tie type DESC; recent
+	// order breaks it type ASC.
+	LastType HitType
 }
+
+// Recent reports whether the cursor is positioned in the recent order.
+// Nil-safe: a nil cursor is the first page of either order.
+func (c *Cursor) Recent() bool { return c != nil && c.Order == OrderRecent }
 
 // Hit is a single search result — one row from one of the three
 // entities, projected to the shared summary shape the frontend
@@ -293,9 +350,23 @@ type Hit struct {
 	OriginServerID *uuid.UUID
 
 	// CreatedAt / UpdatedAt let the frontend show recency without
-	// a per-hit follow-up fetch.
+	// a per-hit follow-up fetch. CreatedAt is the entity's PUBLIC
+	// creation timestamp on every entity, `posts.created_at` included;
+	// it is not the recent order's key. See recency.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// recency is the EFFECTIVE RECENCY KEY the `last:N` order sorts,
+	// keysets and cuts on (#1173, sprint 25b): `created_at` for an asset
+	// or a collection, `posted_at` for a post. Unexported on purpose. It
+	// is not a public hit field, it is never marshalled, and it must not
+	// be confused with CreatedAt: a post whose author back-dated
+	// `posted_at` orders by that date and still reports the `created_at`
+	// it has always reported. Every arm sets it on every hit whatever
+	// the query's order, and withheldHit carries it across the way it
+	// carries the scores, because the page order is computed after
+	// projection.
+	recency time.Time
 
 	// RawScore is the ts_rank_cd value the entity's query
 	// returned. Kept for debug/logging; not surfaced to clients.

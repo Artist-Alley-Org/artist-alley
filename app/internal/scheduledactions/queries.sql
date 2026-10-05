@@ -9,11 +9,11 @@
 INSERT INTO scheduled_actions (action, target_kind, target_id, params, scheduled_for, created_by)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, action, target_kind, target_id, params, scheduled_for,
-          state, error, created_by, created_at, executed_at;
+          state, error, created_by, created_at, executed_at, origin;
 
 -- name: GetScheduledAction :one
 SELECT id, action, target_kind, target_id, params, scheduled_for,
-       state, error, created_by, created_at, executed_at
+       state, error, created_by, created_at, executed_at, origin
 FROM scheduled_actions
 WHERE id = $1;
 
@@ -21,7 +21,7 @@ WHERE id = $1;
 -- Admin surface. Optional state filter (NULL = all states), newest
 -- first, with a cursor on created_at for pagination.
 SELECT id, action, target_kind, target_id, params, scheduled_for,
-       state, error, created_by, created_at, executed_at
+       state, error, created_by, created_at, executed_at, origin
 FROM scheduled_actions
 WHERE (sqlc.narg('state')::text IS NULL OR state = sqlc.narg('state')::text)
   AND (sqlc.narg('cursor_created_at')::timestamptz IS NULL
@@ -46,7 +46,7 @@ WHERE id = $1 AND state = 'pending';
 -- transaction that holds this lock, so no intermediate "executing"
 -- state is needed.
 SELECT id, action, target_kind, target_id, params, scheduled_for,
-       state, error, created_by, created_at, executed_at
+       state, error, created_by, created_at, executed_at, origin
 FROM scheduled_actions
 WHERE state = 'pending' AND scheduled_for <= NOW()
 ORDER BY scheduled_for ASC
@@ -68,6 +68,54 @@ WHERE id = $1;
 SELECT COUNT(*)::bigint AS value
 FROM scheduled_actions
 WHERE state = 'pending' AND scheduled_for <= NOW();
+
+-- ---------------------------------------------------------------------------
+-- The author seam (#1119 sprint 21e). An author's own publication
+-- schedule is an ordinary change_state/post row with origin = 'author';
+-- every query here is scoped to that origin AND to the row's creator,
+-- so this surface can neither see nor touch an operator's or the
+-- system's instruction for the same post. See migration 00069 for the
+-- partial unique index that keeps one pending author row per post.
+-- ---------------------------------------------------------------------------
+
+-- name: CreateAuthorPostPublication :one
+-- Inserts the author's standing instruction. The unique index
+-- scheduled_actions_author_pending_post_idx raises 23505 when another
+-- pending author row for the post exists; the Store maps that to
+-- ErrAuthorScheduleConflict rather than checking first.
+INSERT INTO scheduled_actions (action, target_kind, target_id, params, scheduled_for, created_by, origin)
+VALUES ('change_state', 'post', $1, $2, $3, $4, 'author')
+RETURNING id, action, target_kind, target_id, params, scheduled_for,
+          state, error, created_by, created_at, executed_at, origin;
+
+-- name: GetPendingAuthorPostPublication :one
+-- The one pending author schedule for a post, if the caller made it.
+SELECT id, action, target_kind, target_id, params, scheduled_for,
+       state, error, created_by, created_at, executed_at, origin
+FROM scheduled_actions
+WHERE origin = 'author'
+  AND action = 'change_state'
+  AND target_kind = 'post'
+  AND target_id = $1
+  AND created_by = $2
+  AND state = 'pending'
+LIMIT 1;
+
+-- name: CancelPendingAuthorPostPublication :many
+-- Cancels the caller's own pending author schedule for the post and
+-- returns what it cancelled (zero rows = nothing pending). Guarded on
+-- origin AND created_by, so a row somebody else made is invisible to
+-- this statement even when it targets the same post.
+UPDATE scheduled_actions
+SET state = 'cancelled'
+WHERE origin = 'author'
+  AND action = 'change_state'
+  AND target_kind = 'post'
+  AND target_id = $1
+  AND created_by = $2
+  AND state = 'pending'
+RETURNING id, action, target_kind, target_id, params, scheduled_for,
+          state, error, created_by, created_at, executed_at, origin;
 
 -- ---------------------------------------------------------------------------
 -- Executor domain writes. These live in the executor's own package on

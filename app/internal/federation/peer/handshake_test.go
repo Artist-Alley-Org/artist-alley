@@ -306,7 +306,7 @@ func TestHandleInbound_OfferCreatesPendingInbound(t *testing.T) {
 
 func TestFullHandshakePair_OverHTTPRoundTrip(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	ensureAtrestHS(t)

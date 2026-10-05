@@ -39,6 +39,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/db"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // Local copies of the two helpers admin_test.go defines — that file is
@@ -63,7 +64,7 @@ func openResetPool(t *testing.T) *pgxpool.Pool {
 	}
 	dsn := fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=disable password=%s",
 		resetEnvOr("AA_DB_HOST", "postgres"), resetEnvOr("AA_DB_PORT", "5432"),
-		resetEnvOr("AA_DB_USER", "artist_alley"), resetEnvOr("AA_DB_NAME", "artist_alley"), pwd)
+		resetEnvOr("AA_DB_USER", "artist_alley"), testdb.Name(t), pwd)
 	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)

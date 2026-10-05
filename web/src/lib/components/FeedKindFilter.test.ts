@@ -97,6 +97,46 @@ async function open(selected: string[] = []) {
   return onapply;
 }
 
+// ── #1292, the CONTENT category ─────────────────────────────────────
+
+function aiRow(): HTMLInputElement | null {
+  return document.querySelector('[data-testid="ai-filter-toggle"]');
+}
+
+function matureRow(): HTMLInputElement | null {
+  return document.querySelector('[data-testid="mature-filter-toggle"]');
+}
+
+/** Render with the content-category props and open the panel. Returns
+ *  both commit spies, because the axes commit through DIFFERENT
+ *  callbacks and a test that watched one could not tell them apart. */
+async function openContent(
+  props: {
+    hideAI?: boolean;
+    hideMature?: boolean;
+    matureAvailable?: boolean;
+    selected?: string[];
+  } = {},
+) {
+  const onapply = vi.fn();
+  const onhide = vi.fn();
+  const onhidemature = vi.fn();
+  render(FeedKindFilter, {
+    props: {
+      selected: props.selected ?? [],
+      onapply,
+      onhide,
+      onhidemature,
+      hideAI: props.hideAI ?? false,
+      hideMature: props.hideMature ?? false,
+      matureAvailable: props.matureAvailable ?? false,
+    },
+  });
+  click(toggle());
+  await tick();
+  return { onapply, onhide, onhidemature };
+}
+
 describe('FeedKindFilter — the panel', () => {
   it('offers one checkbox per filterable kind, from kindIcon', async () => {
     await open();
@@ -321,5 +361,186 @@ describe('FeedKindFilter — dismissal follows the ViewControls convention', () 
     click(document.body);
     await tick();
     expect(panel()).toBeNull();
+  });
+});
+
+// #1292: the HIDE section became a CONTENT category, and the tick
+// inverted.
+//
+// ⭐ THE INVERSION IS THE SPRINT, and a single-case test passes on the
+// bug. The owner's complaint was that one row in this menu had a
+// different heading, and the opposite meaning of a tick, from every row
+// above it. Moving it into the same visual grammar WITHOUT flipping it
+// would have been strictly worse than leaving it alone: identical rows
+// disagreeing about what a tick does, with the `HIDE` heading that used
+// to warn about it gone.
+//
+// So both directions are asserted, in both polarities, on both rows:
+// a hidden axis draws an UNTICKED box, an included one draws a TICKED
+// box, and what reaches the callback is the HIDE value either way.
+//
+// ⚠️ THE STORED VALUE DID NOT MOVE. `hideAI` still means hide, so a
+// browser carrying `aa_browse_hide_ai=1` from before this change gets
+// the wall it had, drawn as an unticked row. That is what
+// `it renders a STORED hide as an unticked box` pins, and it is the
+// assertion a key rename or a read-time inversion would break.
+describe('FeedKindFilter: the CONTENT category (#1292)', () => {
+  it('every checkbox in the menu means SHOW, top to bottom', async () => {
+    // The whole complaint in one assertion. Nothing is hidden, so every
+    // box in the panel is ticked: eleven types, the all-types control,
+    // and both content rows.
+    await openContent({ matureAvailable: true });
+    const boxes = Array.from(
+      document.querySelectorAll<HTMLInputElement>('[data-testid="kind-filter-panel"] input[type="checkbox"]'),
+    );
+    expect(boxes.length).toBe(FILTERABLE_KINDS.length + 3);
+    expect(boxes.every((b) => b.checked)).toBe(true);
+  });
+
+  it('has no HIDE section left, and the rows are plain checkboxes', async () => {
+    // A `role="switch"` beside eleven checkboxes was half of what made
+    // the row read as an exception; the heading was the other half.
+    await openContent({ matureAvailable: true });
+    const panelEl = panel();
+    expect(panelEl?.textContent).not.toMatch(/\bHide\b/);
+    expect(panelEl?.textContent).toContain('Content');
+    expect(aiRow()?.getAttribute('role')).toBeNull();
+    expect(matureRow()?.getAttribute('role')).toBeNull();
+  });
+
+  it('⭐ renders a STORED hide as an UNTICKED box, both axes', async () => {
+    // The upgrade case. `hideAI` and `hideMature` still mean HIDE, so
+    // this is the flip happening at the boundary and nowhere else.
+    await openContent({ hideAI: true, hideMature: true, matureAvailable: true });
+    expect(aiRow()?.checked).toBe(false);
+    expect(matureRow()?.checked).toBe(false);
+  });
+
+  it('⭐ commits the HIDE value, which is the opposite of the tick', async () => {
+    const { onhide, onhidemature } = await openContent({ matureAvailable: true });
+    // Both start ticked (nothing hidden). Untick both: that is a
+    // request to HIDE, so `true` is what each callback must receive.
+    check(aiRow()!, false);
+    check(matureRow()!, false);
+    await tick();
+    click(applyBtn());
+    expect(onhide).toHaveBeenCalledWith(true);
+    expect(onhidemature).toHaveBeenCalledWith(true);
+  });
+
+  it('⭐ commits the other direction too, from a hidden state', async () => {
+    // The arm that catches an implementation that always sends `true`,
+    // which passes the case above.
+    const { onhide, onhidemature } = await openContent({
+      hideAI: true,
+      hideMature: true,
+      matureAvailable: true,
+    });
+    check(aiRow()!, true);
+    check(matureRow()!, true);
+    await tick();
+    click(applyBtn());
+    expect(onhide).toHaveBeenCalledWith(false);
+    expect(onhidemature).toHaveBeenCalledWith(false);
+  });
+
+  it('does not commit an axis the reader did not touch', async () => {
+    // One panel, one Apply, but an untouched row must not rewrite
+    // storage every time somebody applies a type filter.
+    const { onhide, onhidemature } = await openContent({ matureAvailable: true });
+    check(aiRow()!, false);
+    await tick();
+    click(applyBtn());
+    expect(onhide).toHaveBeenCalledWith(true);
+    expect(onhidemature).not.toHaveBeenCalled();
+  });
+
+  it('throws both content drafts away when dismissed', async () => {
+    const { onhide, onhidemature } = await openContent({ matureAvailable: true });
+    check(aiRow()!, false);
+    check(matureRow()!, false);
+    await tick();
+    click(document.body);
+    await tick();
+    expect(onhide).not.toHaveBeenCalled();
+    expect(onhidemature).not.toHaveBeenCalled();
+
+    // Re-opening shows the APPLIED state, not the abandoned draft.
+    click(toggle());
+    await tick();
+    expect(aiRow()?.checked).toBe(true);
+    expect(matureRow()?.checked).toBe(true);
+  });
+});
+
+// ⛔ ABSENCE, NEVER DISABLEMENT (ADR 0090's 2026-08-26 amendment).
+//
+// The host answers `matureAvailable` from the two-rung cascade. A
+// disabled row would advertise a filter this reader can never use and
+// name a class of content the operator may have switched off entirely;
+// a missing row says nothing at all.
+//
+// The AI row is unaffected by either rung, because ADR 0094 §4 makes
+// that axis a filter that never gates: everybody gets it.
+describe('FeedKindFilter: the mature row is ABSENT, not disabled', () => {
+  it('does not render the mature row when the cascade says no', async () => {
+    await openContent({ matureAvailable: false });
+    expect(matureRow()).toBeNull();
+    // Not "rendered disabled". Not rendered.
+    expect(
+      document.querySelectorAll('[data-testid="mature-filter-toggle"]').length,
+    ).toBe(0);
+    // And the AI row is still there, because it has no cascade.
+    expect(aiRow()).not.toBeNull();
+  });
+
+  it('⛔ commits nothing for a row it never drew', async () => {
+    // A ticked mature row on an instance with the feature off has to be
+    // unreachable, and this is the half that says the DRAFT cannot
+    // reach the host either. A stored flag from a session that had the
+    // row must not be committed back by an Apply the reader used for
+    // something else.
+    const { onhidemature, onapply } = await openContent({
+      hideMature: true,
+      matureAvailable: false,
+    });
+    click(applyBtn());
+    expect(onapply).toHaveBeenCalled();
+    expect(onhidemature).not.toHaveBeenCalled();
+  });
+
+  it('does not light the button for a filter it is not offering', async () => {
+    // The stored flag survives on the device; the button must not claim
+    // a narrowing the menu has no control for.
+    const { unmount } = render(FeedKindFilter, {
+      props: { selected: [], onapply: vi.fn(), hideMature: true, matureAvailable: false },
+    });
+    expect(toggle().dataset.active).toBeUndefined();
+    expect(document.querySelectorAll('[data-testid="mature-filter-active"]').length).toBe(0);
+    unmount();
+
+    render(FeedKindFilter, {
+      props: { selected: [], onapply: vi.fn(), hideMature: true, matureAvailable: true },
+    });
+    expect(toggle().dataset.active).toBe('true');
+    expect(document.querySelectorAll('[data-testid="mature-filter-active"]').length).toBe(1);
+  });
+
+  it('the button states each axis separately', async () => {
+    // A reader who has hidden AI work and filtered to video needs to be
+    // able to tell which of them is thinning the wall.
+    render(FeedKindFilter, {
+      props: {
+        selected: ['video'],
+        onapply: vi.fn(),
+        hideAI: true,
+        hideMature: true,
+        matureAvailable: true,
+      },
+    });
+    expect(toggle().dataset.active).toBe('true');
+    expect(toggle().textContent).toContain('1');
+    expect(document.querySelectorAll('[data-testid="ai-filter-active"]').length).toBe(1);
+    expect(document.querySelectorAll('[data-testid="mature-filter-active"]').length).toBe(1);
   });
 });

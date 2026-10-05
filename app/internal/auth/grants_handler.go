@@ -148,13 +148,24 @@ func (h *Handler) AddAdminUserGrant(
 	if req.Body.Note != nil {
 		note = *req.Body.Note
 	}
-	if err := q.InsertUserGrant(ctx, InsertUserGrantParams{
-		UserRef:          req.Ref,
-		CapabilityCode:   req.Body.Capability,
-		TeamID:           teamUUID,
-		GrantedByUserRef: &caller.UserRef,
-		Note:             note,
-		ExpiresAt:        expiresAt,
+	// ⛔ SERIALIZED against any operation currently ACTING on this
+	// user's authority (#1173, #1119). A batch metadata edit resolves
+	// the caller's effective verdict and then writes under it; without
+	// this, a revoke could commit in between and the stale verdict would
+	// still authorize the writes. The batch holds the shared half; this
+	// is the exclusive half, and the mutation must be inside it.
+	if err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := LockAuthorityForUpdate(ctx, tx, req.Ref); err != nil {
+			return err
+		}
+		return New(tx).InsertUserGrant(ctx, InsertUserGrantParams{
+			UserRef:          req.Ref,
+			CapabilityCode:   req.Body.Capability,
+			TeamID:           teamUUID,
+			GrantedByUserRef: &caller.UserRef,
+			Note:             note,
+			ExpiresAt:        expiresAt,
+		})
 	}); err != nil {
 		return nil, fmt.Errorf("auth: insert grant: %w", err)
 	}
@@ -204,12 +215,25 @@ func (h *Handler) RemoveAdminUserGrant(
 		}
 	}
 
-	n, err := q.DeleteUserGrant(ctx, DeleteUserGrantParams{
-		UserRef:        req.Ref,
-		CapabilityCode: req.Capability,
-		TeamID:         teamUUID,
-	})
-	if err != nil {
+	// ⛔ SERIALIZED against any operation currently ACTING on this
+	// user's authority (#1173, #1119). A batch metadata edit resolves
+	// the caller's effective verdict and then writes under it; without
+	// this, a revoke could commit in between and the stale verdict would
+	// still authorize the writes. The batch holds the shared half; this
+	// is the exclusive half, and the mutation must be inside it.
+	var n int64
+	if err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := LockAuthorityForUpdate(ctx, tx, req.Ref); err != nil {
+			return err
+		}
+		var derr error
+		n, derr = New(tx).DeleteUserGrant(ctx, DeleteUserGrantParams{
+			UserRef:        req.Ref,
+			CapabilityCode: req.Capability,
+			TeamID:         teamUUID,
+		})
+		return derr
+	}); err != nil {
 		return nil, fmt.Errorf("auth: delete grant: %w", err)
 	}
 	if n == 0 {
@@ -292,13 +316,22 @@ func (h *Handler) AddAdminUserRevoke(
 	if req.Body.Note != nil {
 		note = *req.Body.Note
 	}
-	if err := q.InsertUserRevoke(ctx, InsertUserRevokeParams{
-		UserRef:          req.Ref,
-		CapabilityCode:   req.Body.Capability,
-		TeamID:           teamUUID,
-		RevokedByUserRef: &caller.UserRef,
-		Note:             note,
-		ExpiresAt:        expiresAt,
+	// SERIALIZED, exactly as the grant paths above and for the same
+	// reason: a revoke is the mutation the batch's stale-verdict window
+	// is most dangerous for, and it is an INSERT, so no row lock over
+	// the authority tables could have caught it.
+	if err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := LockAuthorityForUpdate(ctx, tx, req.Ref); err != nil {
+			return err
+		}
+		return New(tx).InsertUserRevoke(ctx, InsertUserRevokeParams{
+			UserRef:          req.Ref,
+			CapabilityCode:   req.Body.Capability,
+			TeamID:           teamUUID,
+			RevokedByUserRef: &caller.UserRef,
+			Note:             note,
+			ExpiresAt:        expiresAt,
+		})
 	}); err != nil {
 		return nil, fmt.Errorf("auth: insert revoke: %w", err)
 	}
@@ -331,14 +364,24 @@ func (h *Handler) RemoveAdminUserRevoke(
 		}, nil
 	}
 
-	q := New(h.Pool)
 	teamUUID := openAPIToPgUUID(req.Params.TeamId)
-	n, err := q.DeleteUserRevoke(ctx, DeleteUserRevokeParams{
-		UserRef:        req.Ref,
-		CapabilityCode: req.Capability,
-		TeamID:         teamUUID,
-	})
-	if err != nil {
+	// SERIALIZED, exactly as the grant paths above and for the same
+	// reason: a revoke is the mutation the batch's stale-verdict window
+	// is most dangerous for, and it is an INSERT, so no row lock over
+	// the authority tables could have caught it.
+	var n int64
+	if err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := LockAuthorityForUpdate(ctx, tx, req.Ref); err != nil {
+			return err
+		}
+		var derr error
+		n, derr = New(tx).DeleteUserRevoke(ctx, DeleteUserRevokeParams{
+			UserRef:        req.Ref,
+			CapabilityCode: req.Capability,
+			TeamID:         teamUUID,
+		})
+		return derr
+	}); err != nil {
 		return nil, fmt.Errorf("auth: delete revoke: %w", err)
 	}
 	if n == 0 {

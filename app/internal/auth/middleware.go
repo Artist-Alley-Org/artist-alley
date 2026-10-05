@@ -416,12 +416,37 @@ func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 // performs. That is the difference between testing the gate and
 // testing the fixture (#930).
 //
-// Same failure mode as loadCapabilities: a lookup error leaves the cap
-// sets empty rather than failing, so the caller can do nothing
-// privileged.
+// It is also how a NON-HTTP caller acts as a user: the scheduled-action
+// reaper publishes a post on behalf of the account that scheduled it
+// (#1238), and that account's capabilities have to be the ones the
+// database holds at fire time, not a literal written when the work was
+// queued.
+//
+// The user row is loaded as well as the capabilities. Username is not
+// decoration on this path — `emit.ActorContext.URI()` builds the
+// federation actor handle as `{baseURL}/users/{username}`, so an
+// identity carrying only a ref would publish to peers as an actor whose
+// URI ends in a slash. A caller that needs a real user checks Username
+// itself; see posts.MovePostPublication.
+//
+// Same failure mode as loadCapabilities: a lookup error leaves the
+// identity thin (no username, empty cap sets) rather than failing, so
+// the caller can do nothing privileged and can see that it could not be
+// resolved.
 func (r *Resolver) LoadIdentity(ctx context.Context, userRef int64) *Identity {
-	id := &Identity{UserRef: userRef, AuthMethod: "session"}
-	r.loadCapabilities(ctx, New(r.Pool), id)
+	q := New(r.Pool)
+	id, err := r.loadUser(ctx, q, userRef)
+	if err != nil {
+		if r.Logger != nil {
+			r.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.identity.load.error",
+				slog.Int64("user_ref", userRef),
+				slog.String("err", err.Error()),
+			)
+		}
+		id = &Identity{UserRef: userRef}
+	}
+	id.AuthMethod = "session"
+	r.loadCapabilities(ctx, q, id)
 	return id
 }
 
@@ -483,49 +508,6 @@ func (r *Resolver) loadCapabilities(ctx context.Context, q *Queries, id *Identit
 	if r.caps != nil {
 		r.caps.Add(key, CachedCapSet{Global: caps, Scoped: scoped})
 	}
-}
-
-// AnonymousRoleName is the seeded role used to represent unauthenticated
-// requests when anonymous browse is enabled. Defined in migration 00001.
-// The role has no capabilities by default — granting it
-// `posts.read.public` (etc.) is what enables anonymous access.
-const AnonymousRoleName = "Anonymous"
-
-// LoadAnonymousIdentity builds the synthetic Identity that represents
-// an unauthenticated request when anonymous browse is enabled. The
-// returned Identity has UserRef=0, AuthMethod="anonymous", and a
-// flat Capabilities slice taken from the seeded Anonymous role (no
-// team scope — Anonymous shouldn't be team-scoped).
-//
-// This is a building block for Phase 1.13.G. The middleware doesn't
-// inject this Identity yet; the existing nil-on-anonymous behaviour
-// is preserved until 1.13.G ships the system.anonymous_browse_enabled
-// gate.
-//
-// On DB error: returns an Identity with empty caps. Anonymous can do
-// nothing, which is the safe default — a transient DB blip shouldn't
-// suddenly grant access just because the cap query failed.
-func LoadAnonymousIdentity(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) *Identity {
-	id := &Identity{
-		UserRef:    0,
-		Username:   "anonymous",
-		AuthMethod: "anonymous",
-	}
-	if pool == nil {
-		return id
-	}
-	caps, err := New(pool).EffectiveCapabilitiesForRoleName(ctx, AnonymousRoleName)
-	if err != nil {
-		if logger != nil {
-			logger.LogAttrs(ctx, slog.LevelWarn, "auth.anonymous.load.error",
-				slog.String("err", err.Error()),
-			)
-		}
-		return id
-	}
-	sort.Strings(caps)
-	id.Capabilities = caps
-	return id
 }
 
 // IsAnonymous reports whether the identity represents an unauthenticated

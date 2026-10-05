@@ -52,14 +52,17 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/coverfocal"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 	"github.com/mscrnt/artist-alley/app/internal/viewkind"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
+	"github.com/mscrnt/artist-alley/app/internal/workflow"
 )
 
 // Cache domain name. Stable string used as NOTIFY target — peer
@@ -80,6 +83,19 @@ const cacheDomainPostByID = cache.DomainPostByID
 const (
 	CapPostsAdmin  = visibility.PostsAdmin
 	CapSystemAdmin = visibility.SystemAdmin
+
+	// CapPostsPublish gates the act of publishing (ADR 0091 decision
+	// 7). It is the capability the `post` domain's own workflow
+	// transitions have carried since the 00001 baseline — this package
+	// names it because CREATING a post already published has to be held
+	// to the same bar as moving one there, or an operator who revokes
+	// publication rights has closed the door and left the window open.
+	//
+	// It says whether a caller may publish AT ALL. Whether they may
+	// publish THIS post is canWidenPostAccess, and the two are checked
+	// separately on purpose: one is instance policy, the other is
+	// authorship.
+	CapPostsPublish = "posts.publish"
 )
 
 const maxListLimit = 200
@@ -168,6 +184,43 @@ type Handler struct {
 	// (#1116). Nil until wired, and a nil resolver DISQUALIFIES rather
 	// than widens — see visibility.ResolveMatureOr.
 	matureResolver visibility.MatureResolver
+
+	// workflow moves a post between the `post` domain's two states —
+	// `wip` (draft) and `published` — for POST /posts/{id}/publish and
+	// /unpublish (ADR 0091 decision 7).
+	//
+	// The state machine rather than a direct UPDATE, because the move
+	// is exactly what it is for: the edge list decides which moves
+	// exist, `posts.publish` gates them as instance policy, and every
+	// move lands a workflow_audit row saying who moved what and when.
+	// Until #1161 the service had no callers at all and the audit table
+	// no rows.
+	//
+	// nil-safe in the sense that matters: the publish handlers refuse
+	// with 500 rather than falling back to writing state_id by hand,
+	// because a fallback that skips the gate is worse than an outage.
+	workflow *workflow.Service
+
+	// actorLoader resolves a user ref to the identity a NON-HTTP caller
+	// acts as — today only the scheduled-action reaper, which has a
+	// `created_by` on the action row and no request context (#1238).
+	//
+	// A loader rather than a hand-built literal because both halves of
+	// what the publication core does with a caller come from the
+	// database: its capabilities decide whether the move is permitted
+	// at fire time, and its username IS the federation actor URI. A
+	// synthesised identity would have neither and would still publish.
+	//
+	// nil-safe: unwired, MovePostPublication refuses. There is no
+	// degraded mode — see its comment.
+	actorLoader actorLoader
+}
+
+// actorLoader is the auth.Resolver slice this package needs to act on
+// behalf of a user with no request behind them. Declared locally, the
+// same shape as `notifier` above, so the wiring at boot is one line.
+type actorLoader interface {
+	LoadIdentity(ctx context.Context, userRef int64) *auth.Identity
 }
 
 // notifier is the notifications.Writer slice this package needs.
@@ -201,6 +254,11 @@ func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx c
 	h.baseURLFn = baseURLFn
 }
 
+// SetWorkflow installs the workflow state machine used by the publish /
+// unpublish handlers. Post-construction setter like the rest, so the
+// boot order stays linear.
+func (h *Handler) SetWorkflow(w *workflow.Service) { h.workflow = w }
+
 // SetMentions installs the @-mention notification service (Phase
 // 1.55.X). Post-construction setter, same shape as the others.
 func (h *Handler) SetMentions(m *mention.Service) { h.mentions = m }
@@ -208,6 +266,11 @@ func (h *Handler) SetMentions(m *mention.Service) { h.mentions = m }
 // SetNotifier installs the cross-package notifications writer (#875).
 // Post-construction setter, same shape as social.Handler's.
 func (h *Handler) SetNotifier(n notifier) { h.notifier = n }
+
+// SetActorLoader installs the identity resolver MovePostPublication
+// acts through (#1238). Post-construction setter, same shape as the
+// rest.
+func (h *Handler) SetActorLoader(l actorLoader) { h.actorLoader = l }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
 	h := &Handler{Pool: pool, Logger: logger, registry: registry}
@@ -254,6 +317,45 @@ func (h *Handler) CreatePost(
 	if !validVisibility(visibility) {
 		return openapi.CreatePost400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be public|private|org-only|followers|explicit-share"},
+		}, nil
+	}
+
+	// #1210: the cover's focal point is a PAIR and is validated as
+	// one, by the same rule the collection slots use. `false` for the
+	// clear flag because there is nothing to clear on a create: a post
+	// that has never been framed is centred already.
+	if msg := coverfocal.Validate(
+		"cover_focal_x", "cover_focal_y", "clear_cover_focal",
+		in.CoverFocalX, in.CoverFocalY, false,
+	); msg != "" {
+		return openapi.CreatePost400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+		}, nil
+	}
+
+	// Draft or published (ADR 0091 decision 7). Omitted means published,
+	// which is what every caller did before the flag existed.
+	//
+	// Creating a post ALREADY PUBLISHED is held to `posts.publish`, the
+	// same capability the wip → published transition carries. Without
+	// this the capability would gate only the second half of a two-step
+	// route to the same place: an operator who revoked publication
+	// rights would find every post still arriving published, straight
+	// from the compose form.
+	//
+	// Creating a DRAFT needs nothing beyond being signed in. A draft is
+	// on no shared surface, so it is not publication and there is
+	// nothing for a policy lever to hold back.
+	//
+	// The refusal is 403 rather than a silent downgrade to draft. A
+	// post that quietly did not publish is exactly the "did it work?"
+	// ambiguity the compose form must never have.
+	draft := in.Draft != nil && *in.Draft
+	if !draft && !id.Can(CapPostsPublish) && !id.Can(CapSystemAdmin) {
+		return openapi.CreatePost403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "publishing requires the posts.publish capability; create the post as a draft instead",
+			},
 		}, nil
 	}
 
@@ -345,13 +447,29 @@ func (h *Handler) CreatePost(
 		teamID = pgtype.UUID{Bytes: uuid.UUID(*in.TeamId), Valid: true}
 	}
 
-	// state_id: domain 'post' UUID, optional. DB FK guards the value;
-	// we don't validate the domain here — the workflow.Service will
-	// reject illegal transitions later if a typo slipped through.
-	var stateID pgtype.UUID
-	if in.StateId != nil {
-		stateID = pgtype.UUID{Bytes: uuid.UUID(*in.StateId), Valid: true}
+	// The post's workflow state is the SERVER's to choose (ADR 0091
+	// decision 7). `PostCreate` used to carry `state_id` and this
+	// handler wrote it verbatim, with a comment saying outright that
+	// the domain was not validated — so a caller could point a post at
+	// any state row on the instance, another domain's included. That
+	// was inert only while nothing read post state. It is now the
+	// difference between published and not, so the field is gone from
+	// the schema and the only thing a caller may say is `draft`.
+	//
+	// Resolved from the state machine on every create rather than
+	// cached: it is one indexed lookup on a unique key, and a cached
+	// UUID is wrong the first time an install reseeds its states.
+	stateID, err := h.createStateID(ctx, draft)
+	if err != nil {
+		return nil, err
 	}
+
+	// #1119 sprint 21d: whether the post takes ordinary comments.
+	// Omitted means enabled, which is what every post created before
+	// the field existed got; an explicit false is stored as sent. The
+	// field is a *bool on the wire precisely so that false and absent
+	// are different things here.
+	commentsEnabled := in.CommentsEnabled == nil || *in.CommentsEnabled
 
 	row, err := q.CreatePost(ctx, CreatePostParams{
 		AuthorUserRef:         id.UserRef,
@@ -362,6 +480,9 @@ func (h *Handler) CreatePost(
 		CoverThumbnailAssetID: coverThumbnailID,
 		TeamID:                teamID,
 		StateID:               stateID,
+		CoverFocalX:           in.CoverFocalX,
+		CoverFocalY:           in.CoverFocalY,
+		CommentsEnabled:       commentsEnabled,
 	})
 	if err != nil {
 		if isFKError(err, "posts_team_id_fkey") {
@@ -439,7 +560,15 @@ func (h *Handler) CreatePost(
 	// activities ledger to publish to peers; without this the new
 	// post would be invisible to federation. 1.22.B-cleanup made
 	// this required — no more silent skip.
-	{
+	//
+	// A DRAFT EMITS NOTHING (ADR 0091 decision 7). Federation is a
+	// shared surface like any other, and it is the one surface where
+	// withholding after the fact is not possible: an activity dispatched
+	// to a peer has left this instance's control, so a draft that
+	// emitted here would be a publication no local read rule could take
+	// back. The Create activity is emitted at PUBLISH time instead —
+	// see PublishPost — which is also where it honestly belongs.
+	if !draft {
 		actorCtx := emit.ActorContext{
 			UserRef:  id.UserRef,
 			Username: id.Username,
@@ -599,6 +728,21 @@ func (h *Handler) UpdatePost(
 
 	in := req.Body
 
+	// #1210: the cover's focal point, validated before anything is
+	// written. See [coverfocal.Validate] for the three states it
+	// refuses; each would otherwise reach posts_cover_focal_check as a
+	// constraint error, which surfaces as a 500 rather than as a 400
+	// the client can act on.
+	clearCoverFocal := in.ClearCoverFocal != nil && *in.ClearCoverFocal
+	if msg := coverfocal.Validate(
+		"cover_focal_x", "cover_focal_y", "clear_cover_focal",
+		in.CoverFocalX, in.CoverFocalY, clearCoverFocal,
+	); msg != "" {
+		return openapi.UpdatePost400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+		}, nil
+	}
+
 	// Phase 1.16 optimistic-concurrency check. Compared against
 	// the row loaded inside the tx (one consistent snapshot).
 	// Truncate both sides to µs (Postgres stores at µs; Go marshals
@@ -709,6 +853,18 @@ func (h *Handler) UpdatePost(
 		Visibility:            visPtr,
 		CoverAssetID:          coverPtr,
 		CoverThumbnailAssetID: thumbPtr,
+		// #1210: the pair validated above, plus its clear flag. Both
+		// axes read the one flag: a focal point is a point, and the
+		// column CHECK does not admit half of one being cleared.
+		CoverFocalX:     in.CoverFocalX,
+		CoverFocalY:     in.CoverFocalY,
+		ClearCoverFocal: clearCoverFocal,
+		// #1119 sprint 21d: the comments setting rides the same PATCH,
+		// the same canMutatePost gate above and the same
+		// if_unchanged_since guard. Passed as the pointer it arrived
+		// as: the query COALESCEs a NULL to the stored value, so only a
+		// nil here means "not sent", and an explicit false is written.
+		CommentsEnabled: in.CommentsEnabled,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.UpdatePost404JSONResponse{
@@ -740,7 +896,21 @@ func (h *Handler) UpdatePost(
 	}
 
 	// Record the Update activity in the same tx per ADR 0044.
-	{
+	//
+	// NOT FOR A DRAFT (ADR 0091 decision 7). An unpublished post has
+	// never been sent to a peer, so an Update naming it would be the
+	// first thing federation ever heard about it — a publication by
+	// side effect, out of a PATCH, and the one kind that cannot be
+	// withdrawn afterwards. The post's Create activity is emitted when
+	// its author publishes it, carrying whatever the edits left behind.
+	//
+	// Read from the row loaded inside this transaction, so an edit
+	// racing a publish is decided by one consistent snapshot.
+	publishedState, err := h.postStateID(ctx, visibility.PostPublishedStateCode)
+	if err != nil {
+		return nil, err
+	}
+	if !isDraftState(current.StateID, publishedState) {
 		actorCtx := emit.ActorContext{
 			UserRef:  caller.UserRef,
 			Username: caller.Username,
@@ -1131,20 +1301,52 @@ func (h *Handler) ListPosts(
 			qText = &s
 		}
 	}
-	var tagPtr *string
-	if req.Params.Tag != nil && *req.Params.Tag != "" {
-		tagPtr = req.Params.Tag
+	// ?tag= narrows the feed to posts carrying the named tag(s) (#1123).
+	//
+	// REPEATABLE since #1251 slice 2 — `?tag=a&tag=b` — and the repeat
+	// means AND: "carries every one of these". That is the meaning
+	// `tag:a tag:b` has always had in the DSL, and composing the feed
+	// through the shared grammar is what makes the two surfaces agree
+	// rather than each decide. See ListPostsPageParams.Tags.
+	//
+	// A REPEATED PARAMETER rather than the comma list `?kind=` uses, and
+	// the difference is the value grammar rather than taste. A kind is
+	// drawn from a closed vocabulary that contains no commas, so a
+	// delimiter is free; a tag is user text under a normaliser that only
+	// trims whitespace, so a comma is a legal character in one and
+	// splitting on it would turn an exact match into two tags that ANDed
+	// to nothing. Repetition has no delimiter to collide with, and a
+	// single `?tag=x` is byte-identical to what it always was.
+	//
+	// Blank values are DROPPED rather than kept as a tag nothing carries.
+	// `?tag=` with no value is a control that was cleared, not a request
+	// for the empty tag, and the frontend spells "no filter" exactly that
+	// way. Which is also why `Tags` needs no "requested but empty"
+	// companion flag the way `Kinds` and `Visibility` do: after this
+	// loop, empty means absent and nothing else.
+	var tags []string
+	if req.Params.Tag != nil {
+		for _, raw := range *req.Params.Tag {
+			// Not trimmed, only tested. `post_tags.tag` is matched
+			// EXACTLY (migration 00050), so trimming here would send a
+			// different string than the corpus holds and silently return
+			// nothing for a tag that genuinely has an edge space.
+			if raw != "" {
+				tags = append(tags, raw)
+			}
+		}
 	}
 
 	// ?kind= restricts the feed to posts CONTAINING an asset of the
 	// named kind(s) — the browse footer's type filter (#1166, widened
 	// from cover-only to any-member by #1190).
 	//
-	// Parsed here and enforced in kindFilterSQL, which carries the
-	// per-member field-plane readability rule with it: a member the
-	// caller may not read contributes no kind, because the card
-	// withholds everything about it and a filter that could still select
-	// the post through it would hand the same fact back by elimination.
+	// Parsed here and enforced by the shared filter grammar's `kind`
+	// dimension (facet.FacetKind, #1251), which carries the per-member
+	// field-plane readability rule with it: a member the caller may not
+	// read contributes no kind, because the card withholds everything
+	// about it and a filter that could still select the post through it
+	// would hand the same fact back by elimination.
 	//
 	// No authorization decision at this layer, for the same reason
 	// ?team_id= has none: the conjunct NARROWS and the post read rule
@@ -1156,6 +1358,82 @@ func (h *Handler) ListPosts(
 	var kindsRequested bool
 	if req.Params.Kind != nil {
 		kinds, kindsRequested = viewkind.ParseList(*req.Params.Kind)
+	}
+
+	// ?ai= is the browse footer's "Hide AI-made work" toggle (#1251
+	// slice 3, ADR 0094 fourth amendment). The control sends
+	// `ai=not_pure` when it is ON and NOTHING when it is off; `pure` is
+	// on the wire for symmetry with `filter=ai:` and no UI emits it.
+	//
+	// Enforced by the shared grammar's `ai` dimension (facet.FacetAI,
+	// #1242), which keys on `posts.ai_pure` — the FILTERING fact —
+	// rather than on `posts.ai_provenance`, the LABELLING one. That is
+	// the owner's ruling in one column choice: `ai_provenance`
+	// propagates a positive claim on ANY member, so an exclusion keyed
+	// on it would drop the MIXED posts too, and excluding a post because
+	// one of its members was honestly declared punishes exactly the
+	// declaration the design depends on.
+	//
+	// ⭐ VALIDATED HERE, AND A BAD VALUE IS A 400 — the one filter on
+	// this operation that answers a typo with an error instead of an
+	// empty page. `?kind=nonsense` and `?visibility=nonsense` both
+	// return an empty page (see viewkind.ParseList above and
+	// ListPostsPageParams.Visibility), and the divergence is deliberate:
+	// those two are POSITIVE selections, where "only X" for an X nobody
+	// has is legibly answered by no rows. This one is an EXCLUSION over
+	// a closed two-value vocabulary, so a tolerated `?ai=generated`
+	// would render a predicate matching nothing and hand a viewer who
+	// asked to hide AI work an EMPTY WALL — indistinguishable from the
+	// site being broken. All three fail CLOSED and none can widen; this
+	// one also says so out loud. Same answer /search gives
+	// `filter=ai:junk`, from the same validator.
+	//
+	// ⛔ THE VALIDATOR IS THE DIMENSION'S OWN. A local switch over
+	// facet.AIPure / facet.AINotPure would be a second copy of the value
+	// grammar — ADR 0093 decision 3's "a filter is defined once" — so
+	// this calls facet.FacetType.CanonicalValue, which is what
+	// facet.ParseSelection calls for the `filter=` spelling.
+	//
+	// ⛔ NOT A GATE (ADR 0094 §4). A caller who sends nothing gets
+	// pure-AI work in their page exactly as before; nothing is withheld,
+	// subtracted or hidden from anybody who did not ask.
+	var aiTerm string
+	if req.Params.Ai != nil {
+		v, ok := facet.FacetAI.CanonicalValue(string(*req.Params.Ai))
+		if !ok {
+			return openapi.ListPosts400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid_ai"},
+			}, nil
+		}
+		aiTerm = v
+	}
+
+	// ?mature=not_mature is the browse footer's Mature row (#1292, ADR
+	// 0090's 2026-08-26 amendment). Layer 3: a reader the three
+	// conjuncts have ALREADY qualified saying "not in these results,
+	// right now".
+	//
+	// ⛔ IT NEVER WIDENS, AND THE WIRE IS WHAT GUARANTEES THAT rather
+	// than this code. The parameter's vocabulary holds one value, so
+	// there is no spelling of it that asks for mature work; the only
+	// thing a caller can express is a subtraction. Compare `?ai=`,
+	// which offers both directions because its axis gates nothing.
+	//
+	// ⚠️ VALIDATED POSITIVELY, and refused rather than ignored. Nothing
+	// in this stack enforces a query-parameter enum at bind time, so a
+	// tolerated `?mature=yes` would fall through as "no filter" and
+	// hand a reader who asked to drop mature work a wall that still
+	// carries it. Silently doing the opposite of what was asked is
+	// worse on this axis than an error, so an unrecognised value is a
+	// 400 for the same reason `?ai=junk` is.
+	var excludeMature bool
+	if req.Params.Mature != nil {
+		if *req.Params.Mature != openapi.ListPostsParamsMatureNotMature {
+			return openapi.ListPosts400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid_mature"},
+			}, nil
+		}
+		excludeMature = true
 	}
 
 	// ?team_id= scopes the feed to one team's posts — the team page's
@@ -1241,18 +1519,33 @@ func (h *Handler) ListPosts(
 	// default instead of a 500 or an arbitrary order.
 	ascending := req.Params.Dir != nil && *req.Params.Dir == openapi.Asc
 
+	// ?draft=true — the author's own drafts listing (ADR 0091 decision
+	// 7). The ONE way a draft reaches a listing at all, and it returns
+	// drafts EXCLUSIVELY rather than mixing them into the feed; see
+	// ListPostsPageParams.Draft. No capability gate here on purpose:
+	// the read rule is stricter for a draft than for a published post
+	// whatever the caller holds, so a stranger asking gets an empty
+	// page rather than a 403 that would confirm drafts exist.
+	//
+	// An anonymous caller reaches this under public mode and gets
+	// nothing, by the same route: the anonymous read rule refuses every
+	// unpublished post before any filter here is consulted.
+	wantDrafts := req.Params.Draft != nil && *req.Params.Draft
+
 	fetch := limit + 1
 	rows, err := h.ListPostsPageGated(ctx, caller, ListPostsPageParams{
 		IncludeDeleted:  includeDeletedArg,
 		AuthorUserRef:   authorPtr,
 		Visibility:      visPtr,
 		Q:               qText,
-		Tag:             tagPtr,
+		Tags:            tags,
 		FeedFollowerRef: followerPtr,
 		TeamID:          teamID,
 		LikedByUserRef:  likedByPtr,
 		Kinds:           kinds,
 		KindsRequested:  kindsRequested,
+		AI:              aiTerm,
+		Draft:           wantDrafts,
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
@@ -1262,9 +1555,23 @@ func (h *Handler) ListPosts(
 		// the answer is a property of the request, not of a post.
 		Mature:      h.resolveMature(ctx, caller),
 		MatureAdmin: caller != nil && caller.Can(CapSystemAdmin),
+		// The VIEW filter (#1292), which is a different axis from the
+		// two lines above it despite reading the same column. Those
+		// decide what this caller MAY be shown; this one is what they
+		// ASKED to be shown, and it is applied after the gate has had
+		// its say. See ListPostsPageParams.ExcludeMature.
+		ExcludeMature: excludeMature,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("posts: list: %w", err)
+	}
+
+	// Resolved once for the page. Only the soft-deleted branch below
+	// needs it — every other item comes through fetchFullPost, which
+	// carries `draft` on the cached object.
+	listPublishedState, err := h.postStateID(ctx, visibility.PostPublishedStateCode)
+	if err != nil {
+		return nil, err
 	}
 
 	items := make([]openapi.Post, 0, limit)
@@ -1282,7 +1589,7 @@ func (h *Handler) ListPosts(
 				// (include_deleted=true) surface it from the list row
 				// rather than dropping it.
 				if r.DeletedAt.Valid {
-					items = append(items, deletedPostFromListRow(r))
+					items = append(items, deletedPostFromListRow(r, listPublishedState))
 					lastPostedAt = r.PostedAt.Time
 					lastID = uuid.UUID(r.ID.Bytes)
 				}
@@ -1922,7 +2229,14 @@ func (h *Handler) fetchFullPost(ctx context.Context, id pgtype.UUID) (*openapi.P
 	if err != nil {
 		return nil, fmt.Errorf("posts: list tags: %w", err)
 	}
-	out := postRowToAPI(row, members, tags)
+	// On the MISS path only: `draft` is a property of the post, not of
+	// the caller, so it belongs in the cached object and costs one
+	// indexed lookup per miss rather than one per request.
+	publishedState, err := h.postStateID(ctx, visibility.PostPublishedStateCode)
+	if err != nil {
+		return nil, err
+	}
+	out := postRowToAPI(row, members, tags, publishedState)
 	if h.byID != nil {
 		h.byID.Add(key, out)
 	}
@@ -2209,28 +2523,62 @@ func validVisibility(s string) bool {
 // enumerates the column's own CHECK constraint and fails when a tier
 // exists that this list does not decide about.
 //
-// Order is irrelevant — it is spliced as `visibility = ANY($3)` — and it
-// is never mutated, so one package-level slice serves every request.
-var defaultFeedTiers = []string{"public", "org-only", "followers", "explicit-share"}
+// Order is irrelevant — the tiers are ORed by the shared grammar's
+// `visibility` dimension, which is non-conjunctive — and it is never
+// mutated, so one package-level slice serves every request.
+//
+// It is DERIVED from facet.VisibilityTiers() since #1251 slice 2 rather
+// than transcribed beside it. The subtraction the paragraph above
+// describes is now literally a subtraction, so a tier added to the
+// grammar's vocabulary lands in this default automatically — which is
+// the direction the guard test says the risk runs in.
+var defaultFeedTiers = sharedTiersExcept(facet.VisibilityPrivate)
+
+// sharedTiersExcept returns the [facet.VisibilityTiers] vocabulary minus
+// the named tiers.
+func sharedTiersExcept(drop ...string) []string {
+	skip := make(map[string]bool, len(drop))
+	for _, d := range drop {
+		skip[d] = true
+	}
+	all := facet.VisibilityTiers()
+	out := make([]string, 0, len(all))
+	for _, t := range all {
+		if !skip[t] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 // ---------------------------------------------------------------------------
 // Row → API conversions
 // ---------------------------------------------------------------------------
 
-func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) openapi.Post {
+// publishedState is the `post` domain's published state id, resolved
+// once per call by the caller (fetchFullPost) rather than looked up per
+// row. It decides the API's `draft` field — see isDraftState, and see
+// visibility.postPublishedExpr for the SQL half of the same question.
+func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string, publishedState pgtype.UUID) openapi.Post {
 	out := openapi.Post{
 		Id:            openapi_types.UUID(p.ID.Bytes),
 		AuthorUserRef: p.AuthorUserRef,
 		Title:         p.Title,
 		Description:   p.Description,
 		Visibility:    openapi.PostVisibility(p.Visibility),
+		Draft:         isDraftState(p.StateID, publishedState),
 		PostedAt:      p.PostedAt.Time,
 		LikeCount:     p.LikeCount,
 		CommentCount:  p.CommentCount,
-		Tags:          append([]string{}, tags...),
-		CreatedAt:     p.CreatedAt.Time,
-		UpdatedAt:     p.UpdatedAt.Time,
-		Members:       make([]openapi.PostMember, 0, len(members)),
+		// #1119 sprint 21d: a property of the post, not of the reader,
+		// so it is safe in the cross-caller cache with the rest of
+		// this object. The column is NOT NULL, so there is no third
+		// value to translate.
+		CommentsEnabled: p.CommentsEnabled,
+		Tags:            append([]string{}, tags...),
+		CreatedAt:       p.CreatedAt.Time,
+		UpdatedAt:       p.UpdatedAt.Time,
+		Members:         make([]openapi.PostMember, 0, len(members)),
 	}
 	if p.CoverAssetID.Valid {
 		v := openapi_types.UUID(p.CoverAssetID.Bytes)
@@ -2240,6 +2588,14 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) open
 		v := openapi_types.UUID(p.CoverThumbnailAssetID.Bytes)
 		out.CoverThumbnailAssetId = &v
 	}
+	// #1210: the crop the author framed for the browse grid's square
+	// tile. Copied as-is rather than defaulted to 0.5: null is "never
+	// framed" and an explicit 0.5 is "framed, and the answer was the
+	// centre", and a client's Reset has to be able to say the first.
+	// The column CHECK guarantees the pair, so a caller never has to
+	// re-validate that it got both.
+	out.CoverFocalX = p.CoverFocalX
+	out.CoverFocalY = p.CoverFocalY
 	if p.OriginServerID.Valid {
 		v := openapi_types.UUID(p.OriginServerID.Bytes)
 		out.OriginServerId = &v
@@ -2251,6 +2607,16 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) open
 	if p.StateID.Valid {
 		v := openapi_types.UUID(p.StateID.Bytes)
 		out.StateId = &v
+	}
+	// #1167 / ADR 0094 — DERIVED by trigger from the post's live
+	// members and its two cover pictures, never written by a request.
+	// nil means UNDECLARED, which is also what one undeclared
+	// contributor produces: the post cannot disclaim AI on behalf of a
+	// maker nobody asked. Safe to cache cross-caller with the rest of
+	// this object — it is a property of the post, not of the reader.
+	if p.AiProvenance != nil && *p.AiProvenance != "" {
+		v := openapi.PostAiProvenance(*p.AiProvenance)
+		out.AiProvenance = &v
 	}
 	for _, m := range members {
 		a := memberToAsset(m)
@@ -2274,17 +2640,19 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) open
 // deleted_at IS NULL, so a deleted post can't be fully hydrated — the
 // scalar fields the list row carries are enough for the trash view
 // (title + deletion metadata + a restore target).
-func deletedPostFromListRow(r ListPostsPageRow) openapi.Post {
+func deletedPostFromListRow(r ListPostsPageRow, publishedState pgtype.UUID) openapi.Post {
 	out := openapi.Post{
-		Id:            openapi_types.UUID(r.ID.Bytes),
-		AuthorUserRef: r.AuthorUserRef,
-		Title:         r.Title,
-		Visibility:    openapi.PostVisibility(r.Visibility),
-		PostedAt:      r.PostedAt.Time,
-		CreatedAt:     r.CreatedAt.Time,
-		UpdatedAt:     r.UpdatedAt.Time,
-		Members:       []openapi.PostMember{},
-		Tags:          []string{},
+		Id:              openapi_types.UUID(r.ID.Bytes),
+		AuthorUserRef:   r.AuthorUserRef,
+		Title:           r.Title,
+		Visibility:      openapi.PostVisibility(r.Visibility),
+		Draft:           isDraftState(r.StateID, publishedState),
+		CommentsEnabled: r.CommentsEnabled,
+		PostedAt:        r.PostedAt.Time,
+		CreatedAt:       r.CreatedAt.Time,
+		UpdatedAt:       r.UpdatedAt.Time,
+		Members:         []openapi.PostMember{},
+		Tags:            []string{},
 	}
 	if r.DeletedAt.Valid {
 		dt := r.DeletedAt.Time
@@ -2334,7 +2702,11 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 	// #939 — the caller's `assets.admin` scope. Widens the FIELD plane
 	// of a restricted member (ADR 0064) and nothing else.
 	var mut visibility.AssetMutationCaps
-	if id := auth.IdentityFromContext(ctx); id != nil {
+	if id := auth.IdentityFromContext(ctx); id != nil && !id.IsAnonymous() {
+		// `!IsAnonymous` as well as non-nil (#1183): a synthetic
+		// anonymous identity carries UserRef 0, and building a caller
+		// around it would present ref 0 to the visibility rules as
+		// though it were a member.
 		caller = visibility.NewCaller(&id.UserRef)
 		caps = func(code string) bool { return id.Can(code) }
 		mut = visibility.ResolveAssetMutationCaps(
@@ -2576,6 +2948,25 @@ func memberToAsset(m ListPostAssetsRow) openapi.Asset {
 	}
 	if m.OwnerUserRef != nil {
 		a.OwnerUserRef = m.OwnerUserRef
+	}
+	// #1243 / ADR 0094 — the MEMBER'S OWN declaration, which is not the
+	// post's derived one. `postRowToAPI` sets `Post.AiProvenance` from
+	// the whole contributor set ("does this post contain AI?"); this is
+	// the per-file fact the viewer labels, and in a MIXED post they
+	// disagree by design: the post says `generated` while the member
+	// beside the declared one says nothing at all.
+	//
+	// Safe to bake into the cross-caller cache with the rest of this
+	// object — unlike `preview_available` it is a property of the asset
+	// and not of the reader. ADR 0094 §4 is what makes that true: the
+	// declaration is a FILTER a viewer may apply to their own feed and
+	// never a gate, so no caller sees a different value for it.
+	//
+	// nil stays nil. UNDECLARED is not `none`, and an omitted field is
+	// the only wire form that keeps them apart.
+	if m.AiProvenance != nil && *m.AiProvenance != "" {
+		v := openapi.AssetAiProvenance(*m.AiProvenance)
+		a.AiProvenance = &v
 	}
 	// Forward the asset-level metadata JSONB so per-kind view bodies
 	// (AudioView, future PDFView, etc.) can read their namespaced

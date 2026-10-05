@@ -48,6 +48,13 @@
     options?: Record<string, unknown>;
     open_vocabulary?: boolean;
     show_on_card?: boolean;
+    show_in_advanced_search?: boolean;
+    show_on_upload?: boolean;
+    edit_tab?: string | null;
+    searchable?: boolean;
+    read_only?: boolean;
+    regexp_filter?: string | null;
+    display_condition?: string[] | null;
     read_capability?: string | null;
     write_capability?: string | null;
     mirrors_column?: string | null;
@@ -199,6 +206,14 @@
     initialOptions={field.options}
     initialOpenVocabulary={field.open_vocabulary === true}
     initialShowOnCard={field.show_on_card === true}
+    initialShowInAdvancedSearch={field.show_in_advanced_search !== false}
+    initialShowOnUpload={field.show_on_upload !== false}
+    initialEditTab={field.edit_tab ?? null}
+    initialSearchable={field.searchable !== false}
+    initialReadOnly={field.read_only === true}
+    initialRegexpFilter={field.regexp_filter ?? null}
+    initialDisplayCondition={field.display_condition ?? null}
+    initialMirrorsColumn={field.mirrors_column ?? null}
     initialReadCapability={field.read_capability ?? null}
     initialWriteCapability={field.write_capability ?? null}
     initialDisplayGroup={field.display_group ?? ''}

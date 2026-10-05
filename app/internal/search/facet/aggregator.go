@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -59,7 +60,7 @@ const (
 	// would stop being a parse-time whitelist. One dimension whose
 	// value names the field keeps the whitelist closed and puts the
 	// open set where it belongs, in the value grammar. See
-	// [FacetType.canonicalValue].
+	// [FacetType.CanonicalValue].
 	//
 	// This is the #1157 advanced page's whole mechanism, and it is
 	// deliberately the SAME mechanism the rail already uses — the
@@ -87,12 +88,592 @@ const (
 	// naming a field this caller cannot read, and the search returns
 	// empty rather than an error, for the same no-oracle reason.
 	FacetField FacetType = "field"
+
+	// FacetAI excludes — or isolates — PURELY AI-generated work
+	// (#1242, ADR 0094 fourth amendment). Two values, and they
+	// partition the corpus: [AIPure] and [AINotPure].
+	//
+	// # It keys on PURITY, and keying it on `ai_provenance` would be
+	// the bug
+	//
+	// `posts.ai_provenance` is the LABELLING fact — "does this post
+	// contain AI?" — and its positive arm propagates on ANY member, so
+	// `{generated, generated}`, `{generated, none}`,
+	// `{generated, undeclared}` and `{generated, assisted}` all read
+	// `generated`. A "hide AI work" filter keyed on that column would
+	// exclude the three MIXED posts along with the pure one, which is
+	// exactly what the owner's ruling forbids: an artist who used a
+	// generative tool to explore compositions and then painted the final
+	// piece by hand has made human work, and excluding their post for
+	// one member's declaration punishes the honest declaration the whole
+	// design depends on. So the dimension reads `posts.ai_pure`, the
+	// second derived fact (migration 00061).
+	//
+	// # It fails toward SHOWING
+	//
+	// An UNDECLARED contributor makes a post not-pure, so it SURVIVES
+	// [AINotPure]. Wrongly hiding human work is a worse error than
+	// showing one more AI post to someone who asked not to see them —
+	// ADR 0094 §3 and both amendments take the same direction, and the
+	// SQL below carries it in two places: `IS DISTINCT FROM` on the
+	// asset arm (`<> 'generated'` is NULL for an undeclared asset, and
+	// a NULL conjunct hides the row) and NOT NULL on `posts.ai_pure`.
+	//
+	// # ⛔ A FILTER, NEVER A GATE (ADR 0094 §4)
+	//
+	// Nothing is withheld on this axis. The work stays public, findable
+	// and countable; a caller who does not ask for this dimension sees
+	// pure-AI work in their hits, their counts, their facet buckets and
+	// their suggestions exactly as before. That is what keeps the column
+	// free of the derived-copies obligation the #1066 list would
+	// otherwise impose, and it is why an operator policy ("no AI on this
+	// instance") is NOT this dimension — that is moderation, and it
+	// belongs in the sensitivity/state machinery.
+	//
+	// # Filter-only, like FacetCollection and FacetField
+	//
+	// No [Aggregator] and absent from [AllFacets]. A two-bucket rail
+	// reading "not_pure 1,946 / pure 1" is not a discovery surface, and
+	// the control this dimension exists for is a toggle rather than a
+	// bucket list. #907's invariant — a bucket's number equals what
+	// ticking it returns — makes no promise a dimension without buckets
+	// can break.
+	FacetAI FacetType = "ai"
+
+	// FacetKind narrows to the BADGE KIND a card draws — image, video,
+	// ebook, 3d — the browse footer's type filter (#1166), converged
+	// onto the shared grammar by #1251 per ADR 0093 decision 1.
+	//
+	// # It is DERIVED, which is why it is a dimension and not a column
+	//
+	// There is no `kind` column and there deliberately is not one. The
+	// glyph in a tile's corner is resolved in the browser by
+	// `kindForAsset` from two inputs — `asset_type` and
+	// `file_extension` — and package viewkind is the server-side mirror
+	// of that derivation, held to its source by a parity test. The
+	// predicate below is [viewkind.KindSQL], the same derivation
+	// transcribed to SQL, so "the filter selected this row" and "the
+	// card draws this badge" are one decision rather than two that agree
+	// today. Filtering on `asset_type` instead was the obvious shortcut
+	// and it is provably wrong on the seeded corpus: ref 2 is "Document"
+	// and the badge splits it into `ebook` and `doc`.
+	//
+	// # ⚠️ THE FIRST DIMENSION WHOSE PREDICATE NEEDS THE CALLER
+	//
+	// [Selection]'s own doc used to state that dimensionSQL is
+	// caller-blind BY DESIGN, and that a dimension needing the caller
+	// must handle it at the execution chokepoints instead. That holds
+	// for a question with a whole-query answer — "may you read this
+	// collection", "may you read this field" — and it cannot hold for
+	// this one, because the readability rule here applies PER MEMBER of
+	// a post, inside a correlated EXISTS that only the renderer builds.
+	// So [RenderContext] exists and dimensionSQL takes it. See the post
+	// arm in [dimensionSQL] for what is at stake if it is dropped: a
+	// restricted member's kind becomes recoverable by asking for each
+	// kind in turn.
+	//
+	// # Its values combine with OR
+	//
+	// The control is a multi-select — "show me images and videos" — and
+	// `?kind=image,video` has meant the union since #1166. For an ASSET,
+	// AND would be unsatisfiable (a row resolves to exactly one kind).
+	// For a POST it would be satisfiable and WRONG: it would read "a post
+	// holding both an image and a video", which is not what ticking two
+	// boxes on a type filter asks for. Non-conjunctive on both counts —
+	// see [FacetType.conjunctive].
+	//
+	// # Filter-only, like FacetCollection, FacetField and FacetAI
+	//
+	// No [Aggregator] and absent from [AllFacets]. The browse footer
+	// renders its boxes from the VOCABULARY (viewkind.All), not from
+	// counts, so there is no bucket whose number could disagree with
+	// what ticking it returns.
+	FacetKind FacetType = "kind"
+
+	// FacetVisibility narrows to a SHARING TIER — private, org-only,
+	// followers, explicit-share, public — the browse feed's
+	// `?visibility=` parameter, converged onto the shared grammar by
+	// #1251 slice 2 per ADR 0093 decision 1.
+	//
+	// # ⛔ IT NARROWS, AND NOTHING ABOUT MOVING IT HERE MAY CHANGE THAT
+	//
+	// This is the only dimension whose column is also an input to a READ
+	// RULE, so it is the only one where "a filter" and "an authorization
+	// decision" name the same word, and the distinction is the whole
+	// safety argument. A tier is SELECTED here and GRANTED nowhere: every
+	// site that renders this fragment ANDs the entity's read rule on
+	// after it (posts.ListPostsPageGated splices `readRuleSQL`,
+	// search.runPosts splices `visibility.Filter`), so naming five tiers
+	// picks among the ones the caller could already read rather than
+	// adding any. A `visibility` filter that could widen would be an
+	// authorization bypass wearing a filter's clothes.
+	//
+	// The composition is a property of the SITES, not of this const, and
+	// that is why it is asserted rather than asserted-about: see
+	// posts.TestVisibilityFilter_NarrowsNeverWidens, which drives a tier
+	// the caller cannot read from both sides and requires an EMPTY page
+	// for the stranger and the real rows for the owner.
+	//
+	// # Posts AND collections, because they share one vocabulary
+	//
+	// `posts.visibility` and `collections.visibility` carry the SAME
+	// five-value CHECK constraint and the same meaning (ADR 0009/0010's
+	// tiers). Assets do not have the column at all — their axis is
+	// `sensitivity`, a DIFFERENT four-value vocabulary already served by
+	// [FacetSensitivity] — so the asset arm falls through to ok=false and
+	// assets drop out of a tier-filtered page entirely.
+	//
+	// ⚠️ That makes this THE FIRST DIMENSION NO ASSET CAN SATISFY, which
+	// retires a claim [buildAssetPopulationSQL] made in its doc ("no
+	// dimension is post-only today so it cannot fire"). The branch it
+	// guarded was already correct; what was untrue was that it was
+	// unreachable.
+	//
+	// The direction check [FacetAI]'s collection arm established applies
+	// and this lands on the other side of it: a tier filter is a POSITIVE
+	// narrowing — the caller is asking FOR something, not excluding it —
+	// so an entity that cannot answer leaving the page is the answer,
+	// not a loss.
+	//
+	// # Its values combine with OR
+	//
+	// A post is in exactly ONE tier, so AND is unsatisfiable — the same
+	// reason [FacetExtension] and [FacetSensitivity] are non-conjunctive.
+	// OR is also what the feed's own default needs: #1193 made the
+	// signed-in default the UNION of four shared tiers, and it is
+	// expressed here as four terms of this dimension.
+	//
+	// # Filter-only, like FacetCollection, FacetField, FacetAI and
+	// FacetKind
+	//
+	// No [Aggregator] and absent from [AllFacets]. A tier rail would be a
+	// bucket list of the sharing states of other people's work, which is
+	// a moderation view rather than a discovery surface, and the control
+	// this dimension exists for is the feed's own display filter.
+	FacetVisibility FacetType = "visibility"
+
+	// FacetFileSize narrows to a range of STORED BYTES —
+	// `filter=file_size:>=12345`, backed by `assets.file_size_bytes`
+	// (#1173, sprint 18b).
+	//
+	// # ⛔ THE FIRST DIMENSION WHOSE VALUE IS A BOUND RATHER THAN A VALUE
+	//
+	// Every other non-field dimension names a thing to equal. This one
+	// names a SIDE of a number, so its value carries a comparison
+	// operator and its wire form is `<dimension>:<op><value>` — a BARE
+	// bound with the operator LEADING, unlike `field:`'s compound
+	// `code<op>value`, because `file_size` names exactly one column and
+	// has nothing to disambiguate.
+	//
+	// ⚠️ `filter=file_size>=12345` — no colon — is and stays malformed.
+	// [ParseSelection] cuts the wire token at the FIRST colon to find the
+	// dimension, so a token with no colon has no dimension. That is a
+	// property of the wire form, not of this dimension.
+	//
+	// # It is ORDERED, and its terms group by OPERATOR
+	//
+	// Two bounds with the SAME operator OR (a value list: "at least A or
+	// at least B" is the looser of the two). Two bounds with DIFFERENT
+	// operators AND, which is what makes `>=A` beside `<=B` the
+	// INTERSECTION rather than "every asset with a size at all". See
+	// [subGroupKey] and [FacetType.orderedDomain] — it is the only
+	// non-field dimension classified as ordered.
+	//
+	// # Exact bytes, int64, no float64 anywhere
+	//
+	// The column is BIGINT and reaches past 2^53, where a float64 stops
+	// being able to tell consecutive integers apart. See
+	// [canonicalByteBound] for the parse and for what it refuses: a
+	// fractional byte, a unit suffix, and anything outside int64.
+	//
+	// # Assets only
+	//
+	// A post is a set of members and a collection is a container, so
+	// neither has a byte count and both fall out of a size-filtered page
+	// through the satisfiable=false path [FacetExtension] has used since
+	// #907. The direction check [FacetAI]'s collection arm records
+	// applies and lands on the same side: this is a POSITIVE narrowing,
+	// so an entity that cannot answer leaving the page IS the answer.
+	//
+	// # Filter-only, like FacetCollection, FacetField, FacetAI,
+	// FacetKind and FacetVisibility
+	//
+	// No [Aggregator] and absent from [AllFacets]. Buckets over a
+	// continuous quantity are histogram bins — a choice of edges is a
+	// product decision, not a GROUP BY — and #907's invariant that a
+	// bucket's count equals what ticking it returns has no meaning until
+	// those edges exist.
+	FacetFileSize FacetType = "file_size"
+
+	// FacetWorkflowState narrows to an asset's WORKFLOW STATE —
+	// `filter=workflow_state:asset:1/published`, backed by
+	// `assets.state_id` (#1173, sprint 18c).
+	//
+	// # ⭐ ITS VALUE IS THE STATE'S NATURAL KEY, NEVER THE ROW UUID
+	//
+	// `workflow_states` carries `UNIQUE (domain, code)`, and that pair
+	// is the state's identity: `<domain>/<code>`. The row's `id` is a
+	// per-install `gen_random_uuid()`, so a saved query naming one is
+	// meaningless on any other install — and ADR 0093's 18a amendment
+	// requires a saved search to be a portable spelling of the query.
+	// [FacetCollection] names a UUID because a collection IS a row with
+	// no other identity; a workflow state has one, and it is stable.
+	//
+	// The split is at the FIRST `/`: the domain is everything before it,
+	// the code everything after. Domains are machine-owned
+	// ([workflow.AssetDomain] renders `asset:<int>`, and `post` is a
+	// constant), so they carry no `/`; a CODE is operator-defined free
+	// text under #897 and may carry one, whitespace, a quote or a
+	// backslash. Splitting at the first slash keeps every possible code
+	// intact. ⛔ Nothing lowercases, trims or otherwise rewrites the
+	// identity — the columns are `text` with no CHECK constraint and
+	// their exact bytes ARE the identity, the same answer [FacetTag]
+	// gives and the opposite of [FacetVisibility]'s enum.
+	//
+	// # The reserved literal `none`
+	//
+	// [WorkflowStateNone] selects assets whose `state_id IS NULL`. It is
+	// unambiguous because a concrete identity must contain a `/` and
+	// this one does not, so no state can ever be spelled `none`.
+	//
+	// # ⛔ MALFORMED IS A 400; UNKNOWN-BUT-WELL-FORMED IS ZERO
+	//
+	// Two different outcomes, deliberately. A value with no `/`, an
+	// empty domain or an empty code is refused in
+	// [FacetType.CanonicalValue] — pure, knowable without a row, a 400
+	// on the `filter=` path and a DSLError on the DSL path, exactly as
+	// [FacetFileSize]'s malformed bound is.
+	//
+	// A WELL-FORMED identity naming no existing row is ACCEPTED and
+	// matches zero. CanonicalValue is pure and cannot check existence
+	// without a database round trip; #897 lets an operator add and
+	// remove states, so rejecting an unknown identity would make a saved
+	// query stop parsing the moment somebody renamed a state; and
+	// matching zero is the CORRECT answer, exactly as `extension:zzz`
+	// matches zero. This is not the "filter that looks applied and is
+	// not" failure — the filter IS applied, and nothing satisfies it.
+	//
+	// # ⛔ A NON-ASSET DOMAIN IS ACCEPTED, AND THAT IS THE POINT
+	//
+	// `post/published` is a real row, and `assets`' handler does NOT
+	// validate that a state it writes belongs to the matching
+	// `asset:<asset_type>` domain — it says so out loud, deferring that
+	// check to `Transition()`. So an asset genuinely can carry a post
+	// state, and the only behaviour that SURFACES that corruption rather
+	// than hiding it is to accept the identity and match the row.
+	// Validating `domain LIKE 'asset:%'` here would answer "no such
+	// asset" about an asset that exists and is misfiled.
+	//
+	// # ⛔ A DELETED STATE'S IDENTITY STAYS ITSELF, AND RETURNS ZERO
+	//
+	// `assets_state_id_fkey` is ON DELETE SET NULL, so deleting a state
+	// nulls the `state_id` of every asset holding it. A saved query
+	// naming that state keeps naming it and returns nothing. It must
+	// NEVER degrade to `none`: otherwise deleting one state would
+	// silently WIDEN every stored query that referenced it into rows its
+	// author never asked for, which is #1368's defect with a different
+	// cause.
+	//
+	// # Its values combine with OR
+	//
+	// An asset holds exactly ONE state, so AND returns nothing forever —
+	// the same reading [FacetExtension], [FacetSensitivity] and
+	// [FacetAI] get, and the `ai` precedent ADR 0093's 2026-08-20
+	// amendment records. Non-conjunctive, and NOT ordered: the values
+	// are identities, not bounds, so [FacetType.orderedDomain] leaves it
+	// alone. See [FacetType.conjunctive].
+	//
+	// # Assets only
+	//
+	// A collection has no `state_id` column at all. A POST has one, and
+	// is still excluded: `visibility.postPublishedExpr` withholds a `wip`
+	// post from every shared surface including search, waived only by
+	// `IncludeDrafts`, whose sole production caller is the author's own
+	// drafts listing — so `post/wip` is unreachable through search for
+	// everyone, including the author and a `posts.admin` holder, and
+	// `post/published` is tautological. Both arms therefore fall through
+	// to ok=false, which [Selection.SQL] returns as satisfiable=false
+	// and all four call sites already honour — [FacetExtension]'s shape
+	// since #907, and the POSITIVE-NARROWING direction [FacetAI]'s
+	// collection arm established as the test.
+	//
+	// # No extra capability
+	//
+	// `workflow.Handler.ListWorkflowStates` requires authentication and
+	// nothing more, and says why: knowing the state vocabulary is not
+	// sensitive, and transition execution is where capability checks
+	// belong. Asset row visibility is already decided by the predicate
+	// every caller ANDs on after this fragment, a state gates nothing,
+	// and `assets.submit` / `review` / `publish` govern MUTATION.
+	// Inheriting a mutation capability into a read filter would be a
+	// gate scoped to the principal rather than to the payload.
+	//
+	// # Filter-only, like the six dimensions above it
+	//
+	// No [Aggregator] and absent from [AllFacets]. 18c is filtering; a
+	// bucket list of workflow states is 18d's question, and #907's
+	// invariant that a bucket's count equals what ticking it returns has
+	// nothing to promise until a bucket exists.
+	FacetWorkflowState FacetType = "workflow_state"
+
+	// FacetPreview narrows to assets WHOSE PREVIEW IS MISSING:
+	// `filter=preview:missing`, the typed form of the owner's
+	// `!nopreviews` (#1173, sprint 25a).
+	//
+	// # ⛔ "MISSING" IS DEFINED BY THE COLUMN THE CARD READS, NOT BY STATUS
+	//
+	// A preview exists when a servable `col` variant exists for the
+	// asset's file hash: that is what `preview_available` answers (ADR
+	// 0071, assets/handler.go's variant check) and it is the EXISTS this
+	// dimension negates. `processing_status` is NOT the contract, in
+	// both directions, and a dimension keyed on it would be wrong on
+	// real rows: the video poster job writes `col` and deliberately does
+	// not touch status, so a `pending` video HAS a preview; and every
+	// non-raster handler logs a fan failure, continues and marks the row
+	// `ready`, so a `ready` text or model asset can have NONE. The
+	// predicate reads the variant table and nothing else.
+	//
+	// # Previewability is DERIVED from the router, not re-listed
+	//
+	// "Missing" only means something for an asset the pipeline could
+	// have rendered; a `.bin` with no `col` is not a failure, it is a
+	// `.bin`. The predicate therefore ANDs [dispatch.PreviewableSQL],
+	// the SQL twin of `dispatch.CanPreview` derived from the same
+	// declared sets the router dispatches on, and a parity test holds
+	// the two to one answer. A hand-written extension list here would be
+	// the second taxonomy ADR 0093 decision 3 refuses.
+	//
+	// # ⛔ THE PICTURE PLANE, COMPOSED INSIDE THE PREDICATE
+	//
+	// Every asset site already ANDs `visibility.FieldsReadableSQL` on
+	// under an active filter, and that is the FIELD plane: it carries
+	// the ADR 0064 mutation disjunct, so a team-scoped `assets.admin`
+	// holder passes it for the assets they administer while being
+	// refused their bytes. Whether a picture exists is a fact about the
+	// BYTES, and answering it for such a caller would hand them one bit
+	// of the binary plane per query: the same probe #1251 closed for
+	// `kind:`. So this arm composes `visibility.PreviewReadableSQL`, the
+	// picture plane, inside its own EXISTS-shaped predicate, from the
+	// [RenderContext] every site already supplies, and fails CLOSED on
+	// an empty caller placeholder exactly as the `kind:` post arm does.
+	// It never widens: it is one more conjunct on a row the field plane
+	// had already admitted.
+	//
+	// # One value, and it is closed
+	//
+	// [PreviewMissing] is the vocabulary. There is deliberately no
+	// `present`: the dimension exists to find what the pipeline did not
+	// produce, and a `present` value would be a second spelling of "an
+	// ordinary asset" that every count would then have to reconcile.
+	// Anything else is refused in [FacetType.CanonicalValue] on both
+	// the `filter=` path and the DSL path.
+	//
+	// # ⛔ TOP-LEVEL ONLY, on the DSL side
+	//
+	// `NOT preview:missing` would flatten to `preview:missing` under the
+	// compiler's positional-blind walk and mean the opposite of what it
+	// says, so the DSL refuses this dimension anywhere but as a
+	// top-level AND term, on the alias and the typed spelling alike,
+	// because the check runs after the alias has folded. See
+	// dsl.Field.topLevelOnly. The `filter=` parameter has no boolean
+	// structure and needs no such rule.
+	//
+	// # Assets only, and filter-only
+	//
+	// A post and a collection have no file, so both arms fall through
+	// to ok=false and drop out of a preview-filtered page, the
+	// POSITIVE-NARROWING direction [FacetFileSize] records. No
+	// [Aggregator] and absent from [AllFacets]: a one-bucket rail is a
+	// toggle, and the control this dimension exists for is a typed verb.
+	FacetPreview FacetType = "preview"
+
+	// FacetID narrows to an EXPLICIT SET of rows named by their own ids
+	// (`filter=id:<uuid>`, repeated), the typed form of the owner's
+	// `!list<uuid>,<uuid>,...` (#1173, sprint 25a).
+	//
+	// # Membership is against each entity's OWN id column
+	//
+	// `assets.id`, `posts.id` and `collections.id` are each compared to
+	// the bound UUID, so the same UUID present in two tables under a
+	// mixed-type query returns both rows: the dimension says "this id",
+	// not "this asset". An id no table holds matches nothing, which is
+	// the correct answer and not an error: a saved list whose member
+	// was since deleted keeps naming it and returns the rest.
+	//
+	// # Its values combine with OR, and list order does not rank
+	//
+	// A row has exactly one id, so AND would return nothing forever:
+	// [FacetExtension]'s reading. The list is a SET; ranking stays with
+	// the engine (score, then id), and a caller who wants a particular
+	// order has the ids in hand.
+	//
+	// # Visibility is unchanged
+	//
+	// Naming a row's id is not a right to read it. The read rules every
+	// site ANDs on after this fragment decide as they do for any filter,
+	// so a restricted asset's id in a stranger's list contributes no hit
+	// and no count, and the count does not move: the no-oracle property
+	// the sensitivity rail established.
+	//
+	// # ⛔ AT MOST [MaxIDTerms] DISTINCT IDS, COUNTED AFTER COLLAPSE
+	//
+	// The bound follows from the CANONICAL STORED FORM. A saved search
+	// stores `id:<uuid>` terms joined by ` AND `, 39 bytes per term
+	// and 5 per join, so 50 ids serialise to 2,195 bytes (the alias
+	// spells the same set in 1,854), which sits under the DSL's 4,096-
+	// byte input cap with 1,901 bytes of composition headroom; 100 ids
+	// would need 4,395 and could never replay. So the dimension's own
+	// 50-id canonical form ALWAYS fits, and the existing composed-DSL
+	// size validation (dsl.Parse of the composed string, in the saved
+	// handler) stays authoritative when free text or other filters
+	// consume the rest of the budget. This does NOT claim that 50 ids
+	// plus arbitrary text always fits: an oversized final expression is
+	// refused by that cap, never stored unreplayably.
+	//
+	// The limit is enforced ONCE, on the [Selection], by
+	// [Selection.Validate], and every entry path (`filter=id:` through
+	// [ParseSelection], `id:` and `!list` through search.SelectionFromDSL
+	// alike) reaches it, so no spelling can carry more than another.
+	// [Selection.SQL] refuses an over-cardinality selection as
+	// unsatisfiable for the same fail-closed reason it re-checks values.
+	//
+	// # Filter-only
+	//
+	// No [Aggregator] and absent from [AllFacets]; `?facets=id` resolves
+	// and produces no bucket, as `collection` does.
+	FacetID FacetType = "id"
+
+	// FacetLast narrows to a RECENT WINDOW: the N newest eligible rows,
+	// globally across the entity types the search asks for
+	// (`filter=last:N`), the typed form of the owner's `!lastN` (#1173,
+	// sprint 25b).
+	//
+	// # ⛔ THE WINDOW IS GLOBAL, NOT N PER ARM
+	//
+	// `last:3` over assets and posts is the three newest rows of the
+	// UNION, not three assets and three posts merged afterwards. Under
+	// ADR 0056 §1 the arms run separately, so the predicate cannot be
+	// "the N newest of this table": it is "this row sorts at or before
+	// the N-th newest row of the union of every requested arm", with
+	// the union's arms spelled by the execution site from the SAME
+	// readability authorities it already applies. See [RecentArm] and
+	// [RenderContext.RecentArms] for how the arms reach the renderer
+	// and why they are rendered by the site rather than here.
+	//
+	// # The window exists BEFORE every other term
+	//
+	// Free text and every other dimension narrow INSIDE the window: if
+	// only the fourth-newest eligible row contains `zebra`, `last:3
+	// zebra` returns nothing. That follows from the predicate being a
+	// conjunct like any other: the window subquery ranks the BASELINE
+	// population (readability alone) and the outer statement ANDs the
+	// rest onto rows that are inside it.
+	//
+	// # `last` is an ACTIVE selection, and the asset baseline is the field plane
+	//
+	// Every asset execution site applies `visibility.FieldsReadableSQL`
+	// under an active filter, and the window's asset arm carries that
+	// same plane. Consequence, stated plainly: a restricted asset that a
+	// stranger can see only as a withheld placeholder does NOT consume
+	// one of that stranger's N slots, while the same asset DOES consume
+	// a slot for its owner or a field-authorised caller. That is
+	// deliberately narrower than an unfiltered placeholder listing, and
+	// it is what keeps the rail's count under `last:N` equal to the set
+	// that ticking it returns: the facet asset population applies the
+	// field plane unconditionally (buildAssetVisibilityAppendedSQL).
+	//
+	// # Clocks
+	//
+	// Assets and collections rank on `created_at`; posts rank on
+	// `posted_at`, the column browse orders the feed by
+	// (posts/list_page.go). A post's public `created_at` is unchanged
+	// and is not the ordering key. See [RecentClock].
+	//
+	// # Single-valued, top-level only, range 1..[dsl.MaxLastWindow]
+	//
+	// A row is in one window or it is not, and two windows have no
+	// combination rule that means anything (`last:3 AND last:5` is
+	// neither the union nor the intersection anyone asked for), so
+	// [FacetType.maxTerms] is 1 and [Selection.Validate] refuses a second
+	// distinct value on every entry path. Placement is the DSL's rule
+	// (dsl.Field.topLevelOnly). The value grammar is ONE function,
+	// [dsl.ParseLastWindow], for the reason recorded there.
+	//
+	// # Filter-only
+	//
+	// No [Aggregator] and absent from [AllFacets]; the dimension changes
+	// what the existing aggregators COUNT OVER, never what they emit.
+	FacetLast FacetType = "last"
+)
+
+// PreviewMissing is the ONLY value of [FacetPreview]. Spelled here for
+// the facet layer's closed vocabulary; dsl.PreviewMissing is the same
+// literal on the parser side, and TestPreviewVocabulary_OneValue holds
+// them equal.
+const PreviewMissing = "missing"
+
+// MaxIDTerms is the largest number of DISTINCT [FacetID] values one
+// selection may carry. See [FacetID] for the byte arithmetic it follows
+// from.
+const MaxIDTerms = 50
+
+// The [FacetVisibility] value vocabulary — the five sharing tiers, in
+// the order the `posts_visibility_check` / `collections_visibility_check`
+// constraints list them, widest last.
+//
+// CLOSED and validated in [FacetType.CanonicalValue] for the reason
+// [FacetAI]'s pair is: there is no `::UUID` cast here to raise a 22P02,
+// so a tolerated `visibility:orgonly` would render a predicate matching
+// nothing and hand back an EMPTY page to a caller who asked to narrow.
+// A 400 at the parser is a mistake the client can see.
+//
+// ⛔ It is a display vocabulary, NOT a permission vocabulary. Adding a
+// value here does not admit a row; the read rule ANDed on after this
+// decides that, and it consults its own tables. See [FacetVisibility].
+const (
+	VisibilityPrivate       = "private"
+	VisibilityOrgOnly       = "org-only"
+	VisibilityFollowers     = "followers"
+	VisibilityExplicitShare = "explicit-share"
+	VisibilityPublic        = "public"
+)
+
+// VisibilityTiers returns the [FacetVisibility] vocabulary.
+//
+// Exported because the feed's default tier set is expressed as a subset
+// of it (posts.defaultFeedTiers) and because the value validator and the
+// tests both need one list rather than two that agree today.
+func VisibilityTiers() []string {
+	return []string{
+		VisibilityPrivate, VisibilityOrgOnly, VisibilityFollowers,
+		VisibilityExplicitShare, VisibilityPublic,
+	}
+}
+
+// The [FacetAI] value vocabulary. CLOSED, validated in
+// [FacetType.CanonicalValue], and a 400 out of [ParseSelection] for
+// anything else — a filter that looked applied and was not is the whole
+// defect the `filter=` parameter was introduced to fix.
+//
+// They are a PARTITION, not a pair of independent flags: every row is
+// exactly one of them, which is what makes the OR of both terms mean
+// "no constraint" rather than "nothing" — see [FacetType.conjunctive].
+const (
+	// AIPure selects work that is ENTIRELY AI-generated: every live
+	// contributor declares `generated`, over a non-empty set.
+	AIPure = "pure"
+	// AINotPure selects everything else — mixed work, wholly human
+	// work, and work nobody was asked about. This is the value a
+	// "hide AI work" control sends.
+	AINotPure = "not_pure"
 )
 
 // AllFacets returns the set of aggregators the dispatcher runs when
 // the caller doesn't restrict via ?facets=...
 //
-// FacetCollection is deliberately absent — see its doc.
+// FacetCollection, FacetField, FacetAI, FacetKind, FacetVisibility,
+// FacetFileSize, FacetWorkflowState, FacetPreview, FacetID and FacetLast
+// are deliberately absent; see their docs.
 func AllFacets() []FacetType {
 	return []FacetType{FacetAssetType, FacetTag, FacetSensitivity, FacetOwner, FacetExtension}
 }
@@ -115,6 +696,22 @@ func ParseFacetType(s string) (FacetType, bool) {
 		return FacetCollection, true
 	case "field":
 		return FacetField, true
+	case "ai":
+		return FacetAI, true
+	case "kind":
+		return FacetKind, true
+	case "visibility":
+		return FacetVisibility, true
+	case "file_size":
+		return FacetFileSize, true
+	case "workflow_state":
+		return FacetWorkflowState, true
+	case "preview":
+		return FacetPreview, true
+	case "id":
+		return FacetID, true
+	case "last":
+		return FacetLast, true
 	}
 	return "", false
 }
@@ -207,6 +804,57 @@ type Request struct {
 	// Timeout caps EACH aggregator's runtime independently.
 	// Zero = DefaultAggregatorTimeout.
 	Timeout time.Duration
+}
+
+// renderContext is the caller half of [Selection.SQL] for an aggregator
+// (#1251).
+//
+// The caller ref is INLINED as a literal rather than bound, matching the
+// two [visibility.FieldsReadableSQL] / [visibility.MatureFilterSQL] call
+// sites in aggregators_impl.go and for the reason recorded there: it is
+// an int64 this process produced, never caller-supplied text, and
+// threading another placeholder through four aggregators' arg lists is
+// where an off-by-one lives. The hot browse feed makes the opposite
+// trade — see [RenderContext.CallerArg].
+//
+// ⚠️ IT IS NOT OPTIONAL HERE, even though no aggregator counts a
+// kind bucket. A caller who has ticked `kind:` and asks for the TAG
+// facet reaches the post branch with that term in its selection, and a
+// zero context would make the post half unsatisfiable — silently
+// dropping every post-derived tag count from a rail whose whole
+// invariant is that its number equals what ticking it returns.
+//
+// # The recent window's arms (#1173, sprint 25b)
+//
+// When the selection carries a `last:` term the context also carries
+// the three entities' baselines, rendered by [RecentArms] with
+// placeholders bound from offset+1, and the returned args must be
+// appended by the caller BEFORE the selection's own. All three
+// entities, always: a suggestion endpoint takes no `types=`, and rule A
+// (ADR 0093, 25b amendment) says the window is the one `/search` would
+// form with no types, formed FIRST, from which each consumer then
+// projects only the kinds it aggregates. A collection can therefore
+// consume a slot even though no consumer counts collections. Without a
+// `last:` term nothing is rendered and nothing is bound, so every other
+// selection's statements are byte-for-byte what they were.
+func (r Request) renderContext(ctx context.Context, offset int) (RenderContext, []any, error) {
+	rc := RenderContext{
+		Caller:       r.Caller,
+		Caps:         r.Caps,
+		MutationCaps: r.MutationCaps,
+		CallerArg:    strconv.FormatInt(r.Caller.UserRef, 10),
+	}
+	if _, ok := r.Selection.RecentWindow(); !ok {
+		return rc, nil, nil
+	}
+	arms, args, err := RecentArms(ctx, r, []visibility.EntityType{
+		visibility.EntityAsset, visibility.EntityCollection, visibility.EntityPost,
+	}, offset)
+	if err != nil {
+		return RenderContext{}, nil, err
+	}
+	rc.RecentArms = arms
+	return rc, args, nil
 }
 
 // DefaultAggregatorTimeout is the fallback if Request.Timeout is

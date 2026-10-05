@@ -16,6 +16,11 @@
 // in localStorage so a user who reaches for ".js$" once keeps it
 // across archive opens.
 
+// #1255 — the shared web-storage accessor. This module used to hold a
+// private `readLS`/`writeLS` pair, and four sibling sessions held
+// byte-identical copies of it; one implementation now, imported by name.
+import { readStoredJSON, writeStoredJSON } from '$lib/util/storage';
+
 export interface ArchiveEntry {
   /** Forward-slash path inside the archive ("folder/file.txt"). */
   path: string;
@@ -94,18 +99,6 @@ export interface ArchiveSessionOpts { assetId: string; }
 
 const G_HIDE_DOT = 'aa.archive.hideDotfiles';
 
-function readLS<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    if (v == null) return fallback;
-    return JSON.parse(v) as T;
-  } catch {
-    return fallback;
-  }
-}
-function writeLS(key: string, value: unknown): void {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
-}
 
 /** Human-friendly byte size formatter. */
 export function fmtBytes(n: number): string {
@@ -128,14 +121,14 @@ export function createArchiveSession(opts: ArchiveSessionOpts): ArchiveSessionIn
     previewMime: '',
     previewSize: 0,
     filter: '',
-    hideDotfiles: readLS<boolean>(G_HIDE_DOT, true),
+    hideDotfiles: readStoredJSON<boolean>(G_HIDE_DOT, true),
     expanded: {},
   });
 
   function setFilter(q: string) { state.filter = q; }
   function toggleHideDotfiles() {
     state.hideDotfiles = !state.hideDotfiles;
-    writeLS(G_HIDE_DOT, state.hideDotfiles);
+    writeStoredJSON(G_HIDE_DOT, state.hideDotfiles);
   }
   function toggleFolder(p: string) {
     state.expanded = { ...state.expanded, [p]: !state.expanded[p] };

@@ -110,7 +110,33 @@ type manifestAsset struct {
 	// mature axis came to be unexercised on every seeded instance
 	// (#1217) even though the schema, the predicate and the UI had
 	// shipped.
-	Mature           bool            `json:"mature"`
+	Mature bool `json:"mature"`
+	// AiProvenance is the MAKER'S DECLARATION about generative-AI
+	// involvement (#1167, ADR 0094): `none`, `assisted`, `generated`,
+	// or ABSENT, which means UNDECLARED — nobody was asked.
+	//
+	// ⚠️ A POINTER, AND NOT A `string`, BECAUSE ABSENT IS A VALUE HERE.
+	// `assets.ai_provenance` is nullable and unbackfilled precisely so
+	// the rows predating the feature do not assert a disclaimer their
+	// makers never made, and a plain `string` would decode a missing key
+	// to `""` — which this seeder would then have to invent a rule for.
+	// Nil writes NULL, which is the honest answer for a catalogue entry
+	// nobody has declared, and it is what every entry says today bar the
+	// handful #1251 slice 3 declares on purpose.
+	//
+	// It is modelled HERE for the reason `Mature` above it records in as
+	// many words: an unmodelled JSON key is silently dropped by the
+	// decoder. #1217 is the bill for learning that the hard way — the
+	// mature axis shipped its schema, its predicate and its UI and then
+	// sat unexercised on every seeded instance because this struct did
+	// not carry the field.
+	//
+	// ⛔ IT DOES NOT REPLACE `metadata.acquisition_source` AND MUST NOT.
+	// The fixture sweep partitions the asset table on that key alone
+	// (fixturesweep.Rules, ADR 0095) — an asset the seeder wrote without
+	// it is indistinguishable from real uploaded content and becomes
+	// sweep-bait. A declared seeded asset carries BOTH.
+	AiProvenance     *string         `json:"ai_provenance"`
 	ArchiveState     string          `json:"archive_state"`
 	OwnerUsername    string          `json:"owner_username"`
 	CollectionName   string          `json:"collection_name"`
@@ -153,6 +179,43 @@ type manifestPost struct {
 	IsMixedType     bool   `json:"is_mixed_type"`
 }
 
+// catFixtures is dataset.fixtures.json: the substrate the dogfood suite
+// used to build for itself on every fresh database (#1270).
+//
+// It is a CATALOGUE and not a hardcoded list because the credentials
+// have to have exactly one home — scripts/dogfood/ui/helpers/
+// seeded-principal.ts reads this same file, so a password changed here
+// reaches the suite and a password changed there reaches nothing.
+//
+// Loaded only when `aa seed --fixtures` asks for it; the demo path never
+// creates these accounts. See the file's own `_why` block.
+type catFixtures struct {
+	Principals []catFixturePrincipal `json:"principals"`
+	Admin      catFixtureAdmin       `json:"admin_uploads"`
+}
+
+type catFixturePrincipal struct {
+	Username string `json:"username"`
+	FullName string `json:"full_name"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	// ConsumedBy and Why are documentation carried in the data, so the
+	// answer to "what is this account for" travels with the account
+	// rather than living in a comment two directories away.
+	ConsumedBy string `json:"consumed_by"`
+	Why        string `json:"why"`
+}
+
+type catFixtureAdmin struct {
+	Count           int    `json:"count"`
+	TitlePrefix     string `json:"title_prefix"`
+	PostTitlePrefix string `json:"post_title_prefix"`
+	CreatedAt       string `json:"created_at"`
+	ConsumedBy      string `json:"consumed_by"`
+	Why             string `json:"why"`
+	SweepNote       string `json:"sweep_note"`
+}
+
 type catalogues struct {
 	Users       []catUser
 	Teams       []catTeam
@@ -160,6 +223,12 @@ type catalogues struct {
 	Fields      []catField
 	Assets      []manifestAsset
 	Posts       []manifestPost
+
+	// Fixtures is nil when the catalogue directory ships no
+	// dataset.fixtures.json. Absent is not an error HERE — the file is
+	// only meaningful to `--fixtures`, and applyTestFixtures is the one
+	// place that can say what its absence costs.
+	Fixtures *catFixtures
 
 	// SiteRoot is kept so coverage selection can reach the bytes:
 	// whether a model declares external companions is a property of the
@@ -186,6 +255,14 @@ func loadCatalogues(catalogueRoot, siteRoot string) (*catalogues, error) {
 	}
 	if err := loadJSON(filepath.Join(siteRoot, "posts.json"), &c.Posts); err != nil {
 		return nil, err
+	}
+	fixPath := filepath.Join(catalogueRoot, "dataset.fixtures.json")
+	if _, err := os.Stat(fixPath); err == nil {
+		var f catFixtures
+		if err := loadJSON(fixPath, &f); err != nil {
+			return nil, err
+		}
+		c.Fixtures = &f
 	}
 	return c, nil
 }
@@ -264,6 +341,83 @@ func guessContentType(extension string) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+// AIDeclarableSourcePrefix is the provenance an asset must claim before
+// it may claim `ai_provenance` (#1260).
+//
+// ⛔ WHY THE SEEDER CHECKS THIS AT ALL, when seed/scripts/apply_upgrade.py
+// audits the same rule. The two read DIFFERENT FILES. The Python audit
+// covers `seed/profiles/*`, which is the pipeline's INPUT and lives in
+// the repo; the seeder reads `MANIFEST.json` off the archive share, which
+// is its OUTPUT and does not. A false declaration written straight into
+// the shipped manifest — which is how the last four got applied, by hand
+// — passes every check in this repo and reaches the database anyway.
+//
+// The claim is not an ordinary catalogue value. `ai_provenance` says HOW
+// THE WORK WAS MADE, on a row that also names its creator, and site_a is
+// published to Kaggle: every asset in it is a real work by an
+// identifiable third party (Kenney.nl 1,778 · Pexels 75 · Met Museum 18
+// · NASA 6 · …). Four rows already carried `generated` over
+// `attribution: "Kenney (kenney.nl)"` before #1260 removed them.
+//
+// Widening this list publishes a claim about somebody. That is why it is
+// a named constant and a hard failure rather than a warning: a seed log
+// nobody reads is exactly how the mature axis sat dead for months
+// (#1217).
+//
+// ⚠️ THE PREFIXES MEAN "WE MADE IT", NOT "AI MADE IT" (#1290). `none` is
+// a declaration too — it says no generative model was involved — and it
+// is gated identically, because asserting it over a Pexels photograph is
+// a false disclosure about that photographer exactly as `generated`
+// would be. But an artifact we made WITHOUT a model cannot honestly
+// claim "Generated in-house (Stable Diffusion 3.5 Large via ComfyUI)",
+// so until #1290 there was no provenance string a truthful `none` could
+// stand on and the corpus could not contain one. "Authored in-house" is
+// that string: ours, and silent about AI.
+//
+// ⛔ Keep this in step with AI_DECLARABLE_SOURCE_PREFIXES in
+// seed/scripts/apply_upgrade.py. They are deliberately separate checks
+// over different files (see above), which also means they can drift —
+// widening one and not the other is how a profile that passes every
+// check in the repo gets refused by the seeder that reads its output.
+var AIDeclarableSourcePrefixes = []string{"Generated in-house", "Authored in-house"}
+
+// declarableSource reports whether a provenance string says we made it.
+func declarableSource(src string) bool {
+	for _, p := range AIDeclarableSourcePrefixes {
+		if strings.HasPrefix(src, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateAIDeclarations refuses a manifest that declares AI on work we
+// did not make. Runs before any bytes move, so the failure costs
+// seconds rather than the whole upload phase.
+func (c *catalogues) validateAIDeclarations() error {
+	for _, a := range c.Assets {
+		if a.AiProvenance == nil || *a.AiProvenance == "" {
+			continue
+		}
+		var meta map[string]any
+		if len(a.Metadata) > 0 {
+			_ = json.Unmarshal(a.Metadata, &meta)
+		}
+		src, _ := meta["acquisition_source"].(string)
+		if declarableSource(src) {
+			continue
+		}
+		return fmt.Errorf(
+			"asset %s (%q) declares ai_provenance=%q but its provenance is %q. "+
+				"An AI declaration on work we did not make is a false statement "+
+				"about that creator, and this dataset is published — either the "+
+				"declaration is wrong or the provenance is. If we really did make it, "+
+				"say so in metadata.acquisition_source (it must start with one of %q)",
+			a.ID, a.Title, *a.AiProvenance, src, AIDeclarableSourcePrefixes)
+	}
+	return nil
 }
 
 func loadJSON(path string, dst any) error {

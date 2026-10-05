@@ -24,6 +24,7 @@
 import zlib from 'node:zlib';
 
 import { expect, test, type Page } from '../../helpers/test';
+import { publicModeHold } from '../../helpers/public-mode';
 
 const STAMP = Date.now();
 const COLLECTION_NAME = `#1207 cover editor ${STAMP}`;
@@ -41,6 +42,10 @@ interface CollectionPayload {
 }
 
 let collectionId: string | undefined;
+// The post carrying the fixture members into the collection (#1161).
+// Held at module scope beside collectionId because afterAll deletes it
+// for the same reason it deletes the collection.
+let fixturePostId: string | undefined;
 let memberIds: string[] = [];
 /** Deliberately NOT a member — the #1074 proof needs a picture the
  *  collection does not contain. */
@@ -159,11 +164,20 @@ const TOKEN = `cvrfix${STAMP}`;
  *  left flipped. Same shape collection-public-tier-1195 uses, which is
  *  the spec that established it and passes on CI.
  *
+ *  ⚠️ CONTENDED INSTANCE STATE: `system.public_mode`. This file is one
+ *  of four writers — collection-public-tier-1195, ai-toggle-1251 and
+ *  advanced-operators-1165-1173-1197 are the others — and "owns it for
+ *  its duration" was only ever true of one worker. It holds the switch
+ *  from beforeAll to afterAll, which is the LONGEST hold of the four, so
+ *  it is the one the others queue behind; that is deliberate, because
+ *  half its assertions are anonymous reads and it cannot narrow the
+ *  window. Taken through the cross-file lock in helpers/public-mode.ts.
+ *
  *  No cache dance is needed: the admin write path calls
  *  InvalidatePublicMode BEFORE it returns (sysconfig/handler.go:799),
  *  so a 200 from the PATCH means the flag is already live for the next
  *  request on every node. Restart-free by construction. */
-let priorPublicMode: boolean | undefined;
+const publicMode = publicModeHold('collection-cover-editor-1207');
 
 test.describe('#1207 the collection cover editor', () => {
   test.describe.configure({ mode: 'serial' });
@@ -225,25 +239,20 @@ test.describe('#1207 the collection cover editor', () => {
     return id;
   }
 
-  async function setPublicMode(
-    request: import('@playwright/test').APIRequestContext,
-    on: boolean,
-  ) {
-    const r = await request.patch('/api/v1/admin/system/public-mode', { data: { enabled: on } });
-    expect(r.status(), `public mode must be settable to ${on}`).toBe(200);
-    // The response is the stored value, so this also confirms the write
-    // landed rather than merely being accepted.
-    expect(((await r.json()) as { enabled: boolean }).enabled).toBe(on);
-  }
-
   test.beforeAll(async ({ request, browser }) => {
+    // Room to queue behind another writer of the same setting. The
+    // default 30s hook budget is shorter than 1195's or 1251's window,
+    // so waiting would otherwise die as a hook timeout — a failure that
+    // says nothing about covers.
+    test.setTimeout(600_000);
+
     // THE CONFIG FIXTURE, FIRST — before any asset exists, because the
     // provisioning check below reads anonymously and would otherwise be
-    // measuring the switch rather than the assets.
-    const mode = await request.get('/api/v1/admin/system/public-mode');
-    expect(mode.status(), 'public-mode state must be readable as admin').toBe(200);
-    priorPublicMode = ((await mode.json()) as { enabled: boolean }).enabled;
-    if (!priorPublicMode) await setPublicMode(request, true);
+    // measuring the switch rather than the assets. The prior value is
+    // read inside the lock, so it is the INSTANCE's value and never
+    // another spec's temporary one.
+    const prior = await publicMode.acquire(request);
+    if (!prior) await publicMode.set(request, true);
 
     // ⚠️ THE SPEC BUILDS ITS OWN FIXTURES. It used to pick two assets
     // out of the seeded library and check they were anonymously
@@ -319,25 +328,53 @@ test.describe('#1207 the collection cover editor', () => {
     expect(created.status(), 'fixture collection must be created').toBe(201);
     collectionId = ((await created.json()) as { id: string }).id;
 
-    for (const assetId of [...memberIds, portraitId]) {
-      const pinned = await request.post(`/api/v1/collections/${collectionId}/resources`, {
-        data: { asset_id: assetId, pinned: true },
-      });
-      expect(pinned.ok(), `pinning ${assetId} must succeed`).toBeTruthy();
-    }
+    // The fixture assets reach the collection AS A POST (#1161, ADR
+    // 0091). They used to be pinned individually through
+    // `POST /collections/{id}/resources`; that endpoint is retired,
+    // because a collection holds posts and pinning a bare asset was a
+    // second publication path with no title and no author's decision.
+    //
+    // One post with all three as members, which is also what the cover
+    // picker now reads: its options are the member assets of the
+    // collection's posts, not a separate list of pinned assets. Reaching
+    // them any other way here would test the picker against a state the
+    // product can no longer produce.
+    const post = await request.post('/api/v1/posts', {
+      data: {
+        title: 'fixture post for #1207',
+        visibility: 'public',
+        members: [...memberIds, portraitId].map((asset_id, sort_order) => ({
+          asset_id,
+          sort_order,
+        })),
+      },
+    });
+    expect(post.status(), 'fixture post must be created').toBe(201);
+    fixturePostId = ((await post.json()) as { id: string }).id;
+    const postId = fixturePostId;
+
+    const pinned = await request.post(`/api/v1/collections/${collectionId}/posts`, {
+      data: { post_id: postId, pinned: true },
+    });
+    expect(pinned.ok(), 'pinning the fixture post must succeed').toBeTruthy();
   });
 
   test.afterAll(async ({ request }) => {
-    // The switch goes back to whatever this install had, whatever else
-    // happened. Restored even on failure, and only when we know what it
-    // was — an undefined prior means beforeAll never got far enough to
-    // read it, and guessing would be how a private install gets left
-    // public by a test run.
-    if (priorPublicMode !== undefined) {
-      await request
-        .patch('/api/v1/admin/system/public-mode', { data: { enabled: priorPublicMode } })
-        .catch(() => undefined);
+    // The fixture POST goes, not just the collection (#1161). Members
+    // reach a collection through a post now, so this spec puts a real
+    // post on the instance — and a leaked one sits at the head of the
+    // feed for every later spec that reaches for "the newest post".
+    if (fixturePostId) {
+      await request.delete(`/api/v1/posts/${fixturePostId}`).catch(() => undefined);
+      fixturePostId = undefined;
     }
+
+    // The switch goes back to whatever this install had, whatever else
+    // happened, and the lock is handed on with it. Restored even on
+    // failure, and only when we know what it was — a hold that never
+    // acquired restores nothing, and guessing would be how a private
+    // install gets left public by a test run.
+    await publicMode.release(request);
     // Collection first, then the pictures it pointed at — the reverse
     // order would leave the collection briefly pointing at soft-deleted
     // assets. Both are soft-deletes, so neither is destructive, and
@@ -351,7 +388,9 @@ test.describe('#1207 the collection cover editor', () => {
     }
   });
 
-  /** Open the edit modal and stop on PAGE 1.
+  /** Open the edit dialog. There is ONE SURFACE now (#1264): the
+   *  collection's identity and BOTH cover slots are on screen together
+   *  and there is nothing to navigate to.
    *
    *  WAIT FOR THE FORM TO HAVE SEEDED ITSELF before touching anything.
    *  The modal reads the collection in an effect that runs on open; a
@@ -367,22 +406,23 @@ test.describe('#1207 the collection cover editor', () => {
     await expect(page.getByTestId('collection-cover-section')).toBeVisible();
   }
 
-  /** Open the modal and navigate to PAGE 2 for one slot (#1213).
+  /** Open the dialog with one slot selected.
    *
-   *  ⚠️ THERE IS ONE DIALOG NOW. The cover surface used to be a second
-   *  `<dialog>` raised over this one and the whole editor was on screen
-   *  at once; it is a PAGE of the same dialog, reached by clicking the
-   *  slot's own thumbnail, and only one slot is mounted at a time. A
-   *  test that wants the other slot navigates to it — which is the
-   *  behaviour a curator has, so the spec exercising it is not a tax. */
+   *  ⚠️ THIS USED TO BE A PAGE TURN AND IT IS NOT ONE ANY MORE (#1264).
+   *  #1207 raised a second `<dialog>`; #1213 turned it into page 2 of
+   *  this one, reached by clicking the slot's own thumbnail; #1264 put
+   *  the editor on the same surface as everything else, and the
+   *  thumbnails now say which slot it is POINTED AT. The dialog does not
+   *  change size, the identity fields do not go away, and there is no
+   *  Back — all three of which are asserted below. */
   async function openCoverPage(page: Page, slot: 'featured' | 'collection' = 'collection') {
     await openEditModal(page);
-    await gotoCoverPage(page, slot);
+    await selectSlot(page, slot);
     return page.getByTestId('collection-cover-editor');
   }
 
-  /** Navigate to a slot's page from page 1 (the modal already open). */
-  async function gotoCoverPage(page: Page, slot: 'featured' | 'collection') {
+  /** Point the (already open) editor at a slot. */
+  async function selectSlot(page: Page, slot: 'featured' | 'collection') {
     await page
       .getByTestId(slot === 'featured' ? 'collection-cover-edit-featured' : 'collection-cover-edit-button')
       .click();
@@ -390,13 +430,6 @@ test.describe('#1207 the collection cover editor', () => {
     await expect(editor).toBeVisible();
     await expect(editor).toHaveAttribute('data-cover-slot', slot);
     return editor;
-  }
-
-  /** Step back to page 1. */
-  async function backToDetails(page: Page) {
-    await page.getByTestId('collection-cover-back').click();
-    await expect(page.getByTestId('collection-cover-editor')).toBeHidden();
-    await expect(page.getByTestId('collection-cover-section')).toBeVisible();
   }
 
   /** The editor's live readout of the stored pair. Empty string is
@@ -471,8 +504,7 @@ test.describe('#1207 the collection cover editor', () => {
     // collection cover should be different. Not force the same image
     // for both." Two visits to one page, and the Back in between is the
     // #1213 shape being exercised rather than worked around.
-    await backToDetails(page);
-    editor = await gotoCoverPage(page, 'featured');
+    editor = await selectSlot(page, 'featured');
     await editor
       .getByTestId('featured-cover-choice')
       .filter({ has: page.locator(`[src*="${memberIds[1]}"]`) })
@@ -657,12 +689,12 @@ test.describe('#1207 the collection cover editor', () => {
     // point that centres a subject in a 890:500 band is not the point
     // that centres it in a square, so the two have to be able to hold
     // different values at the same time.
-    // Back to page 1, then into the OTHER slot — and the values set on
-    // the featured page have to still be there when we return. That is
-    // the #1213 promise ("Back preserves in-progress state") riding
-    // along inside the test that already had both slots to compare.
-    await backToDetails(page);
-    await gotoCoverPage(page, 'collection');
+    // Point the editor at the OTHER slot — and the values set on the
+    // featured one have to still be there when we come back. That is
+    // #1213's "in-progress state survives" promise, re-expressed by
+    // #1264 as a slot switch, riding along inside the test that already
+    // had both slots to compare.
+    await selectSlot(page, 'collection');
 
     const collMarquee = page.getByTestId('collection-crop-marquee');
     await expect(
@@ -712,10 +744,9 @@ test.describe('#1207 the collection cover editor', () => {
     });
     expect(collRatio, 'the collection-cover preview is not 4:3').toBeCloseTo(4 / 3, 2);
 
-    // SAVE FROM PAGE 2. One dialog means one commit, and it applies
-    // both pages wherever the curator is standing — walking back to
-    // page 1 first would be the surface asking them to remember which
-    // page owns their work.
+    // ONE SAVE FOR THE WHOLE SURFACE. It applies both slots' covers,
+    // both framings and the identity fields in one PATCH, whichever
+    // slot the editor happens to be pointed at (#1264).
     await saveAndAwaitPatch(page);
 
     // THE ASSERTION. Read back from the server, not from the form.
@@ -752,6 +783,30 @@ test.describe('#1207 the collection cover editor', () => {
     const editor = await openCoverPage(page, 'featured');
     const marquee = editor.getByTestId('cover-editor-marquee');
     await expect(marquee).toBeVisible();
+
+    // ⛔ VISIBLE IS NOT LOADED, and this guard depends on the difference
+    // (#1348). The marquee's `disabled` is `!canMove && !canZoomIn`
+    // (CoverCropStage.svelte), and both derive from `win`, which is null
+    // until the stage image fires `onLoad` and reports a natural size.
+    // So on a slow box the control is momentarily disabled for a reason
+    // that has nothing to do with the picture's shape, and reading
+    // `isEnabled()` right here would turn a slow render into a silent
+    // skip with a message about aspect ratios.
+    //
+    // Waiting for the load makes the read mean what it says. This one
+    // has not been observed firing wrongly; it is the same shape as the
+    // rail-chip guard that WAS, which is reason enough not to leave it
+    // reading a value the page has not produced yet.
+    await expect
+      .poll(
+        async () =>
+          editor
+            .getByTestId('cover-editor-stage-image')
+            .evaluate((el) => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth > 0),
+        { message: 'the cover editor never loaded its picture, so its controls mean nothing yet' },
+      )
+      .toBe(true);
+
     test.skip(!(await marquee.isEnabled()), 'this picture is already card-shaped: no travel');
 
     const before = await readFocal(page);
@@ -790,8 +845,7 @@ test.describe('#1207 the collection cover editor', () => {
 
     // The collection crop has its own Reset, and its own clear flag
     // behind it — same tri-state, second pair, one page along.
-    await backToDetails(page);
-    editor = await gotoCoverPage(page, 'collection');
+    editor = await selectSlot(page, 'collection');
     const collReset = editor.getByTestId('collection-crop-reset-focal');
     if (await collReset.isEnabled()) await collReset.click();
     expect(
@@ -833,48 +887,102 @@ test.describe('#1207 the collection cover editor', () => {
   });
 
 
-  // ⚠️ ESCAPE STEPS BACK, THEN OUT (#1208, re-expressed by #1213).
+  // ⚠️ ONE ESCAPE CLOSES THE DIALOG (#1264), AND THAT IS A CHANGE.
   //
   // #1208's version of this guarded a stack of two `<dialog>`s: the
   // document-level handler had every open instance answering every
   // press, so one Escape over the cover editor dismissed the form
-  // behind it too, taking the curator's unsaved edits with it. There is
-  // one dialog now and no stack to race, but the PROPERTY the curator
-  // sees has to be identical, because the work at risk is the same:
-  // press one leaves the crop page, press two closes the dialog.
+  // behind it too, taking the curator's unsaved edits with it. #1213
+  // kept the curator-visible property by making Escape STEP BACK from
+  // page 2 and close only from page 1 — two presses to leave.
   //
-  // The stack machinery in Modal itself STAYS. It was never only for
-  // this pair — AssetPlaylist raises RequestAccessDialog and
-  // ConfirmDeleteDialog from inside a native `showModal()` viewer, which
-  // is the same two-layers-one-keypress shape — and removing shared
-  // infrastructure to suit one caller is how the other callers break
-  // quietly. What is gone is this surface's USE of it, which is the part
-  // that was a workaround.
-  test('Escape steps back from the cover page, then closes the dialog', async ({ page }) => {
+  // There is no page 2. Escape means dismiss, exactly as it does on
+  // every other dialog in the product, and the unsaved work it
+  // discards is the same work Cancel discards. A gesture that means
+  // one thing here and another thing there is the confusion #1264 is
+  // about, one level down.
+  //
+  // ⛔ THIS FAILS ON THE TWO-PAGE BUILD, deliberately: there the first
+  // press leaves the dialog open on page 1.
+  //
+  // The stack machinery in Modal itself STAYS, and now carries the
+  // focus trap too (#1269). It was never only for this pair —
+  // AssetPlaylist raises RequestAccessDialog and ConfirmDeleteDialog
+  // from inside a native `showModal()` viewer, which is the same
+  // two-layers-one-keypress shape — and removing shared infrastructure
+  // to suit one caller is how the other callers break quietly.
+  test('one Escape closes the dialog, whichever slot is selected', async ({ page }) => {
     await openCoverPage(page, 'featured');
     await page.keyboard.press('Escape');
     await expect(
-      page.getByTestId('collection-cover-editor'),
-      'Escape did not leave the cover page',
-    ).toBeHidden();
-    await expect(
       page.getByTestId('collection-cover-section'),
-      'Escape closed the whole dialog from the cover page — one press must step back one page, ' +
-        'because that page holds unsaved framing work',
-    ).toBeVisible();
-    // And a second press closes the dialog, so nothing has been trapped.
-    await page.keyboard.press('Escape');
-    await expect(page.getByTestId('collection-cover-section')).toBeHidden();
+      'one Escape did not close the dialog — there is no page to step back to any more',
+    ).toBeHidden();
   });
 
-  // ── #1213: Back keeps the work ────────────────────────────────────
+  // ── ONE SURFACE, MEASURED (#1264) ─────────────────────────────────
   //
-  // A paged modal that forgets on Back is worse than the stacked
-  // dialogs it replaces, so the promise is asserted rather than
+  // The owner's report was a size, not a feeling: "the edit collections
+  // modal is too small. It should be the same size as the set cover
+  // modal." Measured on the two-page build at 1920x1080 — details
+  // 896x586, cover page 1536x1036 — so stepping between them more than
+  // doubled the panel's area.
+  //
+  // ⛔ FAILS ON THE TWO-PAGE BUILD on every one of its four assertions.
+  test.describe('at 1080p, one surface with no jump', () => {
+    test.use({ viewport: { width: 1920, height: 1080 } });
+
+    test('identity and both cover slots share one panel of one size', async ({ page }) => {
+      await openEditModal(page);
+      const panel = page.locator('[role="dialog"] > div').first();
+      const details = page.getByTestId('collection-edit-details-page');
+
+      // 1. The identity fields and the cover editor are on screen
+      //    TOGETHER. On the two-page build one of them is always
+      //    `hidden`.
+      await expect(details.locator('input[type="text"]').first()).toBeVisible();
+      await expect(page.getByTestId('collection-cover-editor')).toBeVisible();
+
+      // 2. There is no navigation out of it.
+      await expect(
+        page.getByTestId('collection-cover-back'),
+        'a Back button means there is still a page to be on',
+      ).toHaveCount(0);
+
+      // 3. Both slots are reachable and the panel does not resize when
+      //    attention moves between them.
+      const onCollection = (await panel.boundingBox())!;
+      await selectSlot(page, 'featured');
+      const onFeatured = (await panel.boundingBox())!;
+      expect(
+        Math.abs(onFeatured.width - onCollection.width),
+        `the panel changed width between slots: ${onCollection.width} -> ${onFeatured.width}. ` +
+          'That is the 896 -> 1536 jump #1264 is about, surviving as a slot switch.',
+      ).toBeLessThan(1);
+      expect(Math.abs(onFeatured.height - onCollection.height)).toBeLessThan(1);
+
+      // 4. And it is the WIDE one — the owner asked for the cover
+      //    surface's size, not the form's.
+      expect(
+        onCollection.width,
+        'the one surface is still the narrow form; the cover editor cannot use it',
+      ).toBeGreaterThan(1200);
+    });
+  });
+
+  // ── SWITCHING SLOTS KEEPS THE WORK (#1213's promise, #1264's shape) ─
+  //
+  // A surface that forgets when attention moves is worse than the
+  // stacked dialogs it replaced, so the promise is asserted rather than
   // assumed — and on the state that is easiest to lose, which is the
   // picker's, because the chosen id and the framing live in the host
-  // component and would survive almost any implementation.
-  test('Back preserves the pending choice, the framing and the picker state', async ({ page }) => {
+  // component and would survive almost any implementation. The editor
+  // is mounted ONCE and pointed at a slot; a version that keyed it on
+  // the slot would remount it and pass everything here except the last
+  // two assertions.
+  test('switching slots preserves the pending choice, the framing and the picker state', async ({
+    page,
+  }) => {
     let editor = await openCoverPage(page, 'featured');
 
     // A pending, UNSAVED choice.
@@ -884,7 +992,7 @@ test.describe('#1207 the collection cover editor', () => {
       .first()
       .click();
     // A search the curator is part-way through, on the arm that is
-    // genuinely destroyed by a naive page switch.
+    // genuinely destroyed by a remount.
     await editor.getByTestId('featured-source-mine').click();
     await editor.getByTestId('featured-search-input').fill(TOKEN);
     await editor.getByTestId('featured-search-input').press('Enter');
@@ -898,21 +1006,24 @@ test.describe('#1207 the collection cover editor', () => {
     const zoomBefore = await readZoom(page);
     expect(zoomBefore, 'the zoom did not take, so there is nothing to preserve').not.toBe('');
 
-    await backToDetails(page);
-    editor = await gotoCoverPage(page, 'featured');
+    // ATTENTION MOVES TO THE OTHER SLOT AND BACK. That is the whole
+    // gesture: the collection cover's own editor, then the featured one
+    // again.
+    await selectSlot(page, 'collection');
+    editor = await selectSlot(page, 'featured');
 
-    expect(await readZoom(page), 'Back discarded the zoom').toBe(zoomBefore);
+    expect(await readZoom(page), 'the slot switch discarded the zoom').toBe(zoomBefore);
     await expect(
       editor.getByTestId('cover-editor-stage-image'),
-      'Back discarded the pending cover choice',
+      'the slot switch discarded the pending cover choice',
     ).toHaveAttribute('src', new RegExp(memberIds[1]));
     await expect(
       editor.getByTestId('featured-search-input'),
-      'Back discarded the search the curator was part-way through',
+      'the slot switch discarded the search the curator was part-way through',
     ).toHaveValue(TOKEN);
     await expect(
       editor.getByTestId('featured-mine-choice').first(),
-      'Back discarded the search RESULTS, so the curator has to run it again',
+      'the slot switch discarded the search RESULTS, so the curator has to run it again',
     ).toBeVisible();
   });
 
@@ -963,10 +1074,16 @@ test.describe('#1207 the collection cover editor', () => {
     // AND IT IS NOT A MEMBER. The whole point of the free pointer is
     // that choosing a picture does not add it to the collection — a
     // cover that quietly joined would change what the collection IS.
-    const members = await request.get(`/api/v1/collections/${collectionId}/resources?limit=200`);
-    const { items } = (await members.json()) as { items: Array<{ asset_id: string }> };
+    // "Member" now means "a member asset of a post in this collection"
+    // (#1161): the collection holds posts, and the picker's options are
+    // their members, so that is the set a cover must not have joined.
+    const members = await request.get(`/api/v1/collections/${collectionId}/posts?limit=200`);
+    const { items } = (await members.json()) as {
+      items: Array<{ members?: Array<{ asset_id: string }> }>;
+    };
+    const memberAssetIds = items.flatMap((p) => (p.members ?? []).map((m) => m.asset_id));
     expect(
-      items.some((m) => m.asset_id === outsiderId),
+      memberAssetIds.includes(outsiderId),
       'choosing a cover added it to the collection — the pointer is supposed to be free',
     ).toBe(false);
   });
@@ -1502,19 +1619,66 @@ test.describe('#1207 the collection cover editor', () => {
         'nothing',
     ).toBe(false);
 
-    // BACK TO NULL, BACK TO THE OLD PICTURE, byte for byte. This is the
-    // regression that matters: every collection that exists has a null
-    // zoom, and none of them may change.
+    // BACK TO NULL, BACK TO THE OLD PICTURE. This is the regression that
+    // matters: every collection that exists has a null zoom, and none of
+    // them may change.
+    //
+    // ⚠️ THIS USED TO BE `Buffer.compare(beforeShot, restoredShot) === 0`
+    // — a BYTE-EXACT screenshot equality (#1241). It failed the federation
+    // nightly on 08-20 and passed it on 08-19 at the identical commit
+    // 1c856cb0, because a byte comparison cannot tell the two things
+    // apart that it is standing between:
+    //
+    //   the state did not reset   (the bug — must be red)
+    //   one pixel rendered differently   (JPEG/scaler/GPU variance — must be green)
+    //
+    // Re-running it decides nothing: it is roughly a coin flip by
+    // construction, so a green re-run is not evidence and the owner keeps
+    // getting the failure mail.
+    //
+    // So the claim is made on the STATE that "restored" actually means,
+    // measured the same way the zoom was proven to APPLY twenty lines up.
+    // `zoomGeom` showed the picture laid out at 3x its box; clearing must
+    // put it back to exactly its box — which is `fitGeom`, the sub-pixel
+    // fit asserted before any zoom existed. Same instrument, same
+    // tolerance, opposite direction. A stuck zoom lands at 3.0 and reds
+    // it; a re-encoded pixel cannot move a layout ratio at all.
     const cleared = await request.patch(`/api/v1/collections/${collectionId}`, {
       data: { clear_cover_zoom: true },
     });
     expect(cleared.status()).toBe(200);
     const restored = await loadTile();
     expect(await restored.getAttribute('data-zoom')).toBe('');
+    const restoredGeom = await restored.evaluate((el) => {
+      const img = el as HTMLImageElement;
+      const box = img.parentElement!.getBoundingClientRect();
+      const r = img.getBoundingClientRect();
+      return {
+        dw: r.width - box.width,
+        dh: r.height - box.height,
+        dx: r.x - box.x,
+        dy: r.y - box.y,
+        scale: r.width / box.width,
+      };
+    });
+    const stuck =
+      `clearing the zoom did not restore the tile's geometry: ` +
+      `${JSON.stringify(restoredGeom)}. A scale near 3 means the cleared zoom is ` +
+      `still being painted; the fit this must return to was asserted above as ` +
+      `${JSON.stringify(fitGeom)}.`;
+    expect(Math.abs(restoredGeom.dw), stuck).toBeLessThan(0.5);
+    expect(Math.abs(restoredGeom.dh), stuck).toBeLessThan(0.5);
+    expect(Math.abs(restoredGeom.dx), stuck).toBeLessThan(0.5);
+    expect(Math.abs(restoredGeom.dy), stuck).toBeLessThan(0.5);
+    expect(restoredGeom.scale, stuck).toBeCloseTo(1, 2);
+
+    // And the SOURCE is back to the rung an unzoomed tile requests. The
+    // geometry above proves the layout; this proves the tile is not
+    // painting a zoom-era variant scaled to look right.
     expect(
-      Buffer.compare(beforeShot, await restored.screenshot()) === 0,
-      'clearing the zoom did not restore the exact picture the tile painted before it existed',
-    ).toBe(true);
+      await restored.getAttribute('src'),
+      'the restored tile is not requesting the variant it painted before the zoom existed',
+    ).toBe(await before.getAttribute('src'));
   });
 
   test('the featured strip paints the zoom on the real card', async ({ page, request }) => {
@@ -1676,20 +1840,27 @@ test.describe('#1207 the collection cover editor', () => {
   // across a picture beside a live preview is that. Switching off
   // UNRELATED functionality is not covered, so these tests assert both
   // halves: the stage is gone, and everything else is not.
-  // ── #1218: page 2 SPENDS the dialog ────────────────────────────────
+  // ── #1218 → #1220: SIZED BY CONTENT, UP TO A CAP ──────────────────
   //
-  // The owner's finding on the shipped #1212 page: "we are still not
-  // using the space properly" — a ~720px dialog in a ~1130px viewport,
-  // a full-width row carrying one sentence of hint, a picker clipped to
+  // #1218's finding on the shipped #1212 page: "we are still not using
+  // the space properly" — a ~720px dialog in a ~1130px viewport, a
+  // full-width row carrying one sentence of hint, a picker clipped to
   // one row with the next peeking, and, before anything is chosen, a
-  // whole empty lower half where the stage's space was reserved.
+  // whole empty lower half where the stage's space was reserved. The
+  // fix was a dialog of STATED height with a column filling it.
+  //
+  // ⛔ #1220 IS THE MIRROR AND IT REPLACES THE MECHANISM. A collection
+  // yielding 59 picturable tiles filled ~790px of that ~1190px box and
+  // left a ~400px dead band under the last row. Nothing takes a
+  // definite height any more; every region is content-sized under a
+  // cap. #1264 then folded the two pages into one surface, so the same
+  // rule has to hold for a dialog that also carries the identity
+  // fields.
   //
   // These assert the SHAPE of the fix rather than pixel counts, because
   // the pixel counts are properties of the viewport and of the
-  // fixture's aspect: with nothing chosen the picker gets the room, and
-  // with a picture chosen the stage does. A ratio against the dialog is
-  // what makes "gets the room" checkable on any screen.
-  test.describe('at 1080p, the page fills the dialog', () => {
+  // fixture's aspect.
+  test.describe('at 1080p, the surface is sized by what it holds', () => {
     test.use({ viewport: { width: 1920, height: 1080 } });
 
     /** The dialog panel — the box everything below is measured against. */
@@ -1697,7 +1868,32 @@ test.describe('#1207 the collection cover editor', () => {
       return (await page.locator('[role="dialog"] > div').first().boundingBox())!;
     }
 
-    test('with nothing chosen the picker takes the room, and no stage is reserved', async ({
+    /** The room allocated to the picker that nothing fills — measured
+     *  from the bottom of the LAST TILE to the bottom of the cover
+     *  column, which is the band #1220 describes. */
+    async function deadBand(page: Page) {
+      return page.evaluate(() => {
+        const grid = document.querySelector<HTMLElement>(
+          '[data-testid="collection-cover-choices"]',
+        )!;
+        const column = document.querySelector<HTMLElement>(
+          '[data-testid="collection-cover-section"]',
+        )!;
+        const footer = document.querySelector<HTMLElement>('[role="dialog"] footer')!;
+        let lowest = grid.getBoundingClientRect().top;
+        for (const tile of Array.from(grid.children)) {
+          const r = (tile as HTMLElement).getBoundingClientRect();
+          if (r.bottom > lowest) lowest = r.bottom;
+        }
+        return {
+          insideGrid: grid.getBoundingClientRect().bottom - lowest,
+          underColumn: column.getBoundingClientRect().bottom - lowest,
+          footerHeight: footer.getBoundingClientRect().height,
+        };
+      });
+    }
+
+    test('a SPARSE picker leaves no band, and the dialog shrinks to hold it', async ({
       page,
       request,
     }) => {
@@ -1716,20 +1912,35 @@ test.describe('#1207 the collection cover editor', () => {
         'the stage is reserving room for a picture nobody has chosen — the dead half',
       ).toHaveCount(0);
 
-      const panel = await panelBox(page);
-      const grid = (await editor.getByTestId('collection-cover-choices').boundingBox())!;
-      const ratio = (grid.width * grid.height) / (panel.width * panel.height);
-      // The shipped page put this at ~0.10 (a 160px window inside a
-      // 720px dialog). Half the dialog is the floor for "the picker
-      // fills the available area"; the rest is the header, the tab row
-      // and the action bar, which are chrome and not slack.
+      // THIS FIXTURE IS SPARSE BY CONSTRUCTION — four member pictures
+      // and a mosaic tile — which is what makes the measurement below
+      // mean anything.
+      const tiles = await editor.getByTestId('collection-cover-choice').count();
+      expect(tiles, 'the fixture is not sparse, so no band could form').toBeLessThan(12);
+
+      const band = await deadBand(page);
       expect(
-        ratio,
-        `the picker occupies ${(ratio * 100).toFixed(1)}% of the dialog with nothing chosen`,
-      ).toBeGreaterThan(0.5);
+        band.insideGrid,
+        `the picker's own box holds ${band.insideGrid}px of allocated-but-empty room under its ` +
+          `last tile (#1220's band was ~400px; the footer is ${band.footerHeight}px)`,
+      ).toBeLessThanOrEqual(band.footerHeight);
+      expect(
+        band.underColumn,
+        `the cover column runs ${band.underColumn}px past its last tile`,
+      ).toBeLessThanOrEqual(band.footerHeight);
+
+      // AND THE DIALOG IS SHORTER THAN THE CAP. "Sized by content" is
+      // only a claim if a sparse surface is measurably smaller than the
+      // room it was allowed.
+      const panel = await panelBox(page);
+      expect(
+        panel.height,
+        `a sparse surface still reached ${panel.height}px — it is taking a stated height, ` +
+          'not the height of what it holds',
+      ).toBeLessThan(1080 - 12 * 16);
     });
 
-    test('with a picture chosen the stage takes the room and the picker becomes a rail', async ({
+    test('a picture chosen puts a real stage on the same surface, and the picker becomes a rail', async ({
       page,
       request,
     }) => {
@@ -1740,17 +1951,25 @@ test.describe('#1207 the collection cover editor', () => {
       const stageImg = page.getByTestId('collection-crop-stage-image');
       await expect(stageImg).toBeVisible();
 
+      // The identity fields are STILL THERE beside it — the point of
+      // #1264. On the two-page build this is where they disappeared.
+      await expect(
+        page.getByTestId('collection-edit-details-page').locator('input[type="text"]').first(),
+      ).toBeVisible();
+
       const panel = await panelBox(page);
       const box = (await page.getByTestId('collection-crop-stage-box').boundingBox())!;
       // The stage's own box — not the picture inside it, whose height is
-      // the picture's business — must be most of the dialog's height.
-      // The shipped page capped it at 52vh of the VIEWPORT while sitting
-      // in a dialog that was shorter than that; the budget is now the
-      // room the dialog actually has.
+      // the picture's business — is the big element of the cover
+      // column. A third of the panel's height is the floor: it shares
+      // the surface with the chips, the picker and the identity column
+      // now, and it is bounded by a vh budget rather than by a stated
+      // dialog height.
       expect(
         box.height / panel.height,
         `the stage box is ${(100 * box.height) / panel.height}% of the dialog's height`,
-      ).toBeGreaterThan(0.55);
+      ).toBeGreaterThan(0.33);
+      expect(box.height, 'the stage box is too small to judge a crop by').toBeGreaterThan(300);
 
       // AND THE PICTURE SPENDS IT. Filling one axis of the box exactly
       // is what "as large as the room allows" means for a picture that
@@ -1878,9 +2097,9 @@ test.describe('#1207 the collection cover editor', () => {
 
       await openCoverPage(page, 'collection');
       await expect(page.getByTestId('cover-page-crop-unavailable')).toBeVisible();
-      // An ordinary edit on the page the phone CAN use, so the save is
-      // a real one rather than a no-op PATCH.
-      await backToDetails(page);
+      // An ordinary edit on the part of the surface the phone CAN use,
+      // so the save is a real one rather than a no-op PATCH. It is on
+      // the same surface — no navigation (#1264).
       const nameField = page.getByTestId('collection-edit-details-page').locator('input[type="text"]').first();
       await nameField.fill(`${COLLECTION_NAME} (mobile)`);
       await saveAndAwaitPatch(page);
@@ -1891,18 +2110,25 @@ test.describe('#1207 the collection cover editor', () => {
       expect(after.cover_zoom, 'a phone save cleared the zoom').toBeCloseTo(2.5, 6);
     });
 
-    // Page 1 is not exempt from anything: it is text fields, radios and
-    // two thumbnails, all of which reflow.
-    test('page 1 stays fully usable', async ({ page }) => {
+    // The identity half is not exempt from anything: text fields, radios
+    // and two thumbnails, all of which reflow. At 390px the one surface
+    // is one COLUMN — the two-column split is `lg` and up — so the whole
+    // of it has to be reachable by scrolling the dialog's own body.
+    test('the whole surface stays usable in one column', async ({ page }) => {
       await openEditModal(page);
       const details = page.getByTestId('collection-edit-details-page');
       await expect(details.locator('input[type="text"]').first()).toBeVisible();
       await expect(details.locator('textarea').first()).toBeVisible();
       await expect(page.getByTestId('collection-cover-edit-featured')).toBeVisible();
       await expect(page.getByTestId('collection-cover-edit-button')).toBeVisible();
-      // The two doors work from here, which is the whole navigation.
-      await gotoCoverPage(page, 'featured');
-      await backToDetails(page);
+      // ⛔ FAILS ON THE TWO-PAGE BUILD. There, the cover editor is
+      // `hidden` until the curator navigates to page 2 and a Back button
+      // exists in the footer; here both slots' controls and the identity
+      // fields are one surface with no page to be on.
+      await expect(page.getByTestId('collection-cover-back')).toHaveCount(0);
+      await selectSlot(page, 'featured');
+      await expect(details.locator('input[type="text"]').first()).toBeVisible();
+      await selectSlot(page, 'collection');
       // And nothing has pushed the page sideways.
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth > document.documentElement.clientWidth,

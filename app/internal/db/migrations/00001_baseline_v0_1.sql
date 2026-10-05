@@ -1071,7 +1071,7 @@ CREATE TABLE public.collections (
 -- Name: COLUMN collections.smart_query; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.collections.smart_query IS 'DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.';
+COMMENT ON COLUMN public.collections.smart_query IS 'DSL query string that was executed to populate this collection. PROVENANCE ONLY (ADR 0091, #1259): it records which search produced this STATIC set, for display and for a refresh the reader invokes deliberately. It is never an input to a read path. Membership in collection_resources is the only membership truth, and a collection saved from a search materialises its members at save time.';
 
 
 --

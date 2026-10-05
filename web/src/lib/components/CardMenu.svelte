@@ -32,10 +32,24 @@
   //           it at all: a collection shows posts only, so pinning a bare
   //           asset wrote a `collection_resources` row that nothing on
   //           this instance renders — a click that reported success and
-  //           changed nothing the user could see. The endpoint still
-  //           exists and still works; retiring it is #1161's, and the
+  //           changed nothing the user could see. The endpoints are gone
+  //           too now (#1161 the writes, #1236 the read); the
   //           post-creating replacement ("turn these assets into a post
   //           in this collection") is #1161's too.
+  //   usage — "where is this used", for the OWNER of an asset (#1237,
+  //           ADR 0091 decision 5). A READ, and the only item here that
+  //           answers a question about somebody else's content: an asset
+  //           is personal storage until it is posted, and its owner can
+  //           otherwise not find out that their file is in a post
+  //           written by another person on a shared team library.
+  //           Gated the `editPath` way — the card hands over a path or
+  //           it does not — because the ENDPOINT is owner-only and
+  //           404s a stranger exactly as it 404s a nonexistent asset.
+  //           An item rendered for everyone would send most of them to
+  //           a page that cannot answer.
+  //           NOT gated on `canWrite`, unlike edit and the two below:
+  //           this writes nothing, so the demo's read-only edge (ADR
+  //           0060) has no reason to hide it.
   //   edit  — links to the entity's edit route (#549). WRITE action, and
   //           like manage-access it appears only when the CARD hands one
   //           over: the card knows whose work it is, this menu does not.
@@ -103,6 +117,19 @@
      *  itself re-answers it authoritatively, so a card that guesses
      *  generously costs a page, not a silent failure. */
     editPath?: string | null;
+    /** Where this card's "where is it used" surface lives, when the
+     *  viewer may plausibly reach it (#1237). Null / absent hides the
+     *  item, which is the case for every post and collection card and
+     *  for any asset the viewer does not own.
+     *
+     *  Same division of labour as `editPath`: the CARD owns the
+     *  ownership question and this component only renders what it is
+     *  handed. Unlike the edit route, though, a card that guesses
+     *  generously here costs a 404 rather than a page that explains
+     *  itself — the endpoint behind it answers 404 to a stranger on
+     *  purpose, so that it cannot be used to discover which assets
+     *  exist. So the card's gate is the one that matters. */
+    usagePath?: string | null;
     /** The CALLER already reveals this control, so skip the built-in
      *  hover/focus fade (#1111).
      *
@@ -142,6 +169,7 @@
     detailPath,
     manageAccess = null,
     editPath = null,
+    usagePath = null,
     revealed = false,
     placement = 'overlay',
   }: Props = $props();
@@ -431,6 +459,15 @@
         {t('card.tools.copy_link')}
       {/if}
     </button>
+
+    {#if usagePath}
+      <a href={usagePath} role="menuitem" onclick={openInfo} data-testid="card-usage" class={item}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m12 2 8 4-8 4-8-4 8-4Z" /><path d="m4 12 8 4 8-4" /><path d="m4 17 8 4 8-4" />
+        </svg>
+        {t('card.tools.usage')}
+      </a>
+    {/if}
 
     {#if canWrite && editPath}
       <a href={editPath} role="menuitem" onclick={openInfo} data-testid="card-edit" class={item}>

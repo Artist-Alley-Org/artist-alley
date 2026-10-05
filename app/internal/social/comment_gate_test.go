@@ -55,6 +55,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // Synthetic refs, disjoint from every other set in this package.
@@ -73,7 +74,7 @@ func cgPool(t *testing.T) *pgxpool.Pool {
 	host := cgEnv("AA_DB_HOST", "postgres")
 	port := cgEnv("AA_DB_PORT", "5432")
 	user := cgEnv("AA_DB_USER", "artist_alley")
-	name := cgEnv("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	pool, err := pgxpool.New(context.Background(), dsn)

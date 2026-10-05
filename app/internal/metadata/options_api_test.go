@@ -29,7 +29,7 @@ func TestUpdateFieldConflictDetection(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	router, _ := makeRouter(t, pool /*admin=*/, true)
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
@@ -115,7 +115,7 @@ func TestUpdateFieldRejectsDanglingReplacement(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	router, _ := makeRouter(t, pool /*admin=*/, true)
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
@@ -179,7 +179,7 @@ func TestPreLifecycleOptionsSurviveAnEdit(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	router, userRef := makeRouter(t, pool /*admin=*/, true)
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })

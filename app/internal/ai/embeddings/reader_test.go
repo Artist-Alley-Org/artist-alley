@@ -23,7 +23,7 @@ func TestReader_FindSimilarByAnchor_HappyPath_RanksByDistance(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const ownerRef int64 = 9_140_010
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -112,7 +112,7 @@ func TestReader_FindSimilarByAnchor_NoAnchorEmbedding_ReturnsSentinel(t *testing
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const ownerRef int64 = 9_140_011
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -137,7 +137,7 @@ func TestReader_HasEmbedding_HitsAndMisses(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const ownerRef int64 = 9_140_012
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

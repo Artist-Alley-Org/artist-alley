@@ -34,6 +34,22 @@
   to be worth having, and a typo is exactly what silent minting
   immortalises.
 
+  # Who may create (ADR 0092 §2)
+
+  Two conditions, not one: the FIELD is open, and THIS CALLER holds
+  `fields.vocabulary.extend`. The capability is read here rather than
+  passed in by each caller, because three surfaces mount this control
+  and a gate that has to be remembered at every call site is a gate
+  that will be missed at one of them — and the failure mode of missing
+  it is a create row that produces a 422 the person cannot act on.
+
+  A caller without the capability gets THE SAME CONTROL with the create
+  arm absent: same chips, same filtering, same keyboard, no create row.
+  Not a disabled row, not an error after the fact. That is the ADR's
+  requirement in as many words, and it is why `blocked` falls through
+  to the closed-field wording — for someone who may not create, an
+  unmatched term genuinely is a term that is not on offer.
+
   # Matching mirrors the server
 
   resolveTerm ($lib/fieldOptions) is the browser's copy of
@@ -52,6 +68,7 @@
 -->
 <script lang="ts">
   import { t } from '$stores/lang.svelte';
+  import { auth } from '$stores/auth.svelte';
   import {
     findOption,
     resolveTerm,
@@ -68,7 +85,11 @@
      * this control is about to create (see the header note).
      */
     value: string[];
-    /** The field's `open_vocabulary` flag. False = no create row, ever. */
+    /**
+     * The field's `open_vocabulary` flag. False = no create row, ever.
+     * True is NECESSARY but not sufficient — see `canCreate` below,
+     * which also requires the caller's capability.
+     */
     open?: boolean;
     disabled?: boolean;
     /** Accessible name. One of these is required for the input. */
@@ -77,6 +98,25 @@
     placeholder?: string;
     /** Suffix for the data-testid hooks, normally the field code. */
     testid?: string;
+    /**
+     * Ask the SERVER for matches instead of filtering `options` in the
+     * browser (#1119).
+     *
+     * Pass the field's id and this control talks to
+     * `GET /fields/{id}/values`, which openapi.yaml calls "THE contract
+     * for offering vocabulary values" (ADR 0092 §1) and which — until
+     * the create page — had no client at all. In-memory filtering is
+     * legal as an OPTIMISATION for demonstrably small vocabularies and
+     * is never the only path: a field with two thousand terms is
+     * unremarkable in a real catalogue, and a page carrying twenty such
+     * fields would ship forty thousand values before the reader touched
+     * a control. Worse, a client filtering a capped list is searching a
+     * prefix of the truth without knowing it.
+     *
+     * Omit to keep the in-memory behaviour, which every existing caller
+     * relies on and which is unchanged.
+     */
+    fieldId?: string | null;
     onchange: (value: string[]) => void;
   }
 
@@ -89,15 +129,33 @@
     labelledBy,
     placeholder,
     testid = 'field',
+    fieldId = null,
     onchange,
   }: Props = $props();
+
+  const serverSearch = $derived(!!fieldId);
 
   // A long vocabulary is a scroll trap, not a picker. Cap the list and
   // say so, rather than rendering nine hundred rows a phone has to
   // paint.
   const MAX_ROWS = 50;
 
+  /**
+   * The capability that lets a value create a term (migration 00057).
+   * Seeded onto `Base`, so by default everyone signed in holds it and
+   * this changes nothing an artist sees; an operator running the
+   * librarian model revokes it and the create row disappears.
+   */
+  const VOCABULARY_EXTEND = 'fields.vocabulary.extend';
+
   let draft = $state('');
+  // Server-search state (#1119). Declared here rather than beside its
+  // $effect below so `canCreate` can read `remoteCanExtend` without a
+  // use-before-declaration.
+  let remoteOptions = $state<FieldOption[]>([]);
+  let remoteMatched = $state(0);
+  let remoteCanExtend = $state<boolean | null>(null);
+  let remoteSeq = 0;
   let listOpen = $state(false);
   let highlight = $state(-1);
   let inputEl = $state<HTMLInputElement | null>(null);
@@ -113,6 +171,22 @@
   const offerable = $derived(selectableOptions(options, value));
 
   const chosen = $derived(new Set(value));
+
+  /**
+   * May this person create a term here. The server answers the same
+   * question on `GET /fields/{id}/values` as `can_extend`, and refuses
+   * a write it did not authorise with
+   * `reason: vocabulary_extension_forbidden` — so this is a rendering
+   * decision that MIRRORS the rule, never one that enforces it.
+   */
+  const canCreate = $derived(
+    // The server's per-field answer wins when we have asked for it
+    // (`can_extend` on GET /fields/{id}/values): it is the same
+    // question the write path answers, where `auth.can` is our local
+    // approximation of it. Falls back to the approximation when this
+    // control is running in its in-memory mode.
+    remoteCanExtend !== null ? remoteCanExtend : open && auth.can(VOCABULARY_EXTEND),
+  );
 
   /** How a chosen entry reads. Falls back to the entry itself, which
       is exactly right for a term being created — there, the text IS
@@ -144,13 +218,22 @@
   const ranked = $derived.by(() => {
     const pool = offerable.filter((o) => !chosen.has(o.value));
     if (!query) return pool;
+    // Slug, label AND aliases — the same three keys the write path
+    // resolves through, and the same three the server's
+    // GET /fields/{id}/values ranks on. Leaving aliases out of the
+    // BROWSE list while resolveTerm matches them produces the worst
+    // possible pair of answers: typing an alias shows "no matches" and
+    // withholds the create row, so the term the operator is addressing
+    // is invisible in both directions.
     const rank = (o: FieldOption): number => {
-      const v = o.value.toLowerCase();
-      const l = o.label.toLowerCase();
-      if (v === query || l === query) return 0;
-      if (v.startsWith(query) || l.startsWith(query)) return 1;
-      if (v.includes(query) || l.includes(query)) return 2;
-      return 3;
+      let best = 3;
+      for (const key of [o.value, o.label, ...(o.aliases ?? [])]) {
+        const k = key.toLowerCase();
+        if (!k) continue;
+        const r = k === query ? 0 : k.startsWith(query) ? 1 : k.includes(query) ? 2 : 3;
+        if (r < best) best = r;
+      }
+      return best;
     };
     return pool
       .map((o, i) => ({ o, r: rank(o), i }))
@@ -159,8 +242,79 @@
       .map((x) => x.o);
   });
 
-  const matches = $derived(ranked.slice(0, MAX_ROWS));
-  const truncated = $derived(ranked.length > MAX_ROWS);
+  // ---------------------------------------------------------------
+  // Server-side search (#1119), when `fieldId` is supplied.
+  //
+  // The endpoint already ranks (exact → prefix → substring, stable) and
+  // already caps, and it reports `matched` so the truncation note tells
+  // the truth instead of guessing from a capped list. So this path does
+  // no ranking of its own — re-ranking a ranked answer is how the
+  // client's idea of "best match" drifts from the server's.
+  //
+  // `match: 'substring'` matches what the in-memory path has always
+  // done for BROWSING. Whether a term matches for the purpose of
+  // WRITING is resolveTerm's stricter question and is unchanged.
+  // ---------------------------------------------------------------
+  $effect(() => {
+    if (!serverSearch) return;
+    // Read the dependencies EAGERLY, at this call frame. A $state read
+    // that happens inside a callee — or after an await — is not
+    // collected as a dependency, and the effect then either never
+    // re-runs or re-runs on the wrong signal.
+    const id = fieldId;
+    const q = draft.trim();
+    if (!id) return;
+
+    const seq = ++remoteSeq;
+    const handle = setTimeout(() => {
+      void (async () => {
+        try {
+          const params = new URLSearchParams({
+            match: 'substring',
+            limit: String(MAX_ROWS),
+            status: 'active',
+          });
+          if (q) params.set('q', q);
+          const res = await fetch(`/api/v1/fields/${id}/values?${params}`, {
+            credentials: 'include',
+          });
+          if (!res.ok) return;
+          const page = await res.json();
+          // Drop a response that a newer keystroke has superseded.
+          if (seq !== remoteSeq) return;
+          remoteOptions = (page.values ?? []).map(
+            (v: { value: string; label?: string; aliases?: string[]; status?: string }) => ({
+              value: v.value,
+              label: v.label ?? v.value,
+              aliases: v.aliases ?? [],
+              status: v.status ?? 'active',
+            }),
+          );
+          remoteMatched = typeof page.matched === 'number' ? page.matched : remoteOptions.length;
+          // The server answers "may THIS caller create a term here" for
+          // this field. Prefer it over the local capability guess —
+          // ADR 0092 §2: the control a client shows must match the
+          // answer the write path will give.
+          remoteCanExtend = !!page.can_extend;
+        } catch {
+          // Leave the last good answer up rather than blanking the list
+          // on a dropped request.
+        }
+      })();
+    }, 150);
+    return () => clearTimeout(handle);
+  });
+
+  const chosenNow = $derived(new Set(value));
+
+  const matches = $derived(
+    serverSearch
+      ? remoteOptions.filter((o) => !chosenNow.has(o.value)).slice(0, MAX_ROWS)
+      : ranked.slice(0, MAX_ROWS),
+  );
+  const truncated = $derived(
+    serverSearch ? remoteMatched > MAX_ROWS : ranked.length > MAX_ROWS,
+  );
 
   /**
    * What the typed term resolves to. Drives the three tails the
@@ -172,7 +326,7 @@
 
   /** The create row, or null. Absent on a closed field, always. */
   const creatable = $derived.by(() => {
-    if (!open || !resolution) return null;
+    if (!canCreate || !resolution) return null;
     if (resolution.matched) return null;
     if (!resolution.slug) return null; // no addressable form ("!!!")
     if (chosen.has(draft.trim())) return null;
@@ -193,7 +347,15 @@
       if (chosen.has(opt.value)) return null;
       return t('vocabulary.term_retired', { label: opt.label });
     }
-    if (open) return resolution.slug ? null : t('vocabulary.term_unslugifiable');
+    if (canCreate) return resolution.slug ? null : t('vocabulary.term_unslugifiable');
+    // Two different refusals, said differently on purpose. A CLOSED
+    // field genuinely does not take new terms, and the operator's fix
+    // is to pick another word or ask for the vocabulary to be edited.
+    // An open field the caller may not extend is not the same
+    // sentence: the term could exist here, and the fix is a
+    // capability. Reusing one string for both would tell one of the
+    // two a specific untruth about their own instance.
+    if (open) return t('vocabulary.term_cannot_create', { term: draft.trim() });
     return t('vocabulary.term_unknown', { term: draft.trim() });
   });
 
@@ -373,7 +535,12 @@
       aria-controls={listId}
       aria-autocomplete="list"
       aria-activedescendant={listOpen && highlight >= 0 ? rowId(highlight) : undefined}
-      placeholder={placeholder ?? (value.length === 0 ? t('vocabulary.placeholder') : '+')}
+      placeholder={placeholder ??
+        (value.length === 0
+          ? canCreate
+            ? t('vocabulary.placeholder')
+            : t('vocabulary.placeholder_pick')
+          : '+')}
       data-testid="vocab-input-{testid}"
       class="min-h-9 min-w-[7rem] flex-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-sm text-fg placeholder:text-fg-muted/60 focus:outline-none disabled:cursor-not-allowed"
     />

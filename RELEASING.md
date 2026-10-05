@@ -93,6 +93,80 @@ pullable tag.
    and the demo's autoupdate keys off `:latest`.
    - Cosign keyless signatures on every image
 
+## Gates before the tag
+
+Step 4 (the tag) waits for every gate below. Each is a stop condition,
+not a reminder: if one is not met, the release stops there.
+
+### Dependabot pull requests
+
+No tag, starting with v0.11.0, while an applicable Dependabot pull
+request is still open. A Dependabot PR is resolved only when it is
+either:
+
+- merged, with its change on the release line and the required CI
+  green; or
+- deliberately closed or superseded, with the reason written on the PR.
+
+Dependabot PRs are release gates, not milestone issues. They are never
+added to a milestone and never counted in the milestone's open set; the
+milestone reaching zero open issues does not clear them.
+
+### Post-merge CI on `main`
+
+After the `dev -> main` merge in step 3, the CI runs on the resulting
+`main` commit must be green before the tag in step 4 is created.
+
+## Releases that republish the seed dataset
+
+When a release republishes the seed dataset, its steps run in this
+order, and none starts before the previous one is done:
+
+1. The archive and the seed are verified.
+2. The dataset issue closes.
+3. The milestone reaches zero open issues.
+4. The dataset is published to Kaggle, as `mscrnt/dam-population-seed`.
+5. The served dataset is verified.
+6. The tag (step 4 above), after the gates in "Gates before the tag".
+
+The dataset publish is part of this release procedure, not of the
+dataset issue. Its acceptance criteria are:
+
+- the dataset description and `ATTRIBUTIONS.md` name the generated source
+- the served signature is verified after upload, as at v0.10.2
+
+If a publish or release gate fails after the dataset issue has closed,
+the release stops and the failure is reported. The dataset issue is not
+silently reopened.
+
+### The scheduled nightly and a promoted archive
+
+The scheduled federation nightly runs `main`'s code against the live
+archive. Promoting a new archive before the release merge therefore puts
+the new corpus in front of the old `main` code until that merge, so a
+promotion is preceded by a rehearsal of the current `main` nightly
+against the staged corpus:
+
+- **Control first.** The same `main` SHA is run against the current
+  corpus. A green control is required before any conclusion is drawn. A
+  red control makes the rehearsal inconclusive, not an infrastructure
+  failure by default: its logs are inspected, one controlled rerun is
+  allowed only for a demonstrated transient flake, and a real defect is
+  resolved through the normal reviewed workflow first.
+- **Compatible (Branch A)** means the control and the test run are both
+  green. That evidence is valid only while `main` stays at the exact
+  rehearsed SHA and the live archive stays byte-identical to the
+  rehearsed corpus. Both are checked before every scheduled nightly
+  until the release merge. If either changes, the evidence lapses at
+  once: the new `main` SHA is rehearsed before a nightly may consume the
+  corpus, or the promotion is reversed.
+- **Incompatible (Branch B)** means release-readiness comes before the
+  promotion: the Dependabot gate resolved, the version bump landed on
+  `dev`, and the release PR open with its checks green. The promotion
+  then runs inside one bounded window that starts after that day's
+  scheduled nightly has concluded and ends at the release merge, with a
+  06:00 UTC rollback cutoff ahead of the nightly's 07:00 UTC schedule.
+
 ## Versioning
 
 Semver:

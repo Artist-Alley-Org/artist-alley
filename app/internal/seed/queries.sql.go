@@ -113,6 +113,57 @@ func (q *Queries) SeedCollectionExists(ctx context.Context, id pgtype.UUID) (int
 	return ok, err
 }
 
+const seedFindRoleByName = `-- name: SeedFindRoleByName :one
+SELECT id FROM roles WHERE name = $1 LIMIT 1
+`
+
+// The shipped role a seeded test-fixture principal is given (#1270).
+//
+// The registration endpoint assigns the configured default role — "Base"
+// unless an operator changed it — and the four accounts this replaces
+// were REGISTERED, so they had one. `AdminHandler.CreateUser` assigns
+// none: the 31 fictional artists cannot log in and never needed caps.
+// A principal seeded with no role would sign in and then be refused
+// every write the spec drives, which reads as a permission regression
+// and is a missing fixture.
+func (q *Queries) SeedFindRoleByName(ctx context.Context, name string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedFindRoleByName, name)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const seedGetAssetIDByID = `-- name: SeedGetAssetIDByID :one
+SELECT id FROM assets WHERE id = $1
+`
+
+// Recovery path for SeedInsertAsset's ON CONFLICT DO NOTHING (#1290).
+//
+// ⛔ TWO DIFFERENT CONFLICTS ARRIVE AT THAT ONE `DO NOTHING`, and they
+// need opposite handling:
+//
+//	id pkey             a RESUMED run. The row IS this manifest entry.
+//	                    It must go back into the seeder's id map or every
+//	                    later phase behaves as though the asset does not
+//	                    exist.
+//	owner+file_hash     a byte-identical sibling the same owner already
+//	                    holds. There is no row for THIS manifest id, the
+//	                    collapse is correct, and skipping is right.
+//
+// Conflating them is what made a fresh post lose an existing member: on
+// an incremental re-seed, `applyPosts` resolves members out of the map
+// that `applyAssets` fills, so a post added to the catalogue after the
+// first seed silently dropped every member that already existed — and a
+// post whose members ALL existed was skipped entirely, as a no-member
+// post. The posts phase already recovers this way on its own conflict;
+// the assets phase did not.
+func (q *Queries) SeedGetAssetIDByID(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedGetAssetIDByID, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const seedGetCommentByID = `-- name: SeedGetCommentByID :one
 SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
@@ -263,9 +314,10 @@ const seedInsertAsset = `-- name: SeedInsertAsset :one
 INSERT INTO assets (
     id, title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata,
-    state_id, team_id, sensitivity, mature, created_at, updated_at
+    state_id, team_id, sensitivity, mature, ai_provenance,
+    created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 ON CONFLICT DO NOTHING
 RETURNING id
 `
@@ -285,6 +337,7 @@ type SeedInsertAssetParams struct {
 	TeamID        pgtype.UUID
 	Sensitivity   string
 	Mature        bool
+	AiProvenance  *string
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 }
@@ -295,11 +348,42 @@ type SeedInsertAssetParams struct {
 // deriving it from the tier. Posts get theirs from the 00052/00054
 // trigger when their membership lands — never written directly.
 //
+// `ai_provenance` is carried the same way and for the same reason
+// (#1251 slice 3, ADR 0094): it is the MAKER'S DECLARATION, a fact the
+// catalogue authors, and NULL — the overwhelming majority — means
+// UNDECLARED rather than `none`. Posts get their two derived AI facts
+// (`ai_provenance`, `ai_pure`) from the 00060/00061 triggers when their
+// membership and covers land, never written directly, exactly as
+// `mature` works one column over.
+//
+// ⚠️ THE ORDER OF THE PHASES IS WHAT MAKES THAT WORK. applyAssets runs
+// before applyPosts, so every declaration is already on the asset row
+// when `post_assets` is written and the recompute fires with the real
+// population. A declaration written AFTER a post exists would still be
+// correct — the trigger on `assets` covers that path — but the seed
+// never takes it.
+//
 // A bare ON CONFLICT DO NOTHING catches
 // both the id pkey (resumed run) AND the (owner_user_ref, file_hash)
 // partial unique index (byte-identical duplicate owned by the same
 // user) — the latter legitimately collapses one asset, matching the
 // product's content-address invariant.
+//
+// ⛔ WHICH MEANS THE CATALOGUE MUST NOT CONTAIN ONE (#1319). The index
+// is identity, not a preference: no DedupBehavior value relaxes it. Two
+// catalogue entries under one (owner, produced bytes) are not two
+// assets, they are one asset named twice, and the second entry's id,
+// declaration, size and field values are never written at all. A post
+// naming it loses that member without a word. The corpus retires the
+// loser onto a named survivor with an asset-collapse document
+// (seed/scripts/asset_collapse.py); this statement is deliberately left
+// permissive, because the resumed-run case needs it and the seeder
+// cannot tell the two apart.
+//
+// ⛔ THAT COLLAPSE IS WHY A DECLARATION IS NOT A PER-POST KNOB. One
+// asset row can be a member of MANY posts, so declaring a shared asset
+// `generated` moves every post containing it. A catalogue entry that
+// wants to move exactly one post has to name an asset unique to it.
 func (q *Queries) SeedInsertAsset(ctx context.Context, arg SeedInsertAssetParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, seedInsertAsset,
 		arg.ID,
@@ -316,6 +400,7 @@ func (q *Queries) SeedInsertAsset(ctx context.Context, arg SeedInsertAssetParams
 		arg.TeamID,
 		arg.Sensitivity,
 		arg.Mature,
+		arg.AiProvenance,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -970,6 +1055,94 @@ func (q *Queries) SeedListFields(ctx context.Context) ([]SeedListFieldsRow, erro
 	return items, nil
 }
 
+const seedListPostFingerprints = `-- name: SeedListPostFingerprints :many
+SELECT
+    p.id,
+    p.title,
+    p.description,
+    p.visibility,
+    p.cover_asset_id,
+    p.created_at,
+    p.updated_at,
+    COALESCE((SELECT array_agg(pa.asset_id ORDER BY pa.sort_order, pa.asset_id)
+              FROM post_assets pa WHERE pa.post_id = p.id), '{}')::uuid[]
+        AS member_ids,
+    COALESCE((SELECT array_agg(pt.tag ORDER BY pt.tag)
+              FROM post_tags pt WHERE pt.post_id = p.id), '{}')::text[]
+        AS tags,
+    COALESCE((SELECT array_agg(cp.collection_id ORDER BY cp.collection_id)
+              FROM collection_posts cp WHERE cp.post_id = p.id), '{}')::uuid[]
+        AS collection_ids
+FROM posts p
+WHERE p.deleted_at IS NULL
+`
+
+type SeedListPostFingerprintsRow struct {
+	ID            pgtype.UUID
+	Title         string
+	Description   string
+	Visibility    string
+	CoverAssetID  pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	MemberIds     []pgtype.UUID
+	Tags          []string
+	CollectionIds []pgtype.UUID
+}
+
+// Everything the posts phase writes, read back for every post row the
+// database already holds (#1320).
+//
+// ⛔ WHY THIS EXISTS AT ALL. `SeedInsertPost` ends in `ON CONFLICT (id)
+// DO NOTHING`, which is the resume contract stated at the top of this
+// block and must survive. What it cannot do is TELL you: a second seed
+// carrying a corrected title, a new member, a moved collection or a
+// reordered wall lands on that clause and the run reports a clean
+// success over data it did not write. `aa seed --reset` is the only
+// thing that can apply the change, and nothing said so.
+//
+// Reading the rows back is the honest half. The seeder compares this
+// against the catalogue and REPORTS the disagreement; it never writes
+// over it. `DO UPDATE` was rejected deliberately: this runs against
+// development databases that people edit, and an override is data
+// resolved OVER the shipped value, never in place of it (ADR 0081).
+//
+// The three subqueries are the post's SUBTREE, which is the half the
+// old skip lost silently: the conflict path used to `continue` past
+// the member, tag and collection loops together, so an existing post
+// could not gain the member the catalogue had just given it. That is
+// the same shape as #1290 one table over.
+func (q *Queries) SeedListPostFingerprints(ctx context.Context) ([]SeedListPostFingerprintsRow, error) {
+	rows, err := q.db.Query(ctx, seedListPostFingerprints)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeedListPostFingerprintsRow
+	for rows.Next() {
+		var i SeedListPostFingerprintsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Description,
+			&i.Visibility,
+			&i.CoverAssetID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.MemberIds,
+			&i.Tags,
+			&i.CollectionIds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const seedListWorkflowStates = `-- name: SeedListWorkflowStates :many
 SELECT id, domain, code FROM workflow_states
 `
@@ -1012,4 +1185,31 @@ func (q *Queries) SeedPostExists(ctx context.Context, id pgtype.UUID) (int32, er
 	var ok int32
 	err := row.Scan(&ok)
 	return ok, err
+}
+
+const seedSetUserGlobalRole = `-- name: SeedSetUserGlobalRole :exec
+WITH _del AS (
+    DELETE FROM user_roles
+     WHERE user_ref = $1 AND team_id IS NULL
+)
+INSERT INTO user_roles (user_ref, role_id, assigned_by_user_ref)
+VALUES ($1, $2, $3)
+ON CONFLICT ON CONSTRAINT user_roles_unique DO UPDATE SET
+    assigned_at          = NOW(),
+    assigned_by_user_ref = EXCLUDED.assigned_by_user_ref
+`
+
+type SeedSetUserGlobalRoleParams struct {
+	UserRef           int64
+	RoleID            pgtype.UUID
+	AssignedByUserRef *int64
+}
+
+// Same statement auth.SetUserGlobalRole runs, so a seeded principal and
+// a registered one end up with identical role state. Global only
+// (team_id IS NULL); team-scoped assignments are untouched. Atomic at
+// statement level, so there is no window where the user has zero roles.
+func (q *Queries) SeedSetUserGlobalRole(ctx context.Context, arg SeedSetUserGlobalRoleParams) error {
+	_, err := q.db.Exec(ctx, seedSetUserGlobalRole, arg.UserRef, arg.RoleID, arg.AssignedByUserRef)
+	return err
 }

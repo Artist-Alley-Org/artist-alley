@@ -24,7 +24,7 @@ import (
 
 func TestMetaAssetAdapterGetAssetRef(t *testing.T) {
 	pool := openPoolForSensitivity(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	// Throwaway team so the asset's team_id FK (-> teams.id) is

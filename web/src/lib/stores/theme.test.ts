@@ -39,7 +39,18 @@ function signIn(theme: 'light' | 'dark' | 'system' | '' | null) {
   // mapUser always supplies it, and making it required is what stops a
   // producer from leaving the field on `false` — which would mean "this
   // install forbids mature content" rather than "unknown".
-  auth.user = { ref: 1, username: 'tester', theme, matureContentAllowed: true };
+  //
+  // matureOptedIn is required for the opposite reason (#1292): its zero
+  // value IS "not opted in", so every producer answering it explicitly
+  // costs nothing and a future one that forgets cannot silently arrive
+  // as consent.
+  auth.user = {
+    ref: 1,
+    username: 'tester',
+    theme,
+    matureContentAllowed: true,
+    matureOptedIn: false,
+  };
 }
 
 beforeEach(() => {

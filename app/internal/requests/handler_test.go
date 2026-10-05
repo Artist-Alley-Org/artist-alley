@@ -34,6 +34,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/requests"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func TestSubmit_CreatesPendingRow_AuditFires(t *testing.T) {
@@ -386,7 +387,7 @@ func openPoolE(t *testing.T) *pgxpool.Pool {
 	host := envOrE("AA_DB_HOST", "postgres")
 	port := envOrE("AA_DB_PORT", "5432")
 	user := envOrE("AA_DB_USER", "artist_alley")
-	name := envOrE("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

@@ -15,6 +15,10 @@
 #     studio-b's postgres + storage volume — no HTTP, no login.
 #   - The chosen site/ dir + the in-repo seed/profiles catalogue are
 #     mounted into that container read-only.
+#   - Passes --fixtures, so the dogfood suite's one-time substrate is
+#     seeded rather than created by the specs on first run (#1270).
+#     This is a DEV stack; the public demo's seed does not pass it,
+#     because those principals have committed passwords.
 
 set -euo pipefail
 
@@ -52,4 +56,4 @@ printf '\033[1;36m==>\033[0m Seeding studio-b from %s\n' "$site"
 exec docker compose --profile dogfood run --rm --no-deps \
     -v "$site:/seed/site:ro" \
     -v "$ROOT/seed/profiles:/seed/profiles:ro" \
-    app-b seed --site /seed/site --catalogue /seed/profiles
+    app-b seed --site /seed/site --catalogue /seed/profiles --fixtures

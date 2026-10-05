@@ -1,0 +1,95 @@
+# scripts/dogfood/skip-manifest.txt: the DENOMINATOR manifest (#1348, #1344)
+#
+# THE INVARIANT: a run that reports "396 passed" must have ASKED all 398
+# of its questions, and every question it declined to ask must be one
+# somebody wrote down here first.
+#
+# ---------------------------------------------------------------------
+# WHY A LIST OF NAMES AND NOT A COUNT
+# ---------------------------------------------------------------------
+#
+# The obvious gate is "fail if SKIP goes above N". It does not work, and
+# the measurement that kills it is in the repository twice over:
+#
+#   CI, quiet run 33198346487   2 skipped: kind-filter-1166's anonymous
+#                               case, and modal-scroll-lock-1223's 1080p
+#                               scroll case.
+#   the coding stack, same day  2 skipped: kind-filter-1166's anonymous
+#                               case, and kind-filter-1166's two-kind
+#                               case. modal-scroll-lock did NOT skip,
+#                               because that corpus is deep enough.
+#
+# Same number, different questions. A count of 2 is satisfied by both,
+# so a count gate would have watched a skip appear and a skip disappear
+# and reported neither. The corpus ratchet's own history (see
+# corpus-budget.txt) is what happens when a counted gate is specified
+# against a number instead of against the thing the number stood for.
+#
+# So the unit here is the TEST, not the tally.
+#
+# ---------------------------------------------------------------------
+# THE FOUR CASES, AND WHAT THIS FILE DOES WITH EACH
+# ---------------------------------------------------------------------
+#
+#  1. A SKIP THAT IS ALWAYS TAKEN is a deleted test with a comment, and
+#     it is NOT declarable here. Every entry has to name the condition
+#     under which the test RUNS; a guard with no such condition has no
+#     justification to write, and the honest fix is to set the
+#     precondition (helpers/public-mode.ts is how) or delete the test.
+#     kind-filter-1166's anonymous case was this, and #1344 is it.
+#
+#  2. A SKIP TAKEN ONLY UNDER LOAD is the #1348 defect and is NOT
+#     declarable either. It is a precondition read at a point in time
+#     that a slow box has not reached yet, and it turns a contended
+#     runner into a quietly smaller suite. Undeclared, so it fails the
+#     run (exit 6) with the test named. The remedy is always the same:
+#     ask an instrument the load cannot move (the API), or wait for the
+#     signal the guard actually depends on.
+#
+#  3. A LEGITIMATELY ENVIRONMENT-DEPENDENT SKIP is what this file is
+#     for. It gets a `skip` line, and the justification has to say what
+#     about the environment decides it.
+#
+#  4. A NEW SKIP is undeclared by construction, so it fails until
+#     somebody classifies it as 1, 2 or 3. That is the ratchet.
+#
+# ---------------------------------------------------------------------
+# HOW THIS FILE STAYS HONEST
+# ---------------------------------------------------------------------
+#
+# A recorded expectation is a new thing that can go stale, so two of the
+# three ways it rots are checked mechanically by skip-audit.mjs:
+#
+#   * an entry naming a test that no longer exists FAILS the run, so a
+#     rename or a deletion cannot leave a permission behind it.
+#   * an entry that did not fire is PRINTED as a prune candidate on
+#     every full run. It is not a failure: not firing is exactly what a
+#     genuinely environment-dependent skip does on the other
+#     environment, and failing on it would make the file unkeepable
+#     across CI and the workstation at once.
+#   * the third way, an entry whose guard was later fixed and now never
+#     fires anywhere, is the one a single run cannot see. The prune
+#     line is the handle for it, and it is a review question rather
+#     than a gate.
+#
+# The `load` records are not permissions. They quarantine nothing and
+# skip nothing: they name tests already known to fail under contention,
+# so that when one of them goes red the run says so on the spot instead
+# of costing another investigation from scratch (#1248, #1348).
+#
+# Format, one record per line, fields separated by ` :: `
+#
+#   skip <spec file> :: <exact test title> :: <what decides it>
+#   load <spec file> :: <exact test title> :: <what is known about it>
+#
+# The spec file is relative to scripts/dogfood/ui/. The title is the
+# LEAF title, exactly as `playwright test` prints it after the last
+# " > " in the test's name. Titles are QUOTED VERBATIM from the spec,
+# punctuation included, because they are keys and not prose: the audit
+# matches on the exact string the runner reports.
+
+skip tests/standalone/modal-scroll-lock-1223.spec.ts :: 1080p — the wheel does not reach the page, which moves again once the dialog closes :: Corpus depth. The case needs a collection whose detail page offers MIN_RANGE (250px) of scroll range, and the CI seed profile has none: measured at 32px on CI run 33221187932, by the spec itself from the rendered page rather than assumed. A workstation stack seeded from the full catalogue does have the depth, and there the case runs and this entry shows up as a prune candidate instead. The lock this file is about is still asserted by the two cases that need no scroll range at all.
+
+skip tests/standalone/kind-filter-1166.spec.ts :: badge and filter agree in BOTH directions, and the kinds OVERLAP :: Corpus content. The case needs a post holding two members the browse wall names as different kinds, and it learns that mapping from the wall itself rather than carrying a second copy of the app's rule. The CI profile is set-cover selected and has such a post; a workstation corpus seeded to a different depth may have none in the sampled window, and there is nothing to observe when every post is one kind.
+
+load tests/standalone/browse-lookahead-1159.spec.ts :: a fast continuous wheel scroll never reaches unrendered feed :: Known load-sensitive since #1248, which named this spec as one of seven that rotate under full-suite parallelism and pass in isolation. It failed all three attempts on the contended push run in #1348 and passed on two quiet runs of the SAME commit, so a red here is a claim about the runner before it is a claim about the lookahead. Check the wall time in the summary first: the contended run took 634s against 402s quiet.

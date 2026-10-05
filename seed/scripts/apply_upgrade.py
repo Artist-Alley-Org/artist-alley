@@ -81,10 +81,18 @@ Usage
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import shutil
 import sys
+from collections import Counter
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import asset_collapse as ac  # noqa: E402
+from title_rule import has_title_separator, normalize_title  # noqa: E402
 
 # Every replacement asset comes from the Kenney All-in-1 pack, which is
 # CC0 across the board. Uniform by construction — asserted in the tests.
@@ -114,6 +122,33 @@ SITE_SOURCE_ROOT = "site"
 # bundle is not on the machine. See kenney_pack_sources.py.
 PACK_SOURCE_ROOT = "pack"
 
+# ⛔ WHO WE MAY SAY "AI" ABOUT (#1260).
+#
+# `ai_provenance` is a claim about HOW THE BYTES WERE MADE, attached to
+# a record that also names a creator — so writing it on someone else's
+# work publishes a false statement about that person. This dataset had
+# four such records: `ai-declarations.site_a.json` and its site_b twin
+# declared `generated` on four Kenney.nl works, in a dataset that ships
+# to Kaggle with `attribution: "Kenney (kenney.nl)"` on the same row.
+# They never reached the archive share, but a re-fold would have applied
+# them, and nothing in this file would have said a word.
+#
+# So the rule is positive, not a deny-list of sources we happen to know:
+# an asset may declare AI only when its own provenance says WE made it.
+# Widening this is a deliberate act with a real creator on the other end
+# of it — which is the point of making it a constant with a name.
+#
+# ⚠️ THE PREFIXES MEAN "WE MADE IT", NOT "AI MADE IT". That distinction
+# only started to matter with #1290. `none` is a declaration too — it says
+# no generative model was involved — and it is subject to the same rule,
+# because asserting it on someone else's work is a false disclosure about
+# that person just as `generated` is. But an artifact we made WITHOUT a
+# model cannot honestly carry "Generated in-house (Stable Diffusion 3.5
+# Large via ComfyUI)", so before #1290 there was no provenance string a
+# truthful `none` could stand on. "Authored in-house" is that string:
+# ours, and silent about AI. Both prefixes gate every state equally.
+AI_DECLARABLE_SOURCE_PREFIXES = ("Generated in-house", "Authored in-house")
+
 # Upgrade doc pairs merged into every profile, in order. `added` is
 # #604/#602's video + internet material; `balance` is #572's per-team
 # fill. Kept as separate files rather than one because they answer
@@ -127,7 +162,38 @@ PACK_SOURCE_ROOT = "pack"
 # than applied by hand to the archive share for the reason this file's
 # docstring is about — the profile is the INPUT, and a manifest edited
 # in place is undone by the next assembly.
-DOC_SETS = ("added", "balance", "pexels", "mature")
+#
+# `generated` is #1260's: 45 images produced in-house with Stable
+# Diffusion 3.5 Large, four per team across all eleven teams, plus the
+# twelve posts that carry them. Each record declares its own
+# `ai_provenance: "generated"` — `merge_added` deep-copies the whole
+# record, so a NEW asset's declaration needs no separate mechanism. That
+# is the difference between this doc set and `ai-declarations.*`, which
+# exists only for declarations ABOUT records the source CSV already
+# owns.
+#
+# ⛔ THE DECLARATION AND THE BYTES ARRIVE TOGETHER, ON PURPOSE. The two
+# `ai-declarations.site_*.json` docs that used to sit beside these were
+# DELETED in #1260 because they declared `generated` on four Kenney.nl
+# works — a false statement about a named real creator, in a dataset
+# that is published. An asset that declares AI must be an asset we
+# actually generated, and the safest way to guarantee that is for the
+# declaration to ride in on the same record as the file.
+# `authored` is #1290's: the two studio plates that let the corpus declare
+# the OTHER two AI states. `generated` was the only one the dataset had —
+# `assisted` and `none` existed solely as soft-deleted test fixtures, so
+# neither had ever been rendered for a human being, and `none` is the one
+# a wrong rendering damages most.
+#
+# ⛔ THEY ARE NEW BYTES BECAUSE RE-LABELLING WAS NOT AVAILABLE. Every
+# other asset in this corpus is a third party's work or one of the 45
+# Stable Diffusion plates that already declare `generated` with their
+# provenance saying so on the same row. Writing `none` onto somebody
+# else's photograph is the disclosure ADR 0094 forbids, and re-declaring
+# an SD plate `assisted` would contradict its own acquisition_source —
+# the #1260 error, exactly. See `authored_plates.py` for how the bytes
+# are made and why each label is true of the artifact it names.
+DOC_SETS = ("added", "balance", "pexels", "mature", "generated", "authored")
 
 _HASH_SUFFIX_RE = re.compile(r"-[0-9a-f]{8}(?:-\d+)?$")
 _CATEGORY_PREFIX_RE = re.compile(
@@ -150,7 +216,10 @@ def title_for(pool_filename: str) -> str:
     stem = _HASH_SUFFIX_RE.sub("", stem)
     stem = _CATEGORY_PREFIX_RE.sub("", stem)
     title = stem.replace("-", " ").strip().capitalize()
-    return f"{title} (vector)" if is_vector else title
+    # The shared title rule (#1319). A pool filename is a slug, so this is
+    # a no-op on every committed record; it is here so a pool file whose
+    # name does carry a comma cannot store one.
+    return normalize_title(f"{title} (vector)" if is_vector else title)
 
 
 def load(path: Path):
@@ -162,10 +231,47 @@ def dump(path: Path, data) -> None:
                     encoding="utf-8")
 
 
-def apply_replacements(profile: list[dict], replacements: list[dict]) -> tuple[int, list[str]]:
-    """Point replaced records at their HQ file. Returns (changed, problems)."""
+def apply_replacements(profile: list[dict],
+                       replacements: list[dict]) -> tuple[int, int, list[str]]:
+    """Point replaced records at their HQ file.
+
+    Returns (processed, modified, problems).
+
+    ⛔ THE TWO COUNTS ARE NOT THE SAME NUMBER, AND CONFLATING THEM BLINDED
+    THE PRE-PUBLISH GATE (#1295). This function used to return one count
+    incremented once per record, unconditionally — so it reported
+    `260/260 records repointed at the HQ pool` whether the profile was
+    already upgraded or 86 byte counts out of date. `--check`'s drift
+    expression therefore could not use it: adding a number that is never
+    zero would have failed every run. The pass was left out of the
+    expression instead, and a profile with drifted replacements passed
+    the gate for as long as it took someone to notice by hand.
+
+    So:
+
+    - **processed** is progress — records this doc names that the profile
+      actually holds. An id the profile lacks is a `problem`, not a
+      processed record, which is why this is not simply `len(replacements)`.
+    - **modified** is drift — records whose CONTENT this pass changed. On
+      an upgraded profile it is 0, and that is what makes it usable in a
+      drift expression.
+
+    ⭐ MODIFIED IS MEASURED OVER THE WHOLE RECORD, not over the list of
+    keys written below. Enumerating the keys would put the drift check and
+    the writes in two places that must be kept in step by hand, and the
+    next key added to this loop would go unwatched exactly the way the
+    whole pass did. A record is modified if it is not byte-identical after
+    the pass, whatever this function grew a write for.
+
+    ⚠️ `_composition` is NOT that comparison and cannot stand in for it.
+    It snapshots the fields the swap must LEAVE ALONE (group, collection,
+    team, workflow …), so `before != after` on it is a violation of the
+    pass's contract, not evidence the record moved — it is 0 on a run that
+    rewrites every record and 0 on a run that rewrites none.
+    """
     by_id = {e["id"]: e for e in profile}
-    changed = 0
+    processed = 0
+    modified = 0
     problems: list[str] = []
     for r in replacements:
         entry = by_id.get(r["id"])
@@ -177,6 +283,8 @@ def apply_replacements(profile: list[dict], replacements: list[dict]) -> tuple[i
         # Snapshot the fields that define composition. Nothing below may
         # touch them; verified immediately after.
         before = _composition(entry)
+        # And the record entire, for the modified count above.
+        before_record = _fingerprint(entry)
 
         # Remember where this record came from BEFORE repointing it.
         # `source_path` has two consumers with different needs:
@@ -203,13 +311,40 @@ def apply_replacements(profile: list[dict], replacements: list[dict]) -> tuple[i
         meta["filename"] = new_name
         meta["license"] = HQ_LICENSE
         meta["attribution"] = HQ_ATTRIBUTION
+        # ⛔ THE HASH HAS TO MOVE WITH THE FILE (#1302). This swapped
+        # every other field that describes the bytes — path, size,
+        # extension, title, licence, filename — and left
+        # `metadata.sha256` describing the file the record USED to be, so
+        # two records per site published the hash of a screenshot they no
+        # longer contain.
+        #
+        # ⚠️ AND IT IS SET, NEVER DROPPED. Dropping it would be honest
+        # about no longer knowing the value and would also block the next
+        # publish: the published manifest HAS the key, so its absence
+        # here reads as MISSING_KEY, which `manifest_guard` classifies as
+        # a LOSS and refuses. `kenney_hq.py sizes --profile` measures
+        # `newSha256` off the built pool for exactly the rows whose
+        # record carries a hash — two per site, not all 916.
+        if r.get("newSha256"):
+            meta["sha256"] = r["newSha256"]
 
         after = _composition(entry)
         if before != after:
             problems.append(
                 f"composition changed for {r['id']}: {before} -> {after}")
-        changed += 1
-    return changed, problems
+        processed += 1
+        if _fingerprint(entry) != before_record:
+            modified += 1
+    return processed, modified, problems
+
+
+def _fingerprint(entry: dict) -> str:
+    """A stable serialisation of a whole profile record.
+
+    Sorted keys so a re-ordered dict is not read as a change, and
+    `ensure_ascii=False` so a non-ASCII title compares as itself.
+    """
+    return json.dumps(entry, sort_keys=True, ensure_ascii=False)
 
 
 def _composition(entry: dict) -> tuple:
@@ -233,16 +368,58 @@ def _composition(entry: dict) -> tuple:
     )
 
 
-def merge_added(profile: list[dict], added: list[dict]) -> tuple[int, int]:
+class UnnormalizedTitle(ValueError):
+    """A newly merged asset record whose title breaks the title rule."""
+
+
+def merge_added(profile: list[dict], added: list[dict],
+                retired_ids: frozenset[str] = frozenset(),
+                sources: dict[str, str] | None = None) -> tuple[int, int, int]:
     """Append records absent from the profile, with copier provenance.
 
-    Returns (appended, repaired). `repaired` counts records that were
-    ALREADY in the profile and gained a `metadata.media_url` from the
-    upgrade doc — see below.
+    Returns (appended, repaired, appended_retired). `repaired` counts
+    records that were ALREADY in the profile and gained a
+    `metadata.media_url` from the upgrade doc: see below.
+
+    ⛔ A DOCUMENTED RETIRED ID IS STILL MERGED, AND COUNTED SEPARATELY.
+    The historical `balance-assets.<site>.json` is not rewritten when a
+    record is retired (it is the record of what the balance pass emitted,
+    and rewriting history to make a check pass is how evidence stops
+    being evidence), so this pass keeps re-appending the retired row on
+    every run. The obvious fix is to drop it from the merge INPUT, and
+    that is the wrong one: if the record never enters, the collapse
+    stage's Pending branch never gets to authenticate it against the
+    document's verbatim `retired_record`, and a stale document could then
+    suppress a record whose content had changed underneath it. So the
+    record is merged, authenticated, and removed by the collapse stage,
+    and only the DRIFT ACCOUNTING excludes it: `appended_retired` is the
+    count the caller subtracts, so `--check` stops calling an intentional
+    retirement a pass that "would change" the profile.
+
+    ⛔ A NEW RECORD WHOSE TITLE HOLDS A COMMA OR AN EM DASH IS REFUSED,
+    NOT NORMALISED (#1319). An upgrade document is historical evidence:
+    rewriting its title here would make the profile disagree with the
+    document that claims to have produced it, and normalising silently
+    would hide that the document's writer skipped the title rule. So the
+    whole merge raises `UnnormalizedTitle` before a single record is
+    appended, naming each offending record and, when `sources` maps its
+    id to one, the document it came from. Records the profile already
+    holds are not new, so the repair branch below never refuses.
     """
     by_id = {e["id"]: e for e in profile}
+    refused = [a for a in added
+               if a["id"] not in by_id
+               and has_title_separator(a.get("title") or "")]
+    if refused:
+        lines = [f"  {(sources or {}).get(a['id'], '(upgrade document)')}: "
+                 f"{a['id']} {a.get('title')!r}" for a in refused]
+        raise UnnormalizedTitle(
+            f"{len(refused)} new asset record(s) carry a comma or an em dash "
+            "in their title, which the title rule forbids:\n"
+            + "\n".join(lines))
     n = 0
     repaired = 0
+    n_retired = 0
     for a in added:
         existing = by_id.get(a["id"])
         if existing is not None:
@@ -267,7 +444,9 @@ def merge_added(profile: list[dict], added: list[dict]) -> tuple[int, int]:
             rec["source_path"] = rec["file_path"]
         profile.append(rec)
         n += 1
-    return n, repaired
+        if a["id"] in retired_ids:
+            n_retired += 1
+    return n, repaired, n_retired
 
 
 def apply_team_corrections(profile: list[dict],
@@ -297,23 +476,541 @@ def apply_team_corrections(profile: list[dict],
     return out
 
 
-def merge_posts(posts: list[dict], added: list[dict]) -> int:
+def apply_ai_declarations(profile: list[dict],
+                          declarations: list[dict]) -> list[tuple[str, str]]:
+    """Write the maker's AI declaration onto named profile records (#1251).
+
+    ⛔ NO SITE SHIPS ONE OF THESE DOCS ANY MORE (#1260), AND THE REASON
+    IS THE WHOLE POINT OF THE FUNCTION. Both that existed — two records
+    per site — declared `generated` on Kenney.nl works: `Brick pack brick
+    medium slope inverted left 4`, `Animated characters retro preview`,
+    `Fish pack terrain dirt top a outline`, `Planets planet01`. Every one
+    of those rows also carries `attribution: "Kenney (kenney.nl)"` and
+    `metadata.acquisition_source: "Kenney.nl"`, and site_a is published
+    to Kaggle.
+
+    HOW IT HAPPENED IS WORTH KEEPING, because the same trap is still
+    open. The docs name records by id and describe them in prose, and
+    the prose was written against the record's PRE-#604 identity —
+    "Progress Blue Border", "Tile 0422 — lighting pass". `apply_replacements`
+    above then swapped those records onto HQ pool files and rewrote
+    `title`, `license` and `attribution` with them, exactly as it is
+    meant to: swap the file, keep the record. So an id that once named a
+    synthetic studio plate now names a Kenney work, the doc's prose still
+    described the old one, and nothing compared the two. An id is not a
+    stable description of what a record CONTAINS in a pipeline whose job
+    is to change what records contain.
+
+    The mechanism is kept because the need is real — a declaration ABOUT
+    a record the source CSV already owns cannot ride in on `merge_added`,
+    and `sanitize_and_assemble.py` regenerates the profiles from
+    `metadata.csv`, so a hand-added key is dropped by the next assembly.
+    What replaced the two docs is CONTENT WE ACTUALLY GENERATED: 45
+    images made in-house with Stable Diffusion 3.5 Large, each declaring
+    itself in `generated-assets.site_a.json`. `audit` now refuses any
+    profile record that declares AI without in-house provenance, whichever
+    route wrote it — see AI_DECLARABLE_SOURCE_PREFIXES.
+
+    IT EXISTS so the browse footer's "Hide AI-made work" toggle has
+    something to hide on a freshly seeded instance: every asset in the
+    source CSV is UNDECLARED (the studio simulation has no notion of
+    generative AI), so without a declared corpus the control is correct,
+    wired end to end, and observably inert — the state that makes a
+    reviewer conclude a feature is broken when it is working.
+
+    WHY A DOC RATHER THAN AN EDIT TO THE PROFILE. Same reason as this
+    file's docstring: `sanitize_and_assemble.py` regenerates the profiles
+    from `metadata.csv`, so a hand-added key is dropped by the next
+    assembly, silently, and the toggle goes inert again with nothing to
+    notice it. The declaration is an input to the pipeline or it does not
+    survive the pipeline.
+
+    WHY IT MODIFIES RATHER THAN APPENDS. `merge_added` brings NEW records
+    in; these are declarations ABOUT records the source CSV already owns,
+    and the whole point is which existing posts they make pure. Nearest
+    neighbour is `apply_team_corrections`, and this borrows its shape.
+
+    ⚠️ THE ASSETS ARE CHOSEN, NOT PICKED. One asset row can be a member
+    of MANY posts — the seeder collapses byte-identical uploads by the
+    same owner, and the catalogue reuses preview plates across posts — so
+    declaring a shared asset moves every post that contains it. Each
+    record here names an asset that belongs to exactly ONE post, and the
+    doc records which post and why, so the blast radius is checkable
+    without a database.
+
+    ⛔ IT DOES NOT TOUCH `metadata.acquisition_source`. That key is what
+    the fixture sweep partitions the asset table on (ADR 0095); an asset
+    the seeder wrote without it is indistinguishable from real uploaded
+    content. A declared seeded asset carries both, which is why this
+    writes one top-level key and nothing else.
+
+    Idempotent by construction: it writes a value, so a second run writes
+    the same value. Returns (id, outcome) per record so the caller can
+    print an id that matched nothing rather than passing over it.
+    """
+    out: list[tuple[str, str]] = []
+    by_id = {e.get("id"): e for e in profile}
+    for d in declarations:
+        aid = d["id"]
+        want = d["ai_provenance"]
+        entry = by_id.get(aid)
+        if entry is None:
+            out.append((aid, "MISSING from profile"))
+            continue
+        before = entry.get("ai_provenance")
+        entry["ai_provenance"] = want
+        out.append((aid, f"{before!r} -> {want!r} ({d.get('role', '?')})"))
+    return out
+
+
+def merge_posts(posts: list[dict], added: list[dict],
+                moved_post_ids: frozenset[str] = frozenset()) -> tuple[int, int]:
+    """Append posts absent from the posts profile.
+
+    Returns (appended, skipped_moved).
+
+    ⛔ `moved_post_ids` HOLDS ONLY THE IDS A COLLAPSE SUBSTITUTION MOVES.
+    A substitution that keeps the post's id (every `asset_group`, whose
+    id derives from the source group_id and not from membership) leaves
+    nothing to exclude: the post is already there under the same id and
+    this pass skips it anyway. A substitution that MOVES the id is
+    different, because the historical document still holds the post under
+    its old id, and re-adding it there would put the same post in the
+    profile twice, under two ids, with two memberships. That is not a
+    state the collapse stage could authenticate: it would be a third
+    state and a hard failure. Skipping is the only safe reading, and it
+    is counted so the reason is visible rather than inferred from a
+    number that did not move.
+    """
     have = {p["id"] for p in posts}
     n = 0
+    n_moved = 0
     for p in added:
         if p["id"] in have:
             continue
+        if p["id"] in moved_post_ids:
+            n_moved += 1
+            continue
         posts.append(json.loads(json.dumps(p)))
         n += 1
-    return n
+    return n, n_moved
+
+
+# `dev` and `demo` are aliases for studio-b and studio-a. The re-copy
+# used to live only in `sanitize_and_assemble`'s full-assembly path, so
+# running THIS script on its own — which is what its own usage block
+# tells you to do — left the alias holding the pre-upgrade profile. That
+# is the #572 drift a second time, by a different route, and only
+# `TestAliasProfilesTrackTheirSource` stood between it and a demo re-seed
+# shipping the wrong records. The mapping lives here, next to the pass
+# that invalidates it, and the assembler imports it.
+PROFILE_ALIASES = (("studio-a", "demo"), ("studio-b", "dev"))
+
+
+def refresh_profile_alias(profile_path: Path) -> str | None:
+    """Re-copy the alias beside a profile this run has just rewritten.
+
+    Returns the alias filename, or None when the profile has no alias.
+    """
+    for stem, alias in PROFILE_ALIASES:
+        if profile_path.name == f"{stem}.assets.json":
+            dst = profile_path.with_name(f"{alias}.assets.json")
+            if dst.is_file():
+                shutil.copyfile(profile_path, dst)
+                return dst.name
+    return None
+
+
+# Fields a curation entry may set. A closed list: the document is
+# hand-recovered from backups, and a typo'd key that silently created a
+# new field on 841 posts would be invisible until something read it.
+CURATABLE_FIELDS = ("created_at", "updated_at", "asset_ids")
+
+
+def _members_digest(asset_ids) -> str:
+    return hashlib.sha1(",".join(sorted(asset_ids or ())).encode()).hexdigest()
+
+
+def apply_post_curation(posts: list[dict],
+                        doc: dict) -> tuple[int, int, list[str], list[str]]:
+    """Reproduce the hand-made feed ordering and hero placement (#1309).
+
+    Returns (posts_curated, values_written, missing, advisories).
+
+    ⛔ THE TWO REPORTS ARE SEPARATED HERE, AT THE SOURCE, BECAUSE THEY
+    NEED OPPOSITE HANDLING AND ONLY THIS FUNCTION CAN TELL THEM APART
+    (#1324). They used to share one `warnings` list, and a caller
+    holding that list has exactly two options: treat every entry as
+    fatal, which makes the documented advisory below stop the run, or
+    treat none of them as fatal, which is what the caller did. That is
+    how 200 hand-made posts were dropped by a run that printed a
+    success line and exited 0.
+
+      `missing`     a curated id the assembler no longer emits. Its
+                    values are LOST, and no later pass can recover
+                    them, so this is a PROBLEM the caller must refuse
+                    on.
+      `advisories`  the membership moved since the curation was
+                    recorded. The curation WAS applied; what it means
+                    may have shifted. Reported, never fatal.
+
+    ⛔ WHY THIS IS NOT `merge_posts`, WHICH IS THE TRAP THIS PASS EXISTS
+    TO AVOID. `apply_upgrade` already discovers `{stem}-posts.{site}.json`
+    documents and hands them to `merge_posts`, so adding the curation
+    under that convention is the obvious move. It does nothing:
+
+        have = {p["id"] for p in posts}
+        for p in added:
+            if p["id"] in have:
+                continue          # ← every curated post is EXISTING
+
+    Every curated post is one the assembler already emitted, so all 841
+    entries would be skipped and the run would report success. A pass
+    that amends in place is the only shape that can work here.
+
+    ⛔ AND IT OVERWRITES, WHICH `apply_manifest_reconcile` MUST NEVER DO.
+    Reproducing a chosen date means replacing a derived one, so the
+    only-add safety property is unavailable. The narrower one that
+    replaces it:
+
+      * only the fields NAMED in an entry are written, from a closed list;
+      * only onto a post that ALREADY EXISTS. A curated id the assembler
+        no longer emits is REPORTED, never created: the curation records
+        values, and a post needs membership and a kind that the document
+        does not carry.
+      * no post is created, deleted or reordered.
+
+    It is idempotent: applying it twice writes the same values.
+
+    ⚠️ THE STALENESS THIS CANNOT FIX, AND SO REPORTS INSTEAD. The
+    document holds values, not reasoning. Nobody recorded WHY a post was
+    dated where it was, so if the assembler later changes a post's
+    membership the curated date and member order go on being applied to
+    something else. Each entry therefore carries `pipeline_members`, the
+    digest of the membership the curation was authored against; a post
+    whose membership has since moved is named in the warnings. That does
+    not say the curation went bad, which nothing can say. It says where a
+    human has to look.
+    """
+    by_id = {p["id"]: p for p in posts}
+    missing: list[str] = []
+    advisories: list[str] = []
+    n_posts = n_values = 0
+    for entry in doc.get("curate", ()):
+        pid = entry["id"]
+        target = by_id.get(pid)
+        if target is None:
+            missing.append(
+                f"{pid}: curated post is not in the assembled profile, so "
+                f"its hand-made values are lost")
+            continue
+        # Compared BEFORE the write, against the membership as the
+        # assembler emits it today.
+        if entry.get("pipeline_members") and \
+                _members_digest(target.get("asset_ids")) != entry["pipeline_members"]:
+            advisories.append(
+                f"{pid}: membership has moved since the curation was "
+                f"recorded; its order and dates may no longer mean what "
+                f"they meant")
+        touched = 0
+        for key in CURATABLE_FIELDS:
+            if key not in entry:
+                continue
+            if target.get(key) != entry[key]:
+                target[key] = json.loads(json.dumps(entry[key]))
+                touched += 1
+        if touched:
+            n_posts += 1
+            n_values += touched
+    return n_posts, n_values, missing, advisories
+
+
+def dedupe_posts(posts: list[dict]) -> tuple[int, list[str]]:
+    """Collapse posts sharing one id. Returns (removed, ids).
+
+    ⛔ WHY THIS IS A PIPELINE PASS AND NOT A HAND EDIT. The assembler
+    derives a roundup's id from `("post", "roundup", team_name,
+    anchor.id)` and a sprint's from `("post", "sprint", project, label,
+    anchor.id)` — neither of which is unique when the generator emits
+    several roundups per team over different asset windows. Measured
+    2026-08-26: eight ids in studio-a covering twelve rows, four in
+    studio-b covering four, and the twins DISAGREE — one says "Props
+    sprint roundup — 8 drops" with eight members, its twin says "— 10
+    drops" with ten.
+
+    A manifest cannot represent both. `aa seed` keys on the stable id, so
+    it takes whichever row it reads last and the other silently never
+    exists; `populate_archive.py` publishes both and pushes the coin toss
+    into the dataset. Removing them here means the next assembly removes
+    them too, which editing the profile by hand would not.
+
+    WHICH ROW SURVIVES. The one with the most members, ties broken by
+    first appearance. A roundup is its membership, so the richest row is
+    the one that loses least, and the rule is a property of the DATA
+    rather than of the order the generator happened to emit — the same
+    reason `apply_replacements` keys on the record and not on position.
+    ⚠️ It deliberately does NOT try to reproduce site_a/posts.json: that
+    file agrees with the profile on membership for all 861 shared ids and
+    disagrees on `created_at` for 840 of them, so it is a different
+    assembly, not a deduplicated copy of this one.
+    """
+    # rank = (member count, -index): most members wins, earliest breaks
+    # the tie because -index is larger for a smaller index.
+    best: dict[str, tuple[int, int]] = {}
+    for i, p in enumerate(posts):
+        pid = p["id"]
+        rank = (len(p.get("asset_ids") or ()), -i)
+        if pid not in best or rank > best[pid]:
+            best[pid] = rank
+    keep = {pid: -rank[1] for pid, rank in best.items()}
+    dup_ids = sorted(pid for pid, n in Counter(p["id"] for p in posts).items() if n > 1)
+    before = len(posts)
+    posts[:] = [p for i, p in enumerate(posts) if keep[p["id"]] == i]
+    return before - len(posts), dup_ids
+
+
+def apply_manifest_reconcile(profile: list[dict], doc: dict,
+                             retired_ids: frozenset[str] = frozenset()
+                             ) -> tuple[int, int, int, list[str], list[str]]:
+    """Carry the archive share's advantage back into the profile (#1275).
+
+    Returns (added_records, filled_values, filled_onto_retired,
+    unknown_fill_ids, retired_fill_ids).
+
+    ⚠️ A FILL NAMING A DOCUMENTED RETIRED ID IS "RETIRED", NOT "UNKNOWN".
+    `manifest-reconcile.<site>.json` is historical and is not rewritten
+    when a record is retired, so its entry for the retired id outlives
+    the record. An unknown fill id is a non-overridable FAIL, and it
+    should be: a mistyped id must not be stepped over. But a fill whose
+    id a collapse document names is accounted for, and reporting it as
+    unknown would make an intentional retirement indistinguishable from a
+    typo. They go on separate channels so the caller can refuse one and
+    report the other.
+
+    ⚠️ A `fill` ENTRY NAMING AN ID THE PROFILE DOES NOT HOLD IS REPORTED
+    ON ITS OWN CHANNEL, NEVER SWALLOWED (#1328). It used to be a bare
+    `continue`, so a mistyped or retired id was indistinguishable from
+    a clean run. The caller decides what to do with the list: this pass
+    can only add, so skipping the entry cannot make the profile worse,
+    and the record it names is exactly what `manifest_guard.py` reports
+    as MISSING_RECORD at publish. That is why the caller treats it as a
+    report rather than a refusal on a normal run, while `--check` must
+    not call a profile clean over it. The counts keep their meaning:
+    an unknown entry fills nothing and adds nothing.
+
+    ⛔ THIS PASS CAN ONLY EVER ADD. It writes a key the profile does not
+    hold, or holds empty; it never replaces a value the profile already
+    has. That is the safety property, and it is why the pass is
+    idempotent and why re-running it cannot undo a later edit.
+
+    ⚠️ IT IS ALSO WHY `file_size_bytes` IS NOT RECONCILED, which looks
+    like an omission and is not. The share's site_a files disagree with
+    the profile on 160 byte counts, and the share's number matches the
+    bytes lying at the share on all 160. That is not enough to act on:
+    the profile's `file_size_bytes` describes the SOURCE file that
+    `populate_archive.py` copies — for 149 of the 160 that is a
+    kenney-hq pool render, and `kenney-hq-replacements.site_a.json`
+    records `newSize` for it — and the copier verifies the record
+    against the source, not against whatever is already at the
+    destination. So "the share matches its own bytes" says the share
+    holds an older pool build, not that the profile is wrong; writing
+    the share's number in would make the very next build refuse its own
+    input. The pool is not on every machine that runs this script, so
+    the disagreement cannot be adjudicated here. It is filed rather than
+    guessed, and `manifest_guard.py` classifies it as CHANGED_VALUE —
+    an edit, not a loss — so it never blocks a publish.
+    """
+    by_id = {a["id"]: a for a in profile}
+    n_added = 0
+    for rec in doc.get("added", ()):
+        if rec["id"] in by_id:
+            continue
+        copied = json.loads(json.dumps(rec))
+        profile.append(copied)
+        by_id[rec["id"]] = copied
+        n_added += 1
+
+    filled = 0
+    filled_retired = 0
+    unknown: list[str] = []
+    retired: list[str] = []
+    for entry in doc.get("fill", ()):
+        target = by_id.get(entry["id"])
+        is_retired = entry["id"] in retired_ids
+        if target is None:
+            if is_retired:
+                retired.append(entry["id"])
+            else:
+                unknown.append(entry["id"])
+            continue
+        before_fill = filled
+        for key, val in entry.items():
+            if key == "id":
+                continue
+            if isinstance(val, dict):
+                sub = target.setdefault(key, {})
+                if not isinstance(sub, dict):
+                    continue
+                for k2, v2 in val.items():
+                    if k2 not in sub or _empty(sub[k2]):
+                        sub[k2] = v2
+                        filled += 1
+                continue
+            if key not in target or _empty(target[key]):
+                target[key] = val
+                filled += 1
+        # ⚠️ THE FILL IS STILL APPLIED, ONLY THE ACCOUNTING DIFFERS. The
+        # document's verbatim `retired_record` is the record as the whole
+        # pipeline produces it, reconcile fills included, so a record
+        # that skipped them would no longer match it and the collapse
+        # stage would refuse the run. What must not happen is these fills
+        # reading as unresolved drift on every single run: the record
+        # they land on is about to be retired, so "N values present at
+        # the share are absent in the profile" would be true forever and
+        # the gate could never come clean.
+        if is_retired:
+            filled_retired += filled - before_fill
+    return n_added, filled, filled_retired, unknown, retired
+
+
+def apply_staged_measurements(profile: list[dict],
+                              doc: list[dict]) -> tuple[int, int, list[str]]:
+    """Make every record describe the bytes the dataset SHIPS (#1301).
+
+    Returns (records_corrected, hashes_recorded, unknown_ids).
+
+    ⛔ AN ENTRY NAMING AN ID THE PROFILE DOES NOT HOLD IS A WRONG INPUT,
+    AND THE CALLER REFUSES ON IT (#1328). This document is the authority
+    for what the site ships, and `measure_staged.py emit` regenerates it
+    from exactly the profile it has to match; an id in it that the
+    profile lacks means the document was measured against a different
+    profile than the one being upgraded. The pass used to `continue`
+    past that in silence. It now returns the ids on their own channel;
+    the counts keep their meaning, and a known record that already
+    matches its entry is still a no-op.
+
+    THE FIELD THIS SETTLES. `file_size_bytes` had two meanings depending
+    on the root — the source file for a copied record, the origin
+    download for a pre-staged one — and eleven video records used the
+    second while the dataset shipped a deliberate two-minute cut. One of
+    them claimed 1,172,428,172 B for a 179,941,478 B file. After this
+    pass the field has ONE meaning everywhere: the shipped bytes. What
+    `metadata.media_url` serves moves to `metadata.origin_bytes`, so the
+    URL survives for attribution and re-fetch without doubling as a
+    description of the ship.
+
+    ⛔ WHY THIS IS SAFE WHERE `apply_manifest_reconcile` REFUSED. That
+    pass declines to take `file_size_bytes` from the share because the
+    share can be STALE against a reproducible source — measured
+    2026-08-27, 392 of site_b's 656 staged pool files disagree with a
+    freshly built pool while the profile agrees with that pool on all
+    656. `measure_staged.py` never measures a source-backed root for
+    exactly that reason. It measures only roots whose bytes are staged
+    AT the destination, where there is no source to be stale against.
+
+    ⛔ `metadata.sha256` IS NOT TOUCHED FOR AN `internet` RECORD. It is
+    the hash of the download (`fetch_gaps.py:1084`), and
+    `sanitize_and_assemble.py:1517` mints the record's id from it —
+    `stable_uuid("asset", "internet", sha256)` — with three timestamps
+    spread off the same value at `:1558-1560`. Re-measuring it against a
+    cut would move asset ids on the next assembly. The emitter records a
+    hash only for the pre-staged roots, where the destination IS the
+    source and no id derives from it.
+    """
+    by_id = {a["id"]: a for a in profile}
+    corrected = hashed = 0
+    unknown: list[str] = []
+    for entry in doc:
+        target = by_id.get(entry["id"])
+        if target is None:
+            unknown.append(entry["id"])
+            continue
+        meta = target.setdefault("metadata", {})
+        if target.get("file_size_bytes") != entry["bytes"]:
+            if "origin_bytes" in entry:
+                meta["origin_bytes"] = entry["origin_bytes"]
+            target["file_size_bytes"] = entry["bytes"]
+            corrected += 1
+        sha = entry.get("sha256")
+        if sha and meta.get("sha256") != sha:
+            meta["sha256"] = sha
+            hashed += 1
+    return corrected, hashed, unknown
+
+
+def _name_ids(ids: list[str], cap: int = 8) -> str:
+    """`a, b, c` or `a, b, ..., h and 4 more`: enough to act on, never a
+    line nobody reads."""
+    shown = ", ".join(ids[:cap])
+    if len(ids) > cap:
+        shown += f" and {len(ids) - cap} more"
+    return shown
+
+
+def _empty(v) -> bool:
+    """`False` and `0` are values, not emptiness — losing `mature: false`
+    loses a declaration."""
+    return v is None or v == "" or v == [] or v == {}
 
 
 def audit(profile: list[dict], posts: list[dict],
           replacements: list[dict], added_assets: list[dict],
-          added_posts: list[dict]) -> list[str]:
+          added_posts: list[dict],
+          collapse: ac.CollapseDocument = ac.EMPTY) -> list[str]:
     """Post-conditions. Every one of these has failed at least once."""
     problems: list[str] = []
     by_id = {e["id"]: e for e in profile}
+
+    # ⛔ THE RETIREMENT POST-CONDITIONS RUN AFTER CURATION, BECAUSE
+    # CURATION CAN WRITE MEMBERSHIP. `CURATABLE_FIELDS` includes
+    # `asset_ids` and 383 of the 841 entries carry it, so a curation
+    # entry could put a retired id back into a post after the collapse
+    # stage has already run and been reported clean. No entry names one
+    # today; that is a fact about the current document, not a property of
+    # the pipeline, and this is what turns it into one.
+    retired_ids = collapse.retired_ids
+    if retired_ids:
+        still = sorted(rid for rid in retired_ids if rid in by_id)
+        if still:
+            problems.append(
+                f"{len(still)} retired record(s) are still in the profile after "
+                f"the collapse stage ({_name_ids(still)}); the app cannot hold "
+                f"them beside their survivor and the seeder would drop them in "
+                f"silence")
+        for p in posts:
+            named = sorted(set(p.get("asset_ids") or ()) & retired_ids)
+            if named:
+                problems.append(
+                    f"post {p['id']} names retired asset(s) {_name_ids(named)}; "
+                    f"the record has no row on a seeded instance, so the post "
+                    f"would silently lose a member")
+        absent = sorted(sid for sid in collapse.survivor_ids if sid not in by_id)
+        if absent:
+            problems.append(
+                f"{len(absent)} collapse survivor(s) are not in the profile "
+                f"({_name_ids(absent)}); a retirement with no survivor is a "
+                f"deletion")
+
+    # ⚠️ A PARTIAL PROXY FOR THE INVARIANT THAT ACTUALLY BITES, AND IT IS
+    # LABELLED ONE. The app's live uniqueness key is
+    # `(owner_user_ref, file_hash)` over the PRODUCED bytes; this key is
+    # `(owner_username, metadata.source_archive.sha256, metadata.render.px)`,
+    # which needs neither pack nor pool and so can run here. Two records
+    # sharing it certainly share an input and a render size, which is how
+    # the one live collision was found. Two records can still produce
+    # identical bytes from different inputs, and this will not say so.
+    # The sufficient check is the publish guard, which hashes the files.
+    for key, ids in sorted(ac.proxy_collisions(profile).items()):
+        owner, sha, px = key
+        problems.append(
+            f"{len(ids)} records owned by {owner} share source_archive.sha256 "
+            f"{sha[:12]}… at render {px}px ({_name_ids(sorted(ids))}). They very "
+            f"likely produce identical bytes, and the app's "
+            f"(owner_user_ref, file_hash) index can hold only one of them: the "
+            f"others get no row, no field values, and vanish from any post that "
+            f"names them. Retire the losers with an asset-collapse document. "
+            f"(This key is a PARTIAL proxy for (owner, produced_byte_sha256); "
+            f"the produced bytes are hashed at publish.)")
 
     ids = [e["id"] for e in profile]
     if len(ids) != len(set(ids)):
@@ -342,6 +1039,13 @@ def audit(profile: list[dict], posts: list[dict],
                             f"{e.get('license')!r}, expected {HQ_LICENSE!r}")
 
     for a in added_assets:
+        # A documented retirement is the one legitimate reason for a
+        # merged record to be absent at the end of the run, and it is
+        # narrow: only an id the collapse document names, only after the
+        # stage authenticated the record it removed against the
+        # document's verbatim copy.
+        if a["id"] in retired_ids:
+            continue
         e = by_id.get(a["id"])
         if e is None:
             problems.append(f"added asset {a['id']} missing from profile")
@@ -404,10 +1108,30 @@ def audit(profile: list[dict], posts: list[dict],
     # An asset nobody posted is invisible on browse. Every added video
     # must be reachable.
     referenced = {aid for p in posts for aid in (p.get("asset_ids") or ())}
-    orphans = [a["id"] for a in added_assets if a["id"] not in referenced]
+    orphans = [a["id"] for a in added_assets
+               if a["id"] not in referenced and a["id"] not in retired_ids]
     if orphans:
         problems.append(f"{len(orphans)} added assets have no post and are "
                         f"unreachable on browse (e.g. {orphans[:2]})")
+
+    # ⛔ NOBODY ELSE'S WORK MAY BE CALLED AI (#1260). Asserted over the
+    # WHOLE profile rather than over the declaration doc, because the
+    # claim can arrive by two routes — `apply_ai_declarations` writing it
+    # onto an existing record, or `merge_added` carrying it in on a new
+    # one — and only the finished profile sees both. See
+    # AI_DECLARABLE_SOURCE_PREFIXES for what this cost the first time.
+    for e in profile:
+        if not e.get("ai_provenance"):
+            continue
+        src = (e.get("metadata") or {}).get("acquisition_source") or ""
+        if not src.startswith(AI_DECLARABLE_SOURCE_PREFIXES):
+            problems.append(
+                f"asset {e['id']} ({e.get('title')!r}) declares "
+                f"ai_provenance={e['ai_provenance']!r} but its provenance is "
+                f"{src!r} — attributed to {e.get('attribution')!r}. An AI "
+                "declaration on work we did not generate is a false statement "
+                "about that creator, and this dataset is published. Either the "
+                "declaration is wrong or the provenance is.")
 
     # Every copier-visible record needs a source root the copier knows.
     known_roots = {"local", "internet", "torrent_import",
@@ -437,6 +1161,8 @@ def main() -> int:
     reps = load(args.upgrades / f"kenney-hq-replacements.{args.site}.json")
     add_a: list[dict] = []
     add_p: list[dict] = []
+    # Which document each added asset came from, so a refusal can name it.
+    add_a_source: dict[str, str] = {}
     for stem in DOC_SETS:
         a = args.upgrades / f"{stem}-assets.{args.site}.json"
         p = args.upgrades / f"{stem}-posts.{args.site}.json"
@@ -444,33 +1170,229 @@ def main() -> int:
         # missing doc must mean "nothing to merge", not a crash — the
         # site_b arm of this script runs on every assembly.
         if a.is_file():
-            add_a += load(a)
+            records = load(a)
+            add_a += records
+            for rec in records:
+                add_a_source.setdefault(rec["id"], a.name)
         if p.is_file():
             add_p += load(p)
     corrections_doc = args.upgrades / f"team-corrections.{args.site}.json"
     corrections = load(corrections_doc) if corrections_doc.is_file() else []
+    declarations_doc = args.upgrades / f"ai-declarations.{args.site}.json"
+    declarations = load(declarations_doc) if declarations_doc.is_file() else []
+    reconcile_doc = args.upgrades / f"manifest-reconcile.{args.site}.json"
+    reconcile = load(reconcile_doc) if reconcile_doc.is_file() else {}
+    staged_doc = args.upgrades / f"staged-measurements.{args.site}.json"
+    staged = load(staged_doc) if staged_doc.is_file() else []
+    curation_doc = args.upgrades / f"post-curation.{args.site}.json"
+    curation = load(curation_doc) if curation_doc.is_file() else {}
+
+    # ⛔ LAYER A1, BEFORE THE DOCUMENT INFLUENCES ANY PASS. A document
+    # that is present and unusable is a REFUSAL, never an absence: it is
+    # the only record of which record may be removed and of what that
+    # removal costs, so "ignore it and continue" would let a run write a
+    # profile the document was supposed to govern. A document that is
+    # simply not there is no evidence, and every id stays where it is.
+    collapse_path = ac.collapse_document_in(args.upgrades, args.profile)
+    collapse = ac.EMPTY
+    if collapse_path is not None and collapse_path.is_file():
+        try:
+            collapse = ac.load_collapse_document(
+                collapse_path, profile_name=args.profile.name)
+        except ac.CollapseError as e:
+            print(f"error: {e}\n"
+                  "  Refusing before any pass: an asset-collapse document that "
+                  "cannot be validated is not evidence, and \"unusable\" must "
+                  "not be read as \"nothing to retire\". Nothing was written.",
+                  file=sys.stderr)
+            return 2
+
     profile = load(args.profile)
     posts = load(args.posts)
 
     before_assets, before_posts = len(profile), len(posts)
 
     corrected = apply_team_corrections(profile, corrections)
-    changed, problems = apply_replacements(profile, reps)
-    n_assets, n_repaired = merge_added(profile, add_a)
-    n_posts = merge_posts(posts, add_p)
-    problems += audit(profile, posts, reps, add_a, add_p)
+    # AFTER the team corrections and BEFORE the replacements, for the
+    # same reason the corrections run first: apply_replacements takes a
+    # composition snapshot and asserts "swap the file, keep the record".
+    # A declaration is part of the record, so writing it first means that
+    # assertion covers it too.
+    declared = apply_ai_declarations(profile, declarations)
+    n_processed, n_modified, problems = apply_replacements(profile, reps)
+    try:
+        n_assets, n_repaired, n_assets_retired = merge_added(
+            profile, add_a, collapse.retired_ids, add_a_source)
+    except UnnormalizedTitle as e:
+        print(f"error: {e}\n"
+              "  Refusing before anything is written. An upgrade document is "
+              "historical evidence and is not normalised here: fix the writer "
+              "that produced it and emit the record with a hyphenated title.",
+              file=sys.stderr)
+        return 2
+    n_posts, n_posts_moved = merge_posts(posts, add_p, collapse.moved_post_ids)
+    # LAST of the asset passes. The reconcile document is the archive
+    # share's advantage (#1275), and the share reflects a library that
+    # has already been through replacement, correction and merge — so
+    # applying it before them would let a later pass overwrite the very
+    # values it exists to restore.
+    n_reconciled, n_filled, n_filled_retired, reconcile_unknown, \
+        reconcile_retired = apply_manifest_reconcile(
+            profile, reconcile, collapse.retired_ids)
+    # AFTER the reconcile, and last of all: the reconcile fills keys the
+    # profile lacks, and one of the keys it can fill is `metadata.sha256`
+    # on a pre-staged record. This pass is the one that knows whether
+    # that hash describes the file the site actually ships, so it has to
+    # be able to overwrite what the reconcile just put there.
+    n_staged, n_hashed, staged_unknown = \
+        apply_staged_measurements(profile, staged)
+    n_deduped, dup_ids = dedupe_posts(posts)
+    # ⛔ LAYER A2 AND THE MUTATION, HERE AND NOT LAST (#1319).
+    #
+    # AFTER every pass that can introduce or duplicate the objects it
+    # judges: `merge_added` and `apply_manifest_reconcile` are how the
+    # retired record ENTERS a regenerated profile, `merge_posts` is how
+    # the affected post enters, and `dedupe_posts` decides which row of a
+    # duplicated id survives. Before all of those, a fresh assembly is
+    # legitimately holding neither object and is in neither state.
+    #
+    # BEFORE `apply_post_curation`, which is the ordering correction.
+    # That pass compares each entry's `pipeline_members` digest against
+    # the membership AS IT STANDS AT THAT MOMENT and appends a
+    # "membership has moved" advisory on a mismatch. With the collapse
+    # running after it, the digest would be compared against the OLD
+    # membership on every fresh assembly and this deliberate, documented,
+    # structurally authenticated substitution would print the advisory
+    # that exists to flag the UNdocumented kind. Running the stage first
+    # means the curation sees the corrected membership, its digest
+    # describes the corrected membership, and the advisory keeps its
+    # meaning: unrelated drift still fires it, and nothing is waived.
+    try:
+        collapsed = ac.apply_collapse(profile, posts, collapse)
+    except ac.CollapseError as e:
+        print(f"error: {e}\n"
+              "  Refusing before any deletion and before anything is written. A "
+              "collapse document may only convert Pending into Applied; a third "
+              "state means the data moved underneath the document, and "
+              "normalising it would delete or rewrite something nobody "
+              "authorised.", file=sys.stderr)
+        return 2
+    # AFTER the dedupe, and after every pass that can add a post. The
+    # curation amends posts that already exist, so anything that creates
+    # or removes one has to have finished: curating a row the dedupe is
+    # about to drop writes into a post that never ships.
+    n_curated, n_curated_values, curation_missing, curation_advisories = \
+        apply_post_curation(posts, curation)
+    problems += audit(profile, posts, reps, add_a, add_p, collapse)
+    # A declaration naming an id this profile does not hold is a
+    # PROBLEM, not a shrug. The failure it guards against is silent by
+    # nature — the toggle keeps working, the wall keeps rendering, and
+    # there is simply nothing to hide — so a mistyped or retired id has
+    # to stop the run rather than be passed over in the log.
+    problems += [f"ai declaration {aid}: {outcome}"
+                 for aid, outcome in declared if outcome.startswith("MISSING")]
+    # ⛔ AND SO IS A CURATED POST THE ASSEMBLER NO LONGER EMITS (#1324).
+    # Same argument, one document over, and it had the same hole: the
+    # curation is the ONLY copy of the owner's hand-made feed ordering
+    # and hero placement, so a value this pass cannot place is a value
+    # that no longer exists anywhere. Measured 2026-08-27, a rebuild on
+    # top of #1322 drops 200 of the 841 curated posts, and before this
+    # line the run wrote all three profiles and exited 0.
+    #
+    # ⚠️ ONLY THE `missing` HALF. The `advisories` half says a curated
+    # post's membership has moved, which is a place for a human to look
+    # and NOT a fault: the curation was applied, and the pass documents
+    # that nothing can say whether it went bad. Joining the whole list
+    # would make that documented advisory fatal.
+    problems += [f"curation {m}" for m in curation_missing]
+    # ⛔ AND A STAGED MEASUREMENT FOR A RECORD THE PROFILE DOES NOT HOLD
+    # (#1328). The document is the authority for the bytes the site
+    # ships and is emitted from the very profile it must match, so an
+    # id it names that the profile lacks is a wrong input, not a gap to
+    # step over. It has a tool-supported remedy, which the line names.
+    #
+    # The reconcile document's unknown ids deliberately do NOT join this
+    # list. That pass can only add, so a skipped entry cannot damage the
+    # profile, and the state it points at is adjudicated by
+    # manifest_guard.py at publish. They are reported on their own
+    # summary line below, and they keep --check from reporting clean.
+    problems += [f"staged measurement {aid}: the profile holds no record "
+                 f"with this id; staged-measurements.{args.site}.json was "
+                 f"measured against a different profile. Regenerate it with "
+                 f"measure_staged.py emit --profile <this profile> (#1328)"
+                 for aid in staged_unknown]
 
     print(f"site        : {args.site}", file=sys.stderr)
-    print(f"replacements: {changed}/{len(reps)} records repointed at the HQ pool",
-          file=sys.stderr)
+    print(f"replacements: {n_processed}/{len(reps)} records repointed at the "
+          f"HQ pool ({n_modified} modified)", file=sys.stderr)
     for desc, n in corrected:
         print(f"correction  : {n:5d}  {desc}", file=sys.stderr)
-    print(f"assets      : {before_assets} -> {len(profile)} (+{n_assets})",
-          file=sys.stderr)
-    print(f"posts       : {before_posts} -> {len(posts)} (+{n_posts})",
-          file=sys.stderr)
+    for aid, outcome in declared:
+        print(f"ai-declare  : {aid}  {outcome}", file=sys.stderr)
+    print(f"assets      : {before_assets} -> {len(profile)} "
+          f"(+{n_assets} merged, +{n_reconciled} reconciled, "
+          f"-{collapsed.records_removed} retired)", file=sys.stderr)
+    print(f"posts       : {before_posts} -> {len(posts)} "
+          f"(+{n_posts} merged, -{n_deduped} duplicate id row(s))", file=sys.stderr)
+    print(f"reconcile   : {n_filled} value(s) filled from the share (#1275)"
+          + (f", {n_filled_retired} of them onto a record this run then "
+             f"retires" if n_filled_retired else ""), file=sys.stderr)
+    # Its own summary line, beside the count of what worked, for the
+    # same reason the curation loss count has one: a warning tail is a
+    # shape a reader skims and an automated caller cannot see.
+    # ⭐ WHAT THIS LINE DOES AND DOES NOT PROVE. The stage is Layer A:
+    # the document is structurally valid and every object it names is in
+    # one of the two states it describes. Nothing here has seen a byte.
+    # The produced files are hashed at publish, by populate_archive.py,
+    # against the source roots it takes; that is the only place a
+    # retirement is source-authenticated.
+    if collapse.entries:
+        print(f"collapse    : {len(collapse.entries)} documented retirement(s) "
+              f"in {collapse_path.name}; structurally validated and "
+              f"state-checked (Layer A). {collapsed.records_removed} record(s) "
+              f"removed, {collapsed.posts_rewritten} post membership(s) "
+              f"rewritten, {collapsed.posts_renamed} post id(s) moved. "
+              f"Produced bytes are verified at publish, not here.",
+              file=sys.stderr)
+    if reconcile_retired:
+        print(f"reconcile   : {len(reconcile_retired)} fill entry(ies) name an "
+              f"intentionally retired record and were skipped: "
+              f"{_name_ids(reconcile_retired)}", file=sys.stderr)
+    if n_assets_retired or n_posts_moved:
+        print(f"collapse    : {n_assets_retired} historical merge row(s) and "
+              f"{n_posts_moved} historical post row(s) name a retired object; "
+              f"merged and authenticated, then retired, and excluded from drift",
+              file=sys.stderr)
+    if reconcile_unknown:
+        print(f"reconcile   : {len(reconcile_unknown)} fill entry(ies) name "
+              f"an id the profile does not hold and were SKIPPED (#1328): "
+              f"{_name_ids(reconcile_unknown)}", file=sys.stderr)
     print(f"media_url   : {n_repaired} existing record(s) backfilled (#602)",
           file=sys.stderr)
+    print(f"staged      : {n_staged} record(s) re-pointed at the bytes the "
+          f"site ships, {n_hashed} hash(es) recorded (#1301)", file=sys.stderr)
+    if staged_unknown:
+        print(f"staged      : {len(staged_unknown)} entry(ies) name an id the "
+              f"profile does not hold (#1328): {_name_ids(staged_unknown)}",
+              file=sys.stderr)
+    print(f"curation    : {n_curated_values} hand-made value(s) reapplied to "
+          f"{n_curated} post(s) (#1309)", file=sys.stderr)
+    # The loss count goes on its own summary line, beside the count of
+    # what worked. It used to appear only as the first eight entries of
+    # a warning tail that ended in "… and 192 more", which is a shape a
+    # reader skims past and an automated caller cannot see at all.
+    if curation_missing:
+        print(f"curation    : {len(curation_missing)} curated post(s) are "
+              f"ABSENT from the assembled profile; their hand-made values "
+              f"are lost", file=sys.stderr)
+    for w in curation_advisories[:8]:
+        print(f"  ⚠️  {w}", file=sys.stderr)
+    if len(curation_advisories) > 8:
+        print(f"  ⚠️  … and {len(curation_advisories) - 8} more",
+              file=sys.stderr)
+    if dup_ids:
+        print(f"duplicate id(s) collapsed: {', '.join(dup_ids[:8])}"
+              f"{' …' if len(dup_ids) > 8 else ''}", file=sys.stderr)
 
     if problems:
         print(f"\n{len(problems)} PROBLEM(S):", file=sys.stderr)
@@ -481,13 +1403,103 @@ def main() -> int:
         return 1
 
     if args.check:
-        # In --check mode nothing may have needed doing.
-        drift = n_assets or n_posts or n_repaired or any(n for _, n in corrected)
-        if drift:
-            print("\nFAIL: profile is not upgraded — re-assembly would drop "
-                  f"{n_assets} assets and {n_posts} posts, and {n_repaired} "
-                  "record(s) are missing the media_url that makes them "
-                  "re-fetchable. Run without --check.", file=sys.stderr)
+        # In --check mode nothing may have needed doing. EVERY pass above
+        # is a term here — a pass missing from this list is a pass the
+        # pre-publish gate cannot see, which is what #1295 was.
+        #
+        # ⭐ AND EACH TERM CARRIES ITS OWN SENTENCE. The old message was
+        # one sentence naming all seven counts, so a run where a single
+        # pass had drifted still recited "would drop 0 assets and 0
+        # posts, 0 record(s) are missing the media_url …" and the reader
+        # had to find the non-zero number in it. A gate that reports six
+        # things that did not happen alongside the one that did is
+        # training people to skim it.
+        drifted = [
+            (n_staged,
+             f"{n_staged} record(s) describe bytes the site does not ship — "
+             f"staged-measurements.{args.site}.json disagrees with the "
+             "profile's file_size_bytes (#1301)"),
+            (n_hashed,
+             f"{n_hashed} pre-staged record(s) carry no hash of the file "
+             "they ship, or the wrong one — a re-fetch cannot refuse an "
+             "origin without it (#1301)"),
+            (n_modified,
+             f"{n_modified} replacement record(s) disagree with "
+             f"kenney-hq-replacements.{args.site}.json — a file_path, byte "
+             "count, title or licence in the profile is stale (#1295)"),
+            # ⛔ RETIRED IDS ARE EXCLUDED FROM THE COUNTED DRIFT, NOT
+            # FROM THE MERGE. The record is still merged and still
+            # authenticated against the document before it is removed
+            # (see merge_added); what is subtracted here is only the
+            # ACCOUNTING, so an intentional retirement stops reading as
+            # "re-assembly would drop them" on every run.
+            (n_assets - n_assets_retired,
+             f"{n_assets - n_assets_retired} added asset(s) are not in the "
+             "profile; re-assembly would drop them"),
+            # ⛔ THE RE-ADDED ROW IS NOT DRIFT IN THE COMMITTED PROFILE.
+            # `merge_added` re-appends the retired record from the
+            # historical balance document on EVERY run, so the merged
+            # state is always Pending for it and a term counting the
+            # merged state could never come clean. What the gate is
+            # asking is whether the COMMITTED profile still holds it, so
+            # the rows this run itself appended are subtracted. A post
+            # that still names the retired id is not subtracted: nothing
+            # re-adds a member to an existing post, so a Pending post IS
+            # committed drift.
+            (collapsed.pending_assets - n_assets_retired + collapsed.pending_posts,
+             f"{collapsed.pending_assets - n_assets_retired + collapsed.pending_posts} object(s) named by "
+             f"{collapse_path.name if collapse_path else 'the collapse document'} "
+             "are still in the Pending state: the retired record is in the "
+             "profile, or a post still names it (#1319)"),
+            (n_posts,
+             f"{n_posts} added post(s) are not in the posts profile — "
+             "their assets would be unreachable on browse"),
+            (n_repaired,
+             f"{n_repaired} record(s) are missing the metadata.media_url "
+             "that makes them re-fetchable (#602)"),
+            (n_reconciled,
+             f"the share's reconcile document holds {n_reconciled} asset(s) "
+             "the profile does not (#1275)"),
+            (n_filled - n_filled_retired,
+             f"{n_filled - n_filled_retired} value(s) present at the share are "
+             "absent or empty in the profile (#1275)"),
+            (n_deduped,
+             f"{n_deduped} post row(s) still share an id with another — "
+             "one of each pair would silently never exist"),
+            (sum(n for _, n in corrected),
+             f"{sum(n for _, n in corrected)} record(s) still sit on the "
+             "team the source CSV put them on (#572)"),
+            # #1324. Curation was the one pass missing from this list,
+            # which is precisely the hole the comment above describes:
+            # a rebuild that reverted the owner's feed ordering to the
+            # assembler's derived dates passed the pre-publish gate.
+            (n_curated,
+             f"{n_curated} post(s) still carry pipeline-derived dates or "
+             f"member order rather than the hand curation recorded in "
+             f"post-curation.{args.site}.json (#1309)"),
+        ]
+        fired = [msg for n, msg in drifted if n]
+        if fired:
+            print("\nFAIL: profile is not upgraded — "
+                  f"{len(fired)} pass(es) would change it:", file=sys.stderr)
+            for msg in fired:
+                print(f"  - {msg}", file=sys.stderr)
+            print("Run without --check.", file=sys.stderr)
+        # ⛔ A RECONCILE ENTRY THE PROFILE CANNOT PLACE IS NOT A "WOULD
+        # CHANGE" TERM, AND THE CHECK IS STILL NOT CLEAN (#1328). Running
+        # without --check would skip the entry again and change nothing,
+        # so it cannot share the list above or its remedy line. It gets
+        # its own verdict and its own remedy: fix the document, or the
+        # profile, and the guard says which record to look at.
+        if reconcile_unknown:
+            print(f"\nFAIL: manifest-reconcile.{args.site}.json fills "
+                  f"{len(reconcile_unknown)} id(s) the profile does not "
+                  f"hold: {_name_ids(reconcile_unknown)} (#1328)",
+                  file=sys.stderr)
+            print("The entries are skipped, so a run without --check does "
+                  "not clear this. Restore the record to the profile or "
+                  "drop the entry from the document.", file=sys.stderr)
+        if fired or reconcile_unknown:
             return 1
         print("\nOK: profile already reflects the upgrade.", file=sys.stderr)
         return 0
@@ -499,6 +1511,9 @@ def main() -> int:
     dump(args.profile, profile)
     dump(args.posts, posts)
     print(f"\nwrote {args.profile}\nwrote {args.posts}", file=sys.stderr)
+    alias = refresh_profile_alias(args.profile)
+    if alias:
+        print(f"wrote {args.profile.with_name(alias)} (alias)", file=sys.stderr)
     return 0
 
 

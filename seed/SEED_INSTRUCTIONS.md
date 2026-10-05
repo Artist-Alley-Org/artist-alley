@@ -28,6 +28,134 @@ See the manifest in the Kaggle dataset for the exact shape.
 The paths shown in the examples below are **one maintainer's local mounts**.
 Substitute your own — nothing here depends on those specific locations.
 
+### Where the maintained dataset lives (#1319)
+
+⛔ **The old source dataset is gone, and it is not coming back.** Maintainer
+docs and older scripts refer to a `$DATASET_SRC` tree at
+`/mnt/d/Projects/unraid_management/artist-alley_dataset`. It has been
+permanently retired and no longer exists. **The maintained datasets are the
+published trees** under `/mnt/blackbox_archives/datasets/artist_alley`
+(`site_a`, `site_b`), and for the `local` source root they are the **only**
+copy of the bytes: measured on the committed profiles, 0 of 696 site_a and 0 of
+552 site_b `local` records carry a `metadata.media_url` or a
+`metadata.source_archive`, so there is nothing to re-fetch or re-derive them
+from.
+
+Authority is per source root:
+
+| root | authority |
+|---|---|
+| `hq`, `pack` | the external Kenney pack / the attested `metadata.source_archive` member. Still re-derivable. The destination never authenticates itself: a record that disagrees with its source fails the run, and a missing source fails it too, except that `pack` can recover through the authenticated `source_archive` re-fetch. |
+| `local` | **archive-authoritative (preserved)**: a frozen snapshot of the published tree, attested by an external hash manifest. |
+| `internet` | **destination-authoritative**: the shipped file at the destination is the artifact. The internet cache (`--internet-source`) holds the origin download and fills a destination only when that download is the recorded size, so a trimmed file already in place is kept. This is an authority rule, not pre-staging: the copier still reads the cache for `internet`. |
+| `site`, `torrent_import` | pre-staged at the destination, as before: there is no source, so the bytes are verified where they sit. |
+
+Every file `populate_archive.py` would copy, re-fetch, keep or refuse is named
+in its output, in a dry run exactly as in a real run, so a dry run's copy set
+can be reconciled path by path before the real run (#1474).
+
+What that means for an operator running the publish tooling:
+
+* `populate_archive.py` needs **`--preserved-roots`** to treat `local` that
+  way, and the mode is **never inferred**. Omitting `--local-source` without
+  the flag is an error, because a fallback cannot tell a decision from a typo.
+* In that mode `--local-source` is **refused as meaningless**, and
+  `metadata.csv` is **never regenerated**. It changes only the way a
+  `--csv-transform` document written *before* the run says it may. Pointed at
+  the archive, the old regeneration matched 0 of 907 site_a rows and 0 of 1,206
+  site_b rows and wrote a header-only file.
+* `groups.csv` is left untouched and any byte change fails the preservation
+  check. ⛔ Do not "correct" its `asset_count`: it describes the original
+  dataset, not the cut a site ships.
+* A source root that **is**, contains, or sits inside `--dest` is refused
+  outright. The published archive is the thing being written, so it cannot also
+  be the thing being read as authority.
+
+#### Three trees, and every command names all three
+
+A preserved operation has **three** trees, and they are not interchangeable:
+
+| tree | what it is |
+|---|---|
+| `$LIVE/site_a` | the published site that serves. What the operation protects. |
+| `$STAGING/site_a` | `populate_archive --dest`, the tree the publish writes. In a direct publish it **is** live, which is allowed and has to be stated. |
+| `$FROZEN/site_a` | the **frozen pre-operation** copy, attested by an external hash manifest. |
+
+⛔ **The frozen snapshot is the only acceptable source** for the `metadata.csv`
+transform and for `preserved_archive` authentication alike. The live site is
+not frozen: it can change under the run, so authenticating against it proves
+only that the archive agrees with itself, and a transform whose "original"
+hash describes unfrozen bytes is a statement about nothing. Checking the
+snapshot against `--dest` alone does **not** catch this, which is why
+`--live-site` is required.
+
+Every command names all three trees so the boundary is **proved** rather than
+documented: the snapshot must be neither of the other two (equal to or nested
+with, in either direction), evidence lands outside all three, and scratch
+lands outside all three and outside the evidence. A missing tree is a
+refusal, because an unprovable boundary must not read as a satisfied one.
+
+```bash
+# 1. attest a frozen snapshot, immediately after taking it (bytes only)
+python3 seed/scripts/preserved_archive.py snapshot-manifest \
+    --snapshot $FROZEN/site_a \
+    --live-site $LIVE/site_a --staging $STAGING/site_a \
+    --out $EVIDENCE/site_a.snapshot-manifest.json
+
+# 2. record the ONE way metadata.csv may change, BEFORE the run, from the
+#    FROZEN CSV and the collapse document whose retirements authorise it
+python3 seed/scripts/preserved_archive.py csv-transform \
+    --snapshot $FROZEN/site_a \
+    --live-site $LIVE/site_a --staging $STAGING/site_a \
+    --collapse-document seed/upgrades/asset-collapse.studio-a.json \
+    --out $EVIDENCE/site_a.csv-transform.json
+
+# 3. build the authored plates externally, from the attested snapshot
+python3 seed/scripts/authored_plates.py build \
+    --generated-source $FROZEN/site_a/images/aurora-generated \
+    --snapshot $FROZEN/site_a \
+    --live-site $LIVE/site_a --staging $STAGING/site_a \
+    --evidence $EVIDENCE \
+    --out $SCRATCH/aurora-authored
+
+# 4. publish
+python3 seed/scripts/populate_archive.py --preserved-roots \
+    --internet-source seed/internet-fetched \
+    --hq-source $POOL --pack-source "$PACK" \
+    --profile seed/profiles/studio-a.assets.json \
+    --posts   seed/profiles/studio-a.posts.json \
+    --csv-transform     $EVIDENCE/site_a.csv-transform.json \
+    --live-site         $LIVE/site_a \
+    --frozen-snapshot   $FROZEN/site_a \
+    --snapshot-manifest $EVIDENCE/site_a.snapshot-manifest.json \
+    --dest $STAGING/site_a --dry-run
+
+# 5. verify, read only
+python3 seed/scripts/verify_site.py check \
+    --profile seed/profiles/studio-a.assets.json \
+    --posts   seed/profiles/studio-a.posts.json \
+    --site    $STAGING/site_a \
+    --baseline $EVIDENCE/site_a.baseline.json \
+    --csv-transform $EVIDENCE/site_a.csv-transform.json
+```
+
+Every evidence document lives **outside** all three trees, and the emit
+commands refuse an `--out` inside any of them.
+
+#### The transform's authority is the collapse document's
+
+⛔ **A transform's own arithmetic is not authority.** It states its own before
+and after hashes, so one that drops an extra row and recomputes its own
+expectations is perfectly self-consistent. Before any `metadata.csv` write the
+publisher proves that the transform's removals are **exactly** the current
+validated collapse document's retirements, intersected with the rows the
+frozen pre-operation CSV actually holds, and that the document it was built
+from is the document in hand (by content digest, profile and retirement set).
+A stale transform, a transform from another document or profile, an extra row
+nobody retired, and a documented retirement quietly left in place all refuse
+**before** anything is written. Re-emit the transform whenever the collapse
+document changes; it costs one command.
+
 The loader is **`aa seed`** — a subcommand of the app binary (#321).
 It writes **straight to postgres + the storage backend** via the app's
 own service layer: no running server, no admin login, no HTTP. It reads
@@ -179,14 +307,25 @@ HTTP round-trips and the separate timestamp-backfill pass):
    collection membership + typed field values. A byte-identical asset
    the same owner already holds is collapsed by the
    `(owner_user_ref, file_hash)` unique index — the same refusal the
-   app gives a duplicate re-upload — so site_a's 1,947 manifest rows
-   yield **1,946** assets (see #339).
+   app gives a duplicate re-upload.
+
+   Measured 2026-09-22 on the committed corpus: `studio-a.assets.json`
+   holds **2,006** rows, all ids distinct, and carries **no** same-owner
+   produced-byte duplicate, so it yields **2,006** assets. It held one
+   such duplicate until #1319 retired it by document. The live
+   pre-republish `site_a/MANIFEST.json` is still the earlier build at
+   **2,005** rows; the profile is the source of truth (ADR 0098) and
+   those two converge at the next publish.
 8. **applyPosts** — post row + members (asset_ids) + tags + collection
    linkage. A post whose referenced assets were all dropped (dedup or
-   `--limit-per-extension`) is skipped; site_a lands **847** posts from
-   859 `posts.json` entries — 12 of those entries repeat an id already
-   seen (8 distinct ids, one of them five times), and a repeat inserts
-   once and is counted once.
+   `--limit-per-extension`) is skipped.
+
+   Measured 2026-09-22 on the committed corpus: `studio-a.posts.json`
+   holds **863** posts, all ids distinct (the duplicate-id rows #1275
+   describes are collapsed by `apply_upgrade.py`'s `dedupe_posts` pass
+   before the profile is written), and **0** of them lose every member,
+   so all 863 land. The live pre-republish `site_a/posts.json` is the
+   earlier build at 861.
 9. **applyComments** — forge a reviewer comment for each asset with
    non-empty `review_notes`, threaded onto the first post containing
    that asset. Deterministic comment UUID → idempotent.
@@ -255,12 +394,24 @@ the before-boot path is faster end-to-end.
 
 - **Don't drop Layer B from site_b.** That's the local dev set; it
   keeps the IP/personal content. Only site_a is Layer A only.
-- **Don't hand-dedupe the catalogue by content hash.** site_a + site_b
-  deliberately carry byte-identical files for CAS dedup testing.
-  `aa seed` inserts every catalogue asset and lets the storage layer +
-  the `(owner_user_ref, file_hash)` unique index collapse same-owner
-  duplicates exactly as a real re-upload would — that's the behaviour
-  under test, not something to pre-empt.
+- **Don't hand-dedupe CROSS-OWNER identical bytes.** site_a + site_b
+  deliberately carry byte-identical files owned by DIFFERENT users for
+  CAS dedup testing: two asset rows over one storage object, which is
+  the storage layer doing its job. That is the behaviour under test and
+  it must not be pre-empted.
+- **A SAME-OWNER produced-byte duplicate is a catalogue defect, and it
+  is retired by document.** It is the opposite case, and #1319 is what
+  separated them. Identity is `(owner_user_ref, file_hash)` and no
+  `DedupBehavior` value relaxes it (ADR 0011), so the second record can
+  never exist: no id, no declaration, no size, no field values, and the
+  post naming it silently ships with one member fewer. `aa seed` counts
+  it `deduped` and carries on; the verifier fails it and names the
+  survivor. The corpus retires the loser onto that survivor with
+  `seed/upgrades/asset-collapse.<stem>.json`, which enumerates every
+  value the retirement costs and whose produced bytes are re-derived
+  from the source roots at publish (`seed/scripts/asset_collapse.py`,
+  ADR 0097). Do not fix one by editing a profile or a historical
+  upgrade document by hand: the next assembly undoes it.
 - **Don't follow the `external_id` field.** It's the original CSV-row
   ID (`AA-XXXX`) — preserved as metadata; the primary key is the `id`
   UUID.

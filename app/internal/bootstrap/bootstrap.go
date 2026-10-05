@@ -160,12 +160,26 @@ func Run(ctx context.Context, pool *pgxpool.Pool, cfg Config, logger *slog.Logge
 	// the container in a restart loop. Re-assigning the Admin role
 	// to the existing user IS the recovery action the operator would
 	// have taken manually, so just do it.
+	//
+	// `created` separates the two branches for the ANNOUNCE at the end,
+	// and the distinction is not cosmetic. The password picked above is
+	// only ever APPLIED on the create branch — the recovery branch
+	// re-assigns a role to a user whose existing password is untouched.
+	// Announcing it anyway told the operator to log in with a credential
+	// that had never been written, and in the secure (random) mode it
+	// also OVERWROTE bootstrap-admin.txt with that dead password,
+	// destroying the real one if it was still there. That was previously
+	// rare — the recovery branch needed something to have wiped
+	// user_roles first — but `aa seed --reset` now runs this path on
+	// every reset by design (#1274), so it had to stop lying.
+	created := false
 	var adminRef int64
 	existing, err := qtx.FindUserByUsername(ctx, &username)
 	switch {
 	case err == nil:
 		adminRef = existing.Ref
 	case errors.Is(err, pgx.ErrNoRows):
+		created = true
 		userRow, err := qtx.CreateUser(ctx, auth.CreateUserParams{
 			Username:  &username,
 			Password:  &hash,
@@ -216,6 +230,20 @@ func Run(ctx context.Context, pool *pgxpool.Pool, cfg Config, logger *slog.Logge
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("bootstrap: commit: %w", err)
+	}
+
+	if !created {
+		// Recovery, not first boot. Say what actually changed and name
+		// nothing the operator could mistake for a new credential.
+		if logger != nil {
+			logger.LogAttrs(ctx, slog.LevelWarn, "bootstrap.admin_role.restored",
+				slog.String("username", username),
+				slog.String("detail",
+					"the existing admin held no system.admin capability; the global Admin role "+
+						"was re-assigned. The account's password is UNCHANGED."),
+			)
+		}
+		return nil
 	}
 
 	announce(ctx, logger, mode, password, cfg.AdminPath)

@@ -39,6 +39,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/mscrnt/artist-alley/app/internal/config"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // envOr is shared with schema_freshness_test.go in this package.
@@ -60,7 +61,7 @@ func freshDatabase(t *testing.T) config.Config {
 		DBPort:     port,
 		DBUser:     envOr("AA_DB_USER", "artist_alley"),
 		DBPassword: pwd,
-		DBName:     envOr("AA_DB_NAME", "artist_alley"),
+		DBName:     testdb.Name(t),
 		DBSSLMode:  "disable",
 	}
 

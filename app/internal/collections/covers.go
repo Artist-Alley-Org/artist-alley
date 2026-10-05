@@ -28,16 +28,31 @@ import (
 // "save someone else's post" — and nothing taught the cover composer
 // about them, so a post-only collection had no cover source at all.
 //
+// #1236 finished the trade the other way round: the mosaic now composes
+// from `collection_posts` ALONE. ADR 0091 made a collection hold posts,
+// #1161 retired bare-asset membership as a publication path and #1185
+// took the asset section off the collection page — after which this was
+// the last surface still painting those rows. A tile is a summary of
+// what the collection contains, and for most of the seeded corpus the
+// bare-asset half outnumbered the post half two to one, so the picture a
+// visitor saw was mostly content the collection no longer held.
+//
+// That was never a LEAK — the picture plane below gated the retired half
+// exactly as it gates the surviving one, so a bare asset only ever
+// painted a tile for someone already entitled to its pixels. It was the
+// tile describing a model the product no longer has.
+//
 // # Why this is composed on the SERVER
 //
 // It used to be a per-card fetch of /collections/{id}/resources from a
 // client-side store (web/src/lib/stores/collectionCovers.svelte.ts,
-// deleted with this change). Three reasons, and only the third is about
-// request count:
+// deleted with #1026; the endpoint itself went with #1236). Three
+// reasons, and only the third is about request count:
 //
-//  1. ORDERING across two member lists cannot be done correctly on the
-//     client without fetching BOTH in full. Interleaving by `added_at`
-//     needs every candidate, not the first page of one table.
+//  1. ORDERING across the member list cannot be done correctly on the
+//     client without fetching it in full — and while there were two
+//     lists, interleaving them by `added_at` needed every candidate
+//     rather than the first page of one table.
 //  2. The CROWDING fix needs to know which members are renderable, and
 //     the read predicate lives here. The old card slotted a restricted
 //     member as a blank tile: four restricted members at the head of a
@@ -48,18 +63,24 @@ import (
 // # The withholding shape, and what it is NOT
 //
 // A member this caller may not picture is ABSENT — it does not occupy a
-// slot. That is deliberately different from
-// /collections/{id}/resources, which returns a restricted asset as a
-// VISIBLE placeholder so the reader can see a restriction exists and
-// #881's "request access" has something to attach to. A blank quarter of
-// a mosaic attaches to nothing; it just costs a picture. The posts
-// listing already answers with absence for the same kind of reason
-// ("absence is the honest answer here").
+// slot. A blank quarter of a mosaic attaches to nothing; it just costs a
+// picture. The posts listing answers with absence for the same kind of
+// reason ("absence is the honest answer here"). The placeholder shape —
+// a withheld member rendered VISIBLY so #881's "request access" has
+// something to attach to — was the member GRID's contract, never this
+// one, and it retired with `GET /collections/{id}/resources` in #1236.
 //
 // Note that the old client store did NOT leak restricted pictures — it
 // crowded them out. This change must keep that true while fixing the
 // crowding, which is what
 // TestCollectionCovers_WithheldMemberContributesNothing pins.
+//
+// ⚠️ AN EMPTY MOSAIC IS NOT A REGRESSION OF #1026. A collection with no
+// posts now yields no tiles where its bare assets used to paint one, and
+// the collection it opens to is empty, so that is the honest answer. The
+// defect #1026 fixed was a collection with renderable members drawing
+// nothing (and, before it, four blank quarters crowding them out); the
+// card's deliberate empty state is a different thing and stays.
 
 // coverCount is how many tiles a mosaic holds. CollectionCard lays out
 // 1 / 2 / 3 / 4 members and ignores anything past the fourth, so asking
@@ -68,9 +89,9 @@ const coverCount = 4
 
 // ComposeCovers returns, for each requested collection, either the
 // curator's CHOSEN cover as the sole entry (#1027) or — when there is
-// none, or this caller may not picture it — the first `coverCount`
-// members whose picture this caller may render, in the curator's order,
-// interleaved across both membership kinds.
+// none, or this caller may not picture it — the first `coverCount` post
+// covers this caller may render, in the curator's order (#1236: posts
+// are the only membership kind that paints a tile).
 //
 // # Why the override lives HERE and not in the callers
 //
@@ -88,8 +109,7 @@ const coverCount = 4
 // second copy of the rule.
 //
 // Each asset appears AT MOST ONCE per collection, at its earliest
-// position — one asset is reachable by several routes (pinned directly
-// and carried as a post's cover, or shared by two posts) and the same
+// position — two posts in one collection can share a cover, and the same
 // picture twice is not a summary. See the DISTINCT ON below.
 //
 // Collections with no renderable member are ABSENT from the map rather
@@ -317,21 +337,29 @@ WITH override AS (
                       AND sv.variant_key = 'col')` + previewFrag + matureAssetFrag + `
 ),
 members AS (
-    -- The asset half. No EntityAsset predicate spliced, matching
-    -- ListCollectionResourcesPageGated: the picture plane below is
-    -- strictly tighter than that predicate's asset branch. Soft-delete
-    -- is the one conjunct it does not carry, so it stays inline.
-    SELECT cr.collection_id, cr.added_at, cr.sort_order, cr.asset_id
-      FROM collection_resources cr
-     WHERE cr.collection_id = ANY($1::UUID[])
-       AND cr.pinned = TRUE
-       AND (cr.expires_at IS NULL OR cr.expires_at > NOW())
-    UNION ALL
-    -- The post half. A post contributes its FEED COVER, and
+    -- POSTS ONLY (#1236). A post contributes its FEED COVER, and
     -- cover_thumbnail_asset_id wins over cover_asset_id because that is
     -- what the Post schema already specifies for a feed card — the tile
     -- and the card should show the same picture. NULL when a post has
     -- neither; the JOIN below drops it.
+    --
+    -- There used to be a second half here, UNION ALLed above this one:
+    -- pinned collection_resources rows, contributing their asset
+    -- directly. #1161 removed bare-asset membership as a publication
+    -- path and #1185 removed the collection page's asset section, so
+    -- those rows stopped being members of anything visible — and this
+    -- was the last surface still drawing them. The tile is a summary of
+    -- what the collection CONTAINS, so it must not be painted from
+    -- pictures that appear nowhere inside it. It was never a leak (the
+    -- picture plane below gated the half exactly as it gates this one);
+    -- it was the tile describing a model the product no longer has.
+    --
+    -- ⚠️ A collection whose only members are bare assets therefore has
+    -- no cover source and is ABSENT from the map — the same answer as a
+    -- genuinely empty collection, which is what it now is. That is the
+    -- honest tile, and CollectionCard's empty state is what renders it;
+    -- see the #1026 note in the header for why that state must stay a
+    -- deliberate placeholder rather than four blank quarters.
     --
     -- #1147's post ROW plane rides the post predicate: posts.mature is
     -- derived by trigger from the members, so a mature post can carry a
@@ -339,7 +367,11 @@ members AS (
     -- feed hides that post; a tile standing in for it here would put the
     -- hidden member back on screen.
     SELECT cp.collection_id, cp.added_at, cp.sort_order,
-           COALESCE(p.cover_thumbnail_asset_id, p.cover_asset_id)
+           -- Aliased explicitly. It used to inherit the name from the
+           -- asset half this UNION ALLed with, and #1236 removed that
+           -- half: an unnamed COALESCE leaves the CTE with a generated
+           -- column name and every reference below fails 42703.
+           COALESCE(p.cover_thumbnail_asset_id, p.cover_asset_id) AS asset_id
       FROM collection_posts cp
       JOIN posts p ON p.id = cp.post_id
      WHERE cp.collection_id = ANY($1::UUID[])
@@ -348,12 +380,13 @@ members AS (
 ),
 renderable AS (
     -- DISTINCT ON collapses one asset reached by several routes to a
-    -- single tile, at its EARLIEST position. A collection may pin an
-    -- asset directly and also hold a post whose cover is that same
-    -- asset, and two posts may share a cover; the mosaic is a visual
-    -- summary and the same picture twice summarises nothing. It has to
-    -- happen HERE, before the rank, or a duplicate would eat a slot and
-    -- the mosaic would come back short.
+    -- single tile, at its EARLIEST position. Two posts in the same
+    -- collection may share a cover — the same file posted twice, or a
+    -- repost — and the mosaic is a visual summary, so the same picture
+    -- twice summarises nothing. It has to happen HERE, before the rank,
+    -- or a duplicate would eat a slot and the mosaic would come back
+    -- short. (It also used to collapse the second route #1236 removed:
+    -- an asset pinned directly AND carried as a post's cover.)
     SELECT DISTINCT ON (m.collection_id, m.asset_id)
            m.collection_id, m.asset_id, m.added_at, m.sort_order,
            EXISTS (SELECT 1 FROM storage_variants sv2
@@ -375,10 +408,11 @@ ranked AS (
     SELECT r.collection_id, r.asset_id, r.preview_available,
            ROW_NUMBER() OVER (
                PARTITION BY r.collection_id
-               -- added_at first: it is the ONE axis comparable across
-               -- the two membership tables, and it is the order the
-               -- curator built. sort_order breaks ties within a kind;
-               -- asset_id makes the result stable.
+               -- added_at first: it is the order the curator built, and
+               -- it stayed the lead key after #1236 dropped the second
+               -- membership table (it was the ONE axis comparable across
+               -- the two). sort_order breaks ties; asset_id makes the
+               -- result stable.
                ORDER BY r.added_at ASC, r.sort_order ASC, r.asset_id ASC
            ) AS rn
       FROM renderable r

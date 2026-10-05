@@ -28,7 +28,7 @@ func TestListWorkflowStates_PostDomain(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	reg := cache.NewRegistry(pool, logger)
@@ -99,7 +99,7 @@ func TestListWorkflowStates_RequiresAuth(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := workflow.NewHandler(pool, logger, nil) // no cache needed for the rejection path
@@ -122,7 +122,7 @@ func TestListWorkflowStates_EmptyDomain(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := workflow.NewHandler(pool, logger, nil)

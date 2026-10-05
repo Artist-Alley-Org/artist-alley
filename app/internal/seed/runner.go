@@ -54,6 +54,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
@@ -118,6 +119,21 @@ type Options struct {
 	// this flag is how an operator says "the renderer changed, rebuild
 	// them".
 	ForcePreviews bool
+
+	// Fixtures seeds the dogfood suite's one-time substrate — the four
+	// login-capable principals and the admin-owned plates the specs used
+	// to create for themselves and could never delete (#1270). Off by
+	// default: these accounts have committed passwords and the public
+	// demo must not have them. See fixtures.go.
+	Fixtures bool
+
+	// HashPassword persists a plaintext password on a seeded user. Nil
+	// leaves the column NULL, which is right for the 31 fictional
+	// artists — they are actors on posts and comments, not accounts —
+	// and refused by AdminHandler.CreateUser the moment a password is
+	// actually supplied, so a missing hasher fails loudly instead of
+	// writing plaintext or silently dropping the credential.
+	HashPassword PasswordHasher
 }
 
 // Counts is the verify-phase tally.
@@ -131,6 +147,14 @@ type Counts struct {
 	Follows     int
 	Likes       int
 	Featured    int
+
+	// What the posts phase found it could NOT apply (#1320). Row counts
+	// alone cannot carry this: a reseed over a changed catalogue reports
+	// the same post count as a reseed over an unchanged one, because the
+	// rows are all there. It is the values inside them that are stale.
+	// Zero on a first seed and on a clean resume, which is the contract.
+	PostsDrifted  int
+	PostsOrphaned int
 }
 
 // Runner executes the seed phases against a live pool + storage.
@@ -168,6 +192,10 @@ type Runner struct {
 	// asset field values applyAssetFields threw away, per reason per
 	// code (#807). Summarised at the end of the asset phase.
 	fieldDrops *fieldDropTally
+
+	// what the posts phase found it could not correct (#1320). Set by
+	// applyPosts; nil before that phase runs.
+	postDrift *postDrift
 }
 
 type fieldMeta struct {
@@ -189,7 +217,7 @@ func NewRunner(pool *pgxpool.Pool, storageSvc *storage.Service, opts Options) *R
 		pool:    pool,
 		q:       New(pool),
 		storage: storageSvc,
-		admin:   NewAdminHandler(pool, nil, nil, nil, nil, nil),
+		admin:   NewAdminHandler(pool, nil, nil, nil, opts.HashPassword, nil),
 		// Enqueue-only Service: the seeder never runs jobs, it just
 		// inserts rows for the serving process's pool to drain. A nil
 		// Registry is fine — Enqueue doesn't consult it.
@@ -236,6 +264,14 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 	if err != nil {
 		return Counts{}, err
 	}
+	// Before the shrinks, and long before any bytes move: a manifest
+	// that declares AI over somebody else's work must not reach the
+	// database (#1260). See AIDeclarableSourcePrefix for why this is
+	// checked here as well as in apply_upgrade.py — the two read
+	// different files, and the manifest is the one the repo cannot see.
+	if err := cat.validateAIDeclarations(); err != nil {
+		return Counts{}, err
+	}
 	if r.opts.Profile == ProfileCI {
 		depth := r.opts.CoverageDepth
 		if depth <= 0 {
@@ -276,6 +312,11 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 		{"applyLikes", r.applyLikes},
 		{"applyComments", r.applyComments},
 		{"applyPostComments", r.applyPostComments},
+		// Last, and a no-op unless --fixtures asked for it. It depends on
+		// the admin ref, the workflow states and the asset types, and on
+		// nothing the dataset carries — so it sits after the corpus
+		// rather than inside it. See fixtures.go.
+		{"applyTestFixtures", r.applyTestFixtures},
 	}
 	for _, p := range phases {
 		start := time.Now()
@@ -285,7 +326,25 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 		}
 		r.log.Info("seed.phase.done", "phase", p.name, "elapsed", time.Since(start).String())
 	}
-	return r.verify(ctx)
+	counts, err := r.verify(ctx)
+	if err != nil {
+		return counts, err
+	}
+	return r.withDriftCounts(counts), nil
+}
+
+// withDriftCounts carries the posts phase's report onto the run's own
+// summary, because the summary is the last thing printed and the last
+// thing read. A warning that scrolled past ten thousand log lines,
+// followed by a final line reporting nothing but success, is still a run
+// that reads as clean (#1320).
+func (r *Runner) withDriftCounts(c Counts) Counts {
+	if r.postDrift == nil {
+		return c
+	}
+	c.PostsDrifted = r.postDrift.drifted
+	c.PostsOrphaned = len(r.postDrift.orphans)
+	return c
 }
 
 // --- phase: resolve lookups -------------------------------------------
@@ -372,6 +431,30 @@ func (r *Runner) applyUsers(ctx context.Context, cat *catalogues) error {
 // --- phase: teams -----------------------------------------------------
 
 func (r *Runner) applyTeams(ctx context.Context, cat *catalogues) error {
+	// ⛔ SERIALIZED AGAINST IN-FLIGHT AUTHORITY READERS (#1173, #1119).
+	//
+	// `SeedInsertTeamClosureSelf` below writes `team_closure`, which is
+	// what expands every TEAM-SCOPED grant to the teams it actually
+	// reaches. Changing it changes effective authority for anyone
+	// holding such a grant, without touching a grant row — and `aa seed`
+	// is documented to run against a live instance.
+	//
+	// ⭐ THE PHASE IS THE SEMANTIC UNIT, not the individual insert. The
+	// closure is a HIERARCHY: it is only the shape the catalogue
+	// describes once every team's rows are in. Locking per statement
+	// would leave a reader free to resolve a scoped grant against a
+	// half-built hierarchy, which is a real and different expansion.
+	//
+	// The lock lives HERE rather than around `Run`, which used to hold
+	// it across assets and posts too, and it lives in the phase rather
+	// than in the caller so that any caller gets it — including a test
+	// that drives this phase directly.
+	release, err := auth.AcquireStructuralAuthorityLock(ctx, r.pool, r.log)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	for _, t := range cat.Teams {
 		slug := slugify(t.Name)
 		id, err := r.insertTeam(ctx, t.ID, slug, t.Name)
@@ -595,8 +678,11 @@ func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 			ID:           cid,
 			OwnerUserRef: r.adminRef,
 			Name:         c.Name,
-			Description:  c.Name + " — seeded collection",
-			Visibility:   vis,
+			// No em dash (#1306): this string is rendered on the
+			// browse wall under every collection tile, so it is
+			// seeded COPY, not an internal label.
+			Description: "Seeded collection: " + c.Name,
+			Visibility:  vis,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -669,6 +755,10 @@ func (r *Runner) applyFeatured(ctx context.Context, cat *catalogues) error {
 
 func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 	inserted, deduped, missing, queued, willSkip := 0, 0, 0, 0, 0
+	// Assets already present from an earlier seed. Reported separately
+	// from `deduped` because they mean opposite things: a resumed row IS
+	// this manifest entry, a deduped one never had a row of its own.
+	resumed := 0
 	for i, a := range cat.Assets {
 		abs := filepath.Join(r.opts.SiteRoot, a.FilePath)
 		f, err := os.Open(abs)
@@ -720,20 +810,70 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 			// their flag is derived by the 00052/00054 triggers off
 			// membership (and off the cover), which is why applyPosts
 			// has nothing to say about it.
-			Mature:    a.Mature,
-			CreatedAt: created,
-			UpdatedAt: updated,
+			Mature: a.Mature,
+			// The maker's AI declaration, written verbatim and NULL
+			// when the catalogue says nothing (#1251 slice 3, ADR
+			// 0094). NULL is UNDECLARED, not `none`: writing `none`
+			// over a work nobody was asked about would fabricate that
+			// maker's disclaimer, which is the one thing the nullable
+			// column exists to prevent.
+			//
+			// Posts are NOT written from here — `ai_provenance` and
+			// `ai_pure` are both derived by the 00060/00061 triggers off
+			// the post's contributors (members UNION the two covers),
+			// same as `mature` above.
+			AiProvenance: a.AiProvenance,
+			CreatedAt:    created,
+			UpdatedAt:    updated,
 		}
 		id, err := r.q.SeedInsertAsset(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Either the id already exists (resumed run) or the
-			// (owner_user_ref, file_hash) unique index collapsed a
-			// byte-identical sibling this owner already holds — e.g.
-			// the same texture exported next to both the OBJ and FBX
-			// of a model. That collapse is the CORRECT behaviour: it
-			// mirrors the real app refusing a re-upload of identical
-			// bytes by the same owner. Skip the duplicate; posts that
-			// reference only it fall out as no-member posts.
+			// TWO different conflicts land here and they need opposite
+			// handling — see SeedGetAssetIDByID for the full story.
+			//
+			//   id pkey          a RESUMED run. The row is this entry.
+			//                    Register it, or every later phase acts
+			//                    as though the asset does not exist.
+			//   owner+file_hash  a byte-identical sibling the same owner
+			//                    already holds — e.g. the texture
+			//                    exported beside both the OBJ and the
+			//                    FBX of a model. The collapse is CORRECT
+			//                    (it mirrors the app refusing a re-upload
+			//                    of identical bytes by the same owner)
+			//                    and there is no row under this id, so
+			//                    skipping is right.
+			//
+			// ⛔ CORRECT PER ROW, AND STILL A CATALOGUE DEFECT WHEN THE
+			// TWO ENTRIES ARE MEANT TO BE DIFFERENT ASSETS (#1319). The
+			// collapse is right for a texture exported beside both the
+			// OBJ and the FBX of one model: one file, named twice. It is
+			// WRONG as a way to carry two catalogue records that each
+			// claim their own id, title, declaration and field values,
+			// because only one of them gets a row: the loser's values are
+			// never written, and `postSubjectFor` cannot resolve it, so
+			// the post naming it silently ships with one member fewer.
+			// Nothing here can tell the two cases apart, and nothing here
+			// should try: a catalogue MUST NOT contain a same-owner
+			// produced-byte duplicate, the seed verifier fails exactly
+			// that, and the corpus retires the loser by document
+			// (seed/scripts/asset_collapse.py, ADR 0097 COLLAPSED_RECORD).
+			//
+			// Treating both as "skip" is what made an incremental
+			// re-seed drop members: `applyPosts` resolves members from
+			// the map this loop fills, so a post added to the catalogue
+			// after the first seed lost every member that already
+			// existed, and a post whose members ALL existed vanished as
+			// a no-member post. Found driving #1290 — the mixed-state
+			// post seeded with one of its two members.
+			existing, gErr := r.q.SeedGetAssetIDByID(ctx, params.ID)
+			if gErr == nil {
+				r.assets[a.ID] = existing
+				resumed++
+				continue
+			}
+			if !errors.Is(gErr, pgx.ErrNoRows) {
+				return fmt.Errorf("recover asset %s: %w", a.ID, gErr)
+			}
 			deduped++
 			continue
 		}
@@ -798,7 +938,20 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 				return fmt.Errorf("asset tag %s: %w", a.ID, err)
 			}
 		}
-		// collection membership
+		// Collection membership — a `collection_resources` row, written
+		// DELIBERATELY and kept after #1236 retired every rendered
+		// surface that read it.
+		//
+		// It is not what publishes the asset: applyCollectionPostBackfill
+		// below authors a post for every member the dataset left bare,
+		// and THAT is what the collection page and the cover mosaic
+		// draw. This row is the dataset's own record of which collection
+		// an asset belongs to, and two live consumers still resolve
+		// "assets inside this collection" through it — the `collection:`
+		// search facet and the reindex job's ScopeCollection. Dropping
+		// the write would make a seeded install's scoped search answer
+		// empty. See the header note in collections/handler.go for the
+		// full consumer list.
 		if a.CollectionName != "" {
 			if cid, ok := r.collections[a.CollectionName]; ok {
 				if err := r.q.SeedInsertCollectionResource(ctx, SeedInsertCollectionResourceParams{
@@ -819,7 +972,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 	}
 	r.logFieldDrops()
 	r.log.Info("seed.assets", "inserted", inserted,
-		"deduped", deduped, "missing", missing,
+		"deduped", deduped, "resumed", resumed, "missing", missing,
 		"previews_queued", queued,
 		"previews_force", r.opts.ForcePreviews,
 		"previews_will_skip", willSkip)
@@ -1157,20 +1310,30 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 	for _, a := range cat.Assets {
 		assetTiers[a.ID] = sensitivity(a.SensitivityTier)
 	}
+	// Read the wall back BEFORE writing anything (#1320). Everything
+	// this phase would write is `ON CONFLICT DO NOTHING`, so a post the
+	// database already holds is one this run cannot correct; the index
+	// is what lets it say which ones and on what. See postdrift.go.
+	index, err := r.loadPostIndex(ctx)
+	if err != nil {
+		return err
+	}
+	drift := newPostDrift()
+	// Every id THIS catalogue names, canonicalised. A pre-existing row
+	// in here is one a later pass may still touch; one that is not is
+	// abandoned. See noteOrphan.
+	named := make(map[string]struct{}, len(cat.Posts))
+	for _, p := range cat.Posts {
+		named[uuidString(parseUUID(p.ID))] = struct{}{}
+	}
+
 	inserted, skipped, madePublic := 0, 0, 0
 	for _, p := range cat.Posts {
-		// Resolve members from inserted assets (apply.py "any member" rule).
-		var members []pgtype.UUID
-		var coverManifestID string
-		for _, aid := range p.AssetIDs {
-			if sid, ok := r.assets[aid]; ok {
-				if len(members) == 0 {
-					coverManifestID = aid
-				}
-				members = append(members, sid)
-			}
-		}
-		if len(members) == 0 {
+		// The state this phase is about to write, gathered in ONE place
+		// so the drift comparison below and `aa seed-verify` (#1319)
+		// both read exactly the values the insert uses.
+		subject, ok := r.postSubjectFor(p, assetTiers)
+		if !ok {
 			skipped++
 			continue
 		}
@@ -1178,31 +1341,67 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			authorRef = r.adminRef
 		}
-		created, updated := r.rowTimes(p.CreatedAt, p.UpdatedAt)
-		cover := members[0]
-		vis := postVisibility(p, assetTiers[coverManifestID])
+		vis := subject.visibility
 		if vis == "public" {
 			madePublic++
 		}
+		members := subject.members
+		tags := subject.tags
+		rowID := parseUUID(p.ID)
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
-			ID:            parseUUID(p.ID),
+			ID:            rowID,
 			AuthorUserRef: authorRef,
-			Title:         orDefault(p.Title, "Untitled"),
-			Description:   p.Description,
+			Title:         subject.title,
+			Description:   subject.description,
 			Visibility:    vis,
-			CoverAssetID:  cover,
+			CoverAssetID:  subject.cover,
 			StateID:       r.postStates["published"],
 			TeamID:        r.teamIDForName(p.TeamName),
-			CreatedAt:     created,
-			UpdatedAt:     updated,
+			CreatedAt:     subject.created,
+			UpdatedAt:     subject.updated,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				// Already inserted in a prior run.
-				r.posts[p.ID] = parseUUID(p.ID)
+				// A row already stands under this id. `ON CONFLICT (id)`
+				// names exactly one constraint, so unlike the asset path
+				// there is only ONE cause to tell apart here and the id
+				// is knowable without a recovery query.
+				//
+				// Registering it is load-bearing and always was: every
+				// later phase resolves posts out of this map. What was
+				// missing is the rest of this sentence, which is that
+				// the run just declined to apply the catalogue to that
+				// post and used to say nothing at all about it.
+				r.posts[p.ID] = rowID
+				drift.resumed++
+				// Keyed on the CANONICAL form, not the catalogue's
+				// spelling. `uuid.Parse` accepts braces, a urn: prefix
+				// and upper case; the index is built from
+				// `uuidString`, which only ever emits one of them. A
+				// raw string lookup would miss and report nothing,
+				// which is this whole issue's failure mode in
+				// miniature.
+				if have, ok := index.byID[uuidString(rowID)]; ok {
+					drift.note(uuidString(rowID), subject.compare(have))
+				}
 				continue
 			}
 			return fmt.Errorf("insert post %s: %w", p.ID, err)
+		}
+		// A CLEAN insert, and the wall may already carry this content
+		// under a different id (#1310 moved 618 post ids across the
+		// three catalogues). Only a pre-existing row this catalogue no
+		// longer names is an orphan; a sibling it still names is an
+		// ordinary post that happens to frame the same assets, and 76
+		// of the published wall's 861 posts are exactly that. See
+		// noteOrphan.
+		if digest := memberDigest(members); digest != "" {
+			mine := uuidString(rowID)
+			if other, ok := index.byMembers[digest]; ok && other != mine {
+				if _, stillNamed := named[other]; !stillNamed {
+					drift.noteOrphan(mine, other)
+				}
+			}
 		}
 		r.posts[p.ID] = id
 		for i, m := range members {
@@ -1212,7 +1411,10 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 				return fmt.Errorf("post asset %s: %w", p.ID, err)
 			}
 		}
-		for _, tag := range dedupStrings(p.Tags) {
+		// The SAME slice the comparison above captured, not a second
+		// call to dedupStrings. Two computations of "the tags this post
+		// gets" is one of them going stale.
+		for _, tag := range tags {
 			if err := r.q.SeedInsertPostTag(ctx, SeedInsertPostTagParams{PostID: id, Tag: tag}); err != nil {
 				return fmt.Errorf("post tag %s: %w", p.ID, err)
 			}
@@ -1228,8 +1430,57 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		}
 		inserted++
 	}
-	r.log.Info("seed.posts", "inserted", inserted, "skipped_no_members", skipped, "public", madePublic)
+	r.log.Info("seed.posts", "inserted", inserted,
+		"resumed", drift.resumed, "drifted", drift.drifted,
+		"orphaned", len(drift.orphans),
+		"skipped_no_members", skipped, "public", madePublic)
+	r.postDrift = drift
+	if msg := drift.summary(); msg != "" {
+		fmt.Print(msg)
+	}
 	return nil
+}
+
+// postSubjectFor is the state applyPosts WOULD write for one catalogue
+// post: members resolved from the inserted assets (apply.py's "any
+// member" rule), cover = first resolved member, visibility from the
+// post's own tier and its cover's, timestamps clamped, tags deduped,
+// collection by name. ok is false for a post with no resolvable member,
+// which applyPosts skips and which therefore has no row to compare.
+//
+// It exists as ONE function because two readers depend on these exact
+// values: the insert in applyPosts and the drift comparison beside it
+// (#1320), and now the read-only verifier (`aa seed-verify`, #1319),
+// which has to ask "what would the seed have written?" without writing.
+// Two computations of "the row this post gets" is one of them going
+// stale, which is the shape #1320 was filed about.
+func (r *Runner) postSubjectFor(p manifestPost, assetTiers map[string]string) (postSubject, bool) {
+	var members []pgtype.UUID
+	var coverManifestID string
+	for _, aid := range p.AssetIDs {
+		if sid, ok := r.assets[aid]; ok {
+			if len(members) == 0 {
+				coverManifestID = aid
+			}
+			members = append(members, sid)
+		}
+	}
+	if len(members) == 0 {
+		return postSubject{}, false
+	}
+	created, updated := r.rowTimes(p.CreatedAt, p.UpdatedAt)
+	return postSubject{
+		title:           orDefault(p.Title, "Untitled"),
+		description:     p.Description,
+		visibility:      postVisibility(p, assetTiers[coverManifestID]),
+		cover:           members[0],
+		created:         created,
+		updated:         updated,
+		members:         members,
+		tags:            dedupStrings(p.Tags),
+		collection:      r.collections[p.CollectionName],
+		datesComparable: r.datesSurviveTheClamp(p.CreatedAt, p.UpdatedAt),
+	}, true
 }
 
 // postVisibility decides a seeded post's visibility tier (#1176).
@@ -1276,9 +1527,13 @@ func postVisibility(p manifestPost, coverTier string) string {
 // asset the dataset left bare (#1185).
 //
 // A collection renders POSTS and nothing else now. `collection_resources`
-// is still written by applyAssets and still feeds the cover mosaic, but
-// nothing draws it as content — so an asset pinned to a collection that no
-// post in that collection frames simply vanishes from the page. Measured
+// is still written by applyAssets — deliberately, see the note there —
+// but since #1236 it feeds NOTHING that is drawn: the cover mosaic and
+// the featured rail's item count were the last two surfaces reading it,
+// and both now compose from `collection_posts` alone. So an asset pinned
+// to a collection that no post in that collection frames vanishes from
+// the page AND from the tile, which is why this backfill matters more
+// than it did when the mosaic still papered over it. Measured
 // against site_a that is 37 of Internet Reference's 118 members: the
 // dataset's own generator groups loose assets into bundles keyed on
 // (collection, team, asset_type) and leaves a tail behind, and 36 of those
@@ -1314,19 +1569,35 @@ func postVisibility(p manifestPost, coverTier string) string {
 // Post ids are stableUUID-derived, so a re-run re-composes the same posts
 // and lands on SeedInsertPost's ON CONFLICT path rather than duplicating
 // the wall.
-func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogues) error {
-	// covered[collection name] = manifest asset ids already framed by a
-	// post PINNED IN THAT COLLECTION. Keyed on the collection because the
-	// same asset can be framed by a post filed elsewhere, and that post
-	// does not put it on this collection's wall.
+// backfillBundle is one collection post applyCollectionPostBackfill
+// composes: the bare assets of one collection sharing a group id (or a
+// single asset with none).
+type backfillBundle struct {
+	collection string
+	members    []manifestAsset
+}
+
+// backfillPostID is the stable id of the backfill post for one bundle
+// key. One function, so the phase that mints it and the verifier that
+// expects it cannot disagree.
+func backfillPostID(key string) uuid.UUID {
+	return stableUUID("collection-post-backfill", key)
+}
+
+// backfillCoverage is covered[collection name] = manifest asset ids
+// already framed by a post PINNED IN THAT COLLECTION. Keyed on the
+// collection because the same asset can be framed by a post filed
+// elsewhere, and that post does not put it on this collection's wall.
+//
+// Only posts that were actually INSERTED count (r.posts): applyPosts
+// skips a post whose members all fell out, and a skipped post frames
+// nothing.
+func (r *Runner) backfillCoverage(cat *catalogues) map[string]map[string]struct{} {
 	covered := make(map[string]map[string]struct{}, len(r.collections))
 	for _, p := range cat.Posts {
 		if p.CollectionName == "" {
 			continue
 		}
-		// Only posts that were actually INSERTED count. applyPosts skips a
-		// post whose members all fell out, and a skipped post frames
-		// nothing.
 		if _, ok := r.posts[p.ID]; !ok {
 			continue
 		}
@@ -1342,15 +1613,22 @@ func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogue
 			set[aid] = struct{}{}
 		}
 	}
+	return covered
+}
 
-	type bundle struct {
-		collection string
-		members    []manifestAsset
-	}
+// planCollectionPostBackfill is the EXACT set of backfill posts this
+// seeded state produces: only assets that materialized (r.assets), only
+// collections that resolve (r.collections), only assets no materialized
+// catalogue post covers in that collection, bundled by group id or
+// single asset. It is a pure derivation shared with `aa seed-verify`
+// (#1319), which has to know what the seed WOULD mint rather than what
+// it could: a superset would let a stale backfill post survive
+// verification.
+func (r *Runner) planCollectionPostBackfill(cat *catalogues, covered map[string]map[string]struct{}) ([]string, map[string]*backfillBundle) {
 	// Insertion order is the catalogue's, so the composed wall is stable
 	// across runs — a map range would shuffle titles and sort_order.
 	var order []string
-	index := make(map[string]*bundle)
+	index := make(map[string]*backfillBundle)
 	for _, a := range cat.Assets {
 		if a.CollectionName == "" {
 			continue
@@ -1372,12 +1650,19 @@ func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogue
 		}
 		b := index[key]
 		if b == nil {
-			b = &bundle{collection: a.CollectionName}
+			b = &backfillBundle{collection: a.CollectionName}
 			index[key] = b
 			order = append(order, key)
 		}
 		b.members = append(b.members, a)
 	}
+	return order, index
+}
+
+func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogues) error {
+	covered := r.backfillCoverage(cat)
+
+	order, index := r.planCollectionPostBackfill(cat, covered)
 
 	inserted, madePublic, bare := 0, 0, 0
 	for _, key := range order {
@@ -1404,11 +1689,17 @@ func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogue
 		title := orDefault(first.Title, "Untitled")
 		description := first.Description
 		if len(b.members) > 1 {
-			title = fmt.Sprintf("%s — %d assets", title, len(b.members))
+			// ⛔ A SECOND TITLE GENERATOR (#1306). This backfill mints
+			// post titles in Go, so the Python assembler's wording fix
+			// left it producing exactly the shape the issue is about:
+			// an em dash and a count that CardKindBadge already prints
+			// beside it. Kept in step with
+			// sanitize_and_assemble.title_group_set.
+			title += " and variants"
 			description = fmt.Sprintf("%s working set for %s. %d assets pulled together for review.",
 				orDefault(first.TeamName, "Reference"), b.collection, len(b.members))
 		}
-		postID := stableUUID("collection-post-backfill", key)
+		postID := backfillPostID(key)
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
 			ID:            parseUUID(postID.String()),
 			AuthorUserRef: authorRef,
@@ -1727,6 +2018,24 @@ func (r *Runner) rowTimes(createdAt, updatedAt string) (created, updated pgtype.
 		updated = created
 	}
 	return created, updated
+}
+
+// datesSurviveTheClamp reports whether this run would write a post's
+// catalogue timestamps VERBATIM, which is the only case in which they
+// can be compared against a row an earlier run wrote (#1320).
+//
+// clampToPast REFLECTS a future-dated timestamp around the instant the
+// run started, so a catalogue date still in the future produces a
+// different stored value on every run, by design. Comparing it would
+// report drift on two correct seeds. The site_a catalogue carries dates
+// out to 2026-12-14, so this is dozens of posts, not a corner.
+func (r *Runner) datesSurviveTheClamp(createdAt, updatedAt string) bool {
+	for _, s := range [2]string{createdAt, updatedAt} {
+		if ts := parseTime(s); ts.Valid && ts.Time.After(r.genTime) {
+			return false
+		}
+	}
+	return true
 }
 
 // dateOnlyLayout is the calendar date a `date`-typed field accepts in

@@ -69,6 +69,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from title_rule import normalize_title  # noqa: E402
+
 SEED_DIR = Path(__file__).resolve().parents[1]
 UPGRADES = SEED_DIR / "upgrades"
 PROFILES = SEED_DIR / "profiles"
@@ -249,7 +253,10 @@ def build_record(video: dict, vf: dict, spec: dict, size: int) -> dict:
         "studio": "shared",
         "tags": list(spec["tags"]),
         "team_name": spec["team"],
-        "title": f"Pexels {vid} {author}",
+        # The author name comes from the API and may hold a comma. The id
+        # is `pexels:{vid}`, so the rule cannot move it (#1319), and
+        # `build_post` copies this already-normalised title.
+        "title": normalize_title(f"Pexels {vid} {author}"),
         "updated_at": created,
         "workflow_state": "approved",
     }

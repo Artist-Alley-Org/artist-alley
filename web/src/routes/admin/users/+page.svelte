@@ -92,6 +92,7 @@
 <div class="mb-4 flex flex-wrap items-center gap-2">
   <input
     type="search"
+    data-testid="admin-users-search"
     bind:value={query}
     oninput={onFilterChange}
     placeholder={t('admin.users.search_placeholder')}

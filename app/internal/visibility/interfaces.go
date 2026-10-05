@@ -74,6 +74,10 @@ type Predicate struct {
 	// nothing, which is the correct default for anonymous and the safe
 	// default for a caller that forgets to pass it.
 	postCaps PostCaps
+	// includeDrafts omits the publication conjunct, and ONLY that
+	// conjunct — see [IncludeDrafts]. Zero value (published only) is
+	// what every shared surface wants.
+	includeDrafts bool
 }
 
 // Option customises a Predicate at construction.
@@ -99,6 +103,30 @@ type Option func(*Predicate)
 // leak pre-installed today for a rule that does not exist yet.
 func IncludeSoftDeleted() Option {
 	return func(p *Predicate) { p.includeSoftDeleted = true }
+}
+
+// IncludeDrafts drops the predicate's publication conjunct — the one
+// that keeps an unpublished post off shared surfaces (ADR 0091
+// decision 7) — and ONLY that conjunct. Authorization is untouched:
+// [postReadableExpr] carries its own draft rule, which no option
+// waives, so a draft stays readable by its author and by a posts.admin
+// holder whichever way this option is set.
+//
+// It exists for two callers and should have no third without a reason
+// written down:
+//
+//   - [PostReadable], the single-item gate. An author has to be able
+//     to open the draft they are writing, and `GET /posts/{id}` is how.
+//   - the author's own drafts listing (`GET /posts?draft=true`), which
+//     pairs it with a filter that returns nothing BUT drafts.
+//
+// The narrowness is the security property, same as [IncludeSoftDeleted]
+// beside it: a caller that reaches for this gets a predicate that has
+// lost one conjunct, not one that was skipped. And the DEFAULT is the
+// safe direction — a surface written next year is published-only
+// without its author having heard of drafts.
+func IncludeDrafts() Option {
+	return func(p *Predicate) { p.includeDrafts = true }
 }
 
 // Filter constructs a [Predicate] for the given entity type + caller.

@@ -37,10 +37,26 @@
   // history is an optional B-4 add.
 
   import { t } from '$stores/lang.svelte';
+  import type { CommitTerm } from '$lib/search/commitTarget';
 
   interface Props {
     value: string;
-    onsearch?: (q: string) => void;
+    /** Fired on COMMIT.
+     *
+     *  ⭐ `term` is #1077's seam. A commit used to be a string and only a
+     *  string, so a picked suggestion arrived here having ALREADY thrown
+     *  away the one fact that made it different from something the user
+     *  typed: which DIMENSION it came from. The payload has carried
+     *  `kind` since the dropdown was built and the chip beside each row
+     *  renders it; `pick` took `(q: string)` and dropped it at the last
+     *  step, so a picked tag was committed as free text — against a
+     *  TSVECTOR that contains no tag-only word.
+     *
+     *  So a typed pick now hands the parent the dimension too, and the
+     *  parent applies the structured filter. `term` is undefined for
+     *  every other commit (typing + Enter, the clear button, Escape, a
+     *  history row), which are free text and unchanged. */
+    onsearch?: (q: string, term?: CommitTerm) => void;
     placeholder?: string;
     /** Which corpus the COMMIT will be executed against (#1155). The
      *  suggest endpoint completes only terms that would return a result
@@ -207,17 +223,41 @@
   // Arrow Down onto the first visible row selected a history entry that
   // was several rows lower — harmless while typing also searched, and a
   // real defect now that the dropdown is the only way to refine.
-  const rows = $derived([
-    ...(value !== '' ? suggestions.map((s) => s.value) : []),
-    ...history,
+  const rows = $derived<Array<{ value: string; kind?: string }>>([
+    ...(value !== '' ? suggestions.map((s) => ({ value: s.value, kind: s.kind })) : []),
+    ...history.map((h) => ({ value: h })),
   ]);
 
+  /** The structured term a picked row carries, or undefined for a row
+   *  that is just text (#1077).
+   *
+   *  Only `tag` maps to a dimension today. The other three kinds the
+   *  endpoint emits — `collection`, `post`, `asset` — name a THING with a
+   *  page of its own rather than a filter, and until that navigation
+   *  exists they commit as free text exactly as they did before. That is
+   *  a correct fallback rather than a gap: a post or asset TITLE is
+   *  indexed into its own document, so free text finds it; a tag-only
+   *  word is in no document at all, which is why it is the one that had
+   *  to change. */
+  function termOf(row: { value: string; kind?: string }): CommitTerm | undefined {
+    return row.kind === 'tag' ? { dimension: 'tag', value: row.value } : undefined;
+  }
+
   /** Commit a dropdown row. This is one of the four commits. */
-  function pick(q: string) {
-    value = q;
-    lastCommitted = q;
-    onsearch?.(q);
-    pushHistory(q);
+  function pick(row: { value: string; kind?: string }) {
+    const term = termOf(row);
+    value = row.value;
+    lastCommitted = row.value;
+    onsearch?.(row.value, term);
+    // ⚠️ A STRUCTURED PICK IS NOT PUSHED INTO HISTORY, and the omission
+    // is the point rather than an oversight. Every history row commits
+    // as FREE TEXT — that is all a `string[]` in localStorage can carry —
+    // so storing a picked tag here would put the exact query #1077 is
+    // about back in front of the user one keystroke later, under a
+    // "Recent" heading that promises it worked before. The filter itself
+    // survives in the URL, which is the shareable, back-navigable record
+    // this app already uses for a result set.
+    if (!term) pushHistory(row.value);
     dropdownOpen = false;
     highlight = -1;
     inputEl?.focus();
@@ -304,7 +344,7 @@
             type="button"
             role="option"
             aria-selected={i === highlight}
-            onmousedown={() => pick(sug.value)}
+            onmousedown={() => pick({ value: sug.value, kind: sug.kind })}
             class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
             class:bg-surface-elevated={i === highlight}
             data-testid="search-suggestion"
@@ -331,7 +371,7 @@
           type="button"
           role="option"
           aria-selected={idx === highlight}
-          onmousedown={() => pick(h)}
+          onmousedown={() => pick({ value: h })}
           class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
           class:bg-surface-elevated={idx === highlight}
           data-testid="search-history-item"

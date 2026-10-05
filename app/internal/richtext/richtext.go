@@ -66,6 +66,7 @@
 package richtext
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/microcosm-cc/bluemonday"
@@ -187,4 +188,113 @@ func forceLinkRel(s string) string {
 			b.Write(z.Raw())
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Semantic emptiness (#1389)
+// ---------------------------------------------------------------------------
+
+// The sanitiser removes what a value may not CONTAIN. It says nothing
+// about whether a value carries anything a reader can see, and nothing
+// in it strips empty elements — measured against the shipped policy,
+// `<p></p>`, `<p><br></p>`, `<p>   </p>`, `<br>`, `<ul><li></li></ul>`
+// and `<blockquote></blockquote>` all survive Sanitize unchanged, and
+// `<p>&nbsp;</p>` survives with the entity decoded to a literal U+00A0.
+//
+// So `strings.TrimSpace` on a stored rich_text value ACCEPTS a value
+// that renders as nothing at all. Any rule about whether a rich_text
+// field "has a value" has to read the value's WORDS, not its bytes.
+//
+// This is the server-authoritative twin of the rule the frontend
+// already ships: web/src/lib/fieldDisplay.ts's htmlToPlainText, whose
+// output feeds the "is this set" test and the field count. There is ONE
+// rule and it is this one; a second implementation of it is two rules
+// that will disagree about a value a person is looking at.
+//
+// It lives here, beside Sanitize, rather than in `metadata`, for the
+// same reason Sanitize does: this package is where what a rich_text
+// value IS gets decided, and callers outside `metadata` need the
+// predicate too.
+
+// tagRun matches one HTML tag, exactly as the frontend's
+// /<[^>]*>/g does — from a `<` up to the first following `>`, with an
+// unterminated `<` left alone.
+var tagRun = regexp.MustCompile(`<[^>]*>`)
+
+// plainEntities are decoded in the order the frontend decodes them,
+// and the order is load-bearing: `&amp;` is last, so `&amp;lt;` reads
+// as the literal `&lt;` its author typed rather than being decoded
+// twice into a `<`.
+var plainEntities = []struct{ from, to string }{
+	{"&nbsp;", " "},
+	{"&lt;", "<"},
+	{"&gt;", ">"},
+	{"&quot;", `"`},
+	{"&#34;", `"`},
+	{"&apos;", "'"},
+	{"&#39;", "'"},
+	{"&amp;", "&"},
+}
+
+// isJSSpace reports whether r is whitespace to JavaScript's `\s`.
+//
+// Spelled out rather than delegating to unicode.IsSpace, because the
+// two sets are NOT the same and this function's whole job is to agree
+// with a JavaScript regexp: unicode.IsSpace counts U+0085 (NEL), which
+// `\s` does not, and `\s` counts U+FEFF, which unicode.IsSpace does
+// not. Neither divergence can be reached through the sanitiser today,
+// which is exactly why it would go unnoticed if the predicate drifted.
+//
+// Go's regexp `\s` is no help here either: it is [\t\n\f\r ] only, so
+// it would miss the U+00A0 that `&nbsp;` decodes to — the single most
+// likely character to be sitting alone inside an "empty" paragraph.
+func isJSSpace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ',
+		'\u00a0', // NBSP — what `&nbsp;` decodes to
+		'\u1680', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000',
+		'\ufeff': // BOM — in `\s`, NOT in unicode.IsSpace
+		return true
+	}
+	// U+2000..U+200A, the en/em/thin quad space run.
+	return r >= '\u2000' && r <= '\u200a'
+}
+
+// PlainText returns the visible words of a rich_text value with its
+// markup taken out: the Go twin of fieldDisplay.ts's htmlToPlainText.
+//
+// Tags collapse to a SPACE rather than to nothing, so
+// `<li>one</li><li>two</li>` reads as "one two" and not "onetwo".
+//
+// This is NOT a sanitiser and must never be used as one. Its output is
+// never rendered; it exists so a rule can ask what a value SAYS.
+func PlainText(s string) string {
+	s = tagRun.ReplaceAllString(s, " ")
+	for _, e := range plainEntities {
+		s = strings.ReplaceAll(s, e.from, e.to)
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	pendingSpace := false
+	wrote := false
+	for _, r := range s {
+		if isJSSpace(r) {
+			pendingSpace = wrote
+			continue
+		}
+		if pendingSpace {
+			b.WriteByte(' ')
+			pendingSpace = false
+		}
+		b.WriteRune(r)
+		wrote = true
+	}
+	return b.String()
+}
+
+// IsEmpty reports whether a rich_text value carries no content a reader
+// would see — the SEMANTIC emptiness #1389 defines, as against the raw
+// TrimSpace that accepts `<p><br></p>`.
+func IsEmpty(s string) bool {
+	return PlainText(s) == ""
 }

@@ -69,7 +69,7 @@ const (
 // column keeps its old value, which is exactly the divergence.
 func TestMirroredField_FieldWriteLandsInTheColumn(t *testing.T) {
 	pool := mirrorPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	assetID := mirrorAsset(t, pool, mirrorOwnerRef, "before the field write")
 	titleID := mirrorFieldID(t, pool, "title")
@@ -98,7 +98,7 @@ func TestMirroredField_FieldWriteLandsInTheColumn(t *testing.T) {
 // value, not a stale copy and not nothing at all.
 func TestMirroredField_ColumnWriteReadsBackThroughTheFieldPath(t *testing.T) {
 	pool := mirrorPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	assetID := mirrorAsset(t, pool, mirrorOwnerRef, "the original title")
 	titleID := mirrorFieldID(t, pool, "title")
@@ -151,7 +151,7 @@ func TestMirroredField_ColumnWriteReadsBackThroughTheFieldPath(t *testing.T) {
 // fires.
 func TestMirroredField_StoredCopyIsRefusedAtTheDatabase(t *testing.T) {
 	pool := mirrorPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	assetID := mirrorAsset(t, pool, mirrorOwnerRef, "guarded")
 	titleID := mirrorFieldID(t, pool, "title")
@@ -187,7 +187,7 @@ func TestMirroredField_StoredCopyIsRefusedAtTheDatabase(t *testing.T) {
 // other guard prevents.
 func TestMirroredField_DeclaringAMirrorOverExistingValuesIsRefused(t *testing.T) {
 	pool := mirrorPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	assetID := mirrorAsset(t, pool, mirrorOwnerRef, "declaring")
 	ordinaryID := mirrorOrdinaryField(t, pool)
@@ -220,7 +220,7 @@ func TestMirroredField_DeclaringAMirrorOverExistingValuesIsRefused(t *testing.T)
 // operator could point a field at a column that does not exist.
 func TestMirroredField_OnlyDeclaredColumnsAreMirrorable(t *testing.T) {
 	pool := mirrorPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	ordinaryID := mirrorOrdinaryField(t, pool)
 	if _, err := pool.Exec(context.Background(),
@@ -241,7 +241,7 @@ func TestMirroredField_OnlyDeclaredColumnsAreMirrorable(t *testing.T) {
 // account the power to retitle every asset on the instance.
 func TestMirroredField_WriteIsGatedByTheColumnsRule(t *testing.T) {
 	pool := mirrorPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	assetID := mirrorAsset(t, pool, mirrorOwnerRef, "owned by someone else")
 	titleID := mirrorFieldID(t, pool, "title")
@@ -291,7 +291,7 @@ func TestMirroredField_WriteIsGatedByTheColumnsRule(t *testing.T) {
 // plane forbids, through a verb nobody thinks of as an edit to the asset.
 func TestMirroredField_RequiredCannotBeBlanked(t *testing.T) {
 	pool := mirrorPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	assetID := mirrorAsset(t, pool, mirrorOwnerRef, "keep me")
 	titleID := mirrorFieldID(t, pool, "title")
@@ -338,7 +338,7 @@ func TestMirroredField_RequiredCannotBeBlanked(t *testing.T) {
 // other test in this file into a test of ordinary fields.
 func TestMirroredField_ShippedDeclarationsAreWired(t *testing.T) {
 	pool := mirrorPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	for code, want := range map[string]string{"title": "title", "description": "description"} {
 		var got *string

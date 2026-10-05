@@ -389,7 +389,7 @@ func withBrowseViewsStore(t *testing.T, fn func(context.Context, *sysconfig.Stor
 	}
 	ctx := t.Context()
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	clean := func() {
 		_, _ = pool.Exec(context.Background(),
@@ -413,7 +413,7 @@ func withBrowseViewsHandler(t *testing.T, fn func(context.Context, *sysconfig.Ha
 	}
 	ctx := t.Context()
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := sysconfig.NewStore(pool)

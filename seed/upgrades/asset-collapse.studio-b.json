@@ -1,0 +1,3363 @@
+{
+ "_why": [
+  "TWENTY-TWO CATALOGUE RECORDS THAT CAN NEVER MATERIALIZE, RETIRED ONTO THEIR SURVIVORS (#1319).",
+  "site_b holds 13 same-owner identical-produced-byte groups over 35 `local` records. App identity is (owner_user_ref, file_hash) (app/schema.sql:5298) and no DedupBehavior value relaxes it, so each group can hold exactly one row. SeedInsertAsset ends in a bare ON CONFLICT DO NOTHING (app/internal/seed/queries.sql:281-286), the ErrNoRows branch finds no row under the loser's own id and counts a `deduped` (app/internal/seed/runner.go:830-863), so 22 records get no id, no declaration, no size and no field values, and 25 posts silently ship 37 members short.",
+  "EVIDENCE KIND IS `preserved_archive`, THE WEAKER CLAIM, AND IS NEVER DESCRIBED AS ANYTHING ELSE. These are `local` records: 0 of the 35 carry metadata.media_url, 0 carry metadata.source_archive and 0 carry metadata.sha256, and the old $DATASET_SRC is permanently retired. There is no source to re-derive from, so no member, no render size, no rasteriser and no produced-hash claim is made, and no `pool_of_record` is recorded. retired_sha256 and survivor_sha256 are EQUAL by design: that equality IS the documented byte collapse, and it is the opposite of the produced-source rule, where the two hashes describe different bytes and must DIFFER.",
+  "Authority is a FROZEN PRE-OPERATION SNAPSHOT attested by an external manifest and recomputed immediately before use, never the archive agreeing with itself, because a stale copy agrees with itself perfectly (ADR 0097, amendment 2026-09-24).",
+  "SURVIVORS ARE CHOSEN BY A DETERMINISTIC RULE, NOT BY WHICHEVER HAPPENED TO MATERIALIZE: the member earliest in profile (JSON) order, which is the row applyAssets reaches first (app/internal/seed/runner.go:762), qualified by the readable-bytes rule (:763-768). All 35 files are present in the archive, so the qualifier excludes nothing here and is recorded because it is part of the rule rather than because it bit.",
+  "Losses are ENUMERATED, never inferred. Both layers recompute the list from retired_record against the survivor and refuse on any disagreement, so the data cannot move under the document. 207 losses over the 22 entries: 32 retired-only and 175 differing, over 19 distinct paths.",
+  "Post membership: 25 posts, 132 members to 108, none emptied. 13 asset_group posts keep their id because it derives from the source group_id; the 7 project_sprint and 5 team_roundup ids derive from MEMBERSHIP and move, each composed onto the existing chain in post-id-migration.studio-b.json. site_b has no post-curation document, so no pipeline_members digest moves."
+ ],
+ "profile": "studio-b.assets.json",
+ "collapse": [
+  {
+   "_why": "maya.okonkwo owns 3 records over these same 20416 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "e9867aaf-7d6c-48ba-1070-b14ee5bfe717",
+   "survivor_id": "e223b561-02f7-e6b4-ff4c-c1cd641dd1de",
+   "owner_username": "maya.okonkwo",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/ottrim02_s.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "3e76e032d1f5e107a7ccba9f4f8736366e6a165de77e8bb96ddef576eaa171c4",
+    "survivor_sha256": "3e76e032d1f5e107a7ccba9f4f8736366e6a165de77e8bb96ddef576eaa171c4",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlongbrick/ottrim02_s.png."
+   },
+   "retired_record": {
+    "id": "e9867aaf-7d6c-48ba-1070-b14ee5bfe717",
+    "asset_type": "image",
+    "title": "Ottrim02 S (raster)",
+    "description": "Raster source for 'Ottrim02 S' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/ottrim02_s.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/ottrim02_s.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 20416,
+    "sensitivity_tier": "restricted",
+    "archive_state": "active",
+    "owner_username": "maya.okonkwo",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "in_review",
+    "metadata": {
+     "filename": "ottrim02_s.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00219"
+    },
+    "field_values": {
+     "pipeline_stage": "Locked",
+     "version": "v1",
+     "revision_count": 3,
+     "rating": 4,
+     "texture_resolution": "512x512",
+     "color_space": "sRGB",
+     "engine_compatibility": "Unreal 5",
+     "target_platforms": [
+      "PC",
+      "Console"
+     ],
+     "naming_compliant": true,
+     "production_area": "environment-architecture",
+     "country": "cn",
+     "keywords": [
+      "photograph",
+      "texture"
+     ],
+     "credit": "Aurora R&D / Field Unit"
+    },
+    "external_id": "AA-3920",
+    "review_notes": null,
+    "reviewer_username": "felipe.costa",
+    "created_at": "2025-05-11T05:24:06Z",
+    "updated_at": "2026-05-20T01:14:42Z",
+    "last_reviewed_at": "2026-05-24T02:49:42Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "cn",
+     "survivor_value": "us"
+    },
+    {
+     "path": "field_values.credit",
+     "retired_value": "Aurora R&D / Field Unit"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Unreal 5",
+     "survivor_value": "Godot 4"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "photograph",
+      "texture"
+     ],
+     "survivor_value": [
+      "editorial"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "environment-architecture",
+     "survivor_value": "ui-icons"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/ottrim02_s.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlongbrick/ottrim02_s.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "e9867aaf-7d6c-48ba-1070-b14ee5bfe717",
+     "survivor_value": "e223b561-02f7-e6b4-ff4c-c1cd641dd1de"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/ottrim02_s.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlongbrick/ottrim02_s.png"
+    },
+    {
+     "path": "workflow_state",
+     "retired_value": "in_review",
+     "survivor_value": "final"
+    }
+   ],
+   "post_substitutions": []
+  },
+  {
+   "_why": "maya.okonkwo owns 3 records over these same 20416 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "27b4289a-f1de-e4d3-f752-16cc00192269",
+   "survivor_id": "e223b561-02f7-e6b4-ff4c-c1cd641dd1de",
+   "owner_username": "maya.okonkwo",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/ottrim02_s.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "3e76e032d1f5e107a7ccba9f4f8736366e6a165de77e8bb96ddef576eaa171c4",
+    "survivor_sha256": "3e76e032d1f5e107a7ccba9f4f8736366e6a165de77e8bb96ddef576eaa171c4",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlongbrick/ottrim02_s.png."
+   },
+   "retired_record": {
+    "id": "27b4289a-f1de-e4d3-f752-16cc00192269",
+    "asset_type": "image",
+    "title": "Ottrim02 S (raster)",
+    "description": "Raster source for 'Ottrim02 S' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/ottrim02_s.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/ottrim02_s.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 20416,
+    "sensitivity_tier": "restricted",
+    "archive_state": "active",
+    "owner_username": "maya.okonkwo",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "final",
+    "metadata": {
+     "filename": "ottrim02_s.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00219"
+    },
+    "field_values": {
+     "pipeline_stage": "Locked",
+     "version": "v1",
+     "revision_count": 3,
+     "rating": 4,
+     "texture_resolution": "2048x2048",
+     "color_space": "sRGB",
+     "engine_compatibility": "N/A",
+     "target_platforms": [
+      "PC",
+      "Console"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "country": "in",
+     "keywords": [
+      "animation",
+      "illustration",
+      "photograph"
+     ]
+    },
+    "external_id": "AA-3920",
+    "review_notes": null,
+    "reviewer_username": "felipe.costa",
+    "created_at": "2025-05-11T05:24:06Z",
+    "updated_at": "2026-05-20T01:14:42Z",
+    "last_reviewed_at": "2026-05-24T02:49:42Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "in",
+     "survivor_value": "us"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "N/A",
+     "survivor_value": "Godot 4"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "animation",
+      "illustration",
+      "photograph"
+     ],
+     "survivor_value": [
+      "editorial"
+     ]
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "2048x2048",
+     "survivor_value": "512x512"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/ottrim02_s.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlongbrick/ottrim02_s.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "27b4289a-f1de-e4d3-f752-16cc00192269",
+     "survivor_value": "e223b561-02f7-e6b4-ff4c-c1cd641dd1de"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/ottrim02_s.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlongbrick/ottrim02_s.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "0fb23c2b-bba3-2b18-3109-f32954b38984",
+     "old_members": [
+      "27b4289a-f1de-e4d3-f752-16cc00192269",
+      "e223b561-02f7-e6b4-ff4c-c1cd641dd1de",
+      "e9867aaf-7d6c-48ba-1070-b14ee5bfe717"
+     ],
+     "new_members": [
+      "e223b561-02f7-e6b4-ff4c-c1cd641dd1de"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    }
+   ]
+  },
+  {
+   "_why": "imani.williams owns 3 records over these same 60051 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "9c2d94b2-358f-ca18-ff32-2bc3488e29dc",
+   "survivor_id": "543704bb-1c1f-2418-13df-625bb4d5aa3e",
+   "owner_username": "imani.williams",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlong/ParadiseFallsMaintile01_NV_alpha.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "176a888786dcc24285e4317a2d652852832c621380e43036ebbaffe0a4877371",
+    "survivor_sha256": "176a888786dcc24285e4317a2d652852832c621380e43036ebbaffe0a4877371",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerr/ParadiseFallsMaintile01_NV_alpha.png."
+   },
+   "retired_record": {
+    "id": "9c2d94b2-358f-ca18-ff32-2bc3488e29dc",
+    "asset_type": "image",
+    "title": "Paradisefallsmaintile01 Nv Alpha (raster)",
+    "description": "Raster source for 'Paradisefallsmaintile01 Nv Alpha' (png). Drop-in environment piece; tileable where applicable.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlong/ParadiseFallsMaintile01_NV_alpha.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlong/ParadiseFallsMaintile01_NV_alpha.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 60051,
+    "sensitivity_tier": "team",
+    "archive_state": "active",
+    "owner_username": "imani.williams",
+    "collection_name": "Art Research",
+    "team_name": "Environment",
+    "brand_workspace": null,
+    "tags": [
+     "environment",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "ParadiseFallsMaintile01_NV_alpha.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00227"
+    },
+    "field_values": {
+     "pipeline_stage": "Locked",
+     "version": "v2",
+     "revision_count": 3,
+     "rating": 4,
+     "texture_resolution": "4096x4096",
+     "color_space": "sRGB",
+     "engine_compatibility": "N/A",
+     "target_platforms": [
+      "PC",
+      "Console",
+      "Mobile"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "production_notes": "Imported from the archive drop. Source layers retained; no destructive edits applied.",
+     "country": "gb",
+     "keywords": [
+      "archival"
+     ],
+     "copyright": "© Aurora R&D. Internal use only."
+    },
+    "external_id": "AA-6141",
+    "review_notes": null,
+    "reviewer_username": "ravi.patel",
+    "created_at": "2025-05-13T10:09:11Z",
+    "updated_at": "2025-09-10T01:48:43Z",
+    "last_reviewed_at": "2025-10-17T17:15:14Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.copyright",
+     "retired_value": "© Aurora R&D. Internal use only."
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "gb",
+     "survivor_value": "se"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "N/A",
+     "survivor_value": "Unreal 5"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "archival"
+     ],
+     "survivor_value": [
+      "animation",
+      "illustration",
+      "product"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "ui-icons",
+     "survivor_value": "environment-architecture"
+    },
+    {
+     "path": "field_values.production_notes",
+     "retired_value": "Imported from the archive drop. Source layers retained; no destructive edits applied."
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "4096x4096",
+     "survivor_value": "2048x2048"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlong/ParadiseFallsMaintile01_NV_alpha.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerr/ParadiseFallsMaintile01_NV_alpha.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "9c2d94b2-358f-ca18-ff32-2bc3488e29dc",
+     "survivor_value": "543704bb-1c1f-2418-13df-625bb4d5aa3e"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlong/ParadiseFallsMaintile01_NV_alpha.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerr/ParadiseFallsMaintile01_NV_alpha.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "532e91b0-8eef-0e08-1005-80804abcd7b7",
+     "old_members": [
+      "f15d1b16-de18-9482-1dd9-40b10a57dfad",
+      "d4d0b6a0-3998-bcc7-3d86-ae22d44e17be",
+      "92ae9fcc-51e6-cea3-46db-5cf8820174c1",
+      "027d8a6a-3684-eb98-a058-a9a7e6ffd463",
+      "9c2d94b2-358f-ca18-ff32-2bc3488e29dc",
+      "0477ce13-808c-1161-da88-0b5a5d24b629"
+     ],
+     "new_members": [
+      "f15d1b16-de18-9482-1dd9-40b10a57dfad",
+      "d4d0b6a0-3998-bcc7-3d86-ae22d44e17be",
+      "92ae9fcc-51e6-cea3-46db-5cf8820174c1",
+      "027d8a6a-3684-eb98-a058-a9a7e6ffd463",
+      "543704bb-1c1f-2418-13df-625bb4d5aa3e",
+      "0477ce13-808c-1161-da88-0b5a5d24b629"
+     ],
+     "new_post_id": "c150b6d1-415d-e245-a2b2-3b5c72f44c1e",
+     "_why": "team_roundup derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    }
+   ]
+  },
+  {
+   "_why": "imani.williams owns 3 records over these same 60051 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "2ba6ae50-09e1-dd46-a06b-3cea357aa3be",
+   "survivor_id": "543704bb-1c1f-2418-13df-625bb4d5aa3e",
+   "owner_username": "imani.williams",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/ParadiseFallsMaintile01_NV_alpha.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "176a888786dcc24285e4317a2d652852832c621380e43036ebbaffe0a4877371",
+    "survivor_sha256": "176a888786dcc24285e4317a2d652852832c621380e43036ebbaffe0a4877371",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerr/ParadiseFallsMaintile01_NV_alpha.png."
+   },
+   "retired_record": {
+    "id": "2ba6ae50-09e1-dd46-a06b-3cea357aa3be",
+    "asset_type": "image",
+    "title": "Paradisefallsmaintile01 Nv Alpha (raster)",
+    "description": "Raster source for 'Paradisefallsmaintile01 Nv Alpha' (png). Drop-in environment piece; tileable where applicable.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/ParadiseFallsMaintile01_NV_alpha.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/ParadiseFallsMaintile01_NV_alpha.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 60051,
+    "sensitivity_tier": "team",
+    "archive_state": "active",
+    "owner_username": "imani.williams",
+    "collection_name": "Art Research",
+    "team_name": "Environment",
+    "brand_workspace": null,
+    "tags": [
+     "environment",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "ParadiseFallsMaintile01_NV_alpha.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00227"
+    },
+    "field_values": {
+     "pipeline_stage": "Locked",
+     "version": "v2",
+     "revision_count": 3,
+     "rating": 4,
+     "texture_resolution": "1024x1024",
+     "color_space": "Linear",
+     "engine_compatibility": "All",
+     "target_platforms": [
+      "PC",
+      "Console",
+      "Mobile"
+     ],
+     "naming_compliant": true,
+     "production_area": "environment-architecture",
+     "country": "au",
+     "keywords": [
+      "people",
+      "reference"
+     ],
+     "credit": "Aurora R&D / Studio B"
+    },
+    "external_id": "AA-6141",
+    "review_notes": "Looks great, ready to ship.",
+    "reviewer_username": "ravi.patel",
+    "created_at": "2025-05-13T10:09:11Z",
+    "updated_at": "2025-09-10T01:48:43Z",
+    "last_reviewed_at": "2025-10-17T17:15:14Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.color_space",
+     "retired_value": "Linear",
+     "survivor_value": "sRGB"
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "au",
+     "survivor_value": "se"
+    },
+    {
+     "path": "field_values.credit",
+     "retired_value": "Aurora R&D / Studio B",
+     "survivor_value": "Aurora R&D / Field Unit"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "All",
+     "survivor_value": "Unreal 5"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "people",
+      "reference"
+     ],
+     "survivor_value": [
+      "animation",
+      "illustration",
+      "product"
+     ]
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "1024x1024",
+     "survivor_value": "2048x2048"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/ParadiseFallsMaintile01_NV_alpha.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerr/ParadiseFallsMaintile01_NV_alpha.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "2ba6ae50-09e1-dd46-a06b-3cea357aa3be",
+     "survivor_value": "543704bb-1c1f-2418-13df-625bb4d5aa3e"
+    },
+    {
+     "path": "review_notes",
+     "retired_value": "Looks great, ready to ship.",
+     "survivor_value": null
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/ParadiseFallsMaintile01_NV_alpha.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerr/ParadiseFallsMaintile01_NV_alpha.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "ec8dd2c3-f7f2-5bfb-2527-fe925faa355c",
+     "old_members": [
+      "2ba6ae50-09e1-dd46-a06b-3cea357aa3be",
+      "543704bb-1c1f-2418-13df-625bb4d5aa3e",
+      "9c2d94b2-358f-ca18-ff32-2bc3488e29dc"
+     ],
+     "new_members": [
+      "543704bb-1c1f-2418-13df-625bb4d5aa3e"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    },
+    {
+     "post_id": "c67f9a35-9c88-70e7-4fce-e3f1f8f66996",
+     "old_members": [
+      "40864d05-fe16-5782-5701-a520085a779a",
+      "d445b692-c818-8967-fa22-5d58b6a88d21",
+      "2ba6ae50-09e1-dd46-a06b-3cea357aa3be",
+      "b176127f-5a60-4409-8f19-02dc3b7cd279",
+      "25934b13-3b6b-510a-cc93-522b066d254b",
+      "98f427ca-232a-dfe3-6570-7fc3b2490629",
+      "f6e47dc5-68c7-506d-e1dd-e3644444bf4d",
+      "5df7614b-7178-c48a-e5e9-390575b8ac5a"
+     ],
+     "new_members": [
+      "40864d05-fe16-5782-5701-a520085a779a",
+      "d445b692-c818-8967-fa22-5d58b6a88d21",
+      "543704bb-1c1f-2418-13df-625bb4d5aa3e",
+      "b176127f-5a60-4409-8f19-02dc3b7cd279",
+      "25934b13-3b6b-510a-cc93-522b066d254b",
+      "98f427ca-232a-dfe3-6570-7fc3b2490629",
+      "f6e47dc5-68c7-506d-e1dd-e3644444bf4d",
+      "5df7614b-7178-c48a-e5e9-390575b8ac5a"
+     ],
+     "new_post_id": "ee1d2e79-67e4-a138-63de-aa23344e266b",
+     "_why": "team_roundup derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    }
+   ]
+  },
+  {
+   "_why": "chen.wei owns 2 records over these same 301422 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "9b8fd58b-c7ab-7095-ce0c-168d97ef76ff",
+   "survivor_id": "027d8a6a-3684-eb98-a058-a9a7e6ffd463",
+   "owner_username": "chen.wei",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerlbrick/otbrick01_n.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "c338f5b25be1d9284c0cee811bf0dea3095afeed95e7b07a5f5e757a11940791",
+    "survivor_sha256": "c338f5b25be1d9284c0cee811bf0dea3095afeed95e7b07a5f5e757a11940791",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/otbrick01_n.png."
+   },
+   "retired_record": {
+    "id": "9b8fd58b-c7ab-7095-ce0c-168d97ef76ff",
+    "asset_type": "image",
+    "title": "Otbrick01 N (raster)",
+    "description": "Raster source for 'Otbrick01 N' (png). Drop-in environment piece; tileable where applicable.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerlbrick/otbrick01_n.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerlbrick/otbrick01_n.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 301422,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "chen.wei",
+    "collection_name": "Art Research",
+    "team_name": "Environment",
+    "brand_workspace": null,
+    "tags": [
+     "environment",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "otbrick01_n.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00215"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v2",
+     "revision_count": 4,
+     "rating": 3,
+     "texture_resolution": "1024x1024",
+     "color_space": "sRGB",
+     "engine_compatibility": "Unity 2022",
+     "target_platforms": [
+      "PC",
+      "Console"
+     ],
+     "naming_compliant": true,
+     "production_area": "environment-architecture",
+     "ingested_at": "2026-11-27T10:10:00Z",
+     "license_expires": "2026-11-27T00:00:00Z",
+     "country": "cn",
+     "keywords": [
+      "editorial",
+      "texture"
+     ],
+     "credit": "Aurora R&D"
+    },
+    "external_id": "AA-4721",
+    "review_notes": null,
+    "reviewer_username": "olaf.lindgren",
+    "created_at": "2025-06-23T07:22:05Z",
+    "updated_at": "2026-03-07T20:53:18Z",
+    "last_reviewed_at": "2026-04-17T22:36:43Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "cn",
+     "survivor_value": "us"
+    },
+    {
+     "path": "field_values.credit",
+     "retired_value": "Aurora R&D"
+    },
+    {
+     "path": "field_values.ingested_at",
+     "retired_value": "2026-11-27T10:10:00Z"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "editorial",
+      "texture"
+     ],
+     "survivor_value": [
+      "nature"
+     ]
+    },
+    {
+     "path": "field_values.license_expires",
+     "retired_value": "2026-11-27T00:00:00Z"
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "environment-architecture",
+     "survivor_value": "ui-icons"
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "1024x1024",
+     "survivor_value": "2048x2048"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerlbrick/otbrick01_n.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/otbrick01_n.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "9b8fd58b-c7ab-7095-ce0c-168d97ef76ff",
+     "survivor_value": "027d8a6a-3684-eb98-a058-a9a7e6ffd463"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerlbrick/otbrick01_n.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/otbrick01_n.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "7d41a42a-784f-35d9-8a3d-22d93af384fb",
+     "old_members": [
+      "027d8a6a-3684-eb98-a058-a9a7e6ffd463",
+      "9b8fd58b-c7ab-7095-ce0c-168d97ef76ff"
+     ],
+     "new_members": [
+      "027d8a6a-3684-eb98-a058-a9a7e6ffd463"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    },
+    {
+     "post_id": "a065d76a-4cf8-1837-5685-3db421fd78f7",
+     "old_members": [
+      "9b8fd58b-c7ab-7095-ce0c-168d97ef76ff",
+      "1126dc47-53f2-74b3-a56c-9a46a432a739",
+      "6167526c-0ad7-ffc4-241c-9ad6666b7d7c",
+      "a92efc74-7273-7897-d81b-19203d5b7374",
+      "1e4b27b3-07de-711c-016c-429f9c9a787e"
+     ],
+     "new_members": [
+      "027d8a6a-3684-eb98-a058-a9a7e6ffd463",
+      "1126dc47-53f2-74b3-a56c-9a46a432a739",
+      "6167526c-0ad7-ffc4-241c-9ad6666b7d7c",
+      "a92efc74-7273-7897-d81b-19203d5b7374",
+      "1e4b27b3-07de-711c-016c-429f9c9a787e"
+     ],
+     "new_post_id": "b63d9ce9-aa98-b82c-b77f-38ee6f13a5d9",
+     "_why": "project_sprint derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    }
+   ]
+  },
+  {
+   "_why": "layla.hassan owns 3 records over these same 100353 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "d4564fc1-1304-237f-4902-e5db9d53ef2a",
+   "survivor_id": "dbb70039-9d4f-83cc-98b4-97a61f3556c2",
+   "owner_username": "layla.hassan",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendr/paradisefallsedgetrim01_NV_n.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "a1f0d1a69cf417b40f10740cd1ab87866066ae22fe238210a000f418eab264c4",
+    "survivor_sha256": "a1f0d1a69cf417b40f10740cd1ab87866066ae22fe238210a000f418eab264c4",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/paradisefallsedgetrim01_NV_n.png."
+   },
+   "retired_record": {
+    "id": "d4564fc1-1304-237f-4902-e5db9d53ef2a",
+    "asset_type": "image",
+    "title": "Paradisefallsedgetrim01 Nv N (raster)",
+    "description": "Raster source for 'Paradisefallsedgetrim01 Nv N' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendr/paradisefallsedgetrim01_NV_n.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendr/paradisefallsedgetrim01_NV_n.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 100353,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "layla.hassan",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "paradisefallsedgetrim01_NV_n.png",
+     "kind": "raster",
+     "license": "CC0",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00225"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v1",
+     "revision_count": 1,
+     "rating": 5,
+     "texture_resolution": "512x512",
+     "color_space": "Raw",
+     "engine_compatibility": "Godot 4",
+     "target_platforms": [
+      "PC"
+     ],
+     "naming_compliant": false,
+     "production_area": "ui-icons",
+     "production_notes": "Imported from the archive drop. Source layers retained; no destructive edits applied.",
+     "country": "us",
+     "keywords": [
+      "event"
+     ],
+     "copyright": "© Aurora R&D. Internal use only."
+    },
+    "external_id": "AA-6366",
+    "review_notes": null,
+    "reviewer_username": "akira.tanaka",
+    "created_at": "2025-07-13T00:51:39Z",
+    "updated_at": "2026-02-08T07:13:55Z",
+    "last_reviewed_at": "2026-03-27T04:40:57Z",
+    "license": "CC0",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.color_space",
+     "retired_value": "Raw",
+     "survivor_value": "sRGB"
+    },
+    {
+     "path": "field_values.copyright",
+     "retired_value": "© Aurora R&D. Internal use only."
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "us",
+     "survivor_value": "mx"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "event"
+     ],
+     "survivor_value": [
+      "archival",
+      "logo",
+      "reference"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "ui-icons",
+     "survivor_value": "environment-architecture"
+    },
+    {
+     "path": "field_values.production_notes",
+     "retired_value": "Imported from the archive drop. Source layers retained; no destructive edits applied."
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "512x512",
+     "survivor_value": "1024x1024"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendr/paradisefallsedgetrim01_NV_n.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/paradisefallsedgetrim01_NV_n.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "d4564fc1-1304-237f-4902-e5db9d53ef2a",
+     "survivor_value": "dbb70039-9d4f-83cc-98b4-97a61f3556c2"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendr/paradisefallsedgetrim01_NV_n.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/paradisefallsedgetrim01_NV_n.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "b2cbad3a-7a31-e974-9885-c460b0234ffc",
+     "old_members": [
+      "d4564fc1-1304-237f-4902-e5db9d53ef2a",
+      "dbb70039-9d4f-83cc-98b4-97a61f3556c2",
+      "f3a8ec33-da14-a54b-4609-11cb81cb3b32"
+     ],
+     "new_members": [
+      "dbb70039-9d4f-83cc-98b4-97a61f3556c2"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    },
+    {
+     "post_id": "1f96fc1d-de14-177b-a31f-bba99e0d77fb",
+     "old_members": [
+      "d4564fc1-1304-237f-4902-e5db9d53ef2a",
+      "0b1de1fc-6a50-c8e2-02b5-10851234e7e4",
+      "034df3b9-671d-c292-32da-54f55d3d09ec",
+      "d5fbcd12-ddec-76aa-eed6-747c9721ef47",
+      "59b60a6f-cc24-1d8d-4a2d-624b7a3a7143",
+      "a882d4d8-48b1-ba9b-40f8-fea1fc6aaee2"
+     ],
+     "new_members": [
+      "dbb70039-9d4f-83cc-98b4-97a61f3556c2",
+      "0b1de1fc-6a50-c8e2-02b5-10851234e7e4",
+      "034df3b9-671d-c292-32da-54f55d3d09ec",
+      "d5fbcd12-ddec-76aa-eed6-747c9721ef47",
+      "59b60a6f-cc24-1d8d-4a2d-624b7a3a7143",
+      "a882d4d8-48b1-ba9b-40f8-fea1fc6aaee2"
+     ],
+     "new_post_id": "5e11d5cc-fd89-8fe3-d17a-647019af2c02",
+     "_why": "project_sprint derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    }
+   ]
+  },
+  {
+   "_why": "layla.hassan owns 3 records over these same 100353 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "f3a8ec33-da14-a54b-4609-11cb81cb3b32",
+   "survivor_id": "dbb70039-9d4f-83cc-98b4-97a61f3556c2",
+   "owner_username": "layla.hassan",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/paradisefallsedgetrim01_NV_n.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "a1f0d1a69cf417b40f10740cd1ab87866066ae22fe238210a000f418eab264c4",
+    "survivor_sha256": "a1f0d1a69cf417b40f10740cd1ab87866066ae22fe238210a000f418eab264c4",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/paradisefallsedgetrim01_NV_n.png."
+   },
+   "retired_record": {
+    "id": "f3a8ec33-da14-a54b-4609-11cb81cb3b32",
+    "asset_type": "image",
+    "title": "Paradisefallsedgetrim01 Nv N (raster)",
+    "description": "Raster source for 'Paradisefallsedgetrim01 Nv N' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/paradisefallsedgetrim01_NV_n.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/paradisefallsedgetrim01_NV_n.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 100353,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "layla.hassan",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "paradisefallsedgetrim01_NV_n.png",
+     "kind": "raster",
+     "license": "CC0",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00225"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v1",
+     "revision_count": 1,
+     "rating": 5,
+     "texture_resolution": "2048x2048",
+     "color_space": "Linear",
+     "engine_compatibility": "Unreal 5",
+     "target_platforms": [
+      "PC"
+     ],
+     "naming_compliant": false,
+     "production_area": "environment-architecture",
+     "country": "cn",
+     "keywords": [
+      "abstract",
+      "portrait"
+     ],
+     "credit": "Aurora R&D / Studio B"
+    },
+    "external_id": "AA-6366",
+    "review_notes": null,
+    "reviewer_username": "akira.tanaka",
+    "created_at": "2025-07-13T00:51:39Z",
+    "updated_at": "2026-02-08T07:13:55Z",
+    "last_reviewed_at": "2026-03-27T04:40:57Z",
+    "license": "CC0",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.color_space",
+     "retired_value": "Linear",
+     "survivor_value": "sRGB"
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "cn",
+     "survivor_value": "mx"
+    },
+    {
+     "path": "field_values.credit",
+     "retired_value": "Aurora R&D / Studio B",
+     "survivor_value": "Aurora R&D / Field Unit"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Unreal 5",
+     "survivor_value": "Godot 4"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "abstract",
+      "portrait"
+     ],
+     "survivor_value": [
+      "archival",
+      "logo",
+      "reference"
+     ]
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "2048x2048",
+     "survivor_value": "1024x1024"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/paradisefallsedgetrim01_NV_n.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/paradisefallsedgetrim01_NV_n.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "f3a8ec33-da14-a54b-4609-11cb81cb3b32",
+     "survivor_value": "dbb70039-9d4f-83cc-98b4-97a61f3556c2"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/paradisefallsedgetrim01_NV_n.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/paradisefallsedgetrim01_NV_n.png"
+    }
+   ],
+   "post_substitutions": []
+  },
+  {
+   "_why": "maya.okonkwo owns 2 records over these same 133391 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "a09a3c6c-014d-cc3f-67bc-b932cca784b2",
+   "survivor_id": "ecae6d74-5143-85de-56dc-a121be8a8db4",
+   "owner_username": "maya.okonkwo",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlong/ParadiseFallsMaintile01_NV_s.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "b05221ebab4a7e0a6cd234bd63da51832ded849d26e848ec8d34bc878274f848",
+    "survivor_sha256": "b05221ebab4a7e0a6cd234bd63da51832ded849d26e848ec8d34bc878274f848",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerr/ParadiseFallsMaintile01_NV_s.png."
+   },
+   "retired_record": {
+    "id": "a09a3c6c-014d-cc3f-67bc-b932cca784b2",
+    "asset_type": "image",
+    "title": "Paradisefallsmaintile01 Nv S (raster)",
+    "description": "Raster source for 'Paradisefallsmaintile01 Nv S' (png). Drop-in environment piece; tileable where applicable.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlong/ParadiseFallsMaintile01_NV_s.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlong/ParadiseFallsMaintile01_NV_s.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 133391,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "maya.okonkwo",
+    "collection_name": "Art Research",
+    "team_name": "Environment",
+    "brand_workspace": null,
+    "tags": [
+     "environment",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "ParadiseFallsMaintile01_NV_s.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00229"
+    },
+    "field_values": {
+     "pipeline_stage": "Greybox",
+     "version": "v1",
+     "revision_count": 2,
+     "rating": 4,
+     "texture_resolution": "4096x4096",
+     "color_space": "sRGB",
+     "engine_compatibility": "All",
+     "target_platforms": [
+      "PC",
+      "Console"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "production_notes": "Imported from the archive drop. Source layers retained; no destructive edits applied.",
+     "country": "us",
+     "keywords": [
+      "archival"
+     ],
+     "copyright": "© Aurora R&D. Internal use only."
+    },
+    "external_id": "AA-6334",
+    "review_notes": null,
+    "reviewer_username": "nikolai.petrov",
+    "created_at": "2025-07-19T10:03:11Z",
+    "updated_at": "2025-08-27T23:47:40Z",
+    "last_reviewed_at": "2025-09-16T12:37:36Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.copyright",
+     "retired_value": "© Aurora R&D. Internal use only."
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "us",
+     "survivor_value": "mx"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "All",
+     "survivor_value": "Unreal 5"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "archival"
+     ],
+     "survivor_value": [
+      "animation",
+      "illustration",
+      "product"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "ui-icons",
+     "survivor_value": "environment-architecture"
+    },
+    {
+     "path": "field_values.production_notes",
+     "retired_value": "Imported from the archive drop. Source layers retained; no destructive edits applied."
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlong/ParadiseFallsMaintile01_NV_s.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerr/ParadiseFallsMaintile01_NV_s.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "a09a3c6c-014d-cc3f-67bc-b932cca784b2",
+     "survivor_value": "ecae6d74-5143-85de-56dc-a121be8a8db4"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterlong/ParadiseFallsMaintile01_NV_s.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerr/ParadiseFallsMaintile01_NV_s.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "3299a3d1-27df-5240-7521-30fba254062e",
+     "old_members": [
+      "a09a3c6c-014d-cc3f-67bc-b932cca784b2",
+      "ecae6d74-5143-85de-56dc-a121be8a8db4"
+     ],
+     "new_members": [
+      "ecae6d74-5143-85de-56dc-a121be8a8db4"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    },
+    {
+     "post_id": "837dfc29-7c04-19f1-b618-4a86e6f91684",
+     "old_members": [
+      "804455ad-a366-5163-bf2c-656aa48a2199",
+      "40864d05-fe16-5782-5701-a520085a779a",
+      "25934b13-3b6b-510a-cc93-522b066d254b",
+      "92ae9fcc-51e6-cea3-46db-5cf8820174c1",
+      "84a88b07-ae23-6bbc-5f43-498135815a0b",
+      "a09a3c6c-014d-cc3f-67bc-b932cca784b2",
+      "dfd84963-c95e-0eca-4dea-7119038ffd3f",
+      "ef204e0f-b5b8-722e-4ffa-b4d26ca24a52",
+      "ece7e9e0-daa6-5a3d-05f8-ccdefe32559d"
+     ],
+     "new_members": [
+      "804455ad-a366-5163-bf2c-656aa48a2199",
+      "40864d05-fe16-5782-5701-a520085a779a",
+      "25934b13-3b6b-510a-cc93-522b066d254b",
+      "92ae9fcc-51e6-cea3-46db-5cf8820174c1",
+      "84a88b07-ae23-6bbc-5f43-498135815a0b",
+      "ecae6d74-5143-85de-56dc-a121be8a8db4",
+      "dfd84963-c95e-0eca-4dea-7119038ffd3f",
+      "ef204e0f-b5b8-722e-4ffa-b4d26ca24a52",
+      "ece7e9e0-daa6-5a3d-05f8-ccdefe32559d"
+     ],
+     "new_post_id": "aa4fea18-905f-c53f-92ea-444c0ceb1a10",
+     "_why": "team_roundup derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    }
+   ]
+  },
+  {
+   "_why": "imani.williams owns 2 records over these same 1598157 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "17dbe1ed-be85-1150-8b15-bd965f711b88",
+   "survivor_id": "d5fbcd12-ddec-76aa-eed6-747c9721ef47",
+   "owner_username": "imani.williams",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/ParadiseFallsMaintile01_NV.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "08f34915e419397aed71e6e25628646178e933f2a8e7cbebf0cefeef844aab2a",
+    "survivor_sha256": "08f34915e419397aed71e6e25628646178e933f2a8e7cbebf0cefeef844aab2a",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendl/ParadiseFallsMaintile01_NV.png."
+   },
+   "retired_record": {
+    "id": "17dbe1ed-be85-1150-8b15-bd965f711b88",
+    "asset_type": "image",
+    "title": "Paradisefallsmaintile01 Nv (raster)",
+    "description": "Raster source for 'Paradisefallsmaintile01 Nv' (png). Drop-in environment piece; tileable where applicable.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/ParadiseFallsMaintile01_NV.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/ParadiseFallsMaintile01_NV.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 1598157,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "imani.williams",
+    "collection_name": "Art Research",
+    "team_name": "Environment",
+    "brand_workspace": null,
+    "tags": [
+     "environment",
+     "franchise:reference"
+    ],
+    "workflow_state": "in_review",
+    "metadata": {
+     "filename": "ParadiseFallsMaintile01_NV.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00226"
+    },
+    "field_values": {
+     "pipeline_stage": "Polish",
+     "version": "v1",
+     "revision_count": 5,
+     "rating": 4,
+     "texture_resolution": "2048x2048",
+     "color_space": "sRGB",
+     "engine_compatibility": "Godot 4",
+     "target_platforms": [
+      "N/A"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "production_notes": "Colour checked on the calibrated display. Slight warmth is intentional, not drift.",
+     "country": "ng",
+     "keywords": [
+      "people"
+     ],
+     "copyright": "© Aurora R&D. Licensed for editorial use."
+    },
+    "external_id": "AA-4674",
+    "review_notes": null,
+    "reviewer_username": "marcus.johnson",
+    "created_at": "2025-07-25T06:12:46Z",
+    "updated_at": "2026-03-17T05:07:53Z",
+    "last_reviewed_at": "2026-05-24T11:39:32Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.color_space",
+     "retired_value": "sRGB",
+     "survivor_value": "Raw"
+    },
+    {
+     "path": "field_values.copyright",
+     "retired_value": "© Aurora R&D. Licensed for editorial use."
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "ng",
+     "survivor_value": "ma"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Godot 4",
+     "survivor_value": "Unity 2022"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "people"
+     ],
+     "survivor_value": [
+      "archival",
+      "logo",
+      "product"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "ui-icons",
+     "survivor_value": "environment-architecture"
+    },
+    {
+     "path": "field_values.production_notes",
+     "retired_value": "Colour checked on the calibrated display. Slight warmth is intentional, not drift."
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/ParadiseFallsMaintile01_NV.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendl/ParadiseFallsMaintile01_NV.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "17dbe1ed-be85-1150-8b15-bd965f711b88",
+     "survivor_value": "d5fbcd12-ddec-76aa-eed6-747c9721ef47"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerl/ParadiseFallsMaintile01_NV.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendl/ParadiseFallsMaintile01_NV.png"
+    },
+    {
+     "path": "workflow_state",
+     "retired_value": "in_review",
+     "survivor_value": "approved"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "3dfd33e1-7422-d4d4-8c3e-f86c74842c05",
+     "old_members": [
+      "17dbe1ed-be85-1150-8b15-bd965f711b88",
+      "d5fbcd12-ddec-76aa-eed6-747c9721ef47"
+     ],
+     "new_members": [
+      "d5fbcd12-ddec-76aa-eed6-747c9721ef47"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    },
+    {
+     "post_id": "4427358e-bda3-72a7-1d49-a58558d79297",
+     "old_members": [
+      "23a9b9ab-623a-03a5-cc70-d6567ea98cdf",
+      "027d8a6a-3684-eb98-a058-a9a7e6ffd463",
+      "c1e5a45a-851b-9e7d-25d7-76b25afb8008",
+      "4be472e4-521f-20b2-7c49-6657d4fff5ac",
+      "14a658a8-8a4d-9b2d-f54f-515539128f58",
+      "be94b969-51ed-e7c5-fc99-15fc46ebbaf4",
+      "17dbe1ed-be85-1150-8b15-bd965f711b88",
+      "8c44a1a6-f86e-66e7-a552-8379cb117baf",
+      "a515f093-d78d-49df-14e9-9df1a8a09534"
+     ],
+     "new_members": [
+      "23a9b9ab-623a-03a5-cc70-d6567ea98cdf",
+      "027d8a6a-3684-eb98-a058-a9a7e6ffd463",
+      "c1e5a45a-851b-9e7d-25d7-76b25afb8008",
+      "4be472e4-521f-20b2-7c49-6657d4fff5ac",
+      "14a658a8-8a4d-9b2d-f54f-515539128f58",
+      "be94b969-51ed-e7c5-fc99-15fc46ebbaf4",
+      "d5fbcd12-ddec-76aa-eed6-747c9721ef47",
+      "8c44a1a6-f86e-66e7-a552-8379cb117baf",
+      "a515f093-d78d-49df-14e9-9df1a8a09534"
+     ],
+     "new_post_id": "37f342ab-c61b-c060-e786-0602899af2a1",
+     "_why": "project_sprint derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    },
+    {
+     "post_id": "088f5b9f-4d22-67c3-a020-d5a2365a1666",
+     "old_members": [
+      "543704bb-1c1f-2418-13df-625bb4d5aa3e",
+      "25934b13-3b6b-510a-cc93-522b066d254b",
+      "40864d05-fe16-5782-5701-a520085a779a",
+      "dfd84963-c95e-0eca-4dea-7119038ffd3f",
+      "b37ae6c6-d818-3a7b-103c-6f1d0f0463c8",
+      "17dbe1ed-be85-1150-8b15-bd965f711b88",
+      "9c2d94b2-358f-ca18-ff32-2bc3488e29dc"
+     ],
+     "new_members": [
+      "543704bb-1c1f-2418-13df-625bb4d5aa3e",
+      "25934b13-3b6b-510a-cc93-522b066d254b",
+      "40864d05-fe16-5782-5701-a520085a779a",
+      "dfd84963-c95e-0eca-4dea-7119038ffd3f",
+      "b37ae6c6-d818-3a7b-103c-6f1d0f0463c8",
+      "d5fbcd12-ddec-76aa-eed6-747c9721ef47"
+     ],
+     "new_post_id": "d8c99564-ed45-6119-4eb1-ee125657fc15",
+     "_why": "team_roundup derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    }
+   ]
+  },
+  {
+   "_why": "layla.hassan owns 2 records over these same 16069 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "e4666283-8f38-55bf-c746-4aeebf244729",
+   "survivor_id": "249308ea-a6b9-5477-4e96-45967cb085f6",
+   "owner_username": "layla.hassan",
+   "source_root": "local",
+   "retired_file_path": "images/kenney_blocky-characters_20/Models/GLB format/Textures/texture-g.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "cce3f8d545625998c27e91016672366eb84f21bbc520f8227022c23d0dd557fc",
+    "survivor_sha256": "cce3f8d545625998c27e91016672366eb84f21bbc520f8227022c23d0dd557fc",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/kenney_blocky-characters_20/Models/OBJ format/Textures/texture-g.png."
+   },
+   "retired_record": {
+    "id": "e4666283-8f38-55bf-c746-4aeebf244729",
+    "asset_type": "image",
+    "title": "Texture G (raster)",
+    "description": "Raster source for 'Texture G' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/kenney_blocky-characters_20/Models/GLB format/Textures/texture-g.png",
+    "source_path": "unpacked/kenney_blocky-characters_20/Models/GLB format/Textures/texture-g.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 16069,
+    "sensitivity_tier": "team",
+    "archive_state": "active",
+    "owner_username": "layla.hassan",
+    "collection_name": "Project Heroes",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+     "character",
+     "characters",
+     "lowpoly",
+     "rigged"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "texture-g.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "All Use",
+     "acquisition_source": "Kenney.nl",
+     "attribution": "Kenney Vleugels (CC0)",
+     "group_id": "grp-05133"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v2",
+     "revision_count": 1,
+     "rating": 5,
+     "texture_resolution": "2048x2048",
+     "color_space": "sRGB",
+     "engine_compatibility": "Unreal 5",
+     "target_platforms": [
+      "N/A"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "derived_from": "249308ea-a6b9-5477-4e96-45967cb085f6",
+     "country": "ar",
+     "keywords": [
+      "animation",
+      "illustration",
+      "photograph"
+     ]
+    },
+    "external_id": "P4-63514",
+    "review_notes": null,
+    "reviewer_username": "ravi.patel",
+    "created_at": "2025-08-19T12:23:30Z",
+    "updated_at": "2026-05-06T14:45:07Z",
+    "last_reviewed_at": "2026-05-17T04:28:37Z",
+    "license": "Internal",
+    "attribution": "Kenney Vleugels (CC0)",
+    "layer": "A",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "ar",
+     "survivor_value": "za"
+    },
+    {
+     "path": "field_values.derived_from",
+     "retired_value": "249308ea-a6b9-5477-4e96-45967cb085f6"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Unreal 5",
+     "survivor_value": "Unity 2022"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "animation",
+      "illustration",
+      "photograph"
+     ],
+     "survivor_value": [
+      "photograph",
+      "texture"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "ui-icons",
+     "survivor_value": "environment-architecture"
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "2048x2048",
+     "survivor_value": "4096x4096"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/kenney_blocky-characters_20/Models/GLB format/Textures/texture-g.png",
+     "survivor_value": "images/kenney_blocky-characters_20/Models/OBJ format/Textures/texture-g.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "e4666283-8f38-55bf-c746-4aeebf244729",
+     "survivor_value": "249308ea-a6b9-5477-4e96-45967cb085f6"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "unpacked/kenney_blocky-characters_20/Models/GLB format/Textures/texture-g.png",
+     "survivor_value": "unpacked/kenney_blocky-characters_20/Models/OBJ format/Textures/texture-g.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "a628690b-3ce3-4801-4744-13f9cd9991cc",
+     "old_members": [
+      "249308ea-a6b9-5477-4e96-45967cb085f6",
+      "e4666283-8f38-55bf-c746-4aeebf244729"
+     ],
+     "new_members": [
+      "249308ea-a6b9-5477-4e96-45967cb085f6"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    }
+   ]
+  },
+  {
+   "_why": "imani.williams owns 2 records over these same 158992 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "d0d1bf02-5abb-6cfe-db12-ed252b0a2d8d",
+   "survivor_id": "e943dc5d-4f93-f145-9d87-fb0f758cffb2",
+   "owner_username": "imani.williams",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/otbrick01_s.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "84ce7b0cc19b829e5a83d7012a52c3e0c5124bcc3b10862613e0b6419ceb7cb7",
+    "survivor_sha256": "84ce7b0cc19b829e5a83d7012a52c3e0c5124bcc3b10862613e0b6419ceb7cb7",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/otbrick01_s.png."
+   },
+   "retired_record": {
+    "id": "d0d1bf02-5abb-6cfe-db12-ed252b0a2d8d",
+    "asset_type": "image",
+    "title": "Otbrick01 S (raster)",
+    "description": "Raster source for 'Otbrick01 S' (png). Drop-in environment piece; tileable where applicable.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/otbrick01_s.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/otbrick01_s.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 158992,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "imani.williams",
+    "collection_name": "Art Research",
+    "team_name": "Environment",
+    "brand_workspace": null,
+    "tags": [
+     "environment",
+     "franchise:reference"
+    ],
+    "workflow_state": "in_review",
+    "metadata": {
+     "filename": "otbrick01_s.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00216"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v3",
+     "revision_count": 2,
+     "rating": 4,
+     "texture_resolution": "1024x1024",
+     "color_space": "Linear",
+     "engine_compatibility": "Unity 2022",
+     "target_platforms": [
+      "Mobile"
+     ],
+     "naming_compliant": true,
+     "production_area": "environment-architecture",
+     "production_notes": "Retopologised for the mobile budget. Higher-density original kept as the reference.",
+     "country": "nl",
+     "keywords": [
+      "texture"
+     ],
+     "credit": "Aurora R&D / Archive",
+     "copyright": "Public domain — no rights reserved."
+    },
+    "external_id": "AA-5946",
+    "review_notes": null,
+    "reviewer_username": "ravi.patel",
+    "created_at": "2025-09-29T04:31:40Z",
+    "updated_at": "2025-12-14T22:22:46Z",
+    "last_reviewed_at": null,
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.color_space",
+     "retired_value": "Linear",
+     "survivor_value": "sRGB"
+    },
+    {
+     "path": "field_values.copyright",
+     "retired_value": "Public domain — no rights reserved."
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "nl",
+     "survivor_value": "it"
+    },
+    {
+     "path": "field_values.credit",
+     "retired_value": "Aurora R&D / Archive"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Unity 2022",
+     "survivor_value": "Unreal 5"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "texture"
+     ],
+     "survivor_value": [
+      "architecture",
+      "nature",
+      "promotional"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "environment-architecture",
+     "survivor_value": "ui-icons"
+    },
+    {
+     "path": "field_values.production_notes",
+     "retired_value": "Retopologised for the mobile budget. Higher-density original kept as the reference."
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "1024x1024",
+     "survivor_value": "2048x2048"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/otbrick01_s.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/otbrick01_s.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "d0d1bf02-5abb-6cfe-db12-ed252b0a2d8d",
+     "survivor_value": "e943dc5d-4f93-f145-9d87-fb0f758cffb2"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/otbrick01_s.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/otbrick01_s.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "3cbe8de0-5c13-3905-64cd-374ae5a08473",
+     "old_members": [
+      "d0d1bf02-5abb-6cfe-db12-ed252b0a2d8d",
+      "e943dc5d-4f93-f145-9d87-fb0f758cffb2"
+     ],
+     "new_members": [
+      "e943dc5d-4f93-f145-9d87-fb0f758cffb2"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    }
+   ]
+  },
+  {
+   "_why": "maya.okonkwo owns 5 records over these same 397830 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "aef2d1c7-5550-f4bc-5593-a3bfee5dbefd",
+   "survivor_id": "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd",
+   "owner_username": "maya.okonkwo",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerlbrick/paradisefallsedgetrim01_n.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "cf6752d9010e0d0a2dc93d6c17e6b5c7a59f9ef78e9440bf667d9630b54e23da",
+    "survivor_sha256": "cf6752d9010e0d0a2dc93d6c17e6b5c7a59f9ef78e9440bf667d9630b54e23da",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png."
+   },
+   "retired_record": {
+    "id": "aef2d1c7-5550-f4bc-5593-a3bfee5dbefd",
+    "asset_type": "image",
+    "title": "Paradisefallsedgetrim01 N (raster)",
+    "description": "Raster source for 'Paradisefallsedgetrim01 N' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerlbrick/paradisefallsedgetrim01_n.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerlbrick/paradisefallsedgetrim01_n.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 397830,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "maya.okonkwo",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "paradisefallsedgetrim01_n.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00222"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v2",
+     "revision_count": 2,
+     "rating": 3,
+     "texture_resolution": "2048x2048",
+     "color_space": "sRGB",
+     "engine_compatibility": "N/A",
+     "target_platforms": [
+      "Mobile"
+     ],
+     "naming_compliant": true,
+     "production_area": "environment-architecture",
+     "ingested_at": "2026-11-23T10:10:00Z",
+     "license_expires": "2026-11-23T00:00:00Z",
+     "country": "cn",
+     "keywords": [
+      "archival",
+      "logo"
+     ],
+     "credit": "Aurora R&D"
+    },
+    "external_id": "AA-2848",
+    "review_notes": null,
+    "reviewer_username": "anya.volkov",
+    "created_at": "2025-10-28T20:23:49Z",
+    "updated_at": "2026-04-11T14:06:50Z",
+    "last_reviewed_at": "2026-05-18T20:28:01Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "cn",
+     "survivor_value": "us"
+    },
+    {
+     "path": "field_values.credit",
+     "retired_value": "Aurora R&D"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "N/A",
+     "survivor_value": "Unreal 5"
+    },
+    {
+     "path": "field_values.ingested_at",
+     "retired_value": "2026-11-23T10:10:00Z"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "archival",
+      "logo"
+     ],
+     "survivor_value": [
+      "product"
+     ]
+    },
+    {
+     "path": "field_values.license_expires",
+     "retired_value": "2026-11-23T00:00:00Z"
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "environment-architecture",
+     "survivor_value": "ui-icons"
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "2048x2048",
+     "survivor_value": "512x512"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerlbrick/paradisefallsedgetrim01_n.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "aef2d1c7-5550-f4bc-5593-a3bfee5dbefd",
+     "survivor_value": "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerlbrick/paradisefallsedgetrim01_n.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "775e90f4-c51f-fe3f-426f-b1b771f4cce0",
+     "old_members": [
+      "aef2d1c7-5550-f4bc-5593-a3bfee5dbefd",
+      "24fdb2e3-30b5-d8cd-fc0f-4d12ef68a979",
+      "e45369cf-1b41-eae7-f1bc-f0c627afc43a",
+      "c5a588c7-0cd4-1e67-80a8-94426510ca2a",
+      "3f5858b1-a7a8-8976-08fd-03f1a8bab587",
+      "d887faba-7f61-0d8f-31f3-145a221e3567",
+      "3ae50b01-b5a1-cb50-1770-687631909f1f",
+      "bed8575d-8a04-a70c-f2cd-3c4379bdeac6",
+      "f123e25f-7843-d09f-4376-dbe2911ddcca"
+     ],
+     "new_members": [
+      "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd",
+      "24fdb2e3-30b5-d8cd-fc0f-4d12ef68a979",
+      "e45369cf-1b41-eae7-f1bc-f0c627afc43a",
+      "3f5858b1-a7a8-8976-08fd-03f1a8bab587",
+      "d887faba-7f61-0d8f-31f3-145a221e3567",
+      "3ae50b01-b5a1-cb50-1770-687631909f1f",
+      "bed8575d-8a04-a70c-f2cd-3c4379bdeac6",
+      "f123e25f-7843-d09f-4376-dbe2911ddcca"
+     ],
+     "new_post_id": "dbf323f1-fe9f-5104-401f-3a9ede22407c",
+     "_why": "project_sprint derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    }
+   ]
+  },
+  {
+   "_why": "maya.okonkwo owns 5 records over these same 397830 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "64821819-548c-0048-4bb0-5f1cb6c85e1b",
+   "survivor_id": "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd",
+   "owner_username": "maya.okonkwo",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/paradisefallsedgetrim01_n.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "cf6752d9010e0d0a2dc93d6c17e6b5c7a59f9ef78e9440bf667d9630b54e23da",
+    "survivor_sha256": "cf6752d9010e0d0a2dc93d6c17e6b5c7a59f9ef78e9440bf667d9630b54e23da",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png."
+   },
+   "retired_record": {
+    "id": "64821819-548c-0048-4bb0-5f1cb6c85e1b",
+    "asset_type": "image",
+    "title": "Paradisefallsedgetrim01 N (raster)",
+    "description": "Raster source for 'Paradisefallsedgetrim01 N' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/paradisefallsedgetrim01_n.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/paradisefallsedgetrim01_n.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 397830,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "maya.okonkwo",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "paradisefallsedgetrim01_n.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00222"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v2",
+     "revision_count": 2,
+     "rating": 3,
+     "texture_resolution": "2048x2048",
+     "color_space": "sRGB",
+     "engine_compatibility": "Unreal 5",
+     "target_platforms": [
+      "Mobile"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "country": "in",
+     "keywords": [
+      "archival",
+      "people",
+      "reference"
+     ]
+    },
+    "external_id": "AA-2848",
+    "review_notes": null,
+    "reviewer_username": "anya.volkov",
+    "created_at": "2025-10-28T20:23:49Z",
+    "updated_at": "2026-04-11T14:06:50Z",
+    "last_reviewed_at": "2026-05-18T20:28:01Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "in",
+     "survivor_value": "us"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "archival",
+      "people",
+      "reference"
+     ],
+     "survivor_value": [
+      "product"
+     ]
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "2048x2048",
+     "survivor_value": "512x512"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/paradisefallsedgetrim01_n.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "64821819-548c-0048-4bb0-5f1cb6c85e1b",
+     "survivor_value": "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/paradisefallsedgetrim01_n.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "95706fe3-839d-75c1-4d57-e879eba393a4",
+     "old_members": [
+      "64821819-548c-0048-4bb0-5f1cb6c85e1b",
+      "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd",
+      "aef2d1c7-5550-f4bc-5593-a3bfee5dbefd",
+      "c5a588c7-0cd4-1e67-80a8-94426510ca2a",
+      "fe578c53-c152-40e7-0543-b28a0807f9bb"
+     ],
+     "new_members": [
+      "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    }
+   ]
+  },
+  {
+   "_why": "maya.okonkwo owns 5 records over these same 397830 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "c5a588c7-0cd4-1e67-80a8-94426510ca2a",
+   "survivor_id": "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd",
+   "owner_username": "maya.okonkwo",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/paradisefallsedgetrim01_n.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "cf6752d9010e0d0a2dc93d6c17e6b5c7a59f9ef78e9440bf667d9630b54e23da",
+    "survivor_sha256": "cf6752d9010e0d0a2dc93d6c17e6b5c7a59f9ef78e9440bf667d9630b54e23da",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png."
+   },
+   "retired_record": {
+    "id": "c5a588c7-0cd4-1e67-80a8-94426510ca2a",
+    "asset_type": "image",
+    "title": "Paradisefallsedgetrim01 N (raster)",
+    "description": "Raster source for 'Paradisefallsedgetrim01 N' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/paradisefallsedgetrim01_n.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/paradisefallsedgetrim01_n.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 397830,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "maya.okonkwo",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "paradisefallsedgetrim01_n.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00222"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v2",
+     "revision_count": 2,
+     "rating": 3,
+     "texture_resolution": "256x256",
+     "color_space": "Raw",
+     "engine_compatibility": "Unreal 5",
+     "target_platforms": [
+      "Mobile"
+     ],
+     "naming_compliant": true,
+     "production_area": "environment-architecture",
+     "production_notes": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock.",
+     "usage_rights": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>",
+     "country": "jp",
+     "keywords": [
+      "abstract"
+     ],
+     "credit": "Aurora R&D / Archive",
+     "copyright": "© Aurora R&D. All rights reserved.",
+     "capture_date": "2026-01-25T12:12:00Z"
+    },
+    "external_id": "AA-2848",
+    "review_notes": null,
+    "reviewer_username": "anya.volkov",
+    "created_at": "2025-10-28T20:23:49Z",
+    "updated_at": "2026-04-11T14:06:50Z",
+    "last_reviewed_at": "2026-05-18T20:28:01Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.capture_date",
+     "retired_value": "2026-01-25T12:12:00Z"
+    },
+    {
+     "path": "field_values.color_space",
+     "retired_value": "Raw",
+     "survivor_value": "sRGB"
+    },
+    {
+     "path": "field_values.copyright",
+     "retired_value": "© Aurora R&D. All rights reserved.",
+     "survivor_value": "© Aurora R&D. Internal use only."
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "jp",
+     "survivor_value": "us"
+    },
+    {
+     "path": "field_values.credit",
+     "retired_value": "Aurora R&D / Archive"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "abstract"
+     ],
+     "survivor_value": [
+      "product"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "environment-architecture",
+     "survivor_value": "ui-icons"
+    },
+    {
+     "path": "field_values.production_notes",
+     "retired_value": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock.",
+     "survivor_value": "Imported from the archive drop. Source layers retained; no destructive edits applied."
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "256x256",
+     "survivor_value": "512x512"
+    },
+    {
+     "path": "field_values.usage_rights",
+     "retired_value": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/paradisefallsedgetrim01_n.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "c5a588c7-0cd4-1e67-80a8-94426510ca2a",
+     "survivor_value": "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/paradisefallsedgetrim01_n.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "b8e11ad0-5c8e-27e8-6320-a6dbb2fdb735",
+     "old_members": [
+      "a41082eb-8025-ae4e-45af-066d0f23cfd4",
+      "b5cc85b0-7a11-d9c5-3424-24de016376d4",
+      "68e9d2c1-7748-e4f9-20e1-59be6e989c41",
+      "54a928b7-d881-f153-cb58-0ea16074cf5b",
+      "12a5782d-42aa-5e55-3c93-c60e3da52937",
+      "c5a588c7-0cd4-1e67-80a8-94426510ca2a",
+      "3af4d19a-4479-9550-28dd-014e15a05135",
+      "30ea549a-edf9-1b3d-25d4-de7cadfa6684",
+      "7d73ba7a-c6c2-3b45-2503-58bdd12883c2",
+      "01849d05-3b68-36ba-3b52-be0d5cfcc835"
+     ],
+     "new_members": [
+      "a41082eb-8025-ae4e-45af-066d0f23cfd4",
+      "b5cc85b0-7a11-d9c5-3424-24de016376d4",
+      "68e9d2c1-7748-e4f9-20e1-59be6e989c41",
+      "54a928b7-d881-f153-cb58-0ea16074cf5b",
+      "12a5782d-42aa-5e55-3c93-c60e3da52937",
+      "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd",
+      "3af4d19a-4479-9550-28dd-014e15a05135",
+      "30ea549a-edf9-1b3d-25d4-de7cadfa6684",
+      "7d73ba7a-c6c2-3b45-2503-58bdd12883c2",
+      "01849d05-3b68-36ba-3b52-be0d5cfcc835"
+     ],
+     "new_post_id": "bbc77118-a2c5-0228-43b6-f00b743487da",
+     "_why": "team_roundup derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    }
+   ]
+  },
+  {
+   "_why": "maya.okonkwo owns 5 records over these same 397830 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "fe578c53-c152-40e7-0543-b28a0807f9bb",
+   "survivor_id": "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd",
+   "owner_username": "maya.okonkwo",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/paradisefallsedgetrim01_n.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "cf6752d9010e0d0a2dc93d6c17e6b5c7a59f9ef78e9440bf667d9630b54e23da",
+    "survivor_sha256": "cf6752d9010e0d0a2dc93d6c17e6b5c7a59f9ef78e9440bf667d9630b54e23da",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png."
+   },
+   "retired_record": {
+    "id": "fe578c53-c152-40e7-0543-b28a0807f9bb",
+    "asset_type": "image",
+    "title": "Paradisefallsedgetrim01 N (raster)",
+    "description": "Raster source for 'Paradisefallsedgetrim01 N' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/paradisefallsedgetrim01_n.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/paradisefallsedgetrim01_n.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 397830,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "maya.okonkwo",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "paradisefallsedgetrim01_n.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00222"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v2",
+     "revision_count": 2,
+     "rating": 3,
+     "texture_resolution": "512x512",
+     "color_space": "sRGB",
+     "engine_compatibility": "Unreal 5",
+     "target_platforms": [
+      "Mobile"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "country": "kr",
+     "keywords": [
+      "landscape",
+      "portrait"
+     ]
+    },
+    "external_id": "AA-2848",
+    "review_notes": null,
+    "reviewer_username": "anya.volkov",
+    "created_at": "2025-10-28T20:23:49Z",
+    "updated_at": "2026-04-11T14:06:50Z",
+    "last_reviewed_at": "2026-05-18T20:28:01Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "kr",
+     "survivor_value": "us"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "landscape",
+      "portrait"
+     ],
+     "survivor_value": [
+      "product"
+     ]
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/paradisefallsedgetrim01_n.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "fe578c53-c152-40e7-0543-b28a0807f9bb",
+     "survivor_value": "89bc0b62-7b2c-ee5f-75bf-712c7e7f20dd"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/paradisefallsedgetrim01_n.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/paradisefallsedgetrim01_n.png"
+    }
+   ],
+   "post_substitutions": []
+  },
+  {
+   "_why": "layla.hassan owns 2 records over these same 13909 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "50669420-6799-bd1f-8ec4-3844631d298c",
+   "survivor_id": "997af954-cc46-ef5f-7e60-64b4f5af3e4c",
+   "owner_username": "layla.hassan",
+   "source_root": "local",
+   "retired_file_path": "images/kenney_blocky-characters_20/Models/OBJ format/Textures/texture-r.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "fd29fd9fc745ca7b4231d704830b7508a3ec6894c54eeacc6cff722e851d9236",
+    "survivor_sha256": "fd29fd9fc745ca7b4231d704830b7508a3ec6894c54eeacc6cff722e851d9236",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/kenney_blocky-characters_20/Models/FBX format/Textures/texture-r.png."
+   },
+   "retired_record": {
+    "id": "50669420-6799-bd1f-8ec4-3844631d298c",
+    "asset_type": "image",
+    "title": "Texture R (raster)",
+    "description": "Raster source for 'Texture R' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/kenney_blocky-characters_20/Models/OBJ format/Textures/texture-r.png",
+    "source_path": "unpacked/kenney_blocky-characters_20/Models/OBJ format/Textures/texture-r.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 13909,
+    "sensitivity_tier": "team",
+    "archive_state": "draft",
+    "owner_username": "layla.hassan",
+    "collection_name": "Project Heroes",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+     "character",
+     "characters",
+     "lowpoly",
+     "rigged"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "texture-r.png",
+     "kind": "raster",
+     "license": "Studio-Exclusive",
+     "usage_rights": "All Use",
+     "acquisition_source": "Kenney.nl",
+     "attribution": "Kenney Vleugels (CC0)",
+     "group_id": "grp-05144"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v1",
+     "revision_count": 4,
+     "rating": 4,
+     "texture_resolution": "4096x4096",
+     "color_space": "Raw",
+     "engine_compatibility": "Godot 4",
+     "target_platforms": [
+      "Mobile"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "ingested_at": "2026-12-20T11:35:00Z",
+     "license_expires": "2026-12-20T00:00:00Z",
+     "country": "in",
+     "keywords": [
+      "animation",
+      "logo",
+      "product"
+     ]
+    },
+    "external_id": "P4-80443",
+    "review_notes": null,
+    "reviewer_username": "ravi.patel",
+    "created_at": "2025-11-05T05:13:59Z",
+    "updated_at": "2025-11-18T06:56:25Z",
+    "last_reviewed_at": "2026-03-13T05:34:55Z",
+    "license": "Studio-Exclusive",
+    "attribution": "Kenney Vleugels (CC0)",
+    "layer": "A",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.color_space",
+     "retired_value": "Raw",
+     "survivor_value": "sRGB"
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "in",
+     "survivor_value": "cn"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Godot 4",
+     "survivor_value": "Unreal 5"
+    },
+    {
+     "path": "field_values.ingested_at",
+     "retired_value": "2026-12-20T11:35:00Z"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "animation",
+      "logo",
+      "product"
+     ],
+     "survivor_value": [
+      "animation",
+      "illustration"
+     ]
+    },
+    {
+     "path": "field_values.license_expires",
+     "retired_value": "2026-12-20T00:00:00Z"
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "ui-icons",
+     "survivor_value": "environment-architecture"
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "4096x4096",
+     "survivor_value": "2048x2048"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/kenney_blocky-characters_20/Models/OBJ format/Textures/texture-r.png",
+     "survivor_value": "images/kenney_blocky-characters_20/Models/FBX format/Textures/texture-r.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "50669420-6799-bd1f-8ec4-3844631d298c",
+     "survivor_value": "997af954-cc46-ef5f-7e60-64b4f5af3e4c"
+    },
+    {
+     "path": "review_notes",
+     "retired_value": null,
+     "survivor_value": "Needs another silhouette pass."
+    },
+    {
+     "path": "source_path",
+     "retired_value": "unpacked/kenney_blocky-characters_20/Models/OBJ format/Textures/texture-r.png",
+     "survivor_value": "unpacked/kenney_blocky-characters_20/Models/FBX format/Textures/texture-r.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "1e174b24-c87b-871a-70a2-a42c210e6855",
+     "old_members": [
+      "e84de3b5-3cb6-7e00-2afd-0630b258cf82",
+      "50669420-6799-bd1f-8ec4-3844631d298c",
+      "1e0e7900-1540-e535-60fa-02c7ce1adbdc",
+      "71d0ace3-cb3c-efa8-23d2-64e21d81296b",
+      "777dd659-9223-c507-e74b-98a80b13a307",
+      "a45870f4-8d2e-5afb-9018-816d1288ea5d",
+      "d6187f1a-0bf3-5496-5597-b08f2786bd5f",
+      "1a19717f-e141-fdd2-efcb-91c287ffb4d6",
+      "943212a1-7afa-4d93-cddd-b0a86cc89c73"
+     ],
+     "new_members": [
+      "e84de3b5-3cb6-7e00-2afd-0630b258cf82",
+      "997af954-cc46-ef5f-7e60-64b4f5af3e4c",
+      "1e0e7900-1540-e535-60fa-02c7ce1adbdc",
+      "71d0ace3-cb3c-efa8-23d2-64e21d81296b",
+      "777dd659-9223-c507-e74b-98a80b13a307",
+      "a45870f4-8d2e-5afb-9018-816d1288ea5d",
+      "d6187f1a-0bf3-5496-5597-b08f2786bd5f",
+      "1a19717f-e141-fdd2-efcb-91c287ffb4d6",
+      "943212a1-7afa-4d93-cddd-b0a86cc89c73"
+     ],
+     "new_post_id": "f19eb62f-eb86-9425-6e33-fb7de1cb5d0a",
+     "_why": "project_sprint derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    },
+    {
+     "post_id": "fb590d5a-21ab-84ad-3975-7908b7bce86b",
+     "old_members": [
+      "50669420-6799-bd1f-8ec4-3844631d298c",
+      "997af954-cc46-ef5f-7e60-64b4f5af3e4c"
+     ],
+     "new_members": [
+      "997af954-cc46-ef5f-7e60-64b4f5af3e4c"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    },
+    {
+     "post_id": "5f194392-9f12-9e8d-21ec-412d45c9f4db",
+     "old_members": [
+      "50669420-6799-bd1f-8ec4-3844631d298c",
+      "0576921e-ca92-0b22-b21b-d2a267c0adec",
+      "0146a059-6bec-3954-fe46-4a293ff84ac4",
+      "7d73ba7a-c6c2-3b45-2503-58bdd12883c2",
+      "1e0e7900-1540-e535-60fa-02c7ce1adbdc",
+      "452356b9-e90d-7fc4-f4bd-f60f47b8e51f",
+      "e4666283-8f38-55bf-c746-4aeebf244729",
+      "9a1514b9-12a8-8922-b98e-26c34a0225fe",
+      "2815a9e1-56da-2177-1941-c5d3e25f08fb"
+     ],
+     "new_members": [
+      "997af954-cc46-ef5f-7e60-64b4f5af3e4c",
+      "0576921e-ca92-0b22-b21b-d2a267c0adec",
+      "0146a059-6bec-3954-fe46-4a293ff84ac4",
+      "7d73ba7a-c6c2-3b45-2503-58bdd12883c2",
+      "1e0e7900-1540-e535-60fa-02c7ce1adbdc",
+      "452356b9-e90d-7fc4-f4bd-f60f47b8e51f",
+      "249308ea-a6b9-5477-4e96-45967cb085f6",
+      "9a1514b9-12a8-8922-b98e-26c34a0225fe",
+      "2815a9e1-56da-2177-1941-c5d3e25f08fb"
+     ],
+     "new_post_id": "3a05ada2-bc7f-c614-b2a1-dba91dc61b30",
+     "_why": "project_sprint derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    },
+    {
+     "post_id": "2cec8256-e532-a826-729b-f48b67c5d023",
+     "old_members": [
+      "1a19717f-e141-fdd2-efcb-91c287ffb4d6",
+      "fa25ce5a-4004-f5d2-4f39-2ae17372e969",
+      "aa416965-d2d4-7245-2074-6a373e53fe91",
+      "50669420-6799-bd1f-8ec4-3844631d298c",
+      "b882db86-eea0-5c83-ea00-5197e11d8a94",
+      "3766e608-02ff-2ca3-de6f-8917cd32c882",
+      "1905503a-2d63-3356-b6c5-7d111e208ced",
+      "c99d823e-ae0f-ba5d-eb89-fce2728cb1d5",
+      "d6187f1a-0bf3-5496-5597-b08f2786bd5f",
+      "c06575fa-b2ce-9492-378c-9fffc43919b5"
+     ],
+     "new_members": [
+      "1a19717f-e141-fdd2-efcb-91c287ffb4d6",
+      "fa25ce5a-4004-f5d2-4f39-2ae17372e969",
+      "aa416965-d2d4-7245-2074-6a373e53fe91",
+      "997af954-cc46-ef5f-7e60-64b4f5af3e4c",
+      "b882db86-eea0-5c83-ea00-5197e11d8a94",
+      "3766e608-02ff-2ca3-de6f-8917cd32c882",
+      "1905503a-2d63-3356-b6c5-7d111e208ced",
+      "c99d823e-ae0f-ba5d-eb89-fce2728cb1d5",
+      "d6187f1a-0bf3-5496-5597-b08f2786bd5f",
+      "c06575fa-b2ce-9492-378c-9fffc43919b5"
+     ],
+     "new_post_id": "befa85e8-4b7a-ef2f-7a56-e5defd26916a",
+     "_why": "project_sprint derives its id from MEMBERSHIP (sorted asset_ids), so the substitution moves it. The move is composed onto the existing chain in post-id-migration.studio-b.json."
+    }
+   ]
+  },
+  {
+   "_why": "yuki.sato owns 4 records over these same 17926 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "4d92527b-c67d-4a02-15ee-3e94ae9bf7a2",
+   "survivor_id": "4de4817a-80d6-c999-dbf5-7a400bdc7c88",
+   "owner_username": "yuki.sato",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/paradisefallsedgetrim01_alpha.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "95c3ab75f3ee9d2b32b9a22457eee0039b03f9a1e31f161469abccbdac7777b5",
+    "survivor_sha256": "95c3ab75f3ee9d2b32b9a22457eee0039b03f9a1e31f161469abccbdac7777b5",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendrbrick/paradisefallsedgetrim01_alpha.png."
+   },
+   "retired_record": {
+    "id": "4d92527b-c67d-4a02-15ee-3e94ae9bf7a2",
+    "asset_type": "image",
+    "title": "Paradisefallsedgetrim01 Alpha (raster)",
+    "description": "Raster source for 'Paradisefallsedgetrim01 Alpha' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/paradisefallsedgetrim01_alpha.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/paradisefallsedgetrim01_alpha.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 17926,
+    "sensitivity_tier": "restricted",
+    "archive_state": "active",
+    "owner_username": "yuki.sato",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "final",
+    "metadata": {
+     "filename": "paradisefallsedgetrim01_alpha.png",
+     "kind": "raster",
+     "license": "CC0",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00221"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v3",
+     "revision_count": 1,
+     "rating": 5,
+     "texture_resolution": "512x512",
+     "color_space": "sRGB",
+     "engine_compatibility": "Unity 2022",
+     "target_platforms": [
+      "PC",
+      "Console"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "country": "in",
+     "keywords": [
+      "architecture",
+      "nature",
+      "promotional"
+     ]
+    },
+    "external_id": "AA-1419",
+    "review_notes": null,
+    "reviewer_username": "ravi.patel",
+    "created_at": "2026-01-14T02:07:39Z",
+    "updated_at": "2026-04-23T18:09:56Z",
+    "last_reviewed_at": "2026-05-20T09:53:22Z",
+    "license": "CC0",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "in",
+     "survivor_value": "cn"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Unity 2022",
+     "survivor_value": "Unreal 5"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "architecture",
+      "nature",
+      "promotional"
+     ],
+     "survivor_value": [
+      "architecture",
+      "landscape"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "ui-icons",
+     "survivor_value": "environment-architecture"
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "512x512",
+     "survivor_value": "1024x1024"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/paradisefallsedgetrim01_alpha.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendrbrick/paradisefallsedgetrim01_alpha.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "4d92527b-c67d-4a02-15ee-3e94ae9bf7a2",
+     "survivor_value": "4de4817a-80d6-c999-dbf5-7a400bdc7c88"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendlbrick/paradisefallsedgetrim01_alpha.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendrbrick/paradisefallsedgetrim01_alpha.png"
+    }
+   ],
+   "post_substitutions": []
+  },
+  {
+   "_why": "yuki.sato owns 4 records over these same 17926 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "408880ca-0b1b-499e-0b26-1fc7108a2477",
+   "survivor_id": "4de4817a-80d6-c999-dbf5-7a400bdc7c88",
+   "owner_username": "yuki.sato",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/paradisefallsedgetrim01_alpha.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "95c3ab75f3ee9d2b32b9a22457eee0039b03f9a1e31f161469abccbdac7777b5",
+    "survivor_sha256": "95c3ab75f3ee9d2b32b9a22457eee0039b03f9a1e31f161469abccbdac7777b5",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendrbrick/paradisefallsedgetrim01_alpha.png."
+   },
+   "retired_record": {
+    "id": "408880ca-0b1b-499e-0b26-1fc7108a2477",
+    "asset_type": "image",
+    "title": "Paradisefallsedgetrim01 Alpha (raster)",
+    "description": "Raster source for 'Paradisefallsedgetrim01 Alpha' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/paradisefallsedgetrim01_alpha.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/paradisefallsedgetrim01_alpha.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 17926,
+    "sensitivity_tier": "restricted",
+    "archive_state": "active",
+    "owner_username": "yuki.sato",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "final",
+    "metadata": {
+     "filename": "paradisefallsedgetrim01_alpha.png",
+     "kind": "raster",
+     "license": "CC0",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00221"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v3",
+     "revision_count": 1,
+     "rating": 5,
+     "texture_resolution": "2048x2048",
+     "color_space": "sRGB",
+     "engine_compatibility": "Unity 2022",
+     "target_platforms": [
+      "PC",
+      "Console"
+     ],
+     "naming_compliant": true,
+     "production_area": "environment-architecture",
+     "production_notes": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock.",
+     "usage_rights": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>",
+     "country": "jp",
+     "keywords": [
+      "texture"
+     ],
+     "credit": "Aurora R&D / Studio B",
+     "copyright": "© Aurora R&D. All rights reserved.",
+     "capture_date": "2026-01-17T12:48:00Z"
+    },
+    "external_id": "AA-1419",
+    "review_notes": null,
+    "reviewer_username": "ravi.patel",
+    "created_at": "2026-01-14T02:07:39Z",
+    "updated_at": "2026-04-23T18:09:56Z",
+    "last_reviewed_at": "2026-05-20T09:53:22Z",
+    "license": "CC0",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.capture_date",
+     "retired_value": "2026-01-17T12:48:00Z"
+    },
+    {
+     "path": "field_values.copyright",
+     "retired_value": "© Aurora R&D. All rights reserved."
+    },
+    {
+     "path": "field_values.country",
+     "retired_value": "jp",
+     "survivor_value": "cn"
+    },
+    {
+     "path": "field_values.credit",
+     "retired_value": "Aurora R&D / Studio B",
+     "survivor_value": "Aurora R&D / Field Unit"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Unity 2022",
+     "survivor_value": "Unreal 5"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "texture"
+     ],
+     "survivor_value": [
+      "architecture",
+      "landscape"
+     ]
+    },
+    {
+     "path": "field_values.production_notes",
+     "retired_value": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock."
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "2048x2048",
+     "survivor_value": "1024x1024"
+    },
+    {
+     "path": "field_values.usage_rights",
+     "retired_value": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/paradisefallsedgetrim01_alpha.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendrbrick/paradisefallsedgetrim01_alpha.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "408880ca-0b1b-499e-0b26-1fc7108a2477",
+     "survivor_value": "4de4817a-80d6-c999-dbf5-7a400bdc7c88"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenterbrick/paradisefallsedgetrim01_alpha.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendrbrick/paradisefallsedgetrim01_alpha.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "bb59e579-5c54-7f91-ed2d-a1017bb32d3c",
+     "old_members": [
+      "408880ca-0b1b-499e-0b26-1fc7108a2477",
+      "4d92527b-c67d-4a02-15ee-3e94ae9bf7a2",
+      "4de4817a-80d6-c999-dbf5-7a400bdc7c88",
+      "cf65cf1b-e881-f6aa-c524-d7b91b49c8a3"
+     ],
+     "new_members": [
+      "4de4817a-80d6-c999-dbf5-7a400bdc7c88"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    }
+   ]
+  },
+  {
+   "_why": "yuki.sato owns 4 records over these same 17926 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "cf65cf1b-e881-f6aa-c524-d7b91b49c8a3",
+   "survivor_id": "4de4817a-80d6-c999-dbf5-7a400bdc7c88",
+   "owner_username": "yuki.sato",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/paradisefallsedgetrim01_alpha.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "95c3ab75f3ee9d2b32b9a22457eee0039b03f9a1e31f161469abccbdac7777b5",
+    "survivor_sha256": "95c3ab75f3ee9d2b32b9a22457eee0039b03f9a1e31f161469abccbdac7777b5",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendrbrick/paradisefallsedgetrim01_alpha.png."
+   },
+   "retired_record": {
+    "id": "cf65cf1b-e881-f6aa-c524-d7b91b49c8a3",
+    "asset_type": "image",
+    "title": "Paradisefallsedgetrim01 Alpha (raster)",
+    "description": "Raster source for 'Paradisefallsedgetrim01 Alpha' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/paradisefallsedgetrim01_alpha.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/paradisefallsedgetrim01_alpha.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 17926,
+    "sensitivity_tier": "restricted",
+    "archive_state": "active",
+    "owner_username": "yuki.sato",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "final",
+    "metadata": {
+     "filename": "paradisefallsedgetrim01_alpha.png",
+     "kind": "raster",
+     "license": "CC0",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00221"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v3",
+     "revision_count": 1,
+     "rating": 5,
+     "texture_resolution": "512x512",
+     "color_space": "sRGB",
+     "engine_compatibility": "Unreal 5",
+     "target_platforms": [
+      "PC",
+      "Console"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "country": "kr",
+     "keywords": [
+      "illustration",
+      "photograph"
+     ]
+    },
+    "external_id": "AA-1419",
+    "review_notes": "Reads well at minimap scale.",
+    "reviewer_username": "ravi.patel",
+    "created_at": "2026-01-14T02:07:39Z",
+    "updated_at": "2026-04-23T18:09:56Z",
+    "last_reviewed_at": "2026-05-20T09:53:22Z",
+    "license": "CC0",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "kr",
+     "survivor_value": "cn"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "illustration",
+      "photograph"
+     ],
+     "survivor_value": [
+      "architecture",
+      "landscape"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "ui-icons",
+     "survivor_value": "environment-architecture"
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "512x512",
+     "survivor_value": "1024x1024"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/paradisefallsedgetrim01_alpha.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendrbrick/paradisefallsedgetrim01_alpha.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "cf65cf1b-e881-f6aa-c524-d7b91b49c8a3",
+     "survivor_value": "4de4817a-80d6-c999-dbf5-7a400bdc7c88"
+    },
+    {
+     "path": "review_notes",
+     "retired_value": "Reads well at minimap scale.",
+     "survivor_value": null
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/paradisefallsedgetrim01_alpha.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendrbrick/paradisefallsedgetrim01_alpha.png"
+    }
+   ],
+   "post_substitutions": []
+  },
+  {
+   "_why": "yuki.sato owns 3 records over these same 244265 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "2650baa0-e4d7-c21f-b800-b112dfad039d",
+   "survivor_id": "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10",
+   "owner_username": "yuki.sato",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrickshort/ottrim02_n.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "670dd29e6d595915242ac18c2903222a3d668a407ee1057498eb47f1da69f7a9",
+    "survivor_sha256": "670dd29e6d595915242ac18c2903222a3d668a407ee1057498eb47f1da69f7a9",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/ottrim02_n.png."
+   },
+   "retired_record": {
+    "id": "2650baa0-e4d7-c21f-b800-b112dfad039d",
+    "asset_type": "image",
+    "title": "Ottrim02 N (raster)",
+    "description": "Raster source for 'Ottrim02 N' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrickshort/ottrim02_n.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrickshort/ottrim02_n.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 244265,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "yuki.sato",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "ottrim02_n.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00218"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v1",
+     "revision_count": 1,
+     "rating": 4,
+     "texture_resolution": "2048x2048",
+     "color_space": "sRGB",
+     "engine_compatibility": "N/A",
+     "target_platforms": [
+      "PC",
+      "Console"
+     ],
+     "naming_compliant": true,
+     "production_area": "environment-architecture",
+     "ingested_at": "2026-11-15T22:10:00Z",
+     "derived_from": "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10",
+     "license_expires": "2026-11-15T00:00:00Z",
+     "country": "au",
+     "keywords": [
+      "abstract",
+      "portrait"
+     ],
+     "credit": "Aurora R&D"
+    },
+    "external_id": "AA-5422",
+    "review_notes": null,
+    "reviewer_username": "akira.tanaka",
+    "created_at": "2026-02-08T20:15:15Z",
+    "updated_at": "2026-03-13T15:09:28Z",
+    "last_reviewed_at": "2026-04-27T20:49:22Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "au",
+     "survivor_value": "gb"
+    },
+    {
+     "path": "field_values.credit",
+     "retired_value": "Aurora R&D"
+    },
+    {
+     "path": "field_values.derived_from",
+     "retired_value": "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "N/A",
+     "survivor_value": "Unreal 5"
+    },
+    {
+     "path": "field_values.ingested_at",
+     "retired_value": "2026-11-15T22:10:00Z"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "abstract",
+      "portrait"
+     ],
+     "survivor_value": [
+      "event"
+     ]
+    },
+    {
+     "path": "field_values.license_expires",
+     "retired_value": "2026-11-15T00:00:00Z"
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "environment-architecture",
+     "survivor_value": "ui-icons"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrickshort/ottrim02_n.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/ottrim02_n.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "2650baa0-e4d7-c21f-b800-b112dfad039d",
+     "survivor_value": "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrickshort/ottrim02_n.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/ottrim02_n.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "624fb057-4562-c09d-d27b-9313e16907f0",
+     "old_members": [
+      "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10",
+      "2650baa0-e4d7-c21f-b800-b112dfad039d",
+      "eb46a5d2-0008-7da8-52ac-d53964d1ae54"
+     ],
+     "new_members": [
+      "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    }
+   ]
+  },
+  {
+   "_why": "yuki.sato owns 3 records over these same 244265 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "eb46a5d2-0008-7da8-52ac-d53964d1ae54",
+   "survivor_id": "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10",
+   "owner_username": "yuki.sato",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/ottrim02_n.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "670dd29e6d595915242ac18c2903222a3d668a407ee1057498eb47f1da69f7a9",
+    "survivor_sha256": "670dd29e6d595915242ac18c2903222a3d668a407ee1057498eb47f1da69f7a9",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/ottrim02_n.png."
+   },
+   "retired_record": {
+    "id": "eb46a5d2-0008-7da8-52ac-d53964d1ae54",
+    "asset_type": "image",
+    "title": "Ottrim02 N (raster)",
+    "description": "Raster source for 'Ottrim02 N' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/ottrim02_n.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/ottrim02_n.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 244265,
+    "sensitivity_tier": "restricted",
+    "archive_state": "draft",
+    "owner_username": "yuki.sato",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "ottrim02_n.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00218"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v1",
+     "revision_count": 1,
+     "rating": 4,
+     "texture_resolution": "256x256",
+     "color_space": "sRGB",
+     "engine_compatibility": "Unity 2022",
+     "target_platforms": [
+      "PC",
+      "Console"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "country": "nz",
+     "keywords": [
+      "architecture",
+      "landscape",
+      "portrait"
+     ]
+    },
+    "external_id": "AA-5422",
+    "review_notes": "Hand-off to engineering, no blockers.",
+    "reviewer_username": "akira.tanaka",
+    "created_at": "2026-02-08T20:15:15Z",
+    "updated_at": "2026-03-13T15:09:28Z",
+    "last_reviewed_at": "2026-04-27T20:49:22Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "nz",
+     "survivor_value": "gb"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Unity 2022",
+     "survivor_value": "Unreal 5"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "architecture",
+      "landscape",
+      "portrait"
+     ],
+     "survivor_value": [
+      "event"
+     ]
+    },
+    {
+     "path": "field_values.texture_resolution",
+     "retired_value": "256x256",
+     "survivor_value": "2048x2048"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/ottrim02_n.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/ottrim02_n.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "eb46a5d2-0008-7da8-52ac-d53964d1ae54",
+     "survivor_value": "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10"
+    },
+    {
+     "path": "review_notes",
+     "retired_value": "Hand-off to engineering, no blockers.",
+     "survivor_value": null
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecappedbrick/ottrim02_n.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecornerrbrick/ottrim02_n.png"
+    }
+   ],
+   "post_substitutions": []
+  },
+  {
+   "_why": "maya.okonkwo owns 2 records over these same 13480 archive bytes; this one is retired onto the member the seeder reaches first.",
+   "retired_id": "7d73babf-bf02-132b-2aab-373f2589abb4",
+   "survivor_id": "034df3b9-671d-c292-32da-54f55d3d09ec",
+   "owner_username": "maya.okonkwo",
+   "source_root": "local",
+   "retired_file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/paradisefallsedgetrim01_NV_alpha.png",
+   "evidence": {
+    "kind": "preserved_archive",
+    "retired_sha256": "405f4decb31f9406b4444e04c478f6a5054ef9ebe191cfa49b03d71c3b138e0a",
+    "survivor_sha256": "405f4decb31f9406b4444e04c478f6a5054ef9ebe191cfa49b03d71c3b138e0a",
+    "_why": "`local` has no source left to re-derive from: this record carries no metadata.media_url and no metadata.source_archive, and the old $DATASET_SRC is retired. The two paths hold the SAME bytes, which is the documented collapse. Authority is the frozen pre-operation snapshot, recomputed against its external manifest at publish, never the archive agreeing with itself. Survivor file: images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendr/paradisefallsedgetrim01_NV_alpha.png."
+   },
+   "retired_record": {
+    "id": "7d73babf-bf02-132b-2aab-373f2589abb4",
+    "asset_type": "image",
+    "title": "Paradisefallsedgetrim01 Nv Alpha (raster)",
+    "description": "Raster source for 'Paradisefallsedgetrim01 Nv Alpha' (png). Owned by Characters team; rig + scale to studio standard.",
+    "file_path": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/paradisefallsedgetrim01_NV_alpha.png",
+    "source_path": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/paradisefallsedgetrim01_NV_alpha.png",
+    "source_root": "local",
+    "file_extension": "png",
+    "file_size_bytes": 13480,
+    "sensitivity_tier": "restricted",
+    "archive_state": "active",
+    "owner_username": "maya.okonkwo",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+     "characters",
+     "franchise:reference"
+    ],
+    "workflow_state": "approved",
+    "metadata": {
+     "filename": "paradisefallsedgetrim01_NV_alpha.png",
+     "kind": "raster",
+     "license": "Internal",
+     "usage_rights": "Reference Only",
+     "acquisition_source": "The Models Resource",
+     "attribution": "Community rip — reference use only",
+     "group_id": "grp-00224"
+    },
+    "field_values": {
+     "pipeline_stage": "Final",
+     "version": "v1",
+     "revision_count": 1,
+     "rating": 3,
+     "texture_resolution": "512x512",
+     "color_space": "sRGB",
+     "engine_compatibility": "Unreal 5",
+     "target_platforms": [
+      "PC"
+     ],
+     "naming_compliant": true,
+     "production_area": "ui-icons",
+     "country": "ar",
+     "keywords": [
+      "animation",
+      "logo",
+      "product"
+     ]
+    },
+    "external_id": "AA-7572",
+    "review_notes": null,
+    "reviewer_username": "olaf.lindgren",
+    "created_at": "2026-02-16T10:04:58Z",
+    "updated_at": "2026-04-05T06:27:42Z",
+    "last_reviewed_at": "2026-05-02T07:38:09Z",
+    "license": "Internal",
+    "attribution": "Community rip — reference use only",
+    "layer": "B",
+    "studio": "b"
+   },
+   "acknowledged_losses": [
+    {
+     "path": "field_values.country",
+     "retired_value": "ar",
+     "survivor_value": "za"
+    },
+    {
+     "path": "field_values.engine_compatibility",
+     "retired_value": "Unreal 5",
+     "survivor_value": "N/A"
+    },
+    {
+     "path": "field_values.keywords",
+     "retired_value": [
+      "animation",
+      "logo",
+      "product"
+     ],
+     "survivor_value": [
+      "animation",
+      "illustration"
+     ]
+    },
+    {
+     "path": "field_values.production_area",
+     "retired_value": "ui-icons",
+     "survivor_value": "environment-architecture"
+    },
+    {
+     "path": "file_path",
+     "retired_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/paradisefallsedgetrim01_NV_alpha.png",
+     "survivor_value": "images/PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendr/paradisefallsedgetrim01_NV_alpha.png"
+    },
+    {
+     "path": "id",
+     "retired_value": "7d73babf-bf02-132b-2aab-373f2589abb4",
+     "survivor_value": "034df3b9-671d-c292-32da-54f55d3d09ec"
+    },
+    {
+     "path": "source_path",
+     "retired_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadecenter/paradisefallsedgetrim01_NV_alpha.png",
+     "survivor_value": "PC _ Computer - Fallout_ New Vegas - Building Parts - City Boulder Parts/Boulder City/arcadeendr/paradisefallsedgetrim01_NV_alpha.png"
+    }
+   ],
+   "post_substitutions": [
+    {
+     "post_id": "20c531a1-57b8-a7b2-72d4-12fbfdbfba32",
+     "old_members": [
+      "034df3b9-671d-c292-32da-54f55d3d09ec",
+      "7d73babf-bf02-132b-2aab-373f2589abb4"
+     ],
+     "new_members": [
+      "034df3b9-671d-c292-32da-54f55d3d09ec"
+     ],
+     "_why": "asset_group derives its id from the source group_id, not from membership, so the post keeps its id and no new_post_id is recorded."
+    }
+   ]
+  }
+ ]
+}

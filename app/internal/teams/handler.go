@@ -555,9 +555,21 @@ func (h *Handler) AddTeamParent(
 	}
 	pgChild := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	pgParent := pgtype.UUID{Bytes: uuid.UUID(req.Body.ParentId), Valid: true}
-	if err := New(h.Pool).AddTeamParent(ctx, AddTeamParentParams{
-		ChildID:  pgChild,
-		ParentID: pgParent,
+	// ⛔ STRUCTURAL SERIALIZATION (#1173, #1119). A parent edge rewrites
+	// `team_closure`, which is what expands a TEAM-SCOPED grant to the
+	// teams it actually reaches — so re-parenting changes effective
+	// authority for every user holding a scoped grant on either side,
+	// without touching a single grant row. It cannot name those users,
+	// so it takes the structural key that every authority reader also
+	// holds shared.
+	if err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := auth.LockStructuralAuthorityForUpdate(ctx, tx); err != nil {
+			return err
+		}
+		return New(tx).AddTeamParent(ctx, AddTeamParentParams{
+			ChildID:  pgChild,
+			ParentID: pgParent,
+		})
 	}); err != nil {
 		if isCheckViolation(err) {
 			return openapi.AddTeamParent409JSONResponse{
@@ -593,9 +605,24 @@ func (h *Handler) RemoveTeamParent(
 		}, nil
 	}
 	pgChild := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	rows, err := New(h.Pool).RemoveTeamParent(ctx, RemoveTeamParentParams{
-		ChildID:  pgChild,
-		ParentID: pgtype.UUID{Bytes: uuid.UUID(req.ParentId), Valid: true},
+	// ⛔ STRUCTURAL SERIALIZATION (#1173, #1119). A parent edge rewrites
+	// `team_closure`, which is what expands a TEAM-SCOPED grant to the
+	// teams it actually reaches — so re-parenting changes effective
+	// authority for every user holding a scoped grant on either side,
+	// without touching a single grant row. It cannot name those users,
+	// so it takes the structural key that every authority reader also
+	// holds shared.
+	var rows int64
+	err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := auth.LockStructuralAuthorityForUpdate(ctx, tx); err != nil {
+			return err
+		}
+		var rerr error
+		rows, rerr = New(tx).RemoveTeamParent(ctx, RemoveTeamParentParams{
+			ChildID:  pgChild,
+			ParentID: pgtype.UUID{Bytes: uuid.UUID(req.ParentId), Valid: true},
+		})
+		return rerr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("teams: remove parent: %w", err)

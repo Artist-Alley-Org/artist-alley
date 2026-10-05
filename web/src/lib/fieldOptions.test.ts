@@ -802,3 +802,70 @@ describe('removeOptionAtPath', () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Alias + merge tombstone (ADR 0092 §4) — the browser's copy of the
+// server's precedence rule. These exist because the picker decides
+// whether to offer a CREATE row from resolveTerm, and a create row for
+// a term the server would have matched is a preview that lies.
+// ---------------------------------------------------------------------------
+
+describe('resolveTerm — aliases and tombstones', () => {
+  const curated = normalizeOptions({
+    values: [
+      { value: 'gb', label: 'United Kingdom', aliases: ['uk', 'britain'] },
+      { value: 'fr', label: 'France' },
+      { value: 'great-britain', label: 'Great Britain', status: 'archived', replaced_by: 'gb' },
+      { value: 'gbr', label: 'GBR', status: 'archived', replaced_by: 'great-britain' },
+      { value: 'atlantis', label: 'Atlantis', status: 'archived' },
+    ],
+  });
+
+  it('resolves an alias to its term rather than offering to create it', () => {
+    for (const typed of ['uk', 'UK', '  Britain  ']) {
+      const r = resolveTerm(curated, typed);
+      expect(r.matched, `${typed} was treated as a new term`).toBe(true);
+      expect(r.slug).toBe('gb');
+    }
+  });
+
+  it('reaches an alias through the slugified form too', () => {
+    const r = resolveTerm(curated, 'UK!');
+    expect(r.matched).toBe(true);
+    expect(r.slug).toBe('gb');
+  });
+
+  it('never lets an alias shadow a real term', () => {
+    const hostile = normalizeOptions({
+      values: [{ value: 'fr', label: 'France' }, { value: 'gb', aliases: ['fr'] }],
+    });
+    expect(resolveTerm(hostile, 'fr').slug).toBe('fr');
+  });
+
+  it('forwards a merge tombstone to the live term', () => {
+    expect(resolveTerm(curated, 'great-britain').slug).toBe('gb');
+    expect(resolveTerm(curated, 'Great Britain').slug).toBe('gb');
+  });
+
+  it('follows a chain of merges to the end', () => {
+    const r = resolveTerm(curated, 'gbr');
+    expect(r.matched).toBe(true);
+    expect(r.slug, 'gbr → great-britain → gb').toBe('gb');
+  });
+
+  it('still refuses a hard archive, which has nowhere to forward to', () => {
+    const r = resolveTerm(curated, 'atlantis');
+    expect(r.matched).toBe(true);
+    expect(r.option?.status).toBe('archived');
+  });
+
+  it('round-trips aliases through normalise + serialise', () => {
+    const out = serializeOptions(curated) as Array<Record<string, unknown>>;
+    const gb = out.find((o) => o.value === 'gb');
+    expect(gb?.aliases).toEqual(['uk', 'britain']);
+    // A bare entry must still serialise as a bare string — adding a
+    // field to the model is exactly how that quietly breaks.
+    const bare = serializeOptions(normalizeOptions({ values: ['one', 'two'] }));
+    expect(bare).toEqual(['one', 'two']);
+  });
+});

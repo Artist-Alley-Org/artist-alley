@@ -179,6 +179,56 @@ hidden behaviour of the search box.
 
 **For anyone adding a control to this page: write the address. Do not fetch.**
 
+#### 3d. A FRESH SEARCH RESETS THE RESULTS REGION — amendment 2026-08-28 (#1298, #1354)
+
+3c decides what a RESTORE does with a stored offset. It is silent on what a **fresh search** does
+with the offset it is leaving behind, and that gap is what #1298 reports: refining a query left the
+reader wherever the browser happened to put them.
+
+**The rule: refining is a new address. The results region resets to its first row; the page chrome
+does not move.**
+
+1. **A refine resets the scroll offset to the top of the results.** The signature changed, so by
+   3c's own logic the old offset was measured against hits that are not coming back. 3c refuses
+   such an offset on a restore; this says a fresh search discards it too, rather than leaving it to
+   the browser.
+2. **Back navigation still restores**, subject to 3c's unchanged signature check. Same address,
+   same signature, restore. That is the case where the standard expectation and the refusal rule do
+   not conflict.
+3. **The reset targets the SCROLLPORT, not the document.** This app never scrolls the window
+   (`web/src/lib/util/scrollport.ts`, #1122), so `window.scrollTo` is the wrong instrument and does
+   nothing at all. `scrollportOf` is the single definition.
+4. **An append is not a refine.** The reader continuing down a list they are already reading keeps
+   their place.
+
+⚠️ **The destination was never DECIDED before this, which is why it varied by machine.** Measured
+on `/search`: six accumulated pages at offset 4511 of a 6088px grid, refined to a 25-hit query,
+landed on **330**, which is exactly `scrollHeight - clientHeight`: the bottom of the new list, with every
+hit the reader had just asked for above the fold. #1298 recorded the other outcome on a taller
+refined wall: Chrome's scroll anchoring re-resolved the offset against reflowed content and landed
+on 0 on one workstation and on 279 (39px FURTHER DOWN than it started) on the CI runner. Neither is
+expressible as `min(before, max)`, and both are legitimate anchoring outcomes. A page that does not
+decide gets whichever one the content happens to produce.
+
+⭐ **The browse wall looked correct without this, and that is an argument FOR stating it.** Measured
+on a 900-card wall at 29457px: refining landed on 0 at 1080p and at 390px. But nothing in the route
+decided that. `items = []` collapses the wall to zero height in the same frame, so `<main>` briefly
+has nothing to scroll and the BROWSER clamps. The landing is correct only while the chrome above
+the wall stays shorter than the viewport, which is a coincidence of the featured rail's height.
+`/search` is the same shape with the coincidence absent, because it swaps its hits in place.
+
+⚠️ **The reset is ordered BEFORE the fetch, not after the results land.** At offset 0 scroll
+anchoring has nothing to compensate, so the swap cannot re-resolve the offset underneath it; a
+reset applied afterwards would be racing the mechanism it is trying to undo. It also makes the
+refine's acknowledgement immediate rather than a jump arriving 100ms later.
+
+⭐ **It also resolves the interaction with infinite scroll (#1354).** `/search` gained the browse
+wall's paging rig in the same sprint, and the hazard `web/src/routes/+page.svelte` documents for
+the restore path is an OFFSET sitting inside the sentinel's lookahead over a one-page list, which
+parks the reader somewhere they never scrolled to. A reset to the top removes the offset, so what
+remains is the loader filling its buffer below a reader who is at the first row: the lookahead
+doing its job, which is what the browse wall has always done after a reset.
+
 #### 4c. THE MATCH ITSELF IS GATED — amendment 2026-08-13 (#902, PR #1063)
 
 §4b gates a *filtered* search. This gates the **match**, and it closes the leak that made #902 the
@@ -246,6 +296,172 @@ mutation disjunct, so a team-scoped `assets.admin` holder — owed the *fields* 
 administer (#939) — is slightly **narrower** under a filter than unfiltered. Widening only the
 Engine would break the count/filter equality; both clauses must widen together. **#1056** tracks
 it. The current behaviour errs narrow, which is the safe direction.
+
+#### 4d. A KIND IS SEARCHABLE VOCABULARY, amendment 2026-09-17 (#1417, sprint 24, PR #1440)
+
+A person typing `ebook`, `sprite` or `video` into the ordinary search box could not find a post
+that contains that kind unless somebody had written the word into a title, description, tag or
+field. The structured `kind:` filter found it (#1190, #1251); free text did not, because an
+asset's resolved kind (the badge its card draws, `viewkind.ForAsset`) was not indexed vocabulary
+at all. On the seeded coding corpus 23 posts holding a public, ready epub were unreachable by
+the word `ebook`.
+
+**The kind is an ingredient of the asset document, at weight D, and reaches the post document
+through the existing eligible-member fold.** Migration 00071. The asset document is title A,
+description B, C empty, searchable active field text D, derived kind D. The post document is
+title A, description B, post tags C, member material D (the inherited kind among it). No live
+per-row predicate: a search reads one stored column on each entity, as before.
+
+**Vocabulary, all thirteen kinds enumerated.** Eleven are emitted as typed: `image`, `video`,
+`pdf`, `audio`, `font`, `sprite`, `3d`, `ebook`, `doc`, `audiobook`, `archive`. `placeholder`
+emits no lexeme: it is the resolver's "I could not tell", not a word anyone searches for.
+`sequence` is never produced for a single asset and there is no post-level derivation of it.
+Under the `english` configuration every emitted kind is one stable lexeme that round-trips
+through `plainto_tsquery` (`image` to `imag`, `archive` to `archiv`, the rest unchanged).
+Precedence, the three `asset_type` overrides, normalisation and the NULL/unknown collapse to
+`placeholder` carry over unchanged from the Go resolver.
+
+**`app/internal/viewkind` stays the sole authority, pinned two ways.** The trigger that builds
+the document runs inside Postgres, so a resident copy of the derivation is unavoidable:
+`public.asset_view_kind(asset_type, file_extension)`, a SQL function whose body is the text
+`viewkind.KindSQL("")` renders, spliced verbatim into 00071. It is a copy and not a second
+taxonomy because two tests hold it to the Go source: `posts.TestKindVocabulary_ResidentDerivationMatchesGo`
+drives the whole vocabulary, every override ref and every edge (NULL, unknown, an extension an
+earlier group already claimed, upper case, whitespace, a leading dot) through the resident
+function, through `KindSQL` in the same session and through `ForAsset`, and requires all three
+to agree; `posts.TestKindVocabulary_ResidentDerivationTextIsKindSQL` compares the stored body to
+the live rendering byte for byte. **The maintainer consequence: a vocabulary change is a Go edit
+plus a migration that re-splices the rendering.** A Go edit alone fails CI. The two `kind:`
+filter arms keep rendering `KindSQL` inline and are untouched.
+
+**The fold is corrected.** `rebuild_post_search_text` used to serialise each eligible member's
+tsvector to text and re-tokenise it. The text form carries position and weight markers
+(`'alpha':1A 'beta':2A 'gamma':3`), and the tokeniser turned those markers into lexemes: `1a`,
+`2a` and the bare position `3`. 384 posts on the coding corpus carried such words, and a search
+for `1a` returned them. (Weight D is the default and is never printed in the text form, so a
+D-weight lexeme at position 3 produced `3`, not `3d`; the junk is the A/B/C markers and the bare
+positions. D-weight lexemes were always present in asset documents, they simply carry no letter.)
+The fold is now a tsvector concatenation, `public.tsvector_agg` over the built-in
+`tsvector_concat`, ordered by member id so a rebuild is deterministic and inert to membership
+order and cover choice, then re-weighted to D as before. Search and browse read the same column;
+`ts_rank_cd` sees the same weights; nothing else about scoring changes.
+
+**The disclosure boundary does not move, and the authorised-member question is decided.** The
+post document stays caller-independent and folds only public, active, ready members (#883). An
+authorised caller's RESTRICTED member does not contribute its kind to the post's shared free
+text. Grounds: the card withholds a restricted member's kind (`facet/selection.go`), so the kind
+is withheld content, and §4c says withheld content belongs in the gated document, not in a
+public ingredient. That caller reaches the kind through `kind:` (per caller, #1190) and, newly,
+through direct asset search by derived kind, which composes `AssetSearchMatchSQL` and therefore
+`FieldsReadableSQL`: the owner finds their restricted epub by `ebook`, a stranger does not, and
+the stranger's count does not move. §4c's standing note that a genuinely public ingredient would
+need a reduced column is unchanged; the kind is not one.
+
+**Backfill, both directions, inline.** Up rebuilds every asset document under the new builder
+and every post document under the corrected fold, one pass each, with the per-asset post
+propagation suppressed (the transaction-local flag 00067 introduced) and an explicit ascending
+post pass discharging it; no install needs the admin reindex. Down restores the prior asset
+builder (00001), the prior post builder (00067, entry lock included) and the prior asset trigger,
+drops the aggregate and the derivation, and rebuilds every asset and post document under the
+restored functions. That brings the old fold semantics back, marker junk included, deliberately:
+stored documents must agree with the functions that maintain them, and no row may sit in a
+mixed-version state. `db.TestMigration00071_KindVocabulary_UpDownUp` walks v70, Up, Down, Up on
+real rows. The asset trigger also refreshes on `asset_type` / `file_extension`, which nothing on
+the wire updates today; a document that derives from a column follows that column.
+
+#### 4e. TWO OWNER-REQUIRED VERBS, AS SUGAR OVER THE TYPED GRAMMAR, amendment 2026-09-19 (#1173, sprint 25a)
+
+Decision 3 above says **"No `!bang` special syntax"**, and gives the reason: a second vocabulary
+is a second code path to keep honest. That reason is kept in full; the statement is superseded
+for exactly two aliases the owner requires and types today: `!nopreviews` and
+`!list<uuid>,<uuid>,...`. Before this amendment both lexed as one word each and reached
+`plainto_tsquery` as free text, so the advanced page answered an empty 200.
+
+**A verb is input sugar and nothing else.** The parser folds `!nopreviews` into the same
+`FieldMatchNode` that `preview:missing` produces, and `!list<a>,<b>` into the same
+left-associative AND chain that `(id:<a> AND id:<b>)` produces, before `parseFactor` returns.
+The compiler, the facet bridge, the placement rule, the serializer and the saved-search
+executor never see a verb; there is one AST shape, one dimension, and no second executor.
+`dsl.Canonicalize` writes a verb back in its typed spelling by lexer offset, so a stored query
+carries the dimension and not the alias, and a `"!nopreviews"` inside quotes stays a phrase.
+The verb registry is matched by name prefix, longest first; an unknown verb is an error naming
+the ones that exist, and `!last...` is deliberately unknown in 25a.
+
+**What decision 3 predicted, measured against this.** No new wire parameter, no new handler
+branch. Two `FacetType` constants, two `dimensionSQL` arms, one `Field` classification
+(`topLevelOnly`), one bridge entry each way, and a verb table of two rows. The grammar's
+extensibility claim holds; what it did not anticipate is that a dimension might need a
+placement rule, which ADR 0093's 25a amendment records.
+
+**Deferred to sprint 25b, and not decided here:** `!lastN`, recency ordering and any cursor
+payload change. This amendment changes nothing in section 1's cursor or `total_count` contract.
+
+#### 4f. THE THIRD OWNER-REQUIRED VERB, AND A SECOND ORDER, amendment 2026-09-19 (#1173, sprint 25b)
+
+`!last<N>` is the third verb, registered in the same table under the same rule 4e records:
+input sugar that folds onto `last:N` before the parser returns, one node, one dimension, no
+second executor. What is new in kind is that `last` changes the ORDER of the page, which 4e
+deferred and which this sub-amendment decides. ADR 0093's 25b amendment records the
+dimension's semantics (the window is global across the requested types and every other term
+narrows inside it); this one records what the engine does with it.
+
+**A recent ordering mode, decided from the selection.** A query whose selection carries a
+`last:` term runs in the recent order; every other query runs in the relevance order exactly
+as before. Under the recent order each arm orders and keysets on its recency clock instead of
+`score DESC`, the cross-entity merge and the cursor cut sort on the same key, no per-arm score
+maximum is measured, and score never orders the page, text-less or not. Every relevance
+statement is byte-for-byte what it was: the window's arms bind no argument and render no
+fragment unless a `last:` term is present.
+
+**An effective recency key, distinct from the public `created_at`.** `Hit.CreatedAt` remains
+the entity's public creation timestamp on every entity, `posts.created_at` for posts, and is
+neither overwritten nor read by the recent order. The order reads a private, unmarshalled key
+set by every arm on every hit: `assets.created_at`, `collections.created_at`,
+`posts.posted_at`. A post an author back-dated orders by its `posted_at` and still reports the
+`created_at` it always reported. No public hit field was added.
+
+**The total order is `recency DESC, id DESC, type ASC`**, the hit type string order being the
+final tiebreak (`asset` before `collection` before `post`). It is spelled once, as a Go
+comparator in `search/recent.go`, and rendered in SQL through an integer rank
+(`facet.RecentRank`) that DESCENDS in type-string order so the whole tuple compares one way.
+The window's cutoff, the SQL keyset (`ROW(clock, id, rank) < ROW($ts, $id, $rank)`, one row
+comparison, no operator switch), the Go merge and the Go cursor cut are all derived from that
+one fact. The relevance `keysetFragment`'s `<`/`<=` rule encodes the relevance order's
+`type DESC` and is not reused.
+
+**Two cursor shapes, one codec.** Section 1's relevance cursor keeps its legacy bytes,
+`{"s":<score>,"i":"<uuid>","t":"<type>"}` with `s` always present, and every cursor minted
+before this amendment decodes as it always did: a cursor without a discriminator is a
+relevance cursor. A recent cursor is `{"o":"recent","ts":<unix microseconds>,"i":"<uuid>",
+"t":"<type>"}`: the discriminator, the recency key at the precision the column stores, the id
+and the type, no score. The two shapes are decided in `cursor.go`'s codec rather than by
+omitempty tags, so the legacy shape cannot drift by a field being added to the struct.
+
+**A cursor is only meaningful in the order that minted it.** Decoding validates STRUCTURE
+(base64, JSON, a known type, a known discriminator, a recent cursor carrying its timestamp, no
+timestamp without a discriminator). Whether the order FITS the query is knowable only after
+`dsl=` and `filter=` have folded into the final selection, so it is checked then at the HTTP
+edge and again, fail-closed, at `Engine.Run`'s entry for programmatic callers. A recent cursor
+on a relevance query, a relevance cursor on a recent query, a recent cursor missing its
+timestamp, an unknown discriminator and a malformed cursor are all `400 invalid_cursor`.
+The cache key folds the discriminator and the recency key beside the score, id and type it
+already carried; N and the mode itself reach the key through the selection.
+
+**The recent count is exact and never capped.** Inside a window `total_count` is the size of
+the narrowed window, at most N, at most `dsl.MaxLastWindow` (10,000, held equal to
+`TotalCountCap` by a test); the "10,000+" clamp of section 1 does not apply, and `last:10000`
+over a corpus of ten thousand eligible rows reports 10,000 with `total_count_capped: false`.
+The rule is one pure function, `assembleTotal(perTypeCount, recent)`, so the boundary is
+proven without a corpus. Relevance counting is unchanged.
+
+**`last` and `similar_to` are two orders for one query, and are refused as one error.** The
+compiler refuses the pair inside one DSL string, on both spellings; `Engine.Run` refuses it
+again at entry when the two arrived split across `dsl=similar_to:` and `filter=last:`, which no
+single parse can see; both return the same `dsl.ErrLastWithSimilarity` value, and `/search`
+and save-as render it as the same `400 dsl_error` with the same kind and message. Saved create
+and patch refuse the canonical combined query before persistence through the existing
+`CompileDSL` gate. Nothing about hybrid ranking without `last` changes; there is no by-image
+filter composition.
 
 ### 5. Autocomplete via `pg_trgm` (B-2)
 

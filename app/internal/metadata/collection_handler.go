@@ -101,9 +101,21 @@ func (h *Handler) GetCollectionFields(
 	// Capability filter: drop fields the caller lacks read_capability for.
 	// We rebuild the slice rather than mutating the cached one (the cache
 	// shape is the unfiltered superset).
+	//
+	// The zero `pgtype.UUID` is the collection's team scope and it is
+	// deliberately invalid: `collections` carries no team_id column, so a
+	// team-scoped grant confers nothing here and the caller's global
+	// holding is the whole answer. Passing it explicitly keeps the
+	// asymmetry with the asset path visible at the call site.
+	//
+	// ⚠️ This filter DROPS THE ROW, so a withheld value and a value that
+	// was never set arrive as the same nothing. That is unchanged and is
+	// correct for a value read; it is also why a form that has to tell
+	// those two apart asks GET /collections/{id}/field-composition, which
+	// reports readability per definition and carries no values.
 	out := make([]openapi.CollectionFieldValue, 0, len(values))
 	for _, v := range values {
-		if !canReadField(ctx, h, v.FieldId, id) {
+		if !canReadField(ctx, h, v.FieldId, id, pgtype.UUID{}) {
 			continue
 		}
 		out = append(out, v)
@@ -166,6 +178,24 @@ func (h *Handler) SetCollectionFieldValue(
 		}
 	}
 
+	// READ-ONLY (#1173), the collection twin of the asset gate. The
+	// asymmetry between the two is deliberate and lives elsewhere: a
+	// collection's create body MAY seed an initial value, because
+	// `CollectionCreate.field_values` is a real human first-write seam
+	// that the asset side has no equivalent of. That seam is
+	// collections.Create's, pre-transaction. THIS handler is every write
+	// after it, and every write after it is refused.
+	if msg := readOnlyRefusal(fieldRow, "set"); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetCollectionFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.FieldReadOnly,
+				Field:  &code,
+			},
+		}, nil
+	}
+
 	// Validate the supplied value_* matches the field's type.
 	if vErr := validateCollectionValueType(fieldRow.Type, req.Body); vErr != nil {
 		field := fieldRow.Code
@@ -175,6 +205,33 @@ func (h *Handler) SetCollectionFieldValue(
 				Reason: openapi.ValueTypeMismatch,
 				Field:  &field,
 			},
+		}, nil
+	}
+
+	// INPUT PATTERN (#1173). `req.Body.ValueText` is what
+	// buildCollectionUpsertParams stores for the two supported types:
+	// SanitizeValueText is a no-op outside `rich_text`, which does not
+	// honour a pattern. Checked before the vocabulary gate below because
+	// the two supported types have no vocabulary to consult.
+	if msg := patternRefusal(fieldRow, req.Body.ValueText); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetCollectionFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.PatternMismatch,
+				Field:  &code,
+			},
+		}, nil
+	}
+
+	// PER-FIELD CONCURRENCY (#1119), the collection twin. There is no
+	// mirrored branch to exempt here: `mirrors_column` is an asset-side
+	// concept and the subject-kind gate above has already refused any
+	// definition that could carry one.
+	guard, guardErr := resolveWriteGuard(req.Body.IfUnchangedSince, req.Body.IfAbsent)
+	if guardErr != nil {
+		return openapi.SetCollectionFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: guardErr.Error()},
 		}, nil
 	}
 
@@ -217,7 +274,8 @@ func (h *Handler) SetCollectionFieldValue(
 		incomingOptions = *req.Body.ValueOptions
 	}
 	vocab, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
-		vocabularySlugs(fieldRow.Type, req.Body.ValueText, incomingOptions), held)
+		vocabularySlugs(fieldRow.Type, req.Body.ValueText, incomingOptions), held,
+		canExtendVocabulary(id))
 	if err != nil {
 		return nil, err
 	}
@@ -229,8 +287,17 @@ func (h *Handler) SetCollectionFieldValue(
 	// Canonical slugs, not the text a client sent — same reason the
 	// asset path rewrites its upsert params. Here the params are built
 	// from req.Body a line below, so the normalisation lands on the body.
-	if fieldRow.Type == "multi_select" {
+	switch fieldRow.Type {
+	case "multi_select":
 		req.Body.ValueOptions = &vocab.Slugs
+	case "select", "tree":
+		// See SetAssetFieldValue for why the single-slug types are
+		// written back too: alias and tombstone redirects move a value
+		// on a closed vocabulary, and value_text is where a closed
+		// vocabulary keeps it.
+		if len(vocab.Slugs) == 1 {
+			req.Body.ValueText = &vocab.Slugs[0]
+		}
 	}
 
 	// Reference-existence gate (#842) — the collection sibling of the
@@ -261,9 +328,75 @@ func (h *Handler) SetCollectionFieldValue(
 		ref = resolvedRef{ID: target.ID, Title: target.Title}
 	}
 
-	row, err := qTx.UpsertCollectionFieldValue(ctx, buildCollectionUpsertParams(
+	upsert := buildCollectionUpsertParams(
 		pgCollection, pgField, fieldRow.Type, req.Body, setBy, &id.UserRef,
-	))
+	)
+
+	// REQUIRED (#1389), R1's Set half. Against the params that will be
+	// STORED rather than the request body, for the same reason the asset
+	// path checks `upsert`: for `rich_text` the sanitiser has already
+	// run, and the sanitised form is what the emptiness predicate is
+	// defined against.
+	//
+	// It sits here rather than beside the read-only gate because the
+	// canonical-slug rewrite above can change what a vocabulary type
+	// will actually store, and an empty check that ran before it would
+	// be testing a value the row never sees.
+	if msg := requiredSetRefusal(fieldRow, collectionUpsertValue(upsert)); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetCollectionFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.FieldRequired,
+				Field:  &code,
+			},
+		}, nil
+	}
+
+	// THE WRITE. See the asset path and the guarded queries in
+	// queries.sql: the precondition is the statement's own WHERE (or,
+	// for the first-write arm, the unique index), never a handler-side
+	// read in front of an unconditional upsert.
+	var row CollectionFieldValue
+	switch guard.kind {
+	case guardUnchangedSince:
+		row, err = qTx.UpdateCollectionFieldValueIfUnchanged(ctx, UpdateCollectionFieldValueIfUnchangedParams{
+			ValueText:        upsert.ValueText,
+			ValueNum:         upsert.ValueNum,
+			ValueDate:        upsert.ValueDate,
+			ValueOptions:     upsert.ValueOptions,
+			ValueRef:         upsert.ValueRef,
+			SetBy:            upsert.SetBy,
+			SetByUserRef:     upsert.SetByUserRef,
+			CollectionID:     pgCollection,
+			FieldID:          pgField,
+			IfUnchangedSince: guard.since,
+		})
+	case guardAbsent:
+		row, err = qTx.InsertCollectionFieldValueWhenAbsent(ctx, InsertCollectionFieldValueWhenAbsentParams{
+			CollectionID: pgCollection,
+			FieldID:      pgField,
+			ValueText:    upsert.ValueText,
+			ValueNum:     upsert.ValueNum,
+			ValueDate:    upsert.ValueDate,
+			ValueOptions: upsert.ValueOptions,
+			ValueRef:     upsert.ValueRef,
+			SetBy:        upsert.SetBy,
+			SetByUserRef: upsert.SetByUserRef,
+		})
+	default:
+		row, err = qTx.UpsertCollectionFieldValue(ctx, upsert)
+	}
+	if guard.engaged() && errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(ctx)
+		body, cErr := h.collectionConflictBody(ctx, pgCollection, pgField, fieldRow)
+		if cErr != nil {
+			return nil, cErr
+		}
+		return openapi.SetCollectionFieldValue409JSONResponse{
+			CollectionFieldValueConflictJSONResponse: openapi.CollectionFieldValueConflictJSONResponse(body),
+		}, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("metadata: upsert: %w", err)
 	}
@@ -335,6 +468,62 @@ func (h *Handler) ClearCollectionFieldValue(
 	pgCollection := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	pgField := pgtype.UUID{Bytes: uuid.UUID(req.FieldId), Valid: true}
 
+	// The removal's guard (#1119) — query string, for the reason
+	// ClearAssetFieldValue gives.
+	guard, guardErr := resolveWriteGuard(req.Params.IfUnchangedSince, nil)
+	if guardErr != nil {
+		return openapi.ClearCollectionFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: guardErr.Error()},
+		}, nil
+	}
+
+	var (
+		fieldRow     FieldDefinition
+		haveFieldRow bool
+	)
+
+	// READ-ONLY (#1173) refuses the clear as well as the set, for the
+	// reason ClearAssetFieldValue gives. The field is loaded before the
+	// transaction opens: nothing here needs the tx, and refusing without
+	// opening one keeps the cheap answer cheap. A field that has since
+	// been deleted falls through to the delete below, which is a no-op
+	// answering 204, exactly as it did before.
+	if loaded, fErr := h.getFieldByIDCached(ctx, pgField); fErr == nil {
+		fieldRow, haveFieldRow = loaded, true
+		if msg := readOnlyRefusal(fieldRow, "cleared"); msg != "" {
+			code := fieldRow.Code
+			return openapi.ClearCollectionFieldValue422JSONResponse{
+				FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+					Error:  msg,
+					Reason: openapi.FieldReadOnly,
+					Field:  &code,
+				},
+			}, nil
+		}
+		// REQUIRED (#1389), R1's Clear half — the collection twin of the
+		// asset refusal, on the same predicate, so a required collection
+		// field cannot be emptied after creation any more than an asset
+		// one can. R2, collection CREATE's presence rule, is untouched.
+		if msg := requiredClearRefusal(fieldRow); msg != "" {
+			code := fieldRow.Code
+			return openapi.ClearCollectionFieldValue422JSONResponse{
+				FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+					Error:  msg,
+					Reason: openapi.FieldRequired,
+					Field:  &code,
+				},
+			}, nil
+		}
+	} else if !errors.Is(fErr, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("metadata: load field: %w", fErr)
+	} else if guard.engaged() {
+		// See ClearAssetFieldValue: a precondition that cannot be
+		// evaluated must not be answered with the unguarded 204.
+		return openapi.ClearCollectionFieldValue404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+		}, nil
+	}
+
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("metadata: begin tx: %w", err)
@@ -342,32 +531,60 @@ func (h *Handler) ClearCollectionFieldValue(
 	defer func() { _ = tx.Rollback(ctx) }()
 	qTx := New(tx)
 
-	prev, err := qTx.GetCollectionFieldValue(ctx, GetCollectionFieldValueParams{
-		CollectionID: pgCollection,
-		FieldID:      pgField,
-	})
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
-	hadOld := err == nil
-
-	if err := qTx.DeleteCollectionFieldValue(ctx, DeleteCollectionFieldValueParams{
-		CollectionID: pgCollection,
-		FieldID:      pgField,
-	}); err != nil {
-		return nil, fmt.Errorf("metadata: delete: %w", err)
+	var (
+		removed CollectionFieldValue
+		hadOld  bool
+	)
+	if guard.kind == guardUnchangedSince {
+		// ONE statement — see the asset twin and queries.sql.
+		removed, err = qTx.DeleteCollectionFieldValueIfUnchanged(ctx, DeleteCollectionFieldValueIfUnchangedParams{
+			CollectionID:     pgCollection,
+			FieldID:          pgField,
+			IfUnchangedSince: guard.since,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			body, cErr := h.collectionConflictBody(ctx, pgCollection, pgField, fieldRow)
+			if cErr != nil {
+				return nil, cErr
+			}
+			return openapi.ClearCollectionFieldValue409JSONResponse{
+				CollectionFieldValueConflictJSONResponse: openapi.CollectionFieldValueConflictJSONResponse(body),
+			}, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("metadata: guarded delete: %w", err)
+		}
+		hadOld = true
+	} else {
+		prev, gErr := qTx.GetCollectionFieldValue(ctx, GetCollectionFieldValueParams{
+			CollectionID: pgCollection,
+			FieldID:      pgField,
+		})
+		if gErr != nil && !errors.Is(gErr, pgx.ErrNoRows) {
+			return nil, gErr
+		}
+		hadOld = gErr == nil
+		if hadOld {
+			removed = CollectionFieldValue{
+				ValueText: prev.ValueText, ValueNum: prev.ValueNum, ValueDate: prev.ValueDate,
+				ValueOptions: prev.ValueOptions, ValueRef: prev.ValueRef,
+			}
+		}
+		if err := qTx.DeleteCollectionFieldValue(ctx, DeleteCollectionFieldValueParams{
+			CollectionID: pgCollection,
+			FieldID:      pgField,
+		}); err != nil {
+			return nil, fmt.Errorf("metadata: delete: %w", err)
+		}
 	}
 
 	if hadOld {
-		fieldRow, fErr := h.getFieldByIDCached(ctx, pgField)
-		if fErr != nil && !errors.Is(fErr, pgx.ErrNoRows) {
-			return nil, fErr
-		}
 		var fieldType string
-		if fErr == nil {
+		if haveFieldRow {
 			fieldType = fieldRow.Type
 		}
-		oldJSON, _ := valueRowToJSON(prev.ValueText, prev.ValueNum, prev.ValueDate, prev.ValueOptions, prev.ValueRef, fieldType)
+		oldJSON, _ := valueRowToJSON(removed.ValueText, removed.ValueNum, removed.ValueDate, removed.ValueOptions, removed.ValueRef, fieldType)
 		if err := qTx.AppendCollectionFieldValueHistory(ctx, AppendCollectionFieldValueHistoryParams{
 			CollectionID:     pgCollection,
 			FieldID:          pgField,
@@ -683,18 +900,32 @@ func validateCollectionValueType(fieldType string, body *openapi.CollectionField
 }
 
 // canReadField checks the caller's identity against the field's
-// read_capability. Empty/nil capability = no gate.
-func canReadField(_ context.Context, h *Handler, fieldUUID openapi_types.UUID, id *auth.Identity) bool {
+// read_capability, in the scope of ONE subject.
+//
+// The verdict itself lives in [fieldReadableOnSubject] and must keep
+// living there: this function's job is to turn a field ID into a
+// definition and hand the question on. Before #1173 it made its own
+// `id.Can` call with no scope, which meant a grant held against the team
+// that owns the subject counted for nothing, and it was the only
+// per-field read check in the package — GetAssetFields had none at all.
+// Two copies of a security rule drift, and the drift is the bug.
+//
+// `teamID` is the SUBJECT's team scope, and an invalid one is a real
+// answer rather than a missing argument: `collections` has no team column
+// at all, so every collection caller passes the zero value and is decided
+// by their global holding. See [fieldReadableOnSubject] for the nullable
+// trap that makes that safe.
+//
+// A field that cannot be loaded is dropped conservatively. Answering
+// "readable" for a definition we could not read would be a leak decided
+// by an infrastructure failure.
+func canReadField(_ context.Context, h *Handler, fieldUUID openapi_types.UUID, id *auth.Identity, teamID pgtype.UUID) bool {
 	pgID := pgtype.UUID{Bytes: uuid.UUID(fieldUUID), Valid: true}
 	row, err := h.getFieldByIDCached(context.Background(), pgID)
 	if err != nil {
-		// Field gone — drop conservatively rather than leak.
 		return false
 	}
-	if row.ReadCapability == nil || *row.ReadCapability == "" {
-		return true
-	}
-	return id.Can(*row.ReadCapability)
+	return fieldReadableOnSubject(id, row.ReadCapability, teamID)
 }
 
 // ---------------------------------------------------------------------------
@@ -774,6 +1005,70 @@ func (h *Handler) SeedCollectionFieldValueInTx(
 		return fmt.Errorf("metadata: upsert collection field value: %w", err)
 	}
 	return nil
+}
+
+// CollectionSeedValueProbe is one value from a collection-create body,
+// as the pre-transaction gate needs to see it.
+//
+// Only `ValueText` travels, because it is the only member an input
+// pattern can be written about: `regexp_filter` is honoured for `text`
+// and `longtext`, and both store there. Widening the pattern to another
+// type would widen this struct with it.
+type CollectionSeedValueProbe struct {
+	FieldID   uuid.UUID
+	ValueText *string
+}
+
+// SeedValueRefusal names the field that refused a seeded value and the
+// sentence to refuse it with.
+type SeedValueRefusal struct {
+	Code    string
+	Label   string
+	Message string
+}
+
+// ValidateCollectionSeedValues checks the values a collection-create
+// body proposes, BEFORE anything is written.
+//
+// It runs pre-transaction for the reason the required-field gate does:
+// a refusal must not leave a half-created collection behind. That is
+// also why the check cannot live inside SeedCollectionFieldValueInTx,
+// which by then is already inside the caller's transaction and one
+// statement away from the collection row.
+//
+// `read_only` is deliberately NOT checked here. The create body is the
+// collection side's human first-write seam, and seeding an initial
+// value is the one write a read-only collection field permits: every
+// later set and clear is refused by the handlers above. The pattern
+// still applies to that first value, because it is a person's input
+// like any other.
+//
+// Probes are checked in the order given, so the refusal an operator
+// sees is stable across identical requests.
+func (h *Handler) ValidateCollectionSeedValues(
+	ctx context.Context,
+	probes []CollectionSeedValueProbe,
+) (*SeedValueRefusal, error) {
+	for _, p := range probes {
+		fieldRow, err := h.getFieldByIDCached(ctx, pgtype.UUID{Bytes: p.FieldID, Valid: true})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Not this gate's refusal to make. An unknown field id
+				// fails inside the create transaction with the message
+				// that path already produces.
+				continue
+			}
+			return nil, fmt.Errorf("metadata: seed value gate: %w", err)
+		}
+		if msg := patternRefusal(fieldRow, p.ValueText); msg != "" {
+			return &SeedValueRefusal{
+				Code:    fieldRow.Code,
+				Label:   fieldRow.Label,
+				Message: msg,
+			}, nil
+		}
+	}
+	return nil, nil
 }
 
 // ListRequiredCollectionFieldsRaw returns the (id, code, label, type)

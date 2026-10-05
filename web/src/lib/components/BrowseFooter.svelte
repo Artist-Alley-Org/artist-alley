@@ -33,6 +33,46 @@
   // nothing about the page you are looking at. Same choice the team and
   // tag chips already made (#1113, #1123), so all three of the browse
   // page's narrowing controls read out of one place.
+  //
+  // ⭐ #1251 slice 3 adds "Hide AI-made work" INSIDE that same panel
+  // (ADR 0094 fourth amendment) rather than as a control of its own,
+  // and #1292 turns that lone row into a CONTENT category holding it
+  // and a Mature row, with every tick in the menu meaning SHOW.
+  // The right cluster therefore still carries exactly two things — the
+  // type-filter button and the sort toggle — which is the owner's
+  // ruling: "should be mixed in the asset type filter", after "that
+  // shouldn't be its own footer item". One menu, two axes.
+  //
+  // ⛔ SHARING A MENU DOES NOT MERGE THEIR PERSISTENCE, and this footer
+  // is where that shows, because it is the host that hands each axis to
+  // a different owner:
+  //
+  //   `?kind=` goes UP to the page, which writes the URL — a
+  //   type-filtered wall is a thing you send someone.
+  //
+  //   `hideAI` and `hideMature` go SIDEWAYS to the browseView store,
+  //   which writes localStorage. "I would rather not look at AI work"
+  //   describes the READER, so it must survive every navigation, and
+  //   pasting it into somebody else's browser would impose your
+  //   preference on them under cover of sharing a link. See readHideAI
+  //   and readHideMature for why they are device preferences and not
+  //   account ones. The second is the sharper case: an account rung for
+  //   mature EXISTS (`user_preferences.mature_content.show`) and is a
+  //   DIFFERENT LAYER rather than this one's default, so writing it
+  //   from here would turn a view filter into a consent.
+  //
+  // ⛔ `matureAvailable` GOES THE OTHER WAY, and it is not a filter at
+  // all: it is the answer to whether the row exists, resolved on the
+  // store from ADR 0090's two-rung cascade. Both rungs are ABSENCE
+  // rather than disablement, so the row is simply not rendered for a
+  // reader the instance or their own account has not opted in.
+  //
+  // Both are signed off. A future reader tempted to "unify" them should
+  // read FeedKindFilter's two-axes note first.
+  //
+  // A control here must be one the server can serve, exactly as FILTERS
+  // above must be: the toggle sends `?ai=not_pure`, a declared parameter
+  // of `GET /posts` since this slice.
   import ViewControls from '$components/ViewControls.svelte';
   import FooterTabs from '$components/FooterTabs.svelte';
   import FeedKindFilter from '$components/FeedKindFilter.svelte';
@@ -78,10 +118,18 @@
   {/snippet}
 
   {#snippet trailing()}
+    <!-- Two axes, two owners, one menu. `onapply` goes up to the page
+         (URL); `onhide` goes to the store (localStorage). See the note
+         at the top of this file for why they are not the same thing. -->
     <FeedKindFilter
       selected={kinds}
       bind:open={kindOpen}
       onapply={(next) => onkinds?.(next)}
+      hideAI={browseView.hideAI}
+      onhide={(next) => browseView.setHideAI(next)}
+      hideMature={browseView.hideMature}
+      onhidemature={(next) => browseView.setHideMature(next)}
+      matureAvailable={browseView.matureFilterAvailable}
     />
   {/snippet}
 </ViewControls>

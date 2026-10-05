@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -314,9 +315,12 @@ func TestParseListNarrows(t *testing.T) {
 	if len(kinds) != 0 {
 		t.Errorf("ParseList(nonsense) = %v, want an empty selection", kinds)
 	}
-	if !Compile(kinds).Empty() {
-		t.Error("an all-unknown selection must compile to a never-satisfied conjunct")
-	}
+	// What an all-unknown selection then MEANS is decided one layer up,
+	// because it is a property of the request and not of the vocabulary:
+	// "the caller asked for a kind filter and named nothing renderable"
+	// must select no posts rather than every post. See
+	// ListPostsPageParams.KindsRequested and
+	// TestKindFilter_UnknownKindReturnsNothing.
 
 	kinds, _ = ParseList(" Image , video ,image, ,3D ")
 	if len(kinds) != 3 || kinds[0] != KindImage || kinds[1] != KindVideo || kinds[2] != Kind3D {
@@ -324,45 +328,76 @@ func TestParseListNarrows(t *testing.T) {
 	}
 }
 
-// TestCompilePrecedence is the property the SQL arm depends on: an
-// extension belongs to exactly one selected kind, so ticking `doc` must
-// not smuggle in `ts`.
-func TestCompilePrecedence(t *testing.T) {
+// TestKindSQLMirrorsResolver is the pure-Go half of the oracle over
+// [KindSQL]: it reads the branch table back out of the rendered SQL and
+// checks it against the Go resolver, extension by extension.
+//
+// The DB half — TestKindSQLMatchesForAsset in package posts — runs the
+// same expression through Postgres. This one needs no database, so a
+// vocabulary edit that breaks the correspondence goes red on a laptop
+// with no stack up, which is where a table like this actually gets
+// edited.
+//
+// The properties it pins are the ones the arms this replaced had to
+// state separately:
+//
+//   - Every recognised extension appears EXACTLY ONCE. A duplicate would
+//     be an unreachable second branch and a silent precedence change.
+//   - Each maps to the kind [KindForExtension] gives it, so `ts` reads
+//     video and never doc.
+//   - The overriding asset_type refs are all present, ahead of the
+//     extension table.
+//   - `sequence` appears nowhere: no asset resolves to it, which is why
+//     the filter needs no "empty selection" special case any more.
+func TestKindSQLMirrorsResolver(t *testing.T) {
 	t.Parallel()
 
-	doc := Compile([]Kind{KindDoc})
-	for _, e := range doc.Extensions {
-		if e == "ts" {
-			t.Error("Compile(doc) claimed `ts`, which resolves to video")
-		}
-	}
-	if len(doc.AssetTypeRefs) != 0 {
-		t.Errorf("Compile(doc) claimed asset_type refs %v", doc.AssetTypeRefs)
-	}
+	rendered := KindSQL("ca")
 
-	sprite := Compile([]Kind{KindSprite})
-	if len(sprite.Extensions) != 0 || len(sprite.AssetTypeRefs) != 1 || sprite.AssetTypeRefs[0] != 13 {
-		t.Errorf("Compile(sprite) = %+v, want ref 13 and no extensions", sprite)
-	}
-
-	// `sequence` is in the vocabulary and no single asset can resolve to
-	// it. That has to compile to "matches nothing", not to "no filter".
-	if !Compile([]Kind{KindSequence}).Empty() {
-		t.Error("Compile(sequence) must be empty")
-	}
-
-	// Every extension in the resolver must be claimable by exactly one
-	// kind's selection — the invariant that makes the badge and the
-	// filter agree row by row.
-	claims := map[string]int{}
-	for _, k := range All() {
-		for _, e := range Compile([]Kind{k}).Extensions {
-			claims[e]++
+	extBranch := regexp.MustCompile(`WHEN '([^']+)' THEN '([^']+)'`)
+	seen := map[string]int{}
+	for _, m := range extBranch.FindAllStringSubmatch(rendered, -1) {
+		ext, kind := m[1], m[2]
+		seen[ext]++
+		if got := KindForExtension(ext); string(got) != kind {
+			t.Errorf("KindSQL maps %q to %q; KindForExtension says %q", ext, kind, got)
 		}
 	}
 	for _, e := range KnownExtensions() {
-		if claims[e] != 1 {
-			t.Errorf("extension %q is claimed by %d kinds, want exactly 1", e, claims[e])
+		if seen[e] != 1 {
+			t.Errorf("extension %q appears in %d branches of KindSQL, want exactly 1", e, seen[e])
 		}
+	}
+	if len(seen) != len(KnownExtensions()) {
+		t.Errorf("KindSQL renders %d extension branches, the resolver knows %d",
+			len(seen), len(KnownExtensions()))
+	}
+
+	refBranch := regexp.MustCompile(`WHEN ca\.asset_type = (\d+) THEN '([^']+)'`)
+	refs := refBranch.FindAllStringSubmatch(rendered, -1)
+	if len(refs) != len(assetTypeKind) {
+		t.Errorf("KindSQL renders %d asset_type branches, the override map has %d",
+			len(refs), len(assetTypeKind))
+	}
+	firstExt := extBranch.FindStringIndex(rendered)
+	for _, m := range refs {
+		ref, err := strconv.ParseInt(m[1], 10, 64)
+		if err != nil {
+			t.Fatalf("unparseable ref %q", m[1])
+		}
+		if want := assetTypeKind[ref]; string(want) != m[2] {
+			t.Errorf("KindSQL maps asset_type %d to %q, the override map says %q", ref, m[2], want)
+		}
+		at := strings.Index(rendered, m[0])
+		if firstExt != nil && at > firstExt[0] {
+			t.Errorf("asset_type branch %q is rendered AFTER the extension table; "+
+				"ForAsset checks the overriding ref FIRST and a sprite atlas would read image", m[0])
+		}
+	}
+
+	// `sequence` is in the vocabulary and no single asset can resolve to
+	// it, so the expression must never return it.
+	if strings.Contains(rendered, "'"+string(KindSequence)+"'") {
+		t.Error("KindSQL can return `sequence`; no single asset resolves to it")
 	}
 }

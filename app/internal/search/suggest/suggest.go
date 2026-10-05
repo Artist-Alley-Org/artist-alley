@@ -7,9 +7,16 @@
 // Uses pg_trgm's similarity() function against a corpus of:
 //
 //   - post_tags.tag (gated by the POST read rule — #1075)
+//   - asset_tag.tag (gated by the asset FIELD plane — #1077, /search
+//     scope only)
 //   - collections.name (gated by the collection rule)
 //   - posts.title (gated by the POST read rule)
 //   - assets.title (gated by the asset FIELD plane — #1064)
+//
+// ⛔ EACH SOURCE COMPOSES ITS OWN ENTITY'S RULE. The two TAG sources are
+// the ones to read that sentence carefully for: they draw the same kind
+// of value from two tables with two different gates (#1077), which is
+// why they are two queries merged by the dedupe rather than one UNION.
 //
 // Similarity threshold default 0.3 (sysconfig
 // search.suggest_similarity_threshold); ordered by similarity DESC;
@@ -225,8 +232,8 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 		scope = ScopeSearch
 	}
 
-	// Assemble all four sub-queries + assemble in-memory.
-	all := make([]Suggestion, 0, limit*4)
+	// Assemble the sub-queries + merge in-memory.
+	all := make([]Suggestion, 0, limit*5)
 
 	tags, err := s.tags(ctx, prefix, threshold, req.Caller, req.PostCaps,
 		req.Mature, req.Caps.SystemAdmin)
@@ -234,6 +241,28 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 		return Response{}, err
 	}
 	all = append(all, tags...)
+
+	// #1077 — the OTHER half of the tag corpus, on the surface that can
+	// execute it. facet.tagAgg has counted `asset_tag` beside `post_tags`
+	// since #907; completing only one of them is why the rail could offer
+	// a value autocomplete never suggested.
+	//
+	// Its own gate, its own query — see [Service.assetTags] for why a
+	// single UNION under one predicate is the shape #1077 warns about by
+	// name. The dedupe below merges the two on (kind, value), so a tag
+	// carried by both planes surfaces once.
+	//
+	// ScopeSearch only. Browse runs `GET /posts`, whose `?tag=` reads
+	// `post_tags`, so an asset-only tag is unanswerable there and the
+	// post source above already covers every tag that is on both.
+	if scope == ScopeSearch {
+		assetTags, err := s.assetTags(ctx, prefix, threshold, req.Caller,
+			req.Caps, req.MutationCaps, req.Mature)
+		if err != nil {
+			return Response{}, err
+		}
+		all = append(all, assetTags...)
+	}
 
 	cols, err := s.collections(ctx, prefix, threshold, req.Caller, req.CollectionCaps,
 		scope, req.PostCaps, req.Mature, req.Caps.SystemAdmin)
@@ -388,10 +417,13 @@ func executableAsSelf(alias, valueExpr string) string {
 // defensible product, and it is NOT what the old comment described
 // either: a vocabulary is authored, not leaked. Out of scope for #1075.
 //
-// Note the ASYMMETRY with facet.tagAgg that remains: that aggregator
-// counts `asset_tag` as well as `post_tags`, and this source still does
-// not complete asset tags at all. That is a pre-existing gap in the
-// CORPUS, not in the gate, and widening it is a product change.
+// # The asymmetry with facet.tagAgg is CLOSED (#1077)
+//
+// This note used to end "that aggregator counts `asset_tag` as well as
+// `post_tags`, and this source still does not complete asset tags at
+// all… widening it is a product change." The product change is [Service.assetTags],
+// beside this function rather than inside it — see there for why the two
+// corpora are two queries and not one `UNION` with one gate.
 func (s *Service) tags(
 	ctx context.Context, prefix string, threshold float64,
 	caller visibility.Caller, caps visibility.PostCaps,
@@ -431,6 +463,123 @@ func (s *Service) tags(
 		  JOIN posts p ON p.id = pt.post_id
 		 WHERE similarity(pt.tag, $1) > $2` + frag + `
 		 GROUP BY pt.tag
+		 ORDER BY sim DESC
+		 LIMIT ` + itoa(MaxResults)
+	queryArgs := append([]any{prefix, threshold}, args...)
+	return s.scanSuggestionsWith(ctx, KindTag, sql, queryArgs)
+}
+
+// assetTags completes on the tags applied to ASSETS, gated by the asset
+// read rule and the FIELD plane — the second half of the tag corpus
+// facet.tagAgg has counted since #907 (#1077).
+//
+// # The gap this closes
+//
+// The rail says `sculpt 12`; the caller types `scul` and the dropdown
+// stays empty, because the tag lives on assets and this endpoint
+// completed `post_tags` alone. #1077's option 1: union the two sources,
+// each gated by its OWN rule.
+//
+// # ⛔ TWO CORPORA, TWO GATES, AND THAT IS WHY IT IS A SEPARATE QUERY
+//
+// The ordering hazard #1077 names by name: "the two sources have
+// different visibility rules, so a naive UNION gated by only one of them
+// re-opens #1075 on the other side". A post tag is gated by the POST
+// read rule; an asset tag is gated by the ASSET read rule AND the field
+// plane, because a tag IS one of the fields visibility.FieldsReadable
+// withholds — which is the same clause facet.buildAssetVisibilityAppendedSQL
+// composes for the counting half, and it has to be, or the rail's number
+// would stop equalling the set that ticking it returns.
+//
+// Written as its own function with its own predicate, the gates cannot
+// be applied to the wrong branch: there is no branch to get wrong. The
+// merge happens in [Service.Suggest]'s existing dedupe, which keys on
+// (kind, value) — both sources emit [KindTag], so a tag carried by both
+// a readable post and a readable asset surfaces ONCE, at the higher
+// similarity, which is what the caller sees on the rail too.
+//
+// # ⭐ WHY THERE IS NO free-text EXECUTABILITY CONJUNCT HERE
+//
+// Every sibling source appends one ([executableAsSelf] or
+// [executableOnPosts]) because #1155 established that a suggestion is a
+// promise: the completed word must MATCH something when executed. That
+// check asks a question about `search_text`, and for an asset tag the
+// answer is no — measured on the dev seed, `fantasy`, `kit` and
+// `lowpoly` are all FALSE against their own asset's `assets.search_text`,
+// because a tag is not indexed into an asset's document. Appending
+// [executableAsSelf] here would complete nothing at all and #1077 would
+// stay open.
+//
+// That is not a reason to drop the promise; it is a sign the promise is
+// about the wrong execution. #1077's other half is that a picked tag
+// stops being executed as FREE TEXT and applies the structured
+// `filter=tag:<value>` instead (SearchBar's pick handler, and
+// commitTarget on the frontend). What that filter runs is
+// facet.dimensionSQL's [facet.FacetTag] asset arm — `EXISTS (asset_tag
+// … ft.tag = $n)` — under runAssets' own read rule and field plane. In
+// other words the executability question for a tag is now exactly "is
+// there a readable row carrying it", and the FROM + gate below IS that
+// question. The conjunct is absent because it would be the same
+// conjunct twice, not because the check was dropped.
+//
+// The post source keeps its [executableAsSelf] unchanged, deliberately:
+// a post tag IS indexed into its post's document (weight C), so there
+// the conjunct is a real and cheap narrowing rather than a wall, and
+// leaving it alone keeps browse's completions byte-identical.
+//
+// # It runs on the /search SCOPE ONLY
+//
+// Browse is `GET /posts`, whose `?tag=` matches `post_tags` and nothing
+// else — that is the feed's own tag dimension on EntityPost, and it is
+// unchanged by this. So an asset tag executed on browse returns an
+// empty feed unless the same string is also on a readable post, in which
+// case the POST source already completes it. Offering it under
+// ScopeBrowse would be #1155's defect reintroduced by the fix for its
+// sibling: a completion the executing surface cannot answer.
+//
+// This is why the scope parameter exists, and why widening the corpus
+// did not need a new mechanism — one branch, on the switch that is
+// already there.
+func (s *Service) assetTags(
+	ctx context.Context, prefix string, threshold float64,
+	caller visibility.Caller, caps visibility.ContentCaps,
+	mut visibility.AssetMutationCaps, mature visibility.MatureViewer,
+) ([]Suggestion, error) {
+	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
+	if err != nil {
+		return nil, err
+	}
+	// $1=prefix, $2=threshold, the predicate's args continue from $3.
+	// The LIMIT is inlined for the reason [Service.tags] records: it is
+	// the first placeholder the spliced fragment claims.
+	frag, args := pred.ToSQL("a", 2)
+	// ⛔ THE FIELD PLANE, and it is the #1075 guard on this side. A tag
+	// is a FIELD of the asset carrying it, so a restricted asset must not
+	// contribute its tags to a caller who cannot open it — otherwise this
+	// endpoint, which takes a PREFIX, walks the alphabet and reads back
+	// the tag vocabulary of work the caller was refused. Identical clause
+	// to facet.buildAssetVisibilityAppendedSQL's, which is what makes the
+	// completion and the count agree about the same corpus.
+	//
+	// Caller ref inlined as a literal and the team scope rendered as UUID
+	// literals, so neither adds a placeholder and the predicate's
+	// numbering above is untouched (ADR 0063) — same trick as
+	// [Service.assetTitles].
+	frag += visibility.FieldsReadableSQL("a", strconv.FormatInt(caller.UserRef, 10), caller, caps, mut)
+	// #1117 — the mature axis, ANDed beside the field plane rather than
+	// merged into it (ADR 0090 §1). A tag that exists only on mature
+	// assets is a derived copy of content this viewer was not shown, and
+	// the completion discloses both that the word is in use and that
+	// something matching it exists. The post source takes the same
+	// decision on its own column.
+	frag += visibility.MatureFilterSQL("a", visibility.MatureOwnerColAsset,
+		strconv.FormatInt(caller.UserRef, 10), mature, caps.SystemAdmin)
+	sql := `
+		SELECT at.tag AS value, similarity(at.tag, $1) AS sim
+		  FROM asset_tag at
+		  JOIN assets a ON a.id = at.asset_id
+		 WHERE similarity(at.tag, $1) > $2` + frag + `
+		 GROUP BY at.tag
 		 ORDER BY sim DESC
 		 LIMIT ` + itoa(MaxResults)
 	queryArgs := append([]any{prefix, threshold}, args...)

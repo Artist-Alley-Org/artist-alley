@@ -234,16 +234,33 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
 	writeSearchJSON(w, page)
 }
 
-// loadCollectionMemberIDs returns the set of asset IDs pinned to
-// the collection. Matches the presentation.Loader query so both
-// use the same canonical member set (pinned, unexpired).
+// loadCollectionMemberIDs returns the set of asset IDs a collection
+// contains. Matches the presentation.Loader query so both use the same
+// canonical member set (pinned, unexpired).
+//
+// THROUGH THE POSTS (#1161, ADR 0091), for the reason the loader
+// documents at length: a collection contains posts, a post contains
+// assets, and the endpoints that pinned bare assets into
+// `collection_resources` are retired — so the old source is empty on
+// every collection made from now on.
+//
+// NO READ RULE HERE, and that is not an omission. This set is a
+// NARROWING filter applied on top of a search whose own visibility
+// gating has already run: it answers "is this hit inside the
+// collection the caller asked about", and every hit it filters was
+// already one the caller may read. Splicing a second rule would change
+// no answer and would put a copy of it on a path that does not decide
+// access. The loader's query is the one that lists members, and that
+// is where the post rule belongs.
 func (h *Handler) loadCollectionMemberIDs(ctx context.Context, collectionID uuid.UUID) (map[uuid.UUID]struct{}, error) {
 	rows, err := h.Pool.Query(ctx, `
-		SELECT asset_id
-		  FROM collection_resources
-		 WHERE collection_id = $1
-		   AND pinned = TRUE
-		   AND (expires_at IS NULL OR expires_at > NOW())
+		SELECT DISTINCT pa.asset_id
+		  FROM collection_posts cp
+		  JOIN post_assets pa ON pa.post_id = cp.post_id
+		  JOIN posts p ON p.id = cp.post_id AND p.deleted_at IS NULL
+		 WHERE cp.collection_id = $1
+		   AND cp.pinned = TRUE
+		   AND (cp.expires_at IS NULL OR cp.expires_at > NOW())
 	`, collectionID)
 	if err != nil {
 		return nil, err

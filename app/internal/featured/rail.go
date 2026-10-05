@@ -286,8 +286,6 @@ func ListPlacements(
 		"fa", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
 	matureRegularCover := visibility.MatureFilterSQL(
 		"ra", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
-	matureCountAsset := visibility.MatureFilterSQL(
-		"ia", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
 	matureCountPost := visibility.MatureFilterSQL(
 		"ip", visibility.MatureOwnerColPost, matureArg, q.Mature, q.MatureAdmin)
 	if matureAsset != "" {
@@ -339,16 +337,17 @@ func ListPlacements(
 	regularCoverFrag, regularCoverArgs := assetPred.ToSQL("ra", len(args))
 	args = append(args, regularCoverArgs...)
 
-	// Fourth and fifth splices, for the two halves of the member count
-	// (#1110). The resource half is the SAME asset predicate a third
-	// time, aliased for the count's own join; the post half is the post
-	// read rule, which this query did not need before — a collection's
-	// cover comes from a post but the cover lateral gates the ASSET, and
-	// counting members means asking whether the caller may see each
-	// MEMBER.
-	countAssetFrag, countAssetArgs := assetPred.ToSQL("ia", len(args))
-	args = append(args, countAssetArgs...)
-
+	// The member count's splice (#1110). The post read rule, which this
+	// query did not need before — a collection's cover comes from a post
+	// but the cover lateral gates the ASSET, and counting members means
+	// asking whether the caller may see each MEMBER.
+	//
+	// #1236: there was a SECOND leg beside it, the asset predicate
+	// aliased `ia` over `collection_resources`. It is gone for the same
+	// reason the mosaic's asset half is — the tile describes what the
+	// page shows, and the page shows posts. A tile advertising "58
+	// items" over a collection that opens to 29 posts is the count
+	// disagreeing with the thing it counts.
 	postPred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
 		visibility.WithPostCaps(q.PostCaps))
 	if err != nil {
@@ -379,19 +378,18 @@ func ListPlacements(
        -- The subtitle's fallback: members THIS caller can see. NULL —
        -- not 0 — for an asset subject, because "no membership" and "an
        -- empty membership" are different tiles.
+       --
+       -- POSTS ONLY (#1236), the same membership ComposeCovers paints
+       -- the tile from. The two are siblings and have to move together:
+       -- a count and a mosaic that disagree about what a collection
+       -- holds are two answers to one question.
        CASE WHEN c.id IS NOT NULL THEN (
-              (SELECT count(*)
-                 FROM collection_posts icp
-                 JOIN posts ip ON ip.id = icp.post_id` + countPostFrag + matureCountPost + `
-                WHERE icp.collection_id = c.id
-                  AND icp.pinned = TRUE
-                  AND (icp.expires_at IS NULL OR icp.expires_at > NOW()))
-            + (SELECT count(*)
-                 FROM collection_resources icr
-                 JOIN assets ia ON ia.id = icr.asset_id` + countAssetFrag + matureCountAsset + `
-                WHERE icr.collection_id = c.id
-                  AND icr.pinned = TRUE
-                  AND (icr.expires_at IS NULL OR icr.expires_at > NOW()))
+              SELECT count(*)
+                FROM collection_posts icp
+                JOIN posts ip ON ip.id = icp.post_id` + countPostFrag + matureCountPost + `
+               WHERE icp.collection_id = c.id
+                 AND icp.pinned = TRUE
+                 AND (icp.expires_at IS NULL OR icp.expires_at > NOW())
        ) END::INTEGER AS item_count,
        -- Kept in lockstep with asset_file_hash: an id without a servable
        -- hash would have the client build a URL that 404s.

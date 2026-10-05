@@ -76,7 +76,12 @@ async function saveForeignPostToNewCollection(
   collectionName: string,
   /** When set, capture the open menu + the open picker under this
    *  prefix. The affordance is the change; a screenshot of the RESULT
-   *  alone does not show that it was reachable. */
+   *  alone does not show that it was reachable.
+   *
+   *  ⚠️ Pass `testInfo.outputPath(name)`, never a bare name (#1211). A
+   *  relative `path:` resolves against the Playwright CWD, which IS
+   *  scripts/dogfood/ui — six of these were landing on TRACKED PNGs and
+   *  dirtying the tree on every local run. */
   shotPrefix?: string,
 ): Promise<string> {
   await page.goto(`/posts/${post.id}`);
@@ -134,7 +139,7 @@ test.describe('UI-39 collect someone else’s post (#882)', () => {
     await loginAsAdminViaUI(page);
   });
 
-  test('desktop 1080p: save another user’s post, then see it in the collection', async ({ page }) => {
+  test('desktop 1080p: save another user’s post, then see it in the collection', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1920, height: 1080 });
     const me = await callerRef(page);
     const post = await foreignPost(page, me);
@@ -142,7 +147,7 @@ test.describe('UI-39 collect someone else’s post (#882)', () => {
 
     try {
       const collectionId = await saveForeignPostToNewCollection(
-        page, post, name, 'ui-39-collect-post-desktop',
+        page, post, name, testInfo.outputPath('collect-post-desktop'),
       );
 
       // The REFERENCE landed — asked of the API, not of the page.
@@ -160,7 +165,7 @@ test.describe('UI-39 collect someone else’s post (#882)', () => {
       await expect(postsSection).toBeVisible();
       await expect(postsSection.locator(`a[href="/posts/${post.id}"]`).first()).toBeVisible();
       await page.screenshot({
-        path: 'ui-39-collect-post-desktop.png',
+        path: testInfo.outputPath('collect-post-desktop.png'),
         fullPage: false,
       });
     } finally {
@@ -168,7 +173,7 @@ test.describe('UI-39 collect someone else’s post (#882)', () => {
     }
   });
 
-  test('mobile 390px: the same flow through the narrow layout', async ({ page }) => {
+  test('mobile 390px: the same flow through the narrow layout', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const me = await callerRef(page);
     const post = await foreignPost(page, me);
@@ -176,7 +181,7 @@ test.describe('UI-39 collect someone else’s post (#882)', () => {
 
     try {
       const collectionId = await saveForeignPostToNewCollection(
-        page, post, name, 'ui-39-collect-post-mobile-390',
+        page, post, name, testInfo.outputPath('collect-post-mobile-390'),
       );
 
       await page.goto(`/collections/${collectionId}`);
@@ -184,7 +189,7 @@ test.describe('UI-39 collect someone else’s post (#882)', () => {
       await expect(postsSection).toBeVisible();
       await expect(postsSection.locator(`a[href="/posts/${post.id}"]`).first()).toBeVisible();
       await page.screenshot({
-        path: 'ui-39-collect-post-mobile-390.png',
+        path: testInfo.outputPath('collect-post-mobile-390.png'),
         fullPage: false,
       });
     } finally {

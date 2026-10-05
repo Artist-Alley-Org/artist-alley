@@ -8,7 +8,7 @@
 // the app and prove the behaviour deterministically (you can't reliably
 // induce an ECONNRESET against the live app).
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { withTransientRetry, waitForAppReady } from '../../helpers/ready';
 
 // This spec makes no HTTP calls — opt out of the shared admin session so

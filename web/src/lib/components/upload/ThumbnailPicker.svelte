@@ -58,6 +58,14 @@
             status: 'draft',
             file_hash: hash,
             file_extension: ext,
+            // #1167 — the cover inherits the declaration the artist
+            // made about the work, because it IS part of the work and
+            // because the post-level derivation counts it. Omitted
+            // when they declared nothing, since there is nothing to
+            // inherit and `none` would be a claim nobody made.
+            ...(upload.sharedAiProvenance
+              ? { ai_provenance: upload.sharedAiProvenance }
+              : {}),
           },
         }),
       );

@@ -115,6 +115,16 @@ const (
 	// without diffing changesets on an unrelated event.
 	EventAdminPublicModeUpdated = "admin.system.public_mode_updated"
 
+	// #789 / ADR 0092 §4 — a vocabulary MERGE. Its own event because it
+	// is the one metadata operation that rewrites records their owners
+	// did not touch: every asset and collection holding the source term
+	// silently starts holding the target instead. "Why does this asset
+	// say `united-kingdom` when I typed `uk`" is only answerable if the
+	// merge, its actor and its stated reason are recorded somewhere an
+	// operator can search — the per-value history rows say WHAT changed
+	// on each record, and this says why they all changed at once.
+	EventVocabularyMerged = "metadata.vocabulary.merged"
+
 	// #709 — the browse-layout allowlist. Its own event because
 	// disabling a layout is the kind of change users notice and report
 	// as a bug ("the masonry button disappeared"); answering that with
@@ -1422,5 +1432,43 @@ func (r *Recorder) AdminUserHardDeletedByGC(ctx context.Context, userRef int64, 
 		"prior_reason":     priorReason,
 		"retention_days":   retentionDays,
 		"days_over_window": daysOverWindow,
+	})
+}
+
+// VocabularyMerge is the payload of one metadata.vocabulary.merged
+// event (#789, ADR 0092 §4).
+//
+// Every member is here because a merge is otherwise unreconstructable
+// after the fact: the tombstone in the options document says WHERE the
+// term went, the per-value history rows say what each record now holds,
+// and only this says who did it, why, and how much moved.
+type VocabularyMerge struct {
+	FieldID   string
+	FieldCode string
+	Source    string
+	Target    string
+	// Reason is operator-written free text. Not a secret and not PII by
+	// construction — it describes two vocabulary terms — so it is
+	// recorded verbatim rather than summarised. It is the whole point
+	// of the event.
+	Reason                    string
+	AssetValuesRewritten      int
+	CollectionValuesRewritten int
+}
+
+// VocabularyMerged records a completed vocabulary merge.
+//
+// No subject user: the records this rewrote belong to many people, and
+// naming one of them would be worse than naming none. actor is the
+// operator who performed it.
+func (r *Recorder) VocabularyMerged(ctx context.Context, actor *int64, m VocabularyMerge) {
+	r.write(ctx, EventVocabularyMerged, nil, actor, reqContext{}, map[string]any{
+		"field_id":                    m.FieldID,
+		"field_code":                  m.FieldCode,
+		"source":                      m.Source,
+		"target":                      m.Target,
+		"reason":                      m.Reason,
+		"asset_values_rewritten":      m.AssetValuesRewritten,
+		"collection_values_rewritten": m.CollectionValuesRewritten,
 	})
 }

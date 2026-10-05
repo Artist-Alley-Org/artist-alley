@@ -58,6 +58,8 @@
   import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
   import { browseView } from '$stores/browseView.svelte';
+  import { upload } from '$stores/upload.svelte';
+  import { createRefreshGate } from '$lib/util/refreshGate';
   import AssetCard from '$components/AssetCard.svelte';
   import CollectionCard from '$components/CollectionCard.svelte';
   import PostCard from '$components/PostCard.svelte';
@@ -67,6 +69,7 @@
   import FooterTabs from '$components/FooterTabs.svelte';
   import PostParamHost from '$components/PostParamHost.svelte';
   import { createMarquee } from '$lib/util/marquee.svelte';
+  import type { SelectionEntry } from '$stores/selection.svelte';
 
   interface Props {
     ref?: number;
@@ -75,6 +78,10 @@
   let { ref, username }: Props = $props();
 
   let profile = $state<Record<string, any> | null>(null);
+  // Declared up here with `profile` rather than beside its other uses:
+  // TABS reads it, and `$derived` bindings are block-scoped even though
+  // their evaluation is lazy.
+  const isSelf = $derived(!!profile && !!auth.user && auth.user.ref === profile.ref);
   let notFound = $state(false);
   let loading = $state(true);
   let posts = $state<any[]>([]);
@@ -89,14 +96,28 @@
   let likesLoaded = $state(false);
   let likesLoading = $state(false);
 
-  type Tab = 'portfolio' | 'about' | 'likes';
-  const TABS: Tab[] = ['portfolio', 'about', 'likes'];
+  type Tab = 'portfolio' | 'about' | 'likes' | 'drafts';
+  // Drafts is the profile owner's tab and NOBODY else's (#1161, ADR
+  // 0091 decision 7). It is not merely hidden from visitors — the API
+  // refuses them too, so a visitor who types `?tab=drafts` gets an
+  // empty tab rather than a private one. Filtering it out of TABS is
+  // about not offering a control that would do nothing.
+  //
+  // It lives here rather than as a fourth pill on browse because
+  // "unfinished work" is a fact about a person, not a slice of the
+  // wall — and because every segment of the browse footer's filter
+  // must be a value `GET /posts?feed=` accepts, which `draft` is not
+  // (it is its own parameter). Bending that invariant to fit one tab
+  // is how the #691 dead pills happened.
+  const BASE_TABS: Tab[] = ['portfolio', 'about', 'likes'];
 
   // The URL owns the tab, for the reasons browse's `?q=` / `?team=`
   // already do: it survives a reload, it travels in a shared link, and
   // it answers the back button. It also composes with `?post=` — the
   // viewer host deletes only its own param on close, so closing a post
   // opened from Likes returns to Likes.
+  const TABS = $derived<Tab[]>(isSelf ? [...BASE_TABS, 'drafts'] : BASE_TABS);
+
   const activeTab = $derived<Tab>(
     (TABS as string[]).includes(page.url.searchParams.get('tab') ?? '')
       ? (page.url.searchParams.get('tab') as Tab)
@@ -118,7 +139,7 @@
    *  everything they see today — the uploads grid survives HERE and
    *  nowhere else. `auth.user` is null for an anonymous viewer, which
    *  resolves this to false without a separate branch. */
-  const isSelf = $derived(!!profile && !!auth.user && auth.user.ref === profile.ref);
+
 
   async function loadProfile() {
     if (username) {
@@ -138,6 +159,20 @@
     return null;
   }
 
+  /**
+   * How many portfolio requests are in flight (#1407).
+   *
+   * `loadContent` had no busy state at all and ends in three bare
+   * replacements, so a refresh started on top of one already running
+   * loses to it: the fresh answer lands, then the older PRE-PUBLISH
+   * response returns and overwrites `posts` and `assets` with the
+   * version that does not contain the new work. Counted rather than a
+   * boolean for the reason the studio page gives: this is the "is
+   * anything running" question the refresh gate consults, and it has to
+   * be right when more than one thing is.
+   */
+  let contentInFlight = $state(0);
+
   async function loadContent(ownerRef: number, self: boolean) {
     // Independent + best-effort: a members-only 401 on the posts feed
     // (anonymous viewer) must not blank the collections an anonymous
@@ -148,20 +183,94 @@
     // uploads grid is off the visitor view, and a fetch whose result is
     // conditionally rendered is a grid one `{#if}` away from coming
     // back.
-    const [p, c] = await Promise.all([
-      api.GET('/posts', { params: { query: { author_ref: ownerRef, limit: 24 } } }).catch(() => ({ data: null })),
-      api.GET('/collections', { params: { query: { owner_ref: ownerRef, limit: 24 } } }).catch(() => ({ data: null })),
-    ]);
-    posts = (p.data?.items ?? []) as any[];
-    collections = (c.data?.items ?? []) as any[];
+    contentInFlight += 1;
+    try {
+      const [p, c] = await Promise.all([
+        api.GET('/posts', { params: { query: { author_ref: ownerRef, limit: 24 } } }).catch(() => ({ data: null })),
+        api.GET('/collections', { params: { query: { owner_ref: ownerRef, limit: 24 } } }).catch(() => ({ data: null })),
+      ]);
+      posts = (p.data?.items ?? []) as any[];
+      collections = (c.data?.items ?? []) as any[];
 
-    if (self) {
-      const a = await api
-        .GET('/assets', { params: { query: { owner_ref: ownerRef, limit: 24 } } })
+      if (self) {
+        const a = await api
+          .GET('/assets', { params: { query: { owner_ref: ownerRef, limit: 24 } } })
+          .catch(() => ({ data: null }));
+        assets = (a.data?.items ?? []) as any[];
+      } else {
+        assets = [];
+      }
+    } finally {
+      contentInFlight -= 1;
+      // ⭐ UNCONDITIONALLY, so a refresh owed behind this request runs.
+      uploadRefresh.settled();
+    }
+  }
+
+  // ── Drafts (#1161) ────────────────────────────────────────────────
+  // Lazy like Likes: fetched the first time the tab is opened, whether
+  // by click or by a deep link into `?tab=drafts`.
+  //
+  // `draft: true` is the ONE listing on the API that returns an
+  // unpublished post, and it is narrowing rather than widening — the
+  // read rule still decides, and it holds a draft to its author and to
+  // a posts.admin holder. So this fetch cannot show somebody else's
+  // work even if `ownerRef` were wrong.
+  let drafts = $state<any[]>([]);
+  let draftsLoading = $state(false);
+  let draftsLoaded = $state(false);
+
+  /**
+   * #1407's publish-to-refresh seam, held behind whatever this profile
+   * is already fetching.
+   *
+   * `busy` names BOTH loaders the handler touches. The portfolio one is
+   * obvious; `draftsLoading` is there because `loadDrafts` early-returns
+   * while a load is in flight, so a handler that ran then would clear
+   * `draftsLoaded` straight into that return and the owed refresh would
+   * be gone. Likes are deliberately absent: an upload cannot change who
+   * liked what, so that loader is not this consumer's business.
+   */
+  const uploadRefresh = createRefreshGate({
+    busy: () => contentInFlight > 0 || draftsLoading,
+    run: () => {
+      const p = profile;
+      if (!p) return;
+      void loadContent(p.ref, !!auth.user && auth.user.ref === p.ref);
+      if (draftsLoaded) {
+        draftsLoaded = false;
+        void loadDrafts(p.ref);
+      }
+    },
+  });
+
+  /**
+   * ⚠️ THE EARLY RETURN IS A DROPPED EVENT UNLESS SOMETHING HOLDS THE
+   * REFRESH BACK (#1407).
+   *
+   * The upload-success handler clears `draftsLoaded` and calls this. If
+   * a draft load was ALREADY in flight, this returned immediately, that
+   * older request then set `draftsLoaded = true` on its way out, and
+   * nothing was owed any more: a draft published from the modal stayed
+   * invisible on the tab that exists to show it, which is the bug this
+   * whole issue is about wearing a different hat.
+   *
+   * `draftsLoading` is therefore part of the gate's `busy`, so the
+   * handler never runs while a draft load is on the wire. It runs
+   * afterwards, when this function will actually do the work.
+   */
+  async function loadDrafts(ownerRef: number) {
+    if (draftsLoaded || draftsLoading) return;
+    draftsLoading = true;
+    try {
+      const p = await api
+        .GET('/posts', { params: { query: { author_ref: ownerRef, draft: true, limit: 24 } } })
         .catch(() => ({ data: null }));
-      assets = (a.data?.items ?? []) as any[];
-    } else {
-      assets = [];
+      drafts = (p.data?.items ?? []) as any[];
+      draftsLoaded = true;
+    } finally {
+      draftsLoading = false;
+      uploadRefresh.settled();
     }
   }
 
@@ -181,6 +290,31 @@
     }
   }
 
+  // #1407: a publish landed while the artist was standing on a profile.
+  //
+  // A SEPARATE `onMount` from the one below, because that one is
+  // `async`: Svelte treats a promise return as a promise and never as a
+  // teardown, so an unsubscribe returned from it would silently never
+  // run and this component would keep answering after it unmounted.
+  //
+  // Portfolio is a FIXED first slice (limit 24, no "load more"), so its
+  // refresh is a straight re-ask and cannot duplicate a row or strand a
+  // page. Drafts is refreshed only if the tab was opened, and by
+  // clearing its loaded flag: `loadDrafts` returns early on it, so
+  // calling it without the reset would do nothing at all.
+  //
+  // ⛔ AND IT WAITS FOR WHATEVER IS ALREADY RUNNING. Both loaders here
+  // end in bare replacements with no generation guard, so a refresh
+  // started on top of one already on the wire loses to it. `busy`
+  // covers BOTH of them, which is what closes the drafts hole: the
+  // handler is never invoked while a draft load is in flight, so it
+  // cannot clear `draftsLoaded` into an early return that throws the
+  // event away.
+  //
+  // `run` reads `profile` when it RUNS, so the refresh describes the
+  // person whose page is on screen.
+  onMount(() => upload.onSuccess(() => uploadRefresh.request()));
+
   onMount(async () => {
     browseView.init(); // pick up the user's tile-size preference for the grids
     const data = await loadProfile();
@@ -198,6 +332,10 @@
   // click or a deep link into `?tab=likes`.
   $effect(() => {
     if (activeTab === 'likes' && profile) void loadLikes(profile.ref);
+  });
+
+  $effect(() => {
+    if (activeTab === 'drafts' && profile && isSelf) void loadDrafts(profile.ref);
   });
 
   const socialEntries = $derived(
@@ -221,13 +359,18 @@
   const sortedCollections = $derived(rev(collections));
   const sortedAssets = $derived(rev(assets));
   const sortedLikedPosts = $derived(rev(likedPosts));
+  const sortedDrafts = $derived(rev(drafts));
   const sortedLikedAssets = $derived(rev(likedAssets));
 
   // What the viewer host walks with ← / →: whichever post grid is on
   // screen. Portfolio and Likes never render together, so this is
   // unambiguous, and on About there is no grid and the arrows go inert.
   const hostedPostIds = $derived(
-    activeTab === 'likes' ? sortedLikedPosts.map((p) => p.id) : sortedPosts.map((p) => p.id),
+    activeTab === 'likes'
+      ? sortedLikedPosts.map((p) => p.id)
+      : activeTab === 'drafts'
+        ? sortedDrafts.map((p) => p.id)
+        : sortedPosts.map((p) => p.id),
   );
 
   const portfolioEmpty = $derived(!posts.length && !collections.length && !assets.length);
@@ -257,14 +400,27 @@
   // below. Collections are absent because CollectionCard carries no
   // `data-select-id` — it is not selectable, so it is not in the range
   // either.
-  const orderedSelectableIds = () =>
+  //
+  // TYPED entries (#1119). This profile is THE mixed surface: one band
+  // sweeps a post grid and an uploads grid in a single gesture (#1177)
+  // so it is the one place where a bare id list was not merely
+  // under-specified but actually ambiguous: two cards in this list can
+  // carry the same uuid, one as a post and one as an asset, and the
+  // batch endpoints must be told which is which.
+  const orderedSelectableEntries = (): SelectionEntry[] =>
     activeTab === 'likes'
-      ? [...sortedLikedPosts.map((p) => p.id), ...sortedLikedAssets.map((a) => a.id)]
-      : [...sortedPosts.map((p) => p.id), ...sortedAssets.map((a) => a.id)];
+      ? [
+          ...sortedLikedPosts.map((p) => ({ kind: 'post' as const, id: p.id })),
+          ...sortedLikedAssets.map((a) => ({ kind: 'asset' as const, id: a.id })),
+        ]
+      : [
+          ...sortedPosts.map((p) => ({ kind: 'post' as const, id: p.id })),
+          ...sortedAssets.map((a) => ({ kind: 'asset' as const, id: a.id })),
+        ];
 
   const marquee = createMarquee(
     () => portfolioWallEl ?? likesWallEl,
-    { ordered: orderedSelectableIds },
+    { ordered: orderedSelectableEntries },
   );
 </script>
 
@@ -365,6 +521,25 @@
           <p class="text-fg-muted">{t('profile.about.empty')}</p>
         {/if}
       </section>
+    {:else if activeTab === 'drafts'}
+      {#if draftsLoading && !draftsLoaded}
+        <p class="mt-10 text-center text-fg-muted">{t('common.loading')}</p>
+      {:else if drafts.length}
+        <section class="mt-10">
+          <h2 class="mb-3 text-lg font-semibold text-fg">{t('profile.section.drafts')}</h2>
+          <p class="mb-4 text-sm text-fg-muted">{t('profile.drafts.hint')}</p>
+          <ContentGrid mode={browseView.mode} items={sortedDrafts} tileMin={browseView.tileMin}>
+            {#snippet card(item, mode)}
+              <PostCard post={item} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} />
+            {/snippet}
+            {#snippet list()}
+              <PostListTable items={sortedDrafts} loading={false} />
+            {/snippet}
+          </ContentGrid>
+        </section>
+      {:else}
+        <p class="mt-10 text-center text-fg-muted">{t('profile.drafts.empty')}</p>
+      {/if}
     {:else if activeTab === 'likes'}
       {#if likesLoading && !likesLoaded}
         <p class="mt-10 text-center text-fg-muted">{t('common.loading')}</p>

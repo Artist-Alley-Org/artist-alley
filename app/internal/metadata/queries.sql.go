@@ -94,6 +94,83 @@ func (q *Queries) ArchiveFieldDefinition(ctx context.Context, arg ArchiveFieldDe
 	return err
 }
 
+const consumeBatchPreview = `-- name: ConsumeBatchPreview :one
+UPDATE metadata_batch_preview
+   SET consumed_at = NOW()
+ WHERE id = $1
+   AND consumed_at IS NULL
+RETURNING id, consumed_at
+`
+
+type ConsumeBatchPreviewRow struct {
+	ID         pgtype.UUID
+	ConsumedAt pgtype.Timestamptz
+}
+
+// THE SINGLE-USE LATCH, and the reason consumption cannot be lost.
+//
+// Run INSIDE the apply transaction, before any field write. The
+// predicate and the mutation are ONE statement, so two concurrent
+// replays of one token cannot both see it unconsumed: the second blocks
+// on the row lock the first took, and when it proceeds it matches zero
+// rows and reports the replay. A handler-side "read, compare, update"
+// would let both through at READ COMMITTED.
+//
+// Because it lives in the apply's transaction, a refusal that rolls
+// that transaction back also rolls this back: a pre-write refusal
+// leaves the token spendable, and a committed apply spends it in the
+// same durable outcome as its writes and its audit envelope. There is
+// no third result.
+func (q *Queries) ConsumeBatchPreview(ctx context.Context, id pgtype.UUID) (ConsumeBatchPreviewRow, error) {
+	row := q.db.QueryRow(ctx, consumeBatchPreview, id)
+	var i ConsumeBatchPreviewRow
+	err := row.Scan(&i.ID, &i.ConsumedAt)
+	return i, err
+}
+
+const countBatchExpandedTargets = `-- name: CountBatchExpandedTargets :one
+SELECT count(*)
+  FROM (
+        SELECT unnest($1::uuid[]) AS asset_id
+         UNION
+        SELECT pa.asset_id
+          FROM post_assets pa
+          JOIN posts p ON p.id = pa.post_id
+          JOIN assets a ON a.id = pa.asset_id
+         WHERE pa.post_id = ANY($2::uuid[])
+           AND p.deleted_at IS NULL
+           AND a.deleted_at IS NULL
+       ) AS expanded
+`
+
+type CountBatchExpandedTargetsParams struct {
+	AssetIds []pgtype.UUID
+	PostIds  []pgtype.UUID
+}
+
+// THE TRUE DISTINCT EXPANDED-TARGET COUNT, computed in the DATABASE.
+//
+// The over-ceiling refusal has to name the ACTUAL count — an operator
+// told "at most 1000, and this reaches 1001" when it really reaches
+// 50,000 has been told the wrong thing about their own selection, and
+// would go on trimming it one post at a time. But materialising 50,000
+// ids in application memory to count them is the thing the bounded read
+// exists to avoid.
+//
+// Both, then: COUNT here, where the set never leaves the server, and a
+// BOUNDED id read afterwards only once the count is known to fit.
+//
+// UNION and not UNION ALL: the count is of DISTINCT assets, and an
+// asset selected directly AND reachable through two selected posts is
+// one target. That is the same dedupe ExpandPostsToAssets performs, in
+// the one place where it has to see both halves of the selection.
+func (q *Queries) CountBatchExpandedTargets(ctx context.Context, arg CountBatchExpandedTargetsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countBatchExpandedTargets, arg.AssetIds, arg.PostIds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createFieldDefinition = `-- name: CreateFieldDefinition :one
 INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
@@ -108,7 +185,9 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab,
+          read_only, regexp_filter, display_condition
 `
 
 type CreateFieldDefinitionParams struct {
@@ -180,6 +259,12 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
 		&i.ShowOnCard,
+		&i.ShowInAdvancedSearch,
+		&i.ShowOnUpload,
+		&i.EditTab,
+		&i.ReadOnly,
+		&i.RegexpFilter,
+		&i.DisplayCondition,
 	)
 	return i, err
 }
@@ -198,6 +283,42 @@ func (q *Queries) DeleteAssetFieldValue(ctx context.Context, arg DeleteAssetFiel
 	return err
 }
 
+const deleteAssetFieldValueIfUnchanged = `-- name: DeleteAssetFieldValueIfUnchanged :one
+DELETE FROM asset_field_value
+WHERE asset_id = $1
+  AND field_id = $2
+  AND set_at   = $3
+RETURNING asset_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type DeleteAssetFieldValueIfUnchangedParams struct {
+	AssetID          pgtype.UUID
+	FieldID          pgtype.UUID
+	IfUnchangedSince pgtype.Timestamptz
+}
+
+// Guarded removal. RETURNING carries the row that was deleted, so the
+// history entry is written from what was actually removed rather than
+// from a snapshot taken before the statement ran.
+func (q *Queries) DeleteAssetFieldValueIfUnchanged(ctx context.Context, arg DeleteAssetFieldValueIfUnchangedParams) (AssetFieldValue, error) {
+	row := q.db.QueryRow(ctx, deleteAssetFieldValueIfUnchanged, arg.AssetID, arg.FieldID, arg.IfUnchangedSince)
+	var i AssetFieldValue
+	err := row.Scan(
+		&i.AssetID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
+}
+
 const deleteCollectionFieldValue = `-- name: DeleteCollectionFieldValue :exec
 DELETE FROM collection_field_value
 WHERE collection_id = $1 AND field_id = $2
@@ -211,6 +332,39 @@ type DeleteCollectionFieldValueParams struct {
 func (q *Queries) DeleteCollectionFieldValue(ctx context.Context, arg DeleteCollectionFieldValueParams) error {
 	_, err := q.db.Exec(ctx, deleteCollectionFieldValue, arg.CollectionID, arg.FieldID)
 	return err
+}
+
+const deleteCollectionFieldValueIfUnchanged = `-- name: DeleteCollectionFieldValueIfUnchanged :one
+DELETE FROM collection_field_value
+WHERE collection_id = $1
+  AND field_id      = $2
+  AND set_at        = $3
+RETURNING collection_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type DeleteCollectionFieldValueIfUnchangedParams struct {
+	CollectionID     pgtype.UUID
+	FieldID          pgtype.UUID
+	IfUnchangedSince pgtype.Timestamptz
+}
+
+func (q *Queries) DeleteCollectionFieldValueIfUnchanged(ctx context.Context, arg DeleteCollectionFieldValueIfUnchangedParams) (CollectionFieldValue, error) {
+	row := q.db.QueryRow(ctx, deleteCollectionFieldValueIfUnchanged, arg.CollectionID, arg.FieldID, arg.IfUnchangedSince)
+	var i CollectionFieldValue
+	err := row.Scan(
+		&i.CollectionID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
 }
 
 const deleteFieldDefaultOverride = `-- name: DeleteFieldDefaultOverride :execrows
@@ -228,6 +382,62 @@ func (q *Queries) DeleteFieldDefaultOverride(ctx context.Context, arg DeleteFiel
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const expandPostsToAssets = `-- name: ExpandPostsToAssets :many
+
+SELECT DISTINCT pa.asset_id
+  FROM post_assets pa
+  JOIN posts p ON p.id = pa.post_id
+  JOIN assets a ON a.id = pa.asset_id
+ WHERE pa.post_id = ANY($1::uuid[])
+   AND p.deleted_at IS NULL
+   AND a.deleted_at IS NULL
+ ORDER BY pa.asset_id
+ LIMIT $2::int
+`
+
+type ExpandPostsToAssetsParams struct {
+	PostIds []pgtype.UUID
+	Limit   int32
+}
+
+// ---------------------------------------------------------------------------
+// Batch metadata edit (#1173, #1119, ADR 0019)
+// ---------------------------------------------------------------------------
+// Membership expansion for a batch selection's `post` entries.
+//
+// SERVER-SIDE on purpose. A client that expanded posts itself would be
+// sending an asset list the server has to trust, and the whole reason
+// the selection is typed is that the server, not the client, decides
+// what a post means. Soft-deleted posts and soft-deleted assets are
+// excluded here rather than partitioned later: they were never targets,
+// so counting them as `gone` would report an outcome for something the
+// operator never selected.
+//
+// DISTINCT because an asset can sit in several selected posts and is
+// one target however many routes reach it. The ORDER BY is the
+// deterministic order the whole contract rests on — preview and apply
+// derive the identical ordered set from it, which is why it is asset id
+// and not sort_order (mutable) or selection order (client-supplied).
+func (q *Queries) ExpandPostsToAssets(ctx context.Context, arg ExpandPostsToAssetsParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, expandPostsToAssets, arg.PostIds, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var asset_id pgtype.UUID
+		if err := rows.Scan(&asset_id); err != nil {
+			return nil, err
+		}
+		items = append(items, asset_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getAssetFieldValue = `-- name: GetAssetFieldValue :one
@@ -301,6 +511,67 @@ func (q *Queries) GetAssetMirrorSubject(ctx context.Context, id pgtype.UUID) (Ge
 	row := q.db.QueryRow(ctx, getAssetMirrorSubject, id)
 	var i GetAssetMirrorSubjectRow
 	err := row.Scan(&i.OwnerUserRef, &i.TeamID)
+	return i, err
+}
+
+const getAssetTeamForFieldComposition = `-- name: GetAssetTeamForFieldComposition :one
+SELECT team_id FROM assets WHERE id = $1
+`
+
+// The team an asset belongs to, for the team-scoped half of effective
+// field readability (#1173, ADR 0099 §5).
+//
+// `assets.team_id` is NULLABLE and a NULL is not "no scope required": a
+// team-less asset SKIPS the scoped disjunct entirely and is answered by
+// the caller's GLOBAL holding alone, which is the same nullable trap
+// `hasAssetCapability` documents on the assets side. Collections have no
+// team column at all, so they have no counterpart to this query and their
+// readability is the global answer by construction.
+func (q *Queries) GetAssetTeamForFieldComposition(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getAssetTeamForFieldComposition, id)
+	var team_id pgtype.UUID
+	err := row.Scan(&team_id)
+	return team_id, err
+}
+
+const getBatchPreviewByTokenHash = `-- name: GetBatchPreviewByTokenHash :one
+SELECT id, caller_user_ref, field_id, mode, would_change, payload,
+       created_at, expires_at, consumed_at
+  FROM metadata_batch_preview
+ WHERE token_hash = $1
+`
+
+type GetBatchPreviewByTokenHashRow struct {
+	ID            pgtype.UUID
+	CallerUserRef int64
+	FieldID       pgtype.UUID
+	Mode          string
+	WouldChange   int32
+	Payload       []byte
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	ConsumedAt    pgtype.Timestamptz
+}
+
+// The unlocked read behind apply's steps 1 through 5. It answers for a
+// row belonging to ANY caller on purpose: the caller-binding comparison
+// is made in Go, and it must be made on the SAME code path for a row
+// that exists and one that does not, so that "belongs to somebody else"
+// and "does not exist" cannot be told apart by timing or by shape.
+func (q *Queries) GetBatchPreviewByTokenHash(ctx context.Context, tokenHash []byte) (GetBatchPreviewByTokenHashRow, error) {
+	row := q.db.QueryRow(ctx, getBatchPreviewByTokenHash, tokenHash)
+	var i GetBatchPreviewByTokenHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.CallerUserRef,
+		&i.FieldID,
+		&i.Mode,
+		&i.WouldChange,
+		&i.Payload,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+	)
 	return i, err
 }
 
@@ -389,7 +660,9 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter, display_condition
 FROM field_definition WHERE code = $1
 `
 
@@ -424,6 +697,12 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
 		&i.ShowOnCard,
+		&i.ShowInAdvancedSearch,
+		&i.ShowOnUpload,
+		&i.EditTab,
+		&i.ReadOnly,
+		&i.RegexpFilter,
+		&i.DisplayCondition,
 	)
 	return i, err
 }
@@ -435,7 +714,9 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter, display_condition
 FROM field_definition WHERE id = $1
 `
 
@@ -470,6 +751,12 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
 		&i.ShowOnCard,
+		&i.ShowInAdvancedSearch,
+		&i.ShowOnUpload,
+		&i.EditTab,
+		&i.ReadOnly,
+		&i.RegexpFilter,
+		&i.DisplayCondition,
 	)
 	return i, err
 }
@@ -587,6 +874,176 @@ func (q *Queries) InsertAssetFieldValueIfAbsent(ctx context.Context, arg InsertA
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const insertAssetFieldValueWhenAbsent = `-- name: InsertAssetFieldValueWhenAbsent :one
+INSERT INTO asset_field_value (
+    asset_id, field_id,
+    value_text, value_num, value_date, value_options, value_ref,
+    set_by, set_at, set_by_user_ref
+) VALUES (
+    $1, $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    NOW(),
+    $9
+)
+ON CONFLICT (asset_id, field_id) DO NOTHING
+RETURNING asset_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type InsertAssetFieldValueWhenAbsentParams struct {
+	AssetID      pgtype.UUID
+	FieldID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+	SetBy        string
+	SetByUserRef *int64
+}
+
+// (Named apart from the defaults path's InsertAssetFieldValueIfAbsent,
+// which is the same ON CONFLICT DO NOTHING primitive with `set_by`
+// hard-wired to 'default' and no returned row.)
+// Guarded first write. The unique index (asset_id, field_id) IS the
+// precondition, so no read participates at all: a competing inserter
+// waits on the in-progress tuple and then takes DO NOTHING, and
+// exactly one row survives two overlapping attempts.
+func (q *Queries) InsertAssetFieldValueWhenAbsent(ctx context.Context, arg InsertAssetFieldValueWhenAbsentParams) (AssetFieldValue, error) {
+	row := q.db.QueryRow(ctx, insertAssetFieldValueWhenAbsent,
+		arg.AssetID,
+		arg.FieldID,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+		arg.SetBy,
+		arg.SetByUserRef,
+	)
+	var i AssetFieldValue
+	err := row.Scan(
+		&i.AssetID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
+}
+
+const insertBatchPreview = `-- name: InsertBatchPreview :one
+INSERT INTO metadata_batch_preview
+    (token_hash, caller_user_ref, field_id, mode, would_change, payload, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, created_at, expires_at
+`
+
+type InsertBatchPreviewParams struct {
+	TokenHash     []byte
+	CallerUserRef int64
+	FieldID       pgtype.UUID
+	Mode          string
+	WouldChange   int32
+	Payload       []byte
+	ExpiresAt     pgtype.Timestamptz
+}
+
+type InsertBatchPreviewRow struct {
+	ID        pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
+// Mint one preview token's durable binding. `token_hash` and never the
+// token: a database that has never held the bearer secret cannot leak
+// it, which is the same reason session tokens are stored hashed.
+func (q *Queries) InsertBatchPreview(ctx context.Context, arg InsertBatchPreviewParams) (InsertBatchPreviewRow, error) {
+	row := q.db.QueryRow(ctx, insertBatchPreview,
+		arg.TokenHash,
+		arg.CallerUserRef,
+		arg.FieldID,
+		arg.Mode,
+		arg.WouldChange,
+		arg.Payload,
+		arg.ExpiresAt,
+	)
+	var i InsertBatchPreviewRow
+	err := row.Scan(&i.ID, &i.CreatedAt, &i.ExpiresAt)
+	return i, err
+}
+
+const insertCollectionFieldValueWhenAbsent = `-- name: InsertCollectionFieldValueWhenAbsent :one
+INSERT INTO collection_field_value (
+    collection_id, field_id,
+    value_text, value_num, value_date, value_options, value_ref,
+    set_by, set_at, set_by_user_ref
+) VALUES (
+    $1, $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    NOW(),
+    $9
+)
+ON CONFLICT (collection_id, field_id) DO NOTHING
+RETURNING collection_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type InsertCollectionFieldValueWhenAbsentParams struct {
+	CollectionID pgtype.UUID
+	FieldID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+	SetBy        string
+	SetByUserRef *int64
+}
+
+func (q *Queries) InsertCollectionFieldValueWhenAbsent(ctx context.Context, arg InsertCollectionFieldValueWhenAbsentParams) (CollectionFieldValue, error) {
+	row := q.db.QueryRow(ctx, insertCollectionFieldValueWhenAbsent,
+		arg.CollectionID,
+		arg.FieldID,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+		arg.SetBy,
+		arg.SetByUserRef,
+	)
+	var i CollectionFieldValue
+	err := row.Scan(
+		&i.CollectionID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
 }
 
 const listAssetDefaultCandidates = `-- name: ListAssetDefaultCandidates :many
@@ -916,6 +1373,112 @@ func (q *Queries) ListAssetMirroredValues(ctx context.Context, id pgtype.UUID) (
 			&i.Options,
 			&i.DisplayGroup,
 			&i.DisplayOrder,
+			&i.SetAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBatchTargetSubjects = `-- name: ListBatchTargetSubjects :many
+SELECT id, owner_user_ref, team_id, asset_type
+  FROM assets
+ WHERE id = ANY($1::uuid[])
+   AND deleted_at IS NULL
+ ORDER BY id
+`
+
+type ListBatchTargetSubjectsRow struct {
+	ID           pgtype.UUID
+	OwnerUserRef *int64
+	TeamID       pgtype.UUID
+	AssetType    int64
+}
+
+// The batch's PREVIEW-side subject probe: owner, team and asset type
+// for every selected target, in the deterministic order.
+//
+// Not GetAssetMutationSubject in a loop — that is one round trip per
+// target, and at the 1000-target ceiling the difference is the whole
+// latency budget. Same projection and the same `deleted_at IS NULL`
+// filter, so the two answer the same question about liveness: only a
+// SOFT DELETE removes a subject from the probe. An ARCHIVED asset comes
+// back and is written, because archive is not deletion.
+//
+// No row lock. This is the preview, which writes nothing and therefore
+// has nothing to make atomic; the apply takes its own locked read over
+// the whole target set (see LockBatchAssetTier).
+func (q *Queries) ListBatchTargetSubjects(ctx context.Context, assetIds []pgtype.UUID) ([]ListBatchTargetSubjectsRow, error) {
+	rows, err := q.db.Query(ctx, listBatchTargetSubjects, assetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBatchTargetSubjectsRow
+	for rows.Next() {
+		var i ListBatchTargetSubjectsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerUserRef,
+			&i.TeamID,
+			&i.AssetType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBatchTargetValues = `-- name: ListBatchTargetValues :many
+SELECT asset_id, value_text, value_num, value_date, value_options, value_ref, set_at
+  FROM asset_field_value
+ WHERE field_id = $1
+   AND asset_id = ANY($2::uuid[])
+`
+
+type ListBatchTargetValuesParams struct {
+	FieldID  pgtype.UUID
+	AssetIds []pgtype.UUID
+}
+
+type ListBatchTargetValuesRow struct {
+	AssetID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+	SetAt        pgtype.Timestamptz
+}
+
+// Every stored value for one field across the batch's targets, in one
+// round trip. Targets holding no value simply do not come back, and
+// absence is the emptiness the fill_empties mode is about.
+func (q *Queries) ListBatchTargetValues(ctx context.Context, arg ListBatchTargetValuesParams) ([]ListBatchTargetValuesRow, error) {
+	rows, err := q.db.Query(ctx, listBatchTargetValues, arg.FieldID, arg.AssetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBatchTargetValuesRow
+	for rows.Next() {
+		var i ListBatchTargetValuesRow
+		if err := rows.Scan(
+			&i.AssetID,
+			&i.ValueText,
+			&i.ValueNum,
+			&i.ValueDate,
+			&i.ValueOptions,
+			&i.ValueRef,
 			&i.SetAt,
 		); err != nil {
 			return nil, err
@@ -1286,7 +1849,9 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter, display_condition
 FROM field_definition
 WHERE (
         CASE WHEN $1::TEXT IS NULL
@@ -1354,6 +1919,12 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.OpenVocabulary,
 			&i.MirrorsColumn,
 			&i.ShowOnCard,
+			&i.ShowInAdvancedSearch,
+			&i.ShowOnUpload,
+			&i.EditTab,
+			&i.ReadOnly,
+			&i.RegexpFilter,
+			&i.DisplayCondition,
 		); err != nil {
 			return nil, err
 		}
@@ -1372,18 +1943,43 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter, display_condition
 FROM field_definition
-WHERE status = 'active'
+WHERE (
+        CASE WHEN $1::TEXT IS NULL
+             THEN status <> 'archived'
+             ELSE status = $1::TEXT
+        END
+      )
   AND subject_kind = 'asset'
-  AND (cardinality(applies_to) = 0 OR $1::BIGINT = ANY(applies_to))
+  AND (cardinality(applies_to) = 0 OR $2::BIGINT = ANY(applies_to))
 ORDER BY display_group, display_order, code
 `
 
+type ListFieldDefinitionsForAssetTypeParams struct {
+	Status *string
+	Rt     int64
+}
+
 // Like ListFieldDefinitions but only fields whose applies_to is
 // empty (applies to all) OR contains the given asset_type ref.
-func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64) ([]FieldDefinition, error) {
-	rows, err := q.db.Query(ctx, listFieldDefinitionsForAssetType, rt)
+//
+// STATUS SEMANTICS ARE THE SAME ONES ListFieldDefinitions CARRIES
+// (#528, #1389). This query pinned `status = 'active'` and had no
+// status parameter at all, which made "which fields are live" answer
+// differently depending on whether an unrelated filter was present —
+// and left the asset edit surface unable to ask for the definitions a
+// record may legitimately still hold values on. Deprecated definitions
+// are not tombstones; archived ones are.
+//
+// The active-only narrowing did not disappear, it MOVED to the caller
+// that owns it. A composer offering fields for a NEW value passes
+// status=active, which the upload form already did; an editor passes
+// no status and gets active + deprecated.
+func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, arg ListFieldDefinitionsForAssetTypeParams) ([]FieldDefinition, error) {
+	rows, err := q.db.Query(ctx, listFieldDefinitionsForAssetType, arg.Status, arg.Rt)
 	if err != nil {
 		return nil, err
 	}
@@ -1419,10 +2015,219 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.OpenVocabulary,
 			&i.MirrorsColumn,
 			&i.ShowOnCard,
+			&i.ShowInAdvancedSearch,
+			&i.ShowOnUpload,
+			&i.EditTab,
+			&i.ReadOnly,
+			&i.RegexpFilter,
+			&i.DisplayCondition,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFieldDefinitionsForComposition = `-- name: ListFieldDefinitionsForComposition :many
+SELECT id, code, read_capability
+  FROM field_definition
+ WHERE subject_kind = $1
+   AND status <> 'archived'
+ ORDER BY code
+`
+
+type ListFieldDefinitionsForCompositionRow struct {
+	ID             pgtype.UUID
+	Code           string
+	ReadCapability *string
+}
+
+// The definitions a composition surface may draw for one subject kind,
+// reduced to the identity plus the read gate (#1173, ADR 0099 §5).
+//
+// Backs GET /assets/{id}/field-composition and
+// GET /collections/{id}/field-composition, which report EFFECTIVE,
+// SERVER-DERIVED readability per field and carry no values whatsoever.
+// Selecting `read_capability` and nothing else from the gate side is the
+// point: the caller-facing shape has no member a stored value could be
+// put in, so non-disclosure is structural rather than a rule somebody has
+// to remember.
+//
+// ARCHIVED EXCLUDED, matching the status semantics of
+// ListFieldDefinitions with no explicit status (#528): archived
+// definitions are tombstones and never appear on a composition surface,
+// so reporting readability for one would describe a control that is not
+// there. A controller archived after a valid configuration therefore
+// resolves to nothing here, which is exactly what makes the dependent
+// fail open.
+func (q *Queries) ListFieldDefinitionsForComposition(ctx context.Context, subjectKind string) ([]ListFieldDefinitionsForCompositionRow, error) {
+	rows, err := q.db.Query(ctx, listFieldDefinitionsForComposition, subjectKind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFieldDefinitionsForCompositionRow
+	for rows.Next() {
+		var i ListFieldDefinitionsForCompositionRow
+		if err := rows.Scan(&i.ID, &i.Code, &i.ReadCapability); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFieldDefinitionsForConditionGraph = `-- name: ListFieldDefinitionsForConditionGraph :many
+SELECT id, code, type, subject_kind, status, applies_to, mirrors_column,
+       display_condition
+  FROM field_definition
+`
+
+type ListFieldDefinitionsForConditionGraphRow struct {
+	ID               pgtype.UUID
+	Code             string
+	Type             string
+	SubjectKind      string
+	Status           string
+	AppliesTo        []int64
+	MirrorsColumn    *string
+	DisplayCondition []byte
+}
+
+// EVERY field definition, reduced to what the display-condition
+// validator needs (#1173, ADR 0099 §6).
+//
+// Read INSIDE the advisory lock, and read WHOLE rather than edge by edge:
+// a cycle closes on the third write of `A -> B`, `B -> C`, `C -> A`, so a
+// validator that only looked at the immediate edge would accept every one
+// of those three.
+//
+// ⚠️ NO subject_kind FILTER, and that is not an oversight. Scoped to one
+// kind, a term naming a field of the OTHER kind is simply absent, and the
+// operator is told "this server does not have that field" — which is
+// false, and which would send them to create a duplicate. Reading both
+// kinds lets the validator answer the question they actually asked:
+// the field exists and describes the wrong sort of record.
+//
+// Safe because `code` is UNIQUE across the whole table
+// (field_definition_code_key), so a code names one row and the graph has
+// no ambiguity to resolve. And the two kinds' graphs are genuinely
+// disjoint, because a cross-kind edge is refused at configuration time —
+// which is why the ADVISORY LOCK stays per subject kind even though this
+// read is not. The extra rows inform a REFUSAL and can never contribute
+// an edge, so a concurrent write on the other kind cannot break an
+// invariant here; at worst it changes which of two refusals an operator
+// sees.
+//
+// ARCHIVED DEFINITIONS ARE INCLUDED, deliberately. They are excluded from
+// every composition surface but they are NOT excluded from the graph: an
+// archived dependent keeps its stored configuration (ADR 0099 §7), so its
+// edges still exist and a cycle through it is still a cycle. The
+// CONTROLLER-side status rule is a separate check in Go, which refuses an
+// already-archived controller at configuration time while leaving a
+// previously valid condition alone when the controller is archived later.
+func (q *Queries) ListFieldDefinitionsForConditionGraph(ctx context.Context) ([]ListFieldDefinitionsForConditionGraphRow, error) {
+	rows, err := q.db.Query(ctx, listFieldDefinitionsForConditionGraph)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFieldDefinitionsForConditionGraphRow
+	for rows.Next() {
+		var i ListFieldDefinitionsForConditionGraphRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Type,
+			&i.SubjectKind,
+			&i.Status,
+			&i.AppliesTo,
+			&i.MirrorsColumn,
+			&i.DisplayCondition,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPostsContainingAssets = `-- name: ListPostsContainingAssets :many
+SELECT DISTINCT post_id
+  FROM post_assets
+ WHERE asset_id = ANY($1::uuid[])
+ ORDER BY post_id
+`
+
+// The DISTINCT posts that contain any of these assets, ascending.
+//
+// The batch suppresses the per-row asset-to-post search propagation
+// inside its own transaction and owes the rebuild instead. This is the
+// set it owes it for, coalesced (a thousand targets across four posts
+// is four rebuilds, not a thousand) and ASCENDING, so the post tier is
+// acquired in one direction by every acquirer.
+//
+// No `deleted_at` filter on either side: a post whose document would be
+// rebuilt by the ordinary trigger must be rebuilt here too, or
+// suppressing the trigger would change what gets indexed rather than
+// only when.
+func (q *Queries) ListPostsContainingAssets(ctx context.Context, assetIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listPostsContainingAssets, assetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var post_id pgtype.UUID
+		if err := rows.Scan(&post_id); err != nil {
+			return nil, err
+		}
+		items = append(items, post_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPostsWithMembers = `-- name: ListPostsWithMembers :many
+SELECT DISTINCT pa.post_id
+  FROM post_assets pa
+  JOIN posts p ON p.id = pa.post_id
+  JOIN assets a ON a.id = pa.asset_id
+ WHERE pa.post_id = ANY($1::uuid[])
+   AND p.deleted_at IS NULL
+   AND a.deleted_at IS NULL
+`
+
+// Which of the selected posts actually hold at least one live member,
+// so the preview can REPORT the ones that hold none rather than
+// silently dropping them. A selected post that contributes no target is
+// a thing the operator should see.
+func (q *Queries) ListPostsWithMembers(ctx context.Context, postIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listPostsWithMembers, postIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var post_id pgtype.UUID
+		if err := rows.Scan(&post_id); err != nil {
+			return nil, err
+		}
+		items = append(items, post_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1476,6 +2281,180 @@ func (q *Queries) ListRequiredCollectionFields(ctx context.Context) ([]ListRequi
 	return items, nil
 }
 
+const lockBatchAssetTier = `-- name: LockBatchAssetTier :many
+SELECT id, owner_user_ref, team_id, asset_type, deleted_at
+  FROM assets
+ WHERE id = ANY($1::uuid[])
+ ORDER BY id
+ FOR UPDATE
+`
+
+type LockBatchAssetTierRow struct {
+	ID           pgtype.UUID
+	OwnerUserRef *int64
+	TeamID       pgtype.UUID
+	AssetType    int64
+	DeletedAt    pgtype.Timestamptz
+}
+
+// THE BATCH'S WHOLE ASSET TIER, IN ONE ORDERED STATEMENT (#1173, ADR
+// 0019).
+//
+// One row lock per id, taken FOR UPDATE, in ASCENDING id order, over
+// the union of the would-change SUBJECTS and any proposed REFERENCE
+// TARGET. It replaces a per-target locked read plus a separate,
+// earlier lock on the reference target.
+//
+// # Why one statement, and why ascending
+//
+// The per-target version acquired its locks interleaved with its
+// writes, and each write drags a lock on `posts` behind it: the
+// asset_field_value trigger rebuilds the asset's search_text, that
+// UPDATE fires assets_member_post_search_text, and that rebuilds every
+// containing post. So after the first target the batch was holding a
+// POST row and still asking for ASSET rows, while an ordinary
+// single-target write takes the same two in the opposite order. That is
+// a lock-order inversion, and it deadlocked (SQLSTATE 40P01).
+//
+// Taking the entire asset tier FIRST closes it. The batch acquires
+// every assets row it will need before it writes anything, so it never
+// asks for an assets row while holding a posts row.
+//
+// ORDER BY id, and it is load-bearing rather than cosmetic: two batches
+// over overlapping sets must queue rather than deadlock. EXPLAIN puts
+// LockRows ABOVE the Sort, so the rows are locked in the sorted order
+// and not in whatever order the scan produced them.
+//
+// # Why FOR UPDATE and not FOR SHARE
+//
+// FOR SHARE is not strong enough here, and the reason is the same
+// trigger chain. Every write in this batch ends in an UPDATE of the
+// subject's `assets` row, which needs FOR NO KEY UPDATE, so a FOR
+// SHARE holder is a holder that must UPGRADE. Two batches sharing one
+// target would each hold FOR SHARE and each block trying to upgrade,
+// which is a deadlock the pre-lock was supposed to remove. FOR UPDATE
+// is taken once, at the strength the transaction will ultimately need,
+// and nothing upgrades.
+//
+// FOR UPDATE also conflicts with the FOR KEY SHARE that a foreign key
+// takes, which is what makes a membership INSERT into `post_assets`
+// queue behind the batch instead of racing its post rebuild. FOR NO KEY
+// UPDATE would not: KEY SHARE is compatible with it. A membership
+// DELETE takes no lock on the parent at all and is unaffected either
+// way, which is why the post rebuild also locks its post at entry.
+//
+// # No deleted_at filter, deliberately
+//
+// Lock and RETURN whatever exists, and classify afterwards in Go. The
+// two roles refuse differently. An absent or soft-deleted SUBJECT is
+// that target's `gone`; an absent or soft-deleted REFERENCE TARGET is a
+// batch-wide `reference_invalidated` that writes nothing. So the
+// filter cannot live in the statement that serves both. `deleted_at`
+// comes back so the caller can tell the two apart, and NEVER `status`:
+// an ARCHIVED asset is a valid subject and a valid reference target.
+//
+// The owner, team and type come back with the lock, so the per-target
+// gates re-check G1, G2 and G5 against a row this transaction HOLDS
+// rather than one it re-reads. That is strictly stronger than the
+// previous FOR SHARE: ownership transfer, team move and soft delete
+// all take FOR NO KEY UPDATE, and FOR UPDATE conflicts with every one
+// of them.
+func (q *Queries) LockBatchAssetTier(ctx context.Context, assetIds []pgtype.UUID) ([]LockBatchAssetTierRow, error) {
+	rows, err := q.db.Query(ctx, lockBatchAssetTier, assetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockBatchAssetTierRow
+	for rows.Next() {
+		var i LockBatchAssetTierRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerUserRef,
+			&i.TeamID,
+			&i.AssetType,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockFieldDefinitionForBatch = `-- name: LockFieldDefinitionForBatch :one
+SELECT id, code, label, type, subject_kind, applies_to, required, status,
+       options, open_vocabulary, mirrors_column, read_only, regexp_filter,
+       read_capability, write_capability, display_condition
+  FROM field_definition
+ WHERE id = $1
+ FOR UPDATE
+`
+
+type LockFieldDefinitionForBatchRow struct {
+	ID               pgtype.UUID
+	Code             string
+	Label            string
+	Type             string
+	SubjectKind      string
+	AppliesTo        []int64
+	Required         bool
+	Status           string
+	Options          []byte
+	OpenVocabulary   bool
+	MirrorsColumn    *string
+	ReadOnly         bool
+	RegexpFilter     *string
+	ReadCapability   *string
+	WriteCapability  *string
+	DisplayCondition []byte
+}
+
+// The batch-wide definition, configuration and vocabulary seam.
+//
+// FOR UPDATE on the field_definition row, taken BEFORE the batch reads
+// anything about the field. Every writer of that row — UpdateField,
+// ArchiveField, the options editor, EnsureOpenVocabularyTerms' own
+// LockFieldDefinitionVocabulary — either takes FOR UPDATE or issues an
+// UPDATE, which takes FOR NO KEY UPDATE, and both conflict with this.
+// So there are EXACTLY TWO valid serial outcomes: the external change
+// wins and the batch reads it and refuses batch-wide with zero writes
+// and no mint, or the batch wins and the ENTIRE batch executes under
+// one validated state with the external change following it. The
+// forbidden third — the first N targets written under the old rules and
+// the rest under the new ones — cannot happen.
+//
+// Lock BEFORE the read, not after. A lock taken after would serialise
+// the writes while still letting the batch validate against a
+// definition that has already changed, which is the failure mode
+// display_condition_race_test.go's header names exactly.
+func (q *Queries) LockFieldDefinitionForBatch(ctx context.Context, id pgtype.UUID) (LockFieldDefinitionForBatchRow, error) {
+	row := q.db.QueryRow(ctx, lockFieldDefinitionForBatch, id)
+	var i LockFieldDefinitionForBatchRow
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.Label,
+		&i.Type,
+		&i.SubjectKind,
+		&i.AppliesTo,
+		&i.Required,
+		&i.Status,
+		&i.Options,
+		&i.OpenVocabulary,
+		&i.MirrorsColumn,
+		&i.ReadOnly,
+		&i.RegexpFilter,
+		&i.ReadCapability,
+		&i.WriteCapability,
+		&i.DisplayCondition,
+	)
+	return i, err
+}
+
 const lockFieldDefinitionVocabulary = `-- name: LockFieldDefinitionVocabulary :one
 SELECT options, type, open_vocabulary
   FROM field_definition
@@ -1512,6 +2491,68 @@ func (q *Queries) LockFieldDefinitionVocabulary(ctx context.Context, id pgtype.U
 	return i, err
 }
 
+const lockFieldDisplayConditionGraph = `-- name: LockFieldDisplayConditionGraph :exec
+SELECT pg_advisory_xact_lock($1::INT, $2::INT)
+`
+
+type LockFieldDisplayConditionGraphParams struct {
+	LockSpace  int32
+	SubjectKey int32
+}
+
+// Serialises display-condition writes on ONE subject-kind graph
+// (#1173, #1119, ADR 0099 §8).
+//
+// ⛔ THE CYCLE CHECK IS THEATRE WITHOUT THIS, and it is theatre in
+// exactly the case it exists for. A condition names OTHER definitions, so
+// the conditions on one subject kind form a directed GRAPH, and
+// "that graph is acyclic" is not a property of any single row: `A -> B`
+// and `B -> A` are each individually a perfectly valid row, which is why
+// no CHECK, no UNIQUE index and no per-row trigger can express it.
+//
+// So two operators, one writing `A -> B` and one writing `B -> A`, each
+// read a graph in which the other's edge is not yet visible. Both
+// validate. Both commit. The graph now holds a 2-cycle that neither write
+// could have created on its own, and every later validation walks it.
+//
+// ADVISORY rather than `SELECT ... FOR UPDATE` over the subject kind, for
+// two reasons. The invariant belongs to the WHOLE graph, so there is no
+// single row whose lock expresses it; and taking a row lock on every
+// definition of a subject kind would block unrelated field edits for the
+// duration of a graph walk. LockFieldDefinitionVocabulary above uses FOR
+// UPDATE because there the read-modify-write really is one row's options
+// document. This is the other case.
+//
+// Transaction-scoped, so it is released by COMMIT or ROLLBACK and cannot
+// be leaked by an early return. Taken ONLY when a request actually
+// touches display_condition, so ordinary field edits never queue behind
+// it. The first key is a constant naming this lock space; the second is
+// the subject kind, mapped by the caller to a small integer rather than
+// hashed, so the value in pg_locks is readable by a person debugging one.
+func (q *Queries) LockFieldDisplayConditionGraph(ctx context.Context, arg LockFieldDisplayConditionGraphParams) error {
+	_, err := q.db.Exec(ctx, lockFieldDisplayConditionGraph, arg.LockSpace, arg.SubjectKey)
+	return err
+}
+
+const purgeExpiredBatchPreviews = `-- name: PurgeExpiredBatchPreviews :exec
+DELETE FROM metadata_batch_preview
+ WHERE expires_at < NOW() - INTERVAL '24 hours'
+`
+
+// Opportunistic sweep from the preview endpoint, so the table stays
+// bounded without a scheduler.
+//
+// The cutoff is well past expiry, not at it: a token that has just
+// expired must still be found, so that its own caller gets 409
+// preview_expired rather than the 403 an unattributable credential
+// gets. Past the cutoff the distinction stops being useful — the token
+// is hours dead — and 403 is the right answer for a credential the
+// server can no longer attribute to anybody.
+func (q *Queries) PurgeExpiredBatchPreviews(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, purgeExpiredBatchPreviews)
+	return err
+}
+
 const readAssetMirroredValue = `-- name: ReadAssetMirroredValue :one
 SELECT coalesce(public.asset_mirror_read($1, $2), '')::TEXT AS value
 `
@@ -1530,6 +2571,214 @@ func (q *Queries) ReadAssetMirroredValue(ctx context.Context, arg ReadAssetMirro
 	var value string
 	err := row.Scan(&value)
 	return value, err
+}
+
+const rebuildAssetSearchTextForField = `-- name: RebuildAssetSearchTextForField :exec
+SELECT rebuild_asset_search_text(p.asset_id)
+  FROM asset_field_value p
+ WHERE p.field_id = $1
+`
+
+// Re-derives `assets.search_text` for every asset holding a value of
+// this field (#1016).
+//
+// `rebuild_asset_search_text` folds a field's values into the document
+// only while `f.searchable = TRUE AND f.status = 'active'`, and the
+// trigger that calls it fires on writes to asset_field_value — not on
+// writes to field_definition. So flipping `searchable` off changed what
+// the rule SAID and nothing about what was already indexed: the field's
+// values kept answering text queries until something happened to touch
+// each asset. An operator who unticks the box has every reason to
+// believe they excluded the field, which is precisely the lie #1016
+// refused to let a UI toggle ship on top of.
+//
+// Runs for a status change too, since `status = 'active'` is the other
+// conjunct of the same WHERE.
+func (q *Queries) RebuildAssetSearchTextForField(ctx context.Context, fieldID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, rebuildAssetSearchTextForField, fieldID)
+	return err
+}
+
+const rebuildPostSearchText = `-- name: RebuildPostSearchText :exec
+SELECT public.rebuild_post_search_text($1::uuid)
+`
+
+// Rebuild ONE post's search document, explicitly.
+//
+// The same function the four search triggers call, so the coalesced
+// rebuild and the ordinary per-row one can never bake a different
+// document. It takes its post FOR NO KEY UPDATE at entry, before it
+// reads anything, which is what makes calling it late in a transaction
+// safe.
+func (q *Queries) RebuildPostSearchText(ctx context.Context, postID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, rebuildPostSearchText, postID)
+	return err
+}
+
+const rewriteAssetValuesForMergedOption = `-- name: RewriteAssetValuesForMergedOption :execrows
+
+WITH affected AS (
+    SELECT p.asset_id, p.field_id, p.value_text AS old_text, p.value_options AS old_options
+      FROM asset_field_value p
+     WHERE p.field_id = $3
+       AND (p.value_text = $4::text OR $4::text = ANY(p.value_options))
+     ORDER BY p.asset_id
+       FOR UPDATE
+), updated AS (
+    UPDATE asset_field_value v
+       SET value_text = CASE WHEN v.value_text = $4::text THEN $5::text ELSE v.value_text END,
+           value_options = CASE
+               WHEN v.value_options IS NULL THEN NULL
+               ELSE (
+                   SELECT array_agg(d.slug ORDER BY d.ord)
+                     FROM (
+                         SELECT DISTINCT ON (u.slug) u.slug, u.ord
+                           FROM unnest(array_replace(v.value_options, $4::text, $5::text))
+                                WITH ORDINALITY AS u(slug, ord)
+                          ORDER BY u.slug, u.ord
+                     ) d
+               )
+           END
+      FROM affected a
+     WHERE v.asset_id = a.asset_id AND v.field_id = a.field_id
+    RETURNING v.asset_id, v.field_id, v.value_text AS new_text, v.value_options AS new_options,
+              a.old_text, a.old_options
+)
+INSERT INTO asset_field_value_history
+    (asset_id, field_id, old_value, new_value, set_by, changed_by_user_ref)
+SELECT u.asset_id, u.field_id,
+       jsonb_build_object('type', $1::text, 'value',
+           CASE WHEN u.old_text IS NOT NULL THEN to_jsonb(u.old_text) ELSE to_jsonb(u.old_options) END),
+       jsonb_build_object('type', $1::text, 'value',
+           CASE WHEN u.new_text IS NOT NULL THEN to_jsonb(u.new_text) ELSE to_jsonb(u.new_options) END),
+       'computed', $2::bigint
+  FROM updated u
+`
+
+type RewriteAssetValuesForMergedOptionParams struct {
+	FieldType    string
+	ActorUserRef *int64
+	FieldID      pgtype.UUID
+	Source       string
+	Target       string
+}
+
+// ---------------------------------------------------------------------------
+// Vocabulary curation — merge (ADR 0092 §4, #789)
+// ---------------------------------------------------------------------------
+// Points every asset value naming @source at @target, and writes the
+// change into the per-value history in the same statement.
+//
+// ## Why one statement rather than a loop in Go
+//
+// A merge on a real vocabulary touches thousands of rows. Reading them
+// into Go, rewriting each and issuing an UPDATE apiece is thousands of
+// round trips inside one transaction, holding locks for the duration —
+// and the loop would still have to reimplement the array rewrite the
+// expression below does once.
+//
+// ## Why the history row is not optional
+//
+// A merge is the ONE vocabulary operation that edits records whose
+// owners did not touch them. Skipping the history entry would leave
+// `asset_field_value_history` describing a value the asset no longer
+// holds, and the audit event for the merge itself cannot fill that gap:
+// it says a merge happened, not what any particular asset now says. So
+// the same INSERT the ordinary write path performs runs here, sourced
+// from the CTE's before-and-after — which is also what makes :execrows
+// a truthful count, since one history row is inserted per value
+// rewritten.
+//
+// set_by is 'computed': no human typed this value, and the VALUE row's
+// own set_by is deliberately left alone — a keyword that arrived from
+// IPTC is still an IPTC keyword after the term it names is renamed.
+//
+// ## The array rewrite
+//
+// array_replace alone is wrong when a row already holds BOTH terms:
+// {uk, gb} would become {gb, gb}. The unnest/DISTINCT ON/array_agg
+// sandwich keeps first-occurrence order and drops the duplicate, which
+// is the same shape the write path's slug dedupe produces.
+//
+// The `search_text` TSVECTOR needs no help here: the AFTER UPDATE
+// trigger on asset_field_value rebuilds it per row.
+func (q *Queries) RewriteAssetValuesForMergedOption(ctx context.Context, arg RewriteAssetValuesForMergedOptionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rewriteAssetValuesForMergedOption,
+		arg.FieldType,
+		arg.ActorUserRef,
+		arg.FieldID,
+		arg.Source,
+		arg.Target,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const rewriteCollectionValuesForMergedOption = `-- name: RewriteCollectionValuesForMergedOption :execrows
+WITH affected AS (
+    SELECT p.collection_id, p.field_id, p.value_text AS old_text, p.value_options AS old_options
+      FROM collection_field_value p
+     WHERE p.field_id = $3
+       AND (p.value_text = $4::text OR $4::text = ANY(p.value_options))
+     ORDER BY p.collection_id
+       FOR UPDATE
+), updated AS (
+    UPDATE collection_field_value v
+       SET value_text = CASE WHEN v.value_text = $4::text THEN $5::text ELSE v.value_text END,
+           value_options = CASE
+               WHEN v.value_options IS NULL THEN NULL
+               ELSE (
+                   SELECT array_agg(d.slug ORDER BY d.ord)
+                     FROM (
+                         SELECT DISTINCT ON (u.slug) u.slug, u.ord
+                           FROM unnest(array_replace(v.value_options, $4::text, $5::text))
+                                WITH ORDINALITY AS u(slug, ord)
+                          ORDER BY u.slug, u.ord
+                     ) d
+               )
+           END
+      FROM affected a
+     WHERE v.collection_id = a.collection_id AND v.field_id = a.field_id
+    RETURNING v.collection_id, v.field_id, v.value_text AS new_text, v.value_options AS new_options,
+              a.old_text, a.old_options
+)
+INSERT INTO collection_field_value_history
+    (collection_id, field_id, old_value, new_value, set_by, changed_by_user_ref)
+SELECT u.collection_id, u.field_id,
+       jsonb_build_object('type', $1::text, 'value',
+           CASE WHEN u.old_text IS NOT NULL THEN to_jsonb(u.old_text) ELSE to_jsonb(u.old_options) END),
+       jsonb_build_object('type', $1::text, 'value',
+           CASE WHEN u.new_text IS NOT NULL THEN to_jsonb(u.new_text) ELSE to_jsonb(u.new_options) END),
+       'computed', $2::bigint
+  FROM updated u
+`
+
+type RewriteCollectionValuesForMergedOptionParams struct {
+	FieldType    string
+	ActorUserRef *int64
+	FieldID      pgtype.UUID
+	Source       string
+	Target       string
+}
+
+// The collection twin of RewriteAssetValuesForMergedOption. Same
+// rewrite, same history guarantee, on the collection tables — a merge
+// that fixed assets and left collections naming a tombstoned term
+// would have moved the drift rather than removed it.
+func (q *Queries) RewriteCollectionValuesForMergedOption(ctx context.Context, arg RewriteCollectionValuesForMergedOptionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rewriteCollectionValuesForMergedOption,
+		arg.FieldType,
+		arg.ActorUserRef,
+		arg.FieldID,
+		arg.Source,
+		arg.Target,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setFieldDefinitionOptions = `-- name: SetFieldDefinitionOptions :exec
@@ -1564,7 +2813,9 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab,
+          read_only, regexp_filter, display_condition
 `
 
 type SetFieldExtractionConfigParams struct {
@@ -1613,6 +2864,189 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
 		&i.ShowOnCard,
+		&i.ShowInAdvancedSearch,
+		&i.ShowOnUpload,
+		&i.EditTab,
+		&i.ReadOnly,
+		&i.RegexpFilter,
+		&i.DisplayCondition,
+	)
+	return i, err
+}
+
+const suppressAssetPostSearchPropagation = `-- name: SuppressAssetPostSearchPropagation :exec
+SELECT set_config('aa.suppress_asset_post_search', 'on', true)
+`
+
+// Turn OFF the per-row asset-to-post search propagation FOR THIS
+// TRANSACTION ONLY (migration 00067).
+//
+// `set_config(..., is_local => true)` is SET LOCAL in function form,
+// so the flag dies with the transaction and can never leak to the next
+// caller that borrows this pooled connection. A transaction that sets
+// it OWES the rebuild: see ListPostsContainingAssets and
+// RebuildPostSearchText.
+func (q *Queries) SuppressAssetPostSearchPropagation(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, suppressAssetPostSearchPropagation)
+	return err
+}
+
+const updateAssetFieldValueIfUnchanged = `-- name: UpdateAssetFieldValueIfUnchanged :one
+
+UPDATE asset_field_value SET
+    value_text      = $1,
+    value_num       = $2,
+    value_date      = $3,
+    value_options   = $4,
+    value_ref       = $5,
+    set_by          = $6,
+    set_at          = NOW(),
+    set_by_user_ref = $7
+WHERE asset_id = $8
+  AND field_id = $9
+  AND set_at   = $10
+RETURNING asset_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type UpdateAssetFieldValueIfUnchangedParams struct {
+	ValueText        *string
+	ValueNum         *float64
+	ValueDate        pgtype.Timestamptz
+	ValueOptions     []string
+	ValueRef         pgtype.UUID
+	SetBy            string
+	SetByUserRef     *int64
+	AssetID          pgtype.UUID
+	FieldID          pgtype.UUID
+	IfUnchangedSince pgtype.Timestamptz
+}
+
+// ---------------------------------------------------------------------------
+// GUARDED field-value mutation (#1119) — the precondition and the
+// mutation are ONE STATEMENT.
+//
+// Every handler here runs BeginTx with EMPTY options, so the isolation
+// level is READ COMMITTED and a plain SELECT takes no lock. A
+// handler-side "read the row, compare set_at, then run the
+// unconditional upsert" would therefore be two statements with a
+// window between them that a competing writer fits through entirely,
+// and it would read as correct in every single-threaded test. It is not
+// correct, and it is the path of least resistance, so it is written
+// down here as the thing these queries exist instead of.
+//
+// The guard is the WHERE clause. At READ COMMITTED an UPDATE or DELETE
+// that meets a row another transaction is currently writing BLOCKS,
+// and then re-evaluates its own WHERE against the version that
+// transaction committed (EvalPlanQual). So a second contender guarding
+// on the same `set_at` cannot match after the first one lands: its
+// predicate is re-checked against the new row, `set_at` has advanced,
+// and it affects zero rows. The zero-row result IS the conflict, which
+// is why every one of these is `:one` — sqlc surfaces it as
+// pgx.ErrNoRows, where `:exec` surfaced nothing at all.
+//
+// The token is the value row's OWN set_at, never the subject's
+// updated_at: two people editing two different fields of one asset are
+// not in conflict. Both upserts already write set_at = NOW() on INSERT
+// and on UPDATE, so no migration is needed to make the token advance.
+// ---------------------------------------------------------------------------
+// Guarded Set against an EXISTING row. Zero rows means either the row
+// is gone or somebody else wrote it; the handler reads the current
+// state afterwards to say which, and stores nothing either way.
+//
+// Deliberately an UPDATE and not an upsert: `if_unchanged_since` on a
+// row that does not exist is a 409, not an insert. A timestamp is a
+// claim that a particular version is still there, and resurrecting a
+// value somebody cleared would be the write that was refused wearing a
+// disguise.
+func (q *Queries) UpdateAssetFieldValueIfUnchanged(ctx context.Context, arg UpdateAssetFieldValueIfUnchangedParams) (AssetFieldValue, error) {
+	row := q.db.QueryRow(ctx, updateAssetFieldValueIfUnchanged,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+		arg.SetBy,
+		arg.SetByUserRef,
+		arg.AssetID,
+		arg.FieldID,
+		arg.IfUnchangedSince,
+	)
+	var i AssetFieldValue
+	err := row.Scan(
+		&i.AssetID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
+}
+
+const updateCollectionFieldValueIfUnchanged = `-- name: UpdateCollectionFieldValueIfUnchanged :one
+
+UPDATE collection_field_value SET
+    value_text      = $1,
+    value_num       = $2,
+    value_date      = $3,
+    value_options   = $4,
+    value_ref       = $5,
+    set_by          = $6,
+    set_at          = NOW(),
+    set_by_user_ref = $7
+WHERE collection_id = $8
+  AND field_id      = $9
+  AND set_at        = $10
+RETURNING collection_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type UpdateCollectionFieldValueIfUnchangedParams struct {
+	ValueText        *string
+	ValueNum         *float64
+	ValueDate        pgtype.Timestamptz
+	ValueOptions     []string
+	ValueRef         pgtype.UUID
+	SetBy            string
+	SetByUserRef     *int64
+	CollectionID     pgtype.UUID
+	FieldID          pgtype.UUID
+	IfUnchangedSince pgtype.Timestamptz
+}
+
+// The collection twins of the three guarded asset statements. See
+// UpdateAssetFieldValueIfUnchanged for why the guard is the WHERE
+// clause rather than a handler-side read, and why each is `:one`.
+func (q *Queries) UpdateCollectionFieldValueIfUnchanged(ctx context.Context, arg UpdateCollectionFieldValueIfUnchangedParams) (CollectionFieldValue, error) {
+	row := q.db.QueryRow(ctx, updateCollectionFieldValueIfUnchanged,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+		arg.SetBy,
+		arg.SetByUserRef,
+		arg.CollectionID,
+		arg.FieldID,
+		arg.IfUnchangedSince,
+	)
+	var i CollectionFieldValue
+	err := row.Scan(
+		&i.CollectionID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
 	)
 	return i, err
 }
@@ -1631,25 +3065,60 @@ UPDATE field_definition SET
     display_group             = COALESCE($10,             display_group),
     open_vocabulary           = COALESCE($11,           open_vocabulary),
     show_on_card              = COALESCE($12,              show_on_card),
-    status                    = COALESCE($13,                    status),
-    deprecated_replacement_id = COALESCE($14, deprecated_replacement_id),
+    show_in_advanced_search   = COALESCE($13,   show_in_advanced_search),
+    show_on_upload            = COALESCE($14,            show_on_upload),
+    -- ` + "`" + `edit_tab` + "`" + ` needs a CLEAR path for the same reason ` + "`" + `default_value` + "`" + `
+    -- does, and it is the only participation flag that does: the other
+    -- two are booleans, where "off" is a value COALESCE can carry, while
+    -- "this field belongs to no tab" is NULL — indistinguishable from
+    -- "leave it alone" everywhere else in this statement. The explicit
+    -- boolean makes un-assigning a tab a deliberate act rather than an
+    -- ambiguity in the absence of a value.
+    edit_tab                  = CASE WHEN $15::BOOLEAN THEN NULL
+                                     ELSE COALESCE($16, edit_tab) END,
+    read_only                 = COALESCE($17,                 read_only),
+    -- ` + "`" + `regexp_filter` + "`" + ` is the third column needing a CLEAR path, and the
+    -- only one of the three that is a PATTERN rather than a label. NULL
+    -- is the single canonical "no constraint" (the CHECK refuses ''),
+    -- and NULL is also what "leave it alone" looks like to COALESCE —
+    -- so removal has to be said out loud, exactly as ` + "`" + `edit_tab` + "`" + ` and
+    -- ` + "`" + `default_value` + "`" + ` say it. The handler refuses the two together.
+    regexp_filter             = CASE WHEN $18::BOOLEAN THEN NULL
+                                     ELSE COALESCE($19, regexp_filter) END,
+    -- ` + "`" + `display_condition` + "`" + ` is the FOURTH column needing a CLEAR path, after
+    -- ` + "`" + `default_value` + "`" + `, ` + "`" + `edit_tab` + "`" + ` and ` + "`" + `regexp_filter` + "`" + `, and for the identical
+    -- reason: NULL is "this field is always offered" AND "leave it alone",
+    -- so removal has to be said out loud. Migration 00065's CHECK refuses
+    -- the empty array, so there is no second spelling of unset to fall back
+    -- on and no way to express removal by sending a value.
+    --
+    -- ⚠️ The condition ARRAY IS REPLACED WHOLE and never merged. A
+    -- condition is one predicate, not a bag of independent settings, and
+    -- there is deliberately no way to express "add a term": an operator
+    -- editing a condition is editing a sentence.
+    display_condition         = CASE WHEN $20::BOOLEAN THEN NULL
+                                     ELSE COALESCE($21, display_condition) END,
+    status                    = COALESCE($22,                    status),
+    deprecated_replacement_id = COALESCE($23, deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
     -- passing NULL means "leave it alone" everywhere else in this
     -- statement, so "remove the default" would be unsayable. The
     -- explicit boolean makes removal a deliberate act rather than an
     -- ambiguity in the absence of a value.
-    default_value             = CASE WHEN $15::BOOLEAN THEN NULL
-                                     ELSE COALESCE($16, default_value) END,
+    default_value             = CASE WHEN $24::BOOLEAN THEN NULL
+                                     ELSE COALESCE($25, default_value) END,
     updated_at                = NOW(),
-    updated_by_user_ref       = $17
-WHERE id = $18
+    updated_by_user_ref       = $26
+WHERE id = $27
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
           display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab,
+          read_only, regexp_filter, display_condition
 `
 
 type UpdateFieldDefinitionParams struct {
@@ -1665,6 +3134,15 @@ type UpdateFieldDefinitionParams struct {
 	DisplayGroup            *string
 	OpenVocabulary          *bool
 	ShowOnCard              *bool
+	ShowInAdvancedSearch    *bool
+	ShowOnUpload            *bool
+	ClearEditTab            bool
+	EditTab                 *string
+	ReadOnly                *bool
+	ClearRegexpFilter       bool
+	RegexpFilter            *string
+	ClearDisplayCondition   bool
+	DisplayCondition        []byte
 	Status                  *string
 	DeprecatedReplacementID pgtype.UUID
 	ClearDefault            bool
@@ -1691,6 +3169,15 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		arg.DisplayGroup,
 		arg.OpenVocabulary,
 		arg.ShowOnCard,
+		arg.ShowInAdvancedSearch,
+		arg.ShowOnUpload,
+		arg.ClearEditTab,
+		arg.EditTab,
+		arg.ReadOnly,
+		arg.ClearRegexpFilter,
+		arg.RegexpFilter,
+		arg.ClearDisplayCondition,
+		arg.DisplayCondition,
 		arg.Status,
 		arg.DeprecatedReplacementID,
 		arg.ClearDefault,
@@ -1727,6 +3214,12 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
 		&i.ShowOnCard,
+		&i.ShowInAdvancedSearch,
+		&i.ShowOnUpload,
+		&i.EditTab,
+		&i.ReadOnly,
+		&i.RegexpFilter,
+		&i.DisplayCondition,
 	)
 	return i, err
 }

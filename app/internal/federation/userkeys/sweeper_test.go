@@ -66,7 +66,7 @@ func seedExpiredRetained(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 func TestSweeper_ReapsExpiredRetainedRows(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// Three expired retained rows from three different users so
@@ -107,7 +107,7 @@ func TestSweeper_ReapsExpiredRetainedRows(t *testing.T) {
 func TestSweeper_PreservesNonExpiredRetainedRows(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// A retained row with retained_until 30 days OUT — must survive
@@ -136,7 +136,7 @@ func TestSweeper_PreservesNonExpiredRetainedRows(t *testing.T) {
 func TestSweeper_PreservesCurrentKey(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// Standard backfill mints a v1 current row with NO retained_until.
@@ -164,7 +164,7 @@ func TestSweeper_PreservesCurrentKey(t *testing.T) {
 func TestSweeper_ZeroReapsDoesNotFireAudit(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// No expired retained rows for our fixture user — sweep

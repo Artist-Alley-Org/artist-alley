@@ -71,6 +71,14 @@
     initialOptions,
     initialOpenVocabulary = false,
     initialShowOnCard = false,
+    initialShowInAdvancedSearch = true,
+    initialShowOnUpload = true,
+    initialEditTab = null,
+    initialSearchable = true,
+    initialReadOnly = false,
+    initialRegexpFilter = null,
+    initialDisplayCondition = null,
+    initialMirrorsColumn = null,
     initialReadCapability = null,
     initialWriteCapability = null,
     initialDisplayGroup = '',
@@ -89,6 +97,33 @@
     initialOptions: Record<string, unknown> | undefined;
     initialOpenVocabulary?: boolean;
     initialShowOnCard?: boolean;
+    /** The participation flags (#1173, ADR 0092 §3). They default TRUE
+     *  and null here for the same reason the columns do: a field that
+     *  has never been configured must render exactly where it renders
+     *  today, so "absent" has to mean "everywhere", not "nowhere". */
+    initialShowInAdvancedSearch?: boolean;
+    initialShowOnUpload?: boolean;
+    initialEditTab?: string | null;
+    /** Whether this field's text feeds the FULL-TEXT INDEX (#1173).
+     *  Defaults true, as the column does. Not a participation flag and
+     *  not a filterability switch: see the section note in the markup. */
+    initialSearchable?: boolean;
+    /** The input rules (#1173). `read_only` refuses HUMAN writes;
+     *  `regexp_filter` is the pattern a human value must match, with
+     *  null meaning no constraint. */
+    initialReadOnly?: boolean;
+    initialRegexpFilter?: string | null;
+    /**
+     * The stored condition, or null for "always shown" (#1119,
+     * ADR 0099). Edited as ONE TERM PER LINE, because that is the shape
+     * an operator can read back: a comma-separated list is ambiguous the
+     * moment a value contains a comma, and values here are operator text.
+     */
+    initialDisplayCondition?: string[] | null;
+    /** Set when this field is a VIEW onto a column of the asset row
+     *  (#822). Neither input rule can be configured on one, so the
+     *  controls are replaced by the reason rather than shown dead. */
+    initialMirrorsColumn?: string | null;
     /** Present only so the editor can explain WHY the card toggle is
      *  unavailable. The server refuses the combination either way. */
     initialReadCapability?: string | null;
@@ -134,11 +169,86 @@
   // and this condition with it.
   const canOpenVocabulary = fieldType === 'multi_select';
 
+  /**
+   * The stored array, edited as ONE CONTROL PER ARRAY ELEMENT.
+   *
+   * ⛔ THERE IS NO DELIMITER, AND THERE MUST NOT BE ONE. The first
+   * version of this control was a textarea holding one term per LINE,
+   * which rested on a grammar rule that does not exist.
+   * `facet.SplitFieldTerm` ends with
+   *
+   *     value = strings.TrimSpace(rest[len(candidate):])
+   *
+   * and `TrimSpace` strips only the ENDS. An INTERNAL newline survives
+   * intact, `validFieldCode` constrains only the code, and 00065's CHECK
+   * asks only for a non-empty string. So `notes~line one\nline two` is a
+   * VALID SINGLE TERM whose parsed value contains a newline. A
+   * line-delimited editor loads that one stored term as two visual lines
+   * and saves it back as two terms, the second of which has no operator
+   * at all. That is a lossy round trip on a legal configuration, and it
+   * breaks the exact-survival requirement the admin surface is held to.
+   *
+   * The same argument rules out every other single-character delimiter:
+   * a comma is ordinary inside a value (`work_type=Poster, framed`), and
+   * so is anything else an operator might type. One UI item to one array
+   * element is the only mapping that cannot lose information.
+   *
+   * The fix belongs HERE and not on the server. Forbidding newlines in a
+   * stored term to save a textarea design would narrow the grammar to
+   * suit a widget, and the search predicate shares that grammar.
+   */
+  function displayConditionRows(v: string[] | null | undefined): string[] {
+    return [...(v ?? [])];
+  }
+
+  /**
+   * The rows the API actually takes.
+   *
+   * ENTIRELY BLANK ROWS ARE DROPPED, because an empty row is a UI
+   * affordance: the operator pressed "add" and has not typed yet. Every
+   * other row is sent VERBATIM, never trimmed, so what comes back on the
+   * next load is byte-identical to what was stored. The parser trims the
+   * code and the value's ends itself, so trimming here would buy nothing
+   * and would silently rewrite what the operator wrote.
+   *
+   * An empty result means the operator removed every row, and the caller
+   * turns that into the explicit clear rather than an empty array: the
+   * server refuses `[]` so "no condition" has exactly one representation.
+   */
+  function displayConditionTerms(rows: string[]): string[] {
+    return rows.filter((row) => row.trim() !== '');
+  }
+
+  /** Append an empty row for the operator to type into. */
+  function addDisplayConditionRow() {
+    displayCondition = [...displayCondition, ''];
+  }
+
+  /** Drop one row BY INDEX, which is what makes the mapping one-to-one. */
+  function removeDisplayConditionRow(i: number) {
+    displayCondition = displayCondition.filter((_, n) => n !== i);
+  }
+
   let label = $state(initialLabel);
   let description = $state(initialDescription);
   let required = $state(initialRequired);
   let openVocab = $state(initialOpenVocabulary);
   let showOnCard = $state(initialShowOnCard);
+  let showInAdvancedSearch = $state(initialShowInAdvancedSearch);
+  let showOnUpload = $state(initialShowOnUpload);
+  let editTab = $state(initialEditTab ?? '');
+  let searchable = $state(initialSearchable);
+  let readOnly = $state(initialReadOnly);
+  // NOT trimmed anywhere in this file, deliberately: whitespace inside a
+  // pattern is meaningful, and `\A(?:   )\z` legitimately matches three
+  // spaces. The empty string is the CLEAR, and it is the only value that
+  // means "no pattern" here — the server refuses a stored `""`.
+  let regexpFilter = $state(initialRegexpFilter ?? '');
+  // One term per LINE. Blank lines are ignored on save, so an operator
+  // pressing Enter twice does not send a blank term the server would
+  // refuse. NOT trimmed as a whole: the per-line trim happens at save,
+  // which is also where the empty box becomes the explicit clear.
+  let displayCondition = $state<string[]>(displayConditionRows(initialDisplayCondition));
 
   // The long tail (#854). Collapsed by default: an operator opening a
   // field to relabel it or curate its vocabulary should not have to
@@ -161,6 +271,24 @@
   // disabled checkbox advertises a setting the operator can never reach
   // here, which is the same complaint the open_vocabulary note above makes.
   const cardGated = $derived(!!(initialReadCapability ?? '').trim());
+
+  // A mirrored field is a view onto a column of the asset row (#822),
+  // and that column has its own human write plane: the upload form
+  // writes the title, the asset editor rewrites both. Neither input
+  // rule can be configured on one, because only the field plane would
+  // obey it — the server refuses both with a 400 and migration 00064
+  // refuses them again in a CHECK. So the controls are REPLACED by the
+  // reason, following the cardGated precedent above: a disabled
+  // checkbox advertises a setting the operator can never reach.
+  const mirrored = $derived(!!(initialMirrorsColumn ?? '').trim());
+
+  // An input pattern is honoured for `text` and `longtext` only, which
+  // is `regexpFilterApplies` server-side. `rich_text` is excluded
+  // despite sharing the storage column: what lands there is sanitised
+  // markup, so a pattern would match tags rather than the words the
+  // operator can see. Offering the box anywhere else would be offering
+  // a setting the server refuses.
+  const regexpSupported = fieldType === 'text' || fieldType === 'longtext';
   let opts = $state<FieldOption[]>(normalizeOptions(initialOptions));
   // Baseline for the optimistic-concurrency guard. Re-based (not
   // reset) after a save so consecutive edits keep working.
@@ -187,6 +315,13 @@
   let requiredSnapshot = $state(initialRequired);
   let openVocabSnapshot = $state(initialOpenVocabulary);
   let showOnCardSnapshot = $state(initialShowOnCard);
+  let showInAdvancedSearchSnapshot = $state(initialShowInAdvancedSearch);
+  let showOnUploadSnapshot = $state(initialShowOnUpload);
+  let editTabSnapshot = $state(initialEditTab ?? '');
+  let searchableSnapshot = $state(initialSearchable);
+  let readOnlySnapshot = $state(initialReadOnly);
+  let regexpFilterSnapshot = $state(initialRegexpFilter ?? '');
+  let displayConditionSnapshot = $state<string[]>(displayConditionRows(initialDisplayCondition));
   let displayGroupSnapshot = $state(initialDisplayGroup);
   let displayOrderSnapshot = $state(initialDisplayOrder);
   let appliesToSnapshot = $state(JSON.stringify([...initialAppliesTo]));
@@ -197,6 +332,17 @@
       required !== requiredSnapshot ||
       openVocab !== openVocabSnapshot ||
       showOnCard !== showOnCardSnapshot ||
+      showInAdvancedSearch !== showInAdvancedSearchSnapshot ||
+      showOnUpload !== showOnUploadSnapshot ||
+      editTab.trim() !== (editTabSnapshot ?? '').trim() ||
+      searchable !== searchableSnapshot ||
+      readOnly !== readOnlySnapshot ||
+      // Exact, not trimmed: " " and "" are different patterns.
+      regexpFilter !== regexpFilterSnapshot ||
+      // Compared through the same normalisation the SAVE uses, so
+      // re-ordered whitespace or a trailing newline is not a change.
+      JSON.stringify(displayConditionTerms(displayCondition)) !==
+        JSON.stringify(displayConditionTerms(displayConditionSnapshot)) ||
       displayGroup !== displayGroupSnapshot ||
       displayOrder !== displayOrderSnapshot ||
       JSON.stringify(appliesTo) !== appliesToSnapshot,
@@ -350,6 +496,13 @@
     required: boolean;
     open_vocabulary?: boolean;
     show_on_card?: boolean;
+    show_in_advanced_search?: boolean;
+    show_on_upload?: boolean;
+    edit_tab?: string | null;
+    searchable?: boolean;
+    read_only?: boolean;
+    regexp_filter?: string | null;
+    display_condition?: string[] | null;
     display_group?: string;
     display_order?: number;
     applies_to?: number[];
@@ -373,6 +526,21 @@
     required = cur.required;
     openVocab = cur.open_vocabulary === true;
     showOnCard = cur.show_on_card === true;
+    // `!== false` and not `=== true`: absent means TODAY'S behaviour,
+    // which for a participation flag is "it appears". Reading these the
+    // way `show_on_card` is read would turn a server that omitted the
+    // key into a form that unticks every surface.
+    showInAdvancedSearch = cur.show_in_advanced_search !== false;
+    showOnUpload = cur.show_on_upload !== false;
+    editTab = cur.edit_tab ?? '';
+    // `!== false` for the same reason the participation flags use it:
+    // absent must mean the column's default, which for `searchable` is
+    // TRUE. Reading it as `=== true` would untick the box on any
+    // response that omitted the key.
+    searchable = cur.searchable !== false;
+    readOnly = cur.read_only === true;
+    regexpFilter = cur.regexp_filter ?? '';
+    displayCondition = displayConditionRows(cur.display_condition);
     displayGroup = cur.display_group ?? '';
     displayOrder = cur.display_order ?? 0;
     appliesTo = [...(cur.applies_to ?? [])];
@@ -383,6 +551,13 @@
     requiredSnapshot = required;
     openVocabSnapshot = openVocab;
     showOnCardSnapshot = showOnCard;
+    showInAdvancedSearchSnapshot = showInAdvancedSearch;
+    showOnUploadSnapshot = showOnUpload;
+    editTabSnapshot = editTab;
+    searchableSnapshot = searchable;
+    readOnlySnapshot = readOnly;
+    regexpFilterSnapshot = regexpFilter;
+    displayConditionSnapshot = displayCondition;
     displayGroupSnapshot = displayGroup;
     displayOrderSnapshot = displayOrder;
     appliesToSnapshot = JSON.stringify(appliesTo);
@@ -435,6 +610,51 @@
       // this editor asserting a setting nobody chose — and the server
       // would answer 400 for a change the operator never made.
       if (!cardGated) body.show_on_card = showOnCard;
+      // Participation is always sent — unlike the two above, these
+      // controls are rendered for every field, so their value is always
+      // one the operator could have changed.
+      body.show_in_advanced_search = showInAdvancedSearch;
+      body.show_on_upload = showOnUpload;
+      // "No tab" is NULL server-side and a partial update cannot say
+      // NULL, so an emptied box is the explicit clear rather than a
+      // blank string the server would refuse.
+      if (editTab.trim()) body.edit_tab = editTab.trim();
+      else body.clear_edit_tab = true;
+      // Always sent: the control is rendered for every field, so its
+      // value is always one the operator could have changed.
+      body.searchable = searchable;
+      // The input rules (#1173). Sent only where the operator could have
+      // changed them, for the reason show_on_card is: on a mirrored
+      // field neither control is rendered, so sending a value would be
+      // this editor asserting a setting nobody chose — and the server
+      // answers 400 for a change the operator never made.
+      if (!mirrored) body.read_only = readOnly;
+      if (!mirrored && regexpSupported) {
+        // Emptying the box is the CLEAR, and the clear is explicit for
+        // the same reason edit_tab's is: "no pattern" is NULL
+        // server-side, a partial update cannot say NULL, and `""` is
+        // refused rather than stored so the state has one
+        // representation. Note the exact comparison — a pattern of
+        // spaces is a real pattern and must not be mistaken for empty.
+        if (regexpFilter !== '') body.regexp_filter = regexpFilter;
+        else body.clear_regexp_filter = true;
+      }
+      // `display_condition` (#1119, ADR 0099). The FOURTH property whose
+      // removal has to be said out loud, after the default, the tab and
+      // the pattern: NULL is "always shown" AND "leave it alone", and the
+      // server refuses `[]` as a second spelling of unset.
+      //
+      // Sent for every non-mirrored field, because the control is
+      // rendered for every non-mirrored field. A mirrored definition
+      // cannot carry one at all (its column has a second write plane), so
+      // sending a value there would be this editor asserting a setting
+      // nobody chose and would earn a 400 for a change the operator never
+      // made — the same reasoning `read_only` and `show_on_card` use.
+      if (!mirrored) {
+        const terms = displayConditionTerms(displayCondition);
+        if (terms.length > 0) body.display_condition = terms;
+        else body.clear_display_condition = true;
+      }
       const { data, error: apiErr, response } = await api.PATCH('/fields/{id}', {
         params: { path: { id: fieldId } },
         body: body as never,
@@ -773,6 +993,248 @@
       </span>
     </label>
   {/if}
+  </section>
+
+  <!--
+    WHAT A VALUE MUST LOOK LIKE, AND WHO MAY WRITE ONE (#1173).
+
+    Two settings that did not exist until sprint 19, so an operator had
+    no way to say "extraction owns this field" or "a shot code looks
+    like AAA_0010". Both are about PEOPLE: the upload defaults and the
+    extraction pipeline keep writing either way, which is what makes
+    read_only useful rather than a freeze.
+
+    Its own section rather than a line under Basics, because the
+    question it answers is a different one from what the field is
+    called.
+  -->
+  <section class="min-w-0 space-y-3 rounded border border-border bg-bg-soft p-3" data-testid="field-edit-input-rules">
+    <h3 class="text-sm font-semibold">{t('admin.fields.section_input_rules')}</h3>
+
+    {#if mirrored}
+      <!--
+        Replaced by the reason, not shown disabled. See the `mirrored`
+        note in the script: the asset row has a second human write plane
+        that would not obey either setting, so the server refuses both.
+      -->
+      <p class="text-xs text-fg-muted" data-testid="field-edit-input-rules-mirrored">
+        {t('admin.fields.input_rules_mirrored', { column: initialMirrorsColumn ?? '' })}
+      </p>
+    {:else}
+      <label class="flex min-h-11 items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          bind:checked={readOnly}
+          data-testid="field-edit-read-only"
+          class="mt-0.5 h-4 w-4 rounded border-border-strong"
+        />
+        <span class="min-w-0">
+          <span class="block">{t('admin.fields.read_only')}</span>
+          <span class="block text-xs text-fg-muted">{t('admin.fields.read_only_help')}</span>
+        </span>
+      </label>
+
+      {#if regexpSupported}
+        <label class="block">
+          <span class="block text-xs text-fg-muted">{t('admin.fields.regexp_filter')}</span>
+          <input
+            type="text"
+            bind:value={regexpFilter}
+            spellcheck="false"
+            autocapitalize="off"
+            autocorrect="off"
+            placeholder={t('admin.fields.regexp_filter_placeholder')}
+            data-testid="field-edit-regexp-filter"
+            class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+          />
+          <span class="mt-0.5 block text-xs text-fg-muted">{t('admin.fields.regexp_filter_help')}</span>
+        </label>
+      {:else}
+        <p class="text-xs text-fg-muted" data-testid="field-edit-regexp-filter-type-note">
+          {t('admin.fields.regexp_filter_type_note', { type: fieldType })}
+        </p>
+      {/if}
+    {/if}
+  </section>
+
+  <!--
+    WHERE THIS FIELD APPEARS (#1173, ADR 0092 §3).
+
+    Its own section rather than a line in the collapsed "Advanced"
+    block, and that is a deliberate reversal of where `display_group`
+    and `display_order` sit. Those are layout: an operator can ignore
+    them and get a plainer page. Participation is the answer to "why is
+    this field not on the search form" — the question an operator with
+    200 fields opens this page to settle — so burying it behind a
+    disclosure would hide the control that the flags exist to give them.
+
+    Both toggles render for EVERY field, including types the advanced
+    page has no control for yet. A field of type `text` marked for
+    advanced search does not appear there today, because that page can
+    only draw a picker for a vocabulary — the help text below says which
+    surfaces read the flag so far, rather than the form quietly
+    withholding the toggle and leaving the operator to guess.
+  -->
+  <section class="min-w-0 space-y-3 rounded border border-border bg-bg-soft p-3" data-testid="field-edit-participation">
+    <h3 class="text-sm font-semibold">{t('admin.fields.section_participation')}</h3>
+    <p class="text-xs text-fg-muted">{t('admin.fields.participation_help')}</p>
+
+    <label class="flex min-h-11 items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        bind:checked={showInAdvancedSearch}
+        data-testid="field-edit-show-in-advanced-search"
+        class="mt-0.5 h-4 w-4 rounded border-border-strong"
+      />
+      <span class="min-w-0">
+        <span class="block">{t('admin.fields.show_in_advanced_search')}</span>
+        <span class="block text-xs text-fg-muted">{t('admin.fields.show_in_advanced_search_help')}</span>
+      </span>
+    </label>
+
+    <label class="flex min-h-11 items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        bind:checked={showOnUpload}
+        data-testid="field-edit-show-on-upload"
+        class="mt-0.5 h-4 w-4 rounded border-border-strong"
+      />
+      <span class="min-w-0">
+        <span class="block">{t('admin.fields.show_on_upload')}</span>
+        <span class="block text-xs text-fg-muted">{t('admin.fields.show_on_upload_help')}</span>
+      </span>
+    </label>
+
+    <label class="block">
+      <span class="block text-xs text-fg-muted">{t('admin.fields.edit_tab')}</span>
+      <input
+        type="text"
+        bind:value={editTab}
+        placeholder={t('admin.fields.edit_tab_placeholder')}
+        data-testid="field-edit-edit-tab"
+        class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none sm:w-64"
+      />
+      <span class="mt-0.5 block text-xs text-fg-muted">{t('admin.fields.edit_tab_help')}</span>
+    </label>
+
+    <!--
+      `display_condition` (#1119, ADR 0099). It belongs in "where this
+      field appears" beside the tab, because it is the same class of
+      setting: both decide COMPOSITION and neither decides access.
+
+      Not offered on a MIRRORED definition, matching `read_only` and
+      `regexp_filter` above and for the same reason: a mirrored field is a
+      view onto a column of the asset with its own write plane and its own
+      first-class control, so only one of the two planes would obey the
+      setting. The server refuses it too; rendering no control is what
+      stops an operator being refused after typing.
+
+      A textarea rather than a term builder. A builder would need the
+      whole field list, the operator matrix and the type of every
+      candidate controller to draw its dropdowns, and would still have to
+      fall back to free text for the value — while the server already
+      answers every malformed configuration with a sentence naming what is
+      wrong, which is surfaced verbatim on save.
+    -->
+    {#if !mirrored}
+      <div class="block" data-testid="field-edit-display-condition">
+        <span class="block text-xs text-fg-muted">{t('admin.fields.display_condition')}</span>
+        <!--
+          ONE CONTROL PER STORED TERM, and no delimiter anywhere. A term's
+          VALUE may legitimately contain a newline (see
+          displayConditionRows), so any single-character separator would
+          load one stored term as two and save two back. One row to one
+          array element is the only lossless mapping.
+
+          A textarea rather than an input for the same reason: an operator
+          has to be able to see and type the newline that is already legal
+          inside a value.
+        -->
+        <div class="mt-1 space-y-1.5">
+          {#each displayCondition as row, i (i)}
+            <div class="flex items-start gap-1.5">
+              <!--
+                SIZED TO ITS CONTENT. A term's value may legitimately
+                contain newlines, and a fixed `rows="1"` clipped the very
+                case this control exists to hold: the operator saw the
+                first line of a stored term and no sign there was more.
+                Capped so one long term cannot push the rest of the form
+                off the screen.
+              -->
+              <textarea
+                bind:value={displayCondition[i]}
+                rows={Math.min(6, Math.max(1, row.split('\n').length))}
+                spellcheck="false"
+                aria-label={t('admin.fields.display_condition_term_aria', { n: i + 1 })}
+                placeholder={t('admin.fields.display_condition_placeholder')}
+                data-testid="field-edit-display-condition-term-{i}"
+                class="min-h-11 w-full rounded border border-border-strong bg-surface px-2 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+              ></textarea>
+              <button
+                type="button"
+                onclick={() => removeDisplayConditionRow(i)}
+                aria-label={t('admin.fields.display_condition_remove_aria', { n: i + 1 })}
+                data-testid="field-edit-display-condition-remove-{i}"
+                class="min-h-11 shrink-0 rounded border border-border-strong px-2 text-sm text-fg-muted hover:bg-state-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >×</button
+              >
+            </div>
+          {/each}
+        </div>
+        <button
+          type="button"
+          onclick={addDisplayConditionRow}
+          data-testid="field-edit-display-condition-add"
+          class="mt-1.5 min-h-11 rounded border border-border-strong px-2.5 py-1 text-sm text-fg hover:bg-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >{t('admin.fields.display_condition_add')}</button
+        >
+        <span class="mt-0.5 block text-xs text-fg-muted">
+          {#if displayConditionTerms(displayCondition).length === 0}
+            <span data-testid="field-edit-display-condition-none"
+              >{t('admin.fields.display_condition_none')}</span
+            >
+          {/if}
+          {t('admin.fields.display_condition_help')}
+        </span>
+      </div>
+    {/if}
+  </section>
+
+  <!--
+    THE SEARCH INDEX (#1173).
+
+    `searchable` has existed since the 00001 baseline, persists through
+    both the create and the update API, and had NO control on any admin
+    surface — so the one setting that decides whether a field's text is
+    findable at all could only be reached with a hand-written PATCH.
+
+    ITS OWN SECTION, deliberately not a fourth line inside "Where this
+    field appears". Sprint 18d had to unpick exactly that conflation:
+    `searchable` governs the FULL-TEXT INDEX, `show_in_advanced_search`
+    governs a CONTROL, and an explicit `field:` filter obeys neither.
+    Putting them under one heading is how they get read as three
+    settings of one thing again, so the boundary is drawn in the layout
+    as well as in the copy.
+  -->
+  <section class="min-w-0 space-y-3 rounded border border-border bg-bg-soft p-3" data-testid="field-edit-search-index">
+    <h3 class="text-sm font-semibold">{t('admin.fields.section_search_index')}</h3>
+
+    <label class="flex min-h-11 items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        bind:checked={searchable}
+        data-testid="field-edit-searchable"
+        class="mt-0.5 h-4 w-4 rounded border-border-strong"
+      />
+      <span class="min-w-0">
+        <span class="block">{t('admin.fields.searchable')}</span>
+        <span class="block text-xs text-fg-muted">{t('admin.fields.searchable_help')}</span>
+      </span>
+    </label>
+
+    <p class="text-xs text-fg-muted" data-testid="field-edit-searchable-boundary">
+      {t('admin.fields.searchable_boundary')}
+    </p>
   </section>
 
   <section class="min-w-0 space-y-3 rounded border border-border bg-bg-soft p-3">

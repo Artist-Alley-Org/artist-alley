@@ -162,15 +162,10 @@ LIMIT $9::INTEGER`)
 	var out []Collection
 	for rows.Next() {
 		var i Collection
-		if err := rows.Scan(
-			&i.ID, &i.OwnerUserRef, &i.Name, &i.Description, &i.Visibility, &i.Membership,
-			&i.ExpiresAt, &i.Purpose, &i.OriginServerID,
-			&i.CreatedAt, &i.UpdatedAt, &i.SearchText, &i.SmartQuery,
-			&i.DeletedAt, &i.DeletedReason, &i.DeletedByUserRef, &i.CoverAssetID,
-			&i.FeaturedCoverAssetID, &i.FeaturedCoverFocalX, &i.FeaturedCoverFocalY,
-			&i.CoverFocalX, &i.CoverFocalY,
-			&i.FeaturedCoverZoom, &i.CoverZoom,
-		); err != nil {
+		// scanCollection, not an inline Scan: the column list above is a
+		// shared constant and this is the second reader of it, so the
+		// positional order is settled in one place (post_usage.go).
+		if err := scanCollection(rows, &i); err != nil {
 			return nil, fmt.Errorf("collections: list page scan: %w", err)
 		}
 		out = append(out, i)

@@ -43,17 +43,20 @@ import (
 // rows.
 //
 // Called at the START of every test here rather than registered as
-// cleanup at the end, and that is not a style preference. withFixture
-// `defer pool.Close()`s around its call to the test body, so the pool
-// is already closed by the time any t.Cleanup registered inside the
-// body runs — a cleanup DELETE there executes against a closed pool,
-// fails, and gets swallowed by the `_, _ =` convention these tests use
-// for best-effort teardown. It looks like isolation and provides none.
+// cleanup at the end. This began as a WORKAROUND: withFixture used to
+// `defer pool.Close()` around its call to the test body, so the pool
+// was already closed by the time any t.Cleanup registered inside the
+// body ran — a cleanup DELETE there executed against a closed pool,
+// failed, and was swallowed by the `_, _ =` best-effort convention.
+// It looked like isolation and provided none. #870 fixed that: the
+// pool now closes on a t.Cleanup registered first, so it outlives
+// every later cleanup.
 //
-// Found the honest way: the "no stored preferences" test below failed
-// on the previous test's leftover row. Pre-cleaning makes each test
-// deterministic no matter what ran before it, including a previous
-// run that was killed mid-way.
+// Pre-cleaning is KEPT anyway, and now on its own merits. It was found
+// the honest way — the "no stored preferences" test below failed on the
+// previous test's leftover row — and it is the only form that survives a
+// previous run killed mid-way (^C, panic, an OOM), where no teardown of
+// any kind got to run. Cleanup cannot repair a run that never reached it.
 func clearAccountPrefs(t *testing.T, ctx context.Context, fx *fixture) {
 	t.Helper()
 	for _, sql := range []string{

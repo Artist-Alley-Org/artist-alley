@@ -1,9 +1,9 @@
 # Artist Alley — Demo Studio Seed (Layer A): Attributions
 
-This dataset bundles content from many sources, every one of them
-open-source, public-domain, or Creative Commons. This document is the
-canonical attribution list — required by the CC-BY-SA 4.0 aggregate
-license under which the dataset is published.
+This dataset bundles content from many sources under several licenses.
+It is published under **no single aggregate license**: each source's own
+terms apply, as set out in **Aggregate license** below. This document is
+the canonical attribution list for those sources.
 
 If you redistribute this dataset (in whole or in part), you must
 preserve this file and provide attribution to every source whose
@@ -213,11 +213,100 @@ motion, esports tournament, retro gaming console.
   - christmas_photo_studio_07 — Sergej Majboroda
   - abandoned_factory_canteen_01 — Sergej Majboroda
 
+### Images — generated in-house (CC0)
+
+- **Aurora R&D — AI-generated (Stable Diffusion 3.5 Large)** (CC0 1.0):
+  45 images under `images/aurora-generated/`, four per team across all
+  eleven teams (five for Reference), produced with **Stable Diffusion
+  3.5 Large** run locally through ComfyUI. No third-party model output
+  is redistributed here beyond what the model itself produced from our
+  own prompts; the weights are not included in this dataset.
+  - Every one carries
+    `metadata.acquisition_source: "Generated in-house (Stable Diffusion 3.5 Large via ComfyUI)"`,
+    `license: "CC0 1.0"`, and
+    `attribution: "Aurora R&D — AI-generated (Stable Diffusion 3.5 Large)"`.
+  - "Aurora R&D" is the fictional studio this dataset simulates — see
+    **Studio simulation metadata** below. It is not a real company.
+  - Carried in the pipeline by
+    [`seed/upgrades/generated-assets.site_a.json`](upgrades/generated-assets.site_a.json)
+    and the twelve posts in
+    [`seed/upgrades/generated-posts.site_a.json`](upgrades/generated-posts.site_a.json).
+
+- **Aurora R&D, authored in-house** (CC0 1.0): two plates under
+  `images/aurora-authored/`, produced by `seed/scripts/authored_plates.py`
+  (Python stdlib only, no image library) so the corpus can honestly carry
+  the two `ai_provenance` states the 45 images above cannot (#1290,
+  ADR 0094). Both carry `license: "CC0 1.0"`.
+  - `studio-colour-chart.png`, record `530cb8f1-1aa4-ab97-87e8-30ad58ac59fb`,
+    11,404 bytes, declares `ai_provenance: none`. A calibration chart: 24
+    colour patches, a 21-step greyscale ramp and corner registration
+    marks, every pixel placed by arithmetic in the script. No generative
+    model is involved at any point, which is what makes `none` a
+    statement of fact rather than a disclaimer. Its `attribution` names
+    Aurora R&D as authoring it in-house with no generative AI (the exact
+    string is on the record), and its
+    `metadata.acquisition_source` is
+    `"Authored in-house (deterministic plate generator, seed/scripts/authored_plates.py)"`.
+  - `reference-mood-board.png`, record `c4542a8f-c9a1-edfa-f2f4-1fea6ab84d96`,
+    1,290,128 bytes, declares `ai_provenance: assisted`. One of the
+    Stable Diffusion 3.5 Large plates listed above,
+    `images/aurora-generated/ref-colour-script.png` (record
+    `4d1c5235-32dd-5faa-8a71-3b5f1d3151df`, named as `MOOD_BOARD_SOURCE`
+    in the script), is downsampled into a panel and its palette strip is
+    sampled from that plate's own pixels; the swatch grid, rules and
+    registration marks around it are drawn by the script. Part of the
+    work came out of a generative model and part did not, so neither
+    `generated` nor `none` would be true of it. Its `attribution` names
+    Aurora R&D as authoring it in-house over an AI-generated plate (the
+    exact string is on the record), and its `metadata.acquisition_source`
+    is
+    `"Authored in-house (seed/scripts/authored_plates.py over a Stable Diffusion 3.5 Large plate)"`.
+  - "Aurora R&D" is the fictional studio this dataset simulates (see
+    **Studio simulation metadata** below). It is not a real company.
+  - The repository carries the recipe, not the bytes: the plates are
+    built once against the dataset source with
+    `python3 seed/scripts/authored_plates.py build` before a publish, and
+    the build is deterministic, so a rebuild is byte-identical and the
+    sizes above do not churn.
+  - Carried in the pipeline by
+    [`seed/upgrades/authored-assets.site_a.json`](upgrades/authored-assets.site_a.json)
+    and the two posts in
+    [`seed/upgrades/authored-posts.site_a.json`](upgrades/authored-posts.site_a.json).
+
 ### Reference material (community contributed)
 
 - **The Models Resource** (referenced game rips) — NOT included in this
   Layer A dataset. Those assets live only in site_b (the local-only
   full dataset) and never ship publicly.
+
+## The `ai_provenance` declaration, and why only these 45
+
+`MANIFEST.json` carries an optional `ai_provenance` on an asset. It is
+the MAKER'S OWN DECLARATION about how the work was made, and the absence
+of the key means **nobody was asked** — not "no AI". Exactly 45 entries
+declare `generated`, and the two authored plates above declare `none`
+and `assisted`, one each; every other entry omits the key entirely,
+which is the honest state for a corpus assembled before the field
+existed.
+
+**Why nothing else in the dataset declares it.** It was tried the other
+way first, and it was wrong. Two upgrade documents (`ai-declarations.site_a.json`
+and its site_b twin) declared `generated` on four **Kenney.nl** works —
+rows that carry `attribution: "Kenney (kenney.nl)"` on the same line.
+That is a false statement about a named real creator, in a dataset that
+is redistributed. Both documents were deleted in #1260 and the four rows
+were stripped; `seed/scripts/apply_upgrade.py` now refuses any record
+that declares AI without in-house provenance, so the pipeline cannot
+make the same claim again. **A declaration must be about work we
+actually made** — which is why the 45 images above exist at all.
+
+**If you do not want them**, drop the 45 entries whose
+`ai_provenance` is `"generated"` and the twelve posts that carry them
+(the eleven `<Team> — AI reference set` posts plus `Backplate study — AI
+plate beside a public-domain plate`); nothing else in the dataset
+references them, except that the authored mood-board post
+(`155b61b8-9c9e-58ac-46fe-fcc79f338555`) pairs `ref-colour-script.png`
+with `reference-mood-board.png` and would keep only the latter.
 
 ## The `mature` label, and why these twelve
 
@@ -267,5 +356,5 @@ If you use this dataset, please:
   Khronos CC-BY for the canonical reference)
 
 If you spot a missing or incorrect attribution, please file an issue
-at https://github.com/mscrnt/artist-alley/issues — we'll fix it
+at https://github.com/Artist-Alley-Org/artist-alley/issues — we'll fix it
 immediately. Attribution accuracy matters.

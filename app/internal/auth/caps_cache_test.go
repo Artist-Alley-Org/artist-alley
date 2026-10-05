@@ -130,7 +130,7 @@ func TestCapsCache_NilRegistryFallsBackToDB(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	r := NewResolver(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
 	if r.caps != nil {

@@ -22,7 +22,7 @@
   import CardCheckbox from './CardCheckbox.svelte';
   import { auth } from '$stores/auth.svelte';
   import { site } from '$stores/site.svelte';
-  import { selection } from '$stores/selection.svelte';
+  import { selection, type SelectionEntry } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { t } from '$stores/lang.svelte';
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
@@ -33,6 +33,8 @@
   import { thumbhashMatteColor } from '$lib/util/thumbhash';
   import CardKindBadge from './CardKindBadge.svelte';
   import CardAuthorLink from './CardAuthorLink.svelte';
+  import AiProvenanceBadge from './AiProvenanceBadge.svelte';
+  import { isMarkedAi } from '$lib/aiProvenance';
 
   // Cover-asset shape is the shared card feed contract (#595) — its
   // presentation fields are REQUIRED so a surface cannot hand-map a
@@ -87,10 +89,28 @@
      *  answer the post's own header gives for a withheld author. */
     comments_preview?: PostCommentPreview[];
     cover_asset_id?: string | null;
+    /** #1210: where the author framed the browse grid's square crop,
+     *  as fractions of the original picture. Null means centred. */
+    cover_focal_x?: number | null;
+    cover_focal_y?: number | null;
     created_at: string;
     like_count: number;
     comment_count: number;
     members: PostMemberSummary[];
+    /** The post's DERIVED AI declaration (#1243, ADR 0094) — "does this
+     *  post contain AI?", positive on ANY contributor.
+     *
+     *  ⚠️ This is the LABELLING column and not the filtering one. A card
+     *  marked here may well be a MIXED post, and that is correct: the
+     *  tile says "there is AI in here", the viewer says which member.
+     *  `posts.ai_pure` is the separate fact the browse footer's hide
+     *  toggle keys on, and the two are not interchangeable.
+     *
+     *  Absent means UNDECLARED — nobody was asked — and never `none`.
+     *  Optional here for the same reason the fields above it are: a
+     *  couple of hand-built card feeds narrow the object, and a feed
+     *  that drops it renders a plainer card, never a wrong one. */
+    ai_provenance?: string | null;
   }
 
   interface PostAuthorSummary {
@@ -140,9 +160,9 @@
      *  Undefined ⇒ the array IS the membership, which is the case on
      *  every list endpoint. */
     memberCount?: number;
-    /** Feed-order ids for range selection (#1127). A thunk — see
-     *  CardCheckbox's prop of the same name. */
-    orderedIds?: () => string[];
+    /** Feed-order TYPED entries for range selection (#1127). A thunk;
+     *  see CardCheckbox's prop of the same name. */
+    ordered?: () => SelectionEntry[];
   }
 
   let {
@@ -151,8 +171,13 @@
     tileSizes = DEFAULT_TILE_SIZES,
     mode = 'grid',
     memberCount: memberCountProp,
-    orderedIds,
+    ordered,
   }: Props = $props();
+
+  /** What this card contributes to the selection: a POST, always.
+   *  Identity is the pair, and this half of it is a property of the
+   *  component rather than of the surface hosting it. */
+  const entry = $derived<SelectionEntry>({ kind: 'post', id: post.id });
 
   /** Selection is gated exactly as CardCheckbox gates it — same two
    *  conditions, because a shift-click that selected on a surface with
@@ -408,7 +433,7 @@
 
   // Selected state (#515 slice 3). A browse card contributes its POST id
   // to the shared selection.
-  const selected = $derived(selection.has(post.id));
+  const selected = $derived(selection.has('post', post.id));
 
   // #555 — grid is a zero-gap CONTACT SHEET: drop the card chrome
   // (rounded / border / elevated bg) so tiles butt into one unbroken
@@ -730,6 +755,29 @@
   // engagement, not identification, and this is not the details card.
   const tipMeta = $derived(
     [
+      // #1243 — COMPACT MASONRY IS THE ONE DENSITY WITH NO BADGE AT ALL.
+      // `compact` suppresses the kind badge (#652: on a 60px tile it
+      // collides with the ⋮ menu), so the AI icon has nowhere to go
+      // there either — and a tile that silently drops the declaration is
+      // the half-finished answer this issue's five-mode problem is
+      // about. The facts a compact tile cannot draw live in this
+      // tooltip, and this is now one of them.
+      //
+      // ⚠️ FIRST, AND THE POSITION IS LOAD-BEARING. CardTooltip renders
+      // this array as ONE `truncate` line inside `max-w-[18rem]`, so a
+      // late entry is silently cut off — measured: appended after the
+      // count, the line read "PNG · 1024 × 1024 · 4 assets in this pos…"
+      // and the declaration never appeared on screen at all, while a DOM
+      // assertion on the payload passed. Everything after it is
+      // recoverable elsewhere (the format from the file, the size from
+      // the picture, the date from the metadata stack in any other
+      // density); this is the one fact that has nowhere else to be in
+      // this density.
+      //
+      // ⛔ Only when marked. `none` and `null` add NOTHING to this
+      // array — a "no AI" line here would be the prohibited claim,
+      // spelled in a tooltip instead of on a badge.
+      isMarkedAi(post.ai_provenance) ? t(`ai_provenance.${post.ai_provenance}`) : null,
       coverFileExtension ? coverFileExtension.replace(/^\./, '').toUpperCase() : null,
       coverPixelWidth && coverPixelHeight ? `${coverPixelWidth} × ${coverPixelHeight}` : null,
       memberCount > 1 ? t('card.multi.badge_label', { count: String(memberCount) }) : null,
@@ -802,7 +850,7 @@
     if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.button === 0 && canSelect) {
       e.preventDefault();
       e.stopPropagation();
-      selection.extendTo(post.id, orderedIds ? orderedIds() : [post.id]);
+      selection.extendTo(entry, ordered ? ordered() : [entry]);
       return;
     }
     // Modifier-key / non-primary clicks fall through to the native
@@ -827,12 +875,16 @@
   keeps the /?post={id} modal intercept (handleClick) with /posts/{id} as
   the modifier-click / new-tab fallback.
 -->
-<!-- `data-select-id` is what the marquee hit-tests against (#1127). It
-     rides the CARD ROOT rather than the checkbox because the band
-     selects a card when it touches the card, not when it happens to
-     clip a 24px control in one corner. -->
+<!-- `data-select-id` + `data-select-kind` are what the marquee
+     hit-tests against (#1127, #1119). They ride the CARD ROOT rather
+     than the checkbox because the band selects a card when it touches
+     the card, not when it happens to clip a 24px control in one
+     corner. The kind travels with the id because the batch contract's
+     identity is the PAIR, and a mixed profile band has to be able to
+     say which of two same-uuid cards it crossed. -->
 <div
   data-select-id={post.id}
+  data-select-kind="post"
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
   {#if social}
@@ -945,7 +997,7 @@
          and one control: what the card IS on the left, and the one
          control that belongs to READING a shelf — the checkbox — on the
          right. The checkbox moving to the right is a MOVE, not a second
-         checkbox: same `CardCheckbox`, same `orderedIds`, so
+         checkbox: same `CardCheckbox`, same `ordered`, so
          shift-range and the marquee's passthrough behave as before.
 
          ONE GAP, AND IT IS THE ONLY ONE. #1158's band held a two-control
@@ -1020,7 +1072,31 @@
         </div>
       {/if}
       <span class="flex-1"></span>
-      <CardCheckbox id={post.id} placement="inline" {orderedIds} />
+      <!-- #1243 — THE BAND'S MIDDLE, immediately left of Select, which
+           is the slot ADR 0094's amendment names. It is the first
+           non-media-type signal this band has ever carried, so it is one
+           small icon and no word: the word is in the viewer.
+
+           It is NOT part of the gapless kind+extension unit above. That
+           pair is one fact read as one thing (#1171); this is a second,
+           unrelated fact, and putting it inside that container would
+           make the band say "png-and-AI" as a single reading. The
+           elastic span already separates them, and the band's own
+           `gap-2` separates this from the checkbox at the edge.
+
+           Suppressed with the rest of the band's content when the cover
+           is restricted — the `{#if !coverRestricted}` above withholds
+           the kind badge for a reader who may not see the cover, and
+           the AI declaration of something you may not look at is not
+           yours to know either. -->
+      {#if !coverRestricted}
+        <AiProvenanceBadge
+          value={post.ai_provenance}
+          variant="inline"
+          tooltipKey={post.id}
+        />
+      {/if}
+      <CardCheckbox kind="post" id={post.id} placement="inline" {ordered} />
     </div>
   {/if}
 
@@ -1038,6 +1114,8 @@
     framed={framed && !social}
     fill={mode === 'grid'}
     variableAspect={mode === 'masonry'}
+    focalX={post.cover_focal_x ?? null}
+    focalY={post.cover_focal_y ?? null}
     {compact}
     pixelWidth={coverPixelWidth}
     pixelHeight={coverPixelHeight}
@@ -1069,7 +1147,7 @@
          frame, so the checkbox is an inline control in the bottom band
          below and nothing at all sits over the preview. -->
     {#if !detailed}
-      <CardCheckbox id={post.id} corner={showOverlay ? 'right' : 'left'} {orderedIds} />
+      <CardCheckbox kind="post" id={post.id} corner={showOverlay ? 'right' : 'left'} {ordered} />
     {/if}
 
     <!-- Kind / multi-asset indicator. BOTTOM-right, PERSISTENT — the one
@@ -1103,11 +1181,21 @@
          chrome band instead, which is where the reference panel puts
          its type indicator and which leaves the artwork untouched. -->
     {#if !compact && !showOverlay && !coverRestricted && !detailed}
-      <CardKindBadge
-        kind={packKind ?? coverKind}
-        count={memberCount}
-        uniform={packKind !== null}
-        class="absolute bottom-2 right-2 z-[2]" tooltipKey={post.id} label={packLabel} />
+      <!-- #1243 rides this badge rather than claiming a corner of its
+           own. The three remaining corners are spoken for (checkbox
+           top-left, ⋯ top-right, and the bottom-left one #578 measured
+           the multi-asset indicator into), and a fourth floating pill
+           over unknown artwork is how a card acquires the chrome the
+           density pass keeps removing. Beside the badge it reads as one
+           cluster: what this is, and one thing about how it was made. -->
+      <div class="absolute bottom-2 right-2 z-[2] flex items-center gap-1.5">
+        <AiProvenanceBadge value={post.ai_provenance} tooltipKey={post.id} />
+        <CardKindBadge
+          kind={packKind ?? coverKind}
+          count={memberCount}
+          uniform={packKind !== null}
+          tooltipKey={post.id} label={packLabel} />
+      </div>
     {/if}
 
     {#if showOverlay}
@@ -1206,7 +1294,25 @@
              search hit ships one member and carries its real size
              beside it, so this never becomes `members.length` and never
              becomes an unbounded query for a badge. -->
-        <div class="relative flex items-start justify-between gap-2">
+        <!-- #1243 joins this block rather than taking the opposite
+             corner: `justify-between` would push it to the tile's right
+             edge, where the select checkbox already sits at
+             `right-2 top-2` OUTSIDE this overlay (see CardCheckbox
+             `corner="right"` below) and the two would overlap on every
+             marked tile. Beside the kind glyph it is the same cluster
+             the thumbnail band draws, one density up.
+
+             ⚠️ GRID IS HOVER-REVEALED AT REST — the whole overlay is,
+             by #1111's ruling that a grid tile is IMAGE ONLY until you
+             reach for it, and the kind badge obeys the same rule. So on
+             the DEFAULT view mode this marker appears on hover, on
+             keyboard focus, and persistently on touch (the `hover:none`
+             arm in this file's <style>). That is deliberate rather than
+             an oversight: ADR 0094 caps the card at "a small icon" and
+             puts the real label in the viewer, and making this the one
+             persistent thing on a resting grid tile would overturn
+             #1111 for a signal the amendment calls secondary. -->
+        <div class="relative flex items-start gap-1.5">
           <CardKindBadge
             kind={packKind ?? coverKind}
             count={memberCount}
@@ -1214,6 +1320,7 @@
             tooltipKey={post.id}
             label={packLabel}
           />
+          <AiProvenanceBadge value={post.ai_provenance} tooltipKey={post.id} />
         </div>
 
         <!-- BOTTOM-LEFT: identity. Title, then the author.

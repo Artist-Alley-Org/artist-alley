@@ -36,7 +36,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
-	"github.com/mscrnt/artist-alley/app/internal/metadata"
+	"github.com/mscrnt/artist-alley/app/internal/coverfocal"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
@@ -99,6 +99,16 @@ type MetadataGate interface {
 	// field_definition whose required=TRUE. Used by Create as the
 	// pre-insert validation gate.
 	RequiredCollectionFields(ctx context.Context) ([]RequiredField, error)
+	// ValidateSeedFieldValues checks the values a create body proposes
+	// against their field definitions' input rules (#1173), BEFORE the
+	// transaction opens. Same reason the required gate runs pre-insert:
+	// a refusal must not leave a half-created collection behind.
+	//
+	// A nil refusal means every value is acceptable. `read_only` is not
+	// among the rules checked here — seeding an initial value is the one
+	// human write a read-only collection field permits, and every later
+	// write is refused by the metadata value handlers.
+	ValidateSeedFieldValues(ctx context.Context, values []SeedFieldValue) (*SeedFieldRefusal, error)
 	// UpsertCollectionFieldValueInTx writes one value inside the
 	// caller's tx. Run in the same tx as the collection INSERT so
 	// a failed value write rolls the whole creation back.
@@ -118,6 +128,25 @@ type RequiredField struct {
 	Code  string
 	Label string
 	Type  string
+}
+
+// SeedFieldValue is one create-body value as the pre-insert input-rule
+// gate sees it (#1173). Ordered, so an identical body always produces
+// an identical refusal.
+//
+// Only the text member travels: an input pattern is honoured for `text`
+// and `longtext`, and both store there.
+type SeedFieldValue struct {
+	FieldID   uuid.UUID
+	ValueText *string
+}
+
+// SeedFieldRefusal names the field that refused a seeded value and
+// carries the sentence to report.
+type SeedFieldRefusal struct {
+	Code    string
+	Label   string
+	Message string
 }
 
 // CollectionFieldValueInput is the value shape collections.Create
@@ -250,6 +279,11 @@ func (h *Handler) CreateCollection(
 	// breaking it). Skipped when metadataGate is nil (test/wiring
 	// fallback).
 	suppliedValues := map[uuid.UUID]CollectionFieldValueInput{}
+	// The same values in body order. The map is what the required gate
+	// and the seeding loop want; the slice is what the input-rule gate
+	// wants, because iterating a map would make WHICH refusal an operator
+	// sees depend on Go's map ordering.
+	seedOrder := make([]SeedFieldValue, 0, 4)
 	if in.FieldValues != nil {
 		for _, fv := range *in.FieldValues {
 			suppliedValues[uuid.UUID(fv.FieldId)] = CollectionFieldValueInput{
@@ -259,6 +293,10 @@ func (h *Handler) CreateCollection(
 				ValueOptions: fv.ValueOptions,
 				ValueRef:     uuidPtrFromOpenAPI(fv.ValueRef),
 			}
+			seedOrder = append(seedOrder, SeedFieldValue{
+				FieldID:   uuid.UUID(fv.FieldId),
+				ValueText: fv.ValueText,
+			})
 		}
 	}
 	if h.metadataGate != nil {
@@ -275,6 +313,25 @@ func (h *Handler) CreateCollection(
 					FieldLabel: &rf.Label,
 				}, nil
 			}
+		}
+		// Input rules (#1173). Second pre-insert gate, deliberately
+		// beside the first rather than inside the seeding helper: by the
+		// time SeedCollectionFieldValueInTx runs, the collection row has
+		// already been written and refusing would mean rolling back a
+		// creation the caller was told nothing about. Ordering after the
+		// required check keeps "you left one out" ahead of "the one you
+		// sent is wrong", which is the order an operator can act on.
+		refusal, ivErr := h.metadataGate.ValidateSeedFieldValues(ctx, seedOrder)
+		if ivErr != nil {
+			return nil, fmt.Errorf("collections: validate seeded field values: %w", ivErr)
+		}
+		if refusal != nil {
+			return openapi.CreateCollection422JSONResponse{
+				Error:      refusal.Message,
+				Reason:     openapi.CollectionFieldPatternMismatch,
+				FieldCode:  &refusal.Code,
+				FieldLabel: &refusal.Label,
+			}, nil
 		}
 	}
 
@@ -614,11 +671,14 @@ func (h *Handler) UpdateCollection(
 		return *resp, nil
 	}
 
-	// #1207 — the COLLECTION cover's own focal pair, on the square
-	// destination. Validated by the same three refusals as the featured
-	// pair; a shared helper rather than a third copy of them, because
-	// three copies of a range check is how one of them ends up admitting
-	// 1.5.
+	// #1207: the COLLECTION cover's own focal pair, on the 4:3
+	// destination. NOT a square (#1334): `col` is a square SOURCE, but
+	// what renders a chosen collection cover is CollectionCard's
+	// `aspect-[4/3]` tile, and a crop locks to the dimensions of the
+	// thing that paints it. Validated by the same three refusals as the
+	// featured pair; a shared helper rather than a third copy of them,
+	// because three copies of a range check is how one of them ends up
+	// admitting 1.5.
 	clearCoverFocal := in.ClearCoverFocal != nil && *in.ClearCoverFocal
 	if resp := validateFocalPair(
 		"cover_focal_x", "cover_focal_y", "clear_cover_focal",
@@ -1091,334 +1151,72 @@ func (h *Handler) ListCollections(
 }
 
 // ---------------------------------------------------------------------------
-// ListCollectionResources
+// The asset-membership endpoints are gone (#1161, #1236, ADR 0091)
 // ---------------------------------------------------------------------------
-
-func (h *Handler) ListCollectionResources(
-	ctx context.Context,
-	req openapi.ListCollectionResourcesRequestObject,
-) (openapi.ListCollectionResourcesResponseObject, error) {
-	// #438 — anonymous callers are admitted, and every caller now passes
-	// a real check on the PARENT collection. Before this, the handler
-	// checked only that an identity existed, so any authenticated caller
-	// could enumerate any collection's contents including ones they hold
-	// no ACL on. The row-level gate lives in the query below; both are
-	// required, because a public collection may contain non-public assets.
-	caller := collectionCaller(ctx)
-	visible, visErr := visibility.CanSee(ctx, h.Pool, visibility.EntityCollection,
-		caller, uuid.UUID(req.Id))
-	if visErr != nil || !visible {
-		// Fail closed, 404 not 403 (ADR 0064) — do not confirm the
-		// collection exists.
-		return openapi.ListCollectionResources404JSONResponse{
-			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
-		}, nil
-	}
-	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if _, err := h.getByIDCached(ctx, pgID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return openapi.ListCollectionResources404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
-			}, nil
-		}
-		return nil, err
-	}
-
-	limit := int32(50)
-	if req.Params.Limit != nil {
-		l := *req.Params.Limit
-		if l < 1 {
-			l = 1
-		}
-		if l > maxListLimit {
-			l = maxListLimit
-		}
-		limit = int32(l)
-	}
-
-	var cursorSort *int32
-	var cursorAdded pgtype.Timestamptz
-	if req.Params.Cursor != nil && *req.Params.Cursor != "" {
-		so, ts, err := decodeResourceCursor(*req.Params.Cursor)
-		if err != nil {
-			return nil, fmt.Errorf("collections: invalid resource cursor")
-		}
-		cursorSort = &so
-		cursorAdded = pgtype.Timestamptz{Time: ts, Valid: true}
-	}
-
-	// caps only short-circuits preview_available for SystemAdmin /
-	// content.read.all (#471); it does not affect row visibility.
-	var caps visibility.CapabilityChecker
-	// #939 — the caller's `assets.admin` scope, which widens the FIELD
-	// plane of a restricted member (ADR 0064). Resolved beside caps
-	// because it is the same question asked of a different plane.
-	var mutCaps visibility.AssetMutationCaps
-	if id := auth.IdentityFromContext(ctx); id != nil {
-		caps = func(code string) bool { return id.Can(code) }
-		mutCaps = visibility.ResolveAssetMutationCaps(
-			func(code string) bool { return id.Can(code) },
-			id.ScopedTeams(visibility.AssetsAdmin),
-		)
-	}
-	fetch := limit + 1
-	rows, err := ListCollectionResourcesPageGated(ctx, h.Pool, caller, caps,
-		ListCollectionResourcesPageGatedParams{
-			CollectionID:    pgID,
-			CursorSortOrder: cursorSort,
-			CursorAddedAt:   cursorAdded,
-			RowLimit:        fetch,
-			Ladder:          h.ladder(ctx),
-			MutationCaps:    mutCaps,
-			// #1147 — the mature axis off the request context, where the
-			// middleware left it. An absent value is the DISQUALIFIED
-			// viewer, never a permissive default.
-			Mature: visibility.MatureFromContext(ctx),
-		})
-	if err != nil {
-		return nil, fmt.Errorf("collections: list resources: %w", err)
-	}
-
-	items := make([]openapi.CollectionResource, 0, limit)
-	var lastSort int32
-	var lastAdded time.Time
-	for i, r := range rows {
-		if i >= int(limit) {
-			break
-		}
-		items = append(items, resourceRowToAPI(r))
-		lastSort = r.SortOrder
-		lastAdded = r.AddedAt.Time
-	}
-	// #1133 — the at-a-glance field strip, from the SAME projection the
-	// browse page decorates its tiles with. A member renders through the
-	// same card as a browse tile, and `show_on_card` had simply never
-	// reached this surface: the decoration lived in `assets`, which this
-	// package cannot import (assets → posts → collections is a cycle), so
-	// the flag worked everywhere except here from the day #552 shipped.
-	//
-	// It runs AFTER the gated page query above and decorates only the
-	// rows that query already admitted; ADR 0012 puts the flag in
-	// `display_order`'s class, so it takes no part in choosing rows and
-	// takes none here. Restricted placeholders are excluded BY ID before
-	// the call, not filtered after — #883's allow-list is that a withheld
-	// member carries the membership row's own columns and nothing from
-	// `assets`, and a field strip is something from `assets`.
-	if err := decorateMemberCardFields(ctx, h.Pool, items); err != nil {
-		return nil, fmt.Errorf("collections: list resources: card fields: %w", err)
-	}
-	resp := openapi.CollectionResourceList{Items: items}
-	if len(rows) > int(limit) {
-		next := encodeResourceCursor(lastSort, lastAdded)
-		resp.NextCursor = &next
-	}
-	return openapi.ListCollectionResources200JSONResponse(resp), nil
-}
-
+//
+// `POST /collections/{id}/resources` and
+// `DELETE /collections/{id}/resources/{asset_id}` used to live here.
+// They wrote `collection_resources` rows — a bare asset pinned into a
+// collection — and that is the second publication path ADR 0091 exists
+// to remove: "collections and browse contain posts only", so dropping
+// a file into a collection published it with no title, no framing and
+// no moment where the artist decided the work was ready.
+//
+// v0.10.1 (#1185) removed the visible half: the collection page's asset
+// section and every affordance that reached these endpoints. #1161
+// removed the writes.
+//
+// `GET /collections/{id}/resources` went with #1236, and it is worth
+// recording WHY it outlived them by one release. It was kept on the
+// grounds that "the cover picker reads it" — which #1232 had already
+// falsified by moving the picker to posts. Nothing else called it: the
+// grep across `web/src` came back empty, and the surface it had been
+// built for (the member grid, with #883's restricted placeholders,
+// #1133's card fields and its own cursor) had no page left to render
+// on. A read endpoint justified by a caller that no longer exists is
+// a claim about the model, and the claim was wrong.
+//
+// ⚠️ The rows are NOT converted into posts. ADR 0091 decision 4 is
+// explicit: an auto-generated post is a publication nobody authored,
+// with a title nobody wrote. The memberships simply stop being
+// writable; the assets remain in their owners' storage, losing nothing.
+//
+// `mayCollectAsset` and the `errAssetMissing` sentinel went with them.
+// The RULE they adapted did not: it lives in
+// visibility.CanSeeAssetContent, which posts.mayAttachAsset composes
+// for exactly the same question on the surface that now owns it — "you
+// may only put in a post what you can actually see". Keeping a
+// caller-less collections-side copy would have left a second adapter
+// for a future contributor to reach for on a path this ADR closed.
+//
 // ---------------------------------------------------------------------------
-// AddCollectionResource
+// ⛔ `collection_resources` IS INTERNAL, NOT DEAD — read this before
+// proposing the DROP (#1236, resolving ADR 0091's "becomes internal or
+// disappears")
 // ---------------------------------------------------------------------------
-
-func (h *Handler) AddCollectionResource(
-	ctx context.Context,
-	req openapi.AddCollectionResourceRequestObject,
-) (openapi.AddCollectionResourceResponseObject, error) {
-	caller := auth.IdentityFromContext(ctx)
-	if caller == nil {
-		return openapi.AddCollectionResource401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
-		}, nil
-	}
-	if req.Body == nil {
-		return openapi.AddCollectionResource400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
-		}, nil
-	}
-
-	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	q := New(h.Pool)
-	cur, err := q.GetCollection(ctx, pgID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return openapi.AddCollectionResource404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
-			}, nil
-		}
-		return nil, err
-	}
-	if !canMutateCollection(caller, cur) {
-		return openapi.AddCollectionResource403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the owner of this collection"},
-		}, nil
-	}
-
-	in := req.Body
-	pgAsset := pgtype.UUID{Bytes: uuid.UUID(in.AssetId), Valid: true}
-	assetIDStr := uuid.UUID(in.AssetId).String()
-
-	// #882 — the ASSET gate. Everything above authorises the
-	// COLLECTION; until this landed nothing looked at the asset at all,
-	// so any collection owner could pin any asset in the instance given
-	// its UUID, and a 404-vs-204 probe confirmed whether an arbitrary
-	// UUID existed.
-	//
-	// A refusal here is deliberately the SAME 404 the FK miss below
-	// returns — same status, same body. Anything else (403
-	// "forbidden", a distinct message) re-creates the enumeration
-	// oracle this check exists to remove.
-	collectible, err := h.mayCollectAsset(ctx, caller, uuid.UUID(in.AssetId))
-	if err != nil {
-		return nil, fmt.Errorf("collections: add resource: asset gate: %w", err)
-	}
-	if !collectible {
-		return openapi.AddCollectionResource404JSONResponse{
-			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
-		}, nil
-	}
-
-	// Gold-standard path: Add(object=asset, target=collection)
-	// per AP §6.6 / §7.8. 1.22.B-cleanup made activities required.
-	var fkAssetMissing bool
-	em := emit.AddToCollection(
-		h.actorContext(ctx, caller),
-		activities.ObjectKindAsset,
-		assetIDStr,
-		uuid.UUID(pgID.Bytes).String(),
-		cur.Name,
-	)
-	errRun := h.activities.WithEmission(ctx, activities.EmissionInput{
-		Activity: em.Activity,
-	}, func(tx pgx.Tx) error {
-		err := New(tx).AddCollectionResource(ctx, AddCollectionResourceParams{
-			CollectionID: pgID,
-			AssetID:      pgAsset,
-			SortOrder:    int32Or(in.SortOrder, 0),
-			Pinned:       boolOr(in.Pinned, true),
-			ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
-		})
-		if err != nil && strings.Contains(err.Error(), "collection_resources_asset_id_fkey") {
-			fkAssetMissing = true
-			return errAssetMissing
-		}
-		return err
-	})
-	if fkAssetMissing {
-		return openapi.AddCollectionResource404JSONResponse{
-			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
-		}, nil
-	}
-	if errRun != nil {
-		return nil, fmt.Errorf("collections: add resource: %w", errRun)
-	}
-	h.cacheInvalidate(ctx, pgID)
-	return openapi.AddCollectionResource204Response{}, nil
-}
-
-// errAssetMissing is the sentinel signalling FK-violation on
-// asset_id inside the WithEmission closure. Used to roll back +
-// return 404 without surfacing as a 500 server error. It is now a
-// race backstop rather than the primary path — mayCollectAsset
-// rejects an absent asset before any activity is emitted.
-var errAssetMissing = errors.New("collections: asset row absent")
-
-// mayCollectAsset answers "may this caller put THIS asset into a
-// collection" (#882). You may only collect what you can actually see.
 //
-// # Why this is not visibility.CanSee alone
+// No endpoint reads or writes the table any more, and after #1236 no
+// rendered surface draws from it. That is NOT the same as unreferenced,
+// and a counter-example search found live consumers on both sides:
 //
-// The obvious call — CanSee(EntityAsset) — gates NOTHING here. Per ADR
-// 0064 sensitivity lives on the CONTENT plane, not the row plane, so
-// EntityAsset's authenticated predicate is `deleted_at IS NULL` and
-// nothing more (visibility/predicate.go, EntityAsset branch; CanSee's
-// own doc says as much). Every authenticated caller is row-visible to
-// every undeleted asset, so a gate built on CanSee alone would return
-// true for a restricted asset it has never been allowed to view, and
-// would review as if it worked.
+//   - WRITERS. The seeder still inserts rows deliberately
+//     (`seed.SeedInsertCollectionResource`; see the note at its call
+//     site). `POST /search/save-as-collection` also still materialises
+//     one row per search hit (`search.createCollectionWithResults`) —
+//     unpinned, so those rows never painted a mosaic or moved a count,
+//     but they are ordinary production writes.
+//   - READERS. The federation shares gate resolves a share's container
+//     membership through a `collection_resources` JOIN
+//     (`federation/shares/queries.sql`), which is LIVE access-control
+//     semantics. Scoped search reads it too: the `collection:` facet on
+//     the asset entity (`search/facet.dimensionSQL`) and the reindex
+//     job's `ScopeCollection` both resolve "assets inside this
+//     collection" through it.
 //
-// # The rule
-//
-// The two-plane conjunction that answers it — CanSee(EntityAsset) AND
-// CanReadContent — lives in visibility.CanSeeAssetContent, which carries the
-// full reasoning: why each plane is load-bearing on its own account, why
-// the SystemAdmin / ContentReadAll short-circuits are inherited, and why
-// it fails closed. #922 needed the identical question on the post
-// surface, so the composition moved beside the planes it composes rather
-// than being copied — a second expression of a security rule is the
-// defect epic #665 exists to remove.
-//
-// This wrapper is the collections-side adapter: nil / identity handling,
-// and the auth.Identity → visibility.Caller + CapabilityChecker
-// translation.
-func (h *Handler) mayCollectAsset(ctx context.Context, id *auth.Identity, assetID uuid.UUID) (bool, error) {
-	if id == nil {
-		return false, nil
-	}
-	return visibility.CanSeeAssetContent(
-		ctx,
-		h.Pool,
-		visibility.NewCaller(&id.UserRef),
-		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
-		assetID,
-		visibility.MatureFromContext(ctx),
-	)
-}
-
-// ---------------------------------------------------------------------------
-// RemoveCollectionResource
-// ---------------------------------------------------------------------------
-
-func (h *Handler) RemoveCollectionResource(
-	ctx context.Context,
-	req openapi.RemoveCollectionResourceRequestObject,
-) (openapi.RemoveCollectionResourceResponseObject, error) {
-	caller := auth.IdentityFromContext(ctx)
-	if caller == nil {
-		return openapi.RemoveCollectionResource401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
-		}, nil
-	}
-	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	q := New(h.Pool)
-	cur, err := q.GetCollection(ctx, pgID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return openapi.RemoveCollectionResource404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
-			}, nil
-		}
-		return nil, err
-	}
-	if !canMutateCollection(caller, cur) {
-		return openapi.RemoveCollectionResource403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the owner of this collection"},
-		}, nil
-	}
-	assetIDStr := uuid.UUID(req.AssetId).String()
-	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.AssetId), Valid: true}
-
-	// Gold-standard path: Remove(object=asset, target=collection)
-	// per AP §6.7 / §7.9. 1.22.B-cleanup made activities required.
-	em := emit.RemoveFromCollection(
-		h.actorContext(ctx, caller),
-		activities.ObjectKindAsset,
-		assetIDStr,
-		uuid.UUID(pgID.Bytes).String(),
-		cur.Name,
-	)
-	errRun := h.activities.WithEmission(ctx, activities.EmissionInput{
-		Activity: em.Activity,
-	}, func(tx pgx.Tx) error {
-		return New(tx).RemoveCollectionResource(ctx, RemoveCollectionResourceParams{
-			CollectionID: pgID,
-			AssetID:      pgAsset,
-		})
-	})
-	if errRun != nil {
-		return nil, fmt.Errorf("collections: remove resource: %w", errRun)
-	}
-	h.cacheInvalidate(ctx, pgID)
-	return openapi.RemoveCollectionResource204Response{}, nil
-}
+// So the table stays, with no reader or writer on the API surface. A
+// future DROP has to answer for each of the consumers above — a
+// migration that only greps for endpoints will find nothing and be
+// wrong.
 
 // ---------------------------------------------------------------------------
 // ACLs — additive grants on top of visibility (ADR 0010 L6)
@@ -1764,48 +1562,28 @@ func rowToAPI(r Collection) openapi.Collection {
 	return c
 }
 
-// validateFocalPair refuses the three shapes a focal pair must never
-// reach the database in, and it is ONE function because #1207 has two
-// pairs — the featured card's 890:500 crop and the collection cover's
-// square one — with identical rules.
+// validateFocalPair wraps [coverfocal.Validate] in this endpoint's own
+// 400 envelope.
 //
-// Each refusal is a state the column CHECK would otherwise reject as a
-// constraint error, which surfaces as a 500 rather than as the 400 the
-// caller can act on:
-//
-//   - one coordinate without the other. Half a point is not a weaker
-//     positioning, it is an unanswerable one, and the only way to
-//     complete it is to invent an axis the curator did not choose.
-//   - either coordinate alongside the clear flag — the exclusivity rule
-//     every clear flag on this endpoint carries, refused rather than
-//     resolved because the server has no basis for preferring one.
-//   - out of 0..1. A fraction outside the picture is a bug in the
-//     client, and rejecting it here is what stops it becoming an
-//     object-position of -240% on a surface nobody is looking at.
-//
-// Returns nil when the pair is acceptable, including when it is absent
-// entirely — "leave alone" is always valid.
+// #1207 wrote the refusals here because collections had the only two
+// focal pairs. #1210 gave posts a third, so the rule moved to
+// internal/coverfocal and this became the envelope alone. The comment
+// that used to sit here said why one function served two pairs: "three
+// copies of a range check is how one of them ends up admitting 1.5".
+// That argument did not stop applying at two.
 func validateFocalPair(
 	xName, yName, clearName string,
 	x, y *float64,
 	clear bool,
 ) *openapi.UpdateCollection400JSONResponse {
-	bad := func(msg string) *openapi.UpdateCollection400JSONResponse {
-		r := openapi.UpdateCollection400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
-		}
-		return &r
+	msg := coverfocal.Validate(xName, yName, clearName, x, y, clear)
+	if msg == "" {
+		return nil
 	}
-	if (x == nil) != (y == nil) {
-		return bad(xName + " and " + yName + " must be sent together")
+	r := openapi.UpdateCollection400JSONResponse{
+		BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
 	}
-	if clear && x != nil {
-		return bad("send either the " + xName + "/" + yName + " pair or " + clearName + ", not both")
-	}
-	if x != nil && (*x < 0 || *x > 1 || *y < 0 || *y > 1) {
-		return bad(xName + " and " + yName + " must be fractions between 0 and 1")
-	}
-	return nil
+	return &r
 }
 
 // MinCoverZoom / MaxCoverZoom bound a cover crop's zoom (#1212), and
@@ -1869,136 +1647,6 @@ func validateZoom(
 	return nil
 }
 
-// decorateMemberCardFields attaches `card_fields` to a page of
-// collection members (#1133), in one query for the whole page.
-//
-// A per-row lookup here would be 200 round trips on a full member grid,
-// which is the same reason the browse page batches it — and the reason
-// the projection is shared rather than re-derived: see
-// [metadata.CardFieldsForAssets].
-//
-// Restricted members are skipped BY ID rather than cleared afterwards.
-// That is the #883 allow-list direction: a placeholder is built as a
-// complete literal carrying only the membership row's own columns, so a
-// key added to CollectionResource later is absent from it by
-// construction. Attaching a strip and then removing it would put this
-// key on the deny-list side, where the next reader has to remember.
-func decorateMemberCardFields(
-	ctx context.Context,
-	db metadata.DBTX,
-	items []openapi.CollectionResource,
-) error {
-	ids := make([]pgtype.UUID, 0, len(items))
-	index := make(map[uuid.UUID]int, len(items))
-	for i := range items {
-		if items[i].Restricted {
-			continue
-		}
-		id := uuid.UUID(items[i].AssetId)
-		if id == uuid.Nil {
-			continue
-		}
-		ids = append(ids, pgtype.UUID{Bytes: id, Valid: true})
-		index[id] = i
-	}
-	fields, err := metadata.CardFieldsForAssets(ctx, db, ids)
-	if err != nil {
-		return err
-	}
-	for id, vals := range fields {
-		i, ok := index[id]
-		if !ok {
-			continue
-		}
-		v := vals
-		items[i].CardFields = &v
-	}
-	return nil
-}
-
-// resourceRowToAPI serialises ONE membership row.
-//
-// The two branches are the #883 allow-list. The placeholder branch is
-// written as a complete literal rather than as "build the full row, then
-// clear the sensitive fields": a field added to CollectionResource later
-// is absent from a literal by construction, whereas a clear-list has to
-// be remembered. That is the deny-list failure mode this issue exists to
-// avoid, and it is why the shared assignments below are duplicated
-// instead of hoisted.
-func resourceRowToAPI(r ListCollectionResourcesPageGatedRow) openapi.CollectionResource {
-	if r.Restricted {
-		out := openapi.CollectionResource{
-			// collection_resources columns only — nothing from `assets`.
-			CollectionId: openapi_types.UUID(r.CollectionID.Bytes),
-			AssetId:      openapi_types.UUID(r.AssetID.Bytes),
-			SortOrder:    int(r.SortOrder),
-			Pinned:       r.Pinned,
-			AddedAt:      r.AddedAt.Time,
-			Restricted:   true,
-		}
-		if r.ExpiresAt.Valid {
-			t := r.ExpiresAt.Time
-			out.ExpiresAt = &t
-		}
-		// Absent, not "", when the owner has no resolvable name — a
-		// client must not be able to read anything off the difference
-		// between "withheld" and "empty".
-		if r.OwnerDisplayName != "" {
-			v := r.OwnerDisplayName
-			out.OwnerDisplayName = &v
-		}
-		return out
-	}
-
-	title := r.Title
-	assetType := r.AssetType
-	status := openapi.CollectionResourceStatus(r.Status)
-	preview, ladder, scrub := r.PreviewAvailable, r.LadderAvailable, r.ScrubAvailable
-	out := openapi.CollectionResource{
-		CollectionId: openapi_types.UUID(r.CollectionID.Bytes),
-		AssetId:      openapi_types.UUID(r.AssetID.Bytes),
-		SortOrder:    int(r.SortOrder),
-		Pinned:       r.Pinned,
-		AddedAt:      r.AddedAt.Time,
-		Restricted:   false,
-		Title:        &title,
-		AssetType:    &assetType,
-		Status:       &status,
-		FileHash:     r.FileHash,
-		// #595 — the media-type + blur-up fields. A member tile renders
-		// through the same CardThumb as a browse tile, and CardThumb
-		// reads the media type off the extension alone (video / 3D badge
-		// + sprite-scrub hover preview). Without these the tile is an
-		// untyped still. Encoded exactly as assets.assetRowToAPI does.
-		// They are `omitempty` pointers now only because the placeholder
-		// branch above needs them absent; on THIS branch every one is
-		// still populated unconditionally, and member_allowlist_test.go
-		// pins that.
-		FileExtension:    r.FileExtension,
-		PreviewAvailable: &preview,
-		LadderAvailable:  &ladder,
-		ScrubAvailable:   &scrub,
-		// #640 — the member tile's aspect ratio. Same pair-or-neither
-		// contract as everywhere else; the gated row already dropped a
-		// half-populated pair.
-		PixelWidth:  r.PixelWidth,
-		PixelHeight: r.PixelHeight,
-	}
-	if len(r.Thumbhash) > 0 {
-		v := base64.StdEncoding.EncodeToString(r.Thumbhash)
-		out.Thumbhash = &v
-	}
-	if r.ExpiresAt.Valid {
-		t := r.ExpiresAt.Time
-		out.ExpiresAt = &t
-	}
-	if r.AssetCreatedAt.Valid {
-		t := r.AssetCreatedAt.Time
-		out.AssetCreatedAt = &t
-	}
-	return out
-}
-
 // ---------------------------------------------------------------------------
 // Cursors
 // ---------------------------------------------------------------------------
@@ -2030,33 +1678,6 @@ func decodeCursor(s string) (time.Time, uuid.UUID, error) {
 		return time.Time{}, uuid.Nil, err
 	}
 	return t, id, nil
-}
-
-// encodeResourceCursor for collection_resources pagination
-// (sort_order ASC, added_at ASC).
-func encodeResourceCursor(sortOrder int32, addedAt time.Time) string {
-	raw := fmt.Sprintf("%d|%s", sortOrder, addedAt.UTC().Format(time.RFC3339Nano))
-	return base64.RawURLEncoding.EncodeToString([]byte(raw))
-}
-
-func decodeResourceCursor(s string) (int32, time.Time, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		return 0, time.Time{}, err
-	}
-	parts := strings.SplitN(string(raw), "|", 2)
-	if len(parts) != 2 {
-		return 0, time.Time{}, errors.New("bad cursor shape")
-	}
-	var so int32
-	if _, err := fmt.Sscanf(parts[0], "%d", &so); err != nil {
-		return 0, time.Time{}, err
-	}
-	t, err := time.Parse(time.RFC3339Nano, parts[1])
-	if err != nil {
-		return 0, time.Time{}, err
-	}
-	return so, t, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -2113,7 +1734,4 @@ var _ interface {
 	GetCollection(context.Context, openapi.GetCollectionRequestObject) (openapi.GetCollectionResponseObject, error)
 	UpdateCollection(context.Context, openapi.UpdateCollectionRequestObject) (openapi.UpdateCollectionResponseObject, error)
 	DeleteCollection(context.Context, openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error)
-	ListCollectionResources(context.Context, openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error)
-	AddCollectionResource(context.Context, openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error)
-	RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error)
 } = (*Handler)(nil)

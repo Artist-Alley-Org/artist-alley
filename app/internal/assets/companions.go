@@ -17,7 +17,9 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/preview/format3d"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // pinSubjectTypeCompanion claims the bytes for one companion row.
@@ -323,4 +325,200 @@ func companionRowToOpenAPI(r AssetCompanion) openapi.AssetCompanion {
 		SizeBytes:   r.SizeBytes,
 		CreatedAt:   r.CreatedAt.Time,
 	}
+}
+
+// ---------------------------------------------------------------------------
+// GetAssetCompanionRequirements  GET /assets/{id}/companion-requirements
+// ---------------------------------------------------------------------------
+
+// declaredCompanions is one parse of one stored model: what it says it
+// needs, and how much of that we were able to read.
+//
+// Cached under the OBJECT HASH (CacheDomainAssetDeclaredCompanions), so
+// an entry is immutable for the life of the bytes and there is no
+// invalidation path to forget. `Detail` carries a parse failure, which
+// is cached too — re-reading a container that did not parse on every
+// request buys nothing, and the answer will not change until the bytes
+// do, which they cannot.
+type declaredCompanions struct {
+	Paths   []string
+	Support format3d.CompanionSupport
+	Detail  string
+}
+
+// GetAssetCompanionRequirements reads the stored model, parses the
+// external files it declares, and subtracts the companions already
+// attached (#754).
+//
+// # Why this endpoint exists at all
+//
+// A multi-file model only renders if its siblings are registered as
+// companions, and nothing on the upload path derived that list. An
+// artist who uploaded a GLB without knowing it names
+// `Textures/planks.png` got a job that SUCCEEDED and a card and viewer
+// that came out grey — a failure that reads as a renderer bug, which is
+// exactly what #689 chased into the renderer before #750 found the real
+// cause. This names the gap instead.
+//
+// # Why it does not call ResolveCompanions
+//
+// ResolveCompanions fuses two jobs: parse the declarations, and check
+// the filesystem for them relative to the model's directory. Only the
+// first is meaningful here. An uploaded asset lives in content-addressed
+// storage under a hash — there is no sibling directory, so the second
+// half would be statting nothing. format3d.DeclaredCompanions is the
+// separated half, and it owns the extension table both callers share.
+//
+// # Why it attaches nothing
+//
+// Option 1 of #754 and deliberately only option 1: tell the artist what
+// is missing. Matching declared paths against other files in the same
+// drop (option 2) is a larger change with its own failure modes, and
+// the silent-grey-render bug is removed by naming the gap alone.
+func (h *Handler) GetAssetCompanionRequirements(
+	ctx context.Context,
+	req openapi.GetAssetCompanionRequirementsRequestObject,
+) (openapi.GetAssetCompanionRequirementsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.GetAssetCompanionRequirements401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+
+	// This answer is DERIVED FROM THE FILE'S BYTES, so it sits on the
+	// content plane and not on the metadata plane — the same gate
+	// DownloadAssetFile applies, for the same reason and with the same
+	// 404 rather than 403, so a restricted asset's existence is not
+	// confirmed. ListAssetCompanions next door is authentication-only
+	// because it reports rows a caller attached; this reports what the
+	// model itself says, which is a reading of the file.
+	caller, caps := contentCaller(ctx)
+	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id),
+		visibility.MatureFromContext(ctx))
+	if err != nil || !allowed {
+		return openapi.GetAssetCompanionRequirements404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+
+	q := New(h.Pool)
+	pgAssetID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	row, err := q.GetAsset(ctx, pgAssetID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.GetAssetCompanionRequirements404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: companion requirements: get asset: %w", err)
+	}
+
+	out := openapi.AssetCompanionRequirements{
+		AssetId:  req.Id,
+		Status:   openapi.AssetCompanionRequirementsStatusUnsupported,
+		Declared: []string{},
+		Missing:  []string{},
+		Attached: []string{},
+	}
+
+	ext := ""
+	if row.FileExtension != nil {
+		ext = *row.FileExtension
+	}
+	// No bytes and no readable extension are both "we cannot tell",
+	// which is `unsupported` — never an empty `ok`, which would claim
+	// the model needs nothing.
+	if row.FileHash == nil || *row.FileHash == "" ||
+		format3d.CompanionSupportFor(ext) == format3d.CompanionUnsupported {
+		return openapi.GetAssetCompanionRequirements200JSONResponse(out), nil
+	}
+
+	parsed, err := h.declaredCompanionsFor(ctx, *row.FileHash, ext)
+	if err != nil {
+		return nil, err
+	}
+	out.Partial = parsed.Support == format3d.CompanionFirstLevel
+	if parsed.Detail != "" {
+		out.Status = openapi.AssetCompanionRequirementsStatusUnreadable
+		detail := parsed.Detail
+		out.Detail = &detail
+		return openapi.GetAssetCompanionRequirements200JSONResponse(out), nil
+	}
+	out.Status = openapi.AssetCompanionRequirementsStatusOk
+	if len(parsed.Paths) > 0 {
+		out.Declared = append(out.Declared, parsed.Paths...)
+	}
+
+	// The subtraction. Recomputed per request rather than cached with
+	// the parse, because THIS half changes: attaching a companion is
+	// exactly the write that moves a path from `missing` to `attached`.
+	rows, err := q.ListAssetCompanions(ctx, pgAssetID)
+	if err != nil {
+		return nil, fmt.Errorf("assets: companion requirements: list: %w", err)
+	}
+	have := make(map[string]struct{}, len(rows))
+	for _, c := range rows {
+		have[c.CompanionPath] = struct{}{}
+	}
+	for _, p := range out.Declared {
+		if _, ok := have[p]; ok {
+			out.Attached = append(out.Attached, p)
+			continue
+		}
+		out.Missing = append(out.Missing, p)
+	}
+
+	return openapi.GetAssetCompanionRequirements200JSONResponse(out), nil
+}
+
+// declaredCompanionsFor reads the stored object and parses it, through
+// the hash-keyed cache.
+//
+// A parse failure is returned as a populated Detail rather than as an
+// error: it is an answer about the file ("we read these bytes and could
+// not finish"), not a fault in serving the request. A STORAGE failure
+// is a real error and propagates — the difference matters, because
+// reporting a missing blob as "this model declares nothing" is the
+// silent-success failure mode this whole endpoint exists to remove.
+func (h *Handler) declaredCompanionsFor(ctx context.Context, hash, ext string) (declaredCompanions, error) {
+	key := hash + ":" + strings.ToLower(strings.TrimPrefix(ext, "."))
+	if h.declaredCompanions != nil {
+		if v, ok := h.declaredCompanions.Get(key); ok {
+			return v, nil
+		}
+	}
+
+	body, _, err := h.Storage.Download(ctx, hash, storage.VariantOriginal)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			// The row points at bytes that are not there. Not cached:
+			// unlike a parse failure this can be repaired without the
+			// asset changing (a restore, a re-upload of the same
+			// content), so a cached "unreadable" would outlive the fix.
+			return declaredCompanions{
+				Support: format3d.CompanionSupportFor(ext),
+				Detail:  "stored object missing for this asset",
+			}, nil
+		}
+		return declaredCompanions{}, fmt.Errorf("assets: companion requirements: download: %w", err)
+	}
+	defer func() { _ = body.Close() }()
+
+	paths, support, perr := format3d.DeclaredCompanions(ext, body)
+	entry := declaredCompanions{Paths: paths, Support: support}
+	if perr != nil {
+		// Never fold a parse failure into an empty list — see the
+		// soft-fail contract in format3d/companions.go. The caller is
+		// told we could not read it, which is a different sentence from
+		// "it needs nothing".
+		entry = declaredCompanions{Support: format3d.CompanionSupportFor(ext), Detail: perr.Error()}
+		h.Logger.LogAttrs(ctx, slog.LevelInfo, "assets.companion_requirements.unreadable",
+			slog.String("hash", hash),
+			slog.String("ext", ext),
+			slog.String("err", perr.Error()))
+	}
+	if h.declaredCompanions != nil {
+		h.declaredCompanions.Add(key, entry)
+	}
+	return entry, nil
 }

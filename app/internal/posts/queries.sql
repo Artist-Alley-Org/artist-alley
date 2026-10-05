@@ -10,23 +10,78 @@
 -- a post member) used by the upload modal's "use a different image
 -- as the cover" UX. state_id is the workflow state in the 'post'
 -- domain — NULL means no workflow tracking.
+-- cover_focal_x / cover_focal_y are the crop the author framed for the
+-- browse grid's square tile (#1210), as fractions of the ORIGINAL
+-- picture. Both NULL means centred, which is what every post rendered
+-- before the columns existed; the column CHECK refuses half a pair.
+-- comments_enabled is the author's decision about whether the post
+-- takes ordinary comments (#1119 sprint 21d). Always written, never
+-- defaulted here: the handler resolves "omitted" to true itself, so the
+-- column default is only ever exercised by writes that bypass it.
 INSERT INTO posts (
     author_user_ref, title, description, visibility, cover_asset_id,
-    cover_thumbnail_asset_id, team_id, state_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    cover_thumbnail_asset_id, team_id, state_id, cover_focal_x, cover_focal_y,
+    comments_enabled
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          cover_thumbnail_asset_id, posted_at, like_count, comment_count,
-          origin_server_id, team_id, state_id, created_at, updated_at;
+          cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
+          posted_at, like_count, comment_count,
+          origin_server_id, team_id, state_id, created_at, updated_at,
+          comments_enabled;
 
 -- name: GetPost :one
+-- `ai_provenance` is DERIVED (#1167, ADR 0094) — maintained by the
+-- triggers 00060 installs, never written by a request. It is selected
+-- HERE and in no other post query on purpose: every read path that
+-- renders a post — detail, browse, by-asset, the collection lateral —
+-- goes through fetchFullPost, so one projection serves all of them, and
+-- CreatePost/UpdatePost must NOT return it. Their RETURNING clause runs
+-- before the AFTER triggers that derive it, so the value they could
+-- report is the pre-membership one: null on every create. fetchFullPost
+-- re-reads after members are inserted, which is where the truth is.
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       cover_thumbnail_asset_id, posted_at, like_count, comment_count,
-       origin_server_id, team_id, state_id, created_at, updated_at
+       cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
+       posted_at, like_count, comment_count,
+       origin_server_id, team_id, state_id, created_at, updated_at,
+       ai_provenance, comments_enabled
 FROM posts
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: UpdatePost :one
 -- COALESCE-based partial update — NULL args keep current values.
+-- The focal pair needs a CASE rather than a bare COALESCE, for the
+-- reason UpdateCollection's pairs do: COALESCE cannot express "set this
+-- back to NULL", so clearing a crop is an explicit flag. Both axes read
+-- the SAME flag, because a focal point is a point and clearing half of
+-- one is not a state the column CHECK admits.
+--
+-- #1333: AND a focal point does not outlive the picture it was chosen
+-- against. A fraction of the way across one photograph means nothing on
+-- the next one, so a cover swap that left the old pair in place framed
+-- the new picture on a point nobody picked, silently and forever. The
+-- third CASE arm below is that rule: the cover changed and the caller
+-- said nothing about framing, so the framing goes.
+--
+-- Arm ORDER is the whole correctness argument, because the arms overlap.
+--   1. the explicit clear flag wins outright;
+--   2. a SUPPLIED value wins over the swap rule. This is the case both
+--      editors actually take, since they save the new cover and its new
+--      focal point in one PATCH, and a rule that cleared on any cover
+--      change would throw that value away while still passing a
+--      single-field test;
+--   3. only then, a cover that genuinely CHANGED clears the pair.
+--      `IS DISTINCT FROM` rather than `IS NOT NULL`, so a client that
+--      round-trips the whole object and re-sends the SAME cover id is
+--      not a swap and keeps its framing;
+--   4. otherwise the stored value stands.
+-- Both axes read the same arms, so the pair can never half-clear into a
+-- posts_cover_focal_check violation.
+--
+-- comments_enabled (#1119 sprint 21d) is a plain COALESCE: the narg is
+-- a nullable boolean, so an absent field keeps the stored value and an
+-- explicit false is a real value, not an absence. The handler passes a
+-- *bool for exactly that reason; a bare bool would read false as
+-- "not sent" and the setting could never be turned off.
 UPDATE posts SET
     title                    = COALESCE(sqlc.narg('title'),                    title),
     description              = COALESCE(sqlc.narg('description'),              description),
@@ -34,11 +89,28 @@ UPDATE posts SET
     cover_asset_id           = COALESCE(sqlc.narg('cover_asset_id'),           cover_asset_id),
     cover_thumbnail_asset_id = COALESCE(sqlc.narg('cover_thumbnail_asset_id'), cover_thumbnail_asset_id),
     state_id                 = COALESCE(sqlc.narg('state_id'),                 state_id),
+    comments_enabled         = COALESCE(sqlc.narg('comments_enabled')::BOOLEAN, comments_enabled),
+    cover_focal_x            = CASE WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
+                                    WHEN sqlc.narg('cover_focal_x')::DOUBLE PRECISION IS NOT NULL
+                                         THEN sqlc.narg('cover_focal_x')::DOUBLE PRECISION
+                                    WHEN sqlc.narg('cover_asset_id')::UUID IS NOT NULL
+                                         AND sqlc.narg('cover_asset_id')::UUID IS DISTINCT FROM cover_asset_id
+                                         THEN NULL
+                                    ELSE cover_focal_x END,
+    cover_focal_y            = CASE WHEN sqlc.arg('clear_cover_focal')::BOOLEAN THEN NULL
+                                    WHEN sqlc.narg('cover_focal_y')::DOUBLE PRECISION IS NOT NULL
+                                         THEN sqlc.narg('cover_focal_y')::DOUBLE PRECISION
+                                    WHEN sqlc.narg('cover_asset_id')::UUID IS NOT NULL
+                                         AND sqlc.narg('cover_asset_id')::UUID IS DISTINCT FROM cover_asset_id
+                                         THEN NULL
+                                    ELSE cover_focal_y END,
     updated_at               = NOW()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          cover_thumbnail_asset_id, posted_at, like_count, comment_count,
-          origin_server_id, team_id, state_id, created_at, updated_at;
+          cover_thumbnail_asset_id, cover_focal_x, cover_focal_y,
+          posted_at, like_count, comment_count,
+          origin_server_id, team_id, state_id, created_at, updated_at,
+          comments_enabled;
 
 -- name: SoftDeletePost :exec
 -- deleted_by_user_ref: see the note on assets.SoftDeleteAsset. The
@@ -96,10 +168,19 @@ SELECT post_id FROM post_assets WHERE asset_id = $1;
 -- name: ListPostAssets :many
 -- Members of a post, in display order, joined onto the asset row so
 -- the API can return the full member shape in one call (no N+1).
+--
+-- `a.ai_provenance` is the MEMBER'S OWN declaration (#1243, ADR 0094),
+-- and it is not the same fact as the post's derived `ai_provenance`.
+-- The post's answers "does this contain AI?" over the whole
+-- contributor set; this one answers it about the file the reader is
+-- actually looking at, which is what the viewer labels. A mixed post —
+-- one declared member beside one undeclared — carries `generated` at
+-- the post level and must NOT paint both members with it. NULL here
+-- means UNDECLARED, never `none`.
 SELECT pa.post_id, pa.asset_id, pa.sort_order, pa.added_at,
        a.title, a.description, a.asset_type, a.owner_user_ref,
        a.status, a.file_hash, a.file_extension, a.file_size_bytes,
-       a.metadata, a.created_at AS asset_created_at,
+       a.metadata, a.ai_provenance, a.created_at AS asset_created_at,
        a.updated_at AS asset_updated_at
 FROM post_assets pa
 JOIN assets a ON a.id = pa.asset_id
@@ -122,13 +203,40 @@ ON CONFLICT (post_id, tag) DO NOTHING;
 DELETE FROM post_tags WHERE post_id = $1 AND tag = $2;
 
 -- name: ReplacePostTags :exec
--- Wipes and refills the tag set in one transaction. Called by
--- UpdatePost when the body sends a `tags` array.
+-- Make the post's tag set exactly $2. Called by UpdatePost when the body
+-- sends a `tags` array.
+--
+-- ⛔ THE TWO SUB-STATEMENTS MUST TOUCH DISJOINT ROWS, and that is the
+-- whole reason for the `<> ALL` and not a narrowing for speed.
+--
+-- This was `DELETE FROM post_tags WHERE post_id = $1` in the CTE with an
+-- unrestricted `INSERT … ON CONFLICT DO NOTHING` beside it, and it
+-- SILENTLY DROPPED EVERY TAG THAT SURVIVED THE REPLACE. Data-modifying
+-- sub-statements in a WITH clause all run against the same snapshot and
+-- cannot see one another's effects (PostgreSQL manual, 7.8.2), so the
+-- INSERT's conflict check still saw the row the CTE was deleting, skipped
+-- the insert as a duplicate, and then the delete took the row away.
+-- Re-sending a tag the post already had therefore REMOVED it.
+--
+-- Nothing shipped ever sent `tags` on a PATCH, which is why this went
+-- unseen: the `tags` property was declared, accepted, and reached only by
+-- hand-written requests that added tags rather than re-sending them. The
+-- post editor (#1119) is its first real caller.
+--
+-- Restricting each half to rows the other does not touch removes the
+-- dependency instead of relying on an ordering the engine does not
+-- promise: the CTE deletes only the tags being taken AWAY, and the INSERT
+-- adds only the ones not already there. A surviving tag keeps its row.
+--
+-- An EMPTY array clears the set, as it must: `tag <> ALL('{}')` is true
+-- for every row, and `unnest('{}')` yields none.
 WITH wipe AS (
-    DELETE FROM post_tags WHERE post_id = $1
+    DELETE FROM post_tags
+     WHERE post_id = $1
+       AND tag <> ALL($2::TEXT[])
 )
 INSERT INTO post_tags (post_id, tag)
-SELECT $1, unnest($2::TEXT[])
+SELECT $1, t FROM unnest($2::TEXT[]) AS t
 ON CONFLICT (post_id, tag) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
@@ -190,3 +298,42 @@ WHERE post_id = $1
   AND principal_type = $2
   AND principal_id   = $3
   AND permission     = $4;
+
+-- name: GetWorkflowStateIDByCode :one
+-- Resolve one workflow state's id from its stable (domain, code) key
+-- — for posts, ('post','published') and ('post','wip') (ADR 0091
+-- decision 7). UNIQUE (domain, code), so this is one index probe.
+--
+-- This package reads the row rather than caching the UUID because a
+-- cached id is silently wrong the first time an install reseeds its
+-- state machine, and "silently wrong" here means every post looks like
+-- a draft. It is asked once per create and once per cache MISS on the
+-- read path, never per row.
+SELECT id FROM workflow_states WHERE domain = $1 AND code = $2;
+
+-- name: GetPostInitialStateID :one
+-- The domain's entry-point state (`is_initial`), used for a post that
+-- is created already published. Asked by name rather than assumed to be
+-- 'published' so an install that moved its entry point is obeyed; a
+-- partial unique index guarantees at most one row per domain.
+SELECT id FROM workflow_states WHERE domain = $1 AND is_initial = TRUE LIMIT 1;
+
+-- name: GetAssetOwnerRef :one
+-- The asset's owner, for the ownership gate on GET /assets/{id}/posts
+-- (ADR 0091 decision 5). Soft-deleted assets answer no rows: a deleted
+-- file has no "where does it appear" to report.
+SELECT owner_user_ref FROM assets WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: CountLivePostsForAsset :one
+-- How many live posts contain this asset, with NO read rule applied.
+--
+-- The raw total is half of decision 5's disclosure: the handler
+-- subtracts the posts the caller may actually read and reports the
+-- remainder as `withheld_count`. It is deliberately a COUNT and not a
+-- list — see the operation's description for why an id, a title or a
+-- cursor over the same set would undo the whole point.
+SELECT COUNT(*)::BIGINT AS value
+FROM posts p
+WHERE p.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM post_assets pa
+                WHERE pa.post_id = p.id AND pa.asset_id = $1);

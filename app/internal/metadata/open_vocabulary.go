@@ -156,16 +156,29 @@ type OpenVocabularyResult struct {
 // created a moment earlier. That is #737's known gap and out of scope
 // here; closing it means moving the editor onto the same lock.
 //
+// # Who may create
+//
+// canExtend is the caller's `fields.vocabulary.extend` capability
+// (ADR 0092 §2), and it is passed in rather than read here because
+// this function runs inside a transaction and knows nothing about the
+// request. False turns the pass into pure RESOLUTION: existing terms,
+// aliases and merge tombstones all still match — matching is not
+// extension — and only a term that would have been NEW is refused,
+// with ExtensionForbidden set so the 422 can say which of the two
+// reasons applied.
+//
 // # Errors
 //
 // Returns a wrapped *slugRejection when a term cannot be created —
-// today, only when its slug collides with an ARCHIVED term. Callers
-// use errors.As to turn it into the same 422 a closed field produces.
+// when its slug collides with an ARCHIVED term, or when the caller may
+// not extend. Callers use errors.As to turn it into the same 422 a
+// closed field produces.
 func EnsureOpenVocabularyTerms(
 	ctx context.Context,
 	q *Queries,
 	fieldID pgtype.UUID,
 	incoming []string,
+	canExtend bool,
 ) (OpenVocabularyResult, error) {
 	var out OpenVocabularyResult
 
@@ -191,7 +204,14 @@ func EnsureOpenVocabularyTerms(
 	// mint on it. When it reads false the pass degrades to pure
 	// resolution: every miss comes back as an unknown-slug rejection,
 	// which is the answer checkVocabulary would have given.
-	mint := openVocabularyApplies(locked.Type, locked.OpenVocabulary)
+	mint := openVocabularyApplies(locked.Type, locked.OpenVocabulary) && canExtend
+
+	// Told apart so the refusal can be. Both produce "this term does
+	// not exist and will not be created", and they are different
+	// answers: one is a property of the FIELD (it is closed, or was
+	// closed between the caller's cached read and this row lock), the
+	// other is a property of the CALLER.
+	openHere := openVocabularyApplies(locked.Type, locked.OpenVocabulary)
 
 	seen := make(map[string]struct{}, len(incoming))
 	for _, raw := range incoming {
@@ -204,6 +224,9 @@ func EnsureOpenVocabularyTerms(
 		}
 		slug, matched, rej := idx.resolveOrMint(term, mint)
 		if rej != nil {
+			if openHere && !canExtend && rej.unknown() {
+				rej.ExtensionForbidden = true
+			}
 			return out, fmt.Errorf("metadata: %w", rej)
 		}
 		if matched {
@@ -277,12 +300,31 @@ func openOrCheckVocabulary(
 	field FieldDefinition,
 	incoming []string,
 	held []string,
+	canExtend bool,
 ) (vocabularyWrite, *slugRejection, error) {
 	out := vocabularyWrite{Slugs: incoming, Options: field.Options}
-	if !openVocabularyApplies(field.Type, field.OpenVocabulary) || len(incoming) == 0 {
-		return out, checkVocabulary(field.Type, field.Options, incoming, held), nil
+	if len(incoming) == 0 {
+		return out, nil, nil
 	}
-	res, err := EnsureOpenVocabularyTerms(ctx, qTx, field.ID, incoming)
+	if !openVocabularyApplies(field.Type, field.OpenVocabulary) {
+		// A CLOSED vocabulary still redirects. Aliases and merge
+		// tombstones are curation, not extension: an operator who
+		// aliased "uk" onto `gb` on a `country` select meant it to work
+		// there, and a `country` value that survived a merge has to
+		// reach its successor exactly as a keyword does. Restricting
+		// either to open fields would make the normalisation tooling
+		// useless on precisely the fields most likely to be curated.
+		//
+		// No row lock: nothing is written to the options document on
+		// this branch, so the cached copy is enough. Anything the index
+		// cannot canonicalise passes through untouched and
+		// checkVocabulary gives its own answer — which is what keeps
+		// the grandfathering rule (a record may re-save a retired term
+		// it already holds) working exactly as before.
+		out.Slugs = canonicaliseVocabulary(field.Options, incoming)
+		return out, checkVocabulary(field.Type, field.Options, out.Slugs, held), nil
+	}
+	res, err := EnsureOpenVocabularyTerms(ctx, qTx, field.ID, incoming, canExtend)
 	if err != nil {
 		var mintRej *slugRejection
 		if errors.As(err, &mintRej) {
@@ -333,12 +375,51 @@ type vocabularyIndex struct {
 	// taken maps a normalised slug to the option holding it, INCLUDING
 	// archived ones, so a mint can detect a collision it must not make.
 	taken map[string]FieldOption
+	// redirects is the CURATION subset of matchable: the keys that
+	// exist because an operator aliased a term or merged one away, and
+	// none of the keys a vocabulary has by simply having terms.
+	//
+	// Separate because the closed-field write path applies exactly this
+	// subset (see canonicaliseVocabulary). Curation must work on a
+	// `select` field — that is where curation happens — but the
+	// membership rule for a closed vocabulary is otherwise unchanged by
+	// this sprint, and folding matchable's case-insensitive slug and
+	// label keys into it would quietly widen what a closed field
+	// accepts, which is a different decision that nobody made.
+	redirects map[string]string
 }
 
+// indexVocabulary flattens a field's option tree into the lookups a
+// write needs.
+//
+// # Three passes, and the order is the precedence rule
+//
+// Every match key — slug, label, alias, tombstone — lives in ONE map,
+// and idx.add is first-writer-wins. So the pass order IS the precedence
+// order, and it is:
+//
+//  1. Slugs and labels of live terms. A term that exists always wins.
+//  2. Aliases (ADR 0092 §4). An alias may only fill a key nothing real
+//     occupies — so adding an alias can never shadow, hijack or
+//     silently redirect an existing term, whatever an operator types.
+//     NormalizeOptionsDoc refuses such a collision on write; this makes
+//     the runtime behaviour safe even for a document that predates that
+//     check.
+//  3. Merge tombstones. An ARCHIVED term carrying ReplacedBy is not a
+//     retirement, it is a forwarding address: a value naming it
+//     resolves to its successor rather than being refused. That is what
+//     lets a value written before a merge — by a queued client, or by a
+//     federated peer that has not seen the merge — still land on
+//     something real instead of 422ing forever.
+//
+// A plain archived term (no ReplacedBy) is absent from every pass: it
+// is a hard retire, and typing its label must not resurrect it. Its
+// slug is still in `taken`, so a mint cannot collide with it.
 func indexVocabulary(values []FieldOption) *vocabularyIndex {
 	idx := &vocabularyIndex{
 		matchable: make(map[string]string, len(values)*2),
 		taken:     make(map[string]FieldOption, len(values)),
+		redirects: map[string]string{},
 	}
 	walkOptions(values, nil, func(o FieldOption, _ []string) {
 		slug := strings.TrimSpace(o.Value)
@@ -361,7 +442,72 @@ func indexVocabulary(values []FieldOption) *vocabularyIndex {
 			idx.add(label, slug)
 		}
 	})
+
+	walkOptions(values, nil, func(o FieldOption, _ []string) {
+		slug := strings.TrimSpace(o.Value)
+		if slug == "" || o.Status == OptionArchived {
+			return
+		}
+		for _, a := range o.Aliases {
+			idx.addRedirect(a, slug)
+		}
+	})
+
+	walkOptions(values, nil, func(o FieldOption, _ []string) {
+		slug := strings.TrimSpace(o.Value)
+		if slug == "" || o.Status != OptionArchived || o.ReplacedBy == "" {
+			return
+		}
+		target := idx.resolveTombstone(o, 0)
+		if target == "" {
+			// A chain that loops, runs too deep, or ends somewhere that
+			// is not a live term. Treated as a plain archive rather than
+			// followed — a forwarding address must forward SOMEWHERE,
+			// and refusing the write is a better answer than storing a
+			// slug no picker offers.
+			return
+		}
+		idx.addRedirect(strings.ToLower(slug), target)
+		if label := strings.ToLower(strings.TrimSpace(o.Label)); label != "" {
+			idx.addRedirect(label, target)
+		}
+		for _, a := range o.Aliases {
+			idx.addRedirect(a, target)
+		}
+	})
 	return idx
+}
+
+// tombstoneChainMax bounds how far a forwarding address is followed.
+// Merges compose — `uk` → `gb` → `united-kingdom` is two ordinary
+// merges — but a document can also carry a cycle (nothing stops an
+// operator writing replaced_by both ways through the options editor),
+// and an unbounded walk on one would hang a value write.
+const tombstoneChainMax = 8
+
+// resolveTombstone follows an archived term's ReplacedBy chain to the
+// first LIVE term, or returns "" when the chain does not reach one.
+//
+// Resolving to a live term rather than to the immediate successor is
+// the point: after `uk` → `gb` and later `gb` → `united-kingdom`, a
+// value naming `uk` must reach `united-kingdom`. Stopping at `gb` would
+// store a tombstone as if it were a value, which is exactly the state
+// the merge existed to remove.
+func (idx *vocabularyIndex) resolveTombstone(o FieldOption, depth int) string {
+	if depth >= tombstoneChainMax {
+		return ""
+	}
+	next, ok := idx.taken[strings.ToLower(strings.TrimSpace(o.ReplacedBy))]
+	if !ok {
+		return ""
+	}
+	if next.Status != OptionArchived {
+		return next.Value
+	}
+	if next.ReplacedBy == "" {
+		return ""
+	}
+	return idx.resolveTombstone(next, depth+1)
 }
 
 // add records a match key, first writer wins. First-wins mirrors
@@ -376,6 +522,23 @@ func (idx *vocabularyIndex) add(key, slug string) {
 	if _, exists := idx.matchable[key]; !exists {
 		idx.matchable[key] = slug
 	}
+}
+
+// addRedirect records a key that exists because of curation — an alias
+// or a merge tombstone — in both maps. Same first-wins rule, and the
+// matchable write is what makes an alias usable by the minting path
+// (a term that resolves is a term that is not created).
+func (idx *vocabularyIndex) addRedirect(key, slug string) {
+	if key == "" {
+		return
+	}
+	if _, exists := idx.matchable[key]; exists {
+		// Something real already owns this key. An alias may not take
+		// it — see indexVocabulary's precedence note.
+		return
+	}
+	idx.matchable[key] = slug
+	idx.redirects[key] = slug
 }
 
 // resolveOrMint returns the canonical slug for one term, whether it
@@ -418,13 +581,21 @@ func (idx *vocabularyIndex) resolveOrMint(term string, mint bool) (slug string, 
 		// it is — nothing in the field matches it and nothing can.
 		return "", false, &slugRejection{Slug: term}
 	}
-	if existing, clash := idx.taken[minted]; clash {
-		if existing.Status == OptionArchived {
-			return "", false, &slugRejection{Slug: existing.Value, Status: OptionArchived}
-		}
+	// The slugified form goes through the SAME key space the typed form
+	// did, not through `taken`. That is what makes "U.K." reach `gb` via
+	// the alias `uk`, and "U.K." reach `united-kingdom` via the `uk`
+	// tombstone — asking `taken` here would see only the raw options and
+	// refuse both.
+	if canonical, ok := idx.matchable[minted]; ok {
 		// Remember this spelling so a third one short-circuits at (1).
-		idx.add(key, existing.Value)
-		return existing.Value, true, nil
+		idx.add(key, canonical)
+		return canonical, true, nil
+	}
+	if existing, clash := idx.taken[minted]; clash {
+		// Reachable only for an ARCHIVED term with no usable forwarding
+		// address — everything else is in matchable and was answered
+		// above. A hard-retired term is refused rather than revived.
+		return "", false, &slugRejection{Slug: existing.Value, Status: OptionArchived}
 	}
 	if !mint {
 		return "", false, &slugRejection{Slug: term}
@@ -433,4 +604,52 @@ func (idx *vocabularyIndex) resolveOrMint(term string, mint bool) (slug string, 
 	idx.add(minted, minted)
 	idx.add(key, minted)
 	return minted, false, nil
+}
+
+// canonicaliseVocabulary maps each incoming slug through the field's
+// alias and tombstone redirects, deduplicating the result while keeping
+// the order the terms arrived in.
+//
+// Deliberately NOT a gate. A slug the index cannot resolve comes back
+// unchanged rather than being refused, because [checkVocabulary] is the
+// membership rule and it knows things this does not — chiefly which
+// retired terms the record already holds, and so may keep. Refusing
+// here would silently take grandfathering away from every closed field.
+//
+// Reads the document the caller already has. On the closed path nothing
+// writes to that document, so there is nothing to lock and nothing to
+// race with.
+func canonicaliseVocabulary(options []byte, incoming []string) []string {
+	values, _, err := decodeOptionValues(options)
+	if err != nil || len(values) == 0 {
+		return incoming
+	}
+	idx := indexVocabulary(values)
+
+	out := make([]string, 0, len(incoming))
+	seen := make(map[string]struct{}, len(incoming))
+	changed := false
+	for _, raw := range incoming {
+		slug := strings.TrimSpace(raw)
+		if canonical, ok := idx.redirects[strings.ToLower(slug)]; ok && canonical != slug {
+			slug = canonical
+			changed = true
+		}
+		if _, dup := seen[slug]; dup {
+			// Two incoming terms landed on one — an alias beside its
+			// target, or both sides of a merge. One value, once.
+			changed = true
+			continue
+		}
+		seen[slug] = struct{}{}
+		out = append(out, slug)
+	}
+	if !changed {
+		// Return the caller's slice untouched when nothing moved, so a
+		// pointer comparison in a test means what it looks like and no
+		// caller pays for an allocation on the overwhelmingly common
+		// path.
+		return incoming
+	}
+	return out
 }

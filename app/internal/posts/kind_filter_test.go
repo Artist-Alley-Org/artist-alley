@@ -494,7 +494,7 @@ func TestKindFilter_ComposesWithTagAndTeam(t *testing.T) {
 		&auth.Identity{UserRef: kfAuthor, AuthMethod: "session"})
 	limit := 200
 	kind := "image"
-	tag := "kf-tag"
+	tag := []string{"kf-tag"} // #1251 slice 2: `?tag=` is repeatable; the value is unchanged
 	teamID := team
 	vis := openapi.ListPostsParamsVisibility("public")
 	resp, err := h.ListPosts(ctx, openapi.ListPostsRequestObject{Params: openapi.ListPostsParams{

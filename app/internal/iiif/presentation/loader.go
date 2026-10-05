@@ -225,10 +225,41 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 	if err != nil {
 		return nil, err
 	}
+	// THE MEMBER SET COMES THROUGH THE COLLECTION'S POSTS (#1161, ADR
+	// 0091). It used to come from `collection_resources` — assets pinned
+	// into the collection directly — and ADR 0091 retired the endpoints
+	// that put them there, so on any collection made from now on that
+	// table is empty and this manifest would list nothing at all.
+	//
+	// A collection contains posts; a post contains assets. So a
+	// collection's manifest is the assets of its posts, which is the
+	// same sentence the old query meant, said in the model that holds.
+	// Legacy `collection_resources` rows are NOT unioned back in: ADR
+	// 0091 decision 4 drops those memberships rather than converting
+	// them, and a manifest that quietly kept serving them would be the
+	// one surface still asserting the old model.
+	//
+	// ⚠️ TWO read rules, and both are required. The ASSET predicate is
+	// the one this function always spliced. The POST rule is new here
+	// and is what stops the manifest widening: without it, a collection
+	// visible to a caller would expose the member assets of posts inside
+	// it that the caller may not read — a list path wider than the item
+	// path, which is the invariant epic #665 names and the same defect
+	// #873 was. It is the SHARED expression (visibility EntityPost), not
+	// a restatement, so it moves when the rule moves.
+	postPred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
+		visibility.WithPostCaps(visibility.ResolvePostCaps(caps)))
+	if err != nil {
+		return nil, err
+	}
 	// Three placeholders bound ($1 collection id, $2 limit, $3 caller
-	// ref) before the fragment renders. LIMIT binds first even though it
+	// ref) before the fragments render. LIMIT binds first even though it
 	// reads last — the invariant is an index bound, not textual order.
+	// The post fragment binds above the asset one, and its args follow
+	// in the same order (ADR 0063's discipline: whoever binds last
+	// counts what is already there).
 	frag, predArgs := pred.ToSQL("a", 3)
+	postFrag, postArgs := postPred.ToSQL("p", 3+len(predArgs))
 	rows, err := l.Pool.Query(ctx, `
 		SELECT a.id, a.title, a.sensitivity, a.status, a.processing_status,
 		       a.owner_user_ref, a.origin_server_id, a.file_extension,
@@ -237,18 +268,26 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 		            SELECT 1 FROM team_memberships tm
 		             WHERE tm.team_id = a.team_id AND tm.user_ref = $3::BIGINT)) AS is_team_member,
 		       a.team_id
-		  FROM collection_resources cr
-		  JOIN assets a ON a.id = cr.asset_id
-		 WHERE cr.collection_id = $1
-		   AND cr.pinned = TRUE
-		   AND (cr.expires_at IS NULL OR cr.expires_at > NOW())`+frag+`
-		 ORDER BY cr.sort_order ASC, cr.added_at ASC
+		  FROM collection_posts cp
+		  JOIN posts p ON p.id = cp.post_id
+		  JOIN post_assets pa ON pa.post_id = p.id
+		  JOIN assets a ON a.id = pa.asset_id
+		 WHERE cp.collection_id = $1
+		   AND cp.pinned = TRUE
+		   AND (cp.expires_at IS NULL OR cp.expires_at > NOW())`+postFrag+frag+`
+		 ORDER BY cp.sort_order ASC, cp.added_at ASC, pa.sort_order ASC
 		 LIMIT $2`,
-		append([]any{collectionID, limit, caller.UserRef}, predArgs...)...)
+		append(append([]any{collectionID, limit, caller.UserRef}, predArgs...), postArgs...)...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	// One asset can be a member of several posts in the same collection,
+	// so the join can repeat it. Deduped HERE rather than with a
+	// DISTINCT: the manifest's order is the curator's (collection sort,
+	// then the post's own member order), and DISTINCT ON would have had
+	// to lead with `a.id`, which is not an order anybody chose.
+	seen := make(map[uuid.UUID]struct{}, limit)
 	out := make([]EntityRef, 0, limit)
 	for rows.Next() {
 		var (
@@ -266,6 +305,10 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 			&origin, &ext, &ref.CreatedAt, &ref.UpdatedAt, &isTeam, &teamID); err != nil {
 			return nil, err
 		}
+		if _, dup := seen[ref.ID]; dup {
+			continue
+		}
+		seen[ref.ID] = struct{}{}
 		ref.Kind = EntityAsset
 		ref.Sensitivity = Sensitivity(sens)
 		ref.OwnerUserRef = owner

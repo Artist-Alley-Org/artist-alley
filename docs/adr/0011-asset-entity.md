@@ -263,3 +263,35 @@ legacy data, it lands as a separate Phase later under
 - Whether `owner_user_ref` should be UUID. The user table itself
   still uses `ref BIGINT`; porting that is its own large phase.
   Keep BIGINT for now, swap when users move to UUIDs.
+
+## Amendment, 2026-09-22 (#1319): live asset identity is `(owner_user_ref, file_hash)`, and no setting relaxes it
+
+The model above describes an asset's fields. It does not state what makes two live asset rows
+different rows, and the answer is enforced in the schema rather than in any handler.
+
+`idx_assets_owner_hash_unique` is a partial unique index on `(owner_user_ref, file_hash)`, over
+rows `WHERE file_hash IS NOT NULL AND deleted_at IS NULL` (`app/schema.sql`; baseline
+`00001_baseline_v0_1.sql`). `file_hash` is the hash of the PRODUCED file that was uploaded. So one
+owner may hold a given set of bytes exactly once, and two owners may each hold them once: that
+second case is the content-addressed store working, two asset rows over one storage object, and it
+is deliberately kept in the seed corpus as the dedup fixture.
+
+**No `DedupBehavior` value relaxes this, and the configuration doc used to say otherwise.** The
+settings choose the RESPONSE SHAPE, never whether a second row appears:
+
+- `warn` (default): the pre-check returns the EXISTING asset with a duplicate warning.
+- `block`: 409, with the existing asset id so the UI can navigate.
+- `allow`, or `DedupScope: off`: the pre-check is SKIPPED, the INSERT then raises SQLSTATE 23505,
+  and the race-loser branch re-fetches and returns the same existing asset the pre-check would
+  have (`app/internal/assets/handler.go`). The old comment claimed `warn` would "create the new
+  asset row" and that with `allow` the "upload always succeeds without warnings". Neither was
+  true, and the difference matters to anything reasoning about identity from the configuration
+  rather than from the index.
+
+The consequence that bites outside the upload path is the seed catalogue's. `SeedInsertAsset` ends
+in a bare `ON CONFLICT DO NOTHING`, which catches this index as well as the id primary key, so a
+catalogue holding two records under one `(owner, produced bytes)` seeds ONE row: the loser gets no
+id, no declaration, no size and no field values, and any post naming it loses that member without
+a word. A catalogue must therefore not contain such a pair; the seed verifier fails exactly that
+case and names the survivor, and the corpus retires the loser by document (ADR 0097's 2026-09-22
+amendment, ADR 0098's, and `seed/scripts/asset_collapse.py`).

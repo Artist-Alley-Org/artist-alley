@@ -35,7 +35,7 @@ func TestPreviewLadderReader_FollowsStoredConfig(t *testing.T) {
 	}
 	ctx := context.Background()
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	store := sysconfig.NewStore(pool)
 
@@ -99,7 +99,7 @@ func TestPreviewLadderReader_FallsBackToDefaultWhenUnset(t *testing.T) {
 	}
 	ctx := context.Background()
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	if _, err := pool.Exec(ctx,
 		`DELETE FROM system_config WHERE key = 'previews'`); err != nil {

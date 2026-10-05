@@ -20,7 +20,9 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter, display_condition
 FROM field_definition
 WHERE (
         CASE WHEN sqlc.narg('status')::TEXT IS NULL
@@ -34,15 +36,35 @@ ORDER BY display_group, display_order, code;
 -- name: ListFieldDefinitionsForAssetType :many
 -- Like ListFieldDefinitions but only fields whose applies_to is
 -- empty (applies to all) OR contains the given asset_type ref.
+--
+-- STATUS SEMANTICS ARE THE SAME ONES ListFieldDefinitions CARRIES
+-- (#528, #1389). This query pinned `status = 'active'` and had no
+-- status parameter at all, which made "which fields are live" answer
+-- differently depending on whether an unrelated filter was present —
+-- and left the asset edit surface unable to ask for the definitions a
+-- record may legitimately still hold values on. Deprecated definitions
+-- are not tombstones; archived ones are.
+--
+-- The active-only narrowing did not disappear, it MOVED to the caller
+-- that owns it. A composer offering fields for a NEW value passes
+-- status=active, which the upload form already did; an editor passes
+-- no status and gets active + deprecated.
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, read_capability, write_capability,
        display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter, display_condition
 FROM field_definition
-WHERE status = 'active'
+WHERE (
+        CASE WHEN sqlc.narg('status')::TEXT IS NULL
+             THEN status <> 'archived'
+             ELSE status = sqlc.narg('status')::TEXT
+        END
+      )
   AND subject_kind = 'asset'
   AND (cardinality(applies_to) = 0 OR sqlc.arg('rt')::BIGINT = ANY(applies_to))
 ORDER BY display_group, display_order, code;
@@ -54,7 +76,9 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter, display_condition
 FROM field_definition WHERE id = $1;
 
 -- name: GetFieldDefinitionByCode :one
@@ -64,7 +88,9 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column, show_on_card
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter, display_condition
 FROM field_definition WHERE code = $1;
 
 -- name: CreateFieldDefinition :one
@@ -81,7 +107,9 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card;
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab,
+          read_only, regexp_filter, display_condition;
 
 -- name: UpdateFieldDefinition :one
 -- COALESCE pattern: NULL args keep current value. `applies_to` is a
@@ -101,6 +129,39 @@ UPDATE field_definition SET
     display_group             = COALESCE(sqlc.narg('display_group'),             display_group),
     open_vocabulary           = COALESCE(sqlc.narg('open_vocabulary'),           open_vocabulary),
     show_on_card              = COALESCE(sqlc.narg('show_on_card'),              show_on_card),
+    show_in_advanced_search   = COALESCE(sqlc.narg('show_in_advanced_search'),   show_in_advanced_search),
+    show_on_upload            = COALESCE(sqlc.narg('show_on_upload'),            show_on_upload),
+    -- `edit_tab` needs a CLEAR path for the same reason `default_value`
+    -- does, and it is the only participation flag that does: the other
+    -- two are booleans, where "off" is a value COALESCE can carry, while
+    -- "this field belongs to no tab" is NULL — indistinguishable from
+    -- "leave it alone" everywhere else in this statement. The explicit
+    -- boolean makes un-assigning a tab a deliberate act rather than an
+    -- ambiguity in the absence of a value.
+    edit_tab                  = CASE WHEN sqlc.arg('clear_edit_tab')::BOOLEAN THEN NULL
+                                     ELSE COALESCE(sqlc.narg('edit_tab'), edit_tab) END,
+    read_only                 = COALESCE(sqlc.narg('read_only'),                 read_only),
+    -- `regexp_filter` is the third column needing a CLEAR path, and the
+    -- only one of the three that is a PATTERN rather than a label. NULL
+    -- is the single canonical "no constraint" (the CHECK refuses ''),
+    -- and NULL is also what "leave it alone" looks like to COALESCE —
+    -- so removal has to be said out loud, exactly as `edit_tab` and
+    -- `default_value` say it. The handler refuses the two together.
+    regexp_filter             = CASE WHEN sqlc.arg('clear_regexp_filter')::BOOLEAN THEN NULL
+                                     ELSE COALESCE(sqlc.narg('regexp_filter'), regexp_filter) END,
+    -- `display_condition` is the FOURTH column needing a CLEAR path, after
+    -- `default_value`, `edit_tab` and `regexp_filter`, and for the identical
+    -- reason: NULL is "this field is always offered" AND "leave it alone",
+    -- so removal has to be said out loud. Migration 00065's CHECK refuses
+    -- the empty array, so there is no second spelling of unset to fall back
+    -- on and no way to express removal by sending a value.
+    --
+    -- ⚠️ The condition ARRAY IS REPLACED WHOLE and never merged. A
+    -- condition is one predicate, not a bag of independent settings, and
+    -- there is deliberately no way to express "add a term": an operator
+    -- editing a condition is editing a sentence.
+    display_condition         = CASE WHEN sqlc.arg('clear_display_condition')::BOOLEAN THEN NULL
+                                     ELSE COALESCE(sqlc.narg('display_condition'), display_condition) END,
     status                    = COALESCE(sqlc.narg('status'),                    status),
     deprecated_replacement_id = COALESCE(sqlc.narg('deprecated_replacement_id'), deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
@@ -119,7 +180,9 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card;
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab,
+          read_only, regexp_filter, display_condition;
 
 -- name: ArchiveFieldDefinition :exec
 -- Soft-archive — keeps the row and any historic values so audit
@@ -145,7 +208,9 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column, show_on_card;
+          open_vocabulary, mirrors_column, show_on_card,
+          show_in_advanced_search, show_on_upload, edit_tab,
+          read_only, regexp_filter, display_condition;
 
 -- name: LockFieldDefinitionVocabulary :one
 -- Reads the live options document under a ROW LOCK, for the
@@ -288,6 +353,98 @@ RETURNING asset_id, field_id, value_text, value_num, value_date,
 
 -- name: DeleteAssetFieldValue :exec
 DELETE FROM asset_field_value WHERE asset_id = $1 AND field_id = $2;
+
+-- ---------------------------------------------------------------------------
+-- GUARDED field-value mutation (#1119) — the precondition and the
+-- mutation are ONE STATEMENT.
+--
+-- Every handler here runs BeginTx with EMPTY options, so the isolation
+-- level is READ COMMITTED and a plain SELECT takes no lock. A
+-- handler-side "read the row, compare set_at, then run the
+-- unconditional upsert" would therefore be two statements with a
+-- window between them that a competing writer fits through entirely,
+-- and it would read as correct in every single-threaded test. It is not
+-- correct, and it is the path of least resistance, so it is written
+-- down here as the thing these queries exist instead of.
+--
+-- The guard is the WHERE clause. At READ COMMITTED an UPDATE or DELETE
+-- that meets a row another transaction is currently writing BLOCKS,
+-- and then re-evaluates its own WHERE against the version that
+-- transaction committed (EvalPlanQual). So a second contender guarding
+-- on the same `set_at` cannot match after the first one lands: its
+-- predicate is re-checked against the new row, `set_at` has advanced,
+-- and it affects zero rows. The zero-row result IS the conflict, which
+-- is why every one of these is `:one` — sqlc surfaces it as
+-- pgx.ErrNoRows, where `:exec` surfaced nothing at all.
+--
+-- The token is the value row's OWN set_at, never the subject's
+-- updated_at: two people editing two different fields of one asset are
+-- not in conflict. Both upserts already write set_at = NOW() on INSERT
+-- and on UPDATE, so no migration is needed to make the token advance.
+-- ---------------------------------------------------------------------------
+
+-- name: UpdateAssetFieldValueIfUnchanged :one
+-- Guarded Set against an EXISTING row. Zero rows means either the row
+-- is gone or somebody else wrote it; the handler reads the current
+-- state afterwards to say which, and stores nothing either way.
+--
+-- Deliberately an UPDATE and not an upsert: `if_unchanged_since` on a
+-- row that does not exist is a 409, not an insert. A timestamp is a
+-- claim that a particular version is still there, and resurrecting a
+-- value somebody cleared would be the write that was refused wearing a
+-- disguise.
+UPDATE asset_field_value SET
+    value_text      = sqlc.narg('value_text'),
+    value_num       = sqlc.narg('value_num'),
+    value_date      = sqlc.narg('value_date'),
+    value_options   = sqlc.narg('value_options'),
+    value_ref       = sqlc.narg('value_ref'),
+    set_by          = sqlc.arg('set_by'),
+    set_at          = NOW(),
+    set_by_user_ref = sqlc.narg('set_by_user_ref')
+WHERE asset_id = sqlc.arg('asset_id')
+  AND field_id = sqlc.arg('field_id')
+  AND set_at   = sqlc.arg('if_unchanged_since')
+RETURNING asset_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref;
+
+-- name: InsertAssetFieldValueWhenAbsent :one
+-- (Named apart from the defaults path's InsertAssetFieldValueIfAbsent,
+-- which is the same ON CONFLICT DO NOTHING primitive with `set_by`
+-- hard-wired to 'default' and no returned row.)
+-- Guarded first write. The unique index (asset_id, field_id) IS the
+-- precondition, so no read participates at all: a competing inserter
+-- waits on the in-progress tuple and then takes DO NOTHING, and
+-- exactly one row survives two overlapping attempts.
+INSERT INTO asset_field_value (
+    asset_id, field_id,
+    value_text, value_num, value_date, value_options, value_ref,
+    set_by, set_at, set_by_user_ref
+) VALUES (
+    sqlc.arg('asset_id'), sqlc.arg('field_id'),
+    sqlc.narg('value_text'),
+    sqlc.narg('value_num'),
+    sqlc.narg('value_date'),
+    sqlc.narg('value_options'),
+    sqlc.narg('value_ref'),
+    sqlc.arg('set_by'),
+    NOW(),
+    sqlc.narg('set_by_user_ref')
+)
+ON CONFLICT (asset_id, field_id) DO NOTHING
+RETURNING asset_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref;
+
+-- name: DeleteAssetFieldValueIfUnchanged :one
+-- Guarded removal. RETURNING carries the row that was deleted, so the
+-- history entry is written from what was actually removed rather than
+-- from a snapshot taken before the statement ran.
+DELETE FROM asset_field_value
+WHERE asset_id = sqlc.arg('asset_id')
+  AND field_id = sqlc.arg('field_id')
+  AND set_at   = sqlc.arg('if_unchanged_since')
+RETURNING asset_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref;
 
 -- ---------------------------------------------------------------------------
 -- MIRRORED fields — a definition that declares `mirrors_column` is a VIEW
@@ -458,6 +615,54 @@ RETURNING collection_id, field_id, value_text, value_num, value_date,
 -- name: DeleteCollectionFieldValue :exec
 DELETE FROM collection_field_value
 WHERE collection_id = $1 AND field_id = $2;
+
+-- The collection twins of the three guarded asset statements. See
+-- UpdateAssetFieldValueIfUnchanged for why the guard is the WHERE
+-- clause rather than a handler-side read, and why each is `:one`.
+
+-- name: UpdateCollectionFieldValueIfUnchanged :one
+UPDATE collection_field_value SET
+    value_text      = sqlc.narg('value_text'),
+    value_num       = sqlc.narg('value_num'),
+    value_date      = sqlc.narg('value_date'),
+    value_options   = sqlc.narg('value_options'),
+    value_ref       = sqlc.narg('value_ref'),
+    set_by          = sqlc.arg('set_by'),
+    set_at          = NOW(),
+    set_by_user_ref = sqlc.narg('set_by_user_ref')
+WHERE collection_id = sqlc.arg('collection_id')
+  AND field_id      = sqlc.arg('field_id')
+  AND set_at        = sqlc.arg('if_unchanged_since')
+RETURNING collection_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref;
+
+-- name: InsertCollectionFieldValueWhenAbsent :one
+INSERT INTO collection_field_value (
+    collection_id, field_id,
+    value_text, value_num, value_date, value_options, value_ref,
+    set_by, set_at, set_by_user_ref
+) VALUES (
+    sqlc.arg('collection_id'), sqlc.arg('field_id'),
+    sqlc.narg('value_text'),
+    sqlc.narg('value_num'),
+    sqlc.narg('value_date'),
+    sqlc.narg('value_options'),
+    sqlc.narg('value_ref'),
+    sqlc.arg('set_by'),
+    NOW(),
+    sqlc.narg('set_by_user_ref')
+)
+ON CONFLICT (collection_id, field_id) DO NOTHING
+RETURNING collection_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref;
+
+-- name: DeleteCollectionFieldValueIfUnchanged :one
+DELETE FROM collection_field_value
+WHERE collection_id = sqlc.arg('collection_id')
+  AND field_id      = sqlc.arg('field_id')
+  AND set_at        = sqlc.arg('if_unchanged_since')
+RETURNING collection_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref;
 
 -- ---------------------------------------------------------------------------
 -- collection_field_value_history — append-only audit (Phase 1.9.B).
@@ -667,3 +872,539 @@ SELECT a.id AS asset_id,
    AND f.status <> 'archived'
    AND (cardinality(f.applies_to) = 0 OR a.asset_type = ANY(f.applies_to))
  ORDER BY a.id, f.display_group, f.display_order, f.code;
+
+-- ---------------------------------------------------------------------------
+-- Vocabulary curation — merge (ADR 0092 §4, #789)
+-- ---------------------------------------------------------------------------
+
+-- name: RewriteAssetValuesForMergedOption :execrows
+-- Points every asset value naming @source at @target, and writes the
+-- change into the per-value history in the same statement.
+--
+-- ## Why one statement rather than a loop in Go
+--
+-- A merge on a real vocabulary touches thousands of rows. Reading them
+-- into Go, rewriting each and issuing an UPDATE apiece is thousands of
+-- round trips inside one transaction, holding locks for the duration —
+-- and the loop would still have to reimplement the array rewrite the
+-- expression below does once.
+--
+-- ## Why the history row is not optional
+--
+-- A merge is the ONE vocabulary operation that edits records whose
+-- owners did not touch them. Skipping the history entry would leave
+-- `asset_field_value_history` describing a value the asset no longer
+-- holds, and the audit event for the merge itself cannot fill that gap:
+-- it says a merge happened, not what any particular asset now says. So
+-- the same INSERT the ordinary write path performs runs here, sourced
+-- from the CTE's before-and-after — which is also what makes :execrows
+-- a truthful count, since one history row is inserted per value
+-- rewritten.
+--
+-- set_by is 'computed': no human typed this value, and the VALUE row's
+-- own set_by is deliberately left alone — a keyword that arrived from
+-- IPTC is still an IPTC keyword after the term it names is renamed.
+--
+-- ## The array rewrite
+--
+-- array_replace alone is wrong when a row already holds BOTH terms:
+-- {uk, gb} would become {gb, gb}. The unnest/DISTINCT ON/array_agg
+-- sandwich keeps first-occurrence order and drops the duplicate, which
+-- is the same shape the write path's slug dedupe produces.
+--
+-- The `search_text` TSVECTOR needs no help here: the AFTER UPDATE
+-- trigger on asset_field_value rebuilds it per row.
+WITH affected AS (
+    SELECT p.asset_id, p.field_id, p.value_text AS old_text, p.value_options AS old_options
+      FROM asset_field_value p
+     WHERE p.field_id = @field_id
+       AND (p.value_text = @source::text OR @source::text = ANY(p.value_options))
+     ORDER BY p.asset_id
+       FOR UPDATE
+), updated AS (
+    UPDATE asset_field_value v
+       SET value_text = CASE WHEN v.value_text = @source::text THEN @target::text ELSE v.value_text END,
+           value_options = CASE
+               WHEN v.value_options IS NULL THEN NULL
+               ELSE (
+                   SELECT array_agg(d.slug ORDER BY d.ord)
+                     FROM (
+                         SELECT DISTINCT ON (u.slug) u.slug, u.ord
+                           FROM unnest(array_replace(v.value_options, @source::text, @target::text))
+                                WITH ORDINALITY AS u(slug, ord)
+                          ORDER BY u.slug, u.ord
+                     ) d
+               )
+           END
+      FROM affected a
+     WHERE v.asset_id = a.asset_id AND v.field_id = a.field_id
+    RETURNING v.asset_id, v.field_id, v.value_text AS new_text, v.value_options AS new_options,
+              a.old_text, a.old_options
+)
+INSERT INTO asset_field_value_history
+    (asset_id, field_id, old_value, new_value, set_by, changed_by_user_ref)
+SELECT u.asset_id, u.field_id,
+       jsonb_build_object('type', @field_type::text, 'value',
+           CASE WHEN u.old_text IS NOT NULL THEN to_jsonb(u.old_text) ELSE to_jsonb(u.old_options) END),
+       jsonb_build_object('type', @field_type::text, 'value',
+           CASE WHEN u.new_text IS NOT NULL THEN to_jsonb(u.new_text) ELSE to_jsonb(u.new_options) END),
+       'computed', sqlc.narg(actor_user_ref)::bigint
+  FROM updated u;
+
+-- name: RewriteCollectionValuesForMergedOption :execrows
+-- The collection twin of RewriteAssetValuesForMergedOption. Same
+-- rewrite, same history guarantee, on the collection tables — a merge
+-- that fixed assets and left collections naming a tombstoned term
+-- would have moved the drift rather than removed it.
+WITH affected AS (
+    SELECT p.collection_id, p.field_id, p.value_text AS old_text, p.value_options AS old_options
+      FROM collection_field_value p
+     WHERE p.field_id = @field_id
+       AND (p.value_text = @source::text OR @source::text = ANY(p.value_options))
+     ORDER BY p.collection_id
+       FOR UPDATE
+), updated AS (
+    UPDATE collection_field_value v
+       SET value_text = CASE WHEN v.value_text = @source::text THEN @target::text ELSE v.value_text END,
+           value_options = CASE
+               WHEN v.value_options IS NULL THEN NULL
+               ELSE (
+                   SELECT array_agg(d.slug ORDER BY d.ord)
+                     FROM (
+                         SELECT DISTINCT ON (u.slug) u.slug, u.ord
+                           FROM unnest(array_replace(v.value_options, @source::text, @target::text))
+                                WITH ORDINALITY AS u(slug, ord)
+                          ORDER BY u.slug, u.ord
+                     ) d
+               )
+           END
+      FROM affected a
+     WHERE v.collection_id = a.collection_id AND v.field_id = a.field_id
+    RETURNING v.collection_id, v.field_id, v.value_text AS new_text, v.value_options AS new_options,
+              a.old_text, a.old_options
+)
+INSERT INTO collection_field_value_history
+    (collection_id, field_id, old_value, new_value, set_by, changed_by_user_ref)
+SELECT u.collection_id, u.field_id,
+       jsonb_build_object('type', @field_type::text, 'value',
+           CASE WHEN u.old_text IS NOT NULL THEN to_jsonb(u.old_text) ELSE to_jsonb(u.old_options) END),
+       jsonb_build_object('type', @field_type::text, 'value',
+           CASE WHEN u.new_text IS NOT NULL THEN to_jsonb(u.new_text) ELSE to_jsonb(u.new_options) END),
+       'computed', sqlc.narg(actor_user_ref)::bigint
+  FROM updated u;
+
+-- name: RebuildAssetSearchTextForField :exec
+-- Re-derives `assets.search_text` for every asset holding a value of
+-- this field (#1016).
+--
+-- `rebuild_asset_search_text` folds a field's values into the document
+-- only while `f.searchable = TRUE AND f.status = 'active'`, and the
+-- trigger that calls it fires on writes to asset_field_value — not on
+-- writes to field_definition. So flipping `searchable` off changed what
+-- the rule SAID and nothing about what was already indexed: the field's
+-- values kept answering text queries until something happened to touch
+-- each asset. An operator who unticks the box has every reason to
+-- believe they excluded the field, which is precisely the lie #1016
+-- refused to let a UI toggle ship on top of.
+--
+-- Runs for a status change too, since `status = 'active'` is the other
+-- conjunct of the same WHERE.
+SELECT rebuild_asset_search_text(p.asset_id)
+  FROM asset_field_value p
+ WHERE p.field_id = $1;
+
+-- name: LockFieldDisplayConditionGraph :exec
+-- Serialises display-condition writes on ONE subject-kind graph
+-- (#1173, #1119, ADR 0099 §8).
+--
+-- ⛔ THE CYCLE CHECK IS THEATRE WITHOUT THIS, and it is theatre in
+-- exactly the case it exists for. A condition names OTHER definitions, so
+-- the conditions on one subject kind form a directed GRAPH, and
+-- "that graph is acyclic" is not a property of any single row: `A -> B`
+-- and `B -> A` are each individually a perfectly valid row, which is why
+-- no CHECK, no UNIQUE index and no per-row trigger can express it.
+--
+-- So two operators, one writing `A -> B` and one writing `B -> A`, each
+-- read a graph in which the other's edge is not yet visible. Both
+-- validate. Both commit. The graph now holds a 2-cycle that neither write
+-- could have created on its own, and every later validation walks it.
+--
+-- ADVISORY rather than `SELECT ... FOR UPDATE` over the subject kind, for
+-- two reasons. The invariant belongs to the WHOLE graph, so there is no
+-- single row whose lock expresses it; and taking a row lock on every
+-- definition of a subject kind would block unrelated field edits for the
+-- duration of a graph walk. LockFieldDefinitionVocabulary above uses FOR
+-- UPDATE because there the read-modify-write really is one row's options
+-- document. This is the other case.
+--
+-- Transaction-scoped, so it is released by COMMIT or ROLLBACK and cannot
+-- be leaked by an early return. Taken ONLY when a request actually
+-- touches display_condition, so ordinary field edits never queue behind
+-- it. The first key is a constant naming this lock space; the second is
+-- the subject kind, mapped by the caller to a small integer rather than
+-- hashed, so the value in pg_locks is readable by a person debugging one.
+SELECT pg_advisory_xact_lock(sqlc.arg('lock_space')::INT, sqlc.arg('subject_key')::INT);
+
+-- name: ListFieldDefinitionsForConditionGraph :many
+-- EVERY field definition, reduced to what the display-condition
+-- validator needs (#1173, ADR 0099 §6).
+--
+-- Read INSIDE the advisory lock, and read WHOLE rather than edge by edge:
+-- a cycle closes on the third write of `A -> B`, `B -> C`, `C -> A`, so a
+-- validator that only looked at the immediate edge would accept every one
+-- of those three.
+--
+-- ⚠️ NO subject_kind FILTER, and that is not an oversight. Scoped to one
+-- kind, a term naming a field of the OTHER kind is simply absent, and the
+-- operator is told "this server does not have that field" — which is
+-- false, and which would send them to create a duplicate. Reading both
+-- kinds lets the validator answer the question they actually asked:
+-- the field exists and describes the wrong sort of record.
+--
+-- Safe because `code` is UNIQUE across the whole table
+-- (field_definition_code_key), so a code names one row and the graph has
+-- no ambiguity to resolve. And the two kinds' graphs are genuinely
+-- disjoint, because a cross-kind edge is refused at configuration time —
+-- which is why the ADVISORY LOCK stays per subject kind even though this
+-- read is not. The extra rows inform a REFUSAL and can never contribute
+-- an edge, so a concurrent write on the other kind cannot break an
+-- invariant here; at worst it changes which of two refusals an operator
+-- sees.
+--
+-- ARCHIVED DEFINITIONS ARE INCLUDED, deliberately. They are excluded from
+-- every composition surface but they are NOT excluded from the graph: an
+-- archived dependent keeps its stored configuration (ADR 0099 §7), so its
+-- edges still exist and a cycle through it is still a cycle. The
+-- CONTROLLER-side status rule is a separate check in Go, which refuses an
+-- already-archived controller at configuration time while leaving a
+-- previously valid condition alone when the controller is archived later.
+SELECT id, code, type, subject_kind, status, applies_to, mirrors_column,
+       display_condition
+  FROM field_definition;
+
+-- name: ListFieldDefinitionsForComposition :many
+-- The definitions a composition surface may draw for one subject kind,
+-- reduced to the identity plus the read gate (#1173, ADR 0099 §5).
+--
+-- Backs GET /assets/{id}/field-composition and
+-- GET /collections/{id}/field-composition, which report EFFECTIVE,
+-- SERVER-DERIVED readability per field and carry no values whatsoever.
+-- Selecting `read_capability` and nothing else from the gate side is the
+-- point: the caller-facing shape has no member a stored value could be
+-- put in, so non-disclosure is structural rather than a rule somebody has
+-- to remember.
+--
+-- ARCHIVED EXCLUDED, matching the status semantics of
+-- ListFieldDefinitions with no explicit status (#528): archived
+-- definitions are tombstones and never appear on a composition surface,
+-- so reporting readability for one would describe a control that is not
+-- there. A controller archived after a valid configuration therefore
+-- resolves to nothing here, which is exactly what makes the dependent
+-- fail open.
+SELECT id, code, read_capability
+  FROM field_definition
+ WHERE subject_kind = $1
+   AND status <> 'archived'
+ ORDER BY code;
+
+-- name: GetAssetTeamForFieldComposition :one
+-- The team an asset belongs to, for the team-scoped half of effective
+-- field readability (#1173, ADR 0099 §5).
+--
+-- `assets.team_id` is NULLABLE and a NULL is not "no scope required": a
+-- team-less asset SKIPS the scoped disjunct entirely and is answered by
+-- the caller's GLOBAL holding alone, which is the same nullable trap
+-- `hasAssetCapability` documents on the assets side. Collections have no
+-- team column at all, so they have no counterpart to this query and their
+-- readability is the global answer by construction.
+SELECT team_id FROM assets WHERE id = $1;
+
+-- ---------------------------------------------------------------------------
+-- Batch metadata edit (#1173, #1119, ADR 0019)
+-- ---------------------------------------------------------------------------
+
+-- name: ExpandPostsToAssets :many
+-- Membership expansion for a batch selection's `post` entries.
+--
+-- SERVER-SIDE on purpose. A client that expanded posts itself would be
+-- sending an asset list the server has to trust, and the whole reason
+-- the selection is typed is that the server, not the client, decides
+-- what a post means. Soft-deleted posts and soft-deleted assets are
+-- excluded here rather than partitioned later: they were never targets,
+-- so counting them as `gone` would report an outcome for something the
+-- operator never selected.
+--
+-- DISTINCT because an asset can sit in several selected posts and is
+-- one target however many routes reach it. The ORDER BY is the
+-- deterministic order the whole contract rests on — preview and apply
+-- derive the identical ordered set from it, which is why it is asset id
+-- and not sort_order (mutable) or selection order (client-supplied).
+SELECT DISTINCT pa.asset_id
+  FROM post_assets pa
+  JOIN posts p ON p.id = pa.post_id
+  JOIN assets a ON a.id = pa.asset_id
+ WHERE pa.post_id = ANY(@post_ids::uuid[])
+   AND p.deleted_at IS NULL
+   AND a.deleted_at IS NULL
+ ORDER BY pa.asset_id
+ LIMIT sqlc.arg('limit')::int;
+
+-- name: ListPostsWithMembers :many
+-- Which of the selected posts actually hold at least one live member,
+-- so the preview can REPORT the ones that hold none rather than
+-- silently dropping them. A selected post that contributes no target is
+-- a thing the operator should see.
+SELECT DISTINCT pa.post_id
+  FROM post_assets pa
+  JOIN posts p ON p.id = pa.post_id
+  JOIN assets a ON a.id = pa.asset_id
+ WHERE pa.post_id = ANY(@post_ids::uuid[])
+   AND p.deleted_at IS NULL
+   AND a.deleted_at IS NULL;
+
+-- name: ListBatchTargetSubjects :many
+-- The batch's PREVIEW-side subject probe: owner, team and asset type
+-- for every selected target, in the deterministic order.
+--
+-- Not GetAssetMutationSubject in a loop — that is one round trip per
+-- target, and at the 1000-target ceiling the difference is the whole
+-- latency budget. Same projection and the same `deleted_at IS NULL`
+-- filter, so the two answer the same question about liveness: only a
+-- SOFT DELETE removes a subject from the probe. An ARCHIVED asset comes
+-- back and is written, because archive is not deletion.
+--
+-- No row lock. This is the preview, which writes nothing and therefore
+-- has nothing to make atomic; the apply takes its own locked read over
+-- the whole target set (see LockBatchAssetTier).
+SELECT id, owner_user_ref, team_id, asset_type
+  FROM assets
+ WHERE id = ANY(@asset_ids::uuid[])
+   AND deleted_at IS NULL
+ ORDER BY id;
+
+-- name: LockBatchAssetTier :many
+-- THE BATCH'S WHOLE ASSET TIER, IN ONE ORDERED STATEMENT (#1173, ADR
+-- 0019).
+--
+-- One row lock per id, taken FOR UPDATE, in ASCENDING id order, over
+-- the union of the would-change SUBJECTS and any proposed REFERENCE
+-- TARGET. It replaces a per-target locked read plus a separate,
+-- earlier lock on the reference target.
+--
+-- # Why one statement, and why ascending
+--
+-- The per-target version acquired its locks interleaved with its
+-- writes, and each write drags a lock on `posts` behind it: the
+-- asset_field_value trigger rebuilds the asset's search_text, that
+-- UPDATE fires assets_member_post_search_text, and that rebuilds every
+-- containing post. So after the first target the batch was holding a
+-- POST row and still asking for ASSET rows, while an ordinary
+-- single-target write takes the same two in the opposite order. That is
+-- a lock-order inversion, and it deadlocked (SQLSTATE 40P01).
+--
+-- Taking the entire asset tier FIRST closes it. The batch acquires
+-- every assets row it will need before it writes anything, so it never
+-- asks for an assets row while holding a posts row.
+--
+-- ORDER BY id, and it is load-bearing rather than cosmetic: two batches
+-- over overlapping sets must queue rather than deadlock. EXPLAIN puts
+-- LockRows ABOVE the Sort, so the rows are locked in the sorted order
+-- and not in whatever order the scan produced them.
+--
+-- # Why FOR UPDATE and not FOR SHARE
+--
+-- FOR SHARE is not strong enough here, and the reason is the same
+-- trigger chain. Every write in this batch ends in an UPDATE of the
+-- subject's `assets` row, which needs FOR NO KEY UPDATE, so a FOR
+-- SHARE holder is a holder that must UPGRADE. Two batches sharing one
+-- target would each hold FOR SHARE and each block trying to upgrade,
+-- which is a deadlock the pre-lock was supposed to remove. FOR UPDATE
+-- is taken once, at the strength the transaction will ultimately need,
+-- and nothing upgrades.
+--
+-- FOR UPDATE also conflicts with the FOR KEY SHARE that a foreign key
+-- takes, which is what makes a membership INSERT into `post_assets`
+-- queue behind the batch instead of racing its post rebuild. FOR NO KEY
+-- UPDATE would not: KEY SHARE is compatible with it. A membership
+-- DELETE takes no lock on the parent at all and is unaffected either
+-- way, which is why the post rebuild also locks its post at entry.
+--
+-- # No deleted_at filter, deliberately
+--
+-- Lock and RETURN whatever exists, and classify afterwards in Go. The
+-- two roles refuse differently. An absent or soft-deleted SUBJECT is
+-- that target's `gone`; an absent or soft-deleted REFERENCE TARGET is a
+-- batch-wide `reference_invalidated` that writes nothing. So the
+-- filter cannot live in the statement that serves both. `deleted_at`
+-- comes back so the caller can tell the two apart, and NEVER `status`:
+-- an ARCHIVED asset is a valid subject and a valid reference target.
+--
+-- The owner, team and type come back with the lock, so the per-target
+-- gates re-check G1, G2 and G5 against a row this transaction HOLDS
+-- rather than one it re-reads. That is strictly stronger than the
+-- previous FOR SHARE: ownership transfer, team move and soft delete
+-- all take FOR NO KEY UPDATE, and FOR UPDATE conflicts with every one
+-- of them.
+SELECT id, owner_user_ref, team_id, asset_type, deleted_at
+  FROM assets
+ WHERE id = ANY(@asset_ids::uuid[])
+ ORDER BY id
+ FOR UPDATE;
+
+-- name: ListPostsContainingAssets :many
+-- The DISTINCT posts that contain any of these assets, ascending.
+--
+-- The batch suppresses the per-row asset-to-post search propagation
+-- inside its own transaction and owes the rebuild instead. This is the
+-- set it owes it for, coalesced (a thousand targets across four posts
+-- is four rebuilds, not a thousand) and ASCENDING, so the post tier is
+-- acquired in one direction by every acquirer.
+--
+-- No `deleted_at` filter on either side: a post whose document would be
+-- rebuilt by the ordinary trigger must be rebuilt here too, or
+-- suppressing the trigger would change what gets indexed rather than
+-- only when.
+SELECT DISTINCT post_id
+  FROM post_assets
+ WHERE asset_id = ANY(@asset_ids::uuid[])
+ ORDER BY post_id;
+
+-- name: SuppressAssetPostSearchPropagation :exec
+-- Turn OFF the per-row asset-to-post search propagation FOR THIS
+-- TRANSACTION ONLY (migration 00067).
+--
+-- `set_config(..., is_local => true)` is SET LOCAL in function form,
+-- so the flag dies with the transaction and can never leak to the next
+-- caller that borrows this pooled connection. A transaction that sets
+-- it OWES the rebuild: see ListPostsContainingAssets and
+-- RebuildPostSearchText.
+SELECT set_config('aa.suppress_asset_post_search', 'on', true);
+
+-- name: RebuildPostSearchText :exec
+-- Rebuild ONE post's search document, explicitly.
+--
+-- The same function the four search triggers call, so the coalesced
+-- rebuild and the ordinary per-row one can never bake a different
+-- document. It takes its post FOR NO KEY UPDATE at entry, before it
+-- reads anything, which is what makes calling it late in a transaction
+-- safe.
+SELECT public.rebuild_post_search_text(@post_id::uuid);
+
+-- name: LockFieldDefinitionForBatch :one
+-- The batch-wide definition, configuration and vocabulary seam.
+--
+-- FOR UPDATE on the field_definition row, taken BEFORE the batch reads
+-- anything about the field. Every writer of that row — UpdateField,
+-- ArchiveField, the options editor, EnsureOpenVocabularyTerms' own
+-- LockFieldDefinitionVocabulary — either takes FOR UPDATE or issues an
+-- UPDATE, which takes FOR NO KEY UPDATE, and both conflict with this.
+-- So there are EXACTLY TWO valid serial outcomes: the external change
+-- wins and the batch reads it and refuses batch-wide with zero writes
+-- and no mint, or the batch wins and the ENTIRE batch executes under
+-- one validated state with the external change following it. The
+-- forbidden third — the first N targets written under the old rules and
+-- the rest under the new ones — cannot happen.
+--
+-- Lock BEFORE the read, not after. A lock taken after would serialise
+-- the writes while still letting the batch validate against a
+-- definition that has already changed, which is the failure mode
+-- display_condition_race_test.go's header names exactly.
+SELECT id, code, label, type, subject_kind, applies_to, required, status,
+       options, open_vocabulary, mirrors_column, read_only, regexp_filter,
+       read_capability, write_capability, display_condition
+  FROM field_definition
+ WHERE id = $1
+ FOR UPDATE;
+
+-- name: ListBatchTargetValues :many
+-- Every stored value for one field across the batch's targets, in one
+-- round trip. Targets holding no value simply do not come back, and
+-- absence is the emptiness the fill_empties mode is about.
+SELECT asset_id, value_text, value_num, value_date, value_options, value_ref, set_at
+  FROM asset_field_value
+ WHERE field_id = $1
+   AND asset_id = ANY(@asset_ids::uuid[]);
+
+-- name: InsertBatchPreview :one
+-- Mint one preview token's durable binding. `token_hash` and never the
+-- token: a database that has never held the bearer secret cannot leak
+-- it, which is the same reason session tokens are stored hashed.
+INSERT INTO metadata_batch_preview
+    (token_hash, caller_user_ref, field_id, mode, would_change, payload, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, created_at, expires_at;
+
+-- name: GetBatchPreviewByTokenHash :one
+-- The unlocked read behind apply's steps 1 through 5. It answers for a
+-- row belonging to ANY caller on purpose: the caller-binding comparison
+-- is made in Go, and it must be made on the SAME code path for a row
+-- that exists and one that does not, so that "belongs to somebody else"
+-- and "does not exist" cannot be told apart by timing or by shape.
+SELECT id, caller_user_ref, field_id, mode, would_change, payload,
+       created_at, expires_at, consumed_at
+  FROM metadata_batch_preview
+ WHERE token_hash = $1;
+
+-- name: ConsumeBatchPreview :one
+-- THE SINGLE-USE LATCH, and the reason consumption cannot be lost.
+--
+-- Run INSIDE the apply transaction, before any field write. The
+-- predicate and the mutation are ONE statement, so two concurrent
+-- replays of one token cannot both see it unconsumed: the second blocks
+-- on the row lock the first took, and when it proceeds it matches zero
+-- rows and reports the replay. A handler-side "read, compare, update"
+-- would let both through at READ COMMITTED.
+--
+-- Because it lives in the apply's transaction, a refusal that rolls
+-- that transaction back also rolls this back: a pre-write refusal
+-- leaves the token spendable, and a committed apply spends it in the
+-- same durable outcome as its writes and its audit envelope. There is
+-- no third result.
+UPDATE metadata_batch_preview
+   SET consumed_at = NOW()
+ WHERE id = $1
+   AND consumed_at IS NULL
+RETURNING id, consumed_at;
+
+-- name: PurgeExpiredBatchPreviews :exec
+-- Opportunistic sweep from the preview endpoint, so the table stays
+-- bounded without a scheduler.
+--
+-- The cutoff is well past expiry, not at it: a token that has just
+-- expired must still be found, so that its own caller gets 409
+-- preview_expired rather than the 403 an unattributable credential
+-- gets. Past the cutoff the distinction stops being useful — the token
+-- is hours dead — and 403 is the right answer for a credential the
+-- server can no longer attribute to anybody.
+DELETE FROM metadata_batch_preview
+ WHERE expires_at < NOW() - INTERVAL '24 hours';
+
+-- name: CountBatchExpandedTargets :one
+-- THE TRUE DISTINCT EXPANDED-TARGET COUNT, computed in the DATABASE.
+--
+-- The over-ceiling refusal has to name the ACTUAL count — an operator
+-- told "at most 1000, and this reaches 1001" when it really reaches
+-- 50,000 has been told the wrong thing about their own selection, and
+-- would go on trimming it one post at a time. But materialising 50,000
+-- ids in application memory to count them is the thing the bounded read
+-- exists to avoid.
+--
+-- Both, then: COUNT here, where the set never leaves the server, and a
+-- BOUNDED id read afterwards only once the count is known to fit.
+--
+-- UNION and not UNION ALL: the count is of DISTINCT assets, and an
+-- asset selected directly AND reachable through two selected posts is
+-- one target. That is the same dedupe ExpandPostsToAssets performs, in
+-- the one place where it has to see both halves of the selection.
+SELECT count(*)
+  FROM (
+        SELECT unnest(@asset_ids::uuid[]) AS asset_id
+         UNION
+        SELECT pa.asset_id
+          FROM post_assets pa
+          JOIN posts p ON p.id = pa.post_id
+          JOIN assets a ON a.id = pa.asset_id
+         WHERE pa.post_id = ANY(@post_ids::uuid[])
+           AND p.deleted_at IS NULL
+           AND a.deleted_at IS NULL
+       ) AS expanded;

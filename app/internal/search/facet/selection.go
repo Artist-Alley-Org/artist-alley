@@ -6,13 +6,19 @@ package facet
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
+	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
+	"github.com/mscrnt/artist-alley/app/internal/viewkind"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -41,6 +47,14 @@ import (
 //
 // No new wire parameter, no new handler branch, no `!bang` syntax.
 //
+// ⚠️ THE LAST CLAUSE HAS ONE DELIBERATE EXCEPTION SINCE #1173 SPRINT
+// 25a: the owner-required `!nopreviews`, `!list<ids>` and (since 25b)
+// `!last<N>` are accepted by the DSL parser, as SUGAR that folds onto
+// `preview:missing`, `id:` and `last:` terms of THIS grammar before
+// anything else sees them. There is still no second executor and no
+// second vocabulary; ADR 0056's sub-amendments 4e and 4f record the
+// exception and its bound.
+//
 // #910 SHIPPED AND THE CLAIM MOSTLY HELD — with two exceptions, recorded
 // here because the next dimension will hit whichever of them applies to
 // it, and a prediction is only useful if its misses are written down:
@@ -49,19 +63,37 @@ import (
 //     assume the value is opaque text, which is true for a tag and an
 //     extension and false for a UUID: an unparseable one reaches a
 //     `::UUID` cast and raises a Postgres error mid-query. See
-//     [FacetType.canonicalValue] — one function, same file, no new
+//     [FacetType.CanonicalValue] — one function, same file, no new
 //     concept on the wire.
 //   - A dimension whose value NAMES ANOTHER ENTITY needs authorizing,
-//     and the renderer cannot do it. dimensionSQL is caller-blind by
-//     design (it takes an entity, a dimension, an alias and one
-//     placeholder index) and every term renders exactly one placeholder,
-//     so there is nowhere to put the caller's identity without changing
-//     the arity for every dimension. It is therefore a separate step at
-//     the two execution chokepoints — see [Selection.Authorize].
+//     and the renderer cannot do it. Authorizing is one lookup with a
+//     WHOLE-QUERY answer, so it is a separate step at the two execution
+//     chokepoints — see [Selection.Authorize].
 //
 // Both are properties of the VALUE's type rather than of the mechanism,
 // and neither needed a second query path, a bespoke parameter, or a
 // change to the wire vocabulary.
+//
+// ⛔ THE SECOND BULLET USED TO SAY MORE THAN IT COULD KEEP, and #1251
+// is where it stopped being true. It read "dimensionSQL is caller-blind
+// by design … so there is nowhere to put the caller's identity without
+// changing the arity for every dimension", which conflated two claims: a
+// dimension may need the caller for AUTHORIZATION (a whole-query yes/no,
+// which Authorize handles) or inside its PREDICATE (a per-row conjunct,
+// which nothing handled). [FacetKind] is the second kind: a post matches
+// through its members, and a member the caller may not read must
+// contribute no kind, inside the correlated EXISTS the renderer builds.
+// So dimensionSQL now takes a [RenderContext] and is no longer
+// caller-blind.
+//
+// The arity worry turned out to be avoidable, and the way it was avoided
+// is worth copying: the DERIVATION moved instead of the plumbing.
+// [viewkind.KindSQL] resolves a row to its kind, so a term is
+// `<expression> = $n` — still one placeholder, still one arg — where the
+// obvious shape (compile the selected kinds to asset-type refs and
+// extension sets, then test membership) needed three bound arrays. If a
+// dimension seems to need more placeholders, ask whether it is testing a
+// derived value that could be COMPUTED and compared instead.
 type Selection struct {
 	// terms is kept in insertion order and deduplicated by
 	// (Type, Value). Small by construction — a rail with more than a
@@ -78,6 +110,19 @@ type Term struct {
 // ErrBadFilter is returned by [ParseSelection] for a malformed
 // `filter=` parameter. The handler maps it to 400.
 var ErrBadFilter = errors.New("facet: filter must be <dimension>:<value>")
+
+// ErrTooManyIDs is returned by [Selection.Validate], and therefore by
+// [ParseSelection] and search.SelectionFromDSL, when a selection names
+// more than [MaxIDTerms] distinct ids (#1173, sprint 25a). It wraps
+// [ErrBadFilter] so a handler that already maps that to 400 keeps doing
+// so without learning a new sentinel.
+var ErrTooManyIDs = fmt.Errorf("%w: at most %d distinct id values", ErrBadFilter, MaxIDTerms)
+
+// ErrLastNotSingle is returned by [Selection.Validate] when a selection
+// names more than one distinct `last:` window (#1173, sprint 25b). Same
+// wrapping and same reach as [ErrTooManyIDs]: `filter=last:3&filter=last:5`,
+// `last:3 AND last:5` and `!last3 !last5` are one refusal.
+var ErrLastNotSingle = fmt.Errorf("%w: last takes exactly one value", ErrBadFilter)
 
 // ParseSelection reads the repeated `filter=<dimension>:<value>` query
 // parameter into a Selection.
@@ -124,13 +169,73 @@ func ParseSelection(raw []string) (Selection, error) {
 		if !ok {
 			return Selection{}, ErrBadFilter
 		}
-		value, ok = ft.canonicalValue(value)
+		value, ok = ft.CanonicalValue(value)
 		if !ok {
 			return Selection{}, ErrBadFilter
 		}
 		s = s.With(ft, value)
 	}
+	// Cardinality is a property of the whole selection, so it is asked
+	// once the set is complete, after every duplicate has collapsed.
+	if err := s.Validate(); err != nil {
+		return Selection{}, err
+	}
 	return s, nil
+}
+
+// maxTerms is the largest number of DISTINCT values a dimension may
+// carry in one selection; 0 means unbounded (#1173, sprint 25a).
+//
+// A classification like [FacetType.conjunctive], and deliberately as
+// short. [FacetID] is bounded because it is the one dimension whose
+// value count is caller-chosen rather than drawn from a vocabulary; see
+// [FacetID] for the arithmetic that fixes the number. [FacetLast] is
+// bounded at ONE because a row is in a window or it is not, and two
+// windows have no combination rule (#1173, sprint 25b).
+func (t FacetType) maxTerms() int {
+	switch t {
+	case FacetID:
+		return MaxIDTerms
+	case FacetLast:
+		return 1
+	}
+	return 0
+}
+
+// Validate checks the whole-selection rules that no single term can
+// answer: today, only cardinality (#1173, sprint 25a).
+//
+// # ⛔ ONE PLACE, REACHED FROM EVERY ENTRY PATH
+//
+// [ParseSelection] calls it for `filter=`, and search.SelectionFromDSL
+// calls it for the DSL, the typed `id:` terms and the `!list` alias
+// alike, since the alias has folded onto `id:` long before the bridge
+// sees it. That is what makes the bound the SAME through all three
+// spellings: there is no second count to fall out of step with this
+// one. [Selection.SQL] asks it again as its fail-closed second gate,
+// because [Selection.With] is exported and error-free and a programmatic
+// caller can build a selection the parsers never saw.
+//
+// Counted over the selection's terms, which [Selection.With] has
+// already deduplicated, so 52 raw entries carrying two duplicates are
+// 50 distinct and pass.
+func (s Selection) Validate() error {
+	counts := make(map[FacetType]int, 2)
+	for _, t := range s.terms {
+		counts[t.Type]++
+	}
+	for ft, n := range counts {
+		if limit := ft.maxTerms(); limit > 0 && n > limit {
+			switch ft {
+			case FacetID:
+				return ErrTooManyIDs
+			case FacetLast:
+				return ErrLastNotSingle
+			}
+			return fmt.Errorf("%w: at most %d %s values", ErrBadFilter, limit, string(ft))
+		}
+	}
+	return nil
 }
 
 // With returns a copy of s carrying one more term. Duplicate
@@ -204,10 +309,138 @@ func (s Selection) CacheKey() string {
 // A tag is the one multi-valued dimension, and the DSL already fixes its
 // meaning — `tag:a tag:b` documents "carries EVERY tag" — so the rail
 // and the typed query say the same thing.
+//
+// ⭐ [FacetAI] was checked against that argument rather than inheriting
+// the default, because it is the first dimension added since the rule
+// was written and #1242 is entirely a plural rule. A post has exactly
+// ONE purity state, so it lands on the same side as extension and
+// sensitivity: `ai:pure ai:not_pure` under AND returns nothing forever,
+// which is a filter that looks applied and is not — the failure this
+// whole file exists to prevent. Under OR it returns everything, which is
+// the honest reading of "show me pure work or non-pure work" and is
+// exactly what the caller asked for, since the two values PARTITION the
+// corpus. Non-conjunctive, deliberately.
+//
+// ⭐ [FacetKind] was checked against it too, and it is the first
+// dimension where the two entities give DIFFERENT reasons for the same
+// answer. An asset resolves to exactly one kind, so AND is the
+// unsatisfiable reading extension and sensitivity already have. A POST
+// is a set of members, so `kind:image AND kind:video` IS satisfiable
+// there — and still wrong: it would mean "a post holding both", which
+// is not what ticking two boxes on a type filter asks for, and it would
+// make the same two terms mean different things on two entities.
+// Non-conjunctive, deliberately, on both counts.
+//
+// ⭐ [FacetVisibility] was checked against it too (#1251 slice 2), and it
+// is the plainest case since `extension`: a post is in exactly ONE
+// sharing tier, so `visibility:public visibility:private` under AND
+// returns nothing forever — a filter that looks applied and is not.
+// Under OR it is the UNION, which is what the feed's own default has
+// been since #1193 ("every shared tier the caller may read") and what
+// this dimension has to be able to express for the feed to compose
+// through it at all. Non-conjunctive, deliberately.
+//
+// ⛔ AND NOTE WHICH DIRECTION THE OR RUNS. Widening the tier SET widens
+// the SELECTION and never the read rule, which is a separate conjunct
+// ANDed on by every site that renders this — see [FacetVisibility].
+//
+// ⭐ [FacetWorkflowState] was checked against it too (#1173 sprint 18c),
+// and it is the plainest case since `visibility`: an asset carries
+// exactly ONE `state_id`, so `workflow_state:asset:1/draft
+// workflow_state:asset:1/published` under AND returns nothing forever.
+// Under OR it is the union, which is what ticking two states on a rail
+// asks for. It is the `ai` precedent ADR 0093's 2026-08-20 amendment
+// records, one dimension over. Non-conjunctive, deliberately — and note
+// that [WorkflowStateNone] beside a concrete identity is the same OR: an
+// asset either has that state or has none.
 func (t FacetType) conjunctive() bool { return t == FacetTag }
 
-// canonicalValue validates a value for dimension t and returns the form
+// orderedDomain is the VALUE DOMAIN of a comparison bound — the fact
+// that decides WHICH STORAGE COLUMN an ordered term reads, and the unit
+// its text is parsed in (#1173, sprint 18b).
+//
+// ⛔ IT IS NOT THE OPERATOR. `>=` and `<=` say which SIDE of a bound a
+// row must fall on and nothing at all about what kind of quantity is
+// being bounded, and until 18b this file conflated the two: dimensionSQL
+// selected `value_date` on `op == FieldOpAtLeast || op == FieldOpAtMost`,
+// so a bound was a date because it was a bound. That reading has exactly
+// one column to offer, which is why `>=` was date-only and why a numeric
+// field could not be compared at all.
+type orderedDomain uint8
+
+const (
+	// domainNone is "this term carries no bound". Equality and contains
+	// land here, and so does every dimension whose values are not bounds.
+	domainNone orderedDomain = iota
+	// domainTemporal is an instant. Canonical form is RFC3339 UTC and
+	// the column is TIMESTAMPTZ — see [canonicalBound] for why the zone
+	// is decided by the parser rather than by whichever server evaluates
+	// the token.
+	domainTemporal
+	// domainNumeric is a FINITE float64. Canonical form is the shortest
+	// decimal that reads back to the same float64, and the column is
+	// DOUBLE PRECISION (`asset_field_value.value_num`).
+	domainNumeric
+	// domainBytes is an EXACT base-10 int64 count of bytes, with no
+	// float64 anywhere on the path. The column is BIGINT
+	// (`assets.file_size_bytes`), whose range extends past 2^53 where a
+	// float64 stops being able to tell consecutive integers apart — so
+	// parsing a byte count through a float would silently round a bound
+	// a caller can state exactly.
+	domainBytes
+)
+
+// orderedDomain classifies a DIMENSION as ordered and says which domain
+// its bounds live in. domainNone means "not ordered".
+//
+// # ⛔ THE CLASSIFICATION IS EXPLICIT AND IT IS DELIBERATELY SHORT
+//
+// This is the parallel of [FacetType.conjunctive] one function above,
+// and it is written the same way for the same reason. The tempting 18b
+// implementation is to make [Selection.SQL] extract an operator from
+// EVERY dimension's values rather than only from `field:`'s — which
+// would make `extension:png` operator-aware, give `tag:>=x` a meaning
+// nobody asked for, and hand every future dimension a value grammar it
+// never declared. So a dimension is ordered only by appearing here.
+//
+// [FacetFileSize] is the only non-field dimension that qualifies in 18b,
+// and it is still the only one after 18c: [FacetWorkflowState]'s values
+// are IDENTITIES, not bounds — `workflow_state:asset:1/published` names
+// a thing to equal and carries no comparison — so it is deliberately
+// absent and [TestOrderedDimension_ClassificationIsShort] holds the list
+// to exactly one member.
+// `field:` is NOT listed: it is a FAMILY of logical dimensions whose
+// orderedness is a property of each field definition's declared type,
+// answered per term against the database in [Selection.Authorize] and
+// carried into the renderer as a [termShape] — see [orderedFieldTypes].
+func (t FacetType) orderedDomain() orderedDomain {
+	if t == FacetFileSize {
+		return domainBytes
+	}
+	return domainNone
+}
+
+// ordered reports whether this dimension's values are BOUNDS carrying a
+// comparison operator, rather than plain values.
+//
+// Derived from [FacetType.orderedDomain] rather than being a second list,
+// so the classification and the column choice cannot come to disagree.
+func (t FacetType) ordered() bool { return t.orderedDomain() != domainNone }
+
+// CanonicalValue validates a value for dimension t and returns the form
 // the rest of the pipeline should carry.
+//
+// ⭐ EXPORTED BY #1251 SLICE 3, and the reason is worth stating because
+// it decides where the NEXT wire parameter validates. A surface that
+// takes one dimension as a query parameter of its own — `?ai=` on the
+// browse feed, and whatever follows it — has to reject an out-of-
+// vocabulary value BEFORE it reaches [Selection.With], which is
+// error-free by design. Doing that with a local `switch` over the
+// exported value constants would be a SECOND copy of the value grammar,
+// which is the shape ADR 0093 decision 3 exists to refuse: two
+// implementations that agree today with nothing asserting they must
+// keep agreeing. So the feed calls this, and `filter=` calls this, and
+// there is one answer to "is this a legal value for this dimension".
 //
 // FIVE OF THE SIX DIMENSIONS HAVE NO USE FOR THIS, and that is worth
 // saying plainly: `extension:!!!` is a well-formed filter that matches
@@ -227,7 +460,7 @@ func (t FacetType) conjunctive() bool { return t == FacetTag }
 // Postgres takes a different subset of them. Normalising here means one
 // spelling reaches the SQL, and `{X}` and `X` share a [CacheKey] instead
 // of paying for the same query twice.
-func (t FacetType) canonicalValue(v string) (string, bool) {
+func (t FacetType) CanonicalValue(v string) (string, bool) {
 	switch t {
 	case FacetCollection:
 		id, err := uuid.Parse(v)
@@ -235,28 +468,564 @@ func (t FacetType) canonicalValue(v string) (string, bool) {
 			return "", false
 		}
 		return id.String(), true
-	case FacetField:
-		// #1157 — `<code>=<value>`. The SECOND dimension with a value
-		// grammar, and the first whose value is compound.
+	case FacetAI:
+		// #1242 — the THIRD dimension with a value grammar, and the
+		// first whose vocabulary is a CLOSED SET of two.
 		//
-		// `=` rather than `:` because [ParseSelection] cuts the wire
-		// token at the FIRST colon, so a nested colon would be
-		// ambiguous with the dimension separator the moment a field
-		// value contained one. `=` appears in no field CODE (codes are
-		// slugs), and a `=` inside the VALUE is harmless because only
-		// the first one separates.
-		code, value, found := strings.Cut(v, "=")
-		if !found {
+		// Rejecting an unknown value matters more here than for the
+		// opaque-text dimensions, and for a different reason than
+		// `collection:`. There is no `::UUID` cast to raise a 22P02;
+		// what a tolerated `ai:generated` or `ai:false` would do is
+		// render a predicate matching nothing, and a caller who asked to
+		// hide AI work would get an EMPTY page rather than an unfiltered
+		// one. Failing at the parser turns that into a 400 the client
+		// can see.
+		switch v = strings.ToLower(strings.TrimSpace(v)); v {
+		case AIPure, AINotPure:
+			return v, true
+		}
+		return "", false
+	case FacetKind:
+		// #1251 — the FOURTH dimension with a value grammar, and like
+		// [FacetAI] its vocabulary is a CLOSED SET: package viewkind's
+		// [viewkind.All], which a parity test holds to the frontend's
+		// ViewKind union.
+		//
+		// Rejecting an unknown name here is what makes `filter=kind:junk`
+		// a 400 out of [ParseSelection] rather than a predicate that
+		// matches nothing. ⚠️ The FEED's `?kind=` parameter answers the
+		// same mistake differently — `viewkind.ParseList` DROPS an
+		// unrecognised name and reports that a filter was asked for, so
+		// `?kind=nonsense` yields an empty page — and the two are not in
+		// conflict: `?kind=` is a comma list where one junk term beside a
+		// real one must still narrow to the real one, while `filter=` is
+		// one dimension and one value, where there is nothing left to
+		// narrow to. Both fail CLOSED; neither can widen.
+		v = strings.ToLower(strings.TrimSpace(v))
+		if !viewkind.Valid(v) {
 			return "", false
 		}
-		code = strings.ToLower(strings.TrimSpace(code))
-		value = strings.TrimSpace(value)
-		if code == "" || value == "" || !validFieldCode(code) {
+		return v, true
+	case FacetVisibility:
+		// #1251 slice 2 — the FIFTH dimension with a value grammar, and
+		// like [FacetAI] and [FacetKind] its vocabulary is a CLOSED SET:
+		// the five tiers of [VisibilityTiers], which are exactly the
+		// `posts_visibility_check` constraint's values.
+		//
+		// Rejecting an unknown tier is what makes `filter=visibility:junk`
+		// a 400 rather than an empty page under a label promising one
+		// tier. It is ALSO what keeps a malformed value out of a
+		// comparison against a column the read rule reads: this dimension
+		// selects among tiers, and the set of tiers it may name is the
+		// set the database defines, never caller text that merely looks
+		// like one.
+		//
+		// ⚠️ Case-folded and trimmed, unlike [FacetTag] one arm below.
+		// The tiers are an enum this repository authored — `Public` and
+		// `public` are the same tier by construction — whereas a tag is
+		// user text whose exact bytes ARE the identity (migration 00050).
+		// Two dimensions, two answers, both deliberate.
+		v = strings.ToLower(strings.TrimSpace(v))
+		for _, tier := range VisibilityTiers() {
+			if v == tier {
+				return v, true
+			}
+		}
+		return "", false
+	case FacetField:
+		// #1157/#1165 — `<code><op><value>`. The SECOND dimension with a
+		// value grammar, the first whose value is compound, and now the
+		// first that carries an OPERATOR.
+		//
+		// The separator characters are drawn from OUTSIDE the field-code
+		// slug alphabet ([validFieldCode]) on purpose, which is what lets
+		// the code and the operator be found by scanning rather than by a
+		// second delimiter: no code can contain `=`, `~`, `>` or `<`, so
+		// the first occurrence of one of them is always the operator and
+		// never part of the code. A value that contains one is harmless
+		// for the same reason the original `=` split was — only the FIRST
+		// occurrence separates.
+		//
+		// `:` remains unusable as an operator character because
+		// [ParseSelection] cuts the wire token at the first colon, so a
+		// nested colon would be ambiguous with the dimension separator.
+		// That is why a date value keeps its colons intact (they fall in
+		// the value half, after the operator) but no operator may use one.
+		code, op, value, ok := SplitFieldTerm(v)
+		if !ok {
 			return "", false
 		}
-		return code + "=" + value, true
+		// The bound operators name a value whose TYPE is a timestamp, and
+		// an unvalidated one reaches a `::TIMESTAMPTZ` cast mid-query —
+		// the same 22P02-shaped 500 [FacetCollection]'s UUID validation
+		// exists to prevent, and the reason this switch is where a
+		// dimension's value grammar lives at all.
+		if op == FieldOpAtLeast || op == FieldOpAtMost {
+			bound, _, ok := canonicalBound(value, op)
+			if !ok {
+				return "", false
+			}
+			value = bound
+		}
+		return code + string(op) + value, true
+	case FacetFileSize:
+		// #1173 sprint 18b — the SIXTH dimension with a value grammar,
+		// and the FIRST whose whole value is a BOUND.
+		//
+		// ⚠️ THE VALUE SHAPE IS NEW AND IT IS NOT `field:`'s. A field
+		// term is compound — `code<op>value` — because `field:` is a
+		// family and the term has to say WHICH field. `file_size` names
+		// exactly one column, so there is nothing to disambiguate and the
+		// value is a BARE BOUND WITH THE OPERATOR LEADING: `>=12345`.
+		//
+		// The wire spelling is therefore `filter=file_size:>=12345`.
+		// [ParseSelection] cuts at the FIRST colon, so the dimension is
+		// `file_size` and `>=12345` is the whole value; `file_size>=12345`
+		// carries no colon at all and stays malformed, which is a property
+		// of the wire form rather than of this dimension.
+		//
+		// It is rejected here rather than tolerated for [FacetAI]'s
+		// reason and [FacetCollection]'s reason at once: a malformed
+		// bound would render a predicate that matches nothing (an empty
+		// page under a label promising a narrowing) and a non-integral
+		// one would reach a `::BIGINT` cast and raise a 22P02 mid-query.
+		return canonicalByteBound(v)
+	case FacetWorkflowState:
+		// #1173 sprint 18c — the SEVENTH dimension with a value grammar,
+		// and the first whose value is another row's NATURAL KEY.
+		//
+		// Two shapes, and nothing else: the reserved literal
+		// [WorkflowStateNone], or `<domain>/<code>` with both halves
+		// non-empty. See [canonicalWorkflowState].
+		return canonicalWorkflowState(v)
+	case FacetPreview:
+		// #1173 sprint 25a: a CLOSED SET OF ONE. `missing` is the whole
+		// vocabulary; there is no `present` (see [FacetPreview]), and a
+		// tolerated unknown value would render a predicate that matches
+		// nothing under a label promising a narrowing, [FacetAI]'s
+		// reason, one value smaller. Folded and trimmed because the
+		// literal is this repository's, not caller text.
+		if strings.ToLower(strings.TrimSpace(v)) == PreviewMissing {
+			return PreviewMissing, true
+		}
+		return "", false
+	case FacetID:
+		// #1173 sprint 25a: a row id, canonicalised exactly as
+		// [FacetCollection]'s is and for the same two reasons: the value
+		// reaches a `::UUID` cast, and google/uuid accepts spellings
+		// (braced, hyphenless, upper case) that must collapse to ONE so
+		// that `{X}` and `x` are one term, one cache key and one entry
+		// against the cardinality bound.
+		id, err := uuid.Parse(strings.TrimSpace(v))
+		if err != nil {
+			return "", false
+		}
+		return id.String(), true
+	case FacetLast:
+		// #1173 sprint 25b: decimal digits, 1..dsl.MaxLastWindow, read by
+		// the ONE function the alias fold reads them with, so `!last0`,
+		// `last:0` and `filter=last:0` are one refusal and `last:05`
+		// canonicalises to the digits the fold would have produced. The
+		// value reaches a `LIMIT` clause, so an unvalidated one is the
+		// 22P02-shaped 500 this switch exists to prevent, and a tolerated
+		// out-of-range one would be a window that looks applied and is
+		// wider or emptier than what was typed.
+		n, ok := dsl.ParseLastWindow(strings.TrimSpace(v))
+		if !ok {
+			return "", false
+		}
+		return strconv.Itoa(n), true
 	}
 	return v, true
+}
+
+// WorkflowStateNone is the [FacetWorkflowState] value that selects
+// assets carrying NO workflow state — `assets.state_id IS NULL`.
+//
+// It cannot collide with a concrete identity: a concrete one is
+// `<domain>/<code>` and must contain a `/`, and this does not.
+const WorkflowStateNone = "none"
+
+// workflowStateSep separates a workflow state's domain from its code in
+// the identity [FacetWorkflowState] carries. Spliced into the predicate
+// from here rather than written twice.
+const workflowStateSep = "/"
+
+// canonicalWorkflowState validates a [FacetWorkflowState] value and
+// returns it UNCHANGED (#1173, sprint 18c).
+//
+// # ⛔ IT VALIDATES AND IT DOES NOT REWRITE
+//
+// Every other dimension with a closed vocabulary folds case and trims
+// ([FacetAI], [FacetKind], [FacetVisibility]) because the vocabulary is
+// an enum this repository authored. This one does not, for [FacetTag]'s
+// reason: `workflow_states.domain` and `.code` are `text` with no CHECK
+// constraint, an operator defines a code as free text under #897, and
+// the exact bytes ARE the identity. Lower-casing `Final` would ask for a
+// state that does not exist while looking like it asked for the one that
+// does — a filter that looks applied and is not, which is the failure
+// [ParseSelection] exists to prevent.
+//
+// ⚠️ ONE TRANSFORMATION IS UNAVOIDABLE AND IT IS NOT THIS FUNCTION'S:
+// [ParseSelection] trims the wire token before any dimension sees it, so
+// a code with LEADING or TRAILING whitespace cannot be spelled through
+// the `filter=` parameter. That is a property of the wire form, shared
+// by every dimension, and interior whitespace survives intact. The DSL
+// path has no such trim — a quoted value carries its bytes exactly — so
+// such a code remains reachable and remains representable in a saved
+// query.
+//
+// # The validity classes, which are deliberately three
+//
+//   - [WorkflowStateNone] — accepted, and means IS NULL.
+//   - `<domain>/<code>`, both halves non-empty — accepted, WHETHER OR
+//     NOT such a row exists. Existence needs a database round trip and
+//     this function is pure; #897 lets an operator delete a state, and a
+//     saved query naming a deleted one must stay parseable and return
+//     zero rather than becoming unreadable. Matching zero is the correct
+//     answer, exactly as `extension:zzz` matches zero.
+//   - anything else — no `/`, an empty domain, an empty code — REFUSED,
+//     which is a 400 on the `filter=` path and a DSLError on the DSL
+//     path. It is knowable without a row, so it belongs in the pure
+//     class, beside [canonicalByteBound]'s malformed bound.
+//
+// The split is at the FIRST `/` ([strings.Cut]), so a code containing
+// further slashes survives whole. The predicate in [dimensionSQL]
+// performs the SAME first-slash split in SQL, over the same single
+// placeholder, and says so.
+func canonicalWorkflowState(v string) (string, bool) {
+	if v == WorkflowStateNone {
+		return v, true
+	}
+	domain, code, found := strings.Cut(v, workflowStateSep)
+	if !found || domain == "" || code == "" {
+		return "", false
+	}
+	return v, true
+}
+
+// FieldOp is the comparison a [FacetField] term applies between a field
+// and its value (#1165).
+//
+// # Why an operator lives in the SHARED grammar rather than on the page
+//
+// The advanced page needs "title contains foo" and "licence expires
+// between two dates", and neither is expressible by equality. The
+// alternative to putting them here was a page-side widget that compiles
+// down to something else — which is the second query language ADR 0093
+// and #1067 forbid, because the rail, the DSL, a saved search and a
+// federated peer would then each have to learn the translation
+// separately and could disagree about what the user asked for.
+//
+// So an operator is one more piece of the VALUE grammar, exactly as the
+// field code is. Nothing new appears on the wire: `filter=field:…` still
+// takes one repeated parameter carrying one dimension and one value, it
+// still round-trips through [Selection.Params], it still folds into
+// [Selection.CacheKey] as opaque text, and a peer that echoes the token
+// back gets the same predicate we would have run.
+//
+// # The set is CLOSED, and unknown operators fail closed
+//
+// [SplitFieldTerm] matches against this list and rejects anything else,
+// which makes [ParseSelection] answer 400 rather than guessing. That
+// direction is deliberate and is the property #1165 asks for by name: a
+// filter that silently degraded to equality — or worse, dropped its
+// predicate and matched everything — renders a result set that LOOKS
+// narrowed and is not, which is the whole defect the `filter=` parameter
+// was introduced to fix.
+type FieldOp string
+
+const (
+	// FieldOpEq is equality, the original and still the only operator a
+	// vocabulary field uses. Matches value_text OR a member of
+	// value_options — see [dimensionSQL].
+	FieldOpEq FieldOp = "="
+	// FieldOpContains is a case-insensitive substring match, for `text`,
+	// `longtext` and `rich_text` fields.
+	FieldOpContains FieldOp = "~"
+	// FieldOpAtLeast and FieldOpAtMost are the inclusive bounds of a
+	// date range, against value_date. Two terms rather than one
+	// two-ended token, so an open-ended range ("expiring after March",
+	// with no upper bound) needs no separate spelling — see
+	// [Selection.SQL] for why two bounds on one field AND together
+	// where two values of one vocabulary field OR.
+	FieldOpAtLeast FieldOp = ">="
+	FieldOpAtMost  FieldOp = "<="
+)
+
+// fieldOps is the match order for [SplitFieldTerm]: LONGEST FIRST, so
+// `>=` is never mistaken for a bare `>` followed by a value beginning
+// `=`. A bare `>` or `<` matches nothing here and is therefore rejected,
+// which is the intended reading — we define inclusive bounds only, and
+// silently treating `>` as `>=` would be an off-by-one the caller cannot
+// see.
+var fieldOps = []FieldOp{FieldOpAtLeast, FieldOpAtMost, FieldOpContains, FieldOpEq}
+
+// fieldOpChars is every character that may START an operator. None of
+// them is legal in a field code ([validFieldCode]), which is the
+// invariant that makes scanning for the first one a correct split.
+const fieldOpChars = "=~<>"
+
+// canonicalBound validates and normalises a [FieldOpAtLeast] /
+// [FieldOpAtMost] value, and reports which [orderedDomain] it landed in.
+//
+// # Why it canonicalises rather than merely accepting
+//
+// Two reasons, and the second is the load-bearing one.
+//
+//  1. A [CacheKey] is text, so `2026-01-31` and `2026-01-31T00:00:00Z`
+//     would pay for the same query twice — and after 18b so would
+//     `1920`, `1920.0` and `1.92e3`.
+//  2. FEDERATION. `value_date` is TIMESTAMPTZ, so a bare `2026-01-31`
+//     has no meaning until something supplies a zone — and the thing
+//     that would supply it is whichever server happens to evaluate the
+//     token. A filter that returns different rows on a peer than on its
+//     origin is not one grammar. Normalising to an explicit `Z` here
+//     means the instant is decided once, by the parser, and travels with
+//     the token.
+//
+// # ⭐ THE TWO SPELLINGS ARE DISJOINT, AND THAT IS WHY NO SCHEMA IS NEEDED
+//
+// 18b makes a bound either temporal or numeric, decided WITHOUT knowing
+// the field's declared type — this function is pure, and it is what
+// [FacetType.CanonicalValue] calls, which is what fixes canonical
+// identity for the cache key. That only works because no string is both:
+//
+//   - RFC3339 and `2006-01-02` both require the full punctuated layout,
+//     so `2026` is not a year here, it is the number 2026;
+//   - `strconv.ParseFloat` rejects every date spelling, because a date
+//     carries `-` in the middle of its digits.
+//
+// So the domain is a function of the VALUE alone. What the schema then
+// decides is a different question — whether the FIELD may be compared
+// that way at all — and it is answered in [Selection.Authorize], which
+// fails CLOSED to an empty result set rather than to a 400. See
+// [orderedFieldTypes].
+//
+// # The upper bound of a date-only value is the END of that day
+//
+// A caller who writes `<=2026-01-31` means "through the 31st", not
+// "through the first instant of the 31st". Reading it literally would
+// silently drop 23 hours and 59 minutes of matches — an off-by-one that
+// looks like missing data rather than like a bug. So a date-only upper
+// bound canonicalises to the last microsecond of that day, and the
+// canonical form is what the URL then carries, so what will run is
+// visible rather than implied.
+//
+// Microseconds, not nanoseconds: TIMESTAMPTZ resolves to microseconds,
+// and a `.999999999` bound would round UP to the next second on the way
+// into Postgres — re-introducing on the storage side exactly the
+// off-by-one this is here to remove.
+//
+// ⛔ There is NO equivalent widening for the numeric arm, deliberately.
+// `1920` denotes one value of a DOUBLE PRECISION column, not a half-open
+// interval of them, so `<=1920` is the literal bound and nothing is
+// added to it.
+//
+// # The numeric canonical form, stated as a property rather than a notation
+//
+//	Two spellings that denote the same float64 produce the SAME canonical
+//	string, and that string reads back to that same float64.
+//
+// `strconv.FormatFloat(n, 'g', -1, 64)` is the shortest decimal with that
+// round-trip property, so the property is what is being relied on and the
+// notation is only how it is obtained.
+//
+// ⚠️ NON-FINITE VALUES ARE REJECTED, and the reason is that they are OUT
+// OF DOMAIN rather than inert. `strconv.ParseFloat` accepts `NaN`, `Inf`
+// and `Infinity`, and returns ±Inf with ErrRange for a decimal too large
+// to represent. An ordered filter over this project's numeric metadata is
+// defined over FINITE values only, so a special float is not a narrower
+// question, it is one this grammar does not ask.
+//
+// ⛔ AND IT IS WORTH BEING EXACT ABOUT WHAT ACCEPTING ONE WOULD DO,
+// because the intuition is wrong. Postgres does NOT evaluate a NaN
+// comparison as unknown the way IEEE 754 does. It deliberately makes NaN
+// EQUAL to NaN and GREATER THAN every non-NaN float, so that NaNs can
+// sort deterministically and live in btree indexes. Measured against this
+// project's own Postgres rather than assumed:
+//
+//	'NaN'::float8 >= 'NaN'::float8        t
+//	'NaN'::float8 >  1e300::float8        t
+//	'NaN'::float8 >= 'Infinity'::float8   t
+//	1e300::float8 >= 'NaN'::float8        f
+//
+// So `value_num >= 'NaN'` does not match nothing; it matches exactly the
+// rows storing NaN, and `>= '-Infinity'` matches every row that has a
+// value at all. Either one surfaces an exceptional ordering rule through
+// a control that promises an ordinary numeric bound. Refusing at the
+// parser keeps that semantics off the wire entirely, which is a stronger
+// reason than inertness would have been.
+func canonicalBound(v string, op FieldOp) (string, orderedDomain, bool) {
+	v = strings.TrimSpace(v)
+	if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+		return t.UTC().Format(time.RFC3339Nano), domainTemporal, true
+	}
+	if d, err := time.Parse("2006-01-02", v); err == nil {
+		if op == FieldOpAtMost {
+			d = d.Add(24*time.Hour - time.Microsecond)
+		}
+		return d.UTC().Format(time.RFC3339Nano), domainTemporal, true
+	}
+	if n, err := strconv.ParseFloat(v, 64); err == nil {
+		if math.IsNaN(n) || math.IsInf(n, 0) {
+			return "", domainNone, false
+		}
+		return strconv.FormatFloat(n, 'g', -1, 64), domainNumeric, true
+	}
+	return "", domainNone, false
+}
+
+// orderedBoundOps is the operator set an ORDERED DIMENSION's bare value
+// may lead with, longest-first for the same reason [fieldOps] is.
+//
+// It is the two inclusive bounds and nothing else. A bare `>` or `<`
+// matches nothing here and is therefore rejected, which is the intended
+// reading — we define inclusive bounds only, and silently treating `>`
+// as `>=` would be an off-by-one the caller cannot see. Equality and
+// contains are absent because they are not orderings: `file_size:=1234`
+// is a question nobody asks of a byte count, and admitting it would put
+// a fourth spelling of "equals" on the wire.
+var orderedBoundOps = []FieldOp{FieldOpAtLeast, FieldOpAtMost}
+
+// SplitOrderedBound splits an ORDERED DIMENSION's value into its leading
+// operator and the rest (#1173).
+//
+// This is the non-field twin of [SplitFieldTerm], and the difference in
+// shape is the difference in the dimensions. A `field:` term has to name
+// WHICH field, so its operator sits in the middle of a compound value and
+// is found by scanning. An ordered dimension names exactly one column, so
+// there is nothing before the operator and the split is a prefix match.
+//
+// Every failure path returns ok=false, which [FacetType.CanonicalValue]
+// turns into a 400 out of [ParseSelection] and [Selection.SQL] turns into
+// "this entity matches nothing" for the programmatic callers that bypass
+// it. Neither can reach a query. Exported for the same reason
+// [SplitFieldTerm] is: the grouping pass and the renderer must read the
+// operator with ONE function or they will eventually disagree about
+// where it ends.
+func SplitOrderedBound(v string) (op FieldOp, value string, ok bool) {
+	v = strings.TrimSpace(v)
+	for _, candidate := range orderedBoundOps {
+		if !strings.HasPrefix(v, string(candidate)) {
+			continue
+		}
+		value = strings.TrimSpace(v[len(candidate):])
+		if value == "" {
+			return "", "", false
+		}
+		return candidate, value, true
+	}
+	return "", "", false
+}
+
+// canonicalByteBound validates and normalises a [FacetFileSize] value —
+// `<op><int64>`, an EXACT count of bytes (#1173).
+//
+// # ⛔ int64, AND NOT A float64 ANYWHERE ON THE PATH
+//
+// `assets.file_size_bytes` is BIGINT. Beyond 2^53 a float64 cannot tell
+// consecutive integers apart, so a byte count parsed through one would
+// come back as a DIFFERENT number than the caller wrote — silently, and
+// only for large files, which is precisely where a size filter is used.
+// `strconv.ParseInt(_, 10, 64)` is exact over the whole column range and
+// reports ErrRange rather than saturating past it.
+//
+// It also gives the value-domain rejections for free, and each one is a
+// caller mistake that would otherwise look like a working filter:
+//
+//   - `12.5` — a fractional byte does not exist. ParseInt rejects it;
+//     a float parse would have silently truncated or rounded it.
+//   - `1MB` — units are NOT part of this grammar. There is no unit
+//     vocabulary on the wire, so `1MB` can only ever be a typo, and
+//     accepting the digits before the letters would run a filter three
+//     orders of magnitude away from the one that was asked for.
+//   - `9223372036854775808` — past int64. ErrRange.
+//   - `0x2000`, `1_000`, `1e3` — base 10 means base 10. ParseInt with an
+//     explicit base rejects prefixes, separators and exponents, so one
+//     spelling reaches the column.
+//
+// Canonicalising (rather than merely accepting) is [canonicalBound]'s
+// argument applied to integers: `+12345` and `12345` denote one bound and
+// must share one [CacheKey] and one stored DSL spelling.
+func canonicalByteBound(v string) (string, bool) {
+	op, rest, ok := SplitOrderedBound(v)
+	if !ok {
+		return "", false
+	}
+	n, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil {
+		return "", false
+	}
+	return string(op) + strconv.FormatInt(n, 10), true
+}
+
+// orderedFieldTypes maps a `field_definition.type` to the domain its
+// ORDERED comparisons live in. A type absent from this table supports NO
+// ordered comparison at all (#1173).
+//
+// # ⛔ THE TWO VALIDITY CLASSES ARE DIFFERENT QUESTIONS WITH DIFFERENT ANSWERS
+//
+// A malformed bound is knowable without a schema, so it is rejected in
+// [FacetType.CanonicalValue] — pure, never reaches execution, and surfaces
+// as a 400 on the `filter=` path and a DSLError on the DSL path.
+//
+// Whether a FIELD may be compared this way is not knowable without the
+// schema: it needs `field_definition.type`, which is a row. So it is
+// answered in [Selection.Authorize] beside the read-capability lookup
+// that is already there, and a refusal is an EMPTY RESULT SET rather than
+// an error — the same no-oracle direction the collection and field
+// arms take, for the same reason. A 400 would separate "that field is a
+// text field" from "no such field" on a code the caller supplied.
+//
+// # Why these three types and no others
+//
+// The enum is CHECK-constrained on `field_definition.type` to eleven
+// values (migration 00001). The storage column follows the type
+// (web/src/lib/fieldOptions.ts VALUE_COLUMN), and only two columns hold
+// an ORDERED quantity:
+//
+//	date, datetime  -> value_date  (TIMESTAMPTZ)
+//	number          -> value_num   (DOUBLE PRECISION)
+//
+// ⚠️ `boolean` also writes `value_num` — ADR 0012 encodes it as 1 or 0 —
+// and it is deliberately ABSENT. "At least true" is not a question, and
+// admitting it would let a bound act as a clumsy equality on a column
+// whose two values already have one.
+//
+// `text`, `longtext` and `rich_text` are absent because a range over
+// prose is meaningless rather than merely narrow; `select`,
+// `multi_select` and `tree` because a vocabulary has no order; and
+// `reference` because a UUID has no magnitude. There is no INTEGER field
+// type at all, which is why exact integral comparison exists only for a
+// resource dimension ([FacetFileSize]) and never for `field:`.
+var orderedFieldTypes = map[string]orderedDomain{
+	"date":     domainTemporal,
+	"datetime": domainTemporal,
+	"number":   domainNumeric,
+}
+
+// fieldTypeAdmitsBound reports whether a field of declared type ftype may
+// be compared with op against value.
+//
+// Non-bound operators are admitted unchanged: `=` and `~` are text
+// questions that every field type can be asked, and #1165's answer for a
+// type that stores nothing matching is already "no rows".
+//
+// For a bound, the value's own domain has to be the one that type stores.
+// A temporal bound on a `number` field and a numeric bound on a `date`
+// field are BOTH refusals — the mismatch is symmetric, and treating
+// either as "compare against the other column anyway" would answer a
+// different question than the caller asked.
+func fieldTypeAdmitsBound(ftype string, op FieldOp, value string) bool {
+	if op != FieldOpAtLeast && op != FieldOpAtMost {
+		return true
+	}
+	_, dom, ok := canonicalBound(value, op)
+	if !ok {
+		return false
+	}
+	return dom != domainNone && orderedFieldTypes[ftype] == dom
 }
 
 // validFieldCode reports whether s is a well-formed field-definition
@@ -307,12 +1076,56 @@ func (s Selection) NamesFieldDimension() bool {
 	return false
 }
 
-// SplitFieldTerm splits a canonical [FacetField] value into its code
-// and value halves. Exported because [Selection.Authorize] needs the
-// code to look the field up, and the frontend's chip labels need both.
-func SplitFieldTerm(v string) (code, value string, ok bool) {
-	code, value, ok = strings.Cut(v, "=")
-	return code, value, ok
+// SplitFieldTerm splits a [FacetField] value into its code, its
+// operator and its value (#1157, operator added #1165).
+//
+// # The split is a SCAN, not a cut on a fixed delimiter
+//
+// It was `strings.Cut(v, "=")` while equality was the only operator.
+// With four, the delimiter is no longer known in advance, so this finds
+// the first character from [fieldOpChars] — none of which
+// [validFieldCode] admits into a code — and matches the operator at that
+// position, longest first. Everything before is the code; everything
+// after the operator is the value, including any further operator
+// characters it happens to contain.
+//
+// # It rejects rather than falling back, and that is the point
+//
+// #1165 asks for an unknown or malformed operator to fail CLOSED at
+// parse time. Every failure path here returns ok=false, which
+// [FacetType.CanonicalValue] turns into a 400 out of [ParseSelection]
+// and, for the programmatic callers that bypass it, into
+// "this entity matches nothing" out of [Selection.SQL]. Neither path can
+// reach a query. Degrading to equality — the tempting alternative, since
+// equality is what every existing term uses — would answer a DIFFERENT
+// question than the caller asked and look like it had answered theirs.
+//
+// Exported because [Selection.Authorize] needs the code to look the
+// field up and [Selection.SQL] needs the operator to pick a predicate.
+//
+// ⚠️ Its doc used to claim the frontend's chip labels were a caller too.
+// They are not and never were — the web client builds these tokens but
+// has never parsed one back (#1165 verified: this function's only caller
+// in the tree is Authorize). Kept exported for Authorize alone.
+func SplitFieldTerm(v string) (code string, op FieldOp, value string, ok bool) {
+	i := strings.IndexAny(v, fieldOpChars)
+	if i < 0 {
+		return "", "", "", false
+	}
+	code = strings.ToLower(strings.TrimSpace(v[:i]))
+	rest := v[i:]
+	for _, candidate := range fieldOps {
+		if !strings.HasPrefix(rest, string(candidate)) {
+			continue
+		}
+		op = candidate
+		value = strings.TrimSpace(rest[len(candidate):])
+		break
+	}
+	if op == "" || value == "" || !validFieldCode(code) {
+		return "", "", "", false
+	}
+	return code, op, value, true
 }
 
 // ForFacet returns the subset of the selection that should be applied
@@ -439,15 +1252,38 @@ func (s Selection) Authorize(
 			// the collection arm: refusing yields an EMPTY result set, not
 			// a 403, so "this field is gated" and "no such field" are
 			// indistinguishable on a code the caller supplied.
-			code, _, ok := SplitFieldTerm(t.Value)
+			// The OPERATOR is deliberately discarded here. What
+			// `read_capability` gates is the FIELD — whether this caller
+			// may learn anything about that column at all — and a
+			// substring probe or a date bound is exactly as capable of
+			// partitioning the corpus one bit at a time as an equality
+			// is. Authorizing per operator would be a gate scoped to the
+			// principal rather than to the payload.
+			//
+			// #1173 sprint 18b — AND THE FIELD'S DECLARED TYPE, which is
+			// the SECOND thing about a `field:` term that cannot be
+			// decided without a row.
+			//
+			// `>=` and `<=` name a comparison, and whether a field
+			// supports one at all is `field_definition.type` — the same
+			// lookup already being made here for `read_capability`, so
+			// the check costs nothing extra. A refusal is the SAME empty
+			// result set for the SAME no-oracle reason: 400 would tell a
+			// caller "that code names a text field" about a code they
+			// supplied, which is the existence oracle [validFieldCode]
+			// refuses one level up. See [orderedFieldTypes].
+			code, op, value, ok := SplitFieldTerm(t.Value)
 			if !ok {
 				return false, nil
 			}
-			allowed, err := fieldReadable(ctx, pool, caps, code)
+			allowed, ftype, err := fieldGate(ctx, pool, caps, code)
 			if err != nil {
 				return false, err
 			}
 			if !allowed {
+				return false, nil
+			}
+			if !fieldTypeAdmitsBound(ftype, op, value) {
 				return false, nil
 			}
 		}
@@ -455,36 +1291,135 @@ func (s Selection) Authorize(
 	return true, nil
 }
 
-// fieldReadable answers "may this caller read the field definition with
-// this code" — the same question metadata's collection handler asks per
-// row (`canReadField`), asked once per selected dimension here.
+// fieldGate reads the two facts about a field definition that only the
+// DATABASE knows and that a `field:` term's admissibility depends on:
+// may this caller read it, and what TYPE is it declared as.
 //
+// The readability half is the same question metadata's collection handler
+// asks per row (`canReadField`), asked once per selected dimension here.
 // A field with a NULL read_capability is readable by everyone, which is
 // the overwhelmingly common case, so the lookup is one indexed read on
 // a small table and only for a selection that names a field at all.
 //
-// An unknown code returns (false, nil): it cannot be read because it
+// The TYPE half arrives on the same row rather than in a second query
+// (#1173): 18b needs it to decide whether an ordered comparison is
+// admissible at all, and asking twice for two columns of one row would
+// double the per-term cost of a filter for no gain. ftype is the empty
+// string whenever readable is false, so a refusal cannot be mistaken for
+// a field of some type.
+//
+// An unknown code returns (false, "", nil): it cannot be read because it
 // does not exist, and reporting that distinctly is the oracle
-// [Selection.Authorize]'s doc refuses.
-func fieldReadable(
+// [Selection.Authorize]'s doc refuses. An INACTIVE field and an
+// UNREADABLE one return the same shape, so none of the three is
+// distinguishable from the others by a caller.
+//
+// # ⛔ `searchable` IS NOT A CONJUNCT HERE, AND REMOVING IT WAS THE FIX
+//
+// This lookup used to require `searchable = TRUE` as well, which
+// conflated two independent settings. `searchable` has meant one thing
+// since the 00001 baseline: whether a field's text is folded into
+// `assets.search_text` by `rebuild_asset_search_text()`, which is the
+// flag's only functional consumer. It has never been a statement about
+// whether an EXPLICIT `field:<code><op><value>` predicate may name the
+// field, and treating it as one made an operator's indexing decision
+// silently disable a structured filter — a control that looks applied
+// and is not, because a refusal here is an empty result set rather than
+// an error.
+//
+// Lifecycle eligibility is `status = 'active'`; caller eligibility is
+// `read_capability`, applied in Go below. Index participation is neither.
+func fieldGate(
 	ctx context.Context, pool visibility.Pool,
 	caps visibility.CapabilityChecker, code string,
-) (bool, error) {
+) (readable bool, ftype string, err error) {
 	var readCap *string
-	err := pool.QueryRow(ctx, `
-		SELECT read_capability FROM field_definition
-		 WHERE code = $1 AND status = 'active' AND searchable = TRUE`,
-		code).Scan(&readCap)
+	err = pool.QueryRow(ctx, `
+		SELECT read_capability, type FROM field_definition
+		 WHERE code = $1 AND status = 'active'`,
+		code).Scan(&readCap, &ftype)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return false, "", nil
 		}
-		return false, err
+		return false, "", err
 	}
 	if readCap == nil || *readCap == "" {
-		return true, nil
+		return true, ftype, nil
 	}
-	return caps != nil && caps(*readCap), nil
+	if caps != nil && caps(*readCap) {
+		return true, ftype, nil
+	}
+	return false, "", nil
+}
+
+// RenderContext carries the caller-dependent inputs a dimension needs
+// when its predicate has to decide, IN SQL, whether this caller may see
+// the value it is selecting on (#1251).
+//
+// # Why it exists, when [Selection.Authorize] already handles the caller
+//
+// Authorize answers questions with a WHOLE-QUERY answer: may you read
+// this collection, may you read this field. One lookup, one boolean, and
+// a refusal means an empty result set — so it can sit at the execution
+// chokepoint and the renderer can stay caller-blind, which is what this
+// file used to say it would always be.
+//
+// [FacetKind] is the first dimension that cannot be served that way. A
+// post matches a kind through its MEMBERS, and a member the caller may
+// not read must contribute no kind — otherwise asking for each kind in
+// turn recovers the withheld one by elimination (#902/#1066, and
+// posts.TestKindFilter_RestrictedMemberIsNeverProbeable is the assertion
+// that pins it). That rule is a conjunct on each candidate member, INSIDE
+// the correlated EXISTS the renderer builds, and there is nowhere else to
+// put it: hoisting it up to the post is precisely the implementation the
+// leak test exists to fail.
+//
+// # ⚠️ THE ZERO VALUE MUST NOT BE USABLE, and it is not
+//
+// [visibility.Caller]'s zero value is `{UserRef: 0, IsAnonymous: false}`
+// — "user zero", which is WIDER than anonymous, because the anonymous
+// branch of the field plane adds status conjuncts that this one skips. A
+// dimension that read a forgotten RenderContext would therefore fail
+// OPEN. So a dimension that needs one requires [RenderContext.CallerArg]
+// to be non-empty and returns ok=false without it, which
+// [Selection.SQL] turns into "this entity matches nothing" — the
+// fail-closed direction the rest of this file takes.
+type RenderContext struct {
+	// Caller is the reader whose readability is being composed.
+	Caller visibility.Caller
+	// Caps and MutationCaps are that caller's resolved content-plane and
+	// assets.admin capabilities — the same two values every other splice
+	// site of [visibility.FieldsReadableSQL] passes.
+	Caps         visibility.ContentCaps
+	MutationCaps visibility.AssetMutationCaps
+	// CallerArg is an ALREADY-BOUND placeholder ("$3") holding the
+	// caller's user_ref, with 0 for anonymous — the same contract
+	// FieldsReadableSQL's own `callerArg` parameter has, and the reason
+	// this is a placeholder rather than an inlined literal is
+	// posts.ListPostsPageGated: it is the hottest query in the app and a
+	// per-user query TEXT would defeat statement caching for a value that
+	// changes nothing about the plan. (The facet aggregators inline it;
+	// they run on a colder path.)
+	//
+	// EMPTY MEANS "no caller was supplied", which is not the same as
+	// anonymous and is treated as a programming error — see the type doc.
+	CallerArg string
+
+	// RecentArms is the population a `last:` window ranks over (#1173,
+	// sprint 25b): one arm per entity the search asks for, each carrying
+	// that entity's baseline eligibility as a fragment the execution
+	// site rendered from the readability authorities it already applies,
+	// with every placeholder already bound in the calling statement.
+	// See [RecentArm] and the recent.go file comment for why the site
+	// renders them rather than this package.
+	//
+	// EMPTY MEANS "no window can be formed", and [FacetLast] then
+	// renders as UNSATISFIABLE for this entity, the fail-closed
+	// direction [CallerArg] takes: a site that forgot to supply the
+	// arms returns nothing under `last:N` rather than an unbounded set.
+	// Every other dimension ignores it.
+	RecentArms []RecentArm
 }
 
 // SQL renders the selection as a WHERE-clause suffix for entity e.
@@ -494,15 +1429,30 @@ func fieldReadable(
 // argOffset+1, and the caller appends the returned args in order. alias
 // is the table alias ("" for an un-aliased FROM).
 //
+// rc carries the caller for the dimensions whose predicate needs one —
+// today only [FacetKind], and see [RenderContext] for why that could not
+// be handled at the execution chokepoint the way [Selection.Authorize]
+// is. Every other dimension ignores it, so a caller-blind site (the
+// facet aggregators counting a dimension none of whose values name a
+// kind) may pass the zero value and get exactly its previous rendering.
+//
 // satisfiable is FALSE when this entity has no column for one of the
 // selected dimensions — a collection has no file extension, a post has
 // no sensitivity tier. The caller must then skip the entity entirely
 // rather than render the fragment: "unsupported" means zero rows and
 // zero count, not "no constraint". Getting that backwards would widen a
 // filtered search to the rows it was asked to exclude.
-func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int) (fragment string, args []any, satisfiable bool) {
+func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int, rc RenderContext) (fragment string, args []any, satisfiable bool) {
 	if len(s.terms) == 0 {
 		return "", nil, true
+	}
+	// Second gate on cardinality, for the reason the value gate below
+	// gives: [Selection.With] is exported and error-free, so a selection
+	// the parsers never validated can reach here. Fail CLOSED, "this
+	// entity matches nothing", rather than render a predicate the
+	// stored form could never replay (#1173, sprint 25a).
+	if err := s.Validate(); err != nil {
+		return "", nil, false
 	}
 	a := strings.TrimSpace(alias)
 	if a != "" {
@@ -527,7 +1477,11 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int) (fr
 		if dim.conjunctive() {
 			joiner = " AND "
 		}
-		parts := make([]string, 0, len(values))
+		// Sub-groups WITHIN a dimension, in first-seen order. Every
+		// dimension but `field:` has exactly one, which is the shape this
+		// loop had before #1165 — see subGroupKey.
+		subOrder := make([]string, 0, 1)
+		bySub := make(map[string][]string, 1)
 		for _, v := range values {
 			// Second gate on the value grammar. ParseSelection already
 			// rejected a malformed one with a 400, but [Selection.With]
@@ -536,20 +1490,176 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int) (fr
 			// in. Fail CLOSED here rather than letting a bad UUID reach
 			// a ::UUID cast: "this entity matches nothing" is a wrong
 			// answer a caller can act on, a 22P02 is a 500.
-			if _, ok := dim.canonicalValue(v); !ok {
+			if _, ok := dim.CanonicalValue(v); !ok {
 				return "", nil, false
 			}
-			idx++
-			expr, ok := dimensionSQL(e, dim, a, idx)
+			key, ok := subGroupKey(dim, v)
 			if !ok {
 				return "", nil, false
 			}
-			parts = append(parts, expr)
-			args = append(args, v)
+			if _, seen := bySub[key]; !seen {
+				subOrder = append(subOrder, key)
+			}
+			bySub[key] = append(bySub[key], v)
 		}
-		b.WriteString(" AND (" + strings.Join(parts, joiner) + ")")
+
+		groups := make([]string, 0, len(subOrder))
+		for _, key := range subOrder {
+			parts := make([]string, 0, len(bySub[key]))
+			for _, v := range bySub[key] {
+				// Re-derive rather than threading it out of the grouping
+				// pass: CanonicalValue has already proven the value
+				// parses, and one parse function with one set of rules
+				// is what keeps the grouping and the rendering from
+				// disagreeing about where the operator ends.
+				sh, ok := shapeOf(dim, v)
+				if !ok {
+					return "", nil, false
+				}
+				idx++
+				expr, ok := dimensionSQL(e, dim, a, idx, sh, rc)
+				if !ok {
+					return "", nil, false
+				}
+				parts = append(parts, expr)
+				args = append(args, v)
+			}
+			groups = append(groups, "("+strings.Join(parts, joiner)+")")
+		}
+		b.WriteString(" AND (" + strings.Join(groups, " AND ") + ")")
 	}
 	return b.String(), args, true
+}
+
+// subGroupKey returns the key that decides which terms of one dimension
+// combine with OR and which with AND (#1165, extended #1173).
+//
+// # Why `field:` needs this and most other dimensions do not
+//
+// Most FacetTypes are ONE dimension with one kind of value: `extension`
+// names one column, so two values of it are two answers to one question
+// and OR is the only reading that makes sense. `field:` is not one
+// dimension — it is a FAMILY of them, one per field definition, collapsed
+// into a single FacetType because field definitions are data and cannot
+// be enum members ([FacetField]'s doc explains why). Grouping it by
+// FacetType alone therefore ORed terms that name DIFFERENT fields, so
+// ticking `pipeline_stage=lookdev` on top of `color_space=srgb` WIDENED
+// the result set instead of narrowing it.
+//
+// That was already wrong before #1165 — it is #1157's bug, found while
+// adding the operator — but the operator is what makes it unshippable
+// rather than merely surprising: the two bounds of a date range are two
+// terms on ONE field, and ORed they read "on or after March OR on or
+// before June", which is every row that has a date at all. A range would
+// have looked like it worked and quietly matched everything, which is
+// the exact failure mode #1165 asks the parser to make impossible.
+//
+// So the key is (code, operator):
+//
+//   - Same field, same operator → OR. Two values of one vocabulary field
+//     is "material is steel or brass", which is what a multi-select row
+//     on the advanced page means and what #1157 documented.
+//   - Same field, different operator → AND. `>=March` and `<=June` is a
+//     range; `~draft` beside `>=March` is "contains draft AND is recent".
+//   - Different field → AND. Two rows of a form narrow each other.
+//
+// # ⭐ AN ORDERED DIMENSION NEEDS IT FOR EXACTLY ONE HALF OF THAT REASON
+//
+// [FacetFileSize] is one dimension over one column, so there is no code
+// to key on — but its values are BOUNDS, and the range argument above is
+// about the OPERATOR rather than about the family. `file_size:>=A` beside
+// `file_size:<=B` ORed reads "bigger than A or smaller than B", which is
+// every asset that has a size at all: the range that looks like it worked.
+// So the key is the operator alone, which makes two bounds AND (an
+// intersection) and two of the SAME bound OR (a value list, the looser
+// of the two winning, which is what "at least A or at least B" means).
+//
+// ⛔ THE CLASSIFICATION IS EXPLICIT, NOT UNIVERSAL. Extracting an operator
+// from every dimension's values would make `extension:png` operator-aware
+// and give `tag:` a value grammar nobody declared. A dimension is ordered
+// only by [FacetType.orderedDomain] naming it.
+//
+// Every other dimension returns the same constant key, which reproduces
+// its previous single-group rendering exactly.
+func subGroupKey(dim FacetType, v string) (string, bool) {
+	switch {
+	case dim == FacetField:
+		code, op, _, ok := SplitFieldTerm(v)
+		if !ok {
+			return "", false
+		}
+		return code + "\x1f" + string(op), true
+	case dim.ordered():
+		op, _, ok := SplitOrderedBound(v)
+		if !ok {
+			return "", false
+		}
+		return string(op), true
+	}
+	return "", true
+}
+
+// termShape is HOW one term compares: its operator, and — for an ordered
+// term — the [orderedDomain] the bound was written in (#1173).
+//
+// # ⛔ THE DOMAIN IS THE HALF THAT USED TO BE MISSING, AND ITS ABSENCE WAS THE BUG
+//
+// Before 18b [dimensionSQL] chose the storage column from the OPERATOR:
+// `op == FieldOpAtLeast || op == FieldOpAtMost` selected `value_date`.
+// That is only correct while dates are the only thing anyone can bound,
+// and it is what made `>=` date-only. The column follows the QUANTITY,
+// so the quantity has to travel with the term.
+//
+// It stays a value carried alongside the term rather than a second
+// placeholder: [dimensionSQL]'s contract is one placeholder per term, and
+// [Selection.SQL] appends exactly one arg. See [dimensionSQL]'s doc.
+type termShape struct {
+	// op is the comparison. EMPTY for a dimension whose values carry no
+	// operator, which is every dimension but `field:` and the ordered
+	// ones.
+	op FieldOp
+	// domain is the bound's value domain, and [domainNone] whenever op
+	// is not a bound.
+	domain orderedDomain
+}
+
+// shapeOf derives the [termShape] of one already-canonical term.
+//
+// ⚠️ It reads the VALUE, not the schema, and that is exactly the split
+// [canonicalBound] documents: which domain a bound was written in is
+// decided by its spelling and is knowable here, while whether the FIELD
+// admits that domain is a row and is decided in [Selection.Authorize].
+// A term that reaches here having failed the schema check renders SQL
+// that matches no row — the column it names is NULL on every row of a
+// field stored elsewhere — so the two gates fail in the same direction.
+//
+// Returns ok=false for a value the grammar cannot read, which
+// [Selection.SQL] turns into "this entity matches nothing". That is the
+// second gate [Selection.With] makes necessary: it is exported and takes
+// no error, so a programmatic caller can seed a term the parser never saw.
+func shapeOf(dim FacetType, v string) (termShape, bool) {
+	switch {
+	case dim == FacetField:
+		_, op, value, ok := SplitFieldTerm(v)
+		if !ok {
+			return termShape{}, false
+		}
+		if op != FieldOpAtLeast && op != FieldOpAtMost {
+			return termShape{op: op}, true
+		}
+		_, dom, ok := canonicalBound(value, op)
+		if !ok {
+			return termShape{}, false
+		}
+		return termShape{op: op, domain: dom}, true
+	case dim.ordered():
+		op, _, ok := SplitOrderedBound(v)
+		if !ok {
+			return termShape{}, false
+		}
+		return termShape{op: op, domain: dim.orderedDomain()}, true
+	}
+	return termShape{}, true
 }
 
 // dimensionSQL renders ONE (dimension, entity) pair as a boolean
@@ -566,7 +1676,29 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int) (fr
 // the ref it was given; a human writing `type:Image` or `owner:alice`
 // in the DSL sends the name. One expression serves both so the two
 // entry points cannot disagree about what `type:3` means.
-func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (string, bool) {
+//
+// rc is the caller context [FacetKind]'s post arm needs and every other
+// dimension ignores; see [RenderContext].
+//
+// sh is the [termShape] of this term — its operator, and the domain its
+// bound was written in. Both are the ZERO VALUE for a dimension whose
+// values carry no operator, which is every dimension but `field:` and the
+// ordered ones. They are parameters rather than something re-derived here
+// because [Selection.SQL] has already parsed the value to group by it,
+// and parsing the same string twice in two places is how the grouping and
+// the predicate would come to disagree.
+//
+// ⚠️ It does NOT widen the one-placeholder contract this function's
+// callers rely on. Each operator renders a DIFFERENT EXPRESSION over the
+// SAME single placeholder, still carrying the whole term; the split still
+// happens in SQL. That is what kept #1165 from having to change the arity
+// for every dimension, #1251 held the same line for [FacetKind] by moving
+// the DERIVATION into SQL rather than binding the compiled sets — see
+// [Selection]'s doc — and #1173's ordered dimensions hold it again by
+// carrying the DOMAIN, which is one enum value per term rather than a
+// second bound argument. `rc` is not a counter-example either: it is one
+// value for the whole selection, not a per-term placeholder.
+func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int, sh termShape, rc RenderContext) (string, bool) {
 	p := placeholder(idx)
 	switch dim {
 	case FacetTag:
@@ -589,6 +1721,53 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (st
 		if e == visibility.EntityAsset {
 			return `LOWER(` + a + `sensitivity) = LOWER(` + p + `::TEXT)`, true
 		}
+	case FacetVisibility:
+		// #1251 slice 2 — the sharing tier, as an ordinary predicate.
+		//
+		// ⛔ THIS IS THE ONE DIMENSION WHOSE COLUMN A READ RULE ALSO
+		// READS, and the expression below is deliberately the whole of
+		// what it does. It compares a tier to a bound value. It grants
+		// nothing, waives nothing and consults no relationship table,
+		// because every caller of [Selection.SQL] ANDs the entity's read
+		// rule on after this fragment — so the set this narrows is
+		// already the set the caller may read, and a tier named here can
+		// only ever remove rows from it. See [FacetVisibility] for why
+		// that ordering is the safety argument rather than a detail.
+		//
+		// A plain `=` and no LOWER(), unlike [FacetSensitivity] beside
+		// it: [FacetType.CanonicalValue] has already folded the value to
+		// one of five literals this package wrote, so lowering the COLUMN
+		// would buy nothing and would give up
+		// `collections_visibility_idx` on the collection arm.
+		switch e {
+		case visibility.EntityPost:
+			return a + `visibility = ` + p + `::TEXT`, true
+		case visibility.EntityCollection:
+			// A collection carries the SAME five-tier column with the
+			// same CHECK constraint, so it answers this question
+			// honestly and stays on a tier-filtered page. Its own rule
+			// (visibility.CollectionReadableSQL, spliced by
+			// search.runCollections) is what decides whether the row was
+			// readable in the first place — this only narrows within it.
+			return a + `visibility = ` + p + `::TEXT`, true
+		}
+		// An ASSET falls through to ok=false and drops out of a
+		// tier-filtered page entirely. It has no `visibility` column: its
+		// axis is `sensitivity`, whose four values are a DIFFERENT
+		// vocabulary served by [FacetSensitivity], and answering a tier
+		// question with a sensitivity answer would make one token mean
+		// two things.
+		//
+		// ⚠️ This is the FIRST dimension an asset cannot satisfy, which
+		// makes [buildAssetPopulationSQL]'s unsatisfiable branch — and
+		// the drop of tagAgg's asset half beneath it — reachable for the
+		// first time. Both were already written to honour it.
+		//
+		// The direction is the safe one, by [FacetAI]'s own check: a tier
+		// filter is a POSITIVE narrowing, so an entity that cannot answer
+		// leaving the page is the answer. `ai:` had to be satisfiable for
+		// a collection precisely because it is the opposite — an
+		// EXCLUSION wearing a value's clothes.
 	case FacetOwner:
 		if e == visibility.EntityAsset {
 			return `(` + a + `owner_user_ref::TEXT = ` + p + `::TEXT
@@ -600,54 +1779,427 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (st
 		if e == visibility.EntityAsset {
 			return `LOWER(` + a + `file_extension) = LOWER(` + p + `::TEXT)`, true
 		}
+	case FacetAI:
+		// #1242 — "hide AI work", as an ordinary predicate.
+		//
+		// Every arm is spelled as `<is this row pure?> = <did the caller
+		// ask for pure?>`, and both halves are TOTAL booleans. That is
+		// not a stylistic choice: it is what keeps the fails-toward-
+		// showing direction out of three-valued logic. The obvious
+		// spelling of the asset arm — `ai_provenance <> 'generated'` —
+		// evaluates to NULL for an UNDECLARED asset, and a NULL conjunct
+		// drops the row, so every work nobody was asked about would
+		// vanish from a search that asked to see non-AI work. That is
+		// the exact error ADR 0094 §3 and both amendments forbid,
+		// arriving through SQL's NULL semantics instead of through a
+		// derivation. `IS NOT DISTINCT FROM` and a NOT NULL column are
+		// the two ways it is prevented here.
+		//
+		// The literals below are spliced from the Go constants
+		// [AIPure] / [AINotPure], never from caller text; the caller's
+		// bytes stay in the placeholder, where [FacetType.CanonicalValue]
+		// has already confirmed they are one of the two.
+		switch e {
+		case visibility.EntityPost:
+			// The maintained derived fact (migration 00061). NOT NULL,
+			// so `= (…)` is total.
+			//
+			// ⚠️ NOT `ai_provenance`. That column answers "does this post
+			// CONTAIN AI?" and reads `generated` for {generated, none},
+			// {generated, undeclared} and {generated, assisted} alike —
+			// keying the filter on it would exclude precisely the mixed
+			// posts the owner's ruling protects.
+			return `(` + a + `ai_pure = (` + p + `::TEXT = '` + AIPure + `'))`, true
+		case visibility.EntityAsset:
+			// The SAME rule over a one-element contributor set, which is
+			// what an asset is: it is pure exactly when its own maker
+			// declared `generated`. No second column, because there is
+			// no set to reduce and therefore nothing a stored value
+			// could disagree with.
+			return `((` + a + `ai_provenance IS NOT DISTINCT FROM 'generated')
+			          = (` + p + `::TEXT = '` + AIPure + `'))`, true
+		case visibility.EntityCollection:
+			// ⭐ A collection is SATISFIABLE here, and it is the only
+			// dimension for which that is true — see runCollections,
+			// which had to start applying the rendered fragment for this
+			// arm to mean anything.
+			//
+			// The reason is the direction of the question. Every other
+			// dimension is a POSITIVE narrowing: a caller who asks for
+			// `extension:png` is asking about files, and a collection
+			// dropping out of that page is the answer, not a loss. This
+			// one is an EXCLUSION wearing a value's clothes — the caller
+			// is saying "not that" — and letting an exclusion silently
+			// remove every collection from the page would hide curated
+			// human work from someone who asked to see less AI work.
+			// That is the fails-toward-showing rule, and it applies to
+			// the mechanism as much as to the derivation.
+			//
+			// So: a collection is never a pure-AI WORK — it is a
+			// container, and we derive no purity for it — which makes it
+			// a member of `not_pure` and never of `pure`. The
+			// placeholder is read (rather than a bare TRUE/FALSE)
+			// because every term appends exactly one arg and pgx rejects
+			// a statement that does not name it.
+			return `(` + p + `::TEXT = '` + AINotPure + `')`, true
+		}
+	case FacetKind:
+		// #1166/#1190, converged onto the grammar by #1251 — the badge
+		// kind, as an ordinary predicate.
+		//
+		// ONE PLACEHOLDER, holding the kind NAME, compared against
+		// [viewkind.KindSQL] — the SQL twin of the same resolver the card
+		// draws its glyph from. The derivation is transcribed once, in
+		// package viewkind beside the Go form and its parity tests, so
+		// this file states WHICH ROWS a kind selects and never what a kind
+		// IS.
+		switch e {
+		case visibility.EntityAsset:
+			// An asset IS the row, so the question is direct. No
+			// readability conjunct here: the asset arm's field plane is
+			// applied by the execution site to the whole selection
+			// (runAssets / enrichAssetHits both append
+			// FieldsReadableSQL under an active filter, for #907's
+			// reason), and the row this predicate reads is the row that
+			// gate covers.
+			return viewkind.KindSQL(strings.TrimSuffix(a, ".")) + ` = ` + p + `::TEXT`, true
+		case visibility.EntityPost:
+			// ⭐⭐ A POST MATCHES THROUGH ITS MEMBERS, AND THE READABILITY
+			// CONJUNCT LIVES PER MEMBER. Both halves are load-bearing and
+			// they are the whole reason [RenderContext] exists.
+			//
+			// ANY MEMBER, NOT THE COVER (#1190). The owner's ruling: "a
+			// post containing an ebook matches the ebook filter, cover or
+			// not". #1166 shipped the cover-only reading and it answered
+			// the wrong question — a five-file art drop whose first image
+			// happens to be the cover was unreachable by every kind it
+			// actually contains.
+			//
+			// The membership is `post_assets` and the EXPLICIT COVER IS
+			// NOT ADDED BESIDE IT, even though `posts.cover_asset_id` can
+			// name a non-member. PostCard resolves its cover as
+			// `cover_asset_id ?? members[0]` and then LOOKS IT UP IN
+			// `post.members`, so a cover that is not a member yields no
+			// coverAsset, no kind badge and no extension band. Selecting a
+			// post by a fact its card cannot draw is the disagreement this
+			// filter's whole test suite is built to catch.
+			//
+			// ⛔ AND THE GATE SITS INSIDE THE EXISTS, BESIDE THE MATCH.
+			// visibility.FieldsReadableSQL is the SQL twin of the exact Go
+			// call posts.enrichPreview makes to decide
+			// `PostMember.Restricted`, so "this member matched" and "this
+			// member's kind is drawable" are one decision. Dropping it —
+			// or hoisting it out to the post — turns the filter into an
+			// oracle for a value the card deliberately withholds: a
+			// restricted member shows no kind and no extension anywhere on
+			// the card, and a filter that could still select the post lets
+			// a reader recover that member's kind by asking for each kind
+			// in turn. That is the derived-copy defect class of
+			// #902/#1066 arriving through a new channel.
+			//
+			// It cannot widen: it is a conjunct INSIDE an EXISTS that is
+			// itself a conjunct, and the whole fragment only ever removes
+			// rows.
+			//
+			// `deleted_at IS NULL` is ListPostAssets' own filter, so the
+			// assets considered here are exactly the ones that reach
+			// `post.members` — a soft-deleted asset is not a member of
+			// anything the reader can see.
+			if rc.CallerArg == "" {
+				// No caller was supplied. Fail closed rather than render
+				// the zero Caller, which reads as "user zero" and is wider
+				// than anonymous — see [RenderContext].
+				return "", false
+			}
+			readable := visibility.FieldsReadableSQL(
+				"fkm", rc.CallerArg, rc.Caller, rc.Caps, rc.MutationCaps)
+			return `EXISTS (SELECT 1 FROM post_assets fkp
+			                 JOIN assets fkm ON fkm.id = fkp.asset_id
+			                WHERE fkp.post_id = ` + a + `id
+			                  AND fkm.deleted_at IS NULL
+			                  AND ` + viewkind.KindSQL("fkm") + ` = ` + p + `::TEXT` +
+				readable + `)`, true
+		}
+		// A collection has no members that resolve to a badge kind — its
+		// mosaic is composed from the assets INSIDE it, which are reached
+		// by `collection:` on the asset entity rather than by this
+		// dimension. So it falls through to ok=false and drops out of a
+		// kind-filtered page entirely.
+		//
+		// ⚠️ That is the POSITIVE-NARROWING direction, and the check
+		// [FacetAI]'s collection arm records is why it is safe here: a
+		// caller asking for `kind:image` is asking about files, so a
+		// collection leaving the page is the answer rather than a loss.
+		// `ai:` had to be satisfiable precisely because it is an
+		// EXCLUSION wearing a value's clothes.
 	case FacetField:
 		// #1157 — one metadata field's value, as an ordinary predicate.
+		// #1165 — under one of four operators.
 		//
-		// ONE PLACEHOLDER, carrying `<code>=<value>`, and the split
+		// ONE PLACEHOLDER, carrying `<code><op><value>`, and the split
 		// happens in SQL. That is deliberate rather than lazy: this
 		// function's contract is that every term renders exactly one
 		// placeholder, and [Selection.SQL] appends exactly one arg per
 		// term. Taking two here would change the arity for every
-		// dimension — the same objection [Selection.Authorize]'s doc
-		// records against threading the caller through. `split_part`
-		// takes the code, and `substr(… position('=' …))` takes
-		// everything after the FIRST `=`, so a value containing `=`
-		// survives intact.
+		// dimension, which is the line [FacetKind] also had to hold and
+		// held by computing its value in SQL. `split_part`
+		// takes the code, and `substr(… position(<op> …))` takes
+		// everything after the FIRST operator occurrence, so a value
+		// containing the operator's own characters survives intact.
 		//
-		// The value is matched against BOTH storage columns because a
-		// vocabulary field's storage depends on its type
-		// (web/src/lib/fieldOptions.ts VALUE_COLUMN): `select` and
-		// `tree` write one slug into `value_text`, `multi_select`
-		// writes an array into `value_options`. A caller ticking
-		// "steel" does not know or care which, and asking both is one
-		// expression rather than a type lookup per term.
+		// The operator's spelling is spliced from a CLOSED Go constant
+		// ([fieldOps]), never from caller text: `op` reaches here only
+		// after [SplitFieldTerm] matched it against that list, so the
+		// literal below is one of four strings this file wrote. The
+		// caller's bytes stay in the placeholder, where they have always
+		// been.
 		//
-		// `searchable` and `status='active'` are conjuncts, not
-		// conveniences: `searchable` is the operator's statement that a
-		// field participates in search at all, and the advanced page
-		// renders its rows from exactly that set, so the backend has to
-		// agree or the page would offer a filter the engine ignores.
+		// `status='active'` is a conjunct, not a convenience: an
+		// archived field's values stop answering queries, which is the
+		// same lifecycle rule `rebuild_asset_search_text()` applies on
+		// the other half of its WHERE.
 		//
-		// ⛔ read_capability is NOT here. It is caller-dependent and
-		// this function is caller-blind by design — see
-		// [Selection.Authorize], which refuses the whole search when a
-		// term names a field this caller may not read.
+		// ⛔ `searchable` is NOT a conjunct here, and it used to be
+		// (#1173, sprint 18d). The comment that justified it said "the
+		// advanced page renders its rows from exactly that set", which
+		// stopped being true in #1173 slice 1 when the page moved onto
+		// `show_in_advanced_search` — ADR 0092 §3 separates indexing
+		// from participation. `searchable` decides whether a field's
+		// text is folded into `assets.search_text`; it decides nothing
+		// about whether an EXPLICIT `field:` predicate may name the
+		// field. Requiring it made a well-formed filter reach the
+		// engine and match zero rows, so the control looked applied and
+		// was not. The correction is cross-cutting rather than a fix
+		// for any one field: ANY active field the caller may read is
+		// now filterable regardless of index participation.
+		//
+		// ⛔ read_capability is NOT here, even though this function does
+		// now receive a [RenderContext] (#1251). What that context
+		// carries is a caller's RESOLVED, closed-set capabilities, and
+		// `read_capability` is an open set an operator types at runtime —
+		// the same reason [Query.CapChecker] cannot be a cache-key
+		// component. It stays with [Selection.Authorize], which refuses
+		// the whole search when a term names a field this caller may not
+		// read.
 		if e == visibility.EntityAsset {
+			match, ok := fieldValueSQL(sh, p)
+			if !ok {
+				return "", false
+			}
 			return `EXISTS (SELECT 1 FROM asset_field_value ffv
 			                 JOIN field_definition ffd ON ffd.id = ffv.field_id
 			                WHERE ffv.asset_id = ` + a + `id
-			                  AND ffd.code = split_part(` + p + `::TEXT, '=', 1)
-			                  AND ffd.searchable = TRUE
+			                  AND ffd.code = split_part(` + p + `::TEXT, '` + string(sh.op) + `', 1)
 			                  AND ffd.status = 'active'
-			                  AND (ffv.value_text = substr(` + p + `::TEXT, position('=' IN ` + p + `::TEXT) + 1)
-			                       OR substr(` + p + `::TEXT, position('=' IN ` + p + `::TEXT) + 1)
-			                          = ANY(ffv.value_options)))`, true
+			                  AND ` + match + `)`, true
 		}
 		// Posts and collections carry no asset_field_value rows, so a
 		// field filter makes them unsatisfiable — zero hits AND zero
 		// count, the same fall-through FacetCollection relies on. That
 		// is correct rather than lossy: "assets whose material is
 		// steel" is a question about assets.
+	case FacetFileSize:
+		// #1173 sprint 18b — the stored byte count of a file, as an
+		// ordinary predicate under an ordered operator.
+		//
+		// ONE PLACEHOLDER, holding the whole bare bound `<op><digits>`,
+		// and the split happens in SQL — the same contract [FacetField]
+		// holds one case above, for the same reason: every term appends
+		// exactly one arg, and taking two here would change the arity for
+		// every dimension. The operator is a FIXED-WIDTH prefix here
+		// rather than something to search for, so the value is everything
+		// from byte len(op)+1 onward. `substr` is 1-indexed.
+		//
+		// The operator's spelling is spliced from a CLOSED Go constant
+		// ([orderedBoundOps]), never from caller text: `sh.op` reaches
+		// here only after [SplitOrderedBound] matched it against that
+		// list, and the guard below is the same fail-closed refusal
+		// [fieldValueSQL] makes for an operator it does not recognise.
+		// The caller's bytes stay in the placeholder, where
+		// [FacetType.CanonicalValue] has already proven they are an
+		// int64 in base 10.
+		//
+		// # ⛔ ONLY AN ASSET HAS A FILE, AND THE OTHER TWO ARMS ARE THE POINT
+		//
+		// A post is a set of members and a collection is a container;
+		// neither carries a byte count of its own. Both therefore fall
+		// through to ok=false, which [Selection.SQL] returns as
+		// satisfiable=false and every one of its call sites honours by
+		// skipping the entity entirely — see [FacetExtension], which has
+		// had exactly this shape since #907.
+		//
+		// That is the POSITIVE-NARROWING direction [FacetAI]'s collection
+		// arm records as the test: a caller asking for files over 10MB is
+		// asking about FILES, so an entity with no file leaving the page
+		// is the answer rather than a loss. Treating an active narrowing
+		// filter as "no constraint" on those arms would return every post
+		// and every collection beside the qualifying assets, which is a
+		// result set the filter made LARGER.
+		//
+		// ⚠️ NULL is not zero. `file_size_bytes` is nullable — an asset
+		// whose file was never measured has no size — and a comparison
+		// against NULL is NULL, so such a row satisfies NEITHER bound and
+		// drops out. That is the fail-closed reading and it is asserted
+		// rather than assumed: it is the only way a row can satisfy
+		// neither `>=A` nor `<=B` for A <= B, since a real number is
+		// always below, within or above the range.
+		if sh.op != FieldOpAtLeast && sh.op != FieldOpAtMost {
+			return "", false
+		}
+		if e == visibility.EntityAsset {
+			return a + `file_size_bytes ` + string(sh.op) + ` substr(` + p +
+				`::TEXT, ` + strconv.Itoa(len(sh.op)+1) + `)::BIGINT`, true
+		}
+	case FacetWorkflowState:
+		// #1173 sprint 18c — the asset's workflow state, as an ordinary
+		// enumerated predicate.
+		//
+		// ONE PLACEHOLDER holding the whole identity, and the split
+		// happens in SQL — the same contract [FacetField] and
+		// [FacetFileSize] hold above, for the same reason: every term
+		// appends exactly one arg, and taking two here would change the
+		// arity for every dimension.
+		//
+		// # The two shapes, discriminated on the value itself
+		//
+		// [WorkflowStateNone] means `state_id IS NULL`; anything else is
+		// a concrete `<domain>/<code>`. The discrimination is EXACT
+		// rather than heuristic: [canonicalWorkflowState] has already
+		// proven a concrete value contains a `/`, and `none` does not,
+		// so no state can ever be spelled `none`. The literal below is
+		// spliced from the Go constant and never from caller text, whose
+		// bytes stay in the placeholder where they have always been.
+		//
+		// # ⭐ THE SPLIT IS AT THE FIRST `/`, AND `substr` SAYS SO
+		//
+		// `strpos` returns the FIRST occurrence, so the domain is
+		// everything before it and the code everything after — a code
+		// carrying further slashes survives whole. That is the same rule
+		// [canonicalWorkflowState] validates against in Go, stated here
+		// in the language that has the row. ⛔ `split_part(v, '/', 2)`
+		// would have been the obvious spelling and it is WRONG: it stops
+		// at the second slash and silently truncates an operator-defined
+		// code (#897) that contains one.
+		//
+		// # An unknown identity is zero, and a NULL state is not a match
+		//
+		// The EXISTS is over `workflow_states` joined to THIS asset's
+		// state, so an identity naming no row yields no rows and the
+		// asset drops out — accepted, applied, matching nothing. An
+		// asset whose `state_id` is NULL makes `fws.id = state_id` NULL,
+		// so the EXISTS is false and it drops out too. ⛔ THAT IS THE
+		// LOAD-BEARING HALF OF THE STALE-QUERY CONTRACT: the FK is
+		// ON DELETE SET NULL, so deleting a state nulls its assets, and
+		// a saved query naming the deleted state must return ZERO rather
+		// than quietly becoming [WorkflowStateNone] and widening into
+		// rows its author never asked for.
+		//
+		// # ⛔ NO `domain LIKE 'asset:%'` FILTER, DELIBERATELY
+		//
+		// Asset create does not validate that the state it writes
+		// belongs to the matching `asset:<asset_type>` domain, so an
+		// asset genuinely can carry a `post` state. Restricting the
+		// lookup to asset domains would answer "nothing" about a row
+		// that exists and is misfiled; matching it is what SURFACES the
+		// corruption. See [FacetWorkflowState].
+		//
+		// # Assets only
+		//
+		// A collection has no `state_id` column. A post has one and is
+		// still excluded, because a draft appears on no shared surface
+		// including search — so `post/wip` is unreachable through search
+		// for everyone and `post/published` is tautological. Both fall
+		// through to ok=false, which [Selection.SQL] returns as
+		// satisfiable=false and every call site honours by skipping the
+		// entity entirely — [FacetExtension]'s shape since #907, and the
+		// POSITIVE-NARROWING direction [FacetAI]'s collection arm
+		// established as the test. Treating an active workflow filter as
+		// "no constraint" on those arms would return every post and every
+		// collection beside the qualifying assets, which is a filter that
+		// made the result set LARGER.
+		if e == visibility.EntityAsset {
+			return `(CASE WHEN ` + p + `::TEXT = '` + WorkflowStateNone + `'
+			              THEN ` + a + `state_id IS NULL
+			              ELSE EXISTS (SELECT 1 FROM workflow_states fws
+			                            WHERE fws.id = ` + a + `state_id
+			                              AND fws.domain = substr(` + p + `::TEXT, 1,
+			                                    strpos(` + p + `::TEXT, '` + workflowStateSep + `') - 1)
+			                              AND fws.code = substr(` + p + `::TEXT,
+			                                    strpos(` + p + `::TEXT, '` + workflowStateSep + `') + 1))
+			         END)`, true
+		}
+	case FacetPreview:
+		// #1173 sprint 25a: "the pipeline produced no preview for this",
+		// as an ordinary predicate. Three conjuncts, each from the
+		// authority that already owns its question:
+		//
+		//   1. THE PICTURE PLANE: visibility.PreviewReadableSQL, the SQL
+		//      twin of PreviewReadable, composed from the render context
+		//      every site supplies. Whether a picture exists is a fact
+		//      about the bytes, and the FIELD plane the execution sites
+		//      AND on carries ADR 0064's mutation disjunct, which admits a
+		//      team-scoped assets.admin holder to the columns and
+		//      deliberately NOT to the picture. Left to the field plane
+		//      alone, this dimension would answer that holder one bit of
+		//      the binary plane per query. It fails CLOSED on an empty
+		//      caller placeholder, as the `kind:` post arm does, because
+		//      the zero Caller reads as "user zero" and is wider than
+		//      anonymous. It folds to nothing for system.admin and
+		//      content.read.all, who hold the plane already.
+		//   2. PREVIEWABLE: dispatch.PreviewableSQL, the router's own
+		//      allowlist rendered to SQL with the router's own
+		//      normalisation, never a list written here.
+		//   3. NO `col`: the negation of the exact EXISTS
+		//      `preview_available` reads (assets/handler.go,
+		//      assets/list_page.go). Never `processing_status`: a poster
+		//      writes `col` under `pending` and a fan failure marks a row
+		//      `ready` with none, so status is wrong in both directions.
+		//
+		// The placeholder holds the vocabulary's one literal and is read
+		// as a tautology-shaped comparison against it, because every term
+		// appends exactly one arg and pgx rejects a statement that does
+		// not name it; [FacetType.CanonicalValue] has already proven the
+		// bytes are `missing`.
+		if e == visibility.EntityAsset {
+			if rc.CallerArg == "" {
+				return "", false
+			}
+			return `(` + p + `::TEXT = '` + PreviewMissing + `'
+			          AND ` + dispatch.PreviewableSQL(a+`file_extension`) + `
+			          AND NOT EXISTS (SELECT 1 FROM storage_variants fpv
+			                           WHERE fpv.object_hash = ` + a + `file_hash
+			                             AND fpv.variant_key = 'col')` +
+				visibility.PreviewReadableSQL(strings.TrimSuffix(a, "."), rc.CallerArg, rc.Caller, rc.Caps) +
+				`)`, true
+		}
+		// A post is a set of members and a collection is a container;
+		// neither has a file the pipeline could have rendered, so both
+		// fall through to ok=false, the POSITIVE-NARROWING direction
+		// [FacetFileSize] records, and the reason a mixed-type
+		// `preview:missing` query returns only assets.
+	case FacetID:
+		// #1173 sprint 25a: "one of these rows", as an ordinary
+		// predicate on each entity's OWN id column. Cast on the
+		// placeholder, not the column, for [FacetCollection]'s reason:
+		// `id` is the primary key and casting it would give up the index.
+		// [FacetType.CanonicalValue] has already proven the value parses.
+		//
+		// All three entities answer, because an id is the one thing every
+		// entity has; the read rule each site ANDs on afterwards decides
+		// whether the caller may see the row it names.
+		switch e {
+		case visibility.EntityAsset, visibility.EntityPost, visibility.EntityCollection:
+			return a + `id = ` + p + `::UUID`, true
+		}
+	case FacetLast:
+		// #1173 sprint 25b: "inside the N newest eligible rows of the
+		// requested union", as an ordinary predicate on this entity's
+		// clock and id against a cutoff the union computes once. The
+		// union's arms arrive already rendered and already bound in
+		// rc.RecentArms, and an entity the window was not formed over
+		// (or a site that supplied no arms) is unsatisfiable. See
+		// recent.go.
+		return recentWindowSQL(e, a, p, rc.RecentArms)
 	case FacetCollection:
 		// #910 — "search inside this collection", as an ordinary
 		// predicate rather than a second query path.
@@ -668,7 +2220,7 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (st
 		// the leading column of each table's primary key and casting the
 		// COLUMN instead would give up that index for a sequential scan
 		// of every membership row in the install. See
-		// [FacetType.canonicalValue] for why the cast is safe.
+		// [FacetType.CanonicalValue] for why the cast is safe.
 		//
 		// Collections themselves are absent on purpose. A collection has
 		// no membership in another collection, so EntityCollection falls
@@ -690,6 +2242,84 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (st
 			                   AND fcp.pinned = TRUE
 			                   AND (fcp.expires_at IS NULL OR fcp.expires_at > NOW()))`, true
 		}
+	}
+	return "", false
+}
+
+// fieldValueSQL renders the VALUE half of a [FacetField] predicate for
+// term shape sh, reading the term from placeholder p (#1165, typed #1173).
+//
+// The value is extracted in SQL as everything after the first occurrence
+// of the operator, so `v` below is the caller's text and nothing else.
+// An unrecognised operator — or a bound whose domain this function has no
+// column for — returns ok=false, which [dimensionSQL] turns into "this
+// entity matches nothing": the same fail-closed direction
+// [SplitFieldTerm] takes at parse time, repeated here because
+// [Selection.With] is exported and can seed a term the parser never saw.
+//
+// # Which storage column each operator reads, and why it is not all of
+// them
+//
+// A field's storage depends on its type (web/src/lib/fieldOptions.ts
+// VALUE_COLUMN): `select` and `tree` write one slug into `value_text`,
+// `multi_select` writes an array into `value_options`, `number` writes
+// `value_num`, and the date types write `value_date`.
+//
+//   - Equality and contains ask BOTH text columns, because a caller
+//     ticking "steel" does not know or care which one holds it, and
+//     asking both is one expression rather than a type lookup per term.
+//   - A BOUND asks the ONE column its domain lives in. It keeps the
+//     partial indexes `asset_field_value_date_idx (field_id, value_date)`
+//     and `asset_field_value_num_idx (field_id, value_num)` usable, which
+//     an OR across columns would have given up.
+//
+// # ⛔ THE COLUMN COMES FROM THE DOMAIN, NOT FROM THE OPERATOR
+//
+// It used to come from the operator — `>=` meant `value_date`, full stop
+// — which is why a numeric field could not be compared at all and why
+// `field:pixel_width>=1920` was a 400. The operator says which SIDE of a
+// bound a row must fall on; only the quantity says which column holds it.
+//
+// ⚠️ AND THE DOMAIN IS NOT A GUESS ABOUT THE FIELD. It is read off the
+// caller's own bound ([shapeOf]), and whether the FIELD may be compared
+// that way is a separate, schema-aware refusal in [Selection.Authorize]
+// (see [orderedFieldTypes]). The two agree by construction, because the
+// domain -> column mapping here and the type -> domain mapping there are
+// the same three rows read from two directions. If one ever slipped past
+// the other the predicate would still match no row, because a field
+// stored in `value_text` has NULL in both of these columns.
+//
+// # `strpos`, not ILIKE
+//
+// A substring match spelled `ILIKE '%' || v || '%'` requires escaping
+// `%` and `_` out of the caller's text, and an escape that is forgotten
+// (or that a later edit drops) turns a search for "50_percent" into a
+// wildcard the caller did not ask for. `strpos` has no metacharacters,
+// so there is nothing to escape and nothing to forget. Both sides are
+// lowered for the case-insensitivity the operator promises.
+//
+// `value_options` is unnested rather than joined into one string:
+// flattening the array would let a match straddle two elements and
+// report a hit for text no single value contains.
+func fieldValueSQL(sh termShape, p string) (string, bool) {
+	// Everything after the FIRST occurrence of the operator.
+	v := `substr(` + p + `::TEXT, position('` + string(sh.op) + `' IN ` + p +
+		`::TEXT) + ` + strconv.Itoa(len(sh.op)) + `)`
+	switch sh.op {
+	case FieldOpEq:
+		return `(ffv.value_text = ` + v + ` OR ` + v + ` = ANY(ffv.value_options))`, true
+	case FieldOpContains:
+		return `(strpos(LOWER(ffv.value_text), LOWER(` + v + `)) > 0
+		         OR EXISTS (SELECT 1 FROM unnest(COALESCE(ffv.value_options, '{}'::TEXT[])) fo
+		                     WHERE strpos(LOWER(fo), LOWER(` + v + `)) > 0))`, true
+	case FieldOpAtLeast, FieldOpAtMost:
+		switch sh.domain {
+		case domainTemporal:
+			return `ffv.value_date ` + string(sh.op) + ` ` + v + `::TIMESTAMPTZ`, true
+		case domainNumeric:
+			return `ffv.value_num ` + string(sh.op) + ` ` + v + `::DOUBLE PRECISION`, true
+		}
+		return "", false
 	}
 	return "", false
 }

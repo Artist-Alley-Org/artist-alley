@@ -138,6 +138,9 @@ CREATE FUNCTION public.asset_changed_trigger() RETURNS trigger
 BEGIN
     IF (NEW.title IS DISTINCT FROM OLD.title)
        OR (NEW.description IS DISTINCT FROM OLD.description)
+       -- #1417: the document derives its kind from these two columns.
+       OR (NEW.asset_type IS DISTINCT FROM OLD.asset_type)
+       OR (NEW.file_extension IS DISTINCT FROM OLD.file_extension)
        OR (OLD.search_text IS NULL) THEN
         PERFORM rebuild_asset_search_text(NEW.id);
     END IF;
@@ -311,6 +314,241 @@ $$;
 
 
 --
+-- Name: asset_view_kind(bigint, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_view_kind(asset_type bigint, file_extension text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+SELECT CASE
+            WHEN asset_type = 6 THEN 'archive'
+            WHEN asset_type = 11 THEN 'audiobook'
+            WHEN asset_type = 13 THEN 'sprite'
+            ELSE COALESCE(CASE regexp_replace(lower(btrim(file_extension)), '^\.', '')
+              WHEN 'epub' THEN 'ebook'
+              WHEN 'm4b' THEN 'audiobook'
+              WHEN 'aax' THEN 'audiobook'
+              WHEN 'jpg' THEN 'image'
+              WHEN 'jpeg' THEN 'image'
+              WHEN 'png' THEN 'image'
+              WHEN 'gif' THEN 'image'
+              WHEN 'webp' THEN 'image'
+              WHEN 'bmp' THEN 'image'
+              WHEN 'tiff' THEN 'image'
+              WHEN 'tif' THEN 'image'
+              WHEN 'avif' THEN 'image'
+              WHEN 'heic' THEN 'image'
+              WHEN 'heif' THEN 'image'
+              WHEN 'svg' THEN 'image'
+              WHEN 'hdr' THEN 'image'
+              WHEN 'exr' THEN 'image'
+              WHEN 'pic' THEN 'image'
+              WHEN 'cr2' THEN 'image'
+              WHEN 'nef' THEN 'image'
+              WHEN 'dng' THEN 'image'
+              WHEN 'arw' THEN 'image'
+              WHEN 'rw2' THEN 'image'
+              WHEN 'eps' THEN 'image'
+              WHEN 'ps' THEN 'image'
+              WHEN 'psd' THEN 'image'
+              WHEN 'psb' THEN 'image'
+              WHEN 'mobi' THEN 'image'
+              WHEN 'cbz' THEN 'image'
+              WHEN 'cbr' THEN 'image'
+              WHEN 'cb7' THEN 'image'
+              WHEN 'mp4' THEN 'video'
+              WHEN 'mov' THEN 'video'
+              WHEN 'mkv' THEN 'video'
+              WHEN 'webm' THEN 'video'
+              WHEN 'avi' THEN 'video'
+              WHEN 'wmv' THEN 'video'
+              WHEN 'mpg' THEN 'video'
+              WHEN 'mpeg' THEN 'video'
+              WHEN '3gp' THEN 'video'
+              WHEN 'flv' THEN 'video'
+              WHEN 'm4v' THEN 'video'
+              WHEN 'ts' THEN 'video'
+              WHEN 'lrv' THEN 'video'
+              WHEN 'insv' THEN 'video'
+              WHEN 'mts' THEN 'video'
+              WHEN 'm2ts' THEN 'video'
+              WHEN 'vob' THEN 'video'
+              WHEN 'f4v' THEN 'video'
+              WHEN 'mxf' THEN 'video'
+              WHEN 'mp3' THEN 'audio'
+              WHEN 'wav' THEN 'audio'
+              WHEN 'flac' THEN 'audio'
+              WHEN 'ogg' THEN 'audio'
+              WHEN 'oga' THEN 'audio'
+              WHEN 'm4a' THEN 'audio'
+              WHEN 'aac' THEN 'audio'
+              WHEN 'opus' THEN 'audio'
+              WHEN 'pdf' THEN 'pdf'
+              WHEN 'ttf' THEN 'font'
+              WHEN 'otf' THEN 'font'
+              WHEN 'ttc' THEN 'font'
+              WHEN 'otc' THEN 'font'
+              WHEN 'woff' THEN 'font'
+              WHEN 'woff2' THEN 'font'
+              WHEN 'glb' THEN '3d'
+              WHEN 'gltf' THEN '3d'
+              WHEN 'obj' THEN '3d'
+              WHEN 'fbx' THEN '3d'
+              WHEN 'blend' THEN '3d'
+              WHEN 'mview' THEN '3d'
+              WHEN 'dae' THEN '3d'
+              WHEN 'ply' THEN '3d'
+              WHEN 'stl' THEN '3d'
+              WHEN '3ds' THEN '3d'
+              WHEN 'x3d' THEN '3d'
+              WHEN 'wrl' THEN '3d'
+              WHEN 'usd' THEN '3d'
+              WHEN 'usda' THEN '3d'
+              WHEN 'usdc' THEN '3d'
+              WHEN 'usdz' THEN '3d'
+              WHEN 'abc' THEN '3d'
+              WHEN 'md2' THEN '3d'
+              WHEN 'md3' THEN '3d'
+              WHEN 'mdl' THEN '3d'
+              WHEN 'ms3d' THEN '3d'
+              WHEN 'mb' THEN '3d'
+              WHEN 'ma' THEN '3d'
+              WHEN 'max' THEN '3d'
+              WHEN 'txt' THEN 'doc'
+              WHEN 'log' THEN 'doc'
+              WHEN 'csv' THEN 'doc'
+              WHEN 'tsv' THEN 'doc'
+              WHEN 'md' THEN 'doc'
+              WHEN 'markdown' THEN 'doc'
+              WHEN 'mdx' THEN 'doc'
+              WHEN 'rst' THEN 'doc'
+              WHEN 'adoc' THEN 'doc'
+              WHEN 'org' THEN 'doc'
+              WHEN 'json' THEN 'doc'
+              WHEN 'jsonc' THEN 'doc'
+              WHEN 'yaml' THEN 'doc'
+              WHEN 'yml' THEN 'doc'
+              WHEN 'toml' THEN 'doc'
+              WHEN 'ini' THEN 'doc'
+              WHEN 'cfg' THEN 'doc'
+              WHEN 'conf' THEN 'doc'
+              WHEN 'env' THEN 'doc'
+              WHEN 'properties' THEN 'doc'
+              WHEN 'sh' THEN 'doc'
+              WHEN 'bash' THEN 'doc'
+              WHEN 'zsh' THEN 'doc'
+              WHEN 'fish' THEN 'doc'
+              WHEN 'ps1' THEN 'doc'
+              WHEN 'makefile' THEN 'doc'
+              WHEN 'mk' THEN 'doc'
+              WHEN 'dockerfile' THEN 'doc'
+              WHEN 'gitignore' THEN 'doc'
+              WHEN 'gitattributes' THEN 'doc'
+              WHEN 'py' THEN 'doc'
+              WHEN 'pyi' THEN 'doc'
+              WHEN 'rb' THEN 'doc'
+              WHEN 'lua' THEN 'doc'
+              WHEN 'pl' THEN 'doc'
+              WHEN 'pm' THEN 'doc'
+              WHEN 'js' THEN 'doc'
+              WHEN 'mjs' THEN 'doc'
+              WHEN 'cjs' THEN 'doc'
+              WHEN 'jsx' THEN 'doc'
+              WHEN 'tsx' THEN 'doc'
+              WHEN 'go' THEN 'doc'
+              WHEN 'rs' THEN 'doc'
+              WHEN 'java' THEN 'doc'
+              WHEN 'kt' THEN 'doc'
+              WHEN 'kts' THEN 'doc'
+              WHEN 'scala' THEN 'doc'
+              WHEN 'swift' THEN 'doc'
+              WHEN 'dart' THEN 'doc'
+              WHEN 'c' THEN 'doc'
+              WHEN 'h' THEN 'doc'
+              WHEN 'cpp' THEN 'doc'
+              WHEN 'cc' THEN 'doc'
+              WHEN 'cxx' THEN 'doc'
+              WHEN 'hpp' THEN 'doc'
+              WHEN 'hh' THEN 'doc'
+              WHEN 'm' THEN 'doc'
+              WHEN 'mm' THEN 'doc'
+              WHEN 'cs' THEN 'doc'
+              WHEN 'php' THEN 'doc'
+              WHEN 'hs' THEN 'doc'
+              WHEN 'erl' THEN 'doc'
+              WHEN 'ex' THEN 'doc'
+              WHEN 'exs' THEN 'doc'
+              WHEN 'clj' THEN 'doc'
+              WHEN 'cljs' THEN 'doc'
+              WHEN 'edn' THEN 'doc'
+              WHEN 'html' THEN 'doc'
+              WHEN 'htm' THEN 'doc'
+              WHEN 'css' THEN 'doc'
+              WHEN 'scss' THEN 'doc'
+              WHEN 'sass' THEN 'doc'
+              WHEN 'less' THEN 'doc'
+              WHEN 'vue' THEN 'doc'
+              WHEN 'svelte' THEN 'doc'
+              WHEN 'sql' THEN 'doc'
+              WHEN 'graphql' THEN 'doc'
+              WHEN 'gql' THEN 'doc'
+              WHEN 'xml' THEN 'doc'
+              WHEN 'plist' THEN 'doc'
+              WHEN 'patch' THEN 'doc'
+              WHEN 'diff' THEN 'doc'
+              WHEN 'zip' THEN 'archive'
+              WHEN 'jar' THEN 'archive'
+              WHEN 'war' THEN 'archive'
+              WHEN 'ear' THEN 'archive'
+              WHEN 'apk' THEN 'archive'
+              WHEN 'ipa' THEN 'archive'
+              WHEN '7z' THEN 'archive'
+              WHEN 'rar' THEN 'archive'
+              WHEN 'tar' THEN 'archive'
+              WHEN 'tgz' THEN 'archive'
+              WHEN 'tbz2' THEN 'archive'
+              WHEN 'txz' THEN 'archive'
+            END, 'placeholder')
+          END
+$$;
+
+
+--
+-- Name: FUNCTION asset_view_kind(asset_type bigint, file_extension text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.asset_view_kind(asset_type bigint, file_extension text) IS 'The SQL twin of viewkind.ForAsset (#1417, sprint 24): resolves an asset row to the badge kind its card draws, from asset_type and file_extension. The body is viewkind.KindSQL("") spliced verbatim by migration 00071 and pinned to the Go authority by two tests (a full-vocabulary oracle and a byte-equality drift guard). Change the vocabulary in app/internal/viewkind and cut a migration; never edit this body by hand. Consumed by rebuild_asset_search_text only; the two kind: filter arms render KindSQL inline.';
+
+
+--
+-- Name: assets_ai_provenance_sync(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assets_ai_provenance_sync() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    r record;
+BEGIN
+    IF NEW.ai_provenance IS NOT DISTINCT FROM OLD.ai_provenance
+       AND (NEW.deleted_at IS NULL) IS NOT DISTINCT FROM (OLD.deleted_at IS NULL) THEN
+        RETURN NULL;
+    END IF;
+    FOR r IN
+        SELECT post_id FROM public.post_assets WHERE asset_id = NEW.id
+        UNION
+        SELECT id AS post_id FROM public.posts
+         WHERE cover_asset_id = NEW.id
+            OR cover_thumbnail_asset_id = NEW.id
+    LOOP
+        PERFORM public.recompute_post_ai_provenance(r.post_id);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: assets_mature_sync(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -324,7 +562,13 @@ BEGIN
        AND (NEW.deleted_at IS NULL) IS NOT DISTINCT FROM (OLD.deleted_at IS NULL) THEN
         RETURN NULL;
     END IF;
-    FOR r IN SELECT DISTINCT post_id FROM public.post_assets WHERE asset_id = NEW.id LOOP
+    FOR r IN
+        SELECT post_id FROM public.post_assets WHERE asset_id = NEW.id
+        UNION
+        SELECT id AS post_id FROM public.posts
+         WHERE cover_asset_id = NEW.id
+            OR cover_thumbnail_asset_id = NEW.id
+    LOOP
         PERFORM public.recompute_post_mature(r.post_id);
     END LOOP;
     RETURN NULL;
@@ -484,6 +728,81 @@ $$;
 
 
 --
+-- Name: post_ai_contributors(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_ai_contributors(p_post_id uuid) RETURNS TABLE(declaration text)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT a.ai_provenance
+      FROM public.post_assets pa
+      JOIN public.assets a ON a.id = pa.asset_id
+     WHERE pa.post_id = p_post_id
+       AND a.deleted_at IS NULL
+    UNION ALL
+    SELECT a.ai_provenance
+      FROM public.posts p
+      JOIN public.assets a
+        ON a.id IN (p.cover_asset_id, p.cover_thumbnail_asset_id)
+     WHERE p.id = p_post_id
+       AND a.deleted_at IS NULL;
+$$;
+
+
+--
+-- Name: post_ai_provenance(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_ai_provenance(p_post_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT CASE
+        -- ANY, strongest first.
+        WHEN count(*) FILTER (WHERE declaration = 'generated') > 0 THEN 'generated'
+        WHEN count(*) FILTER (WHERE declaration = 'assisted')  > 0 THEN 'assisted'
+        -- ALL, and only over a non-empty set.
+        WHEN count(*) > 0
+             AND count(*) FILTER (WHERE declaration = 'none') = count(*) THEN 'none'
+        -- Undeclared: no contributors, or at least one nobody asked.
+        ELSE NULL
+    END
+      FROM public.post_ai_contributors(p_post_id);
+$$;
+
+
+--
+-- Name: post_ai_pure(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_ai_pure(p_post_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT count(*) > 0
+       AND count(*) FILTER (WHERE declaration = 'generated') = count(*)
+      FROM public.post_ai_contributors(p_post_id);
+$$;
+
+
+--
+-- Name: post_assets_ai_provenance_sync(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_assets_ai_provenance_sync() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        PERFORM public.recompute_post_ai_provenance(OLD.post_id);
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        PERFORM public.recompute_post_ai_provenance(NEW.post_id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: post_assets_mature_sync(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -517,6 +836,52 @@ $$;
 
 
 --
+-- Name: post_initial_state_id(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_initial_state_id() RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT id FROM public.workflow_states
+     WHERE domain = 'post' AND is_initial
+     LIMIT 1
+$$;
+
+
+--
+-- Name: FUNCTION post_initial_state_id(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.post_initial_state_id() IS 'The `post` workflow domain''s entry-point state, as the DEFAULT for posts.state_id (ADR 0091 decision 7). A function because a column DEFAULT cannot hold a sub-select. Its job is to make "a post is born published" true of the SCHEMA rather than of each INSERT path in turn — the seeder, the API handler and every test fixture would otherwise each have to remember, and under the fail-closed read rule forgetting means the post is invisible to everybody including its author. Explicit writers (posts.createStateID) still choose, which is how a draft gets created.';
+
+
+--
+-- Name: post_is_mature(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_is_mature(p_post_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT EXISTS (
+        SELECT 1
+          FROM public.post_assets pa
+          JOIN public.assets a ON a.id = pa.asset_id
+         WHERE pa.post_id = p_post_id
+           AND a.deleted_at IS NULL
+           AND a.mature
+    ) OR EXISTS (
+        SELECT 1
+          FROM public.posts p
+          JOIN public.assets a
+            ON a.id IN (p.cover_asset_id, p.cover_thumbnail_asset_id)
+         WHERE p.id = p_post_id
+           AND a.deleted_at IS NULL
+           AND a.mature
+    );
+$$;
+
+
+--
 -- Name: post_tags_search_text_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -525,6 +890,44 @@ CREATE FUNCTION public.post_tags_search_text_trigger() RETURNS trigger
     AS $$
 BEGIN
     PERFORM rebuild_post_search_text(COALESCE(NEW.post_id, OLD.post_id));
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: posts_cover_ai_provenance_sync(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.posts_cover_ai_provenance_sync() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE'
+       AND NEW.cover_asset_id IS NOT DISTINCT FROM OLD.cover_asset_id
+       AND NEW.cover_thumbnail_asset_id IS NOT DISTINCT FROM OLD.cover_thumbnail_asset_id THEN
+        RETURN NULL;
+    END IF;
+    PERFORM public.recompute_post_ai_provenance(NEW.id);
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: posts_cover_mature_sync(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.posts_cover_mature_sync() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE'
+       AND NEW.cover_asset_id IS NOT DISTINCT FROM OLD.cover_asset_id
+       AND NEW.cover_thumbnail_asset_id IS NOT DISTINCT FROM OLD.cover_thumbnail_asset_id THEN
+        RETURN NULL;
+    END IF;
+    PERFORM public.recompute_post_mature(NEW.id);
     RETURN NULL;
 END;
 $$;
@@ -561,7 +964,11 @@ BEGIN
         setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
         setweight(to_tsvector('english', COALESCE(description, '')), 'B') ||
         setweight(to_tsvector('english', ''), 'C') ||
-        setweight(to_tsvector('english', COALESCE(field_text, '')), 'D')
+        setweight(to_tsvector('english', COALESCE(field_text, '')), 'D') ||
+        -- #1417: the resolved kind is vocabulary. One lexeme at D, or
+        -- nothing at all when the resolver could not tell.
+        setweight(to_tsvector('english',
+            COALESCE(NULLIF(public.asset_view_kind(asset_type, file_extension), 'placeholder'), '')), 'D')
      WHERE id = p_asset_id;
 END; $$;
 
@@ -588,9 +995,21 @@ END; $$;
 CREATE FUNCTION public.rebuild_post_search_text(p_post_id uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-DECLARE asset_search TEXT; post_tag_text TEXT;
+DECLARE member_docs TSVECTOR; post_tag_text TEXT;
 BEGIN
-    SELECT COALESCE(string_agg(COALESCE(a.search_text::text, ''), ' '), '') INTO asset_search
+    -- THE ENTRY LOCK (00067). First statement, before any aggregate: the
+    -- document below is computed from three reads, and a row lock taken
+    -- after them would order the writes while still letting the value
+    -- be built from a world that had already moved.
+    PERFORM 1 FROM public.posts WHERE id = p_post_id FOR NO KEY UPDATE;
+
+    -- #1417: fold the member DOCUMENTS, not their text form. Serialising
+    -- a tsvector and re-tokenising it turns its position and weight
+    -- markers into lexemes (`1a`, `2a`, bare `3`); concatenation keeps
+    -- each lexeme as the lexeme it is. Ordered by member id so a rebuild
+    -- is deterministic whatever the membership order or the cover.
+    SELECT COALESCE(public.tsvector_agg(COALESCE(a.search_text, ''::tsvector) ORDER BY a.id), ''::tsvector)
+      INTO member_docs
       FROM post_assets pa JOIN assets a ON a.id = pa.asset_id
      WHERE pa.post_id = p_post_id
        AND a.deleted_at IS NULL
@@ -604,9 +1023,35 @@ BEGIN
         setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
         setweight(to_tsvector('english', COALESCE(description, '')), 'B') ||
         setweight(to_tsvector('english', COALESCE(post_tag_text, '')), 'C') ||
-        setweight(to_tsvector('english', COALESCE(asset_search, '')), 'D')
+        setweight(member_docs, 'D')
      WHERE id = p_post_id;
 END; $$;
+
+
+--
+-- Name: recompute_post_ai_provenance(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.recompute_post_ai_provenance(p_post_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_provenance text;
+    v_pure       boolean;
+BEGIN
+    IF p_post_id IS NULL THEN
+        RETURN;
+    END IF;
+    SELECT public.post_ai_provenance(p_post_id), public.post_ai_pure(p_post_id)
+      INTO v_provenance, v_pure;
+    UPDATE public.posts p
+       SET ai_provenance = v_provenance,
+           ai_pure       = v_pure
+     WHERE p.id = p_post_id
+       AND (p.ai_provenance IS DISTINCT FROM v_provenance
+            OR p.ai_pure IS DISTINCT FROM v_pure);
+END;
+$$;
 
 
 --
@@ -621,26 +1066,9 @@ BEGIN
         RETURN;
     END IF;
     UPDATE public.posts p
-       SET mature = EXISTS (
-               SELECT 1
-                 FROM public.post_assets pa
-                 JOIN public.assets a ON a.id = pa.asset_id
-                WHERE pa.post_id = p_post_id
-                  AND a.deleted_at IS NULL
-                  AND a.mature
-           )
+       SET mature = public.post_is_mature(p_post_id)
      WHERE p.id = p_post_id
-       -- Write only on a real change. Without this every membership
-       -- edit touches the post row, which invalidates caches and
-       -- bumps nothing anybody asked to bump.
-       AND p.mature IS DISTINCT FROM EXISTS (
-               SELECT 1
-                 FROM public.post_assets pa
-                 JOIN public.assets a ON a.id = pa.asset_id
-                WHERE pa.post_id = p_post_id
-                  AND a.deleted_at IS NULL
-                  AND a.mature
-           );
+       AND p.mature IS DISTINCT FROM public.post_is_mature(p_post_id);
 END;
 $$;
 
@@ -823,6 +1251,16 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: tsvector_agg(tsvector); Type: AGGREGATE; Schema: public; Owner: -
+--
+
+CREATE AGGREGATE public.tsvector_agg(tsvector) (
+    SFUNC = tsvector_concat,
+    STYPE = tsvector
+);
 
 
 SET default_tablespace = '';
@@ -1136,6 +1574,8 @@ CREATE TABLE public.assets (
     deleted_reason text,
     deleted_by_user_ref bigint,
     mature boolean DEFAULT false NOT NULL,
+    ai_provenance text,
+    CONSTRAINT assets_ai_provenance_check CHECK (((ai_provenance IS NULL) OR (ai_provenance = ANY (ARRAY['none'::text, 'assisted'::text, 'generated'::text])))),
     CONSTRAINT assets_processing_status_check CHECK ((processing_status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT assets_sensitivity_check CHECK ((sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text]))),
     CONSTRAINT assets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])))
@@ -1154,6 +1594,13 @@ COMMENT ON COLUMN public.assets.sensitivity IS 'Intrinsic sensitivity tier (publ
 --
 
 COMMENT ON COLUMN public.assets.page_count IS 'For paginated assets (PDF today; comics + ebooks later), the total page count extracted by the metadata pipeline. NULL = not paginated OR extractor has not run yet; both are read the same way by clients.';
+
+
+--
+-- Name: COLUMN assets.ai_provenance; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.assets.ai_provenance IS 'The MAKER''S DECLARATION about generative-AI involvement in this work (#1167, ADR 0094). Three declared values — `none` (the maker declares no generative AI was involved), `assisted` (AI used in part: upscaling, inpainting, an AI-generated texture on hand-made geometry), `generated` (substantially AI-generated) — plus NULL, which means UNDECLARED: nobody was asked. ⚠️ NULL IS NOT `none`. The column is nullable and unbackfilled precisely so the rows predating the feature do not assert a disclaimer their makers never made; a reader that renders NULL as "no AI" is lying on the artist''s behalf. ⚠️ A DECLARATION IS NOT A PERMISSION (ADR 0094 §4): this is orthogonal to `sensitivity` and to `mature`; it is a FILTER a viewer may apply to their own feed and never a GATE that withholds the work from others, and nothing derived from the asset — search text, facets, suggest, thumbhash, embeddings, counts, covers — is withheld on account of it. That property is what keeps this column cheap and it holds only while nothing gates on it. Extraction may one day CORROBORATE `generated`/`assisted` from `Iptc4xmpExt:DigitalSourceType` on an UNDECLARED work, and may NEVER establish `none`: the IPTC vocabulary has no term meaning "no AI", so absence of an AI term is not evidence of absence (ADR 0094 §3). Does not federate yet — the v1 envelope rejects unknown top-level fields; the wire mapping is pre-decided in ADR 0094 §6.';
 
 
 --
@@ -1362,7 +1809,7 @@ CREATE TABLE public.collections (
 -- Name: COLUMN collections.smart_query; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.collections.smart_query IS 'DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.';
+COMMENT ON COLUMN public.collections.smart_query IS 'DSL query string that was executed to populate this collection. PROVENANCE ONLY (ADR 0091, #1259): it records which search produced this STATIC set, for display and for a refresh the reader invokes deliberately. It is never an input to a read path. Membership in collection_resources is the only membership truth, and a collection saved from a search materialises its members at save time.';
 
 
 --
@@ -1376,7 +1823,7 @@ COMMENT ON COLUMN public.collections.cover_asset_id IS 'Curator-chosen cover pic
 -- Name: COLUMN collections.featured_cover_asset_id; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.collections.featured_cover_asset_id IS 'Curator-chosen cover for the FEATURED RAIL specifically (#1207). The rail card is locked to 890:500 while a collection card is roughly square, so one picture is not the best answer for both. NULL means no separate choice: the rail falls back to cover_asset_id, then to the derived hero-card cover, each rung re-checked against the viewer''s picture plane so a withheld cover falls back rather than rendering blank. ON DELETE SET NULL, and does NOT federate — same reasoning as cover_asset_id (see migration 00046).';
+COMMENT ON COLUMN public.collections.featured_cover_asset_id IS 'Curator-chosen cover for the FEATURED RAIL specifically (#1207). The rail card is locked to 890:500 while a collection card is 4:3 (#1334), so one picture is not the best answer for both. NULL means no separate choice: the rail falls back to cover_asset_id, then to the derived hero-card cover, each rung re-checked against the viewer''s picture plane so a withheld cover falls back rather than rendering blank. ON DELETE SET NULL, and does NOT federate — same reasoning as cover_asset_id (see migration 00046).';
 
 
 --
@@ -1397,14 +1844,14 @@ COMMENT ON COLUMN public.collections.featured_cover_focal_y IS 'Vertical focal p
 -- Name: COLUMN collections.cover_focal_x; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.collections.cover_focal_x IS 'Horizontal focal point for the collection cover''s SQUARE crop, as a FRACTION of the picture''s width (#1207). The square is the destination shape because `col` is fit=cover at 320px — a 320x320 centre-crop — and that rendition is what every small collection thumbnail is made of. Separate from featured_cover_focal_x because the two destinations are different shapes and one fraction cannot be right for both. NULL means centre. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and is wrong.';
+COMMENT ON COLUMN public.collections.cover_focal_x IS 'Horizontal focal point for the collection cover''s 4:3 crop, as a FRACTION of the picture''s width (0 = left edge, 1 = right edge, #1207). THE DESTINATION IS 4:3, NOT A SQUARE (#1334): CollectionCard paints a chosen cover inside an `aspect-[4/3]` tile on the hub, on a profile and in search, and that tile is the only collection surface that crops this picture. The square is the tempting wrong answer because `col` IS one (fit=cover at 320px, a 320x320 centre-crop, the rendition every small collection thumbnail is made of), but `col` is a SOURCE and not a destination; a curator positioned against it would be shown a region the card never displays. A crop marquee locks to the dimensions of the thing that renders it. Separate from featured_cover_focal_x because the rail card is 890:500, and one fraction cannot be right for two shapes. Maps directly to CSS object-position, and is a fraction rather than a pixel offset so it stays correct across preview rungs and viewport sizes. NULL means centre (the CSS default), distinct from an explicit 0.5 so the editor''s reset is a clear rather than a re-set. Paired with cover_focal_y by collections_cover_focal_check: both NULL or both in 0..1. Cleared when the cover picture is swapped or removed and no new framing is supplied (#1333), because a fraction chosen against one photograph means nothing on the next. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and lands somewhere nobody picked.';
 
 
 --
 -- Name: COLUMN collections.cover_focal_y; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.collections.cover_focal_y IS 'Vertical focal point for the collection cover''s square crop (#1207). See cover_focal_x.';
+COMMENT ON COLUMN public.collections.cover_focal_y IS 'Vertical focal point for the collection cover''s 4:3 crop, as a FRACTION of the picture''s height (0 = top edge, 1 = bottom edge, #1207). See cover_focal_x for the destination shape (4:3, not a square, #1334), why it is a fraction, why NULL means centre, why the two are constrained together, when a cover swap clears them, and why it must be painted from a contain rung.';
 
 
 --
@@ -1994,9 +2441,19 @@ CREATE TABLE public.field_definition (
     open_vocabulary boolean DEFAULT false NOT NULL,
     mirrors_column text,
     show_on_card boolean DEFAULT false NOT NULL,
+    show_in_advanced_search boolean DEFAULT true NOT NULL,
+    show_on_upload boolean DEFAULT true NOT NULL,
+    edit_tab text,
+    read_only boolean DEFAULT false NOT NULL,
+    regexp_filter text,
+    display_condition jsonb,
+    CONSTRAINT field_definition_display_condition_shape_check CHECK (((display_condition IS NULL) OR ((jsonb_typeof(display_condition) = 'array'::text) AND (jsonb_array_length(display_condition) > 0) AND (NOT jsonb_path_exists(display_condition, '$[*]?(@.type() != "string")'::jsonpath)) AND (NOT jsonb_path_exists(display_condition, '$[*]?(@ like_regex "^\\s*$")'::jsonpath))))),
+    CONSTRAINT field_definition_edit_tab_nonblank_check CHECK (((edit_tab IS NULL) OR (btrim(edit_tab) <> ''::text))),
     CONSTRAINT field_definition_extraction_mode_check CHECK ((extraction_mode = ANY (ARRAY['skip_if_set'::text, 'replace'::text, 'append'::text, 'prepend'::text]))),
     CONSTRAINT field_definition_mirrors_column_check CHECK (((mirrors_column IS NULL) OR (mirrors_column = ANY (ARRAY['title'::text, 'description'::text])))),
     CONSTRAINT field_definition_mirrors_column_subject_check CHECK (((mirrors_column IS NULL) OR (subject_kind = 'asset'::text))),
+    CONSTRAINT field_definition_mirrored_input_rules_check CHECK (((mirrors_column IS NULL) OR ((read_only IS FALSE) AND (regexp_filter IS NULL)))),
+    CONSTRAINT field_definition_regexp_filter_nonempty_check CHECK (((regexp_filter IS NULL) OR (regexp_filter <> ''::text))),
     CONSTRAINT field_definition_show_on_card_ungated_check CHECK ((NOT (show_on_card AND (COALESCE(read_capability, ''::text) <> ''::text)))),
     CONSTRAINT field_definition_status_check CHECK ((status = ANY (ARRAY['active'::text, 'deprecated'::text, 'archived'::text]))),
     CONSTRAINT field_definition_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
@@ -2030,6 +2487,48 @@ COMMENT ON COLUMN public.field_definition.mirrors_column IS 'When set, this fiel
 --
 
 COMMENT ON COLUMN public.field_definition.show_on_card IS 'Display hint (#552): render this field at a glance on an asset card. Same class as display_order / display_group — UI may use it, nothing may gate access, filtering or correctness on it, and a client that ignores it must still be correct, merely plainer. FEDERATES with the definition: it names the field, not the server (ADR 0012 amendment 2026-08-10, against ADR 0083''s exclusion criterion). Refused on a field carrying a read_capability, because the card renders on browse where no per-field capability has been evaluated.';
+
+
+--
+-- Name: COLUMN field_definition.show_in_advanced_search; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.show_in_advanced_search IS 'Participation flag (ADR 0092 §3, #1173): offer this field as a filter control on the advanced search page. TRUE by default, because every field appeared there before this column existed and an install that never sets it must render unchanged. It governs the CONTROL only — it does not touch `searchable` (which decides whether the field''s text feeds the search index), does not change any query result, and does not stop a caller composing `filter=field:<code>=<value>` by hand. The read capability still gates on top: a flag can never offer a field the caller may not read. FEDERATES with the definition: it names the field, not the server (ADR 0083 exclusion criterion).';
+
+
+--
+-- Name: COLUMN field_definition.show_on_upload; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.show_on_upload IS 'Participation flag (ADR 0092 §3, #1173): offer this field on the upload / create surface. TRUE by default for the same reason as show_in_advanced_search — the upload composer rendered every active field for the asset type before this column existed. Consumed by the create/edit work (#1119); this column is the declaration, the surfaces obey it there. Not constrained against `required`, because required-ness is enforced on the value-write path and not at asset creation. FEDERATES with the definition.';
+
+
+--
+-- Name: COLUMN field_definition.edit_tab; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.edit_tab IS 'Participation flag (ADR 0092 §3, #1173): which tab of the edit surface this field sits in. NULL (the default) = unassigned, which is today''s behaviour — no surface has tabs yet, and fields group by display_group. Distinct from an empty string, which the CHECK constraint refuses so that "no tab" has exactly one representation. A coarser grouping than display_group, not a replacement for it: a tab holds groups. FEDERATES with the definition.';
+
+
+--
+-- Name: COLUMN field_definition.read_only; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.read_only IS 'Refuse HUMAN writes to this field''s values (#1173, ADR 0012). FALSE by default, which is today''s behaviour. Enforced on the four identity-bearing value handlers: setting and clearing an asset value, and setting and clearing a collection value. It is NOT a freeze on the row — upload defaults, the extraction pipeline and the mirror filler still write, because a read-only field is normally one the SYSTEM owns; those writers are distinct Go functions with no HTTP route, so the exemption is a property of the call site rather than a flag any caller can send. On an ASSET the refusal applies immediately, including where no value exists yet, because asset creation writes no field-value rows and so has no human first-write seam. On a COLLECTION the create body MAY seed an initial value, and every later set or clear is refused. Refused on a field declaring mirrors_column: those carry a second human write plane on the assets row that would not obey it. Does NOT federate — it is an access rule, the same class ADR 0083 keeps out of a schema envelope.';
+
+
+--
+-- Name: COLUMN field_definition.regexp_filter; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.regexp_filter IS 'Pattern a HUMAN-supplied value of this field must match (#1173, ADR 0012). NULL (the default) = no constraint, and NULL is the ONLY representation of that: the empty string is refused by the CHECK, and removing a pattern travels as an explicit clear_regexp_filter on the update body, exactly as clear_edit_tab does for the tab. Go RE2, anchored by the SERVER as \A(?:<pattern>)\z so it always matches the WHOLE value — operators do not write ^…$, which would be line anchors under (?m) and would bind to only the outer branches of an alternation. Stored verbatim: never trimmed, because whitespace inside a pattern is meaningful and a whitespace-only pattern is a legitimate configuration. Honoured for `text` and `longtext` only; the narrowing lives in Go (regexpFilterApplies) so widening it stays a decision rather than a migration. `rich_text` is excluded deliberately even though it shares value_text: that column holds sanitised HTML, so a pattern would match markup rather than anything the operator can see. Validates HUMAN INPUT, not the stored row — system writers (defaults, extraction, mirror fill) are not checked, so a stored value may legitimately fail it. Refused on a field declaring mirrors_column. FEDERATES with the definition: it names the field, not the server.';
+
+
+--
+-- Name: COLUMN field_definition.display_condition; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.display_condition IS 'When this field should be OFFERED on a composition surface (#1173, #1119, ADR 0099). NULL (the default) = always, and NULL is the ONLY representation of that: the CHECK refuses [], {}, "" and JSON null, so no reader has to know a second spelling of unset. Otherwise a JSON array of bare <code><op><value> strings with NO field: prefix, combined with AND, parsed by the EXISTING search term grammar (facet.SplitFieldTerm) — the search grammar is NOT extended. A FORM HINT and never authorization: it decides whether a CONTROL is drawn and nothing about access, filtering, indexing or write validity, so a hidden field keeps its values and can still be written through PUT /assets/{id}/fields/{field_id}. Hiding a field emits no Set, no Clear and no empty row, and revealing it restores the persisted value byte for byte. Update-only on the API (display_condition + clear_display_condition on FieldDefinitionUpdate, neither on FieldDefinitionCreate), because a create body cannot reference a graph that does not exist yet. At runtime the condition is CONJUNCTIVE, and if ANY term is unevaluable — controller definition missing or unresolvable, or unreadable by this caller on this subject — the WHOLE condition fails open and the dependent is SHOWN; a readable controller with genuinely no value is a real FALSE and still hides. Configuration refuses malformed terms, unsupported operator/type pairings, unknown or mirrored or already-archived controllers, mirrored dependents, subject-kind mismatches, cycles walked across the WHOLE subject-kind graph, an empty N-way applies_to intersection, and distinct = literals on one single-valued controller. Archiving a controller later does NOT rewrite or clear a stored condition; the dependent fails open and ordinary evaluation resumes if the controller is restored. The acyclicity invariant is NOT expressible as a constraint on this column and is held by a transaction-scoped advisory lock in UpdateField. FEDERATES with the definition (ADR 0083, amendment 2026-09-03): it names the field rather than the server, and it is the first such property to reference a SECOND field, so a missing referent is preserved verbatim and its cycle and applicability checks are deferred.';
 
 
 --
@@ -2168,6 +2667,26 @@ CREATE TABLE public.metadata_backfill_run (
 
 
 --
+-- Name: metadata_batch_preview; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.metadata_batch_preview (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    token_hash bytea NOT NULL,
+    caller_user_ref bigint NOT NULL,
+    field_id uuid NOT NULL,
+    mode text NOT NULL,
+    would_change integer NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    CONSTRAINT metadata_batch_preview_mode_check CHECK ((mode = ANY (ARRAY['overwrite'::text, 'fill_empties'::text, 'append'::text, 'remove'::text]))),
+    CONSTRAINT metadata_batch_preview_would_change_check CHECK ((would_change >= 0))
+);
+
+
+--
 -- Name: notifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2245,15 +2764,29 @@ CREATE TABLE public.posts (
     deleted_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    state_id uuid,
+    state_id uuid DEFAULT public.post_initial_state_id(),
     team_id uuid,
     cover_thumbnail_asset_id uuid,
     subtitle_track_override jsonb,
     deleted_reason text,
     deleted_by_user_ref bigint,
     mature boolean DEFAULT false NOT NULL,
+    ai_provenance text,
+    ai_pure boolean DEFAULT false NOT NULL,
+    cover_focal_x double precision,
+    cover_focal_y double precision,
+    comments_enabled boolean DEFAULT true NOT NULL,
+    CONSTRAINT posts_ai_provenance_check CHECK (((ai_provenance IS NULL) OR (ai_provenance = ANY (ARRAY['none'::text, 'assisted'::text, 'generated'::text])))),
+    CONSTRAINT posts_cover_focal_check CHECK ((((cover_focal_x IS NULL) AND (cover_focal_y IS NULL)) OR (((cover_focal_x >= (0)::double precision) AND (cover_focal_x <= (1)::double precision)) AND ((cover_focal_y >= (0)::double precision) AND (cover_focal_y <= (1)::double precision))))),
     CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
+
+
+--
+-- Name: COLUMN posts.state_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.state_id IS 'The post''s workflow state, domain = ''post'' (ADR 0091 decision 7). Two states are reachable: `published` — the post is on shared surfaces — and `wip`, the DRAFT state, which is visible to its author and to a posts.admin holder and appears on no shared surface at all. Set by POST /posts from the request''s `draft` flag and moved only by workflow.Service.Transition (POST /posts/{id}/publish and /unpublish), which validates the edge and writes workflow_audit; no request body accepts this column. READ FAIL-CLOSED: visibility.postPublishedExpr asks `state_id = <published>`, so a NULL or unrecognised state withholds the post rather than showing it — the FK is ON DELETE SET NULL, and the other spelling would publish every draft the moment a state row was deleted. This is the ONE place a workflow state decides publication, and it is deliberate: the `post` domain has exactly these two states and ADR 0091 identifies them with draft/published. An ASSET''s workflow state means something else entirely — where the file is in its production process — and must never be read this way.';
 
 
 --
@@ -2261,6 +2794,40 @@ CREATE TABLE public.posts (
 --
 
 COMMENT ON COLUMN public.posts.subtitle_track_override IS 'Per-post override for the parent asset''s subtitle tracks. NULL means use the asset''s intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.';
+
+
+--
+-- Name: COLUMN posts.ai_provenance; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.ai_provenance IS 'DERIVED from the post''s live CONTRIBUTORS — its member assets AND its two cover pictures (#1167, ADR 0094). Never written by a request body; maintained by `public.post_ai_provenance` via triggers on `post_assets`, `assets` and `posts`, exactly as `posts.mature` is. The rule is asymmetric: a POSITIVE claim propagates on ANY (one `generated` contributor makes the post `generated`, else one `assisted` contributor makes it `assisted`), and the NEGATIVE claim requires ALL (the post reads `none` only when it has at least one live contributor and every one of them declares `none`). One undeclared contributor makes the post undeclared, because deriving `none` over a contributor nobody asked would fabricate that maker''s disclaimer at the post level. A post with no live contributors is NULL. The covers arm is present from the first migration deliberately: `posts.mature` shipped without it and #1147 was the bill.';
+
+
+--
+-- Name: COLUMN posts.ai_pure; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.ai_pure IS 'DERIVED — TRUE when this post has at least one live CONTRIBUTOR and EVERY one of them declares `generated` (#1242, ADR 0094 fourth amendment). Contributors are the member assets UNION the two cover pictures, exactly as `ai_provenance` counts them. ⚠️ THIS IS THE FILTERING FACT AND `ai_provenance` IS THE LABELLING FACT; they are not interchangeable. `ai_provenance` propagates a positive claim on ANY member, so `{generated, none}`, `{generated, undeclared}` and `{generated, assisted}` all read `generated` — a "hide AI work" filter keyed on it would exclude exactly the MIXED posts the owner''s ruling protects, because excluding a post for one member''s declaration punishes the honest declaration the design depends on. `assisted` NEVER contributes to purity: an all-`assisted` post is human work made with AI help. An UNDECLARED contributor makes the post NOT pure, because not-knowing must never hide an artist''s work. A post with no live contributors is not pure. NOT NULL is correct here where `assets.ai_provenance` is nullable: `false` is a statement about OUR KNOWLEDGE ("we cannot say this post is purely AI"), not a disclaimer written on a maker''s behalf. ⛔ A FILTER, NEVER A GATE (ADR 0094 §4): nothing withholds on this column, nothing is subtracted from counts, facets or suggest, and it carries no derived-copies obligation for exactly that reason.';
+
+
+--
+-- Name: COLUMN posts.cover_focal_x; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.cover_focal_x IS 'Horizontal focal point for the post cover''s SQUARE crop, as a FRACTION of the picture''s width (0 = left edge, 1 = right edge, #1210). The square is the destination shape because the browse GRID tile is the only post surface that crops: PostCard sets CardThumb''s `fill` in grid alone, and that is `object-fit: cover` on an `aspect-square` frame. Masonry takes the picture''s own shape and feed, thumbnail, band and list letterbox it whole, so none of them can act on this. Maps directly to CSS object-position, and is a fraction rather than a pixel offset so it stays correct across preview rungs and viewport sizes. NULL means centre (the CSS default), distinct from an explicit 0.5 so the editor''s reset is a clear rather than a re-set. Paired with cover_focal_y by posts_cover_focal_check: both NULL or both in 0..1. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and lands somewhere nobody picked.';
+
+
+--
+-- Name: COLUMN posts.cover_focal_y; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.cover_focal_y IS 'Vertical focal point for the post cover''s square crop, as a FRACTION of the picture''s height (0 = top edge, 1 = bottom edge, #1210). See cover_focal_x for the destination shape, why it is a fraction, why NULL means centre, why the two are constrained together, and why it must be painted from a contain rung.';
+
+--
+-- Name: COLUMN posts.comments_enabled; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.comments_enabled IS 'Whether this post accepts NEW ordinary comments and replies (#1119 sprint 21d). A setting of the post, chosen by whoever may edit it: not a user preference (two posts by one author differ independently), not a capability (`posts.comment` says whether a caller may comment at all; this says whether THIS post takes one from anybody, and `system.admin` does not bypass it), and not a workflow state. NOT NULL because "unset" is not a product state; DEFAULT true because that is how every post behaved before the column existed. CREATION ONLY: false refuses POST /posts/{id}/comments with 409 `comments_disabled` and nothing else changes, so existing comments stay readable wherever the thread was readable, and listing, deletion and moderation are untouched. Whiteboards and annotations are separate paths and do not read this column. The comment-create transaction reads it FOR NO KEY UPDATE before inserting, so a committed disable is never raced by a check-then-insert.';
 
 
 --
@@ -2401,7 +2968,9 @@ CREATE TABLE public.scheduled_actions (
     created_by bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     executed_at timestamp with time zone,
+    origin text DEFAULT 'generic'::text NOT NULL,
     CONSTRAINT scheduled_actions_action_check CHECK ((action = ANY (ARRAY['restrict'::text, 'delete'::text, 'change_state'::text, 'change_sensitivity'::text, 'notify'::text]))),
+    CONSTRAINT scheduled_actions_origin_check CHECK ((origin = ANY (ARRAY['generic'::text, 'author'::text]))),
     CONSTRAINT scheduled_actions_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'done'::text, 'cancelled'::text, 'failed'::text]))),
     CONSTRAINT scheduled_actions_target_kind_check CHECK ((target_kind = ANY (ARRAY['asset'::text, 'post'::text, 'collection'::text, 'user'::text])))
 );
@@ -3424,6 +3993,22 @@ ALTER TABLE ONLY public.metadata_backfill_run
 
 
 --
+-- Name: metadata_batch_preview metadata_batch_preview_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_batch_preview
+    ADD CONSTRAINT metadata_batch_preview_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: metadata_batch_preview metadata_batch_preview_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_batch_preview
+    ADD CONSTRAINT metadata_batch_preview_token_hash_key UNIQUE (token_hash);
+
+
+--
 -- Name: notifications notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3990,6 +4575,13 @@ CREATE INDEX asset_type_acls_expires_idx ON public.asset_type_acls USING btree (
 --
 
 CREATE INDEX asset_type_acls_principal_idx ON public.asset_type_acls USING btree (principal_type, principal_id);
+
+
+--
+-- Name: assets_ai_provenance_declared_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX assets_ai_provenance_declared_idx ON public.assets USING btree (ai_provenance) WHERE (ai_provenance = ANY (ARRAY['assisted'::text, 'generated'::text]));
 
 
 --
@@ -4966,6 +5558,13 @@ CREATE INDEX metadata_backfill_run_started_by_idx ON public.metadata_backfill_ru
 
 
 --
+-- Name: metadata_batch_preview_expires_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX metadata_batch_preview_expires_at_idx ON public.metadata_batch_preview USING btree (expires_at);
+
+
+--
 -- Name: post_acls_expires_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5008,6 +5607,20 @@ CREATE INDEX post_tags_tag_trgm ON public.post_tags USING gin (tag public.gin_tr
 
 
 --
+-- Name: posts_ai_provenance_declared_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_ai_provenance_declared_idx ON public.posts USING btree (ai_provenance) WHERE (ai_provenance = ANY (ARRAY['assisted'::text, 'generated'::text]));
+
+
+--
+-- Name: posts_ai_pure_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_ai_pure_idx ON public.posts USING btree (ai_pure) WHERE ai_pure;
+
+
+--
 -- Name: posts_author_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5047,6 +5660,13 @@ CREATE INDEX posts_mature_idx ON public.posts USING btree (id) WHERE mature;
 --
 
 CREATE INDEX posts_public_feed_idx ON public.posts USING btree (posted_at DESC) WHERE ((deleted_at IS NULL) AND (visibility = 'public'::text));
+
+
+--
+-- Name: posts_recent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_recent_idx ON public.posts USING btree (posted_at DESC, id DESC) WHERE (deleted_at IS NULL);
 
 
 --
@@ -5117,6 +5737,13 @@ CREATE INDEX saved_search_due_idx ON public.saved_search USING btree (last_run_a
 --
 
 CREATE INDEX saved_search_owner_idx ON public.saved_search USING btree (owner_user_ref, id);
+
+
+--
+-- Name: scheduled_actions_author_pending_post_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX scheduled_actions_author_pending_post_idx ON public.scheduled_actions USING btree (target_id) WHERE ((state = 'pending'::text) AND (origin = 'author'::text) AND (action = 'change_state'::text) AND (target_kind = 'post'::text));
 
 
 --
@@ -5540,6 +6167,13 @@ CREATE TRIGGER asset_type_acl_sweep_after_team_delete AFTER DELETE ON public.tea
 
 
 --
+-- Name: assets assets_ai_provenance_sync_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER assets_ai_provenance_sync_trg AFTER UPDATE ON public.assets FOR EACH ROW EXECUTE FUNCTION public.assets_ai_provenance_sync();
+
+
+--
 -- Name: assets assets_mature_sync_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5631,6 +6265,13 @@ CREATE TRIGGER likes_maintain_counter_insert AFTER INSERT ON public.likes FOR EA
 
 
 --
+-- Name: post_assets post_assets_ai_provenance_sync_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER post_assets_ai_provenance_sync_trg AFTER INSERT OR DELETE OR UPDATE ON public.post_assets FOR EACH ROW EXECUTE FUNCTION public.post_assets_ai_provenance_sync();
+
+
+--
 -- Name: post_assets post_assets_mature_sync_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5649,6 +6290,20 @@ CREATE TRIGGER post_assets_search_text AFTER INSERT OR DELETE OR UPDATE ON publi
 --
 
 CREATE TRIGGER post_tags_search_text AFTER INSERT OR DELETE OR UPDATE ON public.post_tags FOR EACH ROW EXECUTE FUNCTION public.post_tags_search_text_trigger();
+
+
+--
+-- Name: posts posts_cover_ai_provenance_sync_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER posts_cover_ai_provenance_sync_trg AFTER INSERT OR UPDATE ON public.posts FOR EACH ROW EXECUTE FUNCTION public.posts_cover_ai_provenance_sync();
+
+
+--
+-- Name: posts posts_cover_mature_sync_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER posts_cover_mature_sync_trg AFTER INSERT OR UPDATE ON public.posts FOR EACH ROW EXECUTE FUNCTION public.posts_cover_mature_sync();
 
 
 --
@@ -6171,6 +6826,14 @@ ALTER TABLE ONLY public.mcp_server_tool_grant
 
 ALTER TABLE ONLY public.metadata_backfill_run
     ADD CONSTRAINT metadata_backfill_run_started_by_user_ref_fkey FOREIGN KEY (started_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
+
+
+--
+-- Name: metadata_batch_preview metadata_batch_preview_field_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_batch_preview
+    ADD CONSTRAINT metadata_batch_preview_field_id_fkey FOREIGN KEY (field_id) REFERENCES public.field_definition(id) ON DELETE CASCADE;
 
 
 --

@@ -1521,10 +1521,19 @@ func (h *Handler) SetUserRole(
 	// Sets the user's GLOBAL role (replaces any existing global
 	// assignment; leaves team-scoped assignments intact). The admin
 	// endpoint shape hasn't changed; only the storage semantics did.
-	if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
-		UserRef:           req.Ref,
-		RoleID:            roleUUID,
-		AssignedByUserRef: &id.UserRef,
+	// SERIALIZED (#1173, #1119). A role assignment changes effective
+	// authority as surely as a direct grant does — more so, because a
+	// team-scoped ROLE produces zero rows in `user_capability_grants`
+	// and is invisible to anything watching that table.
+	if err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := LockAuthorityForUpdate(ctx, tx, req.Ref); err != nil {
+			return err
+		}
+		return New(tx).SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
+			UserRef:           req.Ref,
+			RoleID:            roleUUID,
+			AssignedByUserRef: &id.UserRef,
+		})
 	}); err != nil {
 		return nil, err
 	}

@@ -28,6 +28,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func openPool(t *testing.T) *pgxpool.Pool {
@@ -39,7 +40,7 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -137,7 +138,7 @@ func freshKeyParams(t *testing.T, userRef int64, version int32, isCurrent bool) 
 func TestQueries_InsertAndGetCurrent_Roundtrip(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -183,7 +184,7 @@ func TestQueries_InsertAndGetCurrent_Roundtrip(t *testing.T) {
 func TestQueries_GetCurrentUserKey_NoRowsWhenUserHasNoKey(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -198,7 +199,7 @@ func TestQueries_GetCurrentUserKey_NoRowsWhenUserHasNoKey(t *testing.T) {
 func TestQueries_GetUserKeyByVersion_FindsExactRow(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -234,7 +235,7 @@ func TestQueries_GetUserKeyByVersion_FindsExactRow(t *testing.T) {
 func TestQueries_ListPublicKeysByUser_OrdersCurrentFirst(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -269,7 +270,7 @@ func TestQueries_ListPublicKeysByUser_OrdersCurrentFirst(t *testing.T) {
 func TestQueries_ListPublicKeysByUser_ExcludesExpiredRetention(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -304,7 +305,7 @@ func TestQueries_ListPublicKeysByUser_ExcludesExpiredRetention(t *testing.T) {
 func TestQueries_CountUserKeys(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -326,7 +327,7 @@ func TestQueries_CountUserKeys(t *testing.T) {
 func TestQueries_PartialUnique_RejectsTwoCurrent(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -346,7 +347,7 @@ func TestQueries_PartialUnique_RejectsTwoCurrent(t *testing.T) {
 func TestQueries_CurrentXorRetained_RejectsCurrentWithRetained(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -363,7 +364,7 @@ func TestQueries_CurrentXorRetained_RejectsCurrentWithRetained(t *testing.T) {
 func TestQueries_CurrentXorRetained_RejectsRetainedWithNullRetainedUntil(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)
@@ -381,7 +382,7 @@ func TestQueries_CurrentXorRetained_RejectsRetainedWithNullRetainedUntil(t *test
 func TestQueries_OnDeleteCascade_DropsKeysWhenUserGoes(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	q := userkeys.New(pool)

@@ -835,6 +835,11 @@ func (*PanicShim) BurnSubtitleTrack(context.Context, openapi.BurnSubtitleTrackRe
 	panic("PanicShim: BurnSubtitleTrack called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetAssetCompanionRequirements panics by default; test shims override.
+func (*PanicShim) GetAssetCompanionRequirements(context.Context, openapi.GetAssetCompanionRequirementsRequestObject) (openapi.GetAssetCompanionRequirementsResponseObject, error) {
+	panic("PanicShim: GetAssetCompanionRequirements called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListAssetCompanions panics by default; test shims override.
 func (*PanicShim) ListAssetCompanions(context.Context, openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
 	panic("PanicShim: ListAssetCompanions called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -880,6 +885,11 @@ func (*PanicShim) GetEpubSpine(context.Context, openapi.GetEpubSpineRequestObjec
 	panic("PanicShim: GetEpubSpine called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetAssetFieldComposition panics by default; test shims override.
+func (*PanicShim) GetAssetFieldComposition(context.Context, openapi.GetAssetFieldCompositionRequestObject) (openapi.GetAssetFieldCompositionResponseObject, error) {
+	panic("PanicShim: GetAssetFieldComposition called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetAssetFields panics by default; test shims override.
 func (*PanicShim) GetAssetFields(context.Context, openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	panic("PanicShim: GetAssetFields called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -908,6 +918,11 @@ func (*PanicShim) DownloadAssetFile(context.Context, openapi.DownloadAssetFileRe
 // LintAsset panics by default; test shims override.
 func (*PanicShim) LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
 	panic("PanicShim: LintAsset called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListAssetPosts panics by default; test shims override.
+func (*PanicShim) ListAssetPosts(context.Context, openapi.ListAssetPostsRequestObject) (openapi.ListAssetPostsResponseObject, error) {
+	panic("PanicShim: ListAssetPosts called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // RecreateAssetPreview panics by default; test shims override.
@@ -1055,6 +1070,16 @@ func (*PanicShim) VerifyEmail(context.Context, openapi.VerifyEmailRequestObject)
 	panic("PanicShim: VerifyEmail called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ApplyBatchAssetFieldEdit panics by default; test shims override.
+func (*PanicShim) ApplyBatchAssetFieldEdit(context.Context, openapi.ApplyBatchAssetFieldEditRequestObject) (openapi.ApplyBatchAssetFieldEditResponseObject, error) {
+	panic("PanicShim: ApplyBatchAssetFieldEdit called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// PreviewBatchAssetFieldEdit panics by default; test shims override.
+func (*PanicShim) PreviewBatchAssetFieldEdit(context.Context, openapi.PreviewBatchAssetFieldEditRequestObject) (openapi.PreviewBatchAssetFieldEditResponseObject, error) {
+	panic("PanicShim: PreviewBatchAssetFieldEdit called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetPublicBrowseViews panics by default; test shims override.
 func (*PanicShim) GetPublicBrowseViews(context.Context, openapi.GetPublicBrowseViewsRequestObject) (openapi.GetPublicBrowseViewsResponseObject, error) {
 	panic("PanicShim: GetPublicBrowseViews called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1130,6 +1155,11 @@ func (*PanicShim) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionA
 	panic("PanicShim: RemoveCollectionAcl called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetCollectionFieldComposition panics by default; test shims override.
+func (*PanicShim) GetCollectionFieldComposition(context.Context, openapi.GetCollectionFieldCompositionRequestObject) (openapi.GetCollectionFieldCompositionResponseObject, error) {
+	panic("PanicShim: GetCollectionFieldComposition called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetCollectionFields panics by default; test shims override.
 func (*PanicShim) GetCollectionFields(context.Context, openapi.GetCollectionFieldsRequestObject) (openapi.GetCollectionFieldsResponseObject, error) {
 	panic("PanicShim: GetCollectionFields called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1163,21 +1193,6 @@ func (*PanicShim) AddCollectionPost(context.Context, openapi.AddCollectionPostRe
 // RemoveCollectionPost panics by default; test shims override.
 func (*PanicShim) RemoveCollectionPost(context.Context, openapi.RemoveCollectionPostRequestObject) (openapi.RemoveCollectionPostResponseObject, error) {
 	panic("PanicShim: RemoveCollectionPost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
-}
-
-// ListCollectionResources panics by default; test shims override.
-func (*PanicShim) ListCollectionResources(context.Context, openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
-	panic("PanicShim: ListCollectionResources called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
-}
-
-// AddCollectionResource panics by default; test shims override.
-func (*PanicShim) AddCollectionResource(context.Context, openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
-	panic("PanicShim: AddCollectionResource called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
-}
-
-// RemoveCollectionResource panics by default; test shims override.
-func (*PanicShim) RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
-	panic("PanicShim: RemoveCollectionResource called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // DeleteComment panics by default; test shims override.
@@ -1275,6 +1290,16 @@ func (*PanicShim) SetFieldExtraction(context.Context, openapi.SetFieldExtraction
 	panic("PanicShim: SetFieldExtraction called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// SearchFieldValues panics by default; test shims override.
+func (*PanicShim) SearchFieldValues(context.Context, openapi.SearchFieldValuesRequestObject) (openapi.SearchFieldValuesResponseObject, error) {
+	panic("PanicShim: SearchFieldValues called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// MergeFieldValues panics by default; test shims override.
+func (*PanicShim) MergeFieldValues(context.Context, openapi.MergeFieldValuesRequestObject) (openapi.MergeFieldValuesResponseObject, error) {
+	panic("PanicShim: MergeFieldValues called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ClaimJobs panics by default; test shims override.
 func (*PanicShim) ClaimJobs(context.Context, openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
 	panic("PanicShim: ClaimJobs called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1355,6 +1380,11 @@ func (*PanicShim) RemovePostAsset(context.Context, openapi.RemovePostAssetReques
 	panic("PanicShim: RemovePostAsset called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListPostCollections panics by default; test shims override.
+func (*PanicShim) ListPostCollections(context.Context, openapi.ListPostCollectionsRequestObject) (openapi.ListPostCollectionsResponseObject, error) {
+	panic("PanicShim: ListPostCollections called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListPostComments panics by default; test shims override.
 func (*PanicShim) ListPostComments(context.Context, openapi.ListPostCommentsRequestObject) (openapi.ListPostCommentsResponseObject, error) {
 	panic("PanicShim: ListPostComments called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1378,6 +1408,31 @@ func (*PanicShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject)
 // LikePost panics by default; test shims override.
 func (*PanicShim) LikePost(context.Context, openapi.LikePostRequestObject) (openapi.LikePostResponseObject, error) {
 	panic("PanicShim: LikePost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// CancelPostPublicationSchedule panics by default; test shims override.
+func (*PanicShim) CancelPostPublicationSchedule(context.Context, openapi.CancelPostPublicationScheduleRequestObject) (openapi.CancelPostPublicationScheduleResponseObject, error) {
+	panic("PanicShim: CancelPostPublicationSchedule called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetPostPublicationSchedule panics by default; test shims override.
+func (*PanicShim) GetPostPublicationSchedule(context.Context, openapi.GetPostPublicationScheduleRequestObject) (openapi.GetPostPublicationScheduleResponseObject, error) {
+	panic("PanicShim: GetPostPublicationSchedule called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// SetPostPublicationSchedule panics by default; test shims override.
+func (*PanicShim) SetPostPublicationSchedule(context.Context, openapi.SetPostPublicationScheduleRequestObject) (openapi.SetPostPublicationScheduleResponseObject, error) {
+	panic("PanicShim: SetPostPublicationSchedule called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// PublishPost panics by default; test shims override.
+func (*PanicShim) PublishPost(context.Context, openapi.PublishPostRequestObject) (openapi.PublishPostResponseObject, error) {
+	panic("PanicShim: PublishPost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UnpublishPost panics by default; test shims override.
+func (*PanicShim) UnpublishPost(context.Context, openapi.UnpublishPostRequestObject) (openapi.UnpublishPostResponseObject, error) {
+	panic("PanicShim: UnpublishPost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListPostWhiteboards panics by default; test shims override.

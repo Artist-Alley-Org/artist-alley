@@ -17,8 +17,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
+	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/bootstrap"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/config"
@@ -48,6 +51,16 @@ func main() {
 		}
 		return
 	}
+	// `aa seed-verify ...` is the read-only counterpart of `aa seed`
+	// (#1319): did the catalogue materialize, value for value, under the
+	// seed's own provenance? Opens a pool and writes nothing.
+	if len(os.Args) > 1 && os.Args[1] == "seed-verify" {
+		if err := runSeedVerify(os.Args[2:]); err != nil {
+			slog.Error("seed-verify failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
 	// `aa rebuild-previews ...` re-enqueues preview jobs for existing
 	// assets with force set, so a renderer fix reaches the catalogue
 	// that predates it (#760). Enqueue-only; the server's worker pool
@@ -55,6 +68,16 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "rebuild-previews" {
 		if err := runRebuildPreviews(os.Args[2:]); err != nil {
 			slog.Error("rebuild-previews failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
+	// `aa sweep-fixtures ...` removes rows left behind by dogfood and
+	// integration runs in a long-lived dev database (#1245). Dry run by
+	// default; -apply is required to delete.
+	if len(os.Args) > 1 && os.Args[1] == "sweep-fixtures" {
+		if err := runSweepFixtures(os.Args[2:]); err != nil {
+			slog.Error("sweep-fixtures failed", slog.String("err", err.Error()))
 			os.Exit(1)
 		}
 		return
@@ -89,6 +112,13 @@ func runSeed(args []string) error {
 	previews := fs.Bool("previews", true,
 		"enqueue a preview job per asset so the seed produces derivatives "+
 			"(card thumbnails, video sprites); false = fast metadata-only seed")
+	fixtures := fs.Bool("fixtures", false,
+		"also seed the dogfood suite's one-time substrate: five login-capable "+
+			"principals and four admin-owned plates the specs used to create for "+
+			"themselves on every fresh database and could never delete (there is no "+
+			"user-delete endpoint, and asset/post DELETE is a soft delete). Off by "+
+			"default — these accounts have committed passwords, so the public demo "+
+			"must not have them. Reads seed/profiles/dataset.fixtures.json")
 	forcePreviews := fs.Bool("force-previews", false,
 		"re-render variants that already exist instead of skipping them. "+
 			"--reset does NOT erase the content-addressed variant store, so a "+
@@ -163,17 +193,29 @@ func runSeed(args []string) error {
 	//
 	// nil recorder: the seed has no audit recorder wired, which just
 	// skips the key_generated audit row. The keypair is still minted.
-	if err := bootstrap.Run(ctx, pool, bootstrap.Config{
+	bootstrapCfg := bootstrap.Config{
 		ScrambleKey:         cfg.ScrambleKey,
 		AdminPath:           cfg.BootstrapAdminPath,
 		DefaultAdminEnabled: cfg.BootstrapDefaultAdmin,
-	}, logger, nil); err != nil {
+	}
+	// SERIALIZED for the same reason resetContent is: this is the
+	// SEED-invoked bootstrap, running in a process documented to operate
+	// against a live instance. It may create the admin and assign the
+	// global Admin role, which is an authority mutation like any other.
+	if err := func() error {
+		release, err := auth.AcquireStructuralAuthorityLock(ctx, pool, logger)
+		if err != nil {
+			return err
+		}
+		defer release()
+		return bootstrap.Run(ctx, pool, bootstrapCfg, logger, nil)
+	}(); err != nil {
 		return fmt.Errorf("seed: bootstrap admin: %w", err)
 	}
 
 	if *reset {
-		if err := seed.Reset(ctx, pool, bootstrap.DefaultUsername); err != nil {
-			return fmt.Errorf("seed reset: %w", err)
+		if err := resetContent(ctx, pool, bootstrapCfg, logger); err != nil {
+			return err
 		}
 		logger.Info("seed.reset.done")
 	}
@@ -194,7 +236,26 @@ func runSeed(args []string) error {
 		Logger:        logger,
 		Previews:      *previews,
 		ForcePreviews: *forcePreviews,
+		Fixtures:      *fixtures,
+		// Same hasher the setup flow and the bootstrap package use, so a
+		// seeded principal's password verifies through the ordinary login
+		// path (api.go wires the identical closure for the seed admin
+		// endpoints).
+		HashPassword: func(plaintext string) (string, error) {
+			return auth.HashPassword(plaintext, cfg.ScrambleKey)
+		},
 	})
+	// ⛔ NO LOCK HERE. The runner serializes ITSELF, around the two
+	// phases that actually mutate authority — see applyTeams and
+	// applyFixturePrincipals. Wrapping runner.Run() instead held the
+	// STRUCTURAL lock across catalogue loading, users, memberships,
+	// follows, fields, collections, featured, ASSETS, POSTS, likes and
+	// comments, so an unrelated batch apply could wait out its whole
+	// deadline while image files were loading.
+	//
+	// The protection also belongs with the code that mutates authority
+	// rather than with a caller that has to remember: any caller of
+	// those phases gets it, including a test that drives one directly.
 	counts, err := runner.Run(ctx)
 	if err != nil {
 		return err
@@ -220,9 +281,123 @@ func runSeed(args []string) error {
 	logger.Info("seed.complete",
 		"users", counts.Users, "teams", counts.Teams,
 		"collections", counts.Collections, "assets", counts.Assets,
-		"posts", counts.Posts, "comments", counts.Comments)
+		"posts", counts.Posts, "comments", counts.Comments,
+		"posts_drifted", counts.PostsDrifted,
+		"posts_orphaned", counts.PostsOrphaned)
 	fmt.Printf("seed complete: users=%d teams=%d collections=%d assets=%d posts=%d comments=%d\n",
 		counts.Users, counts.Teams, counts.Collections, counts.Assets, counts.Posts, counts.Comments)
+	// ⛔ THE LAST LINE IS THE ONE PEOPLE READ, so it does not get to say
+	// "complete" and stop there when the run knowingly left the
+	// catalogue unapplied (#1320). Row counts cannot carry this: the
+	// rows are all present, and it is the values inside them that are
+	// stale. The exit code stays 0 on purpose; see postdrift.go.
+	if counts.PostsDrifted > 0 || counts.PostsOrphaned > 0 {
+		fmt.Printf("  NOT a clean reseed: %d post(s) still disagree with the "+
+			"catalogue, %d duplicated under an older id.\n"+
+			"  See the warning above. `aa seed --reset` is the only thing "+
+			"that rebuilds them.\n",
+			counts.PostsDrifted, counts.PostsOrphaned)
+	}
+	return nil
+}
+
+// resetContent is what `aa seed --reset` actually does: clear the seeded
+// content, then re-assert the bootstrap admin — because the clear takes
+// the admin's authority with it (#1274).
+//
+// # Why bootstrap.Run is called TWICE and not moved
+//
+// The call before the reset is a prerequisite, not a convenience: the
+// seeder's resolveLookups resolves the bootstrap admin as its very first
+// statement (the seed's collections are owned by it), so a seed that
+// found no admin would die with `resolve admin: no rows` (#574). Moving
+// the call after the reset would reintroduce exactly that. Calling it
+// again instead is free — Run no-ops when a system admin already exists,
+// and re-checks inside its own transaction so parallel processes cannot
+// both create one.
+//
+// # What the reset takes, and why #361's guard does not catch it
+//
+// seed.Reset TRUNCATEs `assets ... CASCADE`, and CASCADE follows every
+// foreign key that POINTS AT a truncated table, transitively, whatever
+// its ON DELETE action says. `teams.hero_asset_id` references `assets`
+// (migration 00047), and `user_roles`, `user_capability_grants` and
+// `user_capability_revokes` all reference `teams` — so truncating assets
+// empties all three, including the bootstrap admin's GLOBAL (team_id IS
+// NULL) role.
+//
+// That is the same end state #361 fixed by taking `teams` OUT of the
+// TRUNCATE list, and the per-row `DELETE FROM teams` it left behind
+// still guards the direct path. It guards only against NAMING teams,
+// though; 00047 opened a transitive route to the same table a month
+// after #361 closed the direct one, and nothing noticed. The symptom is
+// specific and was reproduced before this fix: `admin` still logs in,
+// `/api/v1/auth/me` answers with `"capabilities": []`, and every admin
+// endpoint answers 403 until the SERVER is restarted and runs the same
+// bootstrap itself (see run() below).
+//
+// # What this does NOT restore
+//
+// Only the bootstrap admin's global role, because that is all
+// bootstrap.Run asserts. Every other row of `user_roles` /
+// `user_capability_grants` / `user_capability_revokes` is gone for good.
+// For the seeded fictional users that is a no-op — the reset deletes
+// them outright and the reseed re-grants what it granted before — and
+// for an operator-created user it is equally moot, because
+// `DELETE FROM "user" WHERE username <> 'admin'` removes the user too.
+// The one real loss is a GLOBAL capability grant held by `admin` itself
+// (measured: one planted grant, gone and not rebuilt). On any instance
+// `aa seed --reset` is meant for that is inert — the restored Admin role
+// already carries everything a grant could add — but it is a loss, not a
+// no-op, and it is stated here rather than left to be discovered.
+//
+// The chosen defence is this invariant and its test
+// (reset_admin_test.go), NOT a check over the FK graph. Policing the
+// cascade closure is precisely what failed here: 00047 added a legal
+// foreign key and no rule about the graph would have objected.
+func resetContent(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	bootstrapCfg bootstrap.Config,
+	logger *slog.Logger,
+) error {
+	// ⛔ SERIALIZED AGAINST IN-FLIGHT AUTHORITY READERS (#1173, #1119).
+	//
+	// `aa seed` is DESIGNED to run against a live instance — its own
+	// migrate step is documented as safe "whether the server already
+	// migrated, is migrating right now, or was never started", and
+	// --reset broadcasts a wildcard cache flush precisely because a
+	// server may be serving while this runs.
+	//
+	// And what it does here is the largest authority mutation in the
+	// system. seed.Reset's TRUNCATE ... CASCADE and its `DELETE FROM
+	// teams` empty user_roles, user_capability_grants and
+	// user_capability_revokes wholesale; bootstrap.Run then puts the
+	// admin's role back. A batch metadata edit that resolved its
+	// verdict just before this would otherwise write under authority
+	// that no longer exists.
+	//
+	// THE LOCK SPANS BOTH STEPS, not either one. Releasing it between
+	// the reset and the restoration would leave a window in which the
+	// authority tables are empty and a reader could act on that.
+	//
+	// ⭐ This is the SEED-INVOKED bootstrap.Run. The one in run() at
+	// server startup is a different concurrency context and stays
+	// exempt: it executes before the HTTP server accepts anything, so
+	// there is no in-flight operation to serialize against. One
+	// function, two call sites, two answers.
+	release, err := auth.AcquireStructuralAuthorityLock(ctx, pool, logger)
+	if err != nil {
+		return fmt.Errorf("seed reset: %w", err)
+	}
+	defer release()
+
+	if err := seed.Reset(ctx, pool, bootstrap.DefaultUsername); err != nil {
+		return fmt.Errorf("seed reset: %w", err)
+	}
+	if err := bootstrap.Run(ctx, pool, bootstrapCfg, logger, nil); err != nil {
+		return fmt.Errorf("seed reset: restore bootstrap admin: %w", err)
+	}
 	return nil
 }
 

@@ -18,25 +18,58 @@
 // The language buttons on /account/preferences render each locale's
 // endonym (`l.nativeName`, e.g. "Español") which is never itself
 // translated, so selecting by that text is locale-stable.
+//
+// ── #1017: the profile this spec writes is the whole suite's ─────────
+//
+// `lang.set()` PATCHes the SHARED ADMIN PROFILE, and every spec in this
+// suite signs in as that admin. So while this file is in Spanish, any
+// spec on the other worker asserting English chrome is reading a
+// preference it did not ask for — which is what `--workers 2` did to
+// `locale choice persists across a reload`, and why it passed in
+// isolation every time anyone looked.
+//
+// #535's `mode: 'serial'` was already here when #1017 was filed, and it
+// could not have fixed it: serial orders the tests inside THIS describe
+// block and says nothing about the other worker, which is where the
+// reader is. The exclusion has to be over the resource and across files,
+// so the borrow now goes through `adminProfileHold` — the same
+// cross-file lock `system.public_mode` uses, on a second resource name.
+//
+// Serial stays, for a different and smaller reason: both tests share one
+// hold, and one worker running them in order is what makes a single
+// acquire in `beforeAll` correct.
 
 import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
+import { adminProfileHold } from '../../helpers/admin-profile';
 import { tid } from '../../helpers/testids';
 
 const EN_SEARCH_PLACEHOLDER = 'Search assets…';
 const ES_SEARCH_PLACEHOLDER = 'Buscar recursos…';
 
+const profile = adminProfileHold('ui-30-i18n-locale-switch');
+
 test.describe('UI-30 i18n locale switch', () => {
-  // #535: run serially. `lang.set()` PATCHes the shared admin PROFILE
-  // language, a global. The first test asserts the English default at its
-  // start; under parallel workers (local `workers: 2`) the sibling test's
-  // flip-to-Spanish PATCH lands first and that opening assertion reads
-  // "Buscar recursos…" instead of "Search assets…". Serial keeps the
-  // locale mutations from overlapping. (CI runs workers=1 — never hit it.)
   test.describe.configure({ mode: 'serial' });
+
+  test.beforeAll(async ({ request }) => {
+    await profile.acquire(request);
+  });
+
+  test.afterAll(async ({ request }) => {
+    await profile.release(request);
+  });
 
   test.beforeEach(async ({ page }) => {
     await loginAsAdminViaUI(page);
+    // ARRANGED, not hoped for. Both tests below open by asserting the
+    // English chrome, and until now that was a bet on what the instance
+    // happened to be holding — a bet the previous test in this very file
+    // loses, since it ends in Spanish. Written directly rather than
+    // through the control because this is the arrangement, not the
+    // switch under test, and it is inside the hold so no other worker
+    // can observe the window.
+    await profile.setLanguageDirect(page.request, 'en');
   });
 
   test('switching locale to Spanish re-renders translated navbar chrome', async ({ page }) => {
@@ -48,7 +81,7 @@ test.describe('UI-30 i18n locale switch', () => {
 
     // Flip to Spanish via the real preference control. The endonym
     // "Español" is stable across locales.
-    await page.getByRole('button', { name: /Español/ }).click();
+    await profile.setLanguage(page, 'Español');
 
     // The navbar placeholder must flip without a reload — the store
     // is reactive and `t()` re-runs on `lang.resolved` change.
@@ -57,7 +90,7 @@ test.describe('UI-30 i18n locale switch', () => {
 
   test('locale choice persists across a reload (aa_lang cookie)', async ({ page }) => {
     await page.goto('/account/preferences');
-    await page.getByRole('button', { name: /Español/ }).click();
+    await profile.setLanguage(page, 'Español');
 
     const searchbox = page.locator(tid('nav-search'));
     await expect(searchbox).toHaveAttribute('placeholder', ES_SEARCH_PLACEHOLDER);
@@ -70,17 +103,37 @@ test.describe('UI-30 i18n locale switch', () => {
       ES_SEARCH_PLACEHOLDER,
     );
 
-    // Reset to English so the shared admin session (lang.set PATCHes
-    // the profile) doesn't leak a Spanish preference into sibling
-    // specs. Click the "English" language button specifically — its
-    // endonym never translates, and unlike "System"/"Sistema" it is
-    // unique to the language picker (the theme picker has no such
-    // button), so the selector can't collide with the theme row.
+    // Switching BACK is its own assertion, not only tidying up — the
+    // round trip is what proves the control is a switch rather than a
+    // one-way door. (The tidying is `afterAll`'s job, and it runs even
+    // when this test has already failed.) Click the "English" button
+    // specifically: its endonym never translates, and unlike
+    // "System"/"Sistema" it is unique to the language picker, so the
+    // selector cannot collide with the theme row.
     await page.goto('/account/preferences');
-    await page.getByRole('button', { name: 'English' }).click();
+    await profile.setLanguage(page, 'English');
     await expect(page.locator(tid('nav-search'))).toHaveAttribute(
       'placeholder',
       EN_SEARCH_PLACEHOLDER,
+    );
+  });
+
+  // The refusal, pinned. `public-mode.ts` has had the same guard since
+  // #1248 and nothing ever asserted it fires, so "the lock is taken"
+  // rested on every caller remembering. A hold that never acquired must
+  // not be able to touch the profile, and the failure must name the lock
+  // rather than surface three files away as somebody else's flake.
+  //
+  // Nothing is mutated: the guard throws before the control is clicked,
+  // which is the property being asserted.
+  test('a profile change without the hold fails loudly', async ({ page }) => {
+    const stray = adminProfileHold('ui-30 unheld probe');
+    expect(stray.holding, 'the probe must not hold the lock').toBe(false);
+    await expect(stray.setLanguage(page, 'Español')).rejects.toThrow(
+      /without holding the "user\.admin_profile" lock/,
+    );
+    await expect(stray.setLanguageDirect(page.request, 'es')).rejects.toThrow(
+      /without holding the "user\.admin_profile" lock/,
     );
   });
 });

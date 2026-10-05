@@ -39,6 +39,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/search"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -69,7 +70,7 @@ func csPool(t *testing.T) *pgxpool.Pool {
 	dsn := "host=" + env("AA_DB_HOST", "postgres") +
 		" port=" + env("AA_DB_PORT", "5432") +
 		" user=" + env("AA_DB_USER", "artist_alley") +
-		" dbname=" + env("AA_DB_NAME", "artist_alley") +
+		" dbname=" + testdb.Name(t) +
 		" sslmode=disable password=" + pwd
 	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
@@ -100,11 +101,28 @@ func csSeedCollection(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 		 VALUES ('cs_mature_col', 11470001, 'public') RETURNING id`).Scan(&colID); err != nil {
 		t.Fatalf("seed collection: %v", err)
 	}
-	if _, err := pool.Exec(ctx,
-		`INSERT INTO collection_resources (collection_id, asset_id, pinned)
-		 VALUES ($1, $2, TRUE)`, colID, assetID); err != nil {
-		t.Fatalf("pin member: %v", err)
+	// Through a POST (#1161, ADR 0091): a collection contains posts, and
+	// the member set the search filter reads is now
+	// collection_posts → post_assets.
+	var postID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO posts (author_user_ref, title, visibility)
+		 VALUES (11470001, 'cs_mature_post', 'public') RETURNING id`).Scan(&postID); err != nil {
+		t.Fatalf("seed post: %v", err)
 	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO post_assets (post_id, asset_id, sort_order) VALUES ($1,$2,0)`,
+		postID, assetID); err != nil {
+		t.Fatalf("seed member: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO collection_posts (collection_id, post_id, sort_order, pinned)
+		 VALUES ($1, $2, 0, TRUE)`, colID, postID); err != nil {
+		t.Fatalf("pin post: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM posts WHERE id = $1`, postID)
+	})
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM collections WHERE id = $1`, colID)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id = $1`, assetID)

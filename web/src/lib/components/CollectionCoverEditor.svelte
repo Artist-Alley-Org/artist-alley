@@ -1,25 +1,26 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // PAGE 2 of the collection edit modal: one cover slot, in full
-  // (#1207, re-shaped by #1213).
+  // THE COVER BLOCK of the collection edit modal: one cover slot, in
+  // full (#1207, re-shaped by #1213, un-paged by #1264).
   //
   // WHY THE PICTURE NEEDS ROOM. #1207's finding was that the cover
   // surface "is too small and I can't really see how the cover images
   // will be cropped". Cropping is a judgement about a picture, and
   // making it in a 200px thumbnail is the defect.
   //
-  // ⚠️ IT IS NO LONGER A DIALOG. #1207 got that room by raising a
-  // second `<dialog>` over the edit modal, which the owner then
+  // ⚠️ IT IS NEITHER A DIALOG NOR A PAGE ANY MORE. #1207 got that room
+  // by raising a second `<dialog>` over the edit modal, which the owner
   // questioned directly — "why is edit collection and edit collection
-  // cover two different modals that overlap. Why not one modal?" — and
-  // the honest answer is that the stack was a workaround for a width
-  // that has since changed: this modal was `max-w-lg` when #1207 was
-  // written and #1195 widened it to `max-w-4xl`. So this is now a PAGE
-  // of that one dialog, and it gets the whole panel while it is on
-  // screen. Everything the second dialog was for survives; the second
-  // `<dialog>`, its portal-over-portal and its share of #1208's Escape
-  // race do not.
+  // cover two different modals that overlap. Why not one modal?" —
+  // and #1213 answered it by making this page 2 of that one dialog.
+  // #1264 is the same finding one level in: a page that is reached and
+  // left is still a second surface, and stepping between the two
+  // measured a 896x586 → 1536x1036 jump. So this is a BLOCK of the one
+  // surface now — always on screen, beside the collection's identity,
+  // sharing its Save. Everything the second dialog was for survives;
+  // the second `<dialog>`, its portal-over-portal, its share of #1208's
+  // Escape race and the page switch do not.
   //
   // ONE SLOT PER VISIT, and that is what makes it one block instead of
   // two. A collection cover and a featured-rail cover want different
@@ -75,11 +76,6 @@
      *  what the picker's per-slot state was called — three meanings for
      *  one identifier on one surface is how the wrong one gets read. */
     coverSlot: CoverSlot;
-    /** Step back to page 1. The pending choice, the dragged focal and
-     *  the zoom all live above this component, so going back keeps
-     *  them — which is the difference between a paged modal and a
-     *  wizard that forgets. */
-    onback: () => void;
     choices: CoverChoice[];
     loading: boolean;
     /** The collection's own tier. It decides what an uploaded cover's
@@ -110,7 +106,6 @@
 
   let {
     coverSlot,
-    onback,
     choices,
     loading,
     collectionVisibility,
@@ -145,9 +140,30 @@
   const selectedId = $derived(isFeatured ? featuredCoverAssetId : coverAssetId);
   /** The id actually SHOWN, after the featured slot's fallback. */
   const shownId = $derived(isFeatured ? featuredEffectiveId : coverAssetId);
+  // ⚠️ CHANGING THE PICTURE CLEARS THIS SLOT'S FRAMING (#1333). A focal
+  // pair is a fraction of ONE picture's width and height and a zoom is a
+  // multiple of the window IT fits into; carried onto a different
+  // picture they land wherever those numbers happen to fall on the new
+  // subject, which is nowhere anybody chose. Clearing is the honest
+  // answer and it is recoverable in one drag.
+  //
+  // It has to happen HERE and not only at the server. The save body
+  // composes an explicit `cover_focal_x` whenever this state holds a
+  // number, and an explicitly supplied value beats the query's swap arm
+  // by design (that arm is what lets "new picture plus new framing in
+  // one PATCH" work at all). So a stale value left in this state would
+  // be sent as a deliberate choice and honoured as one.
+  //
+  // ONLY THIS SLOT. The two covers are separate pictures on separate
+  // destinations, and repositioning the rail must not reset the tile.
+  // PostCoverEditor's `choose` is the same rule on the post surface.
   function assign(id: string | null) {
+    if (id === selectedId) return;
     if (isFeatured) featuredCoverAssetId = id;
     else coverAssetId = id;
+    framing[isFeatured ? 'featured' : 'collection'].x = null;
+    framing[isFeatured ? 'featured' : 'collection'].y = null;
+    framing[isFeatured ? 'featured' : 'collection'].zoom = null;
   }
 
   function choiceFor(assetId: string | null): CoverChoice | null {
@@ -289,6 +305,11 @@
     id: string;
     title?: string;
     status?: string;
+    /** #1209: would an ANONYMOUS visitor's read rule return this
+     *  asset. The whole conjunction, decided by the server; `status`
+     *  above is one third of it and is kept only as the fallback for a
+     *  row that does not carry this. */
+    anonymously_visible?: boolean;
     /** Carried through from GET /assets so a picked non-member gets the
      *  SAME source the rail will load — see ladderFor. */
     ladder_available?: boolean;
@@ -470,33 +491,65 @@
     if (file) void uploadAndChoose(pick, file, choose);
   }
 
+  /** Which sentence the warning shows, or null for no warning at all. */
+  type WarningKind = 'draft' | 'hidden' | null;
+
   /** Would a picked asset be invisible to some of the collection's
    *  audience?
    *
-   *  ⚠️ PARTIAL, AND SAID SO RATHER THAN OVERSTATED. A public
-   *  collection is read by anonymous visitors, whose asset predicate
-   *  requires `status = 'active'` AND `sensitivity = 'public'` AND
-   *  `processing_status = 'ready'`. This can only check the first: the
-   *  Asset schema carries `status` and deliberately carries no
-   *  `sensitivity`, so a team-tier asset picked as a public
-   *  collection's cover still falls back on the rail with no warning
-   *  here. Answering that exactly needs a derived
-   *  "anonymously picturable" flag from the server; it is NOT inferred
-   *  client-side, because inferring it is how a warning starts lying in
-   *  the reassuring direction.
+   *  ⭐ IT NOW ASKS THE WHOLE QUESTION (#1209). This used to check
+   *  `status` alone and say so: a public collection is read by anonymous
+   *  visitors, whose asset rule requires `status = 'active'` AND
+   *  `sensitivity = 'public'` AND `processing_status = 'ready'`, and
+   *  the Asset schema carries `status` and deliberately carries no
+   *  `sensitivity`. So a team-tier pick fell back on the rail unwarned.
+   *  It was left partial rather than guessed at, because inferring the
+   *  missing conjuncts client-side is how a warning starts lying in the
+   *  reassuring direction.
+   *
+   *  `anonymously_visible` is that answer, DERIVED ON THE SERVER from
+   *  the same predicate the rail executes rather than re-stated here.
+   *  One rule, not a parallel one: a second copy of a security rule is
+   *  a rule that will disagree with itself.
+   *
+   *  ⚠️ UNDEFINED IS NOT FALSE. A row that never carried the flag (a
+   *  member row from the first grid, or a payload from a server that
+   *  predates it) has nothing to read, and the honest answer there is
+   *  no warning rather than an invented one. That is the same rule the
+   *  `status` check followed and the reason this is not written as
+   *  `!found.anonymously_visible`.
    *
    *  Nothing is BLOCKED by this. The rail's per-rung fallback is the
    *  safety property and it is unchanged — this only makes the fallback
    *  explicable instead of mysterious. */
-  function narrowerThanCollection(assetId: string | null, pick: SlotPicker): boolean {
-    if (assetId === null || collectionVisibility !== 'public') return false;
+  function narrowerThanCollection(assetId: string | null, pick: SlotPicker): WarningKind {
+    if (assetId === null || collectionVisibility !== 'public') return null;
     const found =
       pick.results.find((r) => r.id === assetId) ??
-      // A member row carries no status, so a member picked from the
-      // first grid produces no warning either way. That is the honest
-      // answer, not a silent pass: the check has nothing to read.
+      // A member row carries neither status nor the derived flag, so a
+      // member picked from the first grid produces no warning either
+      // way. That is the honest answer, not a silent pass: the check
+      // has nothing to read.
       null;
-    return found !== null && found.status !== undefined && found.status !== 'active';
+    if (found === null) return null;
+    const hidden =
+      found.anonymously_visible !== undefined
+        ? !found.anonymously_visible
+        : found.status !== undefined && found.status !== 'active';
+    if (!hidden) return null;
+    // WHICH SENTENCE, and it is not cosmetic (#1209). The old copy said
+    // "this picture is still a draft", which was the whole truth while
+    // `status` was the only thing the check could read. It is now one of
+    // four conjuncts, and saying it about an ACTIVE team-tier picture
+    // would be the warning lying in a new direction: the curator would
+    // go looking for a Publish button that is already pressed.
+    //
+    // So the specific sentence is kept for the case it is true of, and
+    // the general one states the OUTCOME for everything else. The
+    // general one does not name the cause, because the payload
+    // deliberately does not carry the tier and inventing a reason is the
+    // thing this whole change exists to stop.
+    return found.status !== undefined && found.status !== 'active' ? 'draft' : 'hidden';
   }
 
   /** The picker state for THIS visit. Declared here rather than beside
@@ -511,37 +564,57 @@
   // ── The two-dimensional half, and when it is offered (#1213) ──────
   const cropOffered = $derived(viewportWidth >= CROP_STAGE_MIN_WIDTH);
 
-  // ── TWO REGIONS, AND WHICH ONE IS GROWING (#1218) ─────────────────
+  // ── TWO REGIONS, AND WHICH ONE IS GROWING (#1218 → #1220) ─────────
   //
-  // The owner's finding on the shipped page: "we are still not using
-  // the space properly" — a 720px dialog in a 1130px viewport, a whole
-  // row spent on one sentence of hint, and a picker clipped to one row
-  // of thumbnails with the next peeking, while the lower half sat
-  // empty because the crop stage's space was reserved for a picture
-  // nobody had chosen yet.
+  // #1218's finding on the shipped page: "we are still not using the
+  // space properly" — a 720px dialog in a 1130px viewport, a whole row
+  // spent on one sentence of hint, and a picker clipped to one row of
+  // thumbnails with the next peeking, while the lower half sat empty
+  // because the crop stage's space was reserved for a picture nobody
+  // had chosen yet. The answer was a column that FILLED a dialog of
+  // stated height, with exactly one of its two regions growing.
   //
-  // So the page is a column that FILLS the dialog, and exactly one of
-  // its two regions grows:
+  // ⛔ #1220 IS THE MIRROR OF THAT AND IT OVERTURNS THE MECHANISM, not
+  // the shape. Growing INTO a stated box is only right while there is
+  // something to fill it: a collection yielding 59 picturable tiles
+  // filled ~790px of an allocated ~1190px and left a ~400px dead band
+  // under the last row. So the rule is "sized by content, up to a cap",
+  // and nothing here takes a definite height any more. What survives
+  // unchanged is which region is the big one:
   //
-  //   nothing chosen  → there is no stage, and the picker takes the
-  //                     whole page. Reserving room for a picture that
-  //                     does not exist is what produced the dead half.
-  //   a picture chosen→ the stage grows and the picker collapses to a
-  //                     rail. The stage is the reason page 2 exists;
-  //                     the picker's job is done the moment it is used,
-  //                     but it stays reachable for a change of mind.
+  //   nothing chosen  → there is no stage, and the picker is the grid.
+  //                     Reserving room for a picture that does not
+  //                     exist is what produced the dead half.
+  //   a picture chosen→ the stage takes a real budget and the picker
+  //                     collapses to a rail. The stage is the reason
+  //                     this block exists; the picker's job is done the
+  //                     moment it is used, but it stays reachable for a
+  //                     change of mind.
   //
   // `stageShown` is the single answer both regions read, so they cannot
-  // disagree about which one is growing — the failure that would give
-  // the dialog two scrollbars or none.
+  // disagree about which one is big — the failure that would give the
+  // dialog two scrollbars or none.
   const stageShown = $derived(shownId !== null && stageSrc !== null && cropOffered);
 
   /** The choice grid, in its two states.
    *
-   *  GROWING: a real grid that takes the region it is in and scrolls
-   *  inside itself. `auto-rows-min` is what keeps the tiles square in a
-   *  tall box — without it the implicit rows stretch to fill and a
-   *  thumbnail of a square rendition is drawn as a tall rectangle.
+   *  GRID: `max-height` and NOT `flex-1` (#1220). A cap lets a dense
+   *  grid scroll inside itself — 204 tiles must not make the dialog
+   *  thousands of pixels tall — while a sparse one simply ends where
+   *  its last row does, which is what leaves no band to be dead.
+   *  `auto-rows-min` keeps the tiles square: without it the implicit
+   *  rows stretch and a thumbnail of a square rendition is drawn as a
+   *  tall rectangle. `content-start` is its companion for the sparse
+   *  case — otherwise a single row of tiles is centred in whatever room
+   *  the box happens to have.
+   *
+   *  ⚠️ `auto-fit`, NOT A COLUMN COUNT, and that is the horizontal half
+   *  of #1220. A fixed `lg:grid-cols-10` gives five tiles five tenths of
+   *  the row and leaves the other half of a bordered box empty — the
+   *  same dead area the issue is about, turned ninety degrees. `auto-fit`
+   *  collapses the tracks nothing occupies, so a sparse collection's few
+   *  pictures are shown LARGE across the width they have, and a dense
+   *  one packs to the 5rem minimum exactly as a column count would.
    *
    *  RAIL: one row, scrolling sideways. `max-h-40` (the old fixed
    *  window, kept for exactly this state) would show one row and a
@@ -549,8 +622,8 @@
    *  reported; a rail shows one row and says so. */
   function gridClass(grow: boolean): string {
     return grow
-      ? 'grid min-h-0 flex-1 auto-rows-min grid-cols-6 gap-2 overflow-y-auto rounded border ' +
-        'border-border p-1 sm:grid-cols-10 lg:grid-cols-12'
+      ? 'grid max-h-[44vh] auto-rows-min content-start gap-2 overflow-y-auto rounded ' +
+        'border border-border p-1 grid-cols-[repeat(auto-fit,minmax(5rem,1fr))]'
       : 'flex shrink-0 gap-2 overflow-x-auto rounded border border-border p-1';
   }
 
@@ -575,7 +648,7 @@
   choose: (id: string | null) => void,
   testidPrefix: string,
   noneLabel: string,
-  warn: boolean,
+  warn: WarningKind,
   /** GROW, or step aside (#1218). True is "no picture is chosen, so
    *  this is the whole page"; false is "the stage has it, keep a rail".
    *  The two states differ in the CHOICE GRID only — the source tabs,
@@ -584,7 +657,7 @@
    *  room the grid has already given back. */
   grow: boolean,
 )}
-  <div class="flex min-h-0 flex-col" class:flex-1={grow}>
+  <div class="flex min-w-0 flex-col">
     <!-- The source switch. Members FIRST and selected by default: it
          is the answer most of the time, and the two new arms are
          there for the case #1074 named — a banner that is not, and
@@ -646,8 +719,11 @@
            prevents is the curator wondering why the strip is showing
            something else. -->
       <p class="mb-2 rounded border border-warning/40 bg-warning/10 px-2 py-1 text-xs text-warning"
-         data-testid="{testidPrefix}-narrow-warning">
-        {t('collections.cover_editor_narrow_warning')}
+         data-testid="{testidPrefix}-narrow-warning"
+         data-warning-kind={warn}>
+        {warn === 'draft'
+          ? t('collections.cover_editor_narrow_warning')
+          : t('collections.cover_editor_hidden_warning')}
       </p>
     {/if}
 
@@ -771,24 +847,37 @@
           </button>
         {/each}
       </div>
+      <!-- THE EMPTY CASE, NAMED (#1220's "say what the surface shows").
+           A collection with nothing picturable in it renders a grid
+           holding one tile — the mosaic option — and then stops, which
+           on its own reads as a broken picker rather than as a true
+           statement about the collection. It says what is true and where
+           the other two sources are, because they both still work: a
+           cover has never had to be a member (#1074). -->
+      {#if choices.length === 0}
+        <p class="mt-2 text-xs text-fg-muted" data-testid="{testidPrefix}-members-empty">
+          {t('collections.cover_editor_members_empty')}
+        </p>
+      {/if}
     {/if}
   </div>
 {/snippet}
 
-<!-- ONE SLOT, THE WHOLE PANEL (#1213).
-     No `<Modal>` here any more: this is a page of the collection edit
-     dialog, rendered in its body while `page === 'cover'`. The header,
-     the Back button, Cancel and Save all belong to that one dialog, so
-     there is one Escape owner, one focus trap and one commit. -->
-<!-- A COLUMN THAT FILLS THE DIALOG (#1218). The host gives this page a
-     definite height and this is what spends it: `min-h-0` on the column
-     and on each region is what lets a child scroll instead of pushing
-     the column taller than the box it was given. -->
+<!-- ONE SLOT, ONE COLUMN OF THE ONE SURFACE (#1213 → #1264).
+     No `<Modal>` here and no page: this is a block of the collection
+     edit dialog, rendered beside the collection's identity. The header,
+     Cancel and Save all belong to that one dialog, so there is one
+     Escape owner, one focus trap and one commit.
+
+     A COLUMN SIZED BY ITS CONTENT (#1220). It used to be `h-full
+     min-h-0` and spend a definite height the host handed down; the host
+     now hands down a CAP instead, so each region is bounded by its own
+     budget and the column is as tall as they come to. -->
 <section
   aria-labelledby="cover-page-heading"
   data-testid="collection-cover-editor"
   data-cover-slot={coverSlot}
-  class="flex h-full min-h-0 flex-col gap-3"
+  class="flex min-w-0 flex-col gap-3"
 >
   <h3 id="cover-page-heading" class="sr-only">
     {isFeatured
@@ -808,7 +897,7 @@
         : t('collections.crop_mosaic_note')}
     </p>
   {:else if cropOffered}
-    <div class="min-h-0 flex-1">
+    <div class="min-w-0">
       <!-- The destination's own shape: 890:500 for the rail card
            (#1110/#1098), 4:3 for the collection tile.
 
@@ -822,11 +911,27 @@
            square would have been shown a region the card never
            displays. A crop marquee locks to the dimensions of the thing
            that RENDERS it. -->
+      <!-- ⚠️ THE VH BUDGET, NOT `fill` (#1220). `fill` measures the box
+           the layout gave the stage, in container units — which needs a
+           DEFINITE box to measure, and a `container-type: size` element
+           in a content-sized column collapses to nothing. The budget is
+           the right answer for a block inside a surface that flows:
+           nobody has told it how much room it has, so it takes a share
+           of the viewport. 44vh rather than the wide card's default 52:
+           the stage now sits beside the collection's identity in half a
+           dialog rather than owning a page, and the picker under it has
+           to be on screen at the same time.
+
+           A SQUARE DESTINATION GETS LESS, which is the same rule the
+           prop's own comment records: the card preview is bounded by
+           `maxHeightVh × aspect` as a max-WIDTH, so at one budget the
+           1:1 collection card comes out nearly twice the height of the
+           890:500 featured one. -->
       <CoverCropStage
-        fill
+        maxHeightVh={isFeatured ? 44 : 34}
         src={stageSrc}
         srcset={stageSrcset}
-        sizes="(max-width: 1024px) 90vw, 55vw"
+        sizes="(max-width: 1024px) 90vw, 45vw"
         {aspect}
         bind:focalX={framing[coverSlot].x}
         bind:focalY={framing[coverSlot].y}
@@ -846,7 +951,7 @@
           {#if isFeatured && featuredCoverAssetId !== null}
             <button
               type="button"
-              onclick={() => (featuredCoverAssetId = null)}
+              onclick={() => assign(null)}
               data-testid="cover-editor-clear-featured"
               class="rounded border border-border px-2 py-1 text-xs hover:bg-surface"
             >

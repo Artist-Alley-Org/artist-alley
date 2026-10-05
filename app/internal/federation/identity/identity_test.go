@@ -28,6 +28,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func openPool(t *testing.T) *pgxpool.Pool {
@@ -39,7 +40,7 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -115,7 +116,7 @@ func ensureAtrest(t *testing.T) {
 
 func TestLoad_FirstBoot_GeneratesAndPersists(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	ensureAtrest(t)
@@ -150,7 +151,7 @@ func TestLoad_FirstBoot_GeneratesAndPersists(t *testing.T) {
 
 func TestLoad_Idempotent_SameInstance(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	ensureAtrest(t)
@@ -177,7 +178,7 @@ func TestLoad_Idempotent_SameInstance(t *testing.T) {
 
 func TestGet_BeforeLoad_ReturnsErrNotLoaded(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ensureAtrest(t)
 
 	mgr := identity.NewManager(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -189,7 +190,7 @@ func TestGet_BeforeLoad_ReturnsErrNotLoaded(t *testing.T) {
 
 func TestSignAndVerify_RoundTrip(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := t.Context()
 
 	ensureAtrest(t)

@@ -19,12 +19,16 @@
   import BrowseFooter from '$components/BrowseFooter.svelte';
   import PostListTable from '$components/PostListTable.svelte';
   import ContentGrid from '$components/ContentGrid.svelte';
-  import SelectionBar from '$components/SelectionBar.svelte';
   import { browseView } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import { createMarquee } from '$lib/util/marquee.svelte';
-  import { scrollportOf } from '$lib/util/scrollport';
+  import type { SelectionEntry } from '$stores/selection.svelte';
+  import { createInfiniteScroll } from '$lib/util/infiniteScroll.svelte';
+  import { resetResultsScroll } from '$lib/util/resultsScroll';
+  import { mergeRefreshedHead } from '$lib/util/refreshHead';
+  import { createRefreshGate } from '$lib/util/refreshGate';
+  import { upload } from '$stores/upload.svelte';
   import type { components } from '$api/schema';
 
   onMount(() => { browseView.init(); });
@@ -186,13 +190,40 @@
 
   let generation = 0;
 
+  // ⛔ AND IT WAITS ITS TURN. `generation` is ONE counter shared by
+  // every mode, so a head fired while an append was on the wire bumped
+  // past it and the guards dropped the appended page: the reader
+  // scrolled, the loader fired, and the rows never arrived. The gate
+  // defers instead, which is the only answer that neither cancels the
+  // page nor drops the publish. It cannot stand down permanently on the
+  // strength of the running request either, because that request may
+  // have read the database before the publish committed.
+  //
+  // `run` reads `query` and the rail parameters when it RUNS, so a
+  // refresh queued behind a REFINE describes the wall that refine left
+  // on screen.
+  const uploadRefresh = createRefreshGate({
+    busy: () => loading,
+    run: () => void fetchPage(query, activeTeamId, activeTag, activeKinds, null, 'head'),
+  });
+
+  /** How a fetched page joins what is already on screen.
+   *
+   *  `reset`  = a new address: the page IS the list.
+   *  `append` = the reader scrolled: the page goes on the end.
+   *  `head`   = #1407, a publish landed while the reader stood here:
+   *             page one is re-asked and merged over the top, leaving
+   *             the accumulated tail, the cursor and the scroll offset
+   *             exactly where they were. */
+  type FetchMode = 'reset' | 'append' | 'head';
+
   async function fetchPage(
     q: string,
     team: string | null,
     tag: string | null,
     kinds: string,
     cursor: string | null,
-    reset: boolean,
+    mode: FetchMode,
   ) {
     loading = true;
     error = null;
@@ -200,7 +231,7 @@
     const gen = ++generation;
     let appended = 0;
     try {
-      const params: Record<string, string | number> = { limit: PAGE };
+      const params: Record<string, string | number | string[]> = { limit: PAGE };
       if (q.trim() !== '') params.q = q.trim();
       // #1113 — the same parameter the team page has always sent
       // (routes/teams/[id]/+page.svelte). The filter is the server's,
@@ -211,14 +242,20 @@
       // shipped; the rail chip just gives it a control. It intersects
       // with `q` and the feed pill server-side for the same reason
       // `team_id` does: they are all parameters of one query.
-      if (tag) params.tag = tag;
+      //
+      // Sent as a ONE-ELEMENT ARRAY since #1251 slice 2 made the
+      // parameter repeatable (`?tag=a&tag=b`, meaning AND). The rail is
+      // single-select and this page's `?tag=` is still one value, so the
+      // request on the wire is byte-identical to what it always was;
+      // what changed is that the server can now be asked for more.
+      if (tag) params.tag = [tag];
       // #1166 — the footer's type filter. Comma-joined, straight from
       // the URL, and a plain parameter of the same query for the same
       // reason `team_id` and `tag` are: composition is the server's
       // job, so a studio's videos is one request and not an
       // intersection this page computes.
       if (kinds) params.kind = kinds;
-      if (!reset && cursor) params.cursor = cursor;
+      if (mode === 'append' && cursor) params.cursor = cursor;
       // Feed filter + direction from the BrowseFooter store.
       //
       // `filter` is now a straight pass-through to the server's typed
@@ -232,6 +269,37 @@
       // can't serve now fails to typecheck here.
       params.feed = browseView.filter;
       params.dir = browseView.feedDir;
+      // #1251 slice 3 — the footer's "Hide AI-made work" toggle. ON
+      // sends `ai=not_pure`; OFF sends NOTHING, which is what
+      // `aiParam` returning null means. The mapping lives on the store
+      // beside the flag, not here, so the one place that knows what the
+      // toggle means is the one that owns it.
+      //
+      // ⚠️ ONLY the purely-AI posts go. A post mixing AI and human
+      // contributors stays on the wall — the server decides that on
+      // `posts.ai_pure`, and this page must never try to reproduce the
+      // rule locally, which would be the second query language ADR 0093
+      // exists to refuse.
+      //
+      // A plain parameter of the same query as `team_id`, `tag` and
+      // `kind`, for the same reason: composition is the server's job,
+      // so "this studio's videos, minus the AI ones" is one request.
+      const ai = browseView.aiParam;
+      if (ai) params.ai = ai;
+      // #1292: the CONTENT category's Mature row, ADR 0090's layer 3.
+      // UNTICKED sends `mature=not_mature`; ticked sends NOTHING, which
+      // is what `matureParam` returning null means. Resolved on the
+      // store for the same reason `ai` is, and with a stronger one:
+      // that getter also holds the availability cascade, so a device
+      // carrying the flag from a session that offered the row cannot
+      // keep filtering on one that does not.
+      //
+      // ⛔ IT NARROWS AND NEVER CONSENTS. The three conjuncts still
+      // decide whether this reader may be shown mature rows at all;
+      // this can only subtract from what survives them, and there is no
+      // value of it that asks for more.
+      const mature = browseView.matureParam;
+      if (mature) params.mature = mature;
 
       const { data, error: apiErr } = await api.GET('/posts', {
         params: { query: params as never },
@@ -261,9 +329,24 @@
       }
 
       const pageItems = (data.items ?? []) as Post[];
-      items = reset ? pageItems : [...items, ...pageItems];
-      nextCursor = (data.next_cursor as string | null) ?? null;
-      appended = pageItems.length;
+      if (mode === 'head' && items.length > 0) {
+        // #1407. `nextCursor` is deliberately NOT reassigned: page
+        // one's cursor points at page two, and the reader is holding
+        // pages well past that. Keyset cursors name a position in the
+        // sort rather than an offset, so a post arriving at the head
+        // does not move the one they already have.
+        //
+        // `appended` stays 0 so the lookahead pump does not fire. The
+        // buffer is as deep as it was; nothing was consumed.
+        items = mergeRefreshedHead(items, pageItems);
+      } else {
+        // An empty list has no tail to protect, so a `head` refresh of
+        // one is just its first load, including its cursor, without
+        // which the feed would be permanently one page deep.
+        items = mode === 'append' ? [...items, ...pageItems] : pageItems;
+        nextCursor = (data.next_cursor as string | null) ?? null;
+        appended = pageItems.length;
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : t('common.failed_to_load');
     } finally {
@@ -271,6 +354,11 @@
         loading = false;
         initialLoaded = true;
       }
+      // ⭐ UNCONDITIONALLY, INCLUDING A SUPERSEDED RESPONSE (#1407).
+      // The gate re-reads `busy()` itself; all it needs from here is to
+      // be told something finished, so a refresh queued behind a
+      // request that lost a race is still tried.
+      uploadRefresh.settled();
     }
     // #1159 — top the buffer back up. See `pumpFeed` for why the
     // IntersectionObserver alone cannot do this once the lookahead is
@@ -298,9 +386,22 @@
   // searches for anything in it silently returned nothing, and every
   // diff rendered as "Binary file not shown" (#925). Do not put a raw
   // control byte back in here.
+  //
+  // ⚠️ EVERY INPUT `fetchPage` READS MUST BE IN HERE. The AI toggle
+  // (#1251 slice 3) was the first that is neither in the URL nor
+  // already keyed for some other reason, and #1292's mature row is the
+  // second; both are in the key for the same argument: flipping it changes
+  // which posts the request returns, so a key that ignored it would
+  // leave the previous wall on screen — a control that visibly does
+  // nothing, which is #691's defect in a different costume. It also has
+  // to be here for the SNAPSHOT to stay honest, since `capture` and
+  // `restore` compare this exact string: pages captured with the toggle
+  // OFF must not be handed back to a page loaded with it ON, or the
+  // hidden posts come straight back on a back-navigation.
   const feedKey = () =>
     `${query}\u001f${browseView.filter}\u001f${browseView.feedDir}\u001f${activeTeamId ?? ''}` +
-    `\u001f${activeTag ?? ''}\u001f${activeKinds}`;
+    `\u001f${activeTag ?? ''}\u001f${activeKinds}\u001f${browseView.aiParam ?? ''}` +
+    `\u001f${browseView.matureParam ?? ''}`;
 
   /** The feedKey whose first page we've already loaded (or restored).
    *  Guards the effect against re-fetching a set we already hold —
@@ -310,15 +411,41 @@
 
   // Reset and refetch every time the query, feed filter, or feed
   // direction changes.
+  //
+  // ⭐ AND PUT THE READER AT THE FIRST ROW (#1298, ADR 0056 §3c's
+  // 2026-08-28 amendment). Refining is a NEW address, so the offset
+  // measured against the old wall describes posts that are not coming
+  // back.
+  //
+  // ⚠️ THIS WALL LOOKED CORRECT WITHOUT IT, AND THAT IS THE ARGUMENT
+  // FOR ADDING IT RATHER THAN AGAINST. Measured on a 900-card wall at
+  // 29457px refined by kind: the offset went to 0, at 1080p and at
+  // 390px. But nothing here decided that. `items = []` collapses the
+  // wall to zero height in the same frame, `<main>` briefly has nothing
+  // to scroll, and the BROWSER clamps — so the landing is correct only
+  // while the chrome above the wall stays shorter than the viewport,
+  // which is a coincidence of the featured rail's height and one this
+  // route must not go on depending on. `/search` is the same shape with
+  // the coincidence absent: it swaps its hits in place, and the same
+  // refine lands the reader at the bottom of a 25-hit list.
+  //
+  // Ordered before the fetch, not after it: at offset 0 Chrome's scroll
+  // anchoring has nothing to compensate, so the reset survives the
+  // content growing back underneath it without being re-asserted.
   $effect(() => {
     const key = feedKey();
     untrack(() => {
       if (key === loadedKey) return;
+      const refine = loadedKey !== null;
       loadedKey = key;
       items = [];
       nextCursor = null;
       initialLoaded = false;
-      void fetchPage(query, activeTeamId, activeTag, activeKinds, null, true);
+      // Only on a REFINE. The first key of a page load is not one, and
+      // a route that scrolled itself on mount would fight the snapshot
+      // restore that back-navigation is about to run.
+      if (refine) resetResultsScroll(wallEl);
+      void fetchPage(query, activeTeamId, activeTag, activeKinds, null, 'reset');
     });
   });
 
@@ -359,139 +486,48 @@
 
   // ── Infinite scroll: stay ahead of the reader (#1159) ─────────────
   //
-  // # The bug was not that 600px is too small. The 600px never applied.
-  //
-  // This observer was built with the DEFAULT root — `null`, meaning the
-  // document viewport — and `rootMargin: '600px 0px'`. But this app
-  // never scrolls the window: the shell is `overflow-hidden` with
-  // `<main class="flex-1 overflow-y-auto">` as the real scrollport
-  // (+layout.svelte, #1122). `rootMargin` inflates the ROOT's rect and
-  // nothing else, while the intersection is still clipped by every
-  // scrolling ancestor in between — so `<main>`'s own unexpanded clip
-  // rect cut the 600px straight back off. The sentinel was reported as
-  // intersecting only once it genuinely entered `<main>`'s visible box:
-  // a lookahead of approximately ZERO, which is exactly what "the feed
-  // loads too late" feels like.
-  //
-  // MEASURED, not deduced. With the margin raised to 2700px and the
-  // trigger left on the implicit root, an in-page rAF sampler recorded
-  // the unread-feed buffer sawtoothing 3893px → 52px → 3893px: the
-  // refills were firing at a buffer of ~50-300px, not at 2700px. Raising
-  // the number could never have worked; the root had to change. The
-  // marquee already knew this about the same wall (its autoscroll walks
-  // up for the scrollport) — this observer just never asked.
-  //
-  // # What replaces it
-  //
-  // `root` is the sentinel's actual scrollport, so `rootMargin` inflates
-  // the box that is really doing the clipping, and the margin is
-  // `LOOKAHEAD_VIEWPORTS × the scrollport's own height` — a head-start
-  // measured in screenfuls of reading, which scales across a 390px phone
-  // and a 4k display without either being written down. Both are
-  // recomputed on resize (rAF-coalesced, and only when the height
-  // actually moved), rebuilding rather than mutating because `root` and
-  // `rootMargin` are fixed at construction.
-  //
-  // The depth has to cover RENDER, not the wire: the wire is 21ms p50 on
-  // this stack, while painting 36 fresh cards on a main thread already
-  // busy scrolling is what costs the hundreds of milliseconds the reader
-  // was waiting on. 2.5 screenfuls buys ~1.6s at a 1.6k px/s wheel and
-  // ~1s at 2.7k px/s, which measurement says is enough and 1.5 is not.
-  //
-  // # Why the observer alone is not the whole trigger
-  //
-  // An IntersectionObserver notifies on threshold CROSSINGS. A lookahead
-  // deeper than one page is tall (a page is ~1.3 screenfuls of tiles at
-  // 1920px) means the sentinel is STILL inside the margin after an
-  // append: the intersection state never changes, no callback is queued,
-  // and the feed stalls one page in — a strictly worse bug than the one
-  // being fixed. So the trigger is a predicate over the sentinel's own
-  // geometry and both edges call it: the observer when the reader moves,
-  // and the tail of a successful fetch when the buffer moves.
-  //
-  // That makes filling a deep buffer a bounded SEQUENTIAL chase. At most
-  // one request is ever in flight (`loading` is still the gate, as it
-  // was), and the chase stops the moment the buffer is covered, so the
-  // steady-state cost is a fixed depth of prefetched pages rather than
-  // anything that scales with how far the reader goes.
-  const LOOKAHEAD_VIEWPORTS = 2.5;
-
-  /** The box that actually clips the sentinel. `null` before mount, and
-   *  on any surface where nothing above the wall scrolls — in which case
-   *  the viewport IS the scrollport and the observer's default root is
-   *  already correct. */
-  const scrollport = () => scrollportOf(sentinel);
-  const portHeight = () => scrollport()?.clientHeight ?? window.innerHeight;
-  const lookaheadPx = () => Math.round(portHeight() * LOOKAHEAD_VIEWPORTS);
-
-  /** Is there less than a lookahead's worth of unread feed below the
-   *  fold? Read off the sentinel, which sits at the wall's tail, so it
-   *  answers for whatever the wall's real height turned out to be —
-   *  masonry's variable tiles included. Measured against the scrollport's
-   *  bottom edge for the same reason the observer is rooted there. */
-  function wantsMore(): boolean {
-    const node = sentinel;
-    if (!node) return false;
-    const port = scrollport();
-    const bottom = port ? port.getBoundingClientRect().bottom : window.innerHeight;
-    return node.getBoundingClientRect().top <= bottom + lookaheadPx();
-  }
-
-  function pumpFeed() {
-    untrack(() => {
-      if (!nextCursor || loading) return;
-      if (!wantsMore()) return;
-      void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, false);
-    });
-  }
-
-  $effect(() => {
-    const node = sentinel;
-    if (!node) return;
-    let observer: IntersectionObserver | undefined;
-    let raf = 0;
-    let armedFor = -1;
-
-    const arm = () => {
-      armedFor = portHeight();
-      observer?.disconnect();
-      observer = new IntersectionObserver(
-        (entries) => {
-          if (entries.some((e) => e.isIntersecting)) pumpFeed();
-        },
-        { root: scrollport(), rootMargin: `${lookaheadPx()}px 0px` },
-      );
-      observer.observe(node);
-    };
-
-    // rAF-coalesced, and only when the HEIGHT moved: a drag-resize fires
-    // a resize event per frame, and rebuilding an observer per frame
-    // would be the same churn MasonryColumns' width guard exists to
-    // avoid. A width-only change (the column count moving) cannot alter
-    // a vertical lookahead.
-    const onResize = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        if (portHeight() !== armedFor) arm();
-      });
-    };
-
-    arm();
-    window.addEventListener('resize', onResize);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', onResize);
-      if (raf) cancelAnimationFrame(raf);
-    };
+  // The rig moved to `$lib/util/infiniteScroll.svelte` in #1354, so
+  // /search inherits it CORRECT rather than growing a second observer
+  // with the default root. Everything this route used to spell inline —
+  // the scrollport-rooted observer, the geometry predicate the observer
+  // alone cannot replace, and the resize re-arm — is there, with the
+  // measurements that produced it.
+  const feedScroll = createInfiniteScroll({
+    sentinel: () => sentinel,
+    more: () => nextCursor !== null,
+    busy: () => loading,
+    load: () => void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, 'append'),
   });
+  const pumpFeed = () => feedScroll.pump();
+
+  // #1407: a publish landed while the reader was standing on the feed.
+  //
+  // The wall re-asks the SERVER for its first page and merges the
+  // answer over what is loaded (`mergeRefreshedHead`). It does not
+  // insert the new post from the upload store: the store's row is not a
+  // `Post`, and the server decides fields the client only guessed at.
+  //
+  // ⛔ AND IT IS NOT A RESET. `items = []` here would collapse a wall
+  // the reader may be 30000px down, re-place every tile and land them
+  // at row one. #1298 established that ordering the reader back to the
+  // top is what a REFINE means, and a publish is not a refine. They
+  // asked a question about their own work, not a different one about
+  // the wall.
+  //
+  // The filtered feed is handled by doing nothing special: the refresh
+  // re-runs whatever query is on screen (`?q=`, `?team=`, `?tag=`,
+  // `kind=`, the feed pill, the AI and mature toggles), so a post that
+  // does not belong in the reader's current narrowing does not appear
+  // in it, which is correct rather than a gap.
+  //
+  onMount(() => upload.onSuccess(() => uploadRefresh.request()));
 
   // ── Marquee drag-select (#1127) ───────────────────────────────────
   //
   // Attached to the WALL, not to <main>: the band should not start from
   // the rail, the featured strip or the page gutters, all of which are
-  // chrome with their own gestures. `orderedIds` is the loaded feed in
-  // feed order — the same array the grid renders from — which is what
+  // chrome with their own gestures. `orderedEntries` is the loaded feed
+  // in feed order, the same array the grid renders from, which is what
   // makes a range "everything between these two posts" rather than
   // "everything between these two positions in some column".
   //
@@ -500,7 +536,15 @@
   // see, so there is no phantom selection of an unfetched page.
   let wallEl = $state<HTMLElement | null>(null);
   const orderedIds = () => items.map((p) => p.id);
-  const marquee = createMarquee(() => wallEl, { ordered: orderedIds });
+  /** The same feed order, as TYPED selection entries (#1119). Browse is
+   *  a post surface end to end, so every entry here is `post`, and it
+   *  is written down rather than assumed downstream, because the batch
+   *  contract's identity is the pair and the store now holds the pair.
+   *  `orderedIds` stays as it was for PostParamHost's sibling walk,
+   *  which navigates and does not select. */
+  const orderedEntries = (): SelectionEntry[] =>
+    items.map((p) => ({ kind: 'post' as const, id: p.id }));
+  const marquee = createMarquee(() => wallEl, { ordered: orderedEntries });
 
   const hasMore = $derived(nextCursor !== null);
   // guestFeed has its own empty state below; without this the generic
@@ -598,8 +642,8 @@
   // this route only says what "sibling" means here and what to do when
   // the walk runs off the loaded end.
   //
-  // `orderedIds` is already the marquee's ordering (the loaded feed in
-  // feed order, the same array the grid renders from), so the arrows
+  // `orderedIds` is the same loaded feed, in the same order, that the
+  // marquee's `orderedEntries` is built from, so the arrows
   // and the range-selection gesture cannot disagree about what comes
   // next.
 
@@ -609,7 +653,7 @@
   // resolves; the user sees it on the next press.
   function loadMoreForSiblingWalk() {
     if (nextCursor && !loading) {
-      void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, false);
+      void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, 'append');
     }
   }
 
@@ -702,13 +746,6 @@
       {t('browse.results_for', { query })}
     </p>
   {/if}
-
-  <!-- Multi-select indicator (#515 slice 3). Sticky under the navbar so
-       the count stays visible while scrolling a long feed; the full
-       bulk-action bar is #39. Renders only while a selection is active. -->
-  <div class="sticky top-2 z-30 empty:hidden">
-    <SelectionBar />
-  </div>
 
   <!-- #417 — the curated rail sits ABOVE both branches below. For a
        guest it is the entire landing page (posts are members-only);
@@ -918,10 +955,10 @@
          the two halves of one feed. -->
     {#snippet cardSnippet(item: unknown, mode: typeof browseView.mode)}
       {@const post = item as Post}
-      <PostCard {post} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} {orderedIds} />
+      <PostCard {post} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} ordered={orderedEntries} />
     {/snippet}
     {#snippet listSnippet()}
-      <PostListTable {items} {loading} {orderedIds} />
+      <PostListTable {items} {loading} ordered={orderedEntries} />
     {/snippet}
 
     <div

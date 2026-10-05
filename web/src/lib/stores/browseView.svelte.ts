@@ -36,7 +36,7 @@
 
 import { browser } from '$app/environment';
 import { api } from '$api/client';
-import { auth, type AccountViewDefaults } from '$stores/auth.svelte';
+import { auth, SYSTEM_ADMIN, type AccountViewDefaults } from '$stores/auth.svelte';
 
 export type ViewMode = 'grid' | 'masonry' | 'thumbnail' | 'list' | 'feed';
 export type SortDir = 'asc' | 'desc';
@@ -65,6 +65,8 @@ const STORAGE_COL_WIDTHS = 'aa_browse_list_col_widths';
 const STORAGE_SORT = 'aa_browse_list_sort';
 const STORAGE_FILTER = 'aa_browse_filter';
 const STORAGE_FEED_DIR = 'aa_browse_feed_dir';
+const STORAGE_HIDE_AI = 'aa_browse_hide_ai';
+const STORAGE_HIDE_MATURE = 'aa_browse_hide_mature';
 
 // ── The tile-size ladder, in rem. The stepper walks these rungs; the
 //    value lands in `--tile-min` and the grid does the rest.
@@ -310,10 +312,36 @@ function writeEnabledCache(modes: ViewMode[]): void {
 /** Modes whose column count is fixed at 1, so the size stepper is inert. */
 const SINGLE_COLUMN_MODES: ReadonlyArray<ViewMode> = ['list', 'feed'];
 
+// ⛔ EVERY READ BELOW IS IN A TRY/CATCH, AND FOUR OF THEM WERE NOT
+// (#1251 slice 3).
+//
+// `localStorage.getItem` does not merely return null when storage is
+// unavailable — it THROWS. A `SecurityError` in a context where site
+// data is blocked, a `QuotaExceededError` on some Safari private
+// windows, a DOM exception from a sandboxed frame: the getter itself
+// raises before any value comes back.
+//
+// The writers here have always been wrapped ("quota / disabled") and so
+// were `readEnabledCache`, `readColumns`, `readColumnWidths` and
+// `readSort` — but `readMode`, `readTileIdx`, `readFilter` and
+// `readFeedDir` were bare, and all four run inside `init()`. So on such
+// a browser the FIRST of them threw out of `init()`, out of the browse
+// page's `onMount`, and the page rendered no feed at all. Not a degraded
+// preference — a blank wall, on a class of browser nobody develops in.
+//
+// Every one of them fails to the same answer: NO LOCAL CHOICE, which
+// falls through to the account preference and then to the built-in
+// default. That is the same direction the writers already took, and it
+// is the only direction that cannot silently apply a setting the reader
+// never made.
 function readMode(): ViewMode | null {
   if (!browser) return null;
-  const v = localStorage.getItem(STORAGE_MODE);
-  return (VALID_MODES as ReadonlyArray<string>).includes(v ?? '') ? (v as ViewMode) : null;
+  try {
+    const v = localStorage.getItem(STORAGE_MODE);
+    return (VALID_MODES as ReadonlyArray<string>).includes(v ?? '') ? (v as ViewMode) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Read the tile-size rung, migrating the legacy column-count stepper.
@@ -327,18 +355,22 @@ function readMode(): ViewMode | null {
  *  who never touched the stepper sees no change at all. */
 function readTileIdx(): number {
   if (!browser) return DEFAULT_TILE_IDX;
-  const raw = localStorage.getItem(STORAGE_TILE);
-  if (raw !== null) {
-    const n = parseInt(raw, 10);
-    if (!Number.isNaN(n) && n >= TILE_MIN_IDX && n <= TILE_MAX_IDX) return n;
-    return DEFAULT_TILE_IDX;
-  }
-  const legacy = localStorage.getItem(STORAGE_SIZE_LEGACY);
-  if (legacy !== null) {
-    const s = parseInt(legacy, 10);
-    if (!Number.isNaN(s) && s >= 1 && s <= 7) {
-      return Math.max(TILE_MIN_IDX, Math.min(TILE_MAX_IDX, 9 - s));
+  try {
+    const raw = localStorage.getItem(STORAGE_TILE);
+    if (raw !== null) {
+      const n = parseInt(raw, 10);
+      if (!Number.isNaN(n) && n >= TILE_MIN_IDX && n <= TILE_MAX_IDX) return n;
+      return DEFAULT_TILE_IDX;
     }
+    const legacy = localStorage.getItem(STORAGE_SIZE_LEGACY);
+    if (legacy !== null) {
+      const s = parseInt(legacy, 10);
+      if (!Number.isNaN(s) && s >= 1 && s <= 7) {
+        return Math.max(TILE_MIN_IDX, Math.min(TILE_MAX_IDX, 9 - s));
+      }
+    }
+  } catch {
+    // See readMode: an unreadable store is NO LOCAL CHOICE.
   }
   return DEFAULT_TILE_IDX;
 }
@@ -548,10 +580,14 @@ const VALID_FILTERS: ReadonlyArray<FeedFilter> = ['latest', 'following'];
  *  cannot serve is not a choice; it is the absence of one. */
 function readFilter(): FeedFilter | null {
   if (!browser) return null;
-  const v = localStorage.getItem(STORAGE_FILTER);
-  if ((VALID_FILTERS as ReadonlyArray<string>).includes(v ?? '')) return v as FeedFilter;
-  if (v !== null) {
-    try { localStorage.removeItem(STORAGE_FILTER); } catch { /* */ }
+  try {
+    const v = localStorage.getItem(STORAGE_FILTER);
+    if ((VALID_FILTERS as ReadonlyArray<string>).includes(v ?? '')) return v as FeedFilter;
+    if (v !== null) {
+      try { localStorage.removeItem(STORAGE_FILTER); } catch { /* */ }
+    }
+  } catch {
+    // See readMode: an unreadable store is NO LOCAL CHOICE.
   }
   return null;
 }
@@ -560,12 +596,161 @@ function writeFilter(v: FeedFilter): void {
   try { localStorage.setItem(STORAGE_FILTER, v); } catch { /* */ }
 }
 
+/** "Hide AI-made work" — the browse footer's AI toggle (#1251 slice 3,
+ *  ADR 0094 fourth amendment).
+ *
+ *  # It is a DEVICE preference, not an account one, and that is decided
+ *
+ *  The three knobs above are `local ?? account ?? built-in` because
+ *  /account/preferences offers an account default for each. This one has
+ *  no account rung and deliberately gets none. `user_preferences.
+ *  mature_content.show` — the obvious precedent — is server-side because
+ *  the SERVER resolves that viewer against instance policy layers before
+ *  a row is returned; ADR 0094 §4 makes AI a filter that NEVER gates, so
+ *  a server preference would be gate-shaped machinery for a non-gate.
+ *  The accepted cost is that the toggle does not roam between devices.
+ *
+ *  # And it is a PREFERENCE, not a property of the page
+ *
+ *  Which is why it lives here and not in the URL, where `?kind=`,
+ *  `?tag=` and `?team=` live. Those three describe the WALL — a filtered
+ *  wall is a thing you send someone, and the back button should walk
+ *  them. "I would rather not look at AI work" describes the READER: it
+ *  should survive a reload and every navigation, and pasting it into
+ *  somebody else's browser would impose your preference on them under
+ *  the guise of sharing a link.
+ *
+ *  # Default OFF, and the failure direction is the same one the whole
+ *  # axis takes
+ *
+ *  Absent, unparseable, or unreadable storage all mean OFF — nothing
+ *  hidden. ADR 0094 §3 and both amendments run this way: wrongly hiding
+ *  human work is the worse error, so every unknown resolves toward
+ *  SHOWING. A quota-exceeded or disabled localStorage therefore renders
+ *  the ordinary unfiltered wall rather than crashing or silently
+ *  filtering. */
+function readHideAI(): boolean {
+  if (!browser) return false;
+  try {
+    return localStorage.getItem(STORAGE_HIDE_AI) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeHideAI(v: boolean): void {
+  if (!browser) return;
+  try {
+    // Removed rather than written `0`. "Off" is the default, so a stored
+    // false is a key that says nothing, and leaving one behind makes
+    // "this device has an opinion" indistinguishable from "this device
+    // is on the default" for anything that later wants to tell them
+    // apart — the distinction readFilter's #706 note is built on.
+    if (v) localStorage.setItem(STORAGE_HIDE_AI, '1');
+    else localStorage.removeItem(STORAGE_HIDE_AI);
+  } catch { /* quota / disabled */ }
+}
+
+/** "Leave mature content out of these results" (#1292), the browse
+ *  filter menu's Mature row.
+ *
+ *  # ⭐ IT IS LAYER 3, AND THE NAME IS RESTRICTIVE ON PURPOSE
+ *
+ *  ADR 0090 names three layers: the INSTANCE switch, the ACCOUNT opt-in
+ *  (`user_preferences.mature_content.show`), and this, the VIEW. Its
+ *  2026-08-26 amendment is explicit that layer 3 NARROWS and never
+ *  consents: layer 2 is the consent, so this may only ever subtract
+ *  from rows the three conjuncts have already allowed, and it defaults
+ *  to INCLUDED so that shipping it changed nothing for a reader who had
+ *  already opted in.
+ *
+ *  ⚠️ WHICH IS WHY IT IS `hide_mature` AND NOT `show_mature`, even
+ *  though ADR 0090 names the ACCOUNT field for the permissive direction.
+ *  The rule that ADR states is "the zero value must be the safe
+ *  answer", not "always name it permissively", and the safe answer is
+ *  the opposite on the two layers because the layers are opposite in
+ *  kind. Layer 2 is a consent, so its unknown is "has not consented".
+ *  Layer 3 is a narrowing, so its unknown is "not narrowing". A
+ *  permissively-named key here would make an absent value read as
+ *  "do not show", which is a filter nobody asked for applied to a
+ *  reader who has already consented, and there would be no rung above
+ *  it to correct the guess.
+ *
+ *  # ⭐ IT IS TRI-STATE SINCE #1345, AND THAT IS WHY IT STORES `0`
+ *
+ *  Absent, unparseable and unreadable storage mean NO LOCAL CHOICE —
+ *  `null` — and the class default decides from there. That is the
+ *  `readFeedDir` / `readMode` / `readFilter` contract, not readHideAI's,
+ *  and the difference is that this axis no longer has ONE built-in
+ *  answer to fall back to. #1345 gave the row to a reader who never
+ *  consented (the moderation exemption), and that class defaults to
+ *  EXCLUDED while a reader who consented defaults to INCLUDED. A plain
+ *  boolean cannot carry two defaults, so absence had to stop meaning
+ *  `false`.
+ *
+ *  ⛔ WHICH IS ALSO WHY `writeHideMature` NOW STORES `0` RATHER THAN
+ *  REMOVING THE KEY, and this is the half that is easy to get wrong.
+ *  readHideAI removes on false because "off" is that axis's one
+ *  default, so a stored false is a key that says nothing. Here it would
+ *  say something and then lose it: an exempt moderator who deliberately
+ *  ticks "show me mature work" would have that choice erased on the
+ *  next load and the class default would narrow their wall again, which
+ *  is a control that visibly forgets. `0` is an explicit include, `1`
+ *  is an explicit exclude, and NO KEY is the only spelling of "this
+ *  device has not answered".
+ *
+ *  A device carrying the pre-#1345 `1` still reads as exclude, so
+ *  nothing stored had to move.
+ *
+ *  # It is a DEVICE preference, and that is decided here rather than
+ *  # inherited from its neighbour
+ *
+ *  FeedKindFilter's header says a third toggle in that menu gets asked
+ *  where it belongs rather than assuming it belongs where its neighbour
+ *  does, so: not the URL, because "not mature, right now" describes the
+ *  READER and pasting it into somebody else's browser would impose it
+ *  on them under cover of sharing a link, which is the same argument
+ *  the AI toggle turns on. And not the ACCOUNT, which is a stronger
+ *  claim: `user_preferences.mature_content.show` is layer 2, writing it
+ *  from here would make the menu row a place to REVOKE and re-give
+ *  consent, and re-ticking would then be consenting from a browse
+ *  popover. That is the conflation ADR 0090 exists to prevent, and it
+ *  would additionally have to solve the re-GET-and-merge hazard
+ *  `account/preferences/+page.svelte:210-230` documents. Layer 3 never
+ *  touches layer 2's row.
+ *
+ *  So: localStorage, beside the AI flag, reached by a different route. */
+function readHideMature(): boolean | null {
+  if (!browser) return null;
+  try {
+    const v = localStorage.getItem(STORAGE_HIDE_MATURE);
+    return v === '1' ? true : v === '0' ? false : null;
+  } catch {
+    // See readFeedDir: an unreadable store is NO LOCAL CHOICE, which
+    // lets the reader's class default answer rather than a guess.
+    return null;
+  }
+}
+function writeHideMature(v: boolean): void {
+  if (!browser) return;
+  try {
+    // ⛔ BOTH VALUES ARE WRITTEN. See readHideMature: removing the key
+    // on false would erase an exempt reader's deliberate "include" and
+    // let their class default narrow the wall again on reload.
+    localStorage.setItem(STORAGE_HIDE_MATURE, v ? '1' : '0');
+  } catch { /* quota / disabled */ }
+}
+
 /** The persisted feed direction, or null when unset — same null-means-
  *  no-local-choice contract as readMode / readFilter / readSort. */
 function readFeedDir(): SortDir | null {
   if (!browser) return null;
-  const v = localStorage.getItem(STORAGE_FEED_DIR);
-  return v === 'asc' || v === 'desc' ? v : null;
+  try {
+    const v = localStorage.getItem(STORAGE_FEED_DIR);
+    return v === 'asc' || v === 'desc' ? v : null;
+  } catch {
+    // See readMode: an unreadable store is NO LOCAL CHOICE.
+    return null;
+  }
 }
 function writeFeedDir(v: SortDir): void {
   if (!browser) return;
@@ -636,6 +821,30 @@ class BrowseViewState {
   filter = $state<FeedFilter>('latest');
   /** Sort direction for the feed itself (newest-first vs oldest-first). */
   feedDir = $state<SortDir>('desc');
+  /** "Hide AI-made work" (#1251 slice 3). ON sends `ai=not_pure`; OFF
+   *  sends no parameter at all.
+   *
+   *  ⚠️ ON HIDES PURELY-AI POSTS ONLY. A post mixing AI and human
+   *  contributors stays on the wall, which is the owner's ruling and not
+   *  an approximation of it: excluding a post because ONE member was
+   *  honestly declared would punish exactly the declaration the design
+   *  depends on. The client does not compute that distinction — the
+   *  server's `ai` dimension keys on `posts.ai_pure` — and it must not
+   *  start, or there would be two answers to one question.
+   *
+   *  ⛔ NOT A THREE-STATE. There is no "show only AI" here. The wire
+   *  vocabulary has a `pure` value for symmetry with `filter=ai:` on
+   *  /search, and no control on this site emits it. */
+  hideAI = $state(false);
+  /** THIS DEVICE's answer to "leave mature content out of these
+   *  results" (#1292), or `null` for "this device has not answered".
+   *
+   *  ⚠️ IT IS THE RAW CHOICE, NOT THE EFFECTIVE VALUE. Read
+   *  `hideMature` for what the feed is actually doing; this is the rung
+   *  below it. Since #1345 the two differ, because a null here resolves
+   *  against a default that is a property of the READER'S CLASS rather
+   *  than a constant. See `matureDefaultHide`. */
+  hideMatureChoice = $state<boolean | null>(null);
   hydrated = $state(false);
 
   /** The active rung in rem, after the thumbnail density offset. */
@@ -795,6 +1004,18 @@ class BrowseViewState {
     this.tileIdx = readTileIdx();
     this.listColumns = readColumns();
     this.columnWidths = readColumnWidths();
+    // Read HERE and not in applyAccountDefaults, which is the
+    // account-seeding path: this preference has no account rung (see
+    // readHideAI), so `local ?? built-in` is the whole ladder and there
+    // is nothing for a re-seed on sign-in to reconsider.
+    this.hideAI = readHideAI();
+    // Read here for the same reason, and it is a STRONGER reason: this
+    // one has an account rung, but the account rung is a DIFFERENT
+    // LAYER rather than a default for this one. `mature_content.show`
+    // is the consent; this is the view filter over what that consent
+    // already allowed, so there is nothing for applyAccountDefaults to
+    // seed and seeding it would silently turn a consent into a filter.
+    this.hideMatureChoice = readHideMature();
     this.applyAccountDefaults(defaults);
     this.hydrated = true;
   }
@@ -919,6 +1140,188 @@ class BrowseViewState {
   toggleFeedDir(): void {
     this.feedDir = this.feedDir === 'asc' ? 'desc' : 'asc';
     writeFeedDir(this.feedDir);
+  }
+
+  /** Flip "hide AI-made work" and remember it on this device (#1251). */
+  setHideAI(v: boolean): void {
+    this.hideAI = v;
+    writeHideAI(v);
+  }
+
+  /** The `?ai=` value the feed request should carry, or null for "send
+   *  nothing".
+   *
+   *  ⭐ IT IS RESOLVED HERE RATHER THAN AT THE FETCH SITE so the ONE
+   *  place that knows the toggle's meaning is the one that owns the
+   *  toggle. A page spelling `browseView.hideAI ? 'not_pure' : undefined`
+   *  inline is a second copy of the mapping, and the second copy is
+   *  where a future "show only AI" gets half-added.
+   *
+   *  ⚠️ OFF IS `null`, NOT `'pure'`. The two wire values PARTITION the
+   *  corpus, so sending `pure` when the toggle is off would show ONLY AI
+   *  work — the exact inverse of the control — rather than everything.
+   *  "No filter" is spelled by omitting the parameter, the same way the
+   *  type filter spells "all types". */
+  get aiParam(): 'not_pure' | null {
+    return this.hideAI ? 'not_pure' : null;
+  }
+
+  /** Flip "leave mature content out of these results" and remember it on
+   *  this device (#1292).
+   *
+   *  ⛔ IT WRITES NOTHING BUT localStorage, and specifically not
+   *  `user_preferences.mature_content.show`. That row is layer 2, the
+   *  CONSENT; this is layer 3, the view. See readHideMature. */
+  setHideMature(v: boolean): void {
+    this.hideMatureChoice = v;
+    writeHideMature(v);
+  }
+
+  /** Whether this reader holds the MODERATION EXEMPTION from the mature
+   *  gate (ADR 0090 §2) — the reason rows can reach them without a
+   *  consent.
+   *
+   *  ⭐ IT MIRRORS ONE SERVER PREDICATE AND NOTHING ELSE.
+   *  `posts.Handler.ListPosts` passes
+   *  `MatureAdmin: caller.Can(auth.SuperAdminCapability)`, and
+   *  `visibility.MatureItemVisible` waives the qualification on exactly
+   *  that flag. So this is `can(SYSTEM_ADMIN)` rather than
+   *  `canSeeAdmin`, which is a wider "may open some admin surface" set
+   *  and would offer the row to read-cap operators the gate does not
+   *  exempt: a control that could never do anything, which is the
+   *  failure the cascade exists to prevent.
+   *
+   *  ⚠️ THE OWNER EXEMPTION IS NOT HERE, and that is not an omission.
+   *  The gate's other waiver is per ROW — an artist sees their own
+   *  work — so it cannot be a property of the reader, and a browse wall
+   *  is not a question about one item. `MatureFilterSQL` evaluates it
+   *  per row for the same reason.
+   *
+   *  ⚠️ UNKNOWN RIGHTS ARE NO RIGHTS. `can()` returns false while
+   *  `capsStatus` is `unavailable`, so a resolver blip withdraws the
+   *  row rather than offering one this reader may not have. */
+  get matureExempt(): boolean {
+    return auth.can(SYSTEM_ADMIN);
+  }
+
+  /** Whether the Mature row is offered in the filter menu at all, which
+   *  is ADR 0090's layer-3 cascade (2026-08-26 amendment, widened by
+   *  the 2026-08-28 amendment for #1345).
+   *
+   *  Two rungs, and BOTH are ABSENCE rather than disablement:
+   *
+   *    the INSTANCE has to allow mature content, or the whole feature is
+   *    off and a row claiming to filter it would be a control that lies;
+   *    the READER has to be able to RECEIVE mature rows, or a control
+   *    meaning "leave mature out of these results" could only ever do
+   *    nothing, and a tickable box that does nothing is the specific
+   *    failure this row has to avoid.
+   *
+   *  ⭐ THE SECOND RUNG ASKS ABOUT CAPABILITY, NOT CONSENT, AND #1345 IS
+   *  WHAT THAT DISTINCTION COST. It used to read `matureOptedIn ===
+   *  true`, which is the same question the #1292 amendment's stated
+   *  reason asks — "meaningless to a reader who has not consented; it
+   *  could never do anything". That reason is sound and it simply does
+   *  not hold for an exempt account: ADR 0090 §2 waives the
+   *  qualification for `system.admin` so a moderator can see what the
+   *  instance switch hid, so rows reach them regardless of consent. The
+   *  one class of reader shown mature content without opting in was the
+   *  one class offered no way to stop seeing it.
+   *
+   *  So the rung is "can this reader actually receive mature rows",
+   *  which is `opted in OR exempt`. Consent still answers it for every
+   *  reader who has given one; the exemption answers it for the reader
+   *  the old spelling could not see.
+   *
+   *  ⛔ IT IS STILL LAYER 3 AND STILL NEVER CONSENTS. An exempt reader
+   *  ticking the row has not granted themselves anything and unticking
+   *  it has not revoked their exemption: `matureParam` has no "include"
+   *  spelling, so the only thing any reader can express here is a
+   *  subtraction from rows the gate already allowed.
+   *
+   *  ⚠️ A SIGNED-OUT READER FAILS BOTH, by construction rather than by a
+   *  third check: `auth.user` is null so the first conjunct is false,
+   *  and an anonymous caller holds no capabilities so the second is
+   *  too. */
+  get matureFilterAvailable(): boolean {
+    return (
+      auth.user?.matureContentAllowed === true &&
+      (auth.user?.matureOptedIn === true || this.matureExempt)
+    );
+  }
+
+  /** ADR 0090's layer-3 default for THIS READER'S CLASS, used when the
+   *  device has no stored choice (2026-08-28 amendment, #1345).
+   *
+   *  Three classes, three answers, and the third is why this is a
+   *  function of the reader rather than a constant:
+   *
+   *    the instance forbids mature content — there is no row, so there
+   *      is nothing to default and `matureParam` is null either way;
+   *    allowed and OPTED IN — INCLUDED, unchanged from #1292. Shipping
+   *      the row changed no wall for a reader who had already consented,
+   *      and that property has to survive this widening;
+   *    allowed, EXEMPT, never opted in — EXCLUDED. That reader has
+   *      never said yes to anything, and minimising a reviewer's
+   *      exposure is the standard for exactly this population.
+   *
+   *  ⚠️ IT IS A PER-VIEW DEFAULT, NOT A REFUSAL. One click gets an
+   *  exempt reader the unfiltered wall when they are actually
+   *  moderating, and — since #1345 made the key tri-state — that click
+   *  is remembered.
+   *
+   *  A getter rather than a value seeded at init(): the class is a
+   *  property of the SESSION, and a guest who signs in as a moderator
+   *  has to get the moderator's default without a reload. Reading
+   *  `auth` here is what keeps callers reactive to that. */
+  get matureDefaultHide(): boolean {
+    // No row means no narrowing. Stated first so the two rungs below
+    // are only ever asked about a reader who is offered the control.
+    if (!this.matureFilterAvailable) return false;
+    if (auth.user?.matureOptedIn === true) return false;
+    return true;
+  }
+
+  /** "Leave mature content out of these results" AS THE FEED IS ACTUALLY
+   *  DOING IT (#1292), ADR 0090's layer 3. TRUE means NARROW.
+   *
+   *  `local choice ?? class default`, which is the same shape as
+   *  `mode` / `filter` / `sort` and, since #1345, for the same reason:
+   *  the built-in answer is not one value. See readHideMature for why
+   *  the flag is named restrictively while the ACCOUNT opt-in beside it
+   *  is named permissively.
+   *
+   *  ⛔ IT IS NOT A CONSENT AND CANNOT BECOME ONE. Turning it off adds
+   *  back only rows the server was already willing to return to this
+   *  reader; there is no value of it that reaches content the three
+   *  conjuncts withheld, and `matureParam` has no "include" spelling to
+   *  send. */
+  get hideMature(): boolean {
+    return this.hideMatureChoice ?? this.matureDefaultHide;
+  }
+
+  /** The `?mature=` value the feed request should carry, or null for
+   *  "send nothing".
+   *
+   *  ⭐ RESOLVED HERE, for aiParam's reason: a page spelling the mapping
+   *  inline would be the second copy, and the second copy is where the
+   *  availability check gets forgotten.
+   *
+   *  ⭐ AND THE AVAILABILITY CHECK IS PART OF THE MAPPING, which is the
+   *  half that is easy to leave out. The flag is stored per device and
+   *  the cascade is per session, so a reader who narrows their feed and
+   *  then loses the row (the operator switches the feature off, they
+   *  opt out on /account/preferences, they sign out) would otherwise go
+   *  on sending a filter with no control left to turn it off: invisible
+   *  state, and the wall stays narrowed for a reason nothing on screen
+   *  explains. Gating the VALUE on the same predicate that gates the
+   *  ROW means the two can never disagree.
+   *
+   *  ⚠️ OFF IS `null`. There is no "include" value on the wire, because
+   *  including is what the absence of the parameter already does, and a
+   *  layer that narrows has nothing to say in the other direction. */
+  get matureParam(): 'not_mature' | null {
+    return this.matureFilterAvailable && this.hideMature ? 'not_mature' : null;
   }
 
   /** Resolve visible column defs in the user's chosen order.

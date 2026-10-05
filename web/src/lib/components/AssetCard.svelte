@@ -13,6 +13,8 @@
   import CardCheckbox from './CardCheckbox.svelte';
   import CardKindBadge from './CardKindBadge.svelte';
   import CardAuthorLink from './CardAuthorLink.svelte';
+  import AiProvenanceBadge from './AiProvenanceBadge.svelte';
+  import { isMarkedAi } from '$lib/aiProvenance';
   import { kindForAsset } from './viewers/controller';
   import { thumbhashMatteColor } from '$lib/util/thumbhash';
   import { auth } from '$stores/auth.svelte';
@@ -124,7 +126,7 @@
 
   // Selected state (#515 slice 3) — the card gets a ring, the checkbox a
   // check. Read from the shared selection singleton.
-  const selected = $derived(selection.has(asset.id));
+  const selected = $derived(selection.has('asset', asset.id));
 
   // #555 — grid is a zero-gap CONTACT SHEET: drop the card chrome
   // (rounded / border / elevated bg) so tiles butt into one unbroken
@@ -236,6 +238,17 @@
   // available and they are the one fact a thin tile actively hides.
   const tipMeta = $derived(
     [
+      // #1243 — a compact masonry tile draws NO badge (see the kind
+      // badge's `!compact` gate), so this is the only place the
+      // declaration can appear in that density. Marked states only:
+      // `none` and `null` contribute nothing, because a "no AI" line
+      // here is the same prohibited claim as a "no AI" badge.
+      //
+      // ⚠️ FIRST — CardTooltip renders this array as one `truncate` line
+      // in an 18rem box, so a late entry is cut off on screen while a
+      // payload assertion still passes. See PostCard's matching note for
+      // the measurement.
+      isMarkedAi(asset.ai_provenance) ? t(`ai_provenance.${asset.ai_provenance}`) : null,
       asset.file_extension ? asset.file_extension.replace(/^\./, '').toUpperCase() : null,
       asset.pixel_width && asset.pixel_height ? `${asset.pixel_width} × ${asset.pixel_height}` : null,
       createdShort,
@@ -286,10 +299,14 @@
   overlay is pointer-events-none; the tool row (z-20) captures its own
   clicks above the link.
 -->
-<!-- `data-select-id` is what the marquee hit-tests against (#1177), and
-     it carries the ASSET id — the same id CardCheckbox contributes to
-     the selection store, so a band and a click build one set rather
-     than two. PostCard has had this attribute since #1127; AssetCard
+<!-- `data-select-id` + `data-select-kind` are what the marquee
+     hit-tests against (#1177), and they carry the ASSET id and the
+     `asset` kind, the same pair CardCheckbox contributes to the
+     selection store, so a band and a click build one set rather
+     than two. THE KIND IS PART OF THE ATTRIBUTE CONTRACT (#1119): the
+     band reads identity off the DOM, the batch endpoints require a
+     typed `{kind, id}`, and a card that published only its uuid would
+     force the band to guess the half the server refuses to guess. PostCard has had this attribute since #1127; AssetCard
      never got it, which made marquee-drag select ZERO cards on the
      profile uploads grid while the checkbox and Shift+range worked
      fine (they go through CardCheckbox, not the hit-test).
@@ -304,6 +321,7 @@
      make a sweep silently drop cards it visibly crossed. -->
 <div
   data-select-id={asset.id}
+  data-select-kind="asset"
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
   {#if detailed && !restricted}
@@ -356,7 +374,20 @@
         {/if}
       </div>
       <span class="flex-1"></span>
-      <CardCheckbox id={asset.id} placement="inline" />
+      <!-- #1243 — the band's middle, left of Select (ADR 0094's
+           amendment). Identical placement to PostCard's band, because
+           a one-asset post and a standalone asset are showing the same
+           fact and there is no reason for the two bands to differ.
+
+           Here the value is the ASSET'S OWN declaration rather than a
+           derived one — this wall lists files in their own right, so
+           there is nothing to derive over. -->
+      <AiProvenanceBadge
+        value={asset.ai_provenance}
+        variant="inline"
+        tooltipKey={asset.id}
+      />
+      <CardCheckbox kind="asset" id={asset.id} placement="inline" />
     </div>
   {/if}
 
@@ -424,7 +455,7 @@
            it is an inline control in the bottom band there, so nothing
            sits over the preview. -->
       {#if !detailed}
-        <CardCheckbox id={asset.id} />
+        <CardCheckbox kind="asset" id={asset.id} />
       {/if}
 
       <!-- The kind, as an ICON and never as a word (#1047). This is the
@@ -446,7 +477,13 @@
       <!-- NOT IN THUMBNAIL (#1136): the same badge draws in the top
            chrome band, which leaves the artwork untouched. -->
       {#if !compact && !detailed}
-        <CardKindBadge {kind} class="absolute bottom-2 right-2 z-[2]" tooltipKey={asset.id} />
+        <!-- #1243 rides the kind badge rather than claiming a fourth
+             corner — see PostCard's matching block for why the other
+             three are spoken for. -->
+        <div class="absolute bottom-2 right-2 z-[2] flex items-center gap-1.5">
+          <AiProvenanceBadge value={asset.ai_provenance} tooltipKey={asset.id} />
+          <CardKindBadge {kind} tooltipKey={asset.id} />
+        </div>
       {/if}
     {/if}
 
@@ -490,9 +527,17 @@
            to #556, superseding "actions visible in the details tile".
            Thumbnail renders the SAME component inline in its bottom band
            (#1136); still exactly one per card. -->
+      <!-- `usagePath` rides the SAME gate as `editPath` (#1237). Both
+           ask "is this plainly the viewer's own file", and the two
+           disjuncts canEdit can evaluate — owner, or a global
+           assets.admin — are exactly the ones GET /assets/{id}/posts
+           admits. The one it cannot see, a TEAM-scoped assets.admin,
+           errs the same safe way it does for edit: no shortcut from
+           this menu, and the route still reachable by URL. -->
       <CardMenu
         detailPath="/assets/{asset.id}"
         editPath={canEdit ? `/assets/${asset.id}/edit` : null}
+        usagePath={canEdit ? `/assets/${asset.id}/usage` : null}
       />
     {/if}
   </CardThumb>

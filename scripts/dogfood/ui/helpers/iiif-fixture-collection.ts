@@ -40,6 +40,9 @@ export type FixtureCollection = {
   id: string;
   assetIds: string[];
   name: string;
+  /** The post carrying the members into the collection (#1161, ADR
+   *  0091). Teardown deletes it — see teardownFixtureCollection. */
+  postId?: string;
 };
 
 const RUN_TAG = `ui-13-${Date.now()}`;
@@ -164,22 +167,39 @@ export async function seedFixtureCollection(
   }
   const collection = await colRes.json();
 
-  // Pin each asset as a collection member. Endpoint is
-  // POST /api/v1/collections/{id}/resources with body {asset_id,
-  // sort_order, pinned} — 204 on success. sort_order is
-  // 1-indexed to match how the Presentation loader orders members
-  // (ORDER BY sort_order ASC per pre-audit Q2 of 1.54.B).
-  for (let i = 0; i < assetIds.length; i++) {
-    const addRes = await request.post(
-      `/api/v1/collections/${collection.id}/resources`,
-      { data: { asset_id: assetIds[i], sort_order: i + 1, pinned: true } },
-    );
+  // The assets reach the collection AS A POST (#1161, ADR 0091). They
+  // used to be pinned one by one through
+  // `POST /collections/{id}/resources`; that endpoint is retired,
+  // because a collection holds posts and pinning a bare asset was a
+  // second publication path.
+  //
+  // ONE post with every fixture asset as a member, in order. That is
+  // also what the Presentation loader now reads — collection_posts →
+  // posts → post_assets — and its member ORDER is (collection
+  // sort_order, added_at, the post's own member sort_order), so a
+  // single post's member order is the manifest's order.
+  const postRes = await request.post('/api/v1/posts', {
+    data: {
+      title: `${collectionName} — fixture post`,
+      visibility: 'private',
+      members: assetIds.map((asset_id, sort_order) => ({ asset_id, sort_order })),
+    },
+  });
+  if (!postRes.ok()) {
+    throw new Error(`fixture post create failed: ${postRes.status()} ${await postRes.text()}`);
+  }
+  const fixturePost = (await postRes.json()) as { id: string };
+
+  {
+    const addRes = await request.post(`/api/v1/collections/${collection.id}/posts`, {
+      data: { post_id: fixturePost.id, sort_order: 1, pinned: true },
+    });
     if (!addRes.ok()) {
-      throw new Error(`collection membership failed for asset ${assetIds[i]}: ${addRes.status()} ${await addRes.text()}`);
+      throw new Error(`collection membership failed for post ${fixturePost.id}: ${addRes.status()} ${await addRes.text()}`);
     }
   }
 
-  return { id: collection.id, assetIds, name: collectionName };
+  return { id: collection.id, assetIds, name: collectionName, postId: fixturePost.id };
 }
 
 /**
@@ -196,6 +216,19 @@ export async function teardownFixtureCollection(
     await request.delete(`/api/v1/collections/${fixture.id}?hard=true`);
   } catch (e) {
     console.warn(`fixture teardown: collection delete failed: ${(e as Error).message}`);
+  }
+  // The post goes FIRST among the content rows (#1161). Since the
+  // members reach the collection through a post, this fixture now puts
+  // a real post on the instance — which means it is in the feed for
+  // however long the spec runs, and any other spec that reaches for
+  // "the newest post" can land on it. Deleting it promptly is what
+  // keeps that window as small as the collection's own.
+  if (fixture.postId) {
+    try {
+      await request.delete(`/api/v1/posts/${fixture.postId}`);
+    } catch (e) {
+      console.warn(`fixture teardown: post delete failed: ${(e as Error).message}`);
+    }
   }
   // Assets get soft-deleted (only hard=true supported on collections
   // per the OpenAPI). Subsequent runs use a fresh RUN_TAG so titles

@@ -2,15 +2,16 @@
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
-    state_id, processing_status, thumbhash, team_id, mature
+    state_id, processing_status, thumbhash, team_id, mature,
+    ai_provenance
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15
+    $11, $12, $13, $14, $15, $16
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id, mature;
+          created_at, updated_at, team_id, mature, ai_provenance;
 
 -- name: GetAsset :one
 -- Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -22,7 +23,7 @@ RETURNING id, title, description, asset_type, owner_user_ref, status,
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, team_id, mature
+       created_at, updated_at, team_id, mature, ai_provenance
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -53,12 +54,24 @@ UPDATE assets SET
     -- it is, which is what makes the artist's own edit and the operator
     -- override the same column on the same endpoint.
     mature      = COALESCE(sqlc.narg('mature'),      mature),
+    -- #1167 / ADR 0094. Two inputs rather than one, because this column
+    -- is NULLABLE and null already means "leave alone" for every other
+    -- field here. Without the explicit clear there would be no way to
+    -- return a declared work to UNDECLARED, and "undeclared" is a state
+    -- the maker is entitled to be in — it is the state of someone who
+    -- has not been asked. Same shape as field_definition.edit_tab's
+    -- clear_edit_tab, for the same reason. The handler refuses the two
+    -- together rather than picking a winner.
+    ai_provenance = CASE
+        WHEN sqlc.arg('clear_ai_provenance')::boolean THEN NULL
+        ELSE COALESCE(sqlc.narg('ai_provenance'), ai_provenance)
+    END,
     updated_at  = NOW()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id, mature;
+          created_at, updated_at, team_id, mature, ai_provenance;
 
 -- name: MergeAssetMetadata :exec
 -- Shallow-merge an incoming JSONB blob into the existing metadata

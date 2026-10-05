@@ -25,6 +25,7 @@ type FacetHandler struct {
 // Wire shape:
 //
 //	GET /search/facets?q=cat&facets=asset_type,tag,owner&filter=tag:sketch
+//	GET /search/facets?dsl=cat+AND+tag:sketch&facets=extension
 //
 // Response:
 //
@@ -70,6 +71,25 @@ func (h *FacetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_filter"})
 		return
+	}
+
+	// #1173 sprint 18d — `dsl=`, folded through the SAME compiler and
+	// bridge /search uses ([foldDSL]).
+	//
+	// ⭐ STRICTLY ADDITIVE. No existing caller sends `dsl=` here — the
+	// rail on /search sends `q=` plus `filter=` — so nothing that works
+	// today changes. What it fixes is the ADVANCED page, whose query IS a
+	// DSL: without this branch the file-type suggestions beside a query
+	// the caller had already narrowed would enumerate the whole corpus,
+	// which is the rail describing a set the grid is not showing, one
+	// surface over.
+	if in := r.URL.Query().Get("dsl"); in != "" {
+		sel, text, derr := foldDSL(in, selection, q)
+		if derr != nil {
+			writeDSLError(w, derr)
+			return
+		}
+		selection, q = sel, text
 	}
 
 	var callerRef *int64

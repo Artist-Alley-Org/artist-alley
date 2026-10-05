@@ -99,6 +99,8 @@ type Asset struct {
 	DeletedReason    *string
 	DeletedByUserRef *int64
 	Mature           bool
+	// The MAKER'S DECLARATION about generative-AI involvement in this work (#1167, ADR 0094). Three declared values — `none` (the maker declares no generative AI was involved), `assisted` (AI used in part: upscaling, inpainting, an AI-generated texture on hand-made geometry), `generated` (substantially AI-generated) — plus NULL, which means UNDECLARED: nobody was asked. ⚠️ NULL IS NOT `none`. The column is nullable and unbackfilled precisely so the rows predating the feature do not assert a disclaimer their makers never made; a reader that renders NULL as "no AI" is lying on the artist's behalf. ⚠️ A DECLARATION IS NOT A PERMISSION (ADR 0094 §4): this is orthogonal to `sensitivity` and to `mature`; it is a FILTER a viewer may apply to their own feed and never a GATE that withholds the work from others, and nothing derived from the asset — search text, facets, suggest, thumbhash, embeddings, counts, covers — is withheld on account of it. That property is what keeps this column cheap and it holds only while nothing gates on it. Extraction may one day CORROBORATE `generated`/`assisted` from `Iptc4xmpExt:DigitalSourceType` on an UNDECLARED work, and may NEVER establish `none`: the IPTC vocabulary has no term meaning "no AI", so absence of an AI term is not evidence of absence (ADR 0094 §3). Does not federate yet — the v1 envelope rejects unknown top-level fields; the wire mapping is pre-decided in ADR 0094 §6.
+	AiProvenance *string
 }
 
 type AssetAlternate struct {
@@ -281,22 +283,22 @@ type Collection struct {
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	SearchText     interface{}
-	// DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.
+	// DSL query string that was executed to populate this collection. PROVENANCE ONLY (ADR 0091, #1259): it records which search produced this STATIC set, for display and for a refresh the reader invokes deliberately. It is never an input to a read path. Membership in collection_resources is the only membership truth, and a collection saved from a search materialises its members at save time.
 	SmartQuery       *string
 	DeletedAt        pgtype.Timestamptz
 	DeletedReason    *string
 	DeletedByUserRef *int64
 	// Curator-chosen cover picture (#1027): any asset the curator may PICTURE, not necessarily a member. NULL means compose the derived mosaic from members instead. Read path (collections.ComposeCovers) re-checks the viewer's picture plane and falls back to the mosaic when the override is unrenderable for them — a withheld cover must never render blank. ON DELETE SET NULL so a hard-deleted asset reverts the collection to its mosaic rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083's exclusion criterion, applied by analogy).
 	CoverAssetID pgtype.UUID
-	// Curator-chosen cover for the FEATURED RAIL specifically (#1207). The rail card is locked to 890:500 while a collection card is roughly square, so one picture is not the best answer for both. NULL means no separate choice: the rail falls back to cover_asset_id, then to the derived hero-card cover, each rung re-checked against the viewer's picture plane so a withheld cover falls back rather than rendering blank. ON DELETE SET NULL, and does NOT federate — same reasoning as cover_asset_id (see migration 00046).
+	// Curator-chosen cover for the FEATURED RAIL specifically (#1207). The rail card is locked to 890:500 while a collection card is 4:3 (#1334), so one picture is not the best answer for both. NULL means no separate choice: the rail falls back to cover_asset_id, then to the derived hero-card cover, each rung re-checked against the viewer's picture plane so a withheld cover falls back rather than rendering blank. ON DELETE SET NULL, and does NOT federate — same reasoning as cover_asset_id (see migration 00046).
 	FeaturedCoverAssetID pgtype.UUID
 	// Horizontal focal point for the featured rail's 890:500 crop, as a FRACTION of the picture's width (0 = left edge, 1 = right edge). Maps directly to CSS object-position, and is a fraction rather than a pixel offset so it stays correct across preview rungs and viewport sizes. NULL means centre (the CSS default), which is distinct from an explicit 0.5 so the editor's reset is a clear rather than a re-set. Paired with featured_cover_focal_y by collections_featured_cover_focal_check: both NULL or both in 0..1.
 	FeaturedCoverFocalX *float64
 	// Vertical focal point for the featured rail's 890:500 crop, as a FRACTION of the picture's height (0 = top edge, 1 = bottom edge). See featured_cover_focal_x for why it is a fraction, why NULL means centre, and why the two are constrained together.
 	FeaturedCoverFocalY *float64
-	// Horizontal focal point for the collection cover's SQUARE crop, as a FRACTION of the picture's width (#1207). The square is the destination shape because `col` is fit=cover at 320px — a 320x320 centre-crop — and that rendition is what every small collection thumbnail is made of. Separate from featured_cover_focal_x because the two destinations are different shapes and one fraction cannot be right for both. NULL means centre. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and is wrong.
+	// Horizontal focal point for the collection cover's 4:3 crop, as a FRACTION of the picture's width (0 = left edge, 1 = right edge, #1207). THE DESTINATION IS 4:3, NOT A SQUARE (#1334): CollectionCard paints a chosen cover inside an `aspect-[4/3]` tile on the hub, on a profile and in search, and that tile is the only collection surface that crops this picture. The square is the tempting wrong answer because `col` IS one (fit=cover at 320px, a 320x320 centre-crop, the rendition every small collection thumbnail is made of), but `col` is a SOURCE and not a destination; a curator positioned against it would be shown a region the card never displays. A crop marquee locks to the dimensions of the thing that renders it. Separate from featured_cover_focal_x because the rail card is 890:500, and one fraction cannot be right for two shapes. Maps directly to CSS object-position, and is a fraction rather than a pixel offset so it stays correct across preview rungs and viewport sizes. NULL means centre (the CSS default), distinct from an explicit 0.5 so the editor's reset is a clear rather than a re-set. Paired with cover_focal_y by collections_cover_focal_check: both NULL or both in 0..1. Cleared when the cover picture is swapped or removed and no new framing is supplied (#1333), because a fraction chosen against one photograph means nothing on the next. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and lands somewhere nobody picked.
 	CoverFocalX *float64
-	// Vertical focal point for the collection cover's square crop (#1207). See cover_focal_x.
+	// Vertical focal point for the collection cover's 4:3 crop, as a FRACTION of the picture's height (0 = top edge, 1 = bottom edge, #1207). See cover_focal_x for the destination shape (4:3, not a square, #1334), why it is a fraction, why NULL means centre, why the two are constrained together, when a cover swap clears them, and why it must be painted from a contain rung.
 	CoverFocalY *float64
 	// How far the featured rail's 890:500 crop is tightened, as a multiplier on the fitting rectangle (#1212). The crop window is the fit window divided by this, so 1 is the fit itself and 2 shows a quarter of the area. NULL means fit — what every collection rendered before this column existed, and what a client that has never heard of zoom keeps rendering. NULL and an explicit 1 paint the same picture and are stored differently on purpose, so the editor's reset stays a clear. Bounded 1..4 by collections_featured_cover_zoom_check: below 1 the window would exceed the picture, and above 4 the preview ladder has no further contain rung to climb to (`hires` 4096 is 4x `preview` 1024, the rung a cover is guaranteed).
 	FeaturedCoverZoom *float64
@@ -681,6 +683,18 @@ type FieldDefinition struct {
 	MirrorsColumn *string
 	// Display hint (#552): render this field at a glance on an asset card. Same class as display_order / display_group — UI may use it, nothing may gate access, filtering or correctness on it, and a client that ignores it must still be correct, merely plainer. FEDERATES with the definition: it names the field, not the server (ADR 0012 amendment 2026-08-10, against ADR 0083's exclusion criterion). Refused on a field carrying a read_capability, because the card renders on browse where no per-field capability has been evaluated.
 	ShowOnCard bool
+	// Participation flag (ADR 0092 §3, #1173): offer this field as a filter control on the advanced search page. TRUE by default, because every field appeared there before this column existed and an install that never sets it must render unchanged. It governs the CONTROL only — it does not touch `searchable` (which decides whether the field's text feeds the search index), does not change any query result, and does not stop a caller composing `filter=field:<code>=<value>` by hand. The read capability still gates on top: a flag can never offer a field the caller may not read. FEDERATES with the definition: it names the field, not the server (ADR 0083 exclusion criterion).
+	ShowInAdvancedSearch bool
+	// Participation flag (ADR 0092 §3, #1173): offer this field on the upload / create surface. TRUE by default for the same reason as show_in_advanced_search — the upload composer rendered every active field for the asset type before this column existed. Consumed by the create/edit work (#1119); this column is the declaration, the surfaces obey it there. Not constrained against `required`, because required-ness is enforced on the value-write path and not at asset creation. FEDERATES with the definition.
+	ShowOnUpload bool
+	// Participation flag (ADR 0092 §3, #1173): which tab of the edit surface this field sits in. NULL (the default) = unassigned, which is today's behaviour — no surface has tabs yet, and fields group by display_group. Distinct from an empty string, which the CHECK constraint refuses so that "no tab" has exactly one representation. A coarser grouping than display_group, not a replacement for it: a tab holds groups. FEDERATES with the definition.
+	EditTab *string
+	// Refuse HUMAN writes to this field's values (#1173, ADR 0012). FALSE by default, which is today's behaviour. Enforced on the four identity-bearing value handlers: setting and clearing an asset value, and setting and clearing a collection value. It is NOT a freeze on the row — upload defaults, the extraction pipeline and the mirror filler still write, because a read-only field is normally one the SYSTEM owns; those writers are distinct Go functions with no HTTP route, so the exemption is a property of the call site rather than a flag any caller can send. On an ASSET the refusal applies immediately, including where no value exists yet, because asset creation writes no field-value rows and so has no human first-write seam. On a COLLECTION the create body MAY seed an initial value, and every later set or clear is refused. Refused on a field declaring mirrors_column: those carry a second human write plane on the assets row that would not obey it. Does NOT federate — it is an access rule, the same class ADR 0083 keeps out of a schema envelope.
+	ReadOnly bool
+	// Pattern a HUMAN-supplied value of this field must match (#1173, ADR 0012). NULL (the default) = no constraint, and NULL is the ONLY representation of that: the empty string is refused by the CHECK, and removing a pattern travels as an explicit clear_regexp_filter on the update body, exactly as clear_edit_tab does for the tab. Go RE2, anchored by the SERVER as \A(?:<pattern>)\z so it always matches the WHOLE value — operators do not write ^…$, which would be line anchors under (?m) and would bind to only the outer branches of an alternation. Stored verbatim: never trimmed, because whitespace inside a pattern is meaningful and a whitespace-only pattern is a legitimate configuration. Honoured for `text` and `longtext` only; the narrowing lives in Go (regexpFilterApplies) so widening it stays a decision rather than a migration. `rich_text` is excluded deliberately even though it shares value_text: that column holds sanitised HTML, so a pattern would match markup rather than anything the operator can see. Validates HUMAN INPUT, not the stored row — system writers (defaults, extraction, mirror fill) are not checked, so a stored value may legitimately fail it. Refused on a field declaring mirrors_column. FEDERATES with the definition: it names the field, not the server.
+	RegexpFilter *string
+	// When this field should be OFFERED on a composition surface (#1173, #1119, ADR 0099). NULL (the default) = always, and NULL is the ONLY representation of that: the CHECK refuses [], {}, "" and JSON null, so no reader has to know a second spelling of unset. Otherwise a JSON array of bare <code><op><value> strings with NO field: prefix, combined with AND, parsed by the EXISTING search term grammar (facet.SplitFieldTerm) — the search grammar is NOT extended. A FORM HINT and never authorization: it decides whether a CONTROL is drawn and nothing about access, filtering, indexing or write validity, so a hidden field keeps its values and can still be written through PUT /assets/{id}/fields/{field_id}. Hiding a field emits no Set, no Clear and no empty row, and revealing it restores the persisted value byte for byte. Update-only on the API (display_condition + clear_display_condition on FieldDefinitionUpdate, neither on FieldDefinitionCreate), because a create body cannot reference a graph that does not exist yet. At runtime the condition is CONJUNCTIVE, and if ANY term is unevaluable — controller definition missing or unresolvable, or unreadable by this caller on this subject — the WHOLE condition fails open and the dependent is SHOWN; a readable controller with genuinely no value is a real FALSE and still hides. Configuration refuses malformed terms, unsupported operator/type pairings, unknown or mirrored or already-archived controllers, mirrored dependents, subject-kind mismatches, cycles walked across the WHOLE subject-kind graph, an empty N-way applies_to intersection, and distinct = literals on one single-valued controller. Archiving a controller later does NOT rewrite or clear a stored condition; the dependent fails open and ordinary evaluation resumes if the controller is restored. The acyclicity invariant is NOT expressible as a constraint on this column and is held by a transaction-scoped advisory lock in UpdateField. FEDERATES with the definition (ADR 0083, amendment 2026-09-03): it names the field rather than the server, and it is the first such property to reference a SECOND field, so a missing referent is preserved verbatim and its cycle and applicability checks are deferred.
+	DisplayCondition []byte
 }
 
 type GooseDbVersion struct {
@@ -763,6 +777,19 @@ type MetadataBackfillRun struct {
 	StartedByUserRef *int64
 }
 
+type MetadataBatchPreview struct {
+	ID            pgtype.UUID
+	TokenHash     []byte
+	CallerUserRef int64
+	FieldID       pgtype.UUID
+	Mode          string
+	WouldChange   int32
+	Payload       []byte
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	ConsumedAt    pgtype.Timestamptz
+}
+
 type Notification struct {
 	ID               pgtype.UUID
 	RecipientUserRef int64
@@ -779,20 +806,21 @@ type Notification struct {
 }
 
 type Post struct {
-	ID                    pgtype.UUID
-	AuthorUserRef         int64
-	Title                 string
-	Description           string
-	Visibility            string
-	CoverAssetID          pgtype.UUID
-	PostedAt              pgtype.Timestamptz
-	LikeCount             int64
-	CommentCount          int64
-	SearchText            interface{}
-	OriginServerID        pgtype.UUID
-	DeletedAt             pgtype.Timestamptz
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
+	ID             pgtype.UUID
+	AuthorUserRef  int64
+	Title          string
+	Description    string
+	Visibility     string
+	CoverAssetID   pgtype.UUID
+	PostedAt       pgtype.Timestamptz
+	LikeCount      int64
+	CommentCount   int64
+	SearchText     interface{}
+	OriginServerID pgtype.UUID
+	DeletedAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	// The post's workflow state, domain = 'post' (ADR 0091 decision 7). Two states are reachable: `published` — the post is on shared surfaces — and `wip`, the DRAFT state, which is visible to its author and to a posts.admin holder and appears on no shared surface at all. Set by POST /posts from the request's `draft` flag and moved only by workflow.Service.Transition (POST /posts/{id}/publish and /unpublish), which validates the edge and writes workflow_audit; no request body accepts this column. READ FAIL-CLOSED: visibility.postPublishedExpr asks `state_id = <published>`, so a NULL or unrecognised state withholds the post rather than showing it — the FK is ON DELETE SET NULL, and the other spelling would publish every draft the moment a state row was deleted. This is the ONE place a workflow state decides publication, and it is deliberate: the `post` domain has exactly these two states and ADR 0091 identifies them with draft/published. An ASSET's workflow state means something else entirely — where the file is in its production process — and must never be read this way.
 	StateID               pgtype.UUID
 	TeamID                pgtype.UUID
 	CoverThumbnailAssetID pgtype.UUID
@@ -801,6 +829,16 @@ type Post struct {
 	DeletedReason         *string
 	DeletedByUserRef      *int64
 	Mature                bool
+	// DERIVED from the post's live CONTRIBUTORS — its member assets AND its two cover pictures (#1167, ADR 0094). Never written by a request body; maintained by `public.post_ai_provenance` via triggers on `post_assets`, `assets` and `posts`, exactly as `posts.mature` is. The rule is asymmetric: a POSITIVE claim propagates on ANY (one `generated` contributor makes the post `generated`, else one `assisted` contributor makes it `assisted`), and the NEGATIVE claim requires ALL (the post reads `none` only when it has at least one live contributor and every one of them declares `none`). One undeclared contributor makes the post undeclared, because deriving `none` over a contributor nobody asked would fabricate that maker's disclaimer at the post level. A post with no live contributors is NULL. The covers arm is present from the first migration deliberately: `posts.mature` shipped without it and #1147 was the bill.
+	AiProvenance *string
+	// DERIVED — TRUE when this post has at least one live CONTRIBUTOR and EVERY one of them declares `generated` (#1242, ADR 0094 fourth amendment). Contributors are the member assets UNION the two cover pictures, exactly as `ai_provenance` counts them. ⚠️ THIS IS THE FILTERING FACT AND `ai_provenance` IS THE LABELLING FACT; they are not interchangeable. `ai_provenance` propagates a positive claim on ANY member, so `{generated, none}`, `{generated, undeclared}` and `{generated, assisted}` all read `generated` — a "hide AI work" filter keyed on it would exclude exactly the MIXED posts the owner's ruling protects, because excluding a post for one member's declaration punishes the honest declaration the design depends on. `assisted` NEVER contributes to purity: an all-`assisted` post is human work made with AI help. An UNDECLARED contributor makes the post NOT pure, because not-knowing must never hide an artist's work. A post with no live contributors is not pure. NOT NULL is correct here where `assets.ai_provenance` is nullable: `false` is a statement about OUR KNOWLEDGE ("we cannot say this post is purely AI"), not a disclaimer written on a maker's behalf. ⛔ A FILTER, NEVER A GATE (ADR 0094 §4): nothing withholds on this column, nothing is subtracted from counts, facets or suggest, and it carries no derived-copies obligation for exactly that reason.
+	AiPure bool
+	// Horizontal focal point for the post cover's SQUARE crop, as a FRACTION of the picture's width (0 = left edge, 1 = right edge, #1210). The square is the destination shape because the browse GRID tile is the only post surface that crops: PostCard sets CardThumb's `fill` in grid alone, and that is `object-fit: cover` on an `aspect-square` frame. Masonry takes the picture's own shape and feed, thumbnail, band and list letterbox it whole, so none of them can act on this. Maps directly to CSS object-position, and is a fraction rather than a pixel offset so it stays correct across preview rungs and viewport sizes. NULL means centre (the CSS default), distinct from an explicit 0.5 so the editor's reset is a clear rather than a re-set. Paired with cover_focal_y by posts_cover_focal_check: both NULL or both in 0..1. ⚠️ Chosen against the ORIGINAL picture, so a consumer honours it by rendering a `contain` rung with object-position; applying it to `col` crops an already-centre-cropped square and lands somewhere nobody picked.
+	CoverFocalX *float64
+	// Vertical focal point for the post cover's square crop, as a FRACTION of the picture's height (0 = top edge, 1 = bottom edge, #1210). See cover_focal_x for the destination shape, why it is a fraction, why NULL means centre, why the two are constrained together, and why it must be painted from a contain rung.
+	CoverFocalY *float64
+	// Whether this post accepts NEW ordinary comments and replies (#1119 sprint 21d). A setting of the post, chosen by whoever may edit it: not a user preference (two posts by one author differ independently), not a capability (`posts.comment` says whether a caller may comment at all; this says whether THIS post takes one from anybody, and `system.admin` does not bypass it), and not a workflow state. NOT NULL because "unset" is not a product state; DEFAULT true because that is how every post behaved before the column existed. CREATION ONLY: false refuses POST /posts/{id}/comments with 409 `comments_disabled` and nothing else changes, so existing comments stay readable wherever the thread was readable, and listing, deletion and moderation are untouched. Whiteboards and annotations are separate paths and do not read this column. The comment-create transaction reads it FOR NO KEY UPDATE before inserting, so a committed disable is never raced by a check-then-insert.
+	CommentsEnabled bool
 }
 
 type PostAcl struct {
@@ -900,6 +938,7 @@ type ScheduledAction struct {
 	CreatedBy    *int64
 	CreatedAt    pgtype.Timestamptz
 	ExecutedAt   pgtype.Timestamptz
+	Origin       string
 }
 
 type SearchFeedback struct {

@@ -130,7 +130,7 @@ func TestListCollectionAcls_PublicCollectionDoesNotDiscloseItsGuestList(t *testi
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	h := alHandler(t, pool)
 	colID := alSeedCollection(t, pool, alOwner, "public")
@@ -201,7 +201,7 @@ func TestListCollectionAcls_ReadGranteeIsStillRefused(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	h := alHandler(t, pool)
 	colID := alSeedCollection(t, pool, alOwner, "private")
@@ -248,7 +248,7 @@ func TestCanMutateCollection_AnonymousAndRefZero(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	h := alHandler(t, pool)
 	zeroOwned := alSeedCollection(t, pool, 0, "private")

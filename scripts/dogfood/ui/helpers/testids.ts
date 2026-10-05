@@ -116,6 +116,30 @@ export const testIds = {
     kindFilterAll:       'kind-filter-all',
     kindFilterOption:    'kind-filter-option',
     kindFilterApply:     'kind-filter-apply',
+    // The CONTENT category's two rows (#1251 slice 3 → #1292). ⚠️ THEY
+    // LIVE INSIDE `kindFilterPanel`, not beside `kindFilterToggle`.
+    // The owner's ruling is one menu, so the footer's right cluster
+    // still holds exactly the type-filter button and the sort toggle. A
+    // spec must OPEN the panel to reach either, which is what makes the
+    // placement itself checkable. The `*Active` ids are the glyphs the
+    // CLOSED button draws, so "the button carries the state" holds for
+    // both axes as well as for the type count.
+    //
+    // ⭐ SINCE #1292 A TICK MEANS SHOW ON BOTH, like every row above
+    // them. `aiFilterToggle` used to be a `role="switch"` whose tick
+    // meant HIDE; the id survived the change and its MEANING did not,
+    // so a spec written against the old polarity type-checks and reads
+    // backwards.
+    //
+    // ⛔ `matureFilterToggle` IS ABSENT rather than disabled for a
+    // reader ADR 0090's layer-3 cascade does not offer it to: the
+    // instance has to allow mature content and the account has to have
+    // opted in. `toHaveCount(0)` is the correct assertion for a
+    // signed-out reader, not `toBeDisabled`.
+    aiFilterToggle:      'ai-filter-toggle',
+    aiFilterActive:      'ai-filter-active',
+    matureFilterToggle:  'mature-filter-toggle',
+    matureFilterActive:  'mature-filter-active',
     // The card's kind badge, which is what a type-filtered wall has to
     // agree with. `cardKind` is the single-asset glyph; `cardKindMulti`
     // is the count-plus-Shapes badge a multi-asset post draws instead.
@@ -133,6 +157,62 @@ export const testIds = {
     empty:               'browse-empty',
     emptyTitle:          'browse-empty-title',
     emptyHint:           'browse-empty-hint',
+  },
+
+  // The per-card ⋯ menu, and the items whose PRESENCE is a gate
+  // rather than a layout detail (#1237). The trigger and the panel are
+  // here because an "item is absent" assertion is only meaningful when
+  // the spec can prove the menu opened at all.
+  cardMenu: {
+    trigger:          'card-menu-trigger',
+    panel:            'card-menu-panel',
+    edit:             'card-edit',
+    manageAccess:     'card-manage-access',
+    addToCollection:  'card-add-to-collection',
+    // "Where is this used" — the OWNER's entry (#1237). Present only
+    // when the CARD hands over a path, because the endpoint behind it
+    // 404s a caller who is neither the asset's owner nor an admin.
+    usage:            'card-usage',
+  },
+
+  // "Where is this file used" — /assets/{id}/usage (#1237).
+  assetUsage: {
+    heading:          'asset-usage-heading',
+    sub:              'asset-usage-sub',
+    back:             'asset-usage-back',
+    // The withheld remainder, as ONE line of prose. There is
+    // deliberately no per-item id here, and there must never be one:
+    // the count carries no handle back to the posts it counted, and an
+    // element per post would re-create the enumeration the API refused.
+    withheld:         'asset-usage-withheld',
+    withheldWhy:      'asset-usage-withheld-why',
+    // The asset is in no post at all — distinct from "every post is
+    // withheld", which prints a count instead.
+    none:             'asset-usage-none',
+  },
+
+  // The quick-upload modal, and the collection surface that opens it
+  // (#1407). Only the controls a spec has to DRIVE are here: the file
+  // input, the post-mode picker, the submit, and the empty-state call
+  // to action a curator presses to fill a new collection.
+  upload: {
+    fileInput:        'upload-file-input',
+    postMode:         'upload-post-mode',
+    submit:           'upload-submit',
+    composeEnabled:   'upload-compose-enabled',
+    composeError:     'upload-compose-error',
+    // The collection empty state's "upload your first" button. The
+    // sharpest case of #1407: the artist pressed exactly this, the
+    // upload landed in this collection, and the empty state stayed.
+    collectionEmpty:  'collection-empty-upload',
+    // The posts wall, which exists only once the collection has one.
+    collectionPosts:  'collection-posts',
+    // The result page's two states, for #1407's search case. The
+    // no-matches line is what makes "the hit was genuinely absent
+    // first" a POSITIVE assertion rather than the absence of a
+    // selector, which a query that never ran would also satisfy.
+    searchNoMatches:  'search-no-matches',
+    searchTotalCount: 'search-total-count',
   },
 
   // Generic page surfaces ------------------------------------

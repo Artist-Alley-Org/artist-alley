@@ -129,6 +129,103 @@ nil/error seam, lives in ADR 0064's 2026-08-05 amendment.
 Everything below stands as the Phase 1.28 design. Read it as the visual
 specification it is.
 
+## Amendment (2026-08-22): the engine grew a POST arm, and the pair table became explicit (#1238, PR #1256)
+
+Three facts the engine now embodies that this ADR did not state, plus one acceptance:
+
+**1. The supported (action, target) pairs are DERIVED from the executors and enforced at schedule
+time.** `validTargets()` used to accept `post`/`collection`/`user` for every verb while three of
+the four mutating arms refused everything but `asset` — so a bad pair enqueued cleanly and failed
+at fire time with nobody watching. `executorTargets()` now maps each verb to the targets its
+executor genuinely acts on (`notify` runs on any target, because `notifyRecipient` addresses via
+`params.recipient`; the mutating verbs are asset-only except as below), and `Store.Schedule`
+refuses everything outside the table. Eleven previously-schedulable pairs became unschedulable.
+**An unrunnable action is refused while someone is watching, never deferred to a failure nobody
+sees.**
+
+**2. `change_state` on a `post` target goes through the PUBLICATION CORE, never through SQL.** A
+post's state is its publication (ADR 0091), and publication commits the state move and the
+federation activity in ONE transaction — an executor writing `posts.state_id` directly would
+publish without federating. The seam: `posts.movePublicationAs(caller, …)` carries every gate and
+the transaction; the HTTP wrapper keeps only context-identity → 401 and response hydration, so the
+endpoints' 404-vs-403 ordering (their existence-probe defence) is untouched. The executor reaches
+it through a `Publisher` interface and owns no SQL; the actor is the action's `created_by`, loaded
+as a REAL identity (`auth.Resolver.LoadIdentity`) — capabilities, username, actor URI — and the arm
+**refuses to run rather than synthesise an identity**.
+
+**3. A scheduled post state change requires `created_by` AT SCHEDULE TIME.** The column is nullable
+because a retention delete has nobody behind it; a publication cannot borrow that — it publishes as
+that user and federates in their name.
+
+**4. Scheduled UNPUBLISH is deliberately allowed.** `change_state` to `wip` on a post runs through
+the same seam and gates. It fits this ADR's own family — admin-scheduled takedowns at dates
+(restrict, delete) — and refusing `wip` would special-case one legitimate post state, re-creating
+the enqueue-then-die class for it. The surface remains `system.admin` (this file's own cap ruling);
+an AUTHOR scheduling their own post is a different authorization story and stays with epic #1119.
+
+Fire-time semantics, decided with the owner: draft → published · already published → idempotent
+no-op success (audit-noted) · soft-deleted → StateFailed with reason · unpublished-again →
+publishes, because a schedule is a standing instruction until cancelled.
+
+## Amendment (2026-09-12): an author schedules their OWN post through the same engine (#1119 sprint 21e)
+
+The 2026-08-22 amendment closed with "an AUTHOR scheduling their own post is a different
+authorization story and stays with epic #1119". This is that story. It adds a second door to the
+same row; it does not add a second scheduler, a second state machine, or a second spelling of who
+may publish.
+
+**1. The generic admin surface stays `system.admin`; the author surface is separate.**
+`GET/POST /admin/scheduled-actions` keep this ADR's own cap ruling and are not opened to authors.
+The author's door is `PUT`, `GET` and `DELETE /posts/{id}/publication-schedule`, served by the
+scheduled-action package over its own rows and gated by the posts package
+(`posts.Handler.PublicationScheduleGate`, reached through the `scheduledactions.PostAuthority`
+interface, in the same direction the `Publisher` seam already runs). The engine asks the
+publication core; it does not re-derive its rules.
+
+**2. Own-post, current-author, current-draft, future-only, decided AT SCHEDULE TIME.** In the
+endpoints' own order: the read gate first (an unreadable or soft-deleted post answers `404`, so the
+surface is not an existence oracle), then strict authorship (`403`; a global `posts.admin` who could
+publish by hand is deliberately not admitted, because the row publishes and federates in its
+creator's name), then the instance's `posts.publish` policy (`403`), then the post's current state
+(`409` when already published), then `scheduled_for > NOW()` decided in the insert's own
+transaction (`400`). The last two are author-surface rules only: `Store.Schedule` still accepts a
+due-now instruction from an operator or the system, and its fire-time table above is unchanged.
+
+**3. `created_by` is the requesting caller's user ref, persisted at schedule time.** Never an
+admin surrogate, a service identity or zero; the store refuses a zero creator rather than
+substituting one. What is persisted is what fires.
+
+**4. Fire time re-loads the real identity, capabilities and authorship.** Nothing is frozen at
+creation. The row executes through the unchanged `change_state` arm and
+`posts.MovePostPublication`, which loads the actor through the real resolver and runs
+`movePublicationAs` with every gate. A capability revoked between the schedule and the fire fails
+the action (`posts.publish` named in the reason) and leaves the post a draft; a post deleted in
+between fails it; a post published by hand first is the idempotent no-op; a post unpublished again
+publishes, because the instruction stands until cancelled.
+
+**5. The status and cancel seam are the author's own rows only.** Rows written by this surface
+carry `scheduled_actions.origin = 'author'` (migration 00069); every other writer keeps the default
+`'generic'`. Status returns the caller's pending author row or `null`, and cancel reaches only the
+caller's pending author row: an operator's or the system's action on the same post is neither shown
+nor cancellable here. Reading and cancelling need authorship only, so an author whose `posts.publish`
+was revoked after scheduling can still withdraw the instruction.
+
+**6. One pending author publication schedule per post, held by the database.** The partial unique
+index `scheduled_actions_author_pending_post_idx` covers `(target_id) WHERE state = 'pending' AND
+origin = 'author' AND action = 'change_state' AND target_kind = 'post'`. A `PUT` cancels the
+caller's own pending row and inserts the new one in a single transaction, so changing the time is one
+request; two requests overlapping for one post are serialised by the index, one wins and the other
+answers `409` and re-reads. Terminal rows (done, failed, cancelled) are outside the predicate, so a
+later valid schedule inserts cleanly.
+
+**7. Unchanged, and stated so nobody infers otherwise.** The generic engine's multiplicity (two
+operator schedules for one post, a scheduled unpublish beside a scheduled publish) is untouched: the
+index predicate does not reach `origin = 'generic'`. Scheduled UNPUBLISH remains supported for the
+generic surface and is not offered to authors, whose surface schedules exactly the accepted
+publication transition. The reaper cadence (`ReapInterval`, five minutes) is unchanged, and the
+author surface promises what it can keep: an action becomes eligible at `scheduled_for` and is
+carried out on the scheduler's next normal pass, never at that exact second.
+
 ## Context
 
 Game studios constantly handle pre-announcement material that must NOT

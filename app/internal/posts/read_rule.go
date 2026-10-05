@@ -69,11 +69,23 @@ import (
 // A nil or anonymous identity takes the anonymous branch (public tier
 // only), reachable today via /posts/by-asset, the one posts route on the
 // public-mode allowlist (auth.publicmode).
+//
+// PUBLICATION is in the fragment and is NOT waived here (ADR 0091
+// decision 7, #1161): the fragment every list path splices excludes
+// drafts, so a post its author has not published is off browse, off
+// search, off collections, off feeds — and off its author's own feed,
+// which is the case a rule written as "unless it is mine" would have
+// got wrong. `opts` is how the one listing that wants drafts asks for
+// them (`GET /posts?draft=true`, which passes
+// visibility.IncludeDrafts alongside a filter that returns nothing
+// else). It is variadic rather than a bool so that reaching for it is
+// a named, greppable act at the call site.
 func readRuleSQL(
 	ctx context.Context,
 	id *auth.Identity,
 	alias string,
 	argOffset int,
+	opts ...visibility.Option,
 ) (fragment string, args []any, err error) {
 	caller := visibility.NewCaller(nil)
 	var caps visibility.PostCaps
@@ -82,8 +94,11 @@ func readRuleSQL(
 		caller = visibility.NewCaller(&ref)
 		caps = visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
 	}
+	base := []visibility.Option{
+		visibility.IncludeSoftDeleted(), visibility.WithPostCaps(caps),
+	}
 	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
-		visibility.IncludeSoftDeleted(), visibility.WithPostCaps(caps))
+		append(base, opts...)...)
 	if err != nil {
 		return "", nil, fmt.Errorf("posts: read rule: %w", err)
 	}

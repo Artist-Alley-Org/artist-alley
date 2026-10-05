@@ -42,55 +42,6 @@ func (q *Queries) AddCollectionAcl(ctx context.Context, arg AddCollectionAclPara
 	return err
 }
 
-const addCollectionResource = `-- name: AddCollectionResource :exec
-
-INSERT INTO collection_resources (
-    collection_id, asset_id, sort_order, pinned, expires_at
-) VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (collection_id, asset_id) DO UPDATE SET
-    sort_order = EXCLUDED.sort_order,
-    pinned     = EXCLUDED.pinned,
-    expires_at = EXCLUDED.expires_at
-`
-
-type AddCollectionResourceParams struct {
-	CollectionID pgtype.UUID
-	AssetID      pgtype.UUID
-	SortOrder    int32
-	Pinned       bool
-	ExpiresAt    pgtype.Timestamptz
-}
-
-// ---------------------------------------------------------------------------
-// collection_resources (manual membership)
-// ---------------------------------------------------------------------------
-// Idempotent on the PK (collection_id, asset_id). A re-add updates
-// sort_order + expires_at + pinned but keeps added_at fixed.
-func (q *Queries) AddCollectionResource(ctx context.Context, arg AddCollectionResourceParams) error {
-	_, err := q.db.Exec(ctx, addCollectionResource,
-		arg.CollectionID,
-		arg.AssetID,
-		arg.SortOrder,
-		arg.Pinned,
-		arg.ExpiresAt,
-	)
-	return err
-}
-
-const countCollectionResources = `-- name: CountCollectionResources :one
-SELECT COUNT(*)::BIGINT AS value
-FROM collection_resources
-WHERE collection_id = $1 AND pinned = TRUE
-  AND (expires_at IS NULL OR expires_at > NOW())
-`
-
-func (q *Queries) CountCollectionResources(ctx context.Context, collectionID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countCollectionResources, collectionID)
-	var value int64
-	err := row.Scan(&value)
-	return value, err
-}
-
 const createCollection = `-- name: CreateCollection :one
 
 
@@ -304,7 +255,6 @@ func (q *Queries) GetCollectionIncludingDeleted(ctx context.Context, id pgtype.U
 }
 
 const listCollectionAcls = `-- name: ListCollectionAcls :many
-
 SELECT collection_id, principal_type, principal_id, permission,
        granted_at, granted_by_user_ref, expires_at
 FROM collection_acls
@@ -312,9 +262,6 @@ WHERE collection_id = $1
 ORDER BY granted_at DESC, principal_type, principal_id, permission
 `
 
-// ---------------------------------------------------------------------------
-// ACLs (Phase 1.7.B-7c)
-// ---------------------------------------------------------------------------
 func (q *Queries) ListCollectionAcls(ctx context.Context, collectionID pgtype.UUID) ([]CollectionAcl, error) {
 	rows, err := q.db.Query(ctx, listCollectionAcls, collectionID)
 	if err != nil {
@@ -332,106 +279,6 @@ func (q *Queries) ListCollectionAcls(ctx context.Context, collectionID pgtype.UU
 			&i.GrantedAt,
 			&i.GrantedByUserRef,
 			&i.ExpiresAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listCollectionResourcesPage = `-- name: ListCollectionResourcesPage :many
-SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
-       cr.expires_at, cr.added_at,
-       a.title, a.asset_type, a.status, a.file_hash,
-       a.file_extension, a.thumbhash,
-       a.created_at AS asset_created_at
-FROM collection_resources cr
-JOIN assets a ON a.id = cr.asset_id
-WHERE cr.collection_id = $1
-  AND cr.pinned = TRUE
-  AND (cr.expires_at IS NULL OR cr.expires_at > NOW())
-  AND a.deleted_at IS NULL
-  AND ($2::INTEGER IS NULL
-       OR cr.sort_order > $2::INTEGER
-       OR (cr.sort_order = $2::INTEGER
-           AND cr.added_at > $3::TIMESTAMPTZ))
-ORDER BY cr.sort_order ASC, cr.added_at ASC
-LIMIT $4::INTEGER
-`
-
-type ListCollectionResourcesPageParams struct {
-	CollectionID    pgtype.UUID
-	CursorSortOrder *int32
-	CursorAddedAt   pgtype.Timestamptz
-	RowLimit        int32
-}
-
-type ListCollectionResourcesPageRow struct {
-	CollectionID   pgtype.UUID
-	AssetID        pgtype.UUID
-	SortOrder      int32
-	Pinned         bool
-	ExpiresAt      pgtype.Timestamptz
-	AddedAt        pgtype.Timestamptz
-	Title          string
-	AssetType      int64
-	Status         string
-	FileHash       *string
-	FileExtension  *string
-	Thumbhash      []byte
-	AssetCreatedAt pgtype.Timestamptz
-}
-
-// NOT THE ENFORCEMENT PATH. Applies no visibility predicate; nothing in
-// production calls it. Collection contents go through
-// ListCollectionResourcesPageGated (resources_page.go), which splices
-// visibility.Predicate — sqlc's static SQL cannot take a runtime
-// fragment (#438). Retained for its generated row shape, which stays in
-// sync with the schema. Do not call it from handler code.
-//
-// #661 proposed deleting it as dead. The QUERY is unreachable, but the
-// generated ListCollectionResourcesPageRow is load-bearing: the gated
-// row embeds it and resourceRowToAPI consumes it, so deleting the query
-// means hand-writing that struct and losing the schema sync this
-// comment relies on. Keeping it is the better trade.
-// Returns pinned members, sorted by sort_order then added_at. Excludes
-// expired-membership rows. Joined onto assets so the list can carry
-// the title/thumb/type the front-end needs without an N+1.
-// file_extension + thumbhash are part of that set (#595): a member tile
-// renders through the same CardThumb as browse, which derives the media
-// type (video / 3D badge + sprite-scrub hover) from the extension alone.
-func (q *Queries) ListCollectionResourcesPage(ctx context.Context, arg ListCollectionResourcesPageParams) ([]ListCollectionResourcesPageRow, error) {
-	rows, err := q.db.Query(ctx, listCollectionResourcesPage,
-		arg.CollectionID,
-		arg.CursorSortOrder,
-		arg.CursorAddedAt,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListCollectionResourcesPageRow
-	for rows.Next() {
-		var i ListCollectionResourcesPageRow
-		if err := rows.Scan(
-			&i.CollectionID,
-			&i.AssetID,
-			&i.SortOrder,
-			&i.Pinned,
-			&i.ExpiresAt,
-			&i.AddedAt,
-			&i.Title,
-			&i.AssetType,
-			&i.Status,
-			&i.FileHash,
-			&i.FileExtension,
-			&i.Thumbhash,
-			&i.AssetCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -603,20 +450,6 @@ func (q *Queries) RemoveCollectionAcl(ctx context.Context, arg RemoveCollectionA
 	return result.RowsAffected(), nil
 }
 
-const removeCollectionResource = `-- name: RemoveCollectionResource :exec
-DELETE FROM collection_resources WHERE collection_id = $1 AND asset_id = $2
-`
-
-type RemoveCollectionResourceParams struct {
-	CollectionID pgtype.UUID
-	AssetID      pgtype.UUID
-}
-
-func (q *Queries) RemoveCollectionResource(ctx context.Context, arg RemoveCollectionResourceParams) error {
-	_, err := q.db.Exec(ctx, removeCollectionResource, arg.CollectionID, arg.AssetID)
-	return err
-}
-
 const updateCollection = `-- name: UpdateCollection :one
 UPDATE collections SET
     name        = COALESCE($1,        name),
@@ -642,17 +475,52 @@ UPDATE collections SET
     -- distinction, and the CHECK is what stops it being lost silently.
     featured_cover_asset_id = CASE WHEN $10::BOOLEAN THEN NULL
                           ELSE COALESCE($11, featured_cover_asset_id) END,
-    featured_cover_focal_x = CASE WHEN $12::BOOLEAN THEN NULL
-                          ELSE COALESCE($13, featured_cover_focal_x) END,
-    featured_cover_focal_y = CASE WHEN $12::BOOLEAN THEN NULL
-                          ELSE COALESCE($14, featured_cover_focal_y) END,
-    -- The regular cover's own focal pair, on the SQUARE destination. Its
-    -- own clear flag, for the reason the featured pair has one: two
-    -- columns, one intention.
-    cover_focal_x = CASE WHEN $15::BOOLEAN THEN NULL
-                          ELSE COALESCE($16, cover_focal_x) END,
-    cover_focal_y = CASE WHEN $15::BOOLEAN THEN NULL
-                          ELSE COALESCE($17, cover_focal_y) END,
+    -- #1333: the swap arm. See the note above UpdateCollection for why
+    -- the arms are in this order; the short version is that arm 2 is
+    -- what keeps the editor's "new picture AND its new framing in one
+    -- PATCH" working, and arm 3 is what stops a framing outliving the
+    -- picture it was chosen against.
+    featured_cover_focal_x = CASE
+        WHEN $12::BOOLEAN THEN NULL
+        WHEN $13::DOUBLE PRECISION IS NOT NULL
+             THEN $13::DOUBLE PRECISION
+        WHEN $10::BOOLEAN THEN NULL
+        WHEN $11::UUID IS NOT NULL
+             AND $11::UUID IS DISTINCT FROM featured_cover_asset_id
+             THEN NULL
+        ELSE featured_cover_focal_x END,
+    featured_cover_focal_y = CASE
+        WHEN $12::BOOLEAN THEN NULL
+        WHEN $14::DOUBLE PRECISION IS NOT NULL
+             THEN $14::DOUBLE PRECISION
+        WHEN $10::BOOLEAN THEN NULL
+        WHEN $11::UUID IS NOT NULL
+             AND $11::UUID IS DISTINCT FROM featured_cover_asset_id
+             THEN NULL
+        ELSE featured_cover_focal_y END,
+    -- The regular cover's own focal pair, on the 4:3 collection-card
+    -- destination (#1334: NOT a square; ` + "`" + `col` + "`" + ` is a square SOURCE and
+    -- CollectionCard's tile is what actually crops). Its own clear flag,
+    -- for the reason the featured pair has one: two columns, one
+    -- intention. And its own #1333 swap arms, keyed on ITS cover column.
+    cover_focal_x = CASE
+        WHEN $15::BOOLEAN THEN NULL
+        WHEN $16::DOUBLE PRECISION IS NOT NULL
+             THEN $16::DOUBLE PRECISION
+        WHEN $8::BOOLEAN THEN NULL
+        WHEN $9::UUID IS NOT NULL
+             AND $9::UUID IS DISTINCT FROM cover_asset_id
+             THEN NULL
+        ELSE cover_focal_x END,
+    cover_focal_y = CASE
+        WHEN $15::BOOLEAN THEN NULL
+        WHEN $17::DOUBLE PRECISION IS NOT NULL
+             THEN $17::DOUBLE PRECISION
+        WHEN $8::BOOLEAN THEN NULL
+        WHEN $9::UUID IS NOT NULL
+             AND $9::UUID IS DISTINCT FROM cover_asset_id
+             THEN NULL
+        ELSE cover_focal_y END,
     -- #1212 — how far each crop is tightened. One column per slot and
     -- one clear flag per column, and the flag is NOT optional dressing
     -- on a numeric field: NULL means "leave alone" here exactly as it
@@ -662,10 +530,30 @@ UPDATE collections SET
     -- the focal pair's because zoom and position are independent
     -- settings: "back to fit, still positioned left" is an ordinary
     -- thing to want, and one shared flag could not say it.
-    featured_cover_zoom = CASE WHEN $18::BOOLEAN THEN NULL
-                          ELSE COALESCE($19, featured_cover_zoom) END,
-    cover_zoom = CASE WHEN $20::BOOLEAN THEN NULL
-                          ELSE COALESCE($21, cover_zoom) END,
+    --
+    -- The swap arms are here too (#1333), and they are not optional
+    -- tidiness: zoom and focal together ARE the crop. Clearing only the
+    -- focal on a cover swap would leave the new picture centred but
+    -- still tightened to 3x by a decision taken about a different
+    -- photograph, which is the same silent wrongness one column over.
+    featured_cover_zoom = CASE
+        WHEN $18::BOOLEAN THEN NULL
+        WHEN $19::DOUBLE PRECISION IS NOT NULL
+             THEN $19::DOUBLE PRECISION
+        WHEN $10::BOOLEAN THEN NULL
+        WHEN $11::UUID IS NOT NULL
+             AND $11::UUID IS DISTINCT FROM featured_cover_asset_id
+             THEN NULL
+        ELSE featured_cover_zoom END,
+    cover_zoom = CASE
+        WHEN $20::BOOLEAN THEN NULL
+        WHEN $21::DOUBLE PRECISION IS NOT NULL
+             THEN $21::DOUBLE PRECISION
+        WHEN $8::BOOLEAN THEN NULL
+        WHEN $9::UUID IS NOT NULL
+             AND $9::UUID IS DISTINCT FROM cover_asset_id
+             THEN NULL
+        ELSE cover_zoom END,
     updated_at  = NOW()
 WHERE id = $22
 RETURNING id, owner_user_ref, name, description, visibility, membership,
@@ -717,6 +605,29 @@ type UpdateCollectionParams struct {
 // statement that was supposed to cover it was never called by anything
 // and is now gone. Two mechanisms for one job is how the working one
 // ends up being the one nobody wired.
+//
+// #1333 adds a FOURTH state to every crop column: "the picture you were
+// describing is gone". A focal fraction and a zoom multiplier are both
+// chosen against one specific photograph, so they mean nothing on the
+// next one; left alone across a cover swap they framed the new picture
+// on a point nobody picked, and did it silently. Each crop column
+// therefore reads its own cover column, and the arms are ordered:
+//  1. the column's explicit clear flag wins outright;
+//  2. a SUPPLIED value wins over the swap rule. This is the case both
+//     cover editors actually take, because they save the new picture
+//     and its new framing in ONE PATCH, so a rule that cleared on any
+//     change would discard the value the curator just chose while
+//     still passing a single-field test;
+//  3. the cover being removed, or genuinely CHANGED, clears the crop.
+//     `IS DISTINCT FROM` rather than `IS NOT NULL`, so a client that
+//     round-trips the whole object and re-sends the SAME cover id is
+//     not a swap and keeps its framing;
+//  4. otherwise the stored value stands, exactly as before.
+//
+// Both axes of a focal pair read identical arms, so the pair can never
+// half-clear into a collections_cover_focal_check violation. The two
+// SLOTS stay independent: swapping the featured picture must not
+// disturb how the collection card is framed, and vice versa.
 func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionParams) (Collection, error) {
 	row := q.db.QueryRow(ctx, updateCollection,
 		arg.Name,

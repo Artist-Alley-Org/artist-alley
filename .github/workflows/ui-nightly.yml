@@ -234,12 +234,36 @@ jobs:
           # (dogfood-profiled). Each exits non-zero on any phase
           # failure, which fails this step.
           #
-          # --limit-per-extension 3 shrinks each stack from ~970/~1270
-          # assets down to ~45/~60, cascade-filtering posts. Keeps
-          # coverage of every distinct file_extension + enough entries
-          # to exercise pagination, but cuts seed wall time to well
-          # under a minute. Full fidelity is only useful for manual
-          # human-review runs; CI / dogfood just need coverage.
+          # The two stacks are seeded under DIFFERENT contracts (#771,
+          # ADR 0080's 2026-10-02 amendment), because they have
+          # different readers.
+          #
+          # site_a -> studio-a: `--profile ci`, the same coverage-selected
+          # fixture ui-pr.yml seeds. Every Playwright project (setup,
+          # standalone, federation) targets STUDIO_A_HOST, so this is the
+          # stack whose catalogue the suite asserts on, and the profile's
+          # requiredDims floor (app/internal/seed/coverage.go) fails the
+          # seed when the catalogue cannot supply a declared class.
+          # Measured against the live site_a: 87/863 posts, 163/2006
+          # assets, 539 MiB, 131/131 dimensions. The old
+          # `--limit-per-extension 3` shrink kept 44 assets, 32 posts and
+          # 11 owners, too thin for three standalone specs (a second
+          # contributor page, a third feed page, a search term that spans
+          # two result kinds).
+          #
+          # site_b -> studio-b: `--limit-per-extension 3`, no coverage
+          # floor. Nothing reads studio-b's seeded catalogue: the
+          # federation specs read studio-a and need only the paired peer,
+          # and the shell scenarios create every studio-b row they read
+          # (uploads, assets, posts) or query federation, key, inbox,
+          # like and audit tables and the admin user. site_b also cannot
+          # supply two required classes (asset.mature=true,
+          # companions=gltf), so `--profile ci` would refuse it. If a test
+          # ever starts reading studio-b's seeded content, that change
+          # adds a peer coverage floor in the same PR.
+          #
+          # The two shrinks are never combined on one command: the seeder
+          # refuses `--profile ci` together with `--limit-per-extension`.
           #
           # Precondition, not a skip (#1040). ui-pr.yml SKIPS its suite
           # when the dataset path is unavailable, because Dependabot and
@@ -261,10 +285,18 @@ jobs:
             exit 1
           fi
 
+          # --fixtures on BOTH: the nightly runs `all`, which includes
+          # the standalone project, and its databases are fresh — so
+          # without the seeded substrate six specs pay the one-time
+          # create cost here too (#1270). site_b's command is unchanged
+          # by #771 and keeps it; no current spec or scenario reads a
+          # fixture principal or plate on studio-b, so it is not a
+          # coverage claim.
           ( docker compose run --rm --no-deps \
               -v "$SITE_A_PATH:/seed/site:ro" \
               -v "$PWD/seed/profiles:/seed/profiles:ro" \
-              app seed --limit-per-extension 3 --site /seed/site --catalogue /seed/profiles \
+              app seed --profile ci --site /seed/site --catalogue /seed/profiles \
+              --fixtures \
               2>&1 | sed 's/^/[a] /' ) &
           PID_A=$!
 
@@ -272,6 +304,7 @@ jobs:
               -v "$SITE_B_PATH:/seed/site:ro" \
               -v "$PWD/seed/profiles:/seed/profiles:ro" \
               app-b seed --limit-per-extension 3 --site /seed/site --catalogue /seed/profiles \
+              --fixtures \
               2>&1 | sed 's/^/[b] /' ) &
           PID_B=$!
 
@@ -331,6 +364,109 @@ jobs:
           STUDIO_A_HOST: http://nginx:80
           STUDIO_B_HOST: https://studio-b.local:9443
         run: ./scripts/dogfood/run-all.sh
+
+      # Let studio-a's render queue drain before the UI suite (#771).
+      #
+      # The same gate as ui-pr.yml's "Wait for the preview render queue
+      # to drain" (#768, #777, #877): read its comment for the full
+      # reasoning. In short, `aa seed` only ENQUEUES preview jobs, a
+      # short coverage seed leaves the render tail running when the
+      # suite starts, and that tail once starved the app badly enough
+      # to fail setup's health probe. The body below is ui-pr's, byte
+      # for byte, plus the studio-b diagnostic lines:
+      #
+      #   - the same NAMED list of gated preview kinds; preview.3d stays
+      #     ungated (no spec reads 3D output, and it is the slowest kind);
+      #   - the same 480s bound, and expiry FAILS the step with the
+      #     outstanding count and slowest job;
+      #   - studio-a only (postgres), because every Playwright project
+      #     targets studio-a. studio-b's queue is printed, never gated.
+      #
+      # Placed after the shell-scenario step on purpose: the scenarios
+      # take ~25s and the workers drain throughout them, so this wait
+      # only pays for the tail they did not already cover.
+      - name: Wait for the preview render queue to drain
+        env:
+          DRAIN_TIMEOUT_SECONDS: "480"
+        run: |
+          q() {
+            docker compose exec -T postgres psql -U artist_alley \
+              -d artist_alley -tAc "$1" 2>/dev/null || echo ""
+          }
+          # The preview kinds this gate waits on. Every per-asset render
+          # kind EXCEPT preview.3d — see the note above for why 3D is
+          # out and what earns a place in here.
+          gated_kinds="'preview.raster','preview.gif','preview.vector',
+                       'preview.psd','preview.eps','preview.pdf',
+                       'preview.comic','preview.ebook','preview.text',
+                       'preview.font','preview.archive','preview.audio',
+                       'preview.video','preview.video.poster',
+                       'preview.thumbhash_backfill'"
+          pending="status IN ('pending','running') AND type IN (${gated_kinds})"
+          ungated="status IN ('pending','running') AND type LIKE 'preview.%'
+                     AND type NOT IN (${gated_kinds})"
+          outstanding="SELECT count(*) FROM jobs WHERE ${pending};"
+          breakdown="SELECT '  ' || type || ' ' || status || ' x' || count(*)
+                       FROM jobs WHERE ${pending} GROUP BY type, status ORDER BY 1;"
+          # Same shape, over the kinds we deliberately do NOT wait for,
+          # so the log still shows the whole preview queue (#877).
+          skipped="SELECT '  (not gated) ' || type || ' ' || status || ' x' || count(*)
+                     FROM jobs WHERE ${ungated} GROUP BY type, status ORDER BY 1;"
+
+          # studio-b: DIAGNOSTIC ONLY, never gating (#771). No UI test
+          # reads studio-b, so its render tail cannot make a spec read an
+          # unrendered asset; it is printed because both stacks render on
+          # the same runner and a busy peer is useful context when a
+          # drain is slow.
+          qb() {
+            docker compose --profile dogfood exec -T postgres-b psql -U artist_alley \
+              -d artist_alley -tAc "$1" 2>/dev/null || echo ""
+          }
+          b_queue="SELECT '  (studio-b, not gated) ' || type || ' ' || status || ' x' || count(*)
+                     FROM jobs WHERE status IN ('pending','running') AND type LIKE 'preview.%'
+                     GROUP BY type, status ORDER BY 1;"
+          b_total="SELECT count(*) FROM jobs WHERE status IN ('pending','running')
+                     AND type LIKE 'preview.%';"
+          b_report() {
+            echo "studio-b preview queue ($1): $(qb "$b_total") job(s) outstanding (diagnostic, not gated)"
+            qb "$b_queue"
+          }
+
+          start=$(date +%s)
+          echo "preview queue after seed: $(q "$outstanding") gated job(s) outstanding"
+          q "$breakdown"
+          q "$skipped"
+          b_report "at drain start"
+
+          while :; do
+            left=$(q "$outstanding")
+            elapsed=$(( $(date +%s) - start ))
+            if [ "${left:-1}" = "0" ]; then
+              echo "preview queue drained after ${elapsed}s"
+              break
+            fi
+            if [ "${elapsed}" -ge "${DRAIN_TIMEOUT_SECONDS}" ]; then
+              slowest=$(q "SELECT type || ' ' ||
+                                  round(extract(epoch from (now() - started_at))::numeric, 1) || 's'
+                             FROM jobs WHERE ${pending} AND started_at IS NOT NULL
+                             ORDER BY (now() - started_at) DESC LIMIT 1;")
+              echo "::error::preview queue did not drain: ${left} gated job(s) outstanding" \
+                   "after ${elapsed}s (cap ${DRAIN_TIMEOUT_SECONDS}s; slowest: ${slowest:-none})"
+              q "$breakdown"
+              q "$skipped"
+              b_report "at studio-a drain expiry"
+              exit 1
+            fi
+            sleep 5
+          done
+
+          # Slowest finished jobs, so the log says what the wait bought
+          # even on a clean drain.
+          q "SELECT '  slowest: ' || type || ' ' ||
+                    round(extract(epoch from (finished_at - started_at))::numeric, 1) || 's'
+               FROM jobs WHERE finished_at IS NOT NULL
+               ORDER BY (finished_at - started_at) DESC LIMIT 5;"
+          b_report "when studio-a drained"
 
       - name: Run UI suite (all projects)
         env:

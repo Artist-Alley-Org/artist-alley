@@ -17,10 +17,13 @@
   // of member there is one ordering, the curator's, and no headings to
   // disambiguate.
   //
-  // `collection_resources` still EXISTS: the table, the API endpoints
-  // and the "save an asset to a collection" writers are all untouched,
-  // and dropping them is #1161's job. This route simply no longer reads
-  // them — `GET /collections/{id}/resources` has no caller here any more.
+  // The ENDPOINTS are gone too now: #1161 took the two writes and #1236
+  // took the read, so there is no longer an API surface that puts an
+  // asset in a collection or lists the ones already there. The TABLE
+  // still exists — it is internal by decision, with the seeder and
+  // save-as-collection writing it and the federation shares gate and
+  // scoped search reading it (see collections/handler.go for the list).
+  // Nothing on this page reads any of it.
   //
   // The post grid renders through the shared ContentGrid + the
   // floating ViewControls bar (#582), the same chrome browse and the
@@ -38,6 +41,7 @@
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import { upload } from '$stores/upload.svelte';
+  import { createRefreshGate } from '$lib/util/refreshGate';
   import { t } from '$stores/lang.svelte';
   import { browseView } from '$stores/browseView.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
@@ -128,18 +132,33 @@
   let collection = $state<Collection | null>(null);
   let posts = $state<PostRow[]>([]);
   let loading = $state(true);
-  let postsLoading = $state(true);
+  /**
+   * How many membership requests are in flight, NOT whether one is
+   * (#1407).
+   *
+   * `loadPosts` is reachable from three places: the mount chain through
+   * `load()`, the admin restore that re-runs `load()`, and the
+   * post-publish refresh. A boolean cannot describe two of those
+   * overlapping, and the thing that reads it is the refresh gate, whose
+   * whole job is to answer "is anything running" correctly. Same
+   * primitive, same reason, as the studio page.
+   *
+   */
+  let postsInFlight = $state(0);
+  /** False until the first membership answer has landed. The wall shows
+   *  skeletons rather than the empty state until then, which is what
+   *  the old boolean's `true` initial value was doing: `load()` fetches
+   *  the collection BEFORE it asks for the members, so a plain
+   *  "something is in flight" would report idle across that gap and
+   *  flash "nothing in this collection yet" at every reader. */
+  let postsEverLoaded = $state(false);
+  const postsLoading = $derived(postsInFlight > 0 || !postsEverLoaded);
   let error = $state<string | null>(null);
   // Separate from `error` on purpose: one is "we could not load this",
   // the other is "this is not yours to see", and they should not look
   // the same to a visitor.
   let notFound = $state(false);
   let editOpen = $state(false);
-  // #1027 — which part of the edit modal to land on. Reset on close
-  // rather than on open, so "Edit details" after "Set cover" starts at
-  // the top of the form again instead of inheriting the last entry
-  // point.
-  let editFocusCover = $state(false);
   let shareOpen = $state(false);
   let copyFeedback = $state(false);
 
@@ -178,6 +197,42 @@
     void load();
   });
 
+  // #1407: the publish that happened while the artist was standing
+  // here. This page owns the sharpest case of the bug: its empty state
+  // carries an "upload your first" button, so the artist pressed it,
+  // completed the upload INTO this collection, and the empty state was
+  // still on screen.
+  //
+  // `loadPosts()` and nothing cleverer. The membership arrives in ONE
+  // request (limit 200, see its own note) so there is no page to reset
+  // the reader to and no accumulated tail to protect: the refetch is a
+  // straight replacement by the server's answer, which is also why no
+  // row can appear twice.
+  //
+  // Fired on ANY successful publish rather than only one carrying this
+  // collection's id. A publish elsewhere refetches a list that comes
+  // back identical, which is a request; a publish that reached this
+  // collection by a route this page did not predict (the navbar
+  // button prefills the same collection from the URL, and the compose
+  // form can be pointed at another one) is the artist's work missing
+  // from the page they are looking at.
+  //
+  // ⛔ AND IT WAITS FOR WHATEVER IS ALREADY RUNNING. `loadPosts` ends in
+  // a bare replacement and has no generation guard, so refreshing on
+  // top of a request already on the wire loses to it: the fresh answer
+  // lands, then the older PRE-PUBLISH response returns and overwrites
+  // the list with the version that does not contain the new post. The
+  // page is stale again, which is the bug this whole issue is about.
+  //
+  // The gate defers instead. It cannot skip the refresh either, because
+  // the request already running may have read the database before the
+  // publish committed. See `refreshGate.ts`.
+  const uploadRefresh = createRefreshGate({
+    busy: () => postsInFlight > 0,
+    run: () => void loadPosts(),
+  });
+  onMount(() => upload.onSuccess(() => uploadRefresh.request()));
+
   async function load() {
     loading = true;
     error = null;
@@ -196,9 +251,14 @@
         // told them something had gone wrong. Nothing had.
         if (response?.status === 404) {
           notFound = true;
+          // No membership request will be made, so release the
+          // first-paint hold rather than leaving the wall in skeletons
+          // behind a branch that never renders it.
+          postsEverLoaded = true;
           return;
         }
         error = (apiErr as { error?: string } | undefined)?.error ?? t('collections.error_not_found');
+        postsEverLoaded = true;
         return;
       }
       collection = data as Collection;
@@ -209,14 +269,19 @@
   }
 
   async function loadPosts() {
-    postsLoading = true;
+    postsInFlight += 1;
     try {
       const { data } = await api.GET('/collections/{id}/posts', {
         params: { path: { id }, query: { limit: 200 } },
       });
       posts = (data?.items ?? []) as unknown as PostRow[];
     } finally {
-      postsLoading = false;
+      postsInFlight -= 1;
+      postsEverLoaded = true;
+      // ⭐ UNCONDITIONALLY. The gate re-reads `busy()` for itself; all
+      // it needs from here is to be told that something finished, so a
+      // refresh owed behind this request is actually run.
+      uploadRefresh.settled();
     }
   }
 
@@ -541,34 +606,29 @@
             >
               {t('collections.edit')}
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              disabled
-              class="block w-full px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-              title={t('collections.manage_members_soon')}
-            >
-              {t('collections.manage_members')}
-            </button>
-            <!-- #1027 — live as of the cover picker. This entry was a
-                 disabled "coming soon" stub placed here in anticipation;
-                 leaving it disabled in the same release that ships the
-                 picker would tell a curator the feature does not exist
-                 while the working control sat behind "Edit details".
-                 It opens the SAME modal, focused on the cover section,
-                 so there is one edit surface and one save path. -->
-            <button
-              type="button"
-              role="menuitem"
-              onclick={() => {
-                editFocusCover = true;
-                editOpen = true;
-              }}
-              data-testid="collection-detail-set-cover-menuitem"
-              class="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface"
-            >
-              {t('collections.set_cover')}
-            </button>
+            <!-- ⛔ TWO ENTRIES ARE GONE FROM HERE (#1264), and the
+                 owner's ruling is the whole reason: "I really think we
+                 shouldn't have more than one menu to edit collections.
+                 We can put all editing of collection items, including
+                 all cover types, in that same modal."
+
+                 "Set cover" set `focusCover` and opened THIS dialog
+                 deep-linked to its cover page. It was added by #1027
+                 because leaving a disabled stub in the release that
+                 shipped the picker would have told a curator the
+                 feature did not exist while the working control sat
+                 behind "Edit details". That reason expired when the
+                 cover block became visible on the edit surface itself,
+                 and what the entry actually produced was the owner's
+                 report: "when I click set cover, it shows a limited
+                 view of what I can set… when I close it, I see the edit
+                 collection modal."
+
+                 "Manage members" was a disabled "coming soon" stub in
+                 the same menu — a second editing entry that could not
+                 be used. A menu item that refuses is not a feature
+                 announcement; the work it stands for is tracked in the
+                 issue that will ship it. -->
           {/if}
           {#if canDeleteCollection}
             {#if isOwner}
@@ -606,6 +666,7 @@
           <button
             type="button"
             onclick={uploadHere}
+            data-testid="collection-empty-upload"
             class="mt-3 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90"
           >
             {t('collections.upload_first')}
@@ -678,11 +739,7 @@
   <EditCollectionModal
     open={editOpen}
     collection={collection}
-    focusCover={editFocusCover}
-    onclose={() => {
-      editOpen = false;
-      editFocusCover = false;
-    }}
+    onclose={() => (editOpen = false)}
     onsaved={handleSaved}
   />
   <ShareEntityModal

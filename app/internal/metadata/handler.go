@@ -33,6 +33,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -54,7 +55,29 @@ var codePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 const (
 	CapFieldsAdmin = "fields.admin"
 	CapSystemAdmin = "system.admin"
+
+	// CapVocabularyExtend lets a value CREATE a term an open field does
+	// not have yet (ADR 0092 §2, migration 00057). Deliberately not
+	// CapFieldsAdmin: adding a keyword while cataloguing is an artist's
+	// gesture, and requiring schema authority for it is the operator
+	// round-trip #789 exists to remove. Seeded onto Base — every
+	// signed-in user — so the dial's default matches the behaviour that
+	// shipped in #830; an operator restricting extension revokes it.
+	CapVocabularyExtend = "fields.vocabulary.extend"
+
+	// CapVocabularyMerge lets one term be folded into another,
+	// rewriting stored values across assets and collections and leaving
+	// a tombstone. Admin-only: it is the single vocabulary operation
+	// that edits records their owners did not touch.
+	CapVocabularyMerge = "fields.vocabulary.merge"
 )
+
+// canExtendVocabulary reports whether this caller may create terms.
+// system.admin wildcards, as everywhere; fields.admin does NOT imply
+// it, and does not need to — the Admin role holds both.
+func canExtendVocabulary(id *auth.Identity) bool {
+	return id != nil && id.Can(CapVocabularyExtend)
+}
 
 // Handler implements the metadata slice of openapi.StrictServerInterface.
 type Handler struct {
@@ -75,6 +98,13 @@ type Handler struct {
 	// domain after a successful write so the asset/metadata cache
 	// picks up the new wiring on the next extract job. Nil-safe.
 	registry *cache.Registry
+
+	// Audit records the one metadata operation that edits records
+	// their owners did not touch: a vocabulary merge (#789). Wired in
+	// production (internal/http/api.go); nil-tolerant because tests
+	// construct the handler without it, and a missing audit recorder
+	// must not fail a merge that otherwise succeeded.
+	Audit *audit.Recorder
 
 	// collectionValues caches the full collection_field_value list
 	// per collection (Phase 1.9.B). Per-collection eviction on
@@ -198,8 +228,28 @@ func (h *Handler) ListFields(
 	}
 	q := New(h.Pool)
 
+	// `status` composes with `asset_type` (#1389). It did not before:
+	// this branch pinned status='active' and discarded whatever the
+	// caller sent, so "which fields are live" had two answers depending
+	// on whether an unrelated filter was present, and the asset edit
+	// surface could not ask for the definitions a record may still
+	// legitimately hold values on.
+	//
+	// The active-only narrowing is not gone, it MOVED to the caller that
+	// owns it. Offering fields for a NEW value is a COMPOSER's question
+	// and the composer asks it explicitly — upload.svelte.ts's
+	// fieldsForAssetType already sent `status=active` alongside
+	// `asset_type`, where it was previously a no-op.
 	if req.Params.AssetType != nil {
-		rows, err := q.ListFieldDefinitionsForAssetType(ctx, *req.Params.AssetType)
+		var assetTypeStatus *string
+		if req.Params.Status != nil {
+			v := string(*req.Params.Status)
+			assetTypeStatus = &v
+		}
+		rows, err := q.ListFieldDefinitionsForAssetType(ctx, ListFieldDefinitionsForAssetTypeParams{
+			Status: assetTypeStatus,
+			Rt:     *req.Params.AssetType,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("metadata: list by rt: %w", err)
 		}
@@ -455,6 +505,8 @@ func (h *Handler) UpdateField(
 		DeprecatedReplacementID: uuidFromOpenAPIPtr(in.DeprecatedReplacementId),
 		OpenVocabulary:          in.OpenVocabulary,
 		ShowOnCard:              in.ShowOnCard,
+		ShowInAdvancedSearch:    in.ShowInAdvancedSearch,
+		ShowOnUpload:            in.ShowOnUpload,
 		UpdatedByUserRef:        &id.UserRef,
 	}
 	// A carded field may not be a GATED field (#552). The card renders on
@@ -511,6 +563,151 @@ func (h *Handler) UpdateField(
 	// retiring the term the default still names must fail. Reading
 	// params.Options first (falling back to the stored document when the
 	// request does not touch options) is what makes both true.
+	// The edit tab is the one participation flag whose "unset" is not a
+	// value COALESCE can carry, so it gets the same explicit clear the
+	// upload default has (#1173, ADR 0092 §3). The blank check is here
+	// rather than only in the CHECK constraint so an operator who
+	// submits a form with the tab box emptied gets a sentence instead
+	// of a 500 — and because "" is precisely the state that would make
+	// "no tab" ambiguous if it were stored.
+	if in.ClearEditTab != nil && *in.ClearEditTab {
+		if in.EditTab != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "send either edit_tab or clear_edit_tab, not both",
+				},
+			}, nil
+		}
+		params.ClearEditTab = true
+	} else if in.EditTab != nil {
+		tab := strings.TrimSpace(*in.EditTab)
+		if tab == "" {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "edit_tab cannot be blank; send clear_edit_tab to unassign it",
+				},
+			}, nil
+		}
+		params.EditTab = &tab
+	}
+
+	// `read_only` and `regexp_filter` (#1173, migration 00064). Both are
+	// checked against `cur` rather than against the request, and that is
+	// exact rather than approximate: `mirrors_column` and `type` are the
+	// only two properties either rule consults, and neither is writable
+	// through this schema — which columns are mirrorable is a CHECK
+	// constraint, and a field's type is fixed at creation. So the state
+	// this request LANDS ON is the stored state, and there is no
+	// same-PATCH escape of the kind the card/capability check above has
+	// to reason about.
+	if in.ReadOnly != nil {
+		if msg := validateReadOnlyConfig(cur, *in.ReadOnly); msg != "" {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+			}, nil
+		}
+		params.ReadOnly = in.ReadOnly
+	}
+
+	// The clear companion, third of its kind after `clear_default` and
+	// `clear_edit_tab`, and for the same reason: NULL is "no constraint"
+	// AND "leave it alone", so removal has to be said out loud.
+	//
+	// ⚠️ ONE DELIBERATE DIVERGENCE from the `edit_tab` arm above, which
+	// TRIMS before its blank check. A pattern is not a label: leading and
+	// trailing whitespace is meaningful inside one, and under the
+	// whole-value semantics compileFieldPattern applies, `\A(?:   )\z`
+	// legitimately matches exactly three spaces. Only the GENUINELY EMPTY
+	// string is refused; a whitespace-only pattern is a valid
+	// configuration and is stored verbatim.
+	if in.ClearRegexpFilter != nil && *in.ClearRegexpFilter {
+		if in.RegexpFilter != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "send either regexp_filter or clear_regexp_filter, not both",
+				},
+			}, nil
+		}
+		// Deliberately unguarded by the mirrored and unsupported-type
+		// rules below. Those restrict a CONFIGURED pattern; clearing one
+		// is legal on every field, so a setting can always be taken back
+		// off even where it could never have been put on.
+		params.ClearRegexpFilter = true
+	} else if in.RegexpFilter != nil {
+		if *in.RegexpFilter == "" {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "regexp_filter cannot be blank; send clear_regexp_filter to remove it",
+				},
+			}, nil
+		}
+		if msg := validateRegexpFilterConfig(cur, *in.RegexpFilter); msg != "" {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+			}, nil
+		}
+		params.RegexpFilter = in.RegexpFilter
+	}
+
+	// `display_condition` (#1173, #1119, migration 00065, ADR 0099). The
+	// FOURTH column needing an explicit clear, after `default_value`,
+	// `edit_tab` and `regexp_filter`, and for the identical reason: NULL
+	// is "always offered" AND "leave it alone", so removal has to be said
+	// out loud. Unlike `regexp_filter` there is not even an empty-value
+	// spelling to fall back on, because 00065's CHECK refuses `[]`.
+	//
+	// Only the SHAPE is decided here. The graph rules — cycles, N-way
+	// applicability, controller status — need a consistent read of the
+	// whole subject-kind graph, so they run below, inside the transaction
+	// that holds the advisory lock. Validating them here would be
+	// validating against a graph that can move before the write lands,
+	// which is the exact defect ADR 0099 §8 exists to close.
+	var proposedCondition []string
+	if in.ClearDisplayCondition != nil && *in.ClearDisplayCondition {
+		if in.DisplayCondition != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "send either display_condition or clear_display_condition, not both",
+				},
+			}, nil
+		}
+		// Deliberately unguarded by the refusal list, the way
+		// `clear_regexp_filter` is: those rules restrict a CONFIGURED
+		// condition, and taking one back off is legal on every field, so a
+		// setting can always be removed even where it could no longer be
+		// applied.
+		params.ClearDisplayCondition = true
+	} else if in.DisplayCondition != nil {
+		cond := *in.DisplayCondition
+		// The empty array is refused HERE with a sentence rather than
+		// left to the CHECK's 500, and it is refused rather than treated
+		// as a clear: "[]" and "remove the condition" being the same
+		// request is exactly the second spelling of unset that 00065 was
+		// written to prevent.
+		if len(cond) == 0 {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "display_condition cannot be empty; send clear_display_condition to remove it",
+				},
+			}, nil
+		}
+		for _, entry := range cond {
+			if strings.TrimSpace(entry) == "" {
+				return openapi.UpdateField400JSONResponse{
+					BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+						Error: "display_condition cannot contain a blank term",
+					},
+				}, nil
+			}
+		}
+		b, err := json.Marshal(cond)
+		if err != nil {
+			return nil, err
+		}
+		params.DisplayCondition = b
+		proposedCondition = cond
+	}
+
 	if in.ClearDefault != nil && *in.ClearDefault {
 		if in.DefaultValue != nil {
 			return openapi.UpdateField400JSONResponse{
@@ -541,17 +738,236 @@ func (h *Handler) UpdateField(
 		params.DefaultValue = b
 	}
 
-	row, err := q.UpdateFieldDefinition(ctx, params)
+	// ⛔ THE WRITE IS TRANSACTIONAL, AND WHEN display_condition IS IN PLAY
+	// THE GRAPH INVARIANT IS CHECKED INSIDE THE SAME TRANSACTION UNDER AN
+	// ADVISORY LOCK (ADR 0099 §8).
+	//
+	// A condition names OTHER definitions, so the conditions of one
+	// subject kind form a directed graph, and "that graph is acyclic" is
+	// not a property of any single row: `A -> B` and `B -> A` are each
+	// individually a valid row, which is why no CHECK, no UNIQUE index and
+	// no per-row trigger can express it.
+	//
+	// So without the lock the cycle check is theatre in exactly the case
+	// it exists for. Two operators, one writing `A -> B` and one writing
+	// `B -> A`, each read a graph in which the other's edge is not yet
+	// visible. Both validate. Both commit. The graph now holds a 2-cycle
+	// that neither write could have created on its own.
+	//
+	// The lock is taken ONLY when this request touches display_condition,
+	// so ordinary field edits never queue behind a graph walk.
+	row, resp, err := h.writeFieldUpdate(ctx, cur, params, proposedCondition,
+		in.DisplayCondition != nil || (in.ClearDisplayCondition != nil && *in.ClearDisplayCondition))
+	if err != nil {
+		return nil, err
+	}
+	if resp != nil {
+		return resp, nil
+	}
+	h.invalidateField(ctx, row.ID)
+
+	// #1016 — `searchable` decides whether a field's values are folded
+	// into `assets.search_text`, and `status` is the other half of the
+	// same condition inside rebuild_asset_search_text(). Both are read
+	// only when that function RUNS, and it runs from a trigger on
+	// asset_field_value — never from a write to field_definition.
+	//
+	// So before this, unticking `searchable` changed the rule and left
+	// every already-indexed value answering text queries until something
+	// happened to touch each asset. The flag was implemented and the
+	// operator's action still did not do what it says. Re-deriving the
+	// affected documents here is what closes the gap between the two.
+	//
+	// Synchronous and after the commit. On a field with a great many
+	// values this is the slowest thing an admin edit can do — but a
+	// background job would return 200 to an operator whose search still
+	// includes the field, which is the same lie in a new place. If it
+	// ever needs to move, it moves with a progress surface, not
+	// silently.
+	if searchParticipationChanged(cur, row) {
+		if err := q.RebuildAssetSearchTextForField(ctx, row.ID); err != nil {
+			// Logged, not fatal: the definition change is committed and
+			// correct, and failing the request would tell the operator
+			// their edit did not land when it did. The stale documents
+			// self-heal on the next write to each value.
+			if h.Logger != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelError, "metadata.search_text.rebuild.error",
+					slog.String("field", row.Code),
+					slog.String("err", err.Error()),
+				)
+			}
+		}
+	}
+	return openapi.UpdateField200JSONResponse(fieldDefToAPI(row)), nil
+}
+
+// displayConditionLockSpace is the first key of the transaction-scoped
+// advisory lock that guards the display-condition graph.
+//
+// A constant rather than a hash, and the issue number rather than an
+// arbitrary integer, so `pg_locks.classid` is legible to a person
+// debugging a wait: 1173 is #1173, the issue this arc belongs to. The
+// second key names the subject kind (see [displayConditionSubjectKey]),
+// so the asset graph and the collection graph do not serialise against
+// each other.
+const displayConditionLockSpace int32 = 1173
+
+// displayConditionSubjectKey maps a subject kind to the advisory lock's
+// second key.
+//
+// Explicit small integers rather than a hash of the string. `hashtext`
+// is not a documented-stable function, and a hash collision between two
+// subject kinds would silently serialise two independent graphs against
+// each other, which is a performance bug nobody would ever trace back to
+// here. An unknown kind falls into its own key rather than sharing one,
+// so adding a third subject kind cannot accidentally reuse the asset
+// graph's lock.
+func displayConditionSubjectKey(subjectKind string) int32 {
+	switch SubjectKind(subjectKind) {
+	case SubjectAsset:
+		return 1
+	case SubjectCollection:
+		return 2
+	}
+	return 0
+}
+
+// writeFieldUpdate performs the UPDATE, and, when the request touches
+// `display_condition`, performs it inside a transaction that holds the
+// subject-kind advisory lock and has validated the graph under it.
+//
+// Returns (row, nil, nil) on success, (zero, response, nil) for an
+// operator-facing refusal, and (zero, nil, err) for a real failure.
+//
+// ⛔ ONE PATH, ALWAYS TRANSACTIONAL. The lock is conditional; the
+// transaction is not. A second, non-transactional branch for the ordinary
+// case would be a second place the update statement is called from, and
+// the two would drift the first time a column was added to one of them.
+//
+// ⚠️ THE GRAPH IS RE-READ INSIDE THE LOCK, and the dependent's own node
+// is taken from that read rather than from the `cur` loaded earlier.
+// Validating against a snapshot taken before the lock is exactly the gap
+// the lock exists to close, and reusing `cur` would quietly reintroduce
+// it while looking like an optimisation.
+//
+// The non-graph rules (read_only, regexp_filter, the card/capability
+// gate) deliberately stay on the outer `cur`. ADR 0099 §8 scopes this
+// invariant to the GRAPH and nothing more: `applies_to`, `status` and
+// `type` drifting under a stored condition is later drift, handled at
+// runtime by failing open.
+func (h *Handler) writeFieldUpdate(
+	ctx context.Context,
+	cur FieldDefinition,
+	params UpdateFieldDefinitionParams,
+	proposedCondition []string,
+	touchesCondition bool,
+) (FieldDefinition, openapi.UpdateFieldResponseObject, error) {
+	tx, err := h.Pool.Begin(ctx)
+	if err != nil {
+		return FieldDefinition{}, nil, fmt.Errorf("metadata: update begin: %w", err)
+	}
+	// Rollback is the safe default and the early returns below rely on
+	// it. A commit later makes this a no-op.
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := New(tx)
+
+	if touchesCondition {
+		if err := qtx.LockFieldDisplayConditionGraph(ctx, LockFieldDisplayConditionGraphParams{
+			LockSpace:  displayConditionLockSpace,
+			SubjectKey: displayConditionSubjectKey(cur.SubjectKind),
+		}); err != nil {
+			return FieldDefinition{}, nil, fmt.Errorf("metadata: display condition lock: %w", err)
+		}
+		// Only a SET needs the graph. A CLEAR removes edges and can never
+		// create a cycle or empty an intersection, so it is accepted
+		// unconditionally — but it still takes the lock above, because a
+		// clear racing a set is what would otherwise let the set validate
+		// against edges the clear is about to remove.
+		if len(proposedCondition) > 0 {
+			graph, err := h.conditionGraph(ctx, qtx)
+			if err != nil {
+				return FieldDefinition{}, nil, err
+			}
+			dependent, ok := graph[cur.Code]
+			if !ok {
+				// The row vanished between the outer load and the lock.
+				return FieldDefinition{}, openapi.UpdateField404JSONResponse{
+					NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+				}, nil
+			}
+			if msg := validateDisplayConditionConfig(dependent, proposedCondition, graph); msg != "" {
+				return FieldDefinition{}, openapi.UpdateField400JSONResponse{
+					BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+				}, nil
+			}
+		}
+	}
+
+	row, err := qtx.UpdateFieldDefinition(ctx, params)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return openapi.UpdateField404JSONResponse{
+			return FieldDefinition{}, openapi.UpdateField404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
 			}, nil
 		}
-		return nil, fmt.Errorf("metadata: update: %w", err)
+		return FieldDefinition{}, nil, fmt.Errorf("metadata: update: %w", err)
 	}
-	h.invalidateField(ctx, row.ID)
-	return openapi.UpdateField200JSONResponse(fieldDefToAPI(row)), nil
+	if err := tx.Commit(ctx); err != nil {
+		return FieldDefinition{}, nil, fmt.Errorf("metadata: update commit: %w", err)
+	}
+	return row, nil, nil
+}
+
+// conditionGraph reads every definition and reduces it to what the
+// validator needs.
+//
+// BOTH SUBJECT KINDS, so a term naming a field of the other kind earns
+// the refusal an operator can act on ("that field describes a
+// collection") rather than a false one ("this server does not have it").
+// The two kinds' graphs are still disjoint, because a cross-kind edge is
+// refused, which is why the advisory lock stays per subject kind.
+//
+// ARCHIVED ROWS ARE INCLUDED. They never appear on a composition surface,
+// but an archived DEPENDENT keeps its stored configuration (ADR 0099 §7),
+// so its edges still exist and a cycle through it is still a cycle. The
+// archived rule is about the CONTROLLER side and is applied per term
+// inside the validator.
+func (h *Handler) conditionGraph(ctx context.Context, q *Queries) (map[string]conditionGraphNode, error) {
+	rows, err := q.ListFieldDefinitionsForConditionGraph(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("metadata: condition graph: %w", err)
+	}
+	out := make(map[string]conditionGraphNode, len(rows))
+	for _, r := range rows {
+		// A row whose stored condition cannot be decoded contributes NO
+		// edges rather than failing the request. 00065's CHECK means that
+		// is a corrupted row, and refusing every later configuration
+		// change on the subject kind because one row is bad would make an
+		// unrelated operator unable to work.
+		cond, _ := DecodeDisplayCondition(r.DisplayCondition)
+		out[r.Code] = conditionGraphNode{
+			Code:          r.Code,
+			Type:          r.Type,
+			Status:        r.Status,
+			subject:       r.SubjectKind,
+			AppliesTo:     r.AppliesTo,
+			MirrorsColumn: r.MirrorsColumn,
+			Condition:     cond,
+		}
+	}
+	return out, nil
+}
+
+// searchParticipationChanged reports whether this update changed
+// something rebuild_asset_search_text() consults.
+//
+// The two conjuncts of its WHERE clause, and nothing else. Deliberately
+// not "did anything change" — a relabel or a display_order bump would
+// then rewrite a tsvector for every asset holding the field, which is
+// an expensive no-op.
+func searchParticipationChanged(before, after FieldDefinition) bool {
+	return before.Searchable != after.Searchable ||
+		(before.Status == "active") != (after.Status == "active")
 }
 
 // ---------------------------------------------------------------------------
@@ -677,7 +1093,8 @@ func (h *Handler) ArchiveField(
 	}
 	q := New(h.Pool)
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if _, err := q.GetFieldDefinitionByID(ctx, pgID); err != nil {
+	prev, err := q.GetFieldDefinitionByID(ctx, pgID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.ArchiveField404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
@@ -692,6 +1109,18 @@ func (h *Handler) ArchiveField(
 		return nil, fmt.Errorf("metadata: archive: %w", err)
 	}
 	h.invalidateField(ctx, pgID)
+	// Archiving takes the field out of rebuild_asset_search_text()'s
+	// `status = 'active'` conjunct, so its values must stop answering
+	// text queries — the same gap PATCH closes for `searchable`, on the
+	// other half of the same WHERE. See searchParticipationChanged.
+	if prev.Status == "active" {
+		if err := q.RebuildAssetSearchTextForField(ctx, pgID); err != nil && h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelError, "metadata.search_text.rebuild.error",
+				slog.String("field", prev.Code),
+				slog.String("err", err.Error()),
+			)
+		}
+	}
 	return openapi.ArchiveField204Response{}, nil
 }
 
@@ -703,13 +1132,22 @@ func (h *Handler) GetAssetFields(
 	ctx context.Context,
 	req openapi.GetAssetFieldsRequestObject,
 ) (openapi.GetAssetFieldsResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
 		return openapi.GetAssetFields401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
 	q := New(h.Pool)
 	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	// The asset's team scope, for the per-field read gate below. Loaded
+	// once for the whole response rather than per row: it is a property of
+	// the SUBJECT, and one row per field of a lookup that cannot change
+	// mid-response would be a query per field for one answer.
+	team, err := h.assetTeamForFields(ctx, pgAsset)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := q.ListAssetFieldValues(ctx, pgAsset)
 	if err != nil {
 		return nil, fmt.Errorf("metadata: list values: %w", err)
@@ -727,11 +1165,42 @@ func (h *Handler) GetAssetFields(
 	merged := mergeFieldValues(rows, mirrored)
 	out := make([]openapi.AssetFieldValue, 0, len(merged))
 	for _, e := range merged {
+		var api openapi.AssetFieldValue
 		if e.stored != nil {
-			out = append(out, listAssetValueRowToAPI(*e.stored))
+			api = listAssetValueRowToAPI(*e.stored)
+		} else {
+			api = mirroredValueToAPI(*e.mirrored)
+		}
+		// THE PER-FIELD READ GATE (#1173, ADR 0099 §5).
+		//
+		// This endpoint had NONE until now. Its only check was the 401
+		// above, so any authenticated caller received the values of every
+		// field on the asset including ones carrying a `read_capability`
+		// they did not hold — and #1119's conditional visibility would
+		// have turned that into an ORACLE, since a dependent's visibility
+		// is observable and the condition is stored.
+		//
+		// A narrowing, and a deliberate one. Two of the three frontend
+		// consumers wanted it already: the asset edit page was drawing
+		// controls for values the caller could not read, and the post
+		// detail host was displaying them.
+		//
+		// The row is DROPPED rather than blanked, which matches the
+		// collection twin's shape, and it means "withheld" and "never
+		// set" look the same here. That is correct for a VALUE read and
+		// is why the field-composition endpoint exists beside it: a
+		// caller that needs to tell those apart asks something that
+		// carries no values at all.
+		//
+		// Applied to the mirrored branch too. `title` and `description`
+		// carry no read capability today, so the gate is a no-op on them
+		// in practice, but exempting a branch from a security filter
+		// because of what the data happens to look like is how the
+		// exemption outlives the reason for it.
+		if !canReadField(ctx, h, api.FieldId, id, team) {
 			continue
 		}
-		out = append(out, mirroredValueToAPI(*e.mirrored))
+		out = append(out, api)
 	}
 	return openapi.GetAssetFields200JSONResponse(out), nil
 }
@@ -784,10 +1253,63 @@ func (h *Handler) SetAssetFieldValue(
 		}
 	}
 
+	// READ-ONLY (#1173). Reaching this line means an identity exists, so
+	// this is a human write by construction: the system writers
+	// (ApplyAssetDefaults, the extraction adapter, mirrorFill) are
+	// separate functions that never enter this handler, which is why the
+	// exemption needs no flag and cannot be claimed by a caller.
+	//
+	// It refuses even where the field holds no value yet, and that is the
+	// asset side's whole story: `POST /assets` writes no field-value rows
+	// at all (AssetCreate.metadata is a free-form document on the asset
+	// row), so there is no human first-write seam here to leave open. The
+	// collection side has one and treats it differently.
+	//
+	// 422 rather than 403: no capability grants this and no grant would
+	// lift it, so answering with a permission code would send an operator
+	// hunting for a role that does not exist.
+	if msg := readOnlyRefusal(fieldRow, "set"); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetAssetFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.FieldReadOnly,
+				Field:  &code,
+			},
+		}, nil
+	}
+
 	upsert, valErr := buildUpsertParams(pgAsset, pgField, fieldRow.Type, req.Body, &id.UserRef)
 	if valErr != nil {
 		return openapi.SetAssetFieldValue400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: valErr.Error()},
+		}, nil
+	}
+
+	// INPUT PATTERN (#1173), against `upsert.ValueText` rather than
+	// against `req.Body.ValueText`. For `text` and `longtext` those are
+	// the same string — neither writer transforms them — and matching the
+	// value that will be STORED is what stops the rule and the row
+	// disagreeing if that ever stops being true. Types that do not honour
+	// a pattern fall through inside patternRefusal.
+	if msg := patternRefusal(fieldRow, upsert.ValueText); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetAssetFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.PatternMismatch,
+				Field:  &code,
+			},
+		}, nil
+	}
+
+	// PER-FIELD CONCURRENCY (#1119). Resolved before the mirrored
+	// branch so a guard aimed at a mirrored field is refused rather than
+	// silently ignored.
+	guard, guardErr := resolveWriteGuard(req.Body.IfUnchangedSince, req.Body.IfAbsent)
+	if guardErr != nil {
+		return openapi.SetAssetFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: guardErr.Error()},
 		}, nil
 	}
 
@@ -800,7 +1322,34 @@ func (h *Handler) SetAssetFieldValue(
 	// trigger refuses the row — it is a 500. This branch is what turns
 	// that impossibility into a working write.
 	if col, ok := MirrorColumnOf(fieldRow); ok {
+		if guard.engaged() {
+			return openapi.SetAssetFieldValue400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: mirroredGuardRefusal(fieldRow.Code, col)},
+			}, nil
+		}
 		return h.setMirroredFieldValue(ctx, id, pgAsset, fieldRow, col, upsert)
+	}
+
+	// REQUIRED (#1389), R1's Set half. Below the mirrored branch, so the
+	// mirrored helper keeps its own `required` refusal byte-identical —
+	// that one is the asset plane's rule (UpdateAsset refuses an empty
+	// title) and is not this one.
+	//
+	// Checked against `upsert`, the shape that will be STORED, so the
+	// rule and the row cannot disagree — the same reason patternRefusal
+	// above reads upsert.ValueText rather than the request member. For
+	// `rich_text` that matters twice over: the sanitiser has already run
+	// by this point, and the sanitised form is what the emptiness
+	// predicate is defined against.
+	if msg := requiredSetRefusal(fieldRow, assetUpsertValue(upsert)); msg != "" {
+		code := fieldRow.Code
+		return openapi.SetAssetFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  msg,
+				Reason: openapi.FieldRequired,
+				Field:  &code,
+			},
+		}, nil
 	}
 
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -833,7 +1382,8 @@ func (h *Handler) SetAssetFieldValue(
 		held = vocabularySlugs(fieldRow.Type, prev.ValueText, prev.ValueOptions)
 	}
 	vocab, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
-		vocabularySlugs(fieldRow.Type, upsert.ValueText, upsert.ValueOptions), held)
+		vocabularySlugs(fieldRow.Type, upsert.ValueText, upsert.ValueOptions), held,
+		canExtendVocabulary(id))
 	if err != nil {
 		return nil, err
 	}
@@ -847,8 +1397,20 @@ func (h *Handler) SetAssetFieldValue(
 	// what it built — so the normalised slugs go back into it here.
 	// Skipping this is how "Sunset" ends up in value_options next to
 	// the `sunset` term it was supposed to become.
-	if fieldRow.Type == "multi_select" {
+	switch fieldRow.Type {
+	case "multi_select":
 		upsert.ValueOptions = vocab.Slugs
+	case "select", "tree":
+		// The single-slug types store in value_text, and they can move
+		// too now that an alias or a merge tombstone redirects on a
+		// CLOSED vocabulary. Writing only the multi_select column was
+		// correct while minting was the only thing that changed a slug
+		// — minting is multi_select-only — and became a silent hole the
+		// moment curation applied to `select` and `tree`: the gate
+		// would approve `gb` and the row would still store `uk`.
+		if len(vocab.Slugs) == 1 {
+			upsert.ValueText = &vocab.Slugs[0]
+		}
 	}
 
 	// Reference-existence gate (#842). A `reference` value is a bare
@@ -882,7 +1444,57 @@ func (h *Handler) SetAssetFieldValue(
 		}
 	}
 
-	row, err := qTx.UpsertAssetFieldValue(ctx, upsert)
+	// THE WRITE. The guarded arms evaluate their precondition and
+	// mutate in ONE statement, so a competing writer cannot fit between
+	// the two — see the header on the guarded queries in queries.sql for
+	// why a handler-side compare in front of the unconditional upsert
+	// would not be equivalent at READ COMMITTED.
+	//
+	// A zero-row result IS the conflict. It is reported by rolling the
+	// transaction back first and then reading the committed state, so
+	// the body describes the world rather than this caller's abandoned
+	// attempt, and so nothing this transaction did — a vocabulary term
+	// it may have minted a few lines up — survives a refused write.
+	var row AssetFieldValue
+	switch guard.kind {
+	case guardUnchangedSince:
+		row, err = qTx.UpdateAssetFieldValueIfUnchanged(ctx, UpdateAssetFieldValueIfUnchangedParams{
+			ValueText:        upsert.ValueText,
+			ValueNum:         upsert.ValueNum,
+			ValueDate:        upsert.ValueDate,
+			ValueOptions:     upsert.ValueOptions,
+			ValueRef:         upsert.ValueRef,
+			SetBy:            upsert.SetBy,
+			SetByUserRef:     upsert.SetByUserRef,
+			AssetID:          pgAsset,
+			FieldID:          pgField,
+			IfUnchangedSince: guard.since,
+		})
+	case guardAbsent:
+		row, err = qTx.InsertAssetFieldValueWhenAbsent(ctx, InsertAssetFieldValueWhenAbsentParams{
+			AssetID:      pgAsset,
+			FieldID:      pgField,
+			ValueText:    upsert.ValueText,
+			ValueNum:     upsert.ValueNum,
+			ValueDate:    upsert.ValueDate,
+			ValueOptions: upsert.ValueOptions,
+			ValueRef:     upsert.ValueRef,
+			SetBy:        upsert.SetBy,
+			SetByUserRef: upsert.SetByUserRef,
+		})
+	default:
+		row, err = qTx.UpsertAssetFieldValue(ctx, upsert)
+	}
+	if guard.engaged() && errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(ctx)
+		body, cErr := h.assetConflictBody(ctx, pgAsset, pgField, fieldRow)
+		if cErr != nil {
+			return nil, cErr
+		}
+		return openapi.SetAssetFieldValue409JSONResponse{
+			AssetFieldValueConflictJSONResponse: openapi.AssetFieldValueConflictJSONResponse(body),
+		}, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("metadata: upsert: %w", err)
 	}
@@ -1049,18 +1661,89 @@ func (h *Handler) ClearAssetFieldValue(
 	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	pgField := pgtype.UUID{Bytes: uuid.UUID(req.FieldId), Valid: true}
 
+	// The removal's concurrency guard (#1119) rides in the QUERY STRING,
+	// because a DELETE carries no body. There is no `if_absent`
+	// companion: "remove it only if it is not there" has nothing to
+	// remove. Omitting it keeps the unguarded 204-either-way behaviour
+	// that non-edit-surface callers depend on.
+	guard, guardErr := resolveWriteGuard(req.Params.IfUnchangedSince, nil)
+	if guardErr != nil {
+		return openapi.ClearAssetFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: guardErr.Error()},
+		}, nil
+	}
+
+	// The field definition, loaded once for every gate below. Held in a
+	// variable rather than re-read per gate because the conflict body
+	// needs its code, label, type and options too.
+	var (
+		fieldRow     FieldDefinition
+		haveFieldRow bool
+		mirroredCol  string
+		isMirrored   bool
+	)
+
 	// MIRRORED fields (#822): clearing a view means emptying the column it
 	// declares, under the column's own gate — the DELETE below would find
 	// nothing to remove and answer 204 while the title stayed put, which is
 	// a lie the caller has no way to detect. A `required` mirrored field
 	// cannot be cleared at all, for the same reason SetAssetFieldValue
 	// refuses to blank one.
-	if fieldRow, err := h.getFieldByIDCached(ctx, pgField); err == nil {
-		if col, ok := MirrorColumnOf(fieldRow); ok {
-			return h.clearMirroredFieldValue(ctx, id, pgAsset, fieldRow, col)
+	if loaded, err := h.getFieldByIDCached(ctx, pgField); err == nil {
+		fieldRow, haveFieldRow = loaded, true
+		mirroredCol, isMirrored = MirrorColumnOf(fieldRow)
+		// READ-ONLY (#1173) refuses the clear as well as the set. A
+		// setting that stopped edits and still allowed deletion would be
+		// the weaker half of the promise, and deletion is the edit an
+		// operator would least like to discover was permitted.
+		//
+		// Checked before the mirror branch only because it is cheaper;
+		// the two cannot both apply, since migration 00064's CHECK
+		// refuses `read_only` on a mirrored field outright.
+		if msg := readOnlyRefusal(fieldRow, "cleared"); msg != "" {
+			code := fieldRow.Code
+			return openapi.ClearAssetFieldValue422JSONResponse{
+				FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+					Error:  msg,
+					Reason: openapi.FieldReadOnly,
+					Field:  &code,
+				},
+			}, nil
+		}
+		if isMirrored {
+			if guard.engaged() {
+				return openapi.ClearAssetFieldValue400JSONResponse{
+					BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: mirroredGuardRefusal(fieldRow.Code, mirroredCol)},
+				}, nil
+			}
+			return h.clearMirroredFieldValue(ctx, id, pgAsset, fieldRow, mirroredCol)
+		}
+
+		// REQUIRED (#1389), R1's Clear half, and the direct semantic
+		// counterweight to the optional Clear the edit surfaces now
+		// perform: required refuses, optional succeeds. Without both
+		// halves a human surface cannot show that `required` is what
+		// caused the refusal rather than Clear being broken outright.
+		if msg := requiredClearRefusal(fieldRow); msg != "" {
+			code := fieldRow.Code
+			return openapi.ClearAssetFieldValue422JSONResponse{
+				FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+					Error:  msg,
+					Reason: openapi.FieldRequired,
+					Field:  &code,
+				},
+			}, nil
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("metadata: load field: %w", err)
+	} else if guard.engaged() {
+		// A guard against a field definition that no longer exists
+		// cannot be honoured, and the unguarded fall-through below
+		// answers 204 for a delete that removes nothing. Say so rather
+		// than reporting success for a precondition never evaluated.
+		return openapi.ClearAssetFieldValue404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+		}, nil
 	}
 
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -1070,24 +1753,65 @@ func (h *Handler) ClearAssetFieldValue(
 	defer func() { _ = tx.Rollback(ctx) }()
 	qTx := New(tx)
 
-	prev, err := qTx.GetAssetFieldValue(ctx, GetAssetFieldValueParams{
-		AssetID: pgAsset,
-		FieldID: pgField,
-	})
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
-	hadOld := err == nil
-
-	if err := qTx.DeleteAssetFieldValue(ctx, DeleteAssetFieldValueParams{
-		AssetID: pgAsset,
-		FieldID: pgField,
-	}); err != nil {
-		return nil, fmt.Errorf("metadata: delete: %w", err)
+	var (
+		removed    AssetFieldValue
+		removedTyp string
+		hadOld     bool
+	)
+	if guard.kind == guardUnchangedSince {
+		// ONE statement: the precondition is the DELETE's own WHERE, so
+		// a competing writer cannot land between a check and a removal.
+		// RETURNING carries the row that was actually deleted, which is
+		// what the history entry is written from — no separate snapshot,
+		// so nothing can be recorded that was not removed.
+		removed, err = qTx.DeleteAssetFieldValueIfUnchanged(ctx, DeleteAssetFieldValueIfUnchangedParams{
+			AssetID:          pgAsset,
+			FieldID:          pgField,
+			IfUnchangedSince: guard.since,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			body, cErr := h.assetConflictBody(ctx, pgAsset, pgField, fieldRow)
+			if cErr != nil {
+				return nil, cErr
+			}
+			return openapi.ClearAssetFieldValue409JSONResponse{
+				AssetFieldValueConflictJSONResponse: openapi.AssetFieldValueConflictJSONResponse(body),
+			}, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("metadata: guarded delete: %w", err)
+		}
+		hadOld = true
+		if haveFieldRow {
+			removedTyp = fieldRow.Type
+		}
+	} else {
+		prev, gErr := qTx.GetAssetFieldValue(ctx, GetAssetFieldValueParams{
+			AssetID: pgAsset,
+			FieldID: pgField,
+		})
+		if gErr != nil && !errors.Is(gErr, pgx.ErrNoRows) {
+			return nil, gErr
+		}
+		hadOld = gErr == nil
+		if hadOld {
+			removed = AssetFieldValue{
+				ValueText: prev.ValueText, ValueNum: prev.ValueNum, ValueDate: prev.ValueDate,
+				ValueOptions: prev.ValueOptions, ValueRef: prev.ValueRef,
+			}
+			removedTyp = prev.Type
+		}
+		if err := qTx.DeleteAssetFieldValue(ctx, DeleteAssetFieldValueParams{
+			AssetID: pgAsset,
+			FieldID: pgField,
+		}); err != nil {
+			return nil, fmt.Errorf("metadata: delete: %w", err)
+		}
 	}
 
 	if hadOld {
-		oldJSON, _ := valueRowToJSON(prev.ValueText, prev.ValueNum, prev.ValueDate, prev.ValueOptions, prev.ValueRef, prev.Type)
+		oldJSON, _ := valueRowToJSON(removed.ValueText, removed.ValueNum, removed.ValueDate, removed.ValueOptions, removed.ValueRef, removedTyp)
 		if err := qTx.AppendAssetFieldValueHistory(ctx, AppendAssetFieldValueHistoryParams{
 			AssetID:          pgAsset,
 			FieldID:          pgField,
@@ -1202,6 +1926,8 @@ var _ interface {
 	UpdateField(context.Context, openapi.UpdateFieldRequestObject) (openapi.UpdateFieldResponseObject, error)
 	ArchiveField(context.Context, openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error)
 	GetAssetFields(context.Context, openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error)
+	GetAssetFieldComposition(context.Context, openapi.GetAssetFieldCompositionRequestObject) (openapi.GetAssetFieldCompositionResponseObject, error)
+	GetCollectionFieldComposition(context.Context, openapi.GetCollectionFieldCompositionRequestObject) (openapi.GetCollectionFieldCompositionResponseObject, error)
 	SetAssetFieldValue(context.Context, openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error)
 	ClearAssetFieldValue(context.Context, openapi.ClearAssetFieldValueRequestObject) (openapi.ClearAssetFieldValueResponseObject, error)
 	GetAssetFieldValueHistory(context.Context, openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error)
@@ -1389,6 +2115,20 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 		ExtractionMode:   apiExtractionMode(r.ExtractionMode),
 		OpenVocabulary:   &r.OpenVocabulary,
 		ShowOnCard:       &r.ShowOnCard,
+		// The participation flags (#1173, ADR 0092 §3). Always sent, so
+		// a surface can read the operator's answer rather than infer one
+		// from `type` or from `searchable` — which is the whole point of
+		// the columns existing.
+		ShowInAdvancedSearch: &r.ShowInAdvancedSearch,
+		ShowOnUpload:         &r.ShowOnUpload,
+		EditTab:              r.EditTab,
+		// The input rules (#1173). Both always sent, for the reason the
+		// participation flags are: a surface deciding whether to offer an
+		// editable control has to read the operator's answer, and an
+		// absent key would make it guess. `regexp_filter` is nil-as-null,
+		// which is the one canonical "no constraint".
+		ReadOnly:     &r.ReadOnly,
+		RegexpFilter: r.RegexpFilter,
 		// Read-only on the wire (#822). A client needs it to know that
 		// writing this field writes the ASSET — different gate, and a
 		// surface that already renders the column natively should skip the
@@ -1409,6 +2149,21 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 	}
 	if d := apiFieldDefault(r.DefaultValue); d != nil {
 		def.DefaultValue = d
+	}
+	// `display_condition` (#1173, #1119, ADR 0099). nil-as-null: NULL is
+	// the canonical "always offered" and migration 00065's CHECK makes it
+	// the only representation, so an omitted key and an empty array must
+	// never both reach a client.
+	//
+	// A DECODE FAILURE LEAVES THE MEMBER ABSENT rather than failing the
+	// whole response. The CHECK means the only storable shapes are NULL
+	// and an array of non-empty strings, so reaching the error branch
+	// means a corrupted row; refusing to serve the definition at all
+	// would take down every form that mentions the field, whereas an
+	// absent condition degrades to "always offered", which is the same
+	// direction the runtime fail-open takes.
+	if cond, err := DecodeDisplayCondition(r.DisplayCondition); err == nil && len(cond) > 0 {
+		def.DisplayCondition = &cond
 	}
 	return def
 }

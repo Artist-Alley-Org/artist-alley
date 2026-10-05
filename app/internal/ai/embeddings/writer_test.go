@@ -16,6 +16,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/ai"
 	"github.com/mscrnt/artist-alley/app/internal/ai/embeddings"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // Compile-time satisfaction so a future signature drift surfaces here.
@@ -27,7 +28,7 @@ func TestWriter_HappyPath_PersistsAndIdempotentReplaces(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const ownerRef int64 = 9_140_001
 	assetID := seedAsset(t, pool, ownerRef, "embed happy",
@@ -81,7 +82,7 @@ func TestWriter_UnsupportedModel_ReturnsTypedError(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	w, err := embeddings.NewWriter(context.Background(), pool,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -107,7 +108,7 @@ func TestWriter_DimensionMismatch_ReturnsTypedError(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	w, err := embeddings.NewWriter(context.Background(), pool,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -134,7 +135,7 @@ func TestWriter_AssetGone_ReturnsAssetNotFoundSentinel(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	w, err := embeddings.NewWriter(context.Background(), pool,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -162,7 +163,7 @@ func TestDimRegistry_DimForModel_HitsAndMisses(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	r := embeddings.NewDimRegistry(pool)
 	if _, err := r.Refresh(context.Background()); err != nil {
@@ -192,7 +193,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

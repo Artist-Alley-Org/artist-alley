@@ -29,8 +29,10 @@
 // That is a display default, not the read rule, and changing it is a
 // separate product decision.
 
-import { test, expect, type APIRequestContext, type Browser } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
+import type { APIRequestContext, Browser } from '@playwright/test';
 import { LOGGED_OUT } from '../../helpers/auth';
+import { requireSeededPrincipal, seededPrincipal } from '../../helpers/seeded-principal';
 import { tid } from '../../helpers/testids';
 
 // A 1x1 PNG. The post needs at least one member asset; what the pixels
@@ -41,15 +43,17 @@ const PNG_1PX = Buffer.from(
 );
 
 const STAMP = Date.now();
-const GRANTEE_USER = `acl667_${STAMP}`;
-const GRANTEE_PASS = 'Sharing1sCaring!667';
+// SEEDED account, stamped CONTENT (#1270). The grantee is created by
+// `aa seed --fixtures` and resolved here; the spec never registers it.
+// See helpers/seeded-principal.ts for why a spec-created account was a
+// permanent corpus leak and a stamped one was worse.
+const GRANTEE = seededPrincipal('noor.abadi');
 
 interface Fixture {
   granteeRef: number;
   sharedPostId: string;
   unsharedPostId: string;
   assetId: string;
-  priorSelfRegistration: unknown;
 }
 
 let fx: Fixture | undefined;
@@ -65,41 +69,11 @@ test.describe('#667 an explicit share grants read to the grantee', () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async ({ browser, request }) => {
-    // The grantee has to exist, and this stack may or may not have
-    // self-registration on. Turn it on, make one throwaway account,
-    // and put the setting back in afterAll — leaving an instance with
-    // open registration behind would be a real change to the box.
-    const authCfg = await request.get('/api/v1/admin/system/auth');
-    expect(authCfg.status(), 'admin auth config must be readable').toBe(200);
-    const priorSelfRegistration = (await json(authCfg)).self_registration;
-
-    const enable = await request.patch('/api/v1/admin/system/auth', {
-      data: {
-        self_registration: {
-          enabled: true,
-          require_email_verification: false,
-          default_role: 'Base',
-        },
-      },
-    });
-    expect(enable.status(), 'enabling self-registration').toBeLessThan(400);
-
-    // A SEPARATE request context: registering signs the caller in, and
-    // doing that on the admin's context would swap the admin session
-    // out from under the rest of this setup.
-    const anon = await browser.newContext({ storageState: LOGGED_OUT });
-    const reg = await anon.request.post('/api/v1/auth/register', {
-      data: {
-        username: GRANTEE_USER,
-        email: `${GRANTEE_USER}@example.test`,
-        password: GRANTEE_PASS,
-        full_name: 'ACL 667 grantee',
-      },
-    });
-    expect(reg.status(), 'registering the grantee').toBeLessThan(400);
-    const granteeRef = Number((await json(reg)).ref);
-    expect(Number.isFinite(granteeRef) && granteeRef > 0).toBe(true);
-    await anon.close();
+    // The grantee has to exist, and this spec does not make it. The
+    // helper signs in as the seeded principal and FAILS if the instance
+    // was seeded without `--fixtures` — a create-on-miss fallback would
+    // work forever and quietly restore the leak.
+    const granteeRef = await requireSeededPrincipal(browser, GRANTEE.username);
 
     // Author side: one asset, two explicit-share posts on it.
     const up = await request.post('/api/v1/storage/objects', {
@@ -146,7 +120,7 @@ test.describe('#667 an explicit share grants read to the grantee', () => {
     });
     expect(grant.status(), 'granting read to the grantee').toBe(204);
 
-    fx = { granteeRef, sharedPostId, unsharedPostId, assetId, priorSelfRegistration };
+    fx = { granteeRef, sharedPostId, unsharedPostId, assetId };
   });
 
   test.afterAll(async ({ request }) => {
@@ -154,13 +128,9 @@ test.describe('#667 an explicit share grants read to the grantee', () => {
     await request.delete(`/api/v1/posts/${fx.sharedPostId}`).catch(() => undefined);
     await request.delete(`/api/v1/posts/${fx.unsharedPostId}`).catch(() => undefined);
     await request.delete(`/api/v1/assets/${fx.assetId}`).catch(() => undefined);
-    if (fx.priorSelfRegistration !== undefined) {
-      await request
-        .patch('/api/v1/admin/system/auth', {
-          data: { self_registration: fx.priorSelfRegistration },
-        })
-        .catch(() => undefined);
-    }
+    // Nothing to restore: the grantee is the seed's, not this run's, and
+    // resolving it touches no instance config (`ensureFixtureUser` used
+    // to flip `self_registration` on and back).
   });
 
   // Sign the grantee in through the form, in their own context.
@@ -168,8 +138,8 @@ test.describe('#667 an explicit share grants read to the grantee', () => {
     const ctx = await browser.newContext({ storageState: LOGGED_OUT });
     const page = await ctx.newPage();
     await page.goto('/login');
-    await page.locator(tid('login-username')).fill(GRANTEE_USER);
-    await page.locator(tid('login-password')).fill(GRANTEE_PASS);
+    await page.locator(tid('login-username')).fill(GRANTEE.username);
+    await page.locator(tid('login-password')).fill(GRANTEE.password);
     await page.locator(tid('login-submit')).click();
     await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 20_000 });
     return { ctx, page };

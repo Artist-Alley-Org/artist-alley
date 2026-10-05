@@ -125,6 +125,33 @@ export interface AuthUser {
    */
   matureContentAllowed: boolean;
   /**
+   * Whether THIS ACCOUNT has opted in to being shown mature content
+   * (#1115), joined from `user_preferences.mature_content.show` at
+   * /auth/me time.
+   *
+   * ⚠️ IT IS ONE CONJUNCT OF THREE, exactly like `matureContentAllowed`
+   * beside it, and neither is the answer on its own. A surface that
+   * renders "mature is on for you" from this field alone will be wrong
+   * on an install whose operator has switched the feature off.
+   *
+   * What it is FOR is the same job as its neighbour: deciding whether
+   * to draw a control. ADR 0090's 2026-08-26 amendment gives the browse
+   * filter menu's Mature row a two-rung cascade, and both rungs are
+   * ABSENCE rather than disablement: the instance has to allow mature
+   * content, and this account has to have consented to see it. The row
+   * NARROWS what a reader already consented to; it is not a second
+   * place to consent, so offering it to someone who has not is offering
+   * a control that could never do anything.
+   *
+   * Absent means FALSE here, and that direction is the safe one (ADR
+   * 0090 §2): an account with no preferences row, an empty blob, or a
+   * key this build has never heard of is NOT opted in. The asymmetry
+   * with `matureContentAllowed` is the point, and the wire says so:
+   * that field is required because absent and false differ there,
+   * while this one is omitted for every account on the default.
+   */
+  matureOptedIn: boolean;
+  /**
    * Non-null when the session was minted via
    * POST /admin/users/{ref}/impersonate. Drives the persistent
    * "you are acting as @target" banner. Phase 1.19.A-2.
@@ -134,7 +161,14 @@ export interface AuthUser {
 
 // Capability the backend wildcards over all other capability checks.
 // Mirrors `Identity.SuperAdminCapability` in app/internal/auth.
-const SYSTEM_ADMIN = 'system.admin';
+//
+// EXPORTED since #1345, so a caller that has to mirror a SERVER-SIDE
+// exemption keyed on this exact capability names it rather than
+// re-spelling the string. `posts.Handler.ListPosts` sets
+// `MatureAdmin: caller.Can(auth.SuperAdminCapability)`, and
+// `browseView.matureExempt` is the client's read of the same fact; two
+// spellings of one capability code is the defect ADR 0063 is about.
+export const SYSTEM_ADMIN = 'system.admin';
 
 /**
  * Mirrors `CurrentUser.capabilities_status` (#956). `resolved` means
@@ -401,6 +435,11 @@ function mapUser(u: Record<string, unknown>): AuthUser {
     // a producer that predates it (only /setup/complete ever did), and
     // a fresh install allows mature content by default.
     matureContentAllowed: u.mature_content_allowed !== false,
+    // Absent → false, which is the opposite default to the line above
+    // and is the one ADR 0090 §2 requires: the zero value of the opt-in
+    // is "not opted in". Read positively (`=== true`) so a malformed
+    // member cannot arrive as consent.
+    matureOptedIn: (u.mature_content as { show?: boolean } | undefined)?.show === true,
     impersonatedBy: ib && ib.ref != null && ib.username != null
       ? { ref: ib.ref, username: ib.username }
       : null,

@@ -22,6 +22,7 @@ import (
 	mcpregistry "github.com/mscrnt/artist-alley/app/internal/ai/mcp_registry"
 	mcpserver "github.com/mscrnt/artist-alley/app/internal/ai/providers/mcp_server"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // ---------------------------------------------------------------------------
@@ -37,7 +38,7 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

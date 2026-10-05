@@ -24,7 +24,8 @@ const (
 	// TokWord is a bare identifier / free-text term.
 	TokWord
 	// TokString is a double-quoted phrase. Inner content is
-	// preserved verbatim (no escape processing beyond \").
+	// preserved verbatim apart from the two escapes lexString
+	// documents: \" for a quote and \\ for a backslash.
 	TokString
 	// TokAnd / TokOr / TokNot are the boolean operators. Case-
 	// insensitive at lex time.
@@ -150,17 +151,53 @@ func Lex(input string) ([]Token, error) {
 }
 
 // lexString reads a "quoted phrase" starting at input[startQuote].
-// Returns (endIndex, unquotedValue, err). Supports \" to embed a
-// literal double-quote — no other escape processing.
+// Returns (endIndex, unquotedValue, err). Two escapes: \" for a literal
+// double-quote and \\ for a literal backslash. A backslash before any
+// OTHER byte is written literally, which is what keeps a Windows path or
+// a regex fragment typed straight into the box readable.
+//
+// # ⛔ WHY \\ HAD TO BECOME AN ESCAPE (#1368)
+//
+// While \" was the only escape there was NO valid quoted representation
+// for a value ending in a backslash, so the grammar could not express
+// every value a canonical serialization has to be able to write down.
+// Traced for the value `abc\`:
+//
+//	"abc\"    the backslash is followed by the closing quote, so the old
+//	           reading took it as an escaped quote, wrote a quote, ran past
+//	           the delimiter and reached ErrUnterminatedString.
+//	"abc\\"   the first backslash was followed by a backslash — not a
+//	           quote — so it was written literally; the second then ate the
+//	           closing quote exactly as above.
+//
+// The same hole swallowed any backslash placed immediately before a
+// quote. #1368 makes a saved search a LOSSLESS round trip of the
+// selection it was saved from ([Serialize] is the other half), and a
+// value the grammar cannot spell is a hole in that contract, so the
+// smallest extension that closes it lands here rather than as a
+// special case in the serializer.
+//
+// ⚠️ THIS CHANGES THE READING OF EXISTING INPUT CONTAINING `\\`, which
+// used to yield two literal backslashes and now yields one. Verified
+// before the change: no test, no fixture and no seeded saved_search row
+// contained one — the only `\\` in the package was this function's own
+// source. Pre-release, so the reading simply changes; there is no shim.
 func lexString(input string, startQuote int) (int, string, error) {
 	i := startQuote + 1
 	var sb strings.Builder
 	for i < len(input) {
 		c := input[i]
-		if c == '\\' && i+1 < len(input) && input[i+1] == '"' {
-			sb.WriteByte('"')
-			i += 2
-			continue
+		if c == '\\' && i+1 < len(input) {
+			switch input[i+1] {
+			case '"':
+				sb.WriteByte('"')
+				i += 2
+				continue
+			case '\\':
+				sb.WriteByte('\\')
+				i += 2
+				continue
+			}
 		}
 		if c == '"' {
 			return i + 1, sb.String(), nil

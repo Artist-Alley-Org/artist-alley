@@ -1,0 +1,492 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
+// The seeder carries the maker's AI declaration (#1251 slice 3, ADR
+// 0094), so a freshly seeded instance has something for the browse
+// footer's "Hide AI-made work" toggle to hide.
+//
+// # The defect this guards is SILENCE, and it has a name
+//
+// #1217. The mature axis shipped its column, its predicate and its UI,
+// and then sat unexercised on every seeded instance for months — because
+// `manifestAsset` did not model the key, and an unmodelled key is
+// dropped by encoding/json without a word. The seed reported success,
+// every count was right, and the feature was simply never reachable.
+//
+// The AI axis is at the same risk for the same reason and one worse: its
+// absent state is INDISTINGUISHABLE from its working state on a corpus
+// where nobody has declared anything, which is every corpus this project
+// has. A toggle that hides nothing looks exactly like a toggle that
+// hides nothing because there is nothing to hide.
+//
+// So there are two halves here and both are necessary:
+//
+//   - TestManifestAsset_CarriesAIDeclaration — the DECODE. A key in the
+//     catalogue reaches the struct at all.
+//   - TestSeedInsertAsset_WritesDeclarationAndDerivesPurity — the WRITE
+//     and the DERIVATION. The value reaches the column, and the triggers
+//     turn it into the `posts.ai_pure` the filter reads. This is the
+//     assertion that a decode test alone cannot make: a field that
+//     decodes and is never bound to a placeholder is exactly as invisible
+//     as one that never decoded.
+//   - TestSeedProfiles_DeclareTheDemonstrablePair — the DATA. The
+//     committed profiles actually name assets, so the pipeline having a
+//     path for declarations is not mistaken for the path being used.
+
+package seed
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
+)
+
+// ---------------------------------------------------------------------------
+// The decode
+// ---------------------------------------------------------------------------
+
+// TestManifestAsset_CarriesAIDeclaration drives the exact decoder the
+// seeder uses over the exact three shapes a catalogue entry can take.
+//
+// ⚠️ ABSENT AND `null` BOTH MEAN UNDECLARED, AND NEITHER MEANS `none`.
+// The column is nullable and unbackfilled precisely so a row predating
+// the feature does not assert a disclaimer its maker never made, and a
+// `string` field here would have collapsed both into `""` — a value the
+// seeder would then have had to invent a rule for, and the obvious rule
+// (`"" -> 'none'`) is the lie the nullable column exists to prevent.
+func TestManifestAsset_CarriesAIDeclaration(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want *string
+	}{
+		{"declared generated", `{"id":"a","ai_provenance":"generated"}`, ptr("generated")},
+		{"declared assisted", `{"id":"a","ai_provenance":"assisted"}`, ptr("assisted")},
+		{"declared none", `{"id":"a","ai_provenance":"none"}`, ptr("none")},
+		{"absent means UNDECLARED", `{"id":"a"}`, nil},
+		{"explicit null means UNDECLARED", `{"id":"a","ai_provenance":null}`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got manifestAsset
+			if err := json.Unmarshal([]byte(tc.raw), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			switch {
+			case tc.want == nil && got.AiProvenance != nil:
+				t.Errorf("decoded %q, want UNDECLARED (nil) — an absent declaration must "+
+					"not become a claim on the maker's behalf", *got.AiProvenance)
+			case tc.want != nil && got.AiProvenance == nil:
+				t.Errorf("decoded nil, want %q — the key is being dropped, which is #1217's "+
+					"defect: the axis ships and no seeded instance can exercise it", *tc.want)
+			case tc.want != nil && *got.AiProvenance != *tc.want:
+				t.Errorf("decoded %q, want %q", *got.AiProvenance, *tc.want)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }
+
+// ---------------------------------------------------------------------------
+// The write, and the derivation it feeds
+// ---------------------------------------------------------------------------
+
+func openAIProvenancePool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	envOr := func(k, def string) string {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+		return def
+	}
+	dsn := "host=" + envOr("AA_DB_HOST", "postgres") +
+		" port=" + envOr("AA_DB_PORT", "5432") +
+		" user=" + envOr("AA_DB_USER", "artist_alley") +
+		" dbname=" + testdb.Name(t) +
+		" sslmode=disable password=" + pwd
+	pool, err := pgxpool.New(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	if err := pool.Ping(t.Context()); err != nil {
+		pool.Close()
+		t.Skipf("dev Postgres not reachable (%v); skipping", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// TestSeedInsertAsset_WritesDeclarationAndDerivesPurity runs the
+// seeder's OWN insert query — not a hand-written one — and then asserts
+// the fact the browse filter actually reads.
+//
+// ⭐ IT ASSERTS `posts.ai_pure`, NOT `assets.ai_provenance`, and the
+// difference is the whole test. A seeder that wrote the asset column
+// correctly and a filter keyed on the post column are two halves that
+// have to MEET, and the thing that joins them is a trigger — the one
+// piece neither the seeder's code nor the filter's code contains. So the
+// assertion is made where the join is observable: one post whose only
+// contributor is declared `generated` must derive `ai_pure = true`, and
+// one whose second contributor is UNDECLARED must not.
+//
+// That mixed row is the owner's ruling, and it is the row a plausible
+// wrong seeder still gets right: this test would pass on a seeder that
+// wrote nothing at all if it only checked the pure case, because
+// `ai_pure` defaults to false and "the mixed post is not pure" would
+// hold vacuously. Hence both, and hence the pure case is the one whose
+// failure means the write never happened.
+func TestSeedInsertAsset_WritesDeclarationAndDerivesPurity(t *testing.T) {
+	pool := openAIProvenancePool(t)
+	ctx := context.Background()
+	q := New(pool)
+
+	// The seeder always stamps acquisition_source (ADR 0095's fixture
+	// sweep partitions the asset table on exactly that key), so the
+	// fixture carries it too — a declared seeded asset must carry BOTH,
+	// and a test that dropped the stamp would model an asset the seeder
+	// never writes.
+	metadata := []byte(`{"acquisition_source":"test-fixture"}`)
+
+	// `assets.created_at` / `updated_at` are NOT NULL with no default —
+	// the seeder always supplies them (Runner.rowTimes carries the
+	// catalogue's own dates so a seeded library has a history). A fixture
+	// that omitted them would fail on the constraint rather than on
+	// anything this test is about.
+	at := pgtype.Timestamptz{Time: time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC), Valid: true}
+
+	insert := func(decl *string) uuid.UUID {
+		t.Helper()
+		id := uuid.New()
+		title, status, ext := "ai-seed-fixture", "active", "png"
+		// ⚠️ NO `file_hash`. `assets.file_hash` is a FOREIGN KEY into
+		// `storage_objects`, so an invented hash is a 23503 rather than a
+		// plausible fixture — and staging real bytes would be a test of
+		// the storage service, which is not what this file is about. The
+		// column is nullable; the declaration is what is under test.
+		var size int64 = 1
+		got, err := q.SeedInsertAsset(ctx, SeedInsertAssetParams{
+			ID:            pgtype.UUID{Bytes: id, Valid: true},
+			Title:         title,
+			AssetType:     1,
+			Status:        status,
+			FileExtension: &ext,
+			FileSizeBytes: &size,
+			Metadata:      metadata,
+			Sensitivity:   "public",
+			AiProvenance:  decl,
+			CreatedAt:     at,
+			UpdatedAt:     at,
+		})
+		if err != nil {
+			t.Fatalf("SeedInsertAsset: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id=$1`, id)
+		})
+		if uuid.UUID(got.Bytes) != id {
+			t.Fatalf("SeedInsertAsset returned %v, want %v", uuid.UUID(got.Bytes), id)
+		}
+		return id
+	}
+
+	gen := insert(ptr("generated"))
+	gen2 := insert(ptr("generated"))
+	undeclared := insert(nil)
+
+	// The asset column first, because everything below depends on it.
+	for _, tc := range []struct {
+		id   uuid.UUID
+		want *string
+	}{{gen, ptr("generated")}, {undeclared, nil}} {
+		var got *string
+		if err := pool.QueryRow(ctx,
+			`SELECT ai_provenance FROM assets WHERE id=$1`, tc.id).Scan(&got); err != nil {
+			t.Fatalf("read asset declaration: %v", err)
+		}
+		switch {
+		case tc.want == nil && got != nil:
+			t.Errorf("asset %v stored %q, want NULL (undeclared)", tc.id, *got)
+		case tc.want != nil && got == nil:
+			t.Errorf("asset %v stored NULL, want %q — the seeder is not binding the "+
+				"declaration, so no seeded instance can exercise the axis", tc.id, *tc.want)
+		case tc.want != nil && *got != *tc.want:
+			t.Errorf("asset %v stored %q, want %q", tc.id, *got, *tc.want)
+		}
+	}
+
+	// ⭐ And now the fact the FILTER reads.
+	plantPost := func(members ...uuid.UUID) uuid.UUID {
+		t.Helper()
+		id := uuid.New()
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO posts (id, author_user_ref, title, description, visibility, cover_asset_id)
+			 VALUES ($1, 12510777, 'ai seed post', '', 'public', $2)`, id, members[0]); err != nil {
+			t.Fatalf("plant post: %v", err)
+		}
+		for i, m := range members {
+			if _, err := pool.Exec(ctx,
+				`INSERT INTO post_assets (post_id, asset_id, sort_order) VALUES ($1,$2,$3)`,
+				id, m, i); err != nil {
+				t.Fatalf("plant membership: %v", err)
+			}
+		}
+		t.Cleanup(func() {
+			c := context.Background()
+			_, _ = pool.Exec(c, `DELETE FROM post_assets WHERE post_id=$1`, id)
+			_, _ = pool.Exec(c, `DELETE FROM posts WHERE id=$1`, id)
+		})
+		return id
+	}
+
+	purePost := plantPost(gen, gen2)
+	mixedPost := plantPost(gen, undeclared)
+
+	for _, tc := range []struct {
+		name string
+		id   uuid.UUID
+		pure bool
+		prov string
+	}{
+		{"every contributor declared `generated`", purePost, true, "generated"},
+		{"one declared, one UNDECLARED", mixedPost, false, "generated"},
+	} {
+		var prov *string
+		var pure bool
+		if err := pool.QueryRow(ctx,
+			`SELECT ai_provenance, ai_pure FROM posts WHERE id=$1`, tc.id).Scan(&prov, &pure); err != nil {
+			t.Fatalf("read derived post facts: %v", err)
+		}
+		gotProv := ""
+		if prov != nil {
+			gotProv = *prov
+		}
+		if pure != tc.pure || gotProv != tc.prov {
+			t.Errorf("%s: derived ai_pure=%v ai_provenance=%q, want %v / %q",
+				tc.name, pure, gotProv, tc.pure, tc.prov)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The data
+// ---------------------------------------------------------------------------
+
+// TestSeedProfiles_DeclareTheDemonstrablePair asserts the committed
+// catalogues carry the declarations the toggle demonstrates — and
+// asserts, first, that every one of them is about work WE MADE.
+//
+// ⚠️ WITHOUT THE SECOND HALF THE OTHER TWO TESTS ARE SATISFIED BY AN
+// EMPTY CATALOGUE. "The seeder can carry a declaration" and "some asset
+// is declared" are different claims, and the first one passing is
+// exactly the state #1217 sat in: the plumbing was fine, nothing flowed
+// through it, and every test was green.
+//
+// ⛔ AND WITHOUT THE FIRST HALF THIS TEST PASSED ON A FALSE STATEMENT
+// ABOUT A NAMED CREATOR. It used to ask only "does each profile declare
+// at least two assets `generated`", and both profiles did — over FOUR
+// Kenney.nl works, on rows carrying `attribution: "Kenney (kenney.nl)"`,
+// in a dataset published to Kaggle (#1260). Green the whole time. So the
+// declarable set is now positively identified by provenance, and it is
+// the same rule the seeder enforces at load time
+// (catalogues.validateAIDeclarations) and apply_upgrade.py enforces over
+// the profiles: an AI claim requires in-house provenance.
+//
+// It also asserts the ALIASES agree, because `demo` and `dev` are
+// byte-for-byte copies of `studio-a` and `studio-b` (seed/README.md) and
+// the failure mode is documented: #572 shipped a demo profile 36 records
+// behind its source because an upgrade landed on the dogfood pair and
+// missed the aliases. A declaration is exactly the kind of small edit
+// that goes the same way.
+func TestSeedProfiles_DeclareTheDemonstrablePair(t *testing.T) {
+	type entry struct {
+		ID           string          `json:"id"`
+		Title        string          `json:"title"`
+		Attribution  string          `json:"attribution"`
+		AiProvenance *string         `json:"ai_provenance"`
+		Metadata     json.RawMessage `json:"metadata"`
+	}
+	read := func(path string) []entry {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var out []entry
+		if err := json.Unmarshal(b, &out); err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		return out
+	}
+
+	declaredIn := func(path string) map[string]string {
+		out := map[string]string{}
+		for _, e := range read(path) {
+			if e.AiProvenance == nil {
+				continue
+			}
+			out[e.ID] = *e.AiProvenance
+			var meta map[string]any
+			if err := json.Unmarshal(e.Metadata, &meta); err != nil {
+				t.Errorf("%s: asset %s has unparseable metadata: %v", path, e.ID, err)
+				continue
+			}
+			// ⛔ ADR 0095. A seeded asset without
+			// `metadata.acquisition_source` is indistinguishable from
+			// real uploaded content to the fixture sweep, which would
+			// then classify it as a fixture and be free to delete it.
+			// Declaring AI on an asset must not cost it that stamp.
+			src, ok := meta["acquisition_source"].(string)
+			if !ok {
+				t.Errorf("%s: declared asset %s has NO metadata.acquisition_source. The "+
+					"fixture sweep partitions the asset table on that key alone (ADR "+
+					"0095), so this row is sweep-bait — a seeded asset carries BOTH.",
+					path, e.ID)
+				continue
+			}
+			// ⛔ #1260. The claim is about how the work was MADE, on a
+			// row that names its creator.
+			if !declarableSource(src) {
+				t.Errorf("%s: asset %s (%q) declares ai_provenance=%q but came from %q "+
+					"and is attributed to %q. That is a false statement about a named "+
+					"creator in a published dataset — this is exactly what shipped in "+
+					"ai-declarations.site_{a,b}.json over four Kenney.nl works before "+
+					"#1260 deleted them.",
+					path, e.ID, e.Title, *e.AiProvenance, src, e.Attribution)
+			}
+		}
+		return out
+	}
+
+	// WHICH profile is expected to carry generated content, stated
+	// rather than implied. Only site_a has any: the 45 images under
+	// `images/aurora-generated/` we produced with Stable Diffusion 3.5
+	// Large. site_b's corpus is entirely third-party, so declaring
+	// anything there would mean inventing a claim about somebody —
+	// which is what the deleted docs did. Add site_b here the day
+	// site_b gets content we made, not before.
+	expectDemonstration := map[string]bool{
+		"../../../seed/profiles/studio-a.assets.json": true,
+		"../../../seed/profiles/studio-b.assets.json": false,
+	}
+
+	for _, pair := range [][2]string{
+		{"../../../seed/profiles/studio-a.assets.json", "../../../seed/profiles/demo.assets.json"},
+		{"../../../seed/profiles/studio-b.assets.json", "../../../seed/profiles/dev.assets.json"},
+	} {
+		src, alias := declaredIn(pair[0]), declaredIn(pair[1])
+		gens := 0
+		for _, v := range src {
+			if v == "generated" {
+				gens++
+			}
+		}
+		if expectDemonstration[pair[0]] {
+			// The pair the toggle demonstrates: at least two
+			// `generated`, so at least one post can derive `ai_pure`
+			// AND one can mix a declared member with an undeclared one.
+			if gens < 2 {
+				t.Errorf("%s declares %d assets `generated`; the demonstration needs at "+
+					"least two — one whose post is entirely declared (the PURE post the "+
+					"toggle hides) and one beside an undeclared sibling (the MIXED post "+
+					"that must STAY visible). With none, the browse footer's hide toggle "+
+					"has nothing to hide on a seeded instance and a working control is "+
+					"indistinguishable from a broken one.", pair[0], gens)
+			}
+		} else if len(src) != 0 {
+			t.Errorf("%s declares %d asset(s) and is not expected to declare any — its "+
+				"corpus is entirely third-party. If content we generated was added to "+
+				"this site, say so in expectDemonstration; if not, this is a claim about "+
+				"somebody else's work (#1260).", pair[0], len(src))
+		}
+		if len(src) != len(alias) {
+			t.Errorf("%s declares %d assets and its alias %s declares %d. The two are "+
+				"byte-for-byte copies (seed/README.md); an upgrade that lands on one and "+
+				"not the other is #572 repeating.", pair[0], len(src), pair[1], len(alias))
+		}
+		for id, want := range src {
+			if got, ok := alias[id]; !ok || got != want {
+				t.Errorf("%s declares %s=%q; alias %s has %q (present=%v)",
+					pair[0], id, want, pair[1], got, ok)
+			}
+		}
+	}
+}
+
+// TestCatalogues_ValidateAIDeclarations is the guard the profiles cannot
+// provide, because the seeder does not read the profiles.
+//
+// `MANIFEST.json` lives on the archive share. Nothing in this repo sees
+// it, and the four false Kenney declarations #1260 removed were applied
+// BY HAND straight to manifests exactly like it. So the rule is enforced
+// again where the data actually enters the process.
+func TestCatalogues_ValidateAIDeclarations(t *testing.T) {
+	gen := "generated"
+	mk := func(source string) *catalogues {
+		return &catalogues{Assets: []manifestAsset{{
+			ID:           "83fc3c37-76f3-f057-f398-86b4dfbd185b",
+			Title:        "Brick pack brick medium slope inverted left 4",
+			AiProvenance: &gen,
+			Metadata:     json.RawMessage(`{"acquisition_source":"` + source + `"}`),
+		}}}
+	}
+
+	if err := mk("Kenney.nl").validateAIDeclarations(); err == nil {
+		t.Error("a `generated` declaration over Kenney.nl work must stop the seed; " +
+			"it reached the manifest unchallenged once already")
+	} else if !strings.Contains(err.Error(), "Kenney.nl") {
+		t.Errorf("the error must name the provenance it refused; got %q", err)
+	}
+
+	inHouse := AIDeclarableSourcePrefixes[0] + " (Stable Diffusion 3.5 Large via ComfyUI)"
+	if err := mk(inHouse).validateAIDeclarations(); err != nil {
+		t.Errorf("work we generated ourselves must be declarable; got %v", err)
+	}
+
+	// ⚠️ #1290. `none` is a declaration too, and the artifact that can
+	// honestly carry it is one we made WITHOUT a model — so it cannot
+	// claim "Generated in-house (Stable Diffusion …)". Both prefixes gate
+	// every state, or the corpus can never contain a truthful `none`.
+	authored := AIDeclarableSourcePrefixes[1] + " (deterministic plate generator)"
+	for _, state := range []string{"none", "assisted", "generated"} {
+		c := &catalogues{Assets: []manifestAsset{{
+			ID: "p", Title: "plate", AiProvenance: &state,
+			Metadata: json.RawMessage(`{"acquisition_source":"` + authored + `"}`)}}}
+		if err := c.validateAIDeclarations(); err != nil {
+			t.Errorf("our own authored work must be able to declare %q; got %v", state, err)
+		}
+	}
+
+	// …and the negative that keeps it honest: `none` over somebody
+	// else's photograph is a fabricated disclosure on their behalf, which
+	// ADR 0094 calls the worst available error on this topic.
+	noneState := "none"
+	c2 := &catalogues{Assets: []manifestAsset{{
+		ID: "q", Title: "photo", AiProvenance: &noneState,
+		Metadata: json.RawMessage(`{"acquisition_source":"Pexels"}`)}}}
+	if err := c2.validateAIDeclarations(); err == nil {
+		t.Error("declaring `none` over a Pexels photograph must stop the seed: it " +
+			"asserts a disclosure on a named photographer's behalf")
+	}
+
+	// An asset with no declaration is the whole rest of the corpus and
+	// must never be examined for provenance at all.
+	c := &catalogues{Assets: []manifestAsset{{
+		ID: "x", Metadata: json.RawMessage(`{"acquisition_source":"Kenney.nl"}`)}}}
+	if err := c.validateAIDeclarations(); err != nil {
+		t.Errorf("an UNDECLARED third-party asset is the normal case; got %v", err)
+	}
+}

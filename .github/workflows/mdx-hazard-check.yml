@@ -1,15 +1,20 @@
-# MDX braced-identifier hazard gate.
+# MDX hazard gate.
 #
 # Prose in synced-to-Astro docs paths (docs/adr/**, docs/install/**,
-# docs/roadmap.md) that contains bare `{[a-zA-Z_]` or `<[a-zA-Z]`
-# outside inline code / fenced blocks / autolinks gets parsed as JSX
-# by MDX and blows up the docs site build. Two dev-side outages
-# hit us:
+# docs/roadmap.md) that contains a bare `{[a-zA-Z_]`, or a bare `<`
+# not followed by whitespace, outside inline code / fenced blocks /
+# autolinks gets parsed as JSX by MDX and blows up the docs site
+# build. Three outages hit us:
 #
 #   - PR #208 introduced `{up,down,undo,rate_limit,disabled}` in
 #     feedback-loop docs and broke Cloudflare Pages for ~12h until
 #     PR #213 landed the fix
 #   - the same class of hazard flagged again mid-review of PR #213
+#   - sprint 18b put `bounds A <= B` in ADR 0093 prose and killed
+#     artist-alley-site's `Build verify` run 33286001571. The
+#     scanner passed it: its rule was `<[a-zA-Z]`, which cannot
+#     match `<=`. scripts/tests/check-mdx-hazards.test.sh now pins
+#     that fail-before so the rule cannot quietly narrow again.
 #
 # This gate runs `scripts/check-mdx-hazards.sh` against the changed
 # markdown files on every PR that touches `docs/**/*.md`. Faster
@@ -25,6 +30,8 @@ on:
     paths:
       - "docs/**/*.md"
       - "scripts/check-mdx-hazards.sh"
+      - "scripts/tests/check-mdx-hazards.test.sh"
+      - "scripts/tests/fixtures/mdx-hazards/**"
       - ".github/workflows/mdx-hazard-check.yml"
 
 concurrency:
@@ -45,6 +52,14 @@ jobs:
         with:
           # Need the PR base ref locally to diff changed files.
           fetch-depth: 0
+
+      - name: Scanner self-test
+        # Runs on every trigger, not just when docs changed. A
+        # scanner whose rule is wrong reports a clean corpus, so
+        # "the corpus is clean" is not evidence the gate works; the
+        # self-test is what proves it still distinguishes the
+        # site-breaking prose from the safe prose.
+        run: bash scripts/tests/check-mdx-hazards.test.sh
 
       - name: Enumerate changed markdown paths
         id: changed

@@ -24,7 +24,7 @@ import type { ViewAsset } from '$components/viewers/controller';
     the shell itself treats all sources the same. */
 export type SourceKind =
   | 'post'        // PostHost — post.members as the playlist
-  | 'collection'  // CollectionHost — collection_resources as the playlist
+  | 'collection'  // CollectionHost — a collection's members as the playlist
   | 'review'      // ReviewHost — curated subset of any other source
   | 'search'      // SearchHost — search results as a playlist
   | 'gallery'     // UserHost — a user's uploads as a playlist

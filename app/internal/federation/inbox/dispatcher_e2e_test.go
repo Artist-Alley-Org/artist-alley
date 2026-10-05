@@ -56,6 +56,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
 	"github.com/mscrnt/artist-alley/app/internal/social"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // pairedFixture spans both halves of the paired-peer interaction:
@@ -570,7 +571,7 @@ func openInboxTestPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()

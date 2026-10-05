@@ -1,0 +1,76 @@
+# Seed guard suite gate (#1300).
+#
+# `seed/scripts/test_dataset_upgrade.py` is the 150-test suite that
+# guards the dataset upgrade + publish pipeline. Until this file landed
+# it was invoked by NOTHING:
+#
+#     grep -rn "test_dataset_upgrade" .github/ Makefile scripts/  ->  no hits
+#
+# so it only ever ran when a human remembered to type it. It had already
+# let a regression through on exactly that basis: sprint 14's repair of
+# 86 `file_size_bytes` values in studio-b.assets.json put 0 of 86 at the
+# correct value, and sprint 14b had to re-measure all of them.
+#
+# ── Why ubuntu-latest and not the self-hosted pool
+#
+# Every python3 step in this repo today runs on `ubuntu-latest` behind
+# `actions/setup-python` (adr-frontmatter-check.yml, site-rebuild-
+# trigger.yml). NO self-hosted job has ever run python3, so "the runners
+# already have python" is true of the hosted ones only. This suite is
+# stdlib-only, needs no compose stack, no database and no archive share,
+# and finishes in under five seconds — so it has no reason to queue
+# behind the contended [self-hosted, artist-alley] pool that ci.yml's
+# own comments describe as putting Integration eight minutes behind the
+# image build. Running hosted also means the gate fires on fork PRs and
+# on Dependabot runs, which self-hosted jobs cannot.
+#
+# ── Why there is no `paths:` filter
+#
+# A `paths:` filter reports SKIPPED, and a skipped job reports success
+# to branch protection. Making the gate required and then filtering it
+# would put the repo back where it started: a green tick that ran
+# nothing on most PRs. The whole job — checkout, python setup, suite —
+# is well under a minute, so it runs on every push and every PR and the
+# check on the PR page always means the suite actually executed.
+#
+# ⛔ Never add `continue-on-error` or `|| true` here. The suite imports
+# ten seed scripts at module level, so any one of them failing to import
+# takes the whole suite with it; a wiring that swallows non-zero turns
+# that into a green tick reporting nothing, which is the exact defect
+# #1300 exists to end.
+
+name: Seed guard suite
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: seed-guard-${{ github.head_ref || github.ref_name }}-${{ github.base_ref || 'push' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Seed dataset guard suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # No `pip install`. The suite is stdlib unittest by design (see the
+      # module docstring) and adding a dependency to run it would be a
+      # new way for the gate to break for a reason unrelated to the seed
+      # pipeline.
+      - name: Run the seed guard suite
+        run: python3 seed/scripts/run_guard_suite.py

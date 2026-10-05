@@ -38,7 +38,7 @@ func TestRecreateAssetPreview_EnqueuesForcedJobByDefault(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const ownerRef int64 = 9_142_760
 	const hash = "760abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456"

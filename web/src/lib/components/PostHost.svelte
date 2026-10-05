@@ -25,6 +25,7 @@
   import CommentsThread from './CommentsThread.svelte';
   import FollowButton from './FollowButton.svelte';
   import Menu from './Menu.svelte';
+  import EditPostModal from './EditPostModal.svelte';
   import ShareEntityModal from './ShareEntityModal.svelte';
   import WhiteboardCanvas from './whiteboard/WhiteboardCanvas.svelte';
   import BrushCanvas from './whiteboard/BrushCanvas.svelte';
@@ -551,8 +552,84 @@
   function manageAccess() {
     shareOpen = true;
   }
+  // ── Edit post (#1119) ─────────────────────────────────────────────
+  //
+  // This was `stubAction('Edit post')`. Every column the dialog writes
+  // has been accepted by `PATCH /posts/{id}` for sprints, and no shipped
+  // client sent that request except the cover dialog, which sent three
+  // of them, so an author who wanted to fix a typo in a published title
+  // had the API and no product.
+  //
+  // ⚠️ THE COVER ITEM WENT WITH IT, and that is the same decision #1264
+  // made on the collection side rather than a cleanup taken in passing.
+  // This menu carried a REAL "Cover and framing…" beside a STUBBED "Edit
+  // post…", and the cover dialog's own note said what to do when the
+  // editor arrived: "this becomes a section of it exactly as
+  // CollectionCoverEditor is a section of EditCollectionModal (ADR 0091's
+  // one-editing-surface ruling)". A second door onto one room is what
+  // the owner's ruling refuses ("we shouldn't have more than one menu
+  // to edit"), so there is one item and `PostCoverEditor` is a block
+  // inside what it opens. Nothing about the cover's SEMANTICS moved with
+  // it; see that component and EditPostModal's `coverBody`.
+  let editOpen = $state(false);
+
   function editPost() {
-    stubAction('Edit post');
+    editOpen = true;
+  }
+
+  /** Re-read the post after a cover save, from the server rather than
+   *  by patching the local copy: the write may have moved more than the
+   *  two columns this dialog sent (`updated_at` at minimum, and the
+   *  derived AI provenance whenever the cover changes), and a client
+   *  that stitched its own answer would show a post that never existed.
+   *  Same reasoning as the publish toggle above. */
+  async function reloadPost() {
+    if (!post) return;
+    const { data } = await api.GET('/posts/{id}', { params: { path: { id: post.id } } });
+    if (data) pl.aux.post = data as typeof pl.aux.post;
+  }
+
+  // ── Publish / unpublish (#1161, ADR 0091 decisions 6 + 7) ────────────
+  // A post is a draft or it is published, and moving between the two is
+  // a deliberate act with its own control. Before this the only way a
+  // post reached the world was "the upload finished", and the only way
+  // to take it back was to delete it.
+  //
+  // The item is author-and-moderator, mirroring the API: publishing
+  // widens who can reach the post, so the server holds it to the same
+  // narrow gate a change of `visibility` takes. `canDelete('post', …)`
+  // is the client's existing spelling of "author, global posts.admin or
+  // system.admin" — the same three the publish endpoint accepts — so it
+  // is reused rather than restated. A team-scoped holder sees no button
+  // and would be refused anyway; see $lib/deletable for why that
+  // ceiling is not worked around.
+  let publishBusy = $state(false);
+  let publishError = $state<string | null>(null);
+
+  const canPublishThisPost = $derived(
+    !!post && canDelete('post', post.author_user_ref),
+  );
+
+  async function togglePublication() {
+    if (!post || publishBusy) return;
+    publishBusy = true;
+    publishError = null;
+    const path = post.draft ? '/posts/{id}/publish' : '/posts/{id}/unpublish';
+    const { data, error } = await api.POST(path, {
+      params: { path: { id: post.id } },
+    });
+    publishBusy = false;
+    if (error || !data) {
+      publishError =
+        (error as { error?: string } | undefined)?.error ?? t('post_menu.publish_failed');
+      return;
+    }
+    // Take the SERVER's post rather than flipping the flag locally. The
+    // response is the same shape a GET returns, so whatever else the
+    // move changed arrives with it — and a client that toggled its own
+    // copy would keep showing "Unpublish" after a refusal the user
+    // never saw.
+    pl.aux.post = data as typeof pl.aux.post;
   }
 
   // ── Delete this post (#981) ───────────────────────────────────────
@@ -913,8 +990,23 @@
                posts.admin holder, which is the instance moderator role,
                and hiding the item from them would mean moderation had
                to happen through the API. -->
-          {#if canDeleteThisPost}
+          {#if canPublishThisPost}
             {#if isOwner || hasVisibleMembers}
+              <div class="my-1 h-px bg-border"></div>
+            {/if}
+            <button
+              type="button"
+              role="menuitem"
+              onclick={togglePublication}
+              disabled={publishBusy}
+              data-testid="post-publish-toggle"
+              class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated disabled:opacity-50"
+            >
+              {post?.draft ? t('post_menu.publish_post') : t('post_menu.unpublish_post')}
+            </button>
+          {/if}
+          {#if canDeleteThisPost}
+            {#if isOwner || hasVisibleMembers || canPublishThisPost}
               <div class="my-1 h-px bg-border"></div>
             {/if}
             <button type="button" role="menuitem" onclick={deletePost} data-testid="post-delete" class="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-container">
@@ -932,6 +1024,20 @@
            post-level, not redundant with the header). -->
 
       <div class="mb-3 flex flex-wrap gap-1.5">
+        <!-- The draft badge sits FIRST and reads louder than the
+             visibility chip beside it, because the two say different
+             things and the loud one is the surprising one: `public`
+             here means "who may read it once published", and a reader
+             who saw only that chip on an unpublished post would
+             reasonably conclude the work was live. #1161. -->
+        {#if post.draft}
+          <span
+            data-testid="post-draft-badge"
+            class="inline-flex items-center rounded-full bg-warning-container px-2 py-0.5 text-xs font-medium text-on-warning-container"
+          >
+            {t('post_menu.draft_badge')}
+          </span>
+        {/if}
         <span class="inline-flex items-center rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-fg-muted">
           {post.visibility}
         </span>
@@ -1164,8 +1270,16 @@
         <span class="ml-auto text-xs text-fg-muted" title={postedAbsolute}>{postedRelative}</span>
       </div>
 
+      <!-- The thread reads the POST's comments setting from the host's
+           copy, which reloadPost refreshes after every editor save: turn
+           comments off in the editor and the composer goes; turn them
+           back on and it returns, with no navigation (#1119 21d). -->
       <div class="mt-6">
-        <CommentsThread postId={post.id} />
+        <CommentsThread
+          postId={post.id}
+          commentsEnabled={post.comments_enabled ?? true}
+          onstale={reloadPost}
+        />
       </div>
     </div>
 
@@ -1183,6 +1297,25 @@
       kind="post"
       id={post.id}
       onclose={() => (shareOpen = false)}
+    />
+
+    <!-- Same placement rule as the two dialogs around it (#1210, #1119):
+         raised from a menu that lives inside the viewer dialog, so it has
+         to be declared where Modal's portal can find that dialog.
+         Declared at the top level of PostHost there is no open <dialog>
+         ancestor, the viewer wins the stacking contest, and the editor
+         renders UNDERNEATH it: present, invisible and unclickable, which
+         reads as "the menu item does nothing".
+
+         `onsaved` is `reloadPost`, not a local patch: the editor reports
+         that something changed and the SERVER says what the post now is.
+         Several of a post's fields are derived there (`updated_at` at
+         minimum, and the AI provenance whenever the cover moves). -->
+    <EditPostModal
+      {post}
+      open={editOpen}
+      onclose={() => (editOpen = false)}
+      onsaved={reloadPost}
     />
 
     <!-- Same placement rule, same reason (#981): the delete confirm is

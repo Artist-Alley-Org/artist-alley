@@ -5,7 +5,7 @@
 // search controls render.
 
 import { test, expect } from '../../helpers/test';
-import { loginAsAdminViaUI } from '../../helpers/auth';
+import { loginAsAdminViaUI, openAdminUsersFilteredToAdmin } from '../../helpers/auth';
 import { expectPageRendersCleanly } from '../../helpers/assertions';
 
 test.describe('UI-11 admin users / roles / teams', () => {
@@ -14,21 +14,20 @@ test.describe('UI-11 admin users / roles / teams', () => {
   });
 
   test('users list renders the admin user', async ({ page }) => {
-    await page.goto('/admin/users');
+    // By IDENTITY, not by shape (#1198). The old assertion was that
+    // `main` matched /admin\b/i somewhere — which a fixture account
+    // called "admin_probe" satisfies just as well, and which the real
+    // bootstrap admin stops satisfying the moment it pages off the list.
+    // The helper searches for it and matches the href carrying its ref.
+    const { ref } = await openAdminUsersFilteredToAdmin(page);
     await expectPageRendersCleanly(page);
-    // Bootstrap admin row must be present — it always exists.
-    await expect(page.locator('main')).toContainText(/admin\b/i);
+    expect(ref, 'the bootstrap admin is ref 1 on every install').toBeGreaterThan(0);
   });
 
   test('clicking the admin user opens their detail page', async ({ page }) => {
-    await page.goto('/admin/users');
-    // First link in the table that contains "admin"
-    const adminLink = page
-      .getByRole('link', { name: /admin/i })
-      .first();
-    await expect(adminLink).toBeVisible();
-    await adminLink.click();
-    await expect(page).toHaveURL(/\/admin\/users\/\d+/);
+    const { ref, row } = await openAdminUsersFilteredToAdmin(page);
+    await row.click();
+    await expect(page).toHaveURL(new RegExp(`/admin/users/${ref}$`));
     await expectPageRendersCleanly(page);
   });
 

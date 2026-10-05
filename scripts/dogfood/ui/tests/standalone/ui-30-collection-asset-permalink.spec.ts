@@ -1,17 +1,21 @@
 // ui-30-collection-asset-permalink.spec.ts
 //
-// TWO assertions over one fixture — a collection with a single pinned
-// asset — because #1185 turned the first one inside out.
+// TWO assertions over one fixture — a collection that cannot hold a bare
+// asset at all — because #1185 turned the first one inside out and #1161
+// then removed the state it described.
 //
-// 1. #1185 — A COLLECTION SHOWS POSTS ONLY. The owner's ruling: "non-post
-//    assets only belong to their uploader; collections and browse contain
-//    posts only." So a collection holding nothing but a pinned asset is,
-//    to every reader, EMPTY. This spec pins the absence: no
-//    `collection-assets` section, no asset tile, and the empty state on
-//    the page. Pinning the absence rather than deleting the old assertion
-//    is deliberate — `POST /collections/{id}/resources` still succeeds
-//    (dropping it is #1161), so nothing else in the suite would notice
-//    the section coming back.
+// 1. #1185 / #1161 / #1236 — A COLLECTION SHOWS POSTS ONLY. The owner's
+//    ruling: "non-post assets only belong to their uploader; collections
+//    and browse contain posts only." So a collection holding nothing but
+//    a pinned asset is, to every reader, EMPTY. This spec pins the
+//    absence: no `collection-assets` section, no asset tile, and the
+//    empty state on the page.
+//
+//    It also pins the RETIREMENT of the whole endpoint family, which is
+//    the stronger guarantee: #1161 took the two writes, #1236 took the
+//    read, and none of the three may be routed. Without that, the
+//    section could come back and nothing else in the suite would
+//    notice.
 //
 // 2. #475 / ADR 0068 layer 3 — THE /assets/{id} PERMALINK STILL RESOLVES.
 //    That route did not exist once, so every AssetCard linked into a 404.
@@ -116,10 +120,18 @@ async function pickDeterministicImageAsset(page: Page): Promise<string> {
   return candidates[0].id;
 }
 
-// provisionCollectionWithAsset creates a collection and pins one
-// deterministic, preview-friendly asset into it, returning both ids.
-// Uses page.request so it runs with the logged-in admin's cookies.
-async function provisionCollectionWithAsset(
+// provisionEmptyCollection creates a collection and picks one
+// deterministic, preview-friendly asset — WITHOUT pinning the asset
+// into it, because #1161 retired the endpoint that could.
+//
+// That retirement is why this helper changed shape. It used to POST to
+// `/collections/{id}/resources`, and the first test below then checked
+// that the resulting bare membership rendered as nothing (#1185's
+// finding). ADR 0091 closed the write path entirely, so the state that
+// test described can no longer be created through the API at all —
+// which is a STRONGER guarantee than the one it was asserting, and the
+// first test below now asserts that instead.
+async function provisionEmptyCollection(
   page: Page,
 ): Promise<{ collectionId: string; assetId: string }> {
   const assetId = await pickDeterministicImageAsset(page);
@@ -129,11 +141,6 @@ async function provisionCollectionWithAsset(
   });
   expect(createRes.ok(), 'POST /collections should succeed').toBeTruthy();
   const collection = (await createRes.json()) as { id: string };
-
-  const pinRes = await page.request.post(`/api/v1/collections/${collection.id}/resources`, {
-    data: { asset_id: assetId, pinned: true },
-  });
-  expect(pinRes.ok(), 'pinning the asset should succeed').toBeTruthy();
 
   return { collectionId: collection.id, assetId };
 }
@@ -152,11 +159,46 @@ test.describe('UI-30 collections are posts-only, and /assets/{id} still resolves
     }
   });
 
-  test('a collection holding only a pinned asset renders as empty — no asset section (#1185)', async ({
+  test('the asset-membership endpoints are gone and the wall shows nothing (#1185, #1161, #1236)', async ({
     page,
   }) => {
-    const provisioned = await provisionCollectionWithAsset(page);
+    const provisioned = await provisionEmptyCollection(page);
     collectionId = provisioned.collectionId;
+
+    // #1161 / ADR 0091: the write endpoints are gone, so the state
+    // #1185 hid from the page cannot be reached through the API at
+    // all. 404 or 405 both mean "not routed"; a handler answering
+    // anything else would mean the endpoint is merely unused.
+    const pinRes = await page.request.post(`/api/v1/collections/${collectionId}/resources`, {
+      data: { asset_id: provisioned.assetId, pinned: true },
+    });
+    expect(
+      [404, 405],
+      `POST /collections/{id}/resources answered ${pinRes.status()} — the retired write endpoint is still routed`,
+    ).toContain(pinRes.status());
+
+    const rmRes = await page.request.delete(
+      `/api/v1/collections/${collectionId}/resources/${provisioned.assetId}`,
+    );
+    expect(
+      [404, 405],
+      `DELETE /collections/{id}/resources/{asset_id} answered ${rmRes.status()} — still routed`,
+    ).toContain(rmRes.status());
+
+    // #1236: the READ joins them. It outlived the writes by one release
+    // on the claim that the cover picker used it — a claim #1232 had
+    // already falsified by moving the picker to posts.
+    //
+    // ⚠️ Asked as the collection's OWNER, which is what makes the
+    // assertion mean anything. A 404 to anyone else is what the parent
+    // visibility gate used to answer, so it would read the same whether
+    // the route existed or not; the owner is the one caller the live
+    // endpoint answered 200 for.
+    const listRes = await page.request.get(`/api/v1/collections/${collectionId}/resources`);
+    expect(
+      [404, 405],
+      `GET /collections/{id}/resources answered ${listRes.status()} for the collection's OWNER — the retired read endpoint is still routed`,
+    ).toContain(listRes.status());
 
     await page.goto(`/collections/${collectionId}`);
 
@@ -187,7 +229,7 @@ test.describe('UI-30 collections are posts-only, and /assets/{id} still resolves
   test('the /assets/{id} permalink opens the viewer and survives a reload (#475)', async ({
     page,
   }) => {
-    const provisioned = await provisionCollectionWithAsset(page);
+    const provisioned = await provisionEmptyCollection(page);
     collectionId = provisioned.collectionId;
 
     // Collect real API failures during the navigation — the #475 class

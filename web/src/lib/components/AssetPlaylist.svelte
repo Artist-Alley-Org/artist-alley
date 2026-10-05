@@ -42,6 +42,13 @@
   import ConfirmDeleteDialog from './ConfirmDeleteDialog.svelte';
   import { toasts } from '$stores/toasts.svelte';
   import { canDelete, deleteEntity, restoreEntity, shouldAskReason } from '$lib/deletable';
+  // #1255 — every pane/strip preference below goes through the shared
+  // accessor. These were bare `localStorage` calls, and four of them ran
+  // inside `onMount`: on a browser with site data blocked the FIRST of
+  // them threw, out of `onMount`, and the viewer shell never rendered at
+  // all. Same class as #1251 slice 3's blank browse wall, one component
+  // deeper — this one is the whole viewer.
+  import { readStored, writeStored } from '$lib/util/storage';
 
   interface Props {
     source: PlaylistSource;
@@ -248,9 +255,9 @@
   onMount(() => {
     // Restore pane + strip prefs first so the initial open matches
     // last session.
-    if (localStorage.getItem('assetPlaylist.paneCollapsed') === '1') paneCollapsed = true;
-    if (localStorage.getItem('assetPlaylist.stripCollapsed') === '1') stripCollapsed = true;
-    const savedHeight = parseInt(localStorage.getItem('assetPlaylist.stripHeight') ?? '', 10);
+    if (readStored('assetPlaylist.paneCollapsed') === '1') paneCollapsed = true;
+    if (readStored('assetPlaylist.stripCollapsed') === '1') stripCollapsed = true;
+    const savedHeight = parseInt(readStored('assetPlaylist.stripHeight') ?? '', 10);
     if (Number.isFinite(savedHeight) && savedHeight >= STRIP_MIN) {
       // Re-clamp on restore — the user could have shrunk the viewport
       // since the height was saved, making it now exceed 25vh.
@@ -259,7 +266,7 @@
     if (!standalone) {
       // Overlay mode: read the windowed/maximized pref. Standalone
       // stays at its default (always maximized) regardless.
-      const pref = localStorage.getItem('assetPlaylist.maximized');
+      const pref = readStored('assetPlaylist.maximized');
       if (pref === '1') maximized = true;
       else if (pref === '0') maximized = false;
     }
@@ -299,7 +306,7 @@
   function toggleMaximize() {
     maximized = !maximized;
     if (!standalone) {
-      localStorage.setItem('assetPlaylist.maximized', maximized ? '1' : '0');
+      writeStored('assetPlaylist.maximized', maximized ? '1' : '0');
     }
     // Un-maximizing means "give me the chrome back" (#635). Without
     // this the button reads as broken whenever the navbar had already
@@ -326,8 +333,12 @@
     else document.body.classList.remove('overflow-hidden');
   }
 
+  // ⚠️ This effect runs at MOUNT as well as on every change, so an
+  // unguarded write here took the shell down on a browser whose store
+  // refuses writes but permits reads — the half-available case that
+  // fixing only the reads would have left standing.
   $effect(() => {
-    localStorage.setItem('assetPlaylist.paneCollapsed', paneCollapsed ? '1' : '0');
+    writeStored('assetPlaylist.paneCollapsed', paneCollapsed ? '1' : '0');
   });
 
   onDestroy(() => {
@@ -470,7 +481,7 @@
 
   function toggleStrip() {
     stripCollapsed = !stripCollapsed;
-    localStorage.setItem('assetPlaylist.stripCollapsed', stripCollapsed ? '1' : '0');
+    writeStored('assetPlaylist.stripCollapsed', stripCollapsed ? '1' : '0');
   }
 
   // Drag-to-resize the bottom thumb strip. Tracks mouse delta from
@@ -489,7 +500,7 @@
     const up = () => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
-      localStorage.setItem('assetPlaylist.stripHeight', String(stripHeight));
+      writeStored('assetPlaylist.stripHeight', String(stripHeight));
     };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);

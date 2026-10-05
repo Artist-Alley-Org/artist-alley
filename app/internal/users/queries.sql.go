@@ -41,11 +41,29 @@ func (q *Queries) CountAdminUsers(ctx context.Context, arg CountAdminUsersParams
 const countPostsByAuthor = `-- name: CountPostsByAuthor :one
 SELECT COUNT(*)::BIGINT AS value
 FROM posts
-WHERE author_user_ref = $1 AND deleted_at IS NULL
+WHERE author_user_ref = $1
+  AND deleted_at IS NULL
+  AND state_id = (SELECT id FROM workflow_states
+                   WHERE domain = 'post' AND code = 'published')
 `
 
-// Total live posts authored by this user. Used as the post_count
-// field on the public profile.
+// Total live PUBLISHED posts authored by this user. Used as the
+// post_count field on the public profile.
+//
+// The publication conjunct is not an optimisation (ADR 0091 decision
+// 7, #1161): a profile is a shared surface, and a count that moved
+// when somebody started a draft would announce that they had — the
+// number is visible to every reader while the post is visible to none
+// of them. It is spelled to match visibility.postPublishedExpr, which
+// is the rule the LISTING behind this number composes; fail-closed the
+// same way, so an unknown state is not counted.
+//
+// Still NOT visibility-scoped, which is a pre-existing gap this change
+// neither widens nor fixes: the number counts the author's private
+// posts too, for any reader. Whether a profile's post count should be
+// per-caller is a product question nobody has asked; it is recorded
+// here rather than quietly conflated with publication, which is a
+// different axis.
 func (q *Queries) CountPostsByAuthor(ctx context.Context, authorUserRef int64) (int64, error) {
 	row := q.db.QueryRow(ctx, countPostsByAuthor, authorUserRef)
 	var value int64

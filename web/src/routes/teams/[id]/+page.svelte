@@ -56,6 +56,9 @@
   import PostParamHost from '$components/PostParamHost.svelte';
   import TeamFollowButton from '$components/TeamFollowButton.svelte';
   import TeamAvatar from '$components/TeamAvatar.svelte';
+  import { upload } from '$stores/upload.svelte';
+  import { mergeRefreshedHead, appendWithoutRepeats } from '$lib/util/refreshHead';
+  import { createRefreshGate } from '$lib/util/refreshGate';
 
   interface Team {
     id: string;
@@ -95,7 +98,49 @@
   let assetsCursor = $state<string | null>(null);
   let postsLoaded = $state(false);
   let assetsLoaded = $state(false);
-  let loadingContent = $state(false);
+  /**
+   * How many content requests are in flight, NOT whether one is (#1407).
+   *
+   * This was a boolean shared by `loadPosts` and `loadAssets`, and a
+   * shared boolean cannot describe two loaders: with both tabs loaded,
+   * one publish starts a posts head and an assets head together, and
+   * whichever finished FIRST wrote `false` while the other was still
+   * running. Everything reading it then believed the surface was idle,
+   * including the load-more buttons and the refresh gate below, which
+   * is the exact "is anything running" question that must not be
+   * answered wrongly here.
+   *
+   * A counter is the same answer for one loader and the correct one for
+   * two. `loadingContent` stays a boolean for the markup, which only
+   * ever asked "is something loading".
+   */
+  let contentInFlight = $state(0);
+  const loadingContent = $derived(contentInFlight > 0);
+
+  // ⛔ AND IT WAITS FOR WHATEVER IS ALREADY RUNNING. This page has no
+  // generation guard, so a head fired on top of a "load more" does not
+  // supersede it, it INTERLEAVES with it: the append composes from the
+  // list at response time and re-adds rows the merge just kept. The
+  // gate serialises them. It cannot skip the refresh instead, because
+  // the running request may have read the database before the publish
+  // committed.
+  //
+  // `busy` counts, and that is the half a boolean got wrong: with both
+  // tabs loaded one publish starts two loaders, and the first to finish
+  // used to report the surface idle while the second was still in
+  // flight. See `contentInFlight`.
+  const uploadRefresh = createRefreshGate({
+    busy: () => contentInFlight > 0,
+    run: () => {
+      if (postsLoaded) void loadPosts(null, 'head');
+      if (assetsLoaded) void loadAssets(null, 'head');
+    },
+  });
+
+  /** `page` is the ordinary load (first page, or the next one appended);
+   *  `head` is #1407's post-publish refresh, which re-asks for page one
+   *  and merges it over what is loaded. */
+  type FetchMode = 'page' | 'head';
 
   async function loadTeam(id: string): Promise<void> {
     loadingTeam = true;
@@ -123,34 +168,56 @@
     members = ((m.data ?? []) as Member[]).slice(0, MEMBER_STRIP);
   }
 
-  async function loadPosts(cursor: string | null): Promise<void> {
-    loadingContent = true;
+  async function loadPosts(cursor: string | null, mode: FetchMode = 'page'): Promise<void> {
+    contentInFlight += 1;
     try {
       const query: Record<string, string | number> = { team_id: teamId, limit: PAGE };
       if (cursor) query.cursor = cursor;
       query.dir = browseView.feedDir;
       const { data } = await api.GET('/posts', { params: { query: query as never } });
-      const items = (data?.items ?? []) as unknown[];
-      posts = cursor ? [...posts, ...items] : items;
-      postsCursor = (data?.next_cursor as string | null) ?? null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const items = (data?.items ?? []) as any[];
+      if (mode === 'head' && posts.length > 0) {
+        // #1407: merged, not swapped, and the cursor is left alone.
+        // See `mergeRefreshedHead`.
+        posts = mergeRefreshedHead(posts, items);
+      } else {
+        // ⚠️ COMPOSED FROM THE LIST AS IT IS NOW, which is not the list
+        // this request was issued against. This page has no generation
+        // guard, so an append and a head can both be in flight; if the
+        // head lands first it keeps rows this response is also about to
+        // add, and a bare concatenation shows them twice. The gate
+        // serialises the two, and this makes the invariant local rather
+        // than a property of that ordering.
+        posts = cursor ? appendWithoutRepeats(posts, items) : items;
+        postsCursor = (data?.next_cursor as string | null) ?? null;
+      }
     } finally {
-      loadingContent = false;
+      contentInFlight -= 1;
       postsLoaded = true;
+      uploadRefresh.settled();
     }
   }
 
-  async function loadAssets(cursor: string | null): Promise<void> {
-    loadingContent = true;
+  async function loadAssets(cursor: string | null, mode: FetchMode = 'page'): Promise<void> {
+    contentInFlight += 1;
     try {
       const query: Record<string, string | number> = { team_id: teamId, limit: PAGE };
       if (cursor) query.cursor = cursor;
       const { data } = await api.GET('/assets', { params: { query: query as never } });
-      const items = (data?.items ?? []) as unknown[];
-      assets = cursor ? [...assets, ...items] : items;
-      assetsCursor = (data?.next_cursor as string | null) ?? null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const items = (data?.items ?? []) as any[];
+      if (mode === 'head' && assets.length > 0) {
+        assets = mergeRefreshedHead(assets, items);
+      } else {
+        // See the posts loader: same reason, same guarantee.
+        assets = cursor ? appendWithoutRepeats(assets, items) : items;
+        assetsCursor = (data?.next_cursor as string | null) ?? null;
+      }
     } finally {
-      loadingContent = false;
+      contentInFlight -= 1;
       assetsLoaded = true;
+      uploadRefresh.settled();
     }
   }
 
@@ -158,6 +225,20 @@
     browseView.init(); // pick up the user's tile-size + mode preference
     if (auth.user) void teamFollows.load(); // so the follow pill renders correct on first paint
   });
+
+  // #1407: a publish landed while the artist was standing on a studio.
+  //
+  // Both lists, because this is the surface where an ASSET-ONLY upload
+  // has somewhere to be: the posts tab shows what was composed, the
+  // assets tab shows the files whether or not a post was made.
+  //
+  // The assets tab is refreshed only when it has ALREADY been loaded.
+  // It is lazy by design (a reader who came for the feed does not pay
+  // for a second list), and fetching it here would spend that request
+  // on a tab nobody has opened, then hand `selectTab` a `assetsLoaded`
+  // it did not set.
+  //
+  onMount(() => upload.onSuccess(() => uploadRefresh.request()));
 
   /** Load (or reload) everything when the route's team changes.
    *

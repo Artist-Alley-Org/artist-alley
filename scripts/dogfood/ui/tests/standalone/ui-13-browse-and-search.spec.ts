@@ -193,16 +193,27 @@ test.describe('UI-13 browse + search', () => {
    *  nothing to do with search. Every rendered card is still a bounded
    *  scan (one page of the feed) and it reaches past any one family of
    *  fixtures; the accumulation itself is #1198's. */
-  async function seededTerms(page: import('@playwright/test').Page) {
+  /** Distinct 5+-letter words off the rendered post titles, in wall
+   *  order. Stops once it has `want` of them, or runs out of wall. */
+  async function wallWords(page: import('@playwright/test').Page, want: number) {
     const links = page.locator('a[href^="/posts/"]');
     await expect(links.first()).toBeVisible();
     const n = await links.count();
     const terms: string[] = [];
-    for (let i = 0; i < n && terms.length < 2; i++) {
+    for (let i = 0; i < n && terms.length < want; i++) {
       const label = (await links.nth(i).getAttribute('aria-label')) ?? '';
-      const word = (label.match(/[A-Za-z]{5,}/g) ?? [])[0];
-      if (word && !terms.includes(word)) terms.push(word);
+      for (const word of label.match(/[A-Za-z]{5,}/g) ?? []) {
+        if (!terms.includes(word)) {
+          terms.push(word);
+          break;
+        }
+      }
     }
+    return { terms, n };
+  }
+
+  async function seededTerms(page: import('@playwright/test').Page) {
+    const { terms, n } = await wallWords(page, 2);
     expect(
       terms.length,
       `no two distinct searchable words across ${n} rendered post titles — the whole ` +
@@ -211,9 +222,103 @@ test.describe('UI-13 browse + search', () => {
     return terms as [string, string];
   }
 
+  /** A term the ASSET index actually answers.
+   *
+   *  ⛔ A WORD OFF A POST TITLE IS NOT A WORD IN AN ASSET TITLE, and the
+   *  one caller that scopes its search to `types=asset` was relying on
+   *  the two coinciding. They coincide by luck: the wall shows posts,
+   *  newest first, and whether the newest post happens to share a word
+   *  with any asset is a property of whatever the install last seeded.
+   *  It stopped being true the moment the catalogue grew and the CI
+   *  coverage profile selected a different subset — the wall's newest
+   *  post became `Cinematic cut — Big Buck Bunny`, no asset is titled
+   *  "Cinematic", and the test failed all three attempts with an empty
+   *  grid that had nothing to do with what it asserts.
+   *
+   *  So the term is CONFIRMED against the same endpoint the test then
+   *  drives, rather than assumed. Candidates still come off the wall, so
+   *  it is still a word this corpus really contains. */
+  async function seededAssetTerm(page: import('@playwright/test').Page) {
+    const { terms, n } = await wallWords(page, 24);
+    for (const term of terms) {
+      // ⚠️ THE KEY IS `hits`, NOT `items`. /search answers a ranked
+      // envelope; the collection endpoints answer `items`. Reading the
+      // wrong one returns 0 for every term and turns this probe into a
+      // guard that rejects the whole corpus.
+      const hits = await page.evaluate(async (q: string) => {
+        const r = await fetch(
+          `/api/v1/search?q=${encodeURIComponent(q)}&types=asset&limit=1`,
+        );
+        if (!r.ok) return 0;
+        return ((await r.json()).hits ?? []).length as number;
+      }, term);
+      if (hits > 0) return term;
+    }
+    throw new Error(
+      `none of the ${terms.length} candidate words off ${n} rendered post titles ` +
+        `matched a single ASSET (${terms.join(', ')}). A post title and an asset ` +
+        'title share words only by luck; if this install genuinely has no ' +
+        'searchable asset the failure is the seed, not the search.',
+    );
+  }
+
+  /** A term whose UNSCOPED search answers posts AND something else (#1483).
+   *
+   *  A word off a post title proves the word is in a post title, nothing
+   *  more. The kind-chip test needs a result set the Posts chip can
+   *  actually narrow: when the term matches posts only, `types=post`
+   *  correctly changes nothing and the test's own anti-vacuity check
+   *  fails before Back is ever exercised. So, like `seededAssetTerm`,
+   *  the candidate is CONFIRMED against the endpoint the page drives.
+   *
+   *  The probe is the /search page's own first request (`limit=25`, `q`,
+   *  no `types`), and it reads each hit's `type`. Any non-post hit on that
+   *  first page is rendered as an /assets/ or /collections/ tile, which a
+   *  post-scoped result can never contain, so the two fingerprints must
+   *  differ.
+   *
+   *  ⛔ NOT `types_matched`. That field echoes the REQUESTED types and
+   *  defaults to all of them, so an unscoped query reports every kind
+   *  whatever matched, and a probe built on it would accept every term.
+   *
+   *  Candidates are tried in wall order and the first that qualifies is
+   *  used. If none does, this fails with every candidate's counts rather
+   *  than skipping: a skipped test is not a passing one. */
+  async function seededMixedKindTerm(page: import('@playwright/test').Page) {
+    const { terms, n } = await wallWords(page, 24);
+    const tried: string[] = [];
+    for (const term of terms) {
+      const kinds = await page.evaluate(async (q: string) => {
+        const params = new URLSearchParams({ limit: '25' });
+        params.set('q', q);
+        const r = await fetch(`/api/v1/search?${params.toString()}`, {
+          credentials: 'include',
+        });
+        if (!r.ok) return { status: r.status, post: 0, asset: 0, collection: 0 };
+        const hits = ((await r.json()).hits ?? []) as { type?: string }[];
+        const count = (t: string) => hits.filter((h) => h.type === t).length;
+        return { status: r.status, post: count('post'), asset: count('asset'), collection: count('collection') };
+      }, term);
+      const line =
+        `${term}: post=${kinds.post} asset=${kinds.asset} collection=${kinds.collection}` +
+        (kinds.status === 200 ? '' : ` (HTTP ${kinds.status})`);
+      tried.push(line);
+      const qualifies = kinds.post > 0 && kinds.asset + kinds.collection > 0;
+      console.log(`[#1483 mixed-kind term] ${qualifies ? 'CHOSEN  ' : 'rejected'} ${line}`);
+      if (qualifies) return term;
+    }
+    throw new Error(
+      `none of the ${terms.length} candidate words off ${n} rendered post titles has an ` +
+        'unscoped first page holding both a post and an asset or collection, so the Posts ' +
+        `chip could not narrow any of them. Candidates tried: ${tried.join('; ')}.`,
+    );
+  }
+
   /** Scroll the result list down past the navbar's auto-hide threshold
    *  and then back up until the navbar is on screen again. Returns the
-   *  offset the page ends at, which is what the caller asserts against.
+   *  offset the page ends at, which the caller uses only to confirm the
+   *  scroll really happened — no test asserts what becomes of that
+   *  offset afterwards (#1298).
    *
    *  Down THEN up, and not because a user would: past 96px of downward
    *  scroll the navbar auto-hides (`chromeScroll`), which translates the
@@ -284,8 +389,8 @@ test.describe('UI-13 browse + search', () => {
   }
 
   test('nav search refines /search IN PLACE and never bounces to browse', async ({ page }) => {
-    // Short viewport so the result grid overflows and the scroll
-    // assertion below has something to measure. Even a single-hit page
+    // Short viewport so the result grid overflows and the page can
+    // actually be scrolled before the refinement. Even a single-hit page
     // is taller than 400px, so this does not depend on how much the
     // install happens to have seeded.
     await page.setViewportSize({ width: 1280, height: 400 });
@@ -298,13 +403,21 @@ test.describe('UI-13 browse + search', () => {
     );
     await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
 
-    // Scroll the results, so "the fix keeps your place" is measured and
-    // not assumed, and leave the page in the state a real reader is in
-    // when they reach for the search box: scrolled down, chrome back.
+    // Leave the page in the state a real reader is in when they reach
+    // for the search box: scrolled down, chrome back. That is the state
+    // #1053 was reported from, so the refinement below is driven from it
+    // rather than from a pristine top-of-page.
+    //
+    // ⚠️ The offset is a PRECONDITION, not a subject — nothing downstream
+    // asserts what became of it, and #1298 explains why. This guard only
+    // says the precondition was really established: a helper that
+    // silently stopped scrolling would leave the refinement exercised
+    // from the top of an unscrolled page, which is not the reported bug.
     const before = await scrollResultsAndKeepChrome(page);
-    expect(before, 'the results did not scroll, so this test would prove nothing').toBeGreaterThan(
-      0,
-    );
+    expect(
+      before,
+      'the results never scrolled, so the refinement was not driven from a scrolled page',
+    ).toBeGreaterThan(0);
 
     // #1156 — typing changes nothing; Enter commits. The helper asserts
     // the URL does not move while typing, which on this surface is also
@@ -325,30 +438,134 @@ test.describe('UI-13 browse + search', () => {
     await expect(page.locator(tid('search-input'))).toHaveValue(second);
     await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
 
-    // Focus and scroll survive, as they do on browse.
+    // Focus survives, so the reader can keep typing — a remount would
+    // take it.
     await expect(nav).toBeFocused();
 
-    // Scroll survives UP TO WHAT THE NEW RESULT SET CAN HOLD.
+    // ⭐ AND THE RESULTS ARE BACK AT THEIR FIRST ROW (#1298, ADR 0056
+    // §3d).
     //
-    // The refinement swaps in a different, usually SHORTER wall, and the
-    // browser clamps scrollTop to that wall's maximum — losing the extra
-    // is the content being shorter, not the page jumping. The bare
-    // `toBe(before)` this replaced only held because the assertion used
-    // to run before the new grid had rendered: typing committed after a
-    // ~250ms debounce, so the read landed on the OLD wall's height. With
-    // the commit now explicit (#1156) the new wall is up by the time we
-    // look, and the clamp is visible.
+    // This block used to say there was deliberately NO offset assertion
+    // here, because the destination was an open product question. It is
+    // decided now: refining is a NEW address, so the results region
+    // resets to its first row and the page chrome does not move.
     //
-    // Asserting `min(before, max)` keeps the property #1053 is about —
-    // the offset is preserved, not reset — and the `> 0` guard keeps it
-    // from passing vacuously if the page did jump to the top and the new
-    // wall happened to be short.
-    const { top, max } = await page
-      .locator('main')
-      .evaluate((el) => ({ top: el.scrollTop, max: Math.max(0, el.scrollHeight - el.clientHeight) }));
-    expect(top).toBe(Math.min(before, max));
-    expect(top, 'the refinement reset the scroll offset to the top').toBeGreaterThan(0);
+    // ⛔ AND THE OLD ASSERTION IS STILL NOT THE ONE TO WRITE. It was
+    // `expect(top).toBe(Math.min(before, max))`, on the theory that a
+    // refinement swaps in a shorter wall and the browser merely CLAMPS.
+    // That model is wrong and no wait fixes it. Measured with an in-page
+    // rAF sampler across the swap:
+    //
+    //     same search term       different search term
+    //     [ 12ms, top 240]       [   5ms, top 240, scrollHeight  979]
+    //     (flat for 2.5s)        [ 984ms, top 184, scrollHeight 1097]
+    //                            [1025ms, top   0, scrollHeight  979]
+    //
+    // `scrollHeight` GREW while `scrollTop` FELL, which a clamp cannot
+    // do, and `max` (646) stayed far above the 240 the model says should
+    // survive. Every tile node is replaced and Chrome's scroll anchoring
+    // re-resolves the offset against reflowed content: 0 here, and 279
+    // — 39px DOWN, not up — on the CI runner. Both legitimate anchoring
+    // outcomes; neither expressible as `min(before, max)`.
+    //
+    // ⭐ WHICH IS EXACTLY WHY THE FIX IS A DECISION AND THE ASSERTION IS
+    // A CONSTANT. `0` is not one of several plausible landings any more,
+    // it is the one the page performs. An assertion derived from
+    // `before` would still be describing the browser's behaviour rather
+    // than ours.
+    //
+    // Measured on the same surface before the fix: six accumulated pages
+    // at offset 4511 of a 6088px grid, refined to a 25-hit query, landed
+    // on 330 — precisely `scrollHeight - clientHeight`, the BOTTOM of
+    // the new list, with every hit just asked for above the fold.
+    await expect
+      .poll(async () => page.locator('main').evaluate((el) => el.scrollTop), {
+        timeout: 10_000,
+        message:
+          'refining left the reader where the browser put them; the results region must ' +
+          'reset to its first row',
+      })
+      .toBe(0);
+
+    // ⭐ AND THE CHROME CAME WITH IT, which is the half that says this
+    // is a reset of the RESULTS rather than a scroll to nowhere. The
+    // page's own search field lives inside the scrollport and was off
+    // screen at the departure offset; the reader's hands have to land
+    // back on the control they just used.
+    await expect(
+      page.locator(tid('search-input')),
+      'the search field must be on screen after a refine',
+    ).toBeInViewport();
+
+    // What #1053 decided is asserted above and stays strict: the URL is
+    // still /search and carries the new term, the page ADOPTED that term
+    // rather than leaving a stale result set under a changed address,
+    // results are on screen, and focus survived. The sibling test below
+    // adds the kind chips and the facet filter.
   });
+
+  test('⭐ #1298: the browse wall resets to its first row on a refine too', async ({ page }) => {
+    // ⛔ THE SECOND SURFACE, AND IT IS NOT A COPY OF THE FIRST. #1298
+    // was filed about /search; the browse wall has the same shape —
+    // `feedKey` changes, `items = []`, refetch page one — with no
+    // scroll reset of its own either.
+    //
+    // ⚠️ IT LOOKED CORRECT WITHOUT ONE, AND THAT IS WHAT THIS PINS.
+    // Measured on a 900-card wall at 29457px refined by kind: the offset
+    // went to 0, at 1080p and at 390px. But nothing in the route decided
+    // that — `items = []` collapses the wall to zero height in the same
+    // frame, so `<main>` briefly has nothing to scroll and the BROWSER
+    // clamps. That holds only while the chrome above the wall is shorter
+    // than the viewport, which is a coincidence of the featured rail's
+    // height. This case is the one that fails if that coincidence ever
+    // stops holding, which is the only reason to write it.
+    await page.setViewportSize({ width: 1280, height: 400 });
+    await page.goto('/');
+    await expect(page.locator(tid('browse-wall'))).toBeVisible({ timeout: 20_000 });
+
+    // Accumulate a deep wall, then leave the reader well down it. Driven
+    // through the scrollport, never `window` — this app does not scroll
+    // the window at all.
+    const before = await page.locator('main').evaluate(async (el) => {
+      for (let i = 0; i < 5; i++) {
+        el.scrollTop = el.scrollHeight;
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      return el.scrollTop;
+    });
+    expect(
+      before,
+      'the wall never scrolled, so the refine below is driven from the top and measures nothing',
+    ).toBeGreaterThan(0);
+
+    // The refine: a kind filter is a component of `feedKey`, so it is
+    // the same reset-and-refetch path a query change takes, reached
+    // through the address the way every control on this page does.
+    await page.goto('/?kind=image');
+    await expect(page.locator(tid('browse-wall'))).toBeVisible({ timeout: 20_000 });
+
+    await expect
+      .poll(async () => page.locator('main').evaluate((el) => el.scrollTop), {
+        timeout: 10_000,
+        message: 'refining the wall left the reader somewhere they did not scroll to',
+      })
+      .toBe(0);
+  });
+
+  // ⭐ #1354's paging guard lives in search-paging-1354.spec.ts, not here.
+  //
+  // ⛔ IT WAS HERE, AND IT SKIPPED ON CI. It picked its query the way
+  // this file's other cases do, off the browse wall, and then declined
+  // to run whenever that term returned a single page: true on the
+  // development stack's 2,008 assets, false on CI's 162, so the one
+  // guard covering the feature stood itself down on the only machine
+  // that gates a merge. The denominator audit failed the run (exit 6)
+  // and was right to.
+  //
+  // A corpus-derived term cannot be the precondition for a paging test,
+  // so that file MANUFACTURES the second page instead of hoping for it.
+  // Nothing about paging is asserted in this file any more; what stays
+  // here is the refine behaviour (#1298), which needs no such depth.
 
   test('refining the query keeps the kind chips and the facet filter', async ({ page }) => {
     await page.goto('/');
@@ -400,7 +617,15 @@ test.describe('UI-13 browse + search', () => {
   }) => {
     const searches: string[] = [];
     page.on('request', (r) => {
-      if (r.url().includes('/api/v1/search?')) searches.push(r.url());
+      // ⛔ ADOPTIONS ONLY, AND THE CURSOR IS WHAT SEPARATES THEM
+      // (#1354). These counters exist to say the URL watcher ran ONE
+      // query per address. Since /search pages itself they also see the
+      // loader's page-2-onwards fetches, which are a different
+      // mechanism and would make "one adoption" read as four. A paging
+      // request is exactly the one carrying `cursor=`; a fresh query
+      // never does.
+      if (r.url().includes('/api/v1/search?') && !r.url().includes('cursor='))
+        searches.push(r.url());
     });
 
     await page.goto('/');
@@ -448,22 +673,80 @@ test.describe('UI-13 browse + search', () => {
    *  this seed the two terms below return three each), and every result
    *  set fills the same grid, so both weaker checks pass while the wrong
    *  results are displayed — which is the bug. */
+  /** The number of tiles on screen, read only once it has stopped
+   *  changing (#1170).
+   *
+   *  Any count taken while an append is in flight is a torn reading, and
+   *  a torn baseline turns a correct restore into a red test. Two
+   *  consecutive equal samples a poll apart is the settle condition; the
+   *  count must also be non-zero, so "nothing rendered at all" cannot
+   *  masquerade as stability. */
+  async function settledCount(tiles: import('@playwright/test').Locator): Promise<number> {
+    let previous = -1;
+    let current = -1;
+    await expect
+      .poll(
+        async () => {
+          previous = current;
+          current = await tiles.count();
+          return current > 0 && current === previous;
+        },
+        {
+          timeout: 15_000,
+          intervals: [250, 250, 250, 250, 500],
+          message: 'the result grid never stopped growing, so no baseline is measurable',
+        },
+      )
+      .toBe(true);
+    return current;
+  }
+
+  /** The rendered result list, read only once it has STOPPED GROWING.
+   *
+   *  ⛔ THE SETTLE IS NOT DEFENSIVE, it is the same #1170 hazard
+   *  `settledCount` documents, made sharper by #1354. /search pages
+   *  itself now, so landing on an address fetches a first page and then
+   *  chases more until the lookahead is covered. A fingerprint taken
+   *  the moment the first tile appears therefore describes a list that
+   *  is still one or two pages short of what the page will snapshot on
+   *  departure — and comparing that torn reading against a faithfully
+   *  restored snapshot fails while the restore is perfectly correct.
+   *
+   *  Two consecutive equal readings, which is what "stopped moving"
+   *  means for a list that grows in whole pages. */
   async function resultFingerprint(page: import('@playwright/test').Page) {
-    return page.evaluate(() =>
-      [
-        ...document.querySelectorAll(
-          'main a[href^="/assets/"], main a[href^="/posts/"], main a[href^="/collections/"]',
-        ),
-      ]
-        .map((a) => a.getAttribute('href'))
-        .join(' '),
-    );
+    const read = () =>
+      page.evaluate(() =>
+        [
+          ...document.querySelectorAll(
+            'main a[href^="/assets/"], main a[href^="/posts/"], main a[href^="/collections/"]',
+          ),
+        ]
+          .map((a) => a.getAttribute('href'))
+          .join(' '),
+      );
+    let prev = await read();
+    for (let i = 0; i < 40; i++) {
+      await page.waitForTimeout(250);
+      const next = await read();
+      if (next === prev) return next;
+      prev = next;
+    }
+    return prev;
   }
 
   test('Back and Forward render the address, not the newer results', async ({ page }) => {
     const searches: string[] = [];
     page.on('request', (r) => {
-      if (r.url().includes('/api/v1/search?')) searches.push(r.url());
+      // ⛔ ADOPTIONS ONLY, AND THE CURSOR IS WHAT SEPARATES THEM
+      // (#1354). These counters exist to say the URL watcher ran ONE
+      // query per address. Since /search pages itself they also see the
+      // loader's page-2-onwards fetches, which are a different
+      // mechanism and would make "one adoption" read as four. A paging
+      // request is exactly the one carrying `cursor=`; a fresh query
+      // never does.
+      if (r.url().includes('/api/v1/search?') && !r.url().includes('cursor='))
+        searches.push(r.url());
     });
 
     await page.goto('/');
@@ -510,7 +793,7 @@ test.describe('UI-13 browse + search', () => {
   // in the OLD entry's snapshot.
   test('Back out of a kind chip restores the unscoped result set', async ({ page }) => {
     await page.goto('/');
-    const [term] = await seededTerms(page);
+    const term = await seededMixedKindTerm(page);
     const tiles = page.locator(
       'main a[href^="/assets/"], main a[href^="/posts/"], main a[href^="/collections/"]',
     );
@@ -545,7 +828,15 @@ test.describe('UI-13 browse + search', () => {
   test('Back from an asset restores the loaded pages without re-querying', async ({ page }) => {
     const searches: string[] = [];
     page.on('request', (r) => {
-      if (r.url().includes('/api/v1/search?')) searches.push(r.url());
+      // ⛔ ADOPTIONS ONLY, AND THE CURSOR IS WHAT SEPARATES THEM
+      // (#1354). These counters exist to say the URL watcher ran ONE
+      // query per address. Since /search pages itself they also see the
+      // loader's page-2-onwards fetches, which are a different
+      // mechanism and would make "one adoption" read as four. A paging
+      // request is exactly the one carrying `cursor=`; a fresh query
+      // never does.
+      if (r.url().includes('/api/v1/search?') && !r.url().includes('cursor='))
+        searches.push(r.url());
     });
 
     // Short viewport, for the same reason the refine test uses one: it
@@ -553,7 +844,7 @@ test.describe('UI-13 browse + search', () => {
     // so the offset half of this is measured rather than skipped.
     await page.setViewportSize({ width: 1280, height: 400 });
     await page.goto('/');
-    const [term] = await seededTerms(page);
+    const term = await seededAssetTerm(page);
     // Scoped to assets, because /assets/{id} is a route that UNMOUNTS
     // this page — the case #584 exists for, and the only one where the
     // loaded pages live nowhere but the snapshot. A post card opens
@@ -566,25 +857,80 @@ test.describe('UI-13 browse + search', () => {
 
     // A second page if the seed has one; the test is about restoring
     // whatever was loaded, so a single-page result set still exercises it.
-    const more = page.getByRole('button', { name: /load more/i });
-    if (await more.count()) {
-      await more.click();
-      await expect(more).toBeHidden({ timeout: 15_000 }).catch(() => {});
-    }
-    const loaded = await tiles.count();
+    //
+    // ⚠️ ACCUMULATED BY SCROLLING SINCE #1354, and this is not a
+    // cosmetic port. /search used to page behind a "Load more" button
+    // and this test clicked it. The button is gone — /search pages the
+    // way the browse wall does — so a clause that went on looking for
+    // it would find nothing, take the `if` never, and silently reduce
+    // this to a ONE-PAGE restore: still green, and no longer testing
+    // the thing it is named after. Driving the scrollport is what
+    // actually makes the loader run now.
+    const grew = await page.locator('main').evaluate(async (el) => {
+      const n = () => document.querySelectorAll('main a[href^="/assets/"]').length;
+      const start = n();
+      for (let i = 0; i < 6 && n() === start; i++) {
+        el.scrollTop = el.scrollHeight;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      el.scrollTop = 0;
+      return n() > start;
+    });
+    // Not asserted: a result set with only one page cannot grow, and
+    // this test is about restoring whatever was loaded either way. It
+    // is READ so the reason a run exercised one page rather than two is
+    // in the trace instead of being invisible.
+    void grew;
+
+    // #1170 — read the count only once it has stopped moving.
+    //
+    // This used to be a bare `tiles.count()` taken straight after the
+    // "load more" button went away, on the assumption that the button
+    // disappearing means the page it fetched has rendered. It does not:
+    // the button was bound to `hasMore`, which clears when the RESPONSE
+    // lands, while the tiles append on a later render. Measured on the
+    // dev stack: the button hid 56ms after the click with 25 tiles on
+    // screen, and the grid settled at 28 about 50ms later.
+    //
+    // The button is gone (#1354) and the hazard is NOT. The sentinel it
+    // was replaced by is bound to the same `hasMore`, and the append
+    // still lands a render later, so a count read at the wrong moment
+    // is still torn. The settle is what this depends on, not the
+    // affordance that used to precede it.
+    //
+    // So `loaded` was 25 for a grid that ended up holding 28, and the
+    // restore assertion below then compared the snapshot's honest 28
+    // against a torn reading — failing on every single local run while
+    // CI, whose prod-shape build renders inside the polling window,
+    // stayed green. The subject of this test is what SURVIVES the round
+    // trip, so the baseline it measures against has to be settled first.
+    const loaded = await settledCount(tiles);
     const before = searches.length;
 
     // Leave on a tile that is ALREADY fully on screen. Playwright scrolls
     // a click target into view first, which would move the very offset
     // being asserted — so the offset is whatever holds a whole tile.
+    //
+    // "On screen" means inside the SCROLL CONTAINER, not inside the
+    // viewport (#1170). This used to compare the tile's rect against
+    // `0` and `window.innerHeight`; `main` starts below the navbar and
+    // is 333px tall against a 400px viewport, so a tile clipped by
+    // main's own top edge still satisfied that test. Playwright then
+    // scrolled the grid UP by the navbar's height to click it, and the
+    // page was left at 202 rather than the 240 recorded here — so the
+    // app snapshotted 202, restored 202, and the assertion below failed
+    // against a number that had stopped being true before the
+    // navigation even happened. The restore was right; the reference
+    // point was wrong.
     const target = await page.locator('main').evaluate((el) => {
       const links = [...document.querySelectorAll('main a[href^="/assets/"]')];
       for (const y of [240, 160, 100, 40]) {
         el.scrollTo(0, y);
         if (el.scrollTop === 0) continue;
+        const box = el.getBoundingClientRect();
         const seen = links.find((a) => {
           const r = a.getBoundingClientRect();
-          return r.top >= 0 && r.bottom <= window.innerHeight;
+          return r.top >= box.top && r.bottom <= box.bottom;
         });
         if (seen) return { y: el.scrollTop, href: seen.getAttribute('href') };
       }
@@ -592,7 +938,27 @@ test.describe('UI-13 browse + search', () => {
     });
     expect(target, 'no scrolled position showed a whole tile, so nothing here is measured')
       .not.toBeNull();
-    await page.locator(`main a[href="${target!.href}"]`).first().click();
+
+    // Then STOP predicting the departure offset and read it (#1170).
+    //
+    // Choosing an unclipped tile above removes the common case, but not
+    // the race: the navbar auto-hides past 96px of scroll and animates
+    // back, so `main`'s box is still moving while the tile is picked.
+    // Under a full-suite load the box settled a navbar's height (38px)
+    // away from where it was measured, Playwright scrolled to correct
+    // for it, and the page departed from 202 while this test went on
+    // asserting 240 — the same "the app is right, the reference point
+    // is stale" failure as above, one layer down. So the scroll that
+    // the click would have performed is performed HERE, and the offset
+    // the assertion uses is the one the page actually left on.
+    const link = page.locator(`main a[href="${target!.href}"]`).first();
+    await link.scrollIntoViewIfNeeded();
+    const departure = await page.locator('main').evaluate((el) => el.scrollTop);
+    expect(
+      departure,
+      'the grid ended up at the top, so the offset half of this test measures nothing',
+    ).toBeGreaterThan(0);
+    await link.click();
     await expect(page).toHaveURL(/\/assets\//);
 
     await page.goBack();
@@ -600,7 +966,7 @@ test.describe('UI-13 browse + search', () => {
     await expect(tiles).toHaveCount(loaded);
     await expect
       .poll(async () => page.locator('main').evaluate((el) => el.scrollTop), { timeout: 10_000 })
-      .toBe(target!.y);
+      .toBe(departure);
     expect(searches.length, 'the restored page re-queried what the snapshot already held').toBe(
       before,
     );

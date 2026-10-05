@@ -37,7 +37,7 @@ func TestCollectionField_Upsert_NewValue_Inserts(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
@@ -78,7 +78,7 @@ func TestCollectionField_Upsert_Replace_OverridesAndWritesHistory(t *testing.T) 
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
@@ -131,7 +131,7 @@ func TestCollectionField_AssetSubjectRejected_422(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
@@ -165,7 +165,7 @@ func TestCollectionField_TypeMismatch_422(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
@@ -194,7 +194,7 @@ func TestCollectionField_Delete_RemovesRowAndWritesHistory(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
@@ -248,7 +248,7 @@ func TestCollectionField_HistoryEndpoint_ReturnsNewestFirst(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
@@ -298,7 +298,7 @@ func TestCollectionField_FilterListBySubjectKind(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	cleanTestFields(t, pool)
@@ -406,7 +406,7 @@ func TestCollectionField_DanglingReferenceRejected_422(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
@@ -456,7 +456,7 @@ func TestCollectionField_ResolvesOptionsAndReference(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })

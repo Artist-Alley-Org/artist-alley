@@ -31,6 +31,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/subtitles"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // --- fixture helpers -------------------------------------------------
@@ -44,7 +45,7 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	host := envOr("AA_DB_HOST", "postgres")
 	port := envOr("AA_DB_PORT", "5432")
 	user := envOr("AA_DB_USER", "artist_alley")
-	name := envOr("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -116,7 +117,7 @@ func mustImage(t *testing.T, ctx context.Context, pool *pgxpool.Pool) uuid.UUID 
 
 func TestUpsert_NewTrack_Inserts(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -142,7 +143,7 @@ func TestUpsert_NewTrack_Inserts(t *testing.T) {
 
 func TestUpsert_ExistingLang_Replaces(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -173,7 +174,7 @@ func TestUpsert_ExistingLang_Replaces(t *testing.T) {
 
 func TestUpsert_OnImageAsset_NotApplicable(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -197,7 +198,7 @@ func TestUpsert_OnImageAsset_NotApplicable(t *testing.T) {
 
 func TestUpsert_InvalidLang_Rejected(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -216,7 +217,7 @@ func TestUpsert_InvalidLang_Rejected(t *testing.T) {
 
 func TestGetForAsset_EmptyAsset_ReturnsEmptySlice(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -235,7 +236,7 @@ func TestGetForAsset_EmptyAsset_ReturnsEmptySlice(t *testing.T) {
 
 func TestGetForAsset_OrderByLang(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -269,7 +270,7 @@ func TestGetForAsset_OrderByLang(t *testing.T) {
 
 func TestDelete_RemovesRow(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -290,7 +291,7 @@ func TestDelete_RemovesRow(t *testing.T) {
 
 func TestDelete_UnknownLang_ReturnsNotFound(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -303,7 +304,7 @@ func TestDelete_UnknownLang_ReturnsNotFound(t *testing.T) {
 
 func TestDelete_OnImageAsset_NotApplicable_GateFiresFirst(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -316,7 +317,7 @@ func TestDelete_OnImageAsset_NotApplicable_GateFiresFirst(t *testing.T) {
 
 func TestAssetHardDelete_CascadesViaFK(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -344,7 +345,7 @@ func TestAssetHardDelete_CascadesViaFK(t *testing.T) {
 // refactor surfaces in CI.
 func TestAssetCount_ExcludesSubtitleTracks(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 
@@ -383,7 +384,7 @@ func TestAssetCount_ExcludesSubtitleTracks(t *testing.T) {
 
 func TestSubtitleTrack_OrphanInsert_FKViolation(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// Direct INSERT with a non-existent asset_id. Must fail at
@@ -402,7 +403,7 @@ func TestSubtitleTrack_OrphanInsert_FKViolation(t *testing.T) {
 
 func TestUpsert_InvalidatesCache(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	h := newHandler(t, pool)
 

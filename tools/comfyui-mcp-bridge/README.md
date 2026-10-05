@@ -1,6 +1,6 @@
 # comfyui-mcp-bridge
 
-Model Context Protocol (MCP) server that exposes [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows as MCP tools. Originally built for [artist-alley](https://github.com/mscrnt/artist-alley)'s Phase 1.14.E-1 image-edit subsystem, but vendor-neutral — any MCP client (Claude Desktop, custom agents, the AA dispatcher) can call it.
+Model Context Protocol (MCP) server that exposes [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflows as MCP tools. Originally built for [artist-alley](https://github.com/Artist-Alley-Org/artist-alley)'s Phase 1.14.E-1 image-edit subsystem, but vendor-neutral — any MCP client (Claude Desktop, custom agents, the AA dispatcher) can call it.
 
 **Status:** beta. The img2img tool path is fully wired against a default SDXL workflow. The other four typed tools (inpaint, outpaint, variations, remove_bg) ship as placeholders — drop your own workflow JSON in to enable them.
 

@@ -510,6 +510,22 @@ func (h *Handler) ListPostComments(
 	return openapi.ListPostComments200JSONResponse(resp), nil
 }
 
+// commentsDisabledError is the stable `error` value of the 409 that
+// POST /posts/{id}/comments answers when the post does not take
+// comments (#1119 sprint 21d). A client keys on this string, so it is
+// a constant and not a sentence.
+const commentsDisabledError = "comments_disabled"
+
+// errCommentsDisabled and errCommentPostGone are the two ways the
+// comment-create transaction refuses from inside its closure. Each
+// rolls the transaction back (WithEmissionFn returns before recording
+// the activity or committing) and is translated to its response by the
+// handler; neither is ever returned to the router as a 500.
+var (
+	errCommentsDisabled = errors.New("social: comments disabled on this post")
+	errCommentPostGone  = errors.New("social: post gone before comment insert")
+)
+
 func (h *Handler) CreatePostComment(
 	ctx context.Context,
 	req openapi.CreatePostCommentRequestObject,
@@ -604,8 +620,54 @@ func (h *Handler) CreatePostComment(
 	// activity row in one tx. Both notifications (post-author +
 	// parent-comment-author for replies) fire AFTER commit.
 	// 1.22.B-cleanup made activities required.
+	//
+	// THE POST'S COMMENTS SETTING IS THE FIRST STATEMENT OF THAT
+	// TRANSACTION (#1119 sprint 21d), and its place in this handler's
+	// gate order is deliberate:
+	//
+	//   401 anonymous, 403 no capability, 400 empty body,
+	//   404 post unreadable, 404/400 bad parent, THEN 409 disabled.
+	//
+	// After the readability 404, so a post the caller may not see
+	// answers exactly what it answered before and never discloses its
+	// setting through the error ordering. After the parent checks,
+	// because those are about the request being well-formed and a
+	// malformed reply is refused as malformed whether or not the post
+	// takes comments.
+	//
+	// Inside the transaction and under the row lock rather than as a
+	// read before it, because a read before it is a check-then-insert:
+	// a PATCH that disables comments could commit between the check
+	// and the insert and the comment would land on a post whose author
+	// had already said no. LockPostCommentsEnabled takes FOR NO KEY
+	// UPDATE on the post row, the same lock the comment_count trigger
+	// takes one statement later, so once a disable has committed no
+	// comment transaction can read anything but false, and one that
+	// read true holds the lock until its own commit, which the disable
+	// then waits for. See the query's comment for why FOR SHARE would
+	// deadlock two commenters.
+	//
+	// Returning errCommentsDisabled from the closure rolls the
+	// transaction back before RecordActivity runs, so on this path
+	// there is no comment row, no comment_count change, no activity
+	// row and no notification; the @-mention pass and the cache
+	// invalidation below are only reached on success.
+	//
+	// `system.admin` is not consulted. It bypassed the capability check
+	// above and it does not bypass this: the setting is the author's
+	// decision about their post, not a permission a role can hold.
 	var savedRow Comment
 	err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		enabled, err := New(tx).LockPostCommentsEnabled(ctx, pgPostID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return activities.EmissionInput{}, errCommentPostGone
+			}
+			return activities.EmissionInput{}, fmt.Errorf("social: lock post for comment: %w", err)
+		}
+		if !enabled {
+			return activities.EmissionInput{}, errCommentsDisabled
+		}
 		r, err := New(tx).CreateComment(ctx, CreateCommentParams{
 			ID:             newID,
 			TargetKind:     "post",
@@ -629,6 +691,16 @@ func (h *Handler) CreatePostComment(
 			Notifications: convertNotifications(em.Notifications),
 		}, nil
 	})
+	if errors.Is(err, errCommentsDisabled) {
+		return openapi.CreatePostComment409JSONResponse{Error: commentsDisabledError}, nil
+	}
+	if errors.Is(err, errCommentPostGone) {
+		// Deleted between the readability gate and the lock. The same
+		// body the gate answers with, so the two are indistinguishable.
+		return openapi.CreatePostComment404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
+		}, nil
+	}
 	if err != nil {
 		return nil, err
 	}

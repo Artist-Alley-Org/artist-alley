@@ -50,7 +50,7 @@
   // /search and /search/facets, which is why the counts re-narrow as you
   // pick: the rail describes the page beside it rather than the corpus.
 
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { site } from '$stores/site.svelte';
   import { page, navigating } from '$app/state';
   import { goto } from '$app/navigation';
@@ -66,6 +66,11 @@
   import PostParamHost from '$components/PostParamHost.svelte';
   import ViewControls from '$components/ViewControls.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
+  import { createInfiniteScroll } from '$lib/util/infiniteScroll.svelte';
+  import { resetResultsScroll } from '$lib/util/resultsScroll';
+  import { mergeRefreshedHead } from '$lib/util/refreshHead';
+  import { createRefreshGate } from '$lib/util/refreshGate';
+  import { upload } from '$stores/upload.svelte';
   import {
     hitAsCardAsset,
     hitAsCollection,
@@ -94,8 +99,29 @@
   let totalCountCapped = $state(false);
   let loading = $state(false);
   let loadingMore = $state(false);
+  /**
+   * A post-publish refresh is on the wire (#1407).
+   *
+   * SEPARATE from the two above because it is invisible by design: it
+   * must not draw skeletons over a list somebody is reading, and it
+   * must not print a footer saying they asked for another page. But it
+   * IS a request against `hits` and `cursor`, so anything asking "may I
+   * start a fetch now" has to count it. Without this the paging pump
+   * saw an idle surface mid-refresh and could fire a page that
+   * superseded the refresh by generation, which is the same class of
+   * bug in the other direction.
+   */
+  let refreshing = $state(false);
   let error = $state('');
   let facets = $state<Record<string, FacetResult>>({});
+  /** The results region. Only ever used to FIND the scrollport (#1298);
+   *  see resultsScroll.ts for why the app cannot address `window`. */
+  let resultsEl: HTMLElement | undefined = $state();
+  /** The paging sentinel at the list's tail (#1354). */
+  let sentinel: HTMLElement | undefined = $state();
+  /** Is there another page to ask for? The cursor is the whole answer,
+   *  and it is `''` rather than null when there is not. */
+  const hasMore = $derived(cursor !== '');
   // The kind filter. Empty = everything, which is what /search does when
   // `types=` is absent.
   let kinds = $state<HitType[]>([]);
@@ -298,11 +324,118 @@
     filters: [],
   };
 
-  async function runSearch(query: string, opts: { append?: boolean } = {}) {
+  /** Infinite scroll (#1354), the browse wall's rig rather than a
+   *  second one. See `$lib/util/infiniteScroll.svelte` for why the
+   *  observer is rooted on the scrollport and why the observer alone is
+   *  not the whole trigger. */
+  const searchScroll = createInfiniteScroll({
+    sentinel: () => sentinel,
+    more: () => cursor !== '',
+    // BOTH flags. `loading` is a fresh query and `loadingMore` is an
+    // append, and a pump that only watched the second would fire a
+    // second page against a first page that has not landed.
+    busy: () => loading || loadingMore || refreshing,
+    load: () => void runSearch(q, { append: true }),
+  });
+
+  /**
+   * #1407's publish-to-refresh seam, held behind whatever this page is
+   * already fetching.
+   *
+   * `busy` is THE SAME EXPRESSION the paging pump uses, deliberately:
+   * the two things that must not collide are a refresh and a page, so
+   * they have to agree on what "a page is in flight" means. Watching
+   * only `loading` is what let a refresh supersede an append and throw
+   * the reader's next page away.
+   *
+   * `run` reads `resultParams` when it RUNS, so a refresh queued behind
+   * a query that changes the address describes the set that query left
+   * on screen rather than the one that was there when the publish
+   * landed.
+   */
+  const uploadRefresh = createRefreshGate({
+    busy: () => loading || loadingMore || refreshing,
+    run: () => void runSearch(resultParams.q, { refresh: true }),
+  });
+
+  /**
+   * `append` is the reader continuing down the list. `refresh` is
+   * #1407: a publish landed while the reader was standing on a result
+   * page, and the answer they are looking at is now out of date.
+   *
+   * Neither is a REFINE, and refresh is the one that has to say so
+   * loudest, because everything a refine does is wrong here: it resets
+   * the results region to its first row, it replaces `hits`, and it
+   * rewrites `cursor` from a page-one response. The reader did not ask
+   * a new question; they added something to the answer.
+   */
+  async function runSearch(
+    query: string,
+    opts: { append?: boolean; refresh?: boolean } = {},
+  ) {
+    // ⛔ A REFRESH NEVER ARRIVES HERE WHILE A REQUEST IS IN FLIGHT, and
+    // that is `uploadRefresh`'s job rather than a check on this line.
+    //
+    // This used to stand down on `loading`, which was wrong twice. It
+    // watched one flag where the paging pump watches two, so a refresh
+    // could still supersede an APPEND: the append owns generation N,
+    // the refresh bumps to N+1, and the page the reader had already
+    // scrolled for is discarded by the guards below and never arrives.
+    // And standing down at all DROPS the publish, on the false premise
+    // that the running request will carry it: that request may have
+    // read the database before the publish committed.
+    //
+    // So the decision moved to the gate, which defers instead of
+    // dropping. See `refreshGate.ts`.
+    // ⭐ THE REFRESH RE-ASKS `resultParams`, NEVER THE LIVE CONTROLS,
+    // and that is a correctness requirement rather than tidiness. The
+    // page's search box is `bind:value={q}`, so `q` runs AHEAD of the
+    // results by every keystroke the reader has typed and not yet
+    // submitted; the kind chips and filter tokens move ahead of them
+    // the same way. A background refresh reading those would fetch an
+    // answer to a question nobody has asked yet and merge it into the
+    // set on screen. `resultParams` is the one record of what the
+    // visible hits actually answer, which is why the history snapshot
+    // is captured from it too.
+    const rQuery = opts.refresh ? resultParams.q : query;
+    const rDsl = opts.refresh ? resultParams.dsl : dslMode;
+    const rKinds = opts.refresh ? resultParams.kinds : kinds;
+    const rFilters = opts.refresh ? resultParams.filters : filters;
+    // Nothing has been asked, so there is no answer to bring up to
+    // date. Returning rather than falling into the clear-and-return
+    // below, which would wipe `resultParams` and the facets on a page
+    // that is merely empty.
+    if (opts.refresh && !rQuery && rFilters.length === 0) return;
     const gen = ++searchGen;
+    // ⭐ REFINING IS A NEW ADDRESS (#1298, ADR 0056 §3c's 2026-08-28
+    // amendment): the results region goes back to its first row, and
+    // the page chrome does not move. An append is not a refine — it is
+    // the reader continuing down the list they are already reading — so
+    // the reset is on this arm only.
+    //
+    // MEASURED before it was written. Six accumulated pages at
+    // `main.scrollTop` 4511 of 6088, refined to a 25-hit query: the
+    // offset landed on 330, which is exactly `scrollHeight -
+    // clientHeight`. The reader was at the BOTTOM of the new list,
+    // looking at its last part-filled row, with every hit they had just
+    // asked for above the fold.
+    //
+    // Ordered BEFORE the fetch rather than after the hits land, for two
+    // reasons. It is immediate feedback that the refine registered,
+    // instead of a jump arriving 100ms later. And at offset 0 Chrome's
+    // scroll anchoring has nothing to compensate, so the swap cannot
+    // re-resolve the offset against reflowed content — which is the
+    // mechanism #1298 measured landing on 0 here, 184 on a second run
+    // and 279 on the CI runner, none of them decided by this page.
+    // ⛔ `refresh` is excluded for the same reason `append` is, one step
+    // stronger. #1407's whole point is that the reader keeps the page
+    // they were on; sending them to row one to show them their own
+    // upload would be the destructive half of that bug rather than a
+    // fix for it.
+    if (!opts.append && !opts.refresh) resetResultsScroll(resultsEl);
     // #1157 — a filter selection is a runnable query with no text. The
     // clear-and-return below is for a genuinely EMPTY address only.
-    if (!query && filters.length === 0) {
+    if (!rQuery && rFilters.length === 0) {
       hits = [];
       totalCount = 0;
       totalCountCapped = false;
@@ -312,29 +445,46 @@
       resultParams = { q: '', dsl: dslMode, kinds: [...kinds], filters: [...filters] };
       return;
     }
+    // A refresh sets NEITHER OF THE VISIBLE FLAGS. `loading` swaps the
+    // results region for skeletons, which is a flash of nothing over a
+    // list the reader is reading, and `loadingMore` prints a footer
+    // saying they asked for another page. They asked for neither. It
+    // does claim the surface through `refreshing`, which is invisible
+    // and exists so nothing else starts a fetch on top of it.
     if (opts.append) {
       loadingMore = true;
+    } else if (opts.refresh) {
+      refreshing = true;
     } else {
       loading = true;
     }
     error = '';
+    /** How many hits this call actually added. The pump's anti-runaway
+     *  guard reads it; see the tail of this function. */
+    let appended = 0;
     try {
       const params = new URLSearchParams({ limit: '25' });
-      if (dslMode) params.set('dsl', query);
-      else if (query !== '') params.set('q', query);
-      if (kinds.length > 0) params.set('types', kinds.join(','));
+      if (rDsl) params.set('dsl', rQuery);
+      else if (rQuery !== '') params.set('q', rQuery);
+      if (rKinds.length > 0) params.set('types', rKinds.join(','));
+      // ⛔ A REFRESH IS PAGE ONE and never carries the cursor: it is
+      // re-asking the head of the same answer, not asking for more of
+      // it. Every narrowing the reader has on is still in the request
+      // above, so a post that does not match their query, their kinds
+      // or their filters does not come back, and their visible
+      // membership does not change.
       if (opts.append && cursor) params.set('cursor', cursor);
       // #907 — repeated, one per tick. Appended to BOTH requests: the
       // counts have to be computed against the same population as the
       // results, or the rail goes back to describing a page nobody is
       // looking at.
-      for (const f of filters) params.append('filter', f);
+      for (const f of rFilters) params.append('filter', f);
       const facetParams = new URLSearchParams();
-      if (query !== '') facetParams.set('q', query);
-      for (const f of filters) facetParams.append('filter', f);
+      if (rQuery !== '') facetParams.set('q', rQuery);
+      for (const f of rFilters) facetParams.append('filter', f);
       const [searchResp, facetsResp] = await Promise.all([
         fetch(`/api/v1/search?${params.toString()}`, { credentials: 'include' }),
-        opts.append || dslMode
+        opts.append || rDsl
           ? Promise.resolve(null)
           : fetch(`/api/v1/search/facets?${facetParams.toString()}`, { credentials: 'include' }),
       ]);
@@ -345,14 +495,40 @@
       }
       const data = (await searchResp.json()) as SearchResponse;
       if (gen !== searchGen) return;
-      cursor = data.next_cursor || '';
       totalCount = data.total_count;
       totalCountCapped = data.total_count_capped;
-      hits = opts.append ? [...hits, ...data.hits] : data.hits;
+      if (opts.refresh && hits.length > 0) {
+        // #1407. The server's page one replaces page one and the pages
+        // the reader has already accumulated keep their order behind
+        // it, minus the overlap. See `mergeRefreshedHead` for why that
+        // is exactly-once and why it cannot invent a position.
+        //
+        // Keyed on `(type, id)`: the three entity types come from three
+        // tables, so a hit's identity is the pair, which is what the
+        // server's own cursor tie-breaks on.
+        //
+        // `cursor` is deliberately NOT reassigned. Page one's cursor
+        // points at page two and the reader is holding further pages
+        // than that; the search cursor is `(score, id, type)` rather
+        // than an offset, so a hit arriving at the head does not move
+        // the position it names.
+        hits = mergeRefreshedHead(hits, data.hits, (h) => `${h.type}:${h.id}`);
+        // `appended` stays 0: nothing was consumed, so the lookahead
+        // pump has no buffer to top back up.
+      } else {
+        // An empty region has no pages to protect, so a refresh of one
+        // is simply its first load, cursor included: without it the
+        // list would be permanently one page deep.
+        cursor = data.next_cursor || '';
+        hits = opts.append ? [...hits, ...data.hits] : data.hits;
+        appended = data.hits.length;
+      }
       // Recorded beside the hits it describes, never before them: an
       // aborted or superseded fetch (both return above) must leave the
-      // previous result set and its parameters matching each other.
-      resultParams = { q: query, dsl: dslMode, kinds: [...kinds], filters: [...filters] };
+      // previous result set and its parameters matching each other. A
+      // refresh writes back the same values it read, because it asked
+      // the same question.
+      resultParams = { q: rQuery, dsl: rDsl, kinds: [...rKinds], filters: [...rFilters] };
       if (facetsResp && facetsResp.ok) {
         const fd = (await facetsResp.json()) as FacetsResponse;
         facets = fd.facets ?? {};
@@ -364,7 +540,30 @@
         loading = false;
         loadingMore = false;
       }
+      // NOT generation guarded: a refresh that lost a race still has to
+      // stop claiming the surface, or the pump and the gate both stall.
+      if (opts.refresh) refreshing = false;
+      // ⭐ UNCONDITIONALLY, INCLUDING A SUPERSEDED RESPONSE. The gate
+      // re-reads `busy()` for itself; what it needs from here is only
+      // to be told that something finished, so an owed refresh is
+      // retried. A `settled()` hidden behind the generation guard would
+      // strand a refresh queued behind a request that lost a race.
+      uploadRefresh.settled();
     }
+    // #1354 — top the buffer back up. The IntersectionObserver alone
+    // cannot do this once the lookahead is deeper than one page is
+    // tall: the sentinel is still inside the margin after an append, so
+    // the intersection state never changes and no callback is queued.
+    // See createInfiniteScroll.
+    //
+    // `appended === 0` is the anti-runaway guard and it is load-bearing
+    // in the same way the wall's is: a search that answers with an
+    // empty page and a non-empty cursor would otherwise leave the
+    // buffer permanently short and pump forever. One empty page stops
+    // the chase; the observer still re-arms it when the reader scrolls.
+    if (gen !== searchGen || appended === 0) return;
+    await tick();
+    requestAnimationFrame(() => searchScroll.pump());
   }
 
   function submit(e: Event) {
@@ -468,6 +667,22 @@
     // change (pushQueryToURL strips it).
     if (page.url.searchParams.get('advanced')) advancedOpen = true;
   });
+
+  // #1407: a publish landed while the reader was standing on a result
+  // page. The upload modal is mounted once in the layout and the navbar
+  // button is on every route, so this surface is reachable from the
+  // same door every other one is, and the answer on screen goes out of
+  // date the moment the post exists.
+  //
+  // A SEPARATE onMount from the one above so the unsubscribe is what
+  // gets returned; the store hands it back for exactly this.
+  //
+  // `refresh`, not a plain call: see `runSearch` for the three things
+  // an ordinary non-append run would do that are all wrong here. The
+  // query, the kinds and the filters are re-sent unchanged, so the
+  // server decides membership and a post that does not match this
+  // reader's narrowing simply does not come back.
+  onMount(() => upload.onSuccess(() => uploadRefresh.request()));
 
   // ---------------------------------------------------------------------
   // The URL is this page's input (#1053)
@@ -721,18 +936,34 @@
     savingSearch = true;
     saveSearchResult = '';
     try {
-      // Use ?dsl= as the stored query when the caller composed this
-      // search in the advanced panel (dslMode); otherwise treat the
-      // free-text q as the DSL string (single-token free-text parses
-      // cleanly).
-      const dslString = q;
+      // ⛔ THE FILTERS TRAVEL WITH THE QUERY (#1368). Until this line
+      // existed the body carried the query expression alone, so a search
+      // narrowed on the rail was saved UNNARROWED: it replayed wider than
+      // the page it was saved from, and the digest the owner is emailed
+      // from it contained hits their own search excludes.
+      //
+      // Posted as `dimension:value` tokens — the same wire form the
+      // save-as-collection button beside this one has posted since #907,
+      // and the same one every GET surface takes. The server composes the
+      // ONE canonical DSL string that gets stored (search.ComposeDSL): it
+      // wraps this expression in parentheses so its own precedence
+      // survives, and conjuncts the selection onto it. Composing the
+      // string HERE would mean a second copy of the DSL's quoting rules
+      // in TypeScript, which is the duplicate grammar ADR 0093 decision 3
+      // refuses — and which cannot be derived from the Go lexer that
+      // decides what a bare token may contain.
+      //
+      // Read off `resultParams` rather than the live controls, because
+      // that is the pair (query, filters) the result set ON SCREEN was
+      // fetched with — the same reason the history snapshot reads it.
       const resp = await fetch('/api/v1/search/saved', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
           name: saveSearchName.trim(),
-          dsl: dslString,
+          dsl: resultParams.q,
+          filters: [...resultParams.filters],
           notify_channel: saveSearchChannel,
           notify_interval_minutes: saveSearchInterval,
         }),
@@ -760,7 +991,7 @@
 <!-- Full viewport width + the same px-4/sm:px-6 padding as the browse
      feed and the profile grids, so the shared TileGrid resolves the SAME
      column count and search reads as one grid system with them. -->
-<div class="w-full px-4 py-6 sm:px-6">
+<div bind:this={resultsEl} class="w-full px-4 py-6 sm:px-6">
   <form onsubmit={submit} class="mb-4 flex flex-wrap gap-2">
     <input
       bind:value={q}
@@ -907,7 +1138,7 @@
   {/if}
 
   {#if !loading && hits.length === 0 && hasRunnableQuery}
-    <p class="text-sm text-fg-muted">{t('search.no_matches')}</p>
+    <p class="text-sm text-fg-muted" data-testid="search-no-matches">{t('search.no_matches')}</p>
   {:else if !loading && !hasRunnableQuery}
     <!-- Landing on /search with no query. Not an "advanced search"
          headline page — an invitation to type, and nothing else on
@@ -967,15 +1198,34 @@
     {/snippet}
   </ContentGrid>
 
-  {#if cursor}
-    <div class="mt-4 flex justify-center">
-      <button
-        type="button"
-        onclick={() => runSearch(q, { append: true })}
-        disabled={loadingMore}
-        class="min-h-11 rounded-md border border-border bg-surface px-4 py-1.5 text-sm hover:border-border-strong disabled:opacity-50"
-      >{loadingMore ? t('common.loading') : t('common.load_more')}</button>
-    </div>
+  <!-- ⭐ THE PAGING SENTINEL (#1354), and it REPLACES the "Load more"
+       button rather than sitting beside it.
+
+       There used to be a button here and the browse wall beside it had
+       none, on the same grid, with the same cards. The comment at the
+       URL watcher does say results are "paged behind a manual load
+       more", but it says that to explain a snapshot-restore
+       interaction — it is a description of the state, not a decision
+       that search should page differently from browse.
+
+       ⚠️ NO MANUAL AFFORDANCE SURVIVES, and that is matching the wall
+       rather than dropping a feature. #1354's rule is "keep one if the
+       browse wall keeps one"; it keeps none (+page.svelte renders the
+       same bare sentinel under the same `hasMore` guard), so inventing
+       a different answer here is the thing to avoid. Both surfaces now
+       end a finished list the same way, with nothing to click.
+
+       Gated on `hasMore` so the observer has nothing to watch once the
+       list is complete — the same guard, for the same reason, as the
+       wall's. -->
+  {#if hasMore}
+    <div bind:this={sentinel} class="h-px w-full" aria-hidden="true"></div>
+  {/if}
+
+  {#if loadingMore}
+    <p class="py-4 text-center text-xs text-fg-muted" data-testid="search-loading-more">
+      {t('common.loading')}
+    </p>
   {/if}
 </div>
 

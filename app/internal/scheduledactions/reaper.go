@@ -52,16 +52,29 @@ type ReaperJob struct {
 	Jobs     *jobs.Service
 	Rec      *audit.Recorder
 	Notifier Notifier
-	Logger   *slog.Logger
+	// Publisher is the post publication core the change_state arm runs
+	// a post target through (#1238). See the Publisher interface for why
+	// the arm cannot own an UPDATE instead.
+	Publisher Publisher
+	Logger    *slog.Logger
 }
 
 // Type implements jobs.Handler.
 func (h *ReaperJob) Type() jobs.JobType { return JobTypeReap }
 
+// newExecutor builds the executor this reaper runs actions through.
+// ONE constructor, because the tests drive processOne directly and a
+// second literal is a seam that silently unwires a dependency: an arm
+// whose collaborator is nil in the test and non-nil in production is an
+// arm nothing tests.
+func (h *ReaperJob) newExecutor() *executor {
+	return &executor{rec: h.Rec, notifier: h.Notifier, publisher: h.Publisher}
+}
+
 // Handle runs one reaper tick: drain up to maxPerTick due actions, then
 // re-enqueue the next tick.
 func (h *ReaperJob) Handle(ctx context.Context, _ *jobs.Claim) (json.RawMessage, error) {
-	exec := &executor{rec: h.Rec, notifier: h.Notifier}
+	exec := h.newExecutor()
 	done, failed := 0, 0
 	for done+failed < maxPerTick {
 		outcome, claimed, err := h.processOne(ctx, exec)

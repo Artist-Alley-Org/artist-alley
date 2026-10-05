@@ -346,9 +346,7 @@ func (h *Handler) AddCollectionPost(
 		target.ID.String(),
 		target.Name,
 	)
-	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
-		Activity: em.Activity,
-	}, func(tx pgx.Tx) error {
+	write := func(tx pgx.Tx) error {
 		return New(tx).AddCollectionPost(ctx, AddCollectionPostParams{
 			CollectionID: pgtype.UUID{Bytes: target.ID, Valid: true},
 			PostID:       pgtype.UUID{Bytes: postID, Valid: true},
@@ -356,7 +354,8 @@ func (h *Handler) AddCollectionPost(
 			Pinned:       boolOr(req.Body.Pinned, true),
 			ExpiresAt:    pgTimestamptzFromPtr(req.Body.ExpiresAt),
 		})
-	}); err != nil {
+	}
+	if err := h.emitUnlessDraft(ctx, postID, em, write); err != nil {
 		return nil, fmt.Errorf("posts: add to collection: %w", err)
 	}
 
@@ -410,14 +409,13 @@ func (h *Handler) RemoveCollectionPost(
 		target.ID.String(),
 		target.Name,
 	)
-	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
-		Activity: em.Activity,
-	}, func(tx pgx.Tx) error {
+	write := func(tx pgx.Tx) error {
 		return New(tx).RemoveCollectionPost(ctx, RemoveCollectionPostParams{
 			CollectionID: pgtype.UUID{Bytes: target.ID, Valid: true},
 			PostID:       pgtype.UUID{Bytes: postID, Valid: true},
 		})
-	}); err != nil {
+	}
+	if err := h.emitUnlessDraft(ctx, postID, em, write); err != nil {
 		return nil, fmt.Errorf("posts: remove from collection: %w", err)
 	}
 	return openapi.RemoveCollectionPost204Response{}, nil
@@ -451,4 +449,72 @@ func pgTimestamptzFromPtr(t *time.Time) pgtype.Timestamptz {
 		return pgtype.Timestamptz{}
 	}
 	return pgtype.Timestamptz{Time: *t, Valid: true}
+}
+
+// emitUnlessDraft runs `write` in a transaction, recording `em`
+// alongside it — UNLESS the post is an unpublished draft, in which case
+// the write lands alone (ADR 0091 decision 7, #1161).
+//
+// # Why a membership write emits nothing for a draft
+//
+// `Add(post → collection)` and `Remove(post → collection)` NAME the
+// post to every peer the collection reaches. For a draft that activity
+// would be the first thing federation ever heard about it: no `Create`
+// has been emitted (see posts.CreatePost), so the peer learns a post id
+// exists, whose it is and which collection it went into — for a post
+// its author has not published. Federation is the one shared surface
+// where withholding after the fact is impossible, so it is the one that
+// must never be reached by accident.
+//
+// The MEMBERSHIP still lands. Curating a collection out of work in
+// progress and publishing afterwards is a real flow, and it discloses
+// nothing locally: the collection's contents listing composes the post
+// read rule, whose publication conjunct excludes the draft for
+// everybody including the curator. The row simply starts mattering the
+// moment the author publishes.
+//
+// ⚠️ KNOWN GAP, deliberately not closed here: a post published AFTER it
+// was pinned emits its `Create` and no `Add`, so a peer has the post
+// and not its collection membership. Re-emitting deferred membership
+// activities at publish time is a real piece of work (which
+// memberships? in what order? what if the collection was since
+// deleted?) and it belongs with the federation model rather than
+// bolted onto this helper. Recorded rather than silently accepted.
+func (h *Handler) emitUnlessDraft(
+	ctx context.Context,
+	postID uuid.UUID,
+	em emit.Emission,
+	write func(pgx.Tx) error,
+) error {
+	publishedState, err := h.postStateID(ctx, visibility.PostPublishedStateCode)
+	if err != nil {
+		return err
+	}
+	var stateID pgtype.UUID
+	row, err := New(h.Pool).GetPost(ctx, pgtype.UUID{Bytes: postID, Valid: true})
+	switch {
+	case err == nil:
+		stateID = row.StateID
+	case errors.Is(err, pgx.ErrNoRows):
+		// No such live post. The write below is a no-op or an FK
+		// refusal either way; emitting an activity about a post that
+		// does not exist is the one thing not to do, so take the
+		// draft branch.
+		stateID = pgtype.UUID{}
+	default:
+		return fmt.Errorf("posts: membership publication check: %w", err)
+	}
+
+	if isDraftState(stateID, publishedState) {
+		tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return fmt.Errorf("posts: begin tx: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := write(tx); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	return h.activities.WithEmission(ctx, activities.EmissionInput{Activity: em.Activity}, write)
 }

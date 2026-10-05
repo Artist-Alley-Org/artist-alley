@@ -308,7 +308,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		storage:          storage.NewHandler(storageSvc, logger),
 		assets:           assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg, sysCfg),
 		subtitles:        subtitles.NewHandler(pool, cacheReg, logger),
-		metadata:         metadata.NewHandler(pool, logger, cacheReg),
+		metadata:         metadataHandlerWithAudit(pool, logger, cacheReg, auditRec),
 		collections:      collections.NewHandler(pool, logger, cacheReg),
 		posts:            posts.NewHandler(pool, logger, cacheReg),
 		teams:            teams.NewHandler(pool, logger, cacheReg),
@@ -1159,12 +1159,20 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// the notification writer built just above; seeded once at boot via
 	// EnsureScheduled (idempotent). The reaper writes audit rows
 	// tx-bound with each domain change.
+	//
+	// Publisher (#1238) is the posts handler itself: a scheduled post
+	// state change is a PUBLICATION, and publication moves the state and
+	// emits the federation activity in one transaction. Handing the
+	// reaper the same body the endpoint runs is what keeps a scheduled
+	// publish from being a post that exists here and nowhere else. The
+	// identity it acts as is wired in server.go — SetActorLoader.
 	jobSvc.Registry.Register(&scheduledactions.ReaperJob{
-		Pool:     pool,
-		Jobs:     jobSvc,
-		Rec:      auditRec,
-		Notifier: socialNotifyAdapter{w: notifWriter},
-		Logger:   logger,
+		Pool:      pool,
+		Jobs:      jobSvc,
+		Rec:       auditRec,
+		Notifier:  socialNotifyAdapter{w: notifWriter},
+		Publisher: s.posts,
+		Logger:    logger,
 	})
 	if err := scheduledactions.EnsureScheduled(context.Background(), jobSvc); err != nil {
 		logger.LogAttrs(context.Background(), slog.LevelWarn,
@@ -1570,6 +1578,19 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// runtime config changes (admin updates site.base_url → next
 	// emit uses the new value, no restart).
 	s.posts.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	// The publish / unpublish endpoints move a post between the `post`
+	// domain's `wip` and `published` states through the state machine,
+	// so the edge list, the `posts.publish` gate and the workflow_audit
+	// row all apply (ADR 0091 decision 7, #1161). Wired here rather
+	// than at construction because the move commits in the same
+	// transaction as the federation activity, which is what the line
+	// above installs.
+	s.posts.SetWorkflow(workflow.NewService(pool, logger))
+	// The author's scheduled-publication surface asks the posts handler
+	// whether THIS caller may schedule THIS post (#1119 21e). The posts
+	// handler is the authority because the gates are publication.go's
+	// own; the scheduled-action handler owns the rows and nothing else.
+	s.scheduledActions.SetPostAuthority(s.posts)
 	s.social.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	s.messages.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	s.collections.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
@@ -1626,6 +1647,28 @@ func (a collectionsMetadataGateAdapter) RequiredCollectionFields(ctx context.Con
 		})
 	}
 	return out, nil
+}
+
+func (a collectionsMetadataGateAdapter) ValidateSeedFieldValues(
+	ctx context.Context,
+	values []collections.SeedFieldValue,
+) (*collections.SeedFieldRefusal, error) {
+	probes := make([]metadata.CollectionSeedValueProbe, 0, len(values))
+	for _, v := range values {
+		probes = append(probes, metadata.CollectionSeedValueProbe{
+			FieldID:   v.FieldID,
+			ValueText: v.ValueText,
+		})
+	}
+	refusal, err := a.md.ValidateCollectionSeedValues(ctx, probes)
+	if err != nil || refusal == nil {
+		return nil, err
+	}
+	return &collections.SeedFieldRefusal{
+		Code:    refusal.Code,
+		Label:   refusal.Label,
+		Message: refusal.Message,
+	}, nil
 }
 
 func (a collectionsMetadataGateAdapter) UpsertCollectionFieldValueInTx(
@@ -3021,6 +3064,9 @@ func (s *apiServer) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetT
 func (s *apiServer) ListAssetCompanions(ctx context.Context, req openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
 	return s.assets.ListAssetCompanions(ctx, req)
 }
+func (s *apiServer) GetAssetCompanionRequirements(ctx context.Context, req openapi.GetAssetCompanionRequirementsRequestObject) (openapi.GetAssetCompanionRequirementsResponseObject, error) {
+	return s.assets.GetAssetCompanionRequirements(ctx, req)
+}
 func (s *apiServer) AddAssetCompanion(ctx context.Context, req openapi.AddAssetCompanionRequestObject) (openapi.AddAssetCompanionResponseObject, error) {
 	return s.assets.AddAssetCompanion(ctx, req)
 }
@@ -3077,6 +3123,12 @@ func (s *apiServer) ArchiveField(ctx context.Context, req openapi.ArchiveFieldRe
 func (s *apiServer) SetFieldExtraction(ctx context.Context, req openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
 	return s.metadata.SetFieldExtraction(ctx, req)
 }
+func (s *apiServer) SearchFieldValues(ctx context.Context, req openapi.SearchFieldValuesRequestObject) (openapi.SearchFieldValuesResponseObject, error) {
+	return s.metadata.SearchFieldValues(ctx, req)
+}
+func (s *apiServer) MergeFieldValues(ctx context.Context, req openapi.MergeFieldValuesRequestObject) (openapi.MergeFieldValuesResponseObject, error) {
+	return s.metadata.MergeFieldValues(ctx, req)
+}
 func (s *apiServer) ListFieldDefaultOverrides(ctx context.Context, req openapi.ListFieldDefaultOverridesRequestObject) (openapi.ListFieldDefaultOverridesResponseObject, error) {
 	return s.metadata.ListFieldDefaultOverrides(ctx, req)
 }
@@ -3089,6 +3141,26 @@ func (s *apiServer) DeleteFieldDefaultOverride(ctx context.Context, req openapi.
 func (s *apiServer) GetAssetFields(ctx context.Context, req openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	return s.metadata.GetAssetFields(ctx, req)
 }
+
+// GetAssetFieldComposition is the per-field readability read the edit
+// surfaces evaluate `display_condition` against (#1173, #1119,
+// ADR 0099 §5). It carries no values; the typed values stay on
+// GetAssetFields, which now filters by the same effective readability.
+func (s *apiServer) GetAssetFieldComposition(ctx context.Context, req openapi.GetAssetFieldCompositionRequestObject) (openapi.GetAssetFieldCompositionResponseObject, error) {
+	return s.metadata.GetAssetFieldComposition(ctx, req)
+}
+
+// The batch metadata editor (#1173, #1119, ADR 0019). Two operations,
+// both on the metadata handler: a preview that writes nothing and mints
+// a single-use token, and an apply that spends it.
+func (s *apiServer) PreviewBatchAssetFieldEdit(ctx context.Context, req openapi.PreviewBatchAssetFieldEditRequestObject) (openapi.PreviewBatchAssetFieldEditResponseObject, error) {
+	return s.metadata.PreviewBatchAssetFieldEdit(ctx, req)
+}
+
+func (s *apiServer) ApplyBatchAssetFieldEdit(ctx context.Context, req openapi.ApplyBatchAssetFieldEditRequestObject) (openapi.ApplyBatchAssetFieldEditResponseObject, error) {
+	return s.metadata.ApplyBatchAssetFieldEdit(ctx, req)
+}
+
 func (s *apiServer) SetAssetFieldValue(ctx context.Context, req openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error) {
 	return s.metadata.SetAssetFieldValue(ctx, req)
 }
@@ -3104,6 +3176,14 @@ func (s *apiServer) GetAssetFieldValueHistory(ctx context.Context, req openapi.G
 // value paths share one cache + audit + capability discipline.
 func (s *apiServer) GetCollectionFields(ctx context.Context, req openapi.GetCollectionFieldsRequestObject) (openapi.GetCollectionFieldsResponseObject, error) {
 	return s.metadata.GetCollectionFields(ctx, req)
+}
+
+// GetCollectionFieldComposition is the collection twin. It matters more
+// here than on assets: GetCollectionFields has always dropped unreadable
+// rows, so "withheld" and "never set" arrive as the same nothing, and
+// those two states have opposite consequences for a display condition.
+func (s *apiServer) GetCollectionFieldComposition(ctx context.Context, req openapi.GetCollectionFieldCompositionRequestObject) (openapi.GetCollectionFieldCompositionResponseObject, error) {
+	return s.metadata.GetCollectionFieldComposition(ctx, req)
 }
 func (s *apiServer) SetCollectionFieldValue(ctx context.Context, req openapi.SetCollectionFieldValueRequestObject) (openapi.SetCollectionFieldValueResponseObject, error) {
 	return s.metadata.SetCollectionFieldValue(ctx, req)
@@ -3155,15 +3235,6 @@ func (s *apiServer) RestoreCollection(ctx context.Context, req openapi.RestoreCo
 	// to reflect its return (Phase 1.55.U-2 §7.2).
 	s.invalidateOwnerProfileOnCollectionDelete(ctx, uuid.UUID(req.Id), err)
 	return resp, err
-}
-func (s *apiServer) ListCollectionResources(ctx context.Context, req openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
-	return s.collections.ListCollectionResources(ctx, req)
-}
-func (s *apiServer) AddCollectionResource(ctx context.Context, req openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
-	return s.collections.AddCollectionResource(ctx, req)
-}
-func (s *apiServer) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
-	return s.collections.RemoveCollectionResource(ctx, req)
 }
 
 // The /collections/{id}/posts trio delegates to POSTS, not collections
@@ -3252,6 +3323,26 @@ func (s *apiServer) ListPostsSharedWithMe(ctx context.Context, req openapi.ListP
 func (s *apiServer) GetPostsByAsset(ctx context.Context, req openapi.GetPostsByAssetRequestObject) (openapi.GetPostsByAssetResponseObject, error) {
 	return s.posts.GetPostsByAsset(ctx, req)
 }
+
+// ListAssetPosts (`GET /assets/{id}/posts`) delegates to POSTS despite
+// its path, for the reason the /collections/{id}/posts trio does: the
+// payload is hydrated Posts and the gate is the post read rule, both of
+// which live there. The asset half is one ownership lookup (ADR 0091
+// decision 5).
+func (s *apiServer) ListAssetPosts(ctx context.Context, req openapi.ListAssetPostsRequestObject) (openapi.ListAssetPostsResponseObject, error) {
+	return s.posts.ListAssetPosts(ctx, req)
+}
+
+// ListPostCollections (`GET /posts/{id}/collections`) delegates to
+// COLLECTIONS despite its path, which is the MIRROR of the rule the line
+// above applies: the payload is hydrated Collections, the gate on each
+// one is the collection read rule, and each item's `can_remove` is the
+// collection mutation predicate. All three live there. The post half is
+// one authorship lookup (#1119).
+func (s *apiServer) ListPostCollections(ctx context.Context, req openapi.ListPostCollectionsRequestObject) (openapi.ListPostCollectionsResponseObject, error) {
+	return s.collections.ListPostCollections(ctx, req)
+}
+
 func (s *apiServer) CreatePost(ctx context.Context, req openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
 	resp, err := s.posts.CreatePost(ctx, req)
 	s.invalidateSearchOnPostWrite(ctx, err)
@@ -3282,6 +3373,16 @@ func (s *apiServer) AddPostAsset(ctx context.Context, req openapi.AddPostAssetRe
 }
 func (s *apiServer) RemovePostAsset(ctx context.Context, req openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
 	return s.posts.RemovePostAsset(ctx, req)
+}
+func (s *apiServer) PublishPost(ctx context.Context, req openapi.PublishPostRequestObject) (openapi.PublishPostResponseObject, error) {
+	resp, err := s.posts.PublishPost(ctx, req)
+	s.invalidateSearchOnPostWrite(ctx, err)
+	return resp, err
+}
+func (s *apiServer) UnpublishPost(ctx context.Context, req openapi.UnpublishPostRequestObject) (openapi.UnpublishPostResponseObject, error) {
+	resp, err := s.posts.UnpublishPost(ctx, req)
+	s.invalidateSearchOnPostWrite(ctx, err)
+	return resp, err
 }
 func (s *apiServer) ListPostAcls(ctx context.Context, req openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
 	return s.posts.ListPostAcls(ctx, req)
@@ -3621,6 +3722,20 @@ func (s *apiServer) ListScheduledActions(ctx context.Context, req openapi.ListSc
 }
 func (s *apiServer) CancelScheduledAction(ctx context.Context, req openapi.CancelScheduledActionRequestObject) (openapi.CancelScheduledActionResponseObject, error) {
 	return s.scheduledActions.CancelScheduledAction(ctx, req)
+}
+
+// The author's own publication schedule (#1119 sprint 21e). Served by
+// the scheduled-action package because the rows are its rows, gated by
+// the posts handler because the authority is the post's: see
+// scheduledactions.PostAuthority and posts.Handler.PublicationScheduleGate.
+func (s *apiServer) GetPostPublicationSchedule(ctx context.Context, req openapi.GetPostPublicationScheduleRequestObject) (openapi.GetPostPublicationScheduleResponseObject, error) {
+	return s.scheduledActions.GetPostPublicationSchedule(ctx, req)
+}
+func (s *apiServer) SetPostPublicationSchedule(ctx context.Context, req openapi.SetPostPublicationScheduleRequestObject) (openapi.SetPostPublicationScheduleResponseObject, error) {
+	return s.scheduledActions.SetPostPublicationSchedule(ctx, req)
+}
+func (s *apiServer) CancelPostPublicationSchedule(ctx context.Context, req openapi.CancelPostPublicationScheduleRequestObject) (openapi.CancelPostPublicationScheduleResponseObject, error) {
+	return s.scheduledActions.CancelPostPublicationSchedule(ctx, req)
 }
 func (s *apiServer) ExportAuditEvents(ctx context.Context, req openapi.ExportAuditEventsRequestObject) (openapi.ExportAuditEventsResponseObject, error) {
 	return s.audit.ExportAuditEvents(ctx, req)
@@ -5419,7 +5534,30 @@ func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p asse
 			// row lock, against the LIVE options document, so two
 			// concurrent extract jobs adding different keywords to the
 			// same field both keep theirs.
-			res, ensureErr := metadata.EnsureOpenVocabularyTerms(ctx, q, pgField, p.Value.Options)
+			//
+			// canExtend is TRUE here, and that is not the capability
+			// being skipped — it is the capability not applying. This
+			// adapter has no identity at all: it is a background job,
+			// several layers below any request, and it already bypasses
+			// read_capability, write_capability and the mirrored-field
+			// gate for the same reason (see the doc comment above).
+			// Passing anything else would mean inventing a principal.
+			//
+			// Extraction's gate is the OPERATOR'S, not the uploader's,
+			// and it is two flags rather than a capability: a field
+			// grows from files only while `open_vocabulary` is on AND
+			// an `extraction_source` is wired to it. An operator who
+			// does not want uploaded files minting terms turns off
+			// either one.
+			//
+			// The asymmetry is real and worth stating: after ADR 0092
+			// a person without fields.vocabulary.extend cannot type a
+			// new keyword, while a file they upload can still carry
+			// one in its IPTC block. Closing that means giving the
+			// extraction pipeline an uploader identity, which is a
+			// change to every capability it bypasses and not just this
+			// one.
+			res, ensureErr := metadata.EnsureOpenVocabularyTerms(ctx, q, pgField, p.Value.Options, true)
 			if ensureErr != nil {
 				return fmt.Errorf("metadata extraction: vocabulary: %w", ensureErr)
 			}
@@ -5518,4 +5656,16 @@ func (a metaFailureAdapter) RecordExtractionFailure(ctx context.Context, p asset
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, p.AssetID, p.Format, p.ErrorKind, p.Message, string(p.FieldKey), raw)
 	return err
+}
+
+// metadataHandlerWithAudit builds the metadata handler and attaches the
+// audit recorder. A tiny wrapper rather than a widened NewHandler
+// signature, matching usersHandlerWithAudit and sysconfigHandlerWithAudit
+// beside it: only ONE metadata operation is auditable (a vocabulary
+// merge), and every test that constructs the handler would otherwise
+// have to pass a recorder it does not use.
+func metadataHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *cache.Registry, rec *audit.Recorder) *metadata.Handler {
+	h := metadata.NewHandler(pool, logger, cacheReg)
+	h.Audit = rec
+	return h
 }

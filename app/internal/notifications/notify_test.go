@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 // The Writer cadence fork (Phase 1.55.Y): immediate → enqueue the email
@@ -32,7 +34,7 @@ func digestTestPool(t *testing.T) *pgxpool.Pool {
 		return d
 	}
 	dsn := "host=" + env("AA_DB_HOST", "postgres") + " port=" + env("AA_DB_PORT", "5432") +
-		" user=" + env("AA_DB_USER", "artist_alley") + " dbname=" + env("AA_DB_NAME", "artist_alley") +
+		" user=" + env("AA_DB_USER", "artist_alley") + " dbname=" + testdb.Name(t) +
 		" sslmode=disable password=" + pwd
 	ctx := t.Context()
 

@@ -5,6 +5,739 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
+## [Unreleased]
+
+## [v0.11.0] - 2026-10-04 - Making and describing work
+
+### Added
+
+- **Advanced Search understands three special verbs.** Typed into the advanced search's query
+  (the simple search bar is deliberately unchanged), `!nopreviews` finds files the preview
+  pipeline should have rendered but has no usable preview for, so an operator can see at a
+  glance what needs attention; `!list<id>,<id>,...` returns exactly the files, posts or
+  collections with those ids (up to 50), which is what makes a set of ids shareable as a
+  search; and `!lastN`, for example `!last500`, returns the newest N things across whatever
+  kinds the search covers, newest first, with every other word and filter in the same query
+  narrowing inside that recent set rather than reaching past it. Each verb is a plain
+  spelling of the ordinary typed grammar (`preview:missing`, `id:<uuid>`, `last:N`), so it
+  composes with every other filter, appears in the suggestion lists beside the query, and can
+  be saved and replayed like any other search. A `!last` search pages with its own cursor and
+  reports an exact count; a `!last` query cannot be combined with a similar-image search, and
+  says so. What a person may see is never widened by a verb: a file whose details are withheld
+  from you takes no place in your `!last` window and does not answer `!nopreviews`. (#1173,
+  PRs #1443, #1444)
+- **Typing a kind of file finds it.** Searching for `ebook`, `video`, `sprite`, `3d`, `pdf`,
+  `audio`, `font`, `doc`, `audiobook`, `archive` or `image` in the ordinary search box now finds
+  the posts that contain a file of that kind and the files themselves, without anyone having
+  written the word into a title, description, tag or field. A post counts as containing a kind
+  through any of its files, not only its cover, and swapping the cover or reordering the files
+  changes nothing. A kind word ranks below a title, a description or a tag that carries the same
+  word. Files a person is not allowed to see contribute nothing to a post's search entry, so a
+  kind search cannot reveal that a post holds a restricted file; the structured kind filter keeps
+  working exactly as before and remains the way to find a restricted file you are allowed to see
+  (#1417, PR #1440).
+
+- **A post can turn comments off.** Whoever can edit a post can now decide whether it takes
+  comments, from the post editor or from the create page, where comments stay on unless you say
+  otherwise. Turning them off stops new comments and replies on that post; the comments already
+  there stay exactly where they are, and the thread says why nothing new can be added. If your
+  browser was still showing the composer when the setting changed, the server refuses the comment
+  and nothing is added, not even for a moment. Turning comments back on brings the composer and the
+  reply buttons back without leaving the page. Whiteboards on the post are not affected. Every post
+  that existed before this change has comments on (#1119, PR #1433).
+
+- **Publish later.** You can now schedule one of your own drafts to publish at a time you
+  choose, from the post editor or from the create page. The pending time is shown in the post
+  editor, where you can cancel it. The schedule is made in your name, and your right to publish is
+  checked again when it actually runs, so if that right is taken away in between the post simply
+  stays a draft. A post holds one pending schedule at a time; to change the time, cancel it and
+  schedule again. If the create page saves your draft but cannot schedule it, you keep exactly one
+  draft with no schedule and nothing published, and you can try again from the draft. Publish now
+  and Save as draft work exactly as before. Publication happens on the scheduler's next pass,
+  usually within a few minutes, not at an exact second (#1119, PR #1431).
+
+- **"Edit post" does something now.** It used to be a placeholder that changed nothing. It now
+  opens an editor where you can change a post's title, description, who can see it and its tags,
+  choose which of its files is the cover, and set how that cover is framed. If somebody else
+  changed the post after you opened it, your save is refused rather than overwriting theirs. You
+  can reload to see their version, or keep your edits and save again over it. Saving never
+  publishes a draft or takes a published post down; publishing stays a separate step. The
+  editor lists the collections you can open that hold the post, tells you how many more hold it
+  that you cannot open, and offers to remove it only from the ones you already have the right to
+  change. Re-saving a post with the tags it already had used to remove those tags; it no longer
+  does (#1119, PR #1429).
+
+- **Finish an upload and the page you were already on catches up by itself.**
+  Publishing through the quick upload dialog used to leave the page behind it showing the
+  old answer until you reloaded the browser. A collection, the browse feed, a team page, a
+  profile and the search results now ask the server for the current answer instead. Your
+  place is kept: the order does not change, the list does not jump back to the first page,
+  and nothing you were already looking at is shown twice. If a page of results was already
+  loading when the upload finished, that page still arrives, once. An upload that failed or
+  was refused does not appear as new work. The full create page still takes you to the post
+  it made, as it always has (#1407, PR #1427).
+
+- **Drop a 3D model and its texture files together and they arrive as one textured model.**
+  Supplying a model alongside the files it references now attaches them automatically, instead of
+  leaving you with a pile of unrelated uploads and a warning you could not clear. The model's own
+  declared references decide what belongs to it, so a file it never names stays an ordinary upload.
+  Where the browser gives us the folder, nested paths such as `textures/foo.png` are kept, so a
+  texture matches the path the model actually asks for. When a name really is ambiguous, you are
+  asked which model it belongs to rather than having it guessed for you. Attaching a file after the
+  upload has finished now genuinely uploads it, and the list of missing files updates on the spot
+  without a page reload. The same behaviour is in the upload dialog and on the create page
+  (#1408, PR #1425).
+
+- **Change one metadata field across many files at once, from anywhere you can select them.**
+  Ticking files or posts anywhere in the app now shows a bar with the count, a way to clear it, and
+  a button to edit a field across everything selected. Before, that bar only existed on the browse
+  page, so a selection made anywhere else quietly went nowhere. Selecting a post means selecting
+  what is inside it: the server works out the real list of files, so two posts sharing a picture
+  count that picture once, and the number you are shown is the server's, never the page's guess.
+  Nothing is written until you have seen a preview naming exactly which files would change, which
+  would not, and which the operation cannot touch and why, and overwriting or removing still asks
+  you to type that number first. When the change runs, the result says what actually happened to
+  each file rather than just reporting success: a file someone else edited first, or deleted, or
+  that you lost permission on, is named. A run that changes nothing is still a real, recorded run
+  and is not offered back to you as if it never happened. Your selection stays put throughout
+  (#1173, #1119, PR #1421).
+
+- **Change one metadata field across many files at once.** A batch editor can overwrite a field, fill
+  in only the ones that are empty, or add and remove keywords, across the files you have selected.
+  Nothing is written until you have seen a preview that says exactly which files would change, which
+  would not, and which the operation cannot touch and why. Overwriting and removing also ask you to
+  type the number of files affected before they run, so a large change cannot happen by a stray
+  click. Every batch needs a written reason, and that reason is recorded (#1173, #1119, PR #1404).
+
+- **The batch editor cannot reach further than you can.** It checks, for every file separately, that
+  you may edit that file, that you may write that field, and that you may read the value it is about
+  to change. A file you cannot edit is listed as such and left alone rather than silently skipped.
+  Because it also requires read access, a field whose value is hidden from you cannot be reshaped by
+  a batch, which is deliberately stricter than editing one file at a time (#1173, #1119, PR #1404).
+
+- **A preview is used once and cannot be replayed.** Applying a preview spends it, and the change,
+  its record, and that spending all commit together, so a lost connection can never cause the same
+  batch to run twice. A preview belonging to somebody else is refused in a way that reveals nothing
+  about it, including whether it exists (#1173, #1119, PR #1404).
+
+- **A field can now say when it should appear.** An operator can give a metadata field a condition
+  naming another field's value, and the field is offered only while that condition holds. Hiding a
+  field is composition and nothing else: the stored value is left exactly as it was, nothing is
+  written or cleared on your behalf, an unsaved edit is still there if the field comes back, and a
+  hidden field never becomes a new thing you must fill in before saving. A condition that cannot be
+  worked out, because the field it names is gone or because you are not allowed to see that field's
+  value, shows the dependent field rather than hiding it (#1173, #1119, PR #1400).
+
+- **A field's value you are not allowed to read is no longer sent to the browser** on the surfaces
+  that compose forms. Deciding whether to draw a control now asks the server what this person may
+  actually read on this record, including permissions granted only within a team, and the protected
+  value itself never leaves the server. The same read used by the file page gained the per-field
+  permission check the collection page already had (#1173, PR #1400).
+
+- **Edit tabs work.** A field's tab, which operators have been able to set since the field settings
+  landed, now actually groups the form: on the file edit page, in the collection dialog and on the
+  create page. Fields with no tab keep their own tab and it opens first, so nothing an operator
+  never assigned can disappear. The tabs stay put while you work, so a tab whose fields are all
+  currently hidden keeps its place rather than vanishing under your cursor, and your unsaved edits
+  in one tab survive a trip to another (#1173, #1119, PR #1400).
+
+- **The create page keeps its shape.** Fields stay grouped under the file type they belong to, then
+  by tab, then by the operator's own grouping, and two file types that happen to use the same tab
+  name keep their fields apart (#1119, PR #1400).
+
+- **Conditions are configurable, and configuring them cannot lose what you typed.** The field
+  settings page can add, replace and clear a field's conditions, one control per condition, so a
+  condition whose value runs over more than one line stays one condition instead of quietly becoming
+  two. Configuration that could never work is refused when you save it with a sentence saying why,
+  including a condition that points at itself, a loop between fields, and a pair of fields that can
+  never appear on the same record (#1173, PR #1400).
+
+- **Your own metadata fields are now editable on a file.** The file edit page grew a section for
+  every field an operator configured for that file's type, so a value you could set at upload and
+  then never touch again is finally reachable. Title and description keep their own boxes at the
+  top of the page rather than appearing a second time in the list. Fields an operator has retired
+  but not removed still appear while they hold a value, so nothing quietly drops out of view
+  (#1119, #1173, PR #1394).
+
+- **A field an operator marked read-only now shows why it cannot be edited**, with its value still
+  in plain sight rather than hidden, and a field carrying a required pattern now shows the pattern
+  alongside its help text. Both reach the file edit page, the collection dialog and the create page
+  together, because they all use the same control (#1173, PR #1394).
+
+- **An optional value can be removed again.** Emptying a field's control and saving now clears the
+  stored value instead of failing with a save error, on both the file edit page and the collection
+  dialog. A yes/no field grew a blank choice, so "not answered" is finally different from "no": a
+  stored "no" stays a real answer, and clearing the field removes it altogether (#1119, PR #1394).
+
+- **Two people editing the same file no longer overwrite each other silently.** Each field value
+  now carries its own version, so a save refuses when someone else has changed *that field* since
+  you loaded it, tells you what it now says, and keeps what you typed so you can decide. Changing a
+  neighbouring field does not get in your way, and where several fields are saved at once the ones
+  that succeeded stay saved while only the conflicting one asks for attention (#1173, PR #1394).
+
+- **A field marked required now actually is one.** Setting it to nothing, or clearing it, is
+  refused on files and on collections alike, where before the rule reached only the title and
+  description mirrors and did nothing on every other field. A rich-text field counts as empty when
+  it holds no visible words, so formatting left behind by an empty editor no longer passes as a
+  value. Collections still require their fields at creation exactly as before, and putting a file
+  in still requires nothing at all (#1389, PR #1394).
+
+- **The sample library now carries every kind of AI declaration**, including "assisted" and an
+  explicit "no AI", so each one can be seen rather than only tested (#1290, PR #1297).
+
+- **Work made with AI now says so.** An asset whose maker declared it AI-generated or AI-assisted
+  carries a small purple marker — in the asset viewer, and on cards in the browse feed. The two
+  declarations look different from each other, and an asset whose maker said nothing shows nothing
+  at all: silence is not a claim that no AI was involved. In the default grid view the marker
+  appears with the rest of the card's overlay, on hover or keyboard focus (#1243, PR #1289).
+
+- **Editing a collection is one place now.** Its name, description, who can see it, its custom
+  fields and both of its cover pictures all live in a single dialog with a single Save — no more
+  stepping between pages, and no separate "Set cover" menu item that opened the same dialog
+  somewhere else. The dialog also sizes itself to what it is showing, so a collection with few
+  pictures to choose from no longer leaves a large empty area (#1264, #1220, PR #1286).
+
+- **The demo library now contains work that is honestly labelled as AI-made.** Forty-five images
+  generated in-house — four for each team, in forty-five different styles — carry a maker's
+  declaration saying so, which is what lets the "hide AI-made work" switch actually demonstrate the
+  rule it implements: purely-AI work disappears, and a piece that mixes AI with human work stays
+  (#1260, PR #1273).
+
+- **You can see where one of your files ended up.** A file's ⋯ menu gains "Where this is used",
+  which lists the posts it appears in — including posts by other people, which the shared-library
+  side of this product makes ordinary. Posts you cannot open are not listed; instead you get a
+  count and a plain sentence saying so, because the number is the whole disclosure and a title or
+  a link would give away what the post is. A file in no posts says so and reminds you it stays in
+  your library until you put it in one (#1237, PR #1258).
+
+- **Publishing a post can now be scheduled** (groundwork). An administrator-scheduled action can
+  publish — or unpublish — a post at a future time, going through the same path as pressing the
+  button: the post becomes visible and its federation announcement goes out together, as one act.
+  Scheduling anything the system cannot actually run is refused *when you schedule it*, with a
+  clear error, instead of quietly failing weeks later. The artist-facing "publish at..." control
+  arrives with the create-page work; this makes it possible (#1238, PR #1256).
+
+- **You can hide AI-made work while you browse.** The type-filter menu on the browse wall gains a
+  "Hide AI-made work" switch. It hides only work that is *entirely* AI-generated — a piece that
+  used AI along the way and was finished by hand stays visible, and so does anything with no
+  declaration at all, because not knowing must never hide someone's work. The choice sticks across
+  reloads on that browser, applies with the same Apply button as the type filters, and the closed
+  button shows a marker so you can tell the wall is being thinned without opening the menu
+  (#1251, #1242's dimension, PR #1254).
+
+- **Hiding AI work now keeps the mixed pieces.** Choosing to hide AI-created work excludes only
+  posts where *everything* is declared AI-generated. A piece that used AI for part of the process —
+  an early idea, an upscale — and was finished by hand still shows, because excluding it for one
+  file's declaration would punish the artist for being honest. Work with no declaration at all is
+  never hidden: not knowing must not hide someone's work (#1242, PR #1250).
+
+- **Advanced search can ask for more than exact matches.** Fields can now be searched for words
+  they contain and for dates between two points, instead of only exact equality — so "title
+  contains sunset" and "captured between March and June" are expressible at last. The page also
+  groups fields by the kind of work you pick, and shows a running count of how many results your
+  search will return before you run it (#1165, #1197, #1173 in part, PR #1244).
+
+- **A page for making a post.** Uploading used to be a modal that asked for a fixed handful of
+  fields and published the moment you submitted. There is now a full page for it, where the only
+  thing required is the files — a title, a description, categories, tags, a cover and an album are
+  all offered and none are asked for. Fields an operator has hidden from the upload form no longer
+  appear on it, which is the first time that setting has had any effect. The quick modal is still
+  there for a fast drop (#1119 in part, PR #1239).
+- **Say whether AI was involved, in your own words.** A work can now carry one of three
+  statements — no AI, AI-assisted, or AI-generated — chosen once at upload. Nothing is
+  pre-selected, and leaving it alone is deliberately *not* the same as declaring no AI was used:
+  work uploaded before this existed carries no statement at all, and the system will never write a
+  disclaimer on an artist's behalf. It is a statement about the work, not a restriction on it —
+  nothing is hidden from anyone (#1167, PR #1239).
+- **A model that needs its textures now says so.** Uploading a 3D model that references external
+  texture files used to render grey with no explanation, which read as a broken viewer rather than
+  a missing file. The upload surface now names the files the model is asking for (#754, PR #1239).
+
+- **Posts have drafts, and publishing is something you do.** A post now starts as a draft that
+  only its author can see, and becomes visible when they publish it — an explicit act rather than
+  a side effect of uploading. Publishing can be undone: an unpublished post returns to draft
+  rather than being deleted. Existing posts were all published on upgrade, so nothing already
+  visible disappears (#1161, PR #1231).
+- **An asset can tell you where it ended up.** The owner of a file can ask which posts it appears
+  in, including posts written by other people — the ordinary case in a shared team library. Posts
+  they may read arrive whole; the rest are summarised as a count with no other detail, so the
+  answer never becomes a way to learn about posts they cannot see. Only the file's owner and
+  administrators may ask. This is currently available through the API only; the asset menu entry
+  is still to come (#1161, PR #1232, UI tracked in #1237).
+
+- **A field can say where it appears.** Operators can now keep a field off the advanced search
+  page or the upload form, and give it an edit tab, instead of every field showing everywhere —
+  which matters the moment a catalogue has more than a handful. Nothing changes for existing
+  installs: a field that has never been configured appears exactly where it did before, and
+  hiding a field from a form does not stop its values being indexed or searched (#1173 in part,
+  PR #1230).
+- **Metadata vocabularies scale and stay tidy.** A field's values can now be searched on the
+  server instead of every list being sent to the browser whole — on a 2,500-term field a search
+  returns fifty matches in about six milliseconds and roughly a twenty-sixth of the data. Who may
+  invent a new term is now a permission, so an instance can let everyone extend a vocabulary or
+  keep that to librarians. And vocabularies can be tidied: one term can redirect to another, and
+  merging two leaves a permanent marker so the old name keeps resolving instead of vanishing
+  (#789, PR #1228).
+
+- **Search results now load as you scroll.** Reaching the end of `/search` used to mean clicking
+  "Load more" for every page, while the browse wall had pulled the next page in automatically for
+  some time. Both surfaces now share one paging mechanism, and the amount fetched ahead is measured
+  against the actual scrolling area rather than a fixed guess (#1354, PR #1355).
+
+- **A post's cover picture keeps its focal point.** Choosing which part of a wide or tall image
+  shows in a card is now saved with the post, so the framing survives a reload and follows the
+  picture wherever the card is drawn (#1210, PR #1332).
+
+- **Search results can be paged all the way through.** A search that reported hundreds of matches
+  would stop handing out results after a fixed number of pages, and raising the page size only
+  moved the ceiling rather than removing it. The full set is now reachable, in the same order, with
+  no repeated or skipped results (#1356, PR #1366).
+
+- **A saved search now keeps the filters you had on screen.** Narrowing a search by file type,
+  tag, owner, sensitivity, kind or a metadata field and then saving it used to store only the words
+  you typed, so the saved copy quietly matched more than the search you saved and the digest it
+  emailed you contained work your own search had excluded. The whole query is now stored, including
+  every active filter. Selecting two values of one filter keeps both rather than only the last, and
+  a filter on a metadata field survives too, which was not previously possible at all (#1368,
+  PR #1370).
+
+- **An operator can now say what a metadata value must look like, and who may write one.** A field's
+  settings gain three controls that were previously unreachable. **Read-only** stops people editing a
+  field's values by hand while the system keeps filling it, which is what you want for something a
+  machine owns. A **pattern** can require text to match a set shape before it will save, on plain and
+  long text fields, enforced by the server whenever a person supplies or edits the value. Values the
+  system fills in for you, from an upload default or read out of the file itself, are deliberately
+  left alone, and nothing already stored is rewritten when a pattern is set. And the switch for
+  **whether a field's text feeds the search index** now has a control at all: it was settable through
+  the API and appeared on no screen, so nobody could reach it. That switch governs the index only, and
+  filtering by that field directly keeps working either way.
+
+  Title and description are left out of the two new settings on purpose. They are mirrors of the work's
+  own title and description, which can also be edited from the work itself, and a rule that only one of
+  those two routes obeyed would be worse than no rule.
+
+  A field's description is now shown as guidance beside the box when you fill it in, instead of living
+  only in the admin screens (#1173 in part, PR #1388).
+
+- **Advanced search can narrow by contributor, file type, file size and pixel dimensions.** The
+  advanced page gains controls for the person whose work you want, the kind of file, how large it
+  is, and how many pixels across or tall it is. The contributor box can be left empty to browse
+  everyone with work in the current search rather than only the most frequent few, and picking one
+  person never hides the others. File sizes are entered in KB, MB or GB and converted exactly, so a
+  bound means the byte count you asked for. A "files with no workflow state" option sits alongside
+  the per-kind state choices and applies to the whole search, because having no state is not a
+  property of one kind of file. These filters narrow a search to files, which the page now says in
+  as many words, and the words box keeps being the one place free text is typed (#1173 in part,
+  PR #1383).
+
+- **A metadata field can now be filtered on even when its values are kept out of the text index.**
+  Whether a field's text feeds the full-text index and whether you can filter on it directly were
+  the same setting by accident, so filtering by pixel width returned nothing at all: the values
+  were deliberately kept out of the index, which silently switched the filter off too. Those are
+  separate questions now. Who may read a field, and whether the field is still in use, gate it
+  exactly as before. ⚠️ A saved or scheduled search that named such a field and had been quietly
+  returning nothing will start returning the matches it always described, including the emailed
+  digests built from one (#1173 in part, PR #1383).
+
+- **Search can filter files by their workflow state.** A search can now narrow to files sitting in
+  a given state, such as draft, awaiting review, published or archived, and choosing more than one
+  state returns the files in any of them rather than none at all. A "no workflow state" option
+  finds files that have never been given one. A state is named by where it belongs and what it is
+  called rather than by an internal row number, so a saved search keeps meaning the same thing
+  after states are edited and when it travels to another instance, and it survives being saved and
+  replayed like any other filter. Posts and collections are not filtered this way: an unpublished
+  post is already kept off every shared surface including search, and collections carry no workflow
+  state at all, so a search with a workflow-state filter active returns files only (#1173 in part,
+  PR #1376).
+
+- **Search can filter by size and by numeric metadata, not just by dates.** A range on a number,
+  such as a polygon count or a pixel dimension, now works the way a date range always has, and
+  files can be filtered by how large they are. Giving both a lower and an upper bound narrows to
+  the overlap rather than widening to everything that has a value, which is what the previous
+  grouping would have done. Size filtering applies to files, so a search mixing files with posts
+  and collections returns only the files once a size bound is active, and these filters survive
+  being saved and replayed like any other (#1173 in part, PR #1373).
+
+### Changed
+
+- **Development only: the browse-and-search test that backs out of a kind chip now picks a search term
+  it can actually test.** It used to take a word off a post title, so when that word matched posts
+  only, narrowing to posts changed nothing and the test failed before it reached the step it guards.
+  It now confirms the term returns both a post and an asset or collection. No effect on the running
+  product (#1483).
+
+- **Collections hold posts, not loose files.** Dropping a file into a collection used to publish
+  it there with no title and no framing, and no moment where the artist decided it was ready.
+  Uploading into a collection now composes a post, and the two endpoints that could pin a bare
+  file into a collection are gone. Files already pinned this way are left alone rather than being
+  turned into posts — an automatically generated post is a publication nobody authored, with a
+  title nobody wrote (#1161, PR #1232).
+
+- **The viewer no longer comes up blank when a browser blocks site data.** Reading a saved
+  preference could throw rather than simply return nothing, which took out the whole viewer shell
+  before it drew. Preferences now fall back to their defaults: the controls work for the session
+  and just forget (#1255, PR #1289).
+
+- **Keyboard focus stays inside an open dialog.** Pressing Tab used to walk out of a dialog and
+  into the page behind it, which was both disorienting and a false promise to screen readers.
+  Focus now cycles within the dialog, backwards as well as forwards, and follows the topmost one
+  when dialogs are stacked (#1269, PR #1286).
+
+- **Rebuilding the demo data no longer strips the administrator's access.** Resetting and
+  re-seeding an instance left the admin account able to sign in but holding no permissions at all,
+  until the app was restarted. It now comes back usable immediately (#1274, PR #1284).
+
+- **A first-boot message could name a password that was never set.** When the server repaired an
+  existing administrator's missing role, it announced a freshly generated password it had not
+  applied — and on installations that keep the generated password in a file, overwrote the real one
+  with it. It now says plainly that the password is unchanged (#1274, PR #1284).
+
+- **Development only — the test suite stopped re-creating what the seed should own.** The dogfood
+  fixtures are now seeded rather than made on first run, so a freshly built database no longer
+  drifts. No effect on the running product (#1270, PR #1273).
+
+- **Editing a collection no longer loses the change you just made.** Opening the edit dialog
+  started a background load, and when it finished the form quietly reset to the stored values — so
+  a curator who set a collection to Org-only and pressed Save could store the old setting instead,
+  while the dialog reported success. **Making a collection *more* private was affected the same
+  way**, which is why this is worth calling out: the restriction could silently fail to stick. The
+  same reset also defeated the check that catches two people editing at once (#1262, PR #1268).
+
+- **The page behind a dialog no longer scrolls when you use the mouse wheel.** Every dialog in the
+  app is affected; the page keeps its place when the dialog closes, and scrolling inside a dialog
+  still works (#1223, PR #1268).
+
+- **Development only — the test suite stopped miscounting its own cleanup.** The dogfood suite's
+  corpus check counted deleted rows as leaks, because deleting through the API marks a row deleted
+  rather than removing it. Four of the five tables it watched were already clean; three specs that
+  genuinely left rows behind are fixed. No effect on the running product (#1247, PR #1261).
+
+- **A collection's tile now shows what the collection actually contains.** The mosaic a collection
+  falls back to, and the item count on its featured tile, were both composed partly from loose
+  files that stopped being members of anything visible when collections became post-only. On the
+  seeded library the counts were more than double the real ones. A collection with nothing in it
+  now shows its empty state rather than a picture of things you cannot find inside (#1236, PR #1258).
+
+- **"Posts you cannot open" no longer counts posts you simply weren't sent.** The
+  where-is-this-used count is capped at 200 listed posts, and everything past the cap had been
+  folded into the withheld number — so a heavily used file could report posts as hidden from you
+  when they were not (#1237, PR #1258).
+
+- **The quick-upload dialog no longer shows a blank visibility choice.** It offered three options
+  while defaulting to a fourth, so the control rendered empty and the form posted a tier it never
+  showed you — on the field that decides who can see the work. It now presents the same four
+  choices as the full create page, with the real default selected (#1240, PR #1256).
+
+- **Browsers set to block site data no longer get an empty browse page.** Reading a remembered
+  setting could throw in that configuration, and it happened while the page was starting up — so
+  nothing rendered at all. The browse page's settings reads are now guarded; a wider sweep of the
+  remaining settings is tracked separately (#1255 filed, fixed for browse in PR #1254).
+
+- **Picking a tag suggestion now finds what the tag counts.** The search box could suggest a tag
+  and then find nothing when you picked it, because the pick ran as ordinary text — and many tags
+  exist only as labels, not as words in any description. A picked tag now applies the real tag
+  filter, so choosing "open-licence" returns exactly the items the sidebar says carry it. Tag
+  suggestions also cover tags on individual files now, not only tags on posts — gated so a tag you
+  could only learn from something unreadable is never offered (#1077, PR #1253).
+
+- **Adding a second filter to an advanced search no longer widens the results.** Two filters on
+  different fields were being combined as "either" instead of "both", so narrowing a search made it
+  return *more* — 907 matches for one filter and 596 for another gave 1,191 together, when the
+  honest answer was 312. Date ranges were hit hardest, since a range is two conditions on one
+  field: a June range returned 74 results instead of 6 (#1165, PR #1244).
+
+- **Marking an upload as mature could be silently dropped.** Two separate paths lost the setting:
+  the create response never carried it back, and ticking the box *after* the file had been added
+  came too late, because the upload starts as soon as a file is dropped (PR #1239).
+
+- **A wrong API address now says so instead of returning the web page.** In released builds, any
+  mistyped, removed or not-yet-shipped API address answered "200 OK" with the site's HTML in the
+  body, so a program calling it could not tell a missing endpoint from a working one. It now
+  answers a proper 404. This only ever affected released builds, which is why it survived so long
+  — development builds already answered correctly, so the two disagreed (#1161, PR #1232).
+
+- **Turning off a field's searchability now takes effect.** The setting was honoured when values
+  were written but never re-applied when the setting itself changed, so unticking the box left
+  everything already indexed still answering searches (#1016, PR #1228).
+- **Contributor-facing links and setup script corrected.** The repository move left old GitHub
+  URLs in the contributing guide and issue templates, and the bootstrap script still provisioned
+  a database and language stack this project no longer uses (#1093, #996, PR #1226).
+
+- **The browse filter menu's "Hide" section is now a "Content" category.** AI-made work and mature
+  content sit as ordinary rows alongside everything else, and a ticked box means show rather than
+  hide, which is what every other row in the menu already meant. Where an instance does not permit
+  mature content, the row is absent rather than shown disabled (#1292, PR #1343).
+
+- **Moderators can filter mature content they never opted into.** An administrator is shown mature
+  work so they can moderate it, but until now was offered no way to leave it out of a view. The
+  filter row now appears for anyone who can actually receive those rows, not only for those who
+  opted in, and for a moderator who never opted in it starts switched on. Turning it off grants
+  nothing and turning it on revokes nothing: it only narrows what a given view shows (#1345,
+  PR #1355).
+
+- **Refining a search no longer strands you mid-list.** Changing a query used to replace every
+  result while leaving the page scrolled where it was, which could drop you at the bottom of a
+  shorter list. The results now return to their first row while the search field and filters stay
+  put, and going back to a previous search still restores where you were (#1298, PR #1355).
+
+- **Changing a cover picture no longer keeps the old framing.** Swapping the image left the
+  previously saved focal point in place, so the crop pointed at part of a picture that was no
+  longer there (#1333, PR #1337).
+
+- **The interface calls the product Artist Alley.** Four strings used the repository slug as
+  though it were the name, and the README never used the name at all (#1326, PR #1337).
+
+- **Live interface copy reads more plainly.** 143 strings, including empty states and error
+  messages, carried punctuation that made them read as machine-written (#1307, PR #1337).
+
+- **The cover picker's warning tells the truth.** Whether an image is visible to signed-out
+  visitors is now reported by the server rather than guessed by the browser, so the warning shown
+  when picking a cover reflects what people will actually see (#1209, PR #1332).
+
+### Internal
+
+- **The published sample library's site_a now carries the corrected catalogue.** On 2026-10-03 the
+  owner-run republish replaced the published site_a with a staged copy built from the frozen
+  pre-operation snapshot, the committed profiles and the archive contract: 2,006 assets and 863 posts,
+  the corrected titles and dates, the retired duplicate removed, and the two authored plates installed.
+  The swap was one scripted rename pair. Before it, the staged copy was checked byte for byte against an
+  independently rebuilt expected tree, seeded and verified, and rehearsed against `main`'s nightly and
+  `dev`'s UI suites; after it, the published site_a passed the full verification again, read the same
+  through every client path, and seeded cleanly. site_b, the private federation fixture, was not
+  changed. The previous site_a is kept, unchanged, as the rollback copy until the later publication
+  cutoff. Nothing was published to Kaggle, and no version bump, licensing audit, release merge or tag
+  has happened (#1319).
+
+- **Republishing the sample library can no longer swap a trimmed video for its full-length download.**
+  The copier that stages the published library decided whether a file was already in place by comparing
+  it with its source copy, never with the size the library records. On 2026-09-28 that replaced four
+  correctly trimmed site_a videos in staging with the larger downloads in the local cache, and the staging
+  check caught it before anything was published. The copier now checks `internet`, `hq` and `pack` files
+  against the record's size, by who is authoritative for each: a downloaded video already at its recorded
+  size is kept, `hq` and `pack` files never vouch for themselves (a record that disagrees with its source
+  fails the run, and a missing `pack` file is recovered only through the hash-checked download), and a
+  record with no size fails. Every file it would copy, keep, re-download or refuse is now named in the
+  output, the same in a dry run as in a real run, so the copy set can be checked before anything is
+  written. ADR 0097 records the rule (#1474, PR #1476).
+
+- **The sample library's site_a feed keeps seven hand-made dates the republish would have reverted.**
+  The 2026-08-27 recovery of the hand-curated feed missed seven `updated_at` values: it skipped a
+  backup interval that also held real hand edits, and it could not see an edit made on one row of a
+  post id that briefly existed twice. The curation document now records all seven, including one
+  Pexels post that had no entry, and the site_a post profile carries them; nothing else in the
+  profile changed and no post id moved. The curation now holds 1,520 values across 842 posts. ADR
+  0098 records the corrected count; the decision to codify the hand edits is unchanged (#1469, PR
+  #1472).
+
+- **`aa seed-verify` now checks asset titles, as it already checked post titles.** For every asset
+  in the site manifest that is present in the database, the seeded title must equal the title the
+  seeder writes from the manifest (`Untitled` when the manifest title is blank). Separately, a seeded
+  asset title that carries a comma or an em dash fails, even when the manifest agrees, with one
+  failure per asset naming the characters. Absent and collapsed assets keep their existing verdict
+  and get no extra title verdict. Before this, a database whose asset titles were stale, edited or
+  still punctuated was reported verified; a reseed without `--reset` keeps an earlier title, so that
+  case was reachable. No flag, summary line or result form changed (#1464, PR #1466).
+
+- **The published sample library's own title columns can now be corrected, and only under proof.** The
+  library's two catalogue spreadsheets, `metadata.csv` and `groups.csv`, still show some titles with a comma
+  or an em dash. The republish can now correct exactly those title cells and nothing else. Every other value
+  and every other byte stays as it was, including quoting and line endings. The corrected title is worked out
+  again from a frozen copy taken before anything moved, rather than trusted from a document. Rows retired
+  from the library are removed first, exactly as before, and a removed row is never also retitled. The groups
+  spreadsheet can never lose a row or change its asset counts. Any change needs both the frozen copy and the
+  record of its checksums; without them the publish refuses before writing anything. The publish check now
+  also refuses a title with a comma or an em dash in the manifest or in either spreadsheet. ADR 0097 records
+  the change.
+  These corrections are enabled by the archive contract shipped in #1460 / PR #1462. The owner-run 23b
+  republish applied them to the published site_a on 2026-10-03; site_b, the private federation fixture,
+  is unchanged by design (#1319).
+
+- **Seeded titles lose their comma and em-dash separators in the repository.** Asset titles in the
+  committed sample library no longer carry a comma or an em dash: each one now reads with an ASCII hyphen,
+  so `Moby Dick , Herman Melville` becomes `Moby Dick - Herman Melville` and `Mono,wght` becomes
+  `Mono-wght`. Post titles change only where the separator was generated, such as the `, part 2` that told
+  two same-named posts apart and now reads ` - part 2`, or where they repeat an asset title that changed. A
+  comma someone writes on purpose in a post title is still allowed. The tools that build the library apply
+  the same rule to every asset title they write, without changing any record's id, and the upgrade pass now
+  refuses to merge an asset title carrying a comma or em dash rather than quietly rewriting it. 88 asset
+  titles and 1,137 post titles changed, no post id moved, and nothing else in those records changed.
+  This changed the repository first. The owner-run republish carried the corrected titles into the
+  published site_a on 2026-10-03, and the archive's own title columns followed in the next slice of this
+  work (#1459, #1460, PR #1458).
+
+- **The sample library stops asking the application to store 22 records it cannot store, and 25 posts
+  get their missing members back.** The second seeded site's catalogue held 13 groups in which one
+  owner owned the same bytes more than once. The application keeps one row per owner per set of
+  bytes, so 22 of those records could never become rows: each arrived with no id, no declaration, no
+  size and no field values, and the 25 posts that listed them shipped 37 members short without
+  saying so. Those 22 are now retired onto named survivors through a collapse document that records,
+  for each one, the survivor, the retired record verbatim, every value the retirement gives up
+  including the empty and false ones, and the membership substitution it causes. The evidence is
+  labelled as the weaker kind it is: these files have no upstream copy left to rebuild from, so the
+  retired and surviving hashes are equal by definition, the document invents no member, no render
+  size and no source pool, and authority is a frozen copy taken before anything moved and re-hashed
+  against the record made when it was taken, never the archive agreeing with itself. The survivor is
+  the member the seeder reaches first, decided by a written rule rather than by whichever record
+  happened to materialize. The corrected catalogue holds 1,284 records instead of 1,306, its 767
+  posts stay 767 with none emptied, 132 affected memberships become 108, and the 12 posts whose id
+  is derived from what they contain have their new ids composed onto the existing migration chain
+  rather than replacing it, so the three migration documents keep their 175, 336 and 478 rows. The
+  same correction is applied to the other profile holding those posts, because a retired record may
+  not appear there either. One committed test that had been counting retirements for profiles with
+  no balance document to compare against is corrected rather than accommodated. The seed guard
+  suite's floor moved from 547 to 559.
+  ⚠️ This prerequisite changed the repository only. `metadata.csv` was not touched: the read-only
+  proof against the frozen copy shows the correction implies 1,206 data rows becoming 1,184 when the
+  owner-run operation runs, with `groups.csv` byte-identical. The live archive was read and never
+  written, nothing was published to Kaggle, and v0.11.0 is not tagged (#1319, PR #1455).
+
+- **The published archive is now the maintained dataset, and the publish path proves which tree it
+  is reading.** The upstream source dataset the sample library was assembled from is retired, so
+  for the records that have no other copy the archive itself is the authority, while the records
+  that can still be rebuilt from the Kenney pack keep their authority there and their known stale
+  sizes stay ordinary edits rather than corruption. Preserving is now something an operator asks
+  for in as many words: without it the publish still refuses to run without a source, and with it
+  the run says out loud that it is treating those records as preserved. A publish involves three
+  separate directories, the live site, the staging copy being written and a frozen snapshot taken
+  before anything moved, and the tooling now proves they really are three directories rather than
+  one pointed at twice, so the frozen copy can never be the live site or the tree being written.
+  The per-site `metadata.csv` can change only in the one way that was worked out in advance and
+  written down before any file was touched, and that plan is tied to the retirement document the
+  same run authenticates, so a plan that authorises even one row the document does not is refused
+  before anything is written; `groups.csv` may not change at all. A retirement now says which kind
+  of evidence stands behind it, a rebuildable file or a preserved one, and a preserved one is
+  believed only after the frozen snapshot is re-hashed against the record made when it was taken.
+  The two authored plates stay something a person builds and installs on purpose; the publisher
+  will not conjure them. The seed guard suite's floor moved from 403 to 547 across this work.
+  ⚠️ This prerequisite changed the repository only: it did not update the live archive, did not
+  publish anything to Kaggle, and did not tag or release v0.11.0 (#1319, PR #1453).
+
+- **The sample library no longer asks the application to store something it cannot store, and a
+  retirement has to prove itself.** One catalogue record described the same bytes under the same
+  owner as another record, which the application refuses by design, so that entry could never
+  become a row: its id, its declaration, its size and its typed values were dropped in silence and
+  a post that listed it quietly lost a member. That record is now retired onto its named survivor
+  through an explicit collapse document that states the survivor, the retired record verbatim,
+  every value the retirement gives up, the membership substitution it causes, and the hash of the
+  archive member it came from kept separate from the hash of the file the pipeline actually
+  produces. Two different questions are now answered in two places and labelled as such: the
+  repository-side pass checks the document's shape and that the profile is in exactly one of the
+  two states the document describes, before it is allowed to change what the ordinary upgrade
+  counts as drift, and the publish path separately re-derives the produced bytes from the sources
+  it is given and only then may report a record as an authenticated collapse instead of a deletion.
+  Evidence that is malformed, stale, or describes a state the files are not in stops the run before
+  anything is written or deleted, rather than being stepped over. A retired file is removed from a
+  staging copy only through that narrow authenticated path, checked against the recorded produced
+  hash, never through the broad prune. The seeder's own behaviour is unchanged and is now pinned by
+  tests covering two through five records collapsing onto one owner, the case where the first
+  member's bytes are missing, and identical bytes held by different owners, which stay two separate
+  files. Nothing was published by this work (#1319, PR #1451).
+
+- **Publishing the sample library can no longer refuse its own corrected posts, and a published
+  site can be checked before and after.** The publish guard treats a post id that the committed
+  migration documents moved on purpose as a move, comparing what the post carries across it,
+  rather than as a deleted record; a document that is malformed, ambiguous or promises an id the
+  profile does not hold still refuses, and duplicate ids still refuse with no override. Two
+  read-only checks were added for the operator: one compares a published site directory against
+  the profiles, supplied expectations and a recorded preservation baseline; the other compares a
+  seeded database against its catalogue, field value by typed field value, and fails when a
+  catalogue asset or post did not materialize under its own id. Nothing was published: this is the
+  tooling the owner-run republish will use (#1319, PR #1449).
+
+- **The asset-edit browser tests no longer race the upload pipeline.** The dogfood fixture used
+  to hand the editor a freshly created file while the preview job was still updating it, so a
+  perfectly correct stale-write refusal turned into a red suite and stranded the eight tests behind
+  it, on three of four recent landings. The fixture now registers the file for cleanup, waits until
+  the preview pipeline reports the file ready, and only then returns; a failed preview or a
+  timeout is reported as itself. The product's stale-write guard is untouched, and a deliberately
+  stale save still gets refused (#1401, PR #1441).
+
+- **Rebuilding the sample library's posts can no longer overwrite the shipped ones by accident.**
+  The rebuild command used to write straight over the committed post profiles and the site's
+  posts file, replacing 863 hand-maintained posts with 1,103 regenerated ones that share only
+  336 ids. It now refuses before writing anything if any of those files already exists, names
+  each one, and refuses the same way on a dry run. Rebuilding into an empty folder still works
+  (#1322, PR #1438).
+
+- **Two sample-data passes now say when a record they were told to update does not exist.** The
+  pass that carries values back from the published archive and the pass that records the bytes a
+  site actually ships both used to skip an unknown record in silence and report a clean run. A
+  missing record in the carry-back document is now reported on its own summary line and the run
+  continues; in check mode it fails the check and names the record. A missing record in the
+  shipped-bytes document stops the run before anything is written, because that document is
+  regenerated from the very profile it must match, so a mismatch means the wrong input. Both
+  shipped documents are now pinned by a test that fails if a record is removed without them
+  (#1328, PR #1438).
+
+- **Two seed issues closed on evidence rather than code.** The coding stack has carried its five
+  test principals and four admin fixture plates since 2026-08-28, the six fixture and probe
+  failures that were reported there are gone, and a zero-failure full browser run was recorded
+  on it before this sprint landed, so the report no longer describes it (#1335). The
+  shipped post and asset titles carry no em dash in any committed profile, the guards that pin
+  that are green, and no post id moves; the dashed titles that were visible on running stacks came
+  from the published archive, which the owner-run republish refreshed for site_a on 2026-10-03
+  (#1338, #1319).
+
+- **Two kinds of metadata edit could deadlock each other, and one of them needed no batch at all.**
+  Saving a metadata value rebuilds the searchable text of the file and then of every post that file
+  appears in. Two writes could reach those posts in opposite orders and stop each other dead, so one
+  was cancelled by the database and the person saw the save fail. That happened between a batch edit
+  and an ordinary single-file save, and also between two ordinary saves on files that share more than
+  one post, which needed no batch involved and could happen before batch editing existed. Writes now
+  take the files they touch up front and in a fixed order, a batch rebuilds each affected post once at
+  the end instead of once per file, and every rebuild claims its post before it reads what goes into
+  it, so a rebuild can no longer publish a document it worked out from stale inputs. A batch over a
+  thousand files also got substantially faster. Deterministic tests now reproduce each of these races
+  and fail without the fix (#1173, #1119, PR #1410).
+
+- **A green test run now accounts for every test.** The browser suite summed "skipped" and "never
+  attempted" into one figure, so a cascade of tests that never ran read as a handful of deliberate
+  skips. The two are now separate, and a test that removes itself from a run without being declared
+  fails the run outright. That gate immediately caught a new test covering search paging that had
+  quietly excluded itself on CI while passing locally (#1348, #1344, PR #1350).
+
+- **Two test-harness counters that disagreed now reconcile.** One counted successful API calls and
+  the other counted database rows, and nothing had ever compared the two, so a create that returned
+  an existing record and a delete that removed nothing both went unnoticed. They are now checked
+  against each other on every run and disagreement fails it (#1351, PR #1361).
+
+
+- **Browse's tag and visibility filters joined the shared machinery.** Same convergence as the
+  type filter before them, deleting a duplicated tag predicate; the wall's results are unchanged,
+  verified byte-for-byte across 336 captured pages. Filtering by two tags is now possible and means
+  "both", matching what the search language already documented (#1251 in part, PR #1253).
+
+- **Browse's type filter now uses the same machinery as search.** Filtering the wall by kind of work
+  was implemented separately from the identical filter in search — two copies of one rule, which is
+  how they drift apart. Browse now composes the shared one, so a filter is written once and behaves
+  the same wherever it appears. No change to what anyone sees: the same posts, the same order, the
+  same pagination, verified by capturing the feed before and after across 40 combinations (#1251 in
+  part, PR #1252).
+
+- **The test environment stopped producing failures nobody caused.** The long-lived development
+  database had silted up with rows left behind by test runs — enough that nine browser tests failed
+  for reasons in nobody's changes, which teaches everyone to ignore the test suite. Leaked rows are
+  now separated from real content by where they came from rather than by what they look like, and
+  swept with a dry run first. Two tests that measured the wrong thing were rewritten: one compared
+  screenshots pixel-for-pixel and now checks the layout it actually cares about, and one assumed a
+  precondition it now measures (#1245, #1241, PR #1246).
+- **A stray `go test` can no longer wipe the development database.** Forty-six test files defaulted
+  to the real database when run directly rather than through the test script; they now share one
+  guarded entry point that refuses anything but a test database (#1125, PR #1246).
+- **Test cleanup that never ran now runs.** Per-test cleanup was registered to happen *after* the
+  database connection had already been closed, across 22 places, so every cleanup silently did
+  nothing and its error was discarded. Verified by looking for the rows afterwards rather than by a
+  passing run — which is exactly what it produced while broken (#870, PR #1246).
+
+- **The test suite stopped lying.** Several browser specs had been failing locally while passing
+  in CI — and one of them was passing *vacuously*, sampling only frames taken after the moment it
+  meant to measure, so neither result meant anything. Fixture accounts and posts left behind by
+  earlier runs are cleaned up, screenshots no longer overwrite files in the repository, and the
+  suite now produces the same result twice in a row on a used machine (#1198, #1054, #1170,
+  #1211, PR #1225).
+- **A malformed architecture record now blocks the docs-site rebuild** instead of merely
+  reporting, proven by pushing a deliberately broken one (#1014, PR #1226).
+
 ## [v0.10.2] — 2026-08-18 — Seed coverage for mature content, and a cover editor that uses its room
 
 ### Added
@@ -41,6 +774,69 @@ where applicable, otherwise note "no-spec-impact."
   (PR #1175, refining #1158/#1171).
 
 ### Fixed
+
+- **Rebuilding the sample library can no longer throw away hand-made edits without saying so.**
+  A regeneration used to skip any curated post it could not find, print a truncated list of
+  warnings, and report success. On a full rebuild that quietly discarded 200 of 841 edited posts.
+  It now stops before writing anything and says how many it could not place. The separate warning
+  about a post whose contents have shifted since it was edited stays a warning, because that one
+  needs a person to look rather than a run to fail (#1324, PR #1327).
+
+- **Re-running the sample data loader now says what it left alone.** It could always add new
+  records and never correct an existing one, and it reported the same clean result either way, so
+  reloading to pick up a corrected catalogue looked like it had worked when it had not. It now
+  counts and names the records whose stored values disagree with the catalogue, and points at the
+  full reset that actually applies them. It still changes nothing on its own and an interrupted
+  load can still be resumed safely, which is what the old behaviour was protecting (#1320,
+  PR #1327).
+
+- **The hand-made edits to the sample library are now part of the build.** Someone had gone
+  through the published feed by hand and chosen better dates, better orderings and better titles
+  for it, and none of that lived anywhere the build could see: the next regeneration would have
+  thrown all of it away. Those 1,513 choices across 841 posts are now recorded as data the build
+  applies, so the feed keeps the shape a person gave it (#1309, PR #1318).
+
+- **The pre-publish check can now tell a wrong measurement from a deliberate edit.** It used to
+  treat every disagreement between the repository and the published archive as an edit and let it
+  through, which is right for a title someone changed and wrong for a file size that has simply
+  gone stale. It now decides by where the file came from: where the published copy is the only
+  record of the bytes, a disagreeing repository is refused; where the file was copied from a source
+  the repository is built against, the disagreement is reported as a publish that has fallen behind
+  (#1312, PR #1318).
+
+- **The second sample site was missing catalogue detail the published copy already had.** 6,806
+  values across all 1,306 of its records existed only in the published archive, and a rebuild would
+  have stripped every one. They are restored, and the check above is what would now stop it
+  (#1313, PR #1318).
+
+- **The sample library's post titles read like a person wrote them.** They used to end with a
+  machine-written tally, "Project Heroes polish week, 9 assets across 1 team(s)", which was long,
+  repeated a count already shown on the card, and left an unresolved "(s)" in plain sight. Titles
+  that would otherwise have become identical are now numbered instead (#1306, PR #1311).
+- **The catalogue no longer overstates what the dataset contains.** Twelve records claimed sizes
+  their files do not have, 2.7 GB of overstatement in total, and a rebuild would have copied those
+  claims over the accurate published copy. The claims are re-measured from the files themselves, and
+  a re-download can no longer quietly substitute a full-length original for the short clip the
+  dataset actually ships (#1301, #1302, #1303, PR #1311).
+
+- **The dataset's pre-publish check can no longer pass a stale catalogue.** One of its own steps was
+  invisible to it, because that step reported how many records it looked at rather than how many it
+  changed — so a catalogue with outdated file sizes was reported as ready to publish. The check now
+  sees every step, and names the ones that actually found something (#1295, PR #1299).
+- **The catalogue's recorded file sizes now match the files themselves.** They had drifted from the
+  images they describe across four profiles; all 1,244 were re-measured from the source rather than
+  copied from anywhere downstream (#1294, PR #1299).
+
+- **The dataset build can no longer quietly undo published work.** Rebuilding the archive used to
+  copy the repository's copy of the catalogue over the published one, with nothing comparing the
+  two first — which would have removed one asset outright and stripped catalogue details from
+  nearly two thousand more. The build now refuses to overwrite a published archive that holds
+  content the repository does not, and the repository's copy has been brought back up to date
+  (#1275, PR #1297).
+- **The fixture cleanup tool runs again.** It had been refusing to delete anything after any test
+  run, because one test attached test-shaped posts to a real contributor and the tool correctly
+  would not guess. The refusal was right and is unchanged — it now names the rows it is refusing
+  over, and the test no longer creates them (#1276, PR #1297).
 
 - **Every menu works from the keyboard.** The shared menu component's default styling made its
   buttons invisible to keyboard focus — on the browse page not one menu could be reached by Tab,
@@ -322,7 +1118,6 @@ where applicable, otherwise note "no-spec-impact."
   an account that follows studios and no individuals saw an empty feed — with the studios it
   follows listed directly above it. It now means both (#1048).
 
-
 - **Search filters actually filter.** Every facet beside a search — tag, file type, owner,
   sensitivity, extension — showed a real count and did nothing when you clicked it. They are
   controls now: tick one and the results narrow, and the number on the bucket is exactly how many
@@ -523,7 +1318,6 @@ where applicable, otherwise note "no-spec-impact."
   built for refining a search was the one screen you couldn't refine one on. It now updates in
   place, keeping focus and scroll position. Searching from anywhere else still takes you to the
   results, as before (#1053).
-
 
 - **The check that proves 3D previews actually work now runs when it matters.** Generating a
   preview for a 3D model is a chain — a headless browser renders the model and saves the picture —
@@ -3271,7 +4065,6 @@ pre-existing access holes in the foundation it was built on.
   carrying the exact commit that changed so a rapid second push cannot
   cause the wrong content to be built, and a rejected credential fails
   loudly rather than skipping silently.
-
 
 - `app/schema.sql` refreshed from a cleanly migrated database. The
   committed copy had drifted in **column order** — Postgres physical

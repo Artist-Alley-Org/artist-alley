@@ -25,7 +25,7 @@
       "tab_assets": "Ressources",
       "tab_posts": "Publications",
       "tab_collections": "Collections",
-      "empty": "Rien ici — aucun élément supprimé de ce type.",
+      "empty": "Rien ici. Aucun élément supprimé de ce type.",
       "deleted_at": "Supprimé",
       "reason": "Raison",
       "restore": "Restaurer",
@@ -66,7 +66,7 @@
     "demo_fill": "Remplir les identifiants de démo"
   },
   "demo": {
-    "banner": "Démo en lecture seule — vos modifications ne seront pas enregistrées."
+    "banner": "Démo en lecture seule. Vos modifications ne seront pas enregistrées."
   },
   "common": {
     "save": "Enregistrer",

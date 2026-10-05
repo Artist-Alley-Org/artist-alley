@@ -575,3 +575,95 @@ func afSeedPost(
 	})
 	return id
 }
+
+// TestAnonymousIdentity_EnrichmentTreatsItAsAnonymous is #1183.
+//
+// Every anonymous assertion above drives a context with NO identity,
+// because that is the shape today's resolver produces. The other shape —
+// a non-nil Identity carrying AuthMethod "anonymous" — is what
+// `IsAnonymous()` exists for, what the read rule already checks, and
+// what `auth.LoadAnonymousIdentity` would have injected had anything
+// ever wired it. Three enrichment passes tested `caller == nil` alone,
+// so on that path they would have classified an anonymous principal as a
+// MEMBER and handed out precisely the display name TestAnonymousFeed_
+// OwnerDisplayNameOptOut proves is withheld: the read rule staying right
+// while the enrichment beside it leaked.
+//
+// The dead function is deleted, which removes the only way to reach
+// that. This is the assertion that makes reintroducing one safe — it
+// fails on the `== nil` form and passes on `isAnonymousCaller`, so the
+// two shapes cannot drift apart again.
+//
+// Same fixture and same controls as the nil-caller test, deliberately:
+// the claim is that the two shapes are INDISTINGUISHABLE to enrichment,
+// and that is only demonstrated by asking them the same question.
+func TestAnonymousIdentity_EnrichmentTreatsItAsAnonymous(t *testing.T) {
+	h := wireWriteHandler(t)
+
+	hiddenRef, hiddenUser := seedAuthor(t, h.Pool, "Hidden Realname", "Hidden Displayname", "", true)
+	shownRef, shownUser := seedAuthor(t, h.Pool, "Shown Realname", "Shown Displayname", "", false)
+	hiddenPost := seedAuthoredPost(t, h.Pool, hiddenRef)
+	shownPost := seedAuthoredPost(t, h.Pool, shownRef)
+
+	// The synthetic principal, built the way the deleted helper built it:
+	// the sentinel ref, the anonymous auth method, no capabilities.
+	anon := &auth.Identity{UserRef: 0, Username: "anonymous", AuthMethod: "anonymous"}
+
+	list := func(author int64) ([]openapi.Post, string) {
+		t.Helper()
+		limit := maxListLimit
+		ref := author
+		resp, err := h.ListPosts(
+			auth.WithIdentity(context.Background(), anon),
+			openapi.ListPostsRequestObject{
+				Params: openapi.ListPostsParams{Limit: &limit, AuthorRef: &ref},
+			},
+		)
+		if err != nil {
+			t.Fatalf("ListPosts(anonymous identity): %v", err)
+		}
+		ok, is := resp.(openapi.ListPosts200JSONResponse)
+		if !is {
+			t.Fatalf("ListPosts(anonymous identity) = %T, want 200", resp)
+		}
+		raw, err := json.Marshal(ok)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return ok.Items, string(raw)
+	}
+
+	hiddenItems, hiddenJSON := list(hiddenRef)
+	byID := afIDs(hiddenItems)
+	if byID[hiddenPost] == nil {
+		t.Fatal("the opted-out author's public post is missing for an anonymous IDENTITY — " +
+			"the opt-out withholds the identity, not the content")
+	}
+	if a := byID[hiddenPost].Author; a != nil {
+		t.Errorf("post.author = %+v for an author who set hide_from_anonymous, when the "+
+			"caller is a non-nil anonymous Identity; want nil. The enrichment is testing "+
+			"`caller == nil` rather than IsAnonymous() and read this principal as a member "+
+			"(#1183)", *a)
+	}
+	for _, leaked := range []string{"Hidden Realname", "Hidden Displayname", hiddenUser} {
+		if strings.Contains(hiddenJSON, leaked) {
+			t.Errorf("the feed body for a non-nil anonymous caller contains %q (ADR 0024)", leaked)
+		}
+	}
+
+	// Controls, so "everything was withheld" cannot pass this.
+	shownItems, shownJSON := list(shownRef)
+	shownByID := afIDs(shownItems)
+	if shownByID[shownPost] == nil || shownByID[shownPost].Author == nil {
+		t.Fatal("an author who did NOT opt out has no author object — the withholding " +
+			"above is unconditional, not the opt-out")
+	}
+	if !strings.Contains(shownJSON, "Shown Displayname") {
+		t.Errorf("the non-opted-out author's display name is missing from the feed body")
+	}
+	if strings.Contains(shownJSON, "Shown Realname") {
+		t.Errorf("the feed body contains an author's `fullname` — the real-name rung is " +
+			"authenticated-only, and an anonymous IDENTITY is on the anonymous rung")
+	}
+	_ = shownUser
+}

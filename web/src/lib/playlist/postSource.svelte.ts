@@ -28,6 +28,16 @@ export interface PostForPlaylist {
   title: string;
   description: string;
   visibility: 'private' | 'followers' | 'public';
+  /** The post is unpublished (#1161, ADR 0091 decision 7). Present on
+   *  every post the API returns; declared optional here only because
+   *  this local mirror of the schema is hand-written and older cached
+   *  payloads may predate the field. */
+  draft?: boolean;
+  /** Whether the post takes new ordinary comments (#1119 sprint 21d).
+   *  Present on every post the API returns; optional here for the same
+   *  reason `draft` is. Absent reads as true, which is what every post
+   *  was before the setting existed. */
+  comments_enabled?: boolean;
   cover_asset_id?: string | null;
   posted_at: string;
   like_count: number;
@@ -52,6 +62,12 @@ export interface PostForPlaylist {
       /** #981 — the ASSET's owner, which is not the post's author.
        *  Absent on a withheld member (the whole `asset` object is). */
       owner_user_ref?: number | null;
+      /** #1243 / ADR 0094 — THIS MEMBER'S OWN declaration, which is not
+       *  the post's derived one below. In a mixed post they disagree by
+       *  design: the post says `generated` because one contributor
+       *  does, and the member beside it says nothing at all. Absent
+       *  means UNDECLARED, never `none`. */
+      ai_provenance?: string | null;
     };
   }>;
   team_id?: string | null;
@@ -178,6 +194,18 @@ export function createPostPlaylistSource(postId: string) {
             // owner, not the post's author. Undefined on a withheld
             // member, which is correct: no owner, no ownership claim.
             owner_user_ref: m.asset?.owner_user_ref ?? null,
+            // #1243 — THE MEMBER'S OWN declaration, read off the member
+            // and never off `post.ai_provenance`. This is the second of
+            // the two hand-written ViewAsset mappers (assetSource's
+            // `toItem` is the other); they share no code, so a field
+            // added to one reaches one route.
+            //
+            // ⛔ Sourcing this from the post would mark every member of
+            // a mixed post as AI, which is a fabricated claim about
+            // whichever maker was never asked — the error ADR 0094
+            // decision 2 exists to prevent, arriving through the UI
+            // instead of through the column.
+            ai_provenance: m.asset?.ai_provenance ?? null,
           },
         }),
       );

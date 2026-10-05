@@ -100,6 +100,123 @@ func WithPostCaps(c PostCaps) Option {
 	return func(p *Predicate) { p.postCaps = c }
 }
 
+// ---------------------------------------------------------------------------
+// Publication — the OTHER question, kept apart from the read rule
+// ---------------------------------------------------------------------------
+//
+// #1161 / ADR 0091 decision 7. A post is a DRAFT until its author
+// publishes it, and a draft appears on no shared surface: not browse,
+// not search, not a collection, not a feed, not the federation outbox,
+// and not its own author's feed either.
+//
+// That is a DIFFERENT question from the read rule below, and the two
+// are rendered separately on purpose:
+//
+//   - "may this caller read this post"  — postReadableExpr. Identity,
+//     tiers, the follow graph, live grants.
+//   - "does this post belong on a shared listing at all" —
+//     postPublishedExpr. Nothing to do with the caller.
+//
+// The second is an orthogonal axis owned by [Predicate.ToSQL], exactly
+// like the soft-delete conjunct beside it, and waivable by exactly one
+// narrow option ([IncludeDrafts]) for the two callers that must see a
+// draft: the single-item gate, so an author can open the thing they are
+// writing, and the author's own drafts listing. Every other splice site
+// gets it without asking, which is the property that matters — a
+// surface added next year is published-only unless somebody
+// deliberately says otherwise.
+//
+// Waiving it does NOT open a draft to strangers. The read rule below
+// carries its own draft conjunct that no option waives, so with
+// [IncludeDrafts] set a draft is still readable by its author and by a
+// posts.admin holder alone.
+//
+// ⚠️ THIS IS THE ONE PLACE A WORKFLOW STATE DECIDES PUBLICATION.
+// ADR 0091's first amendment is sharp about not conflating the two —
+// a workflow state answers "where is this in its production process",
+// published answers "has its author put it in front of people" — and
+// the second amendment then RESOLVES that for posts specifically: the
+// `post` domain has exactly two states, `wip` and `published`, and
+// they ARE draft and published. An ASSET's workflow state is the other
+// thing, and no asset read path may be written this way.
+//
+// It is also why this is a predicate over one named state rather than
+// a read of `workflow_states.visible_by_default`. That flag is
+// workflow CONFIGURATION — an admin's answer to "which states show up
+// in default searches" — and hanging publication off it would make
+// editing a config row publish other people's drafts. Both post states
+// carry visible_by_default = TRUE today, so it does not even encode
+// the distinction; wiring it would have meant changing the data to fit
+// a flag whose only reader would have been this expression.
+
+// PostDraftStateCode + PostPublishedStateCode name the two states of
+// the `post` workflow domain (migration 00001, made reachable by
+// 00059). Exported so callers that must MOVE a post between them —
+// the publish / unpublish handlers — resolve the same two rows this
+// rule reads, rather than a second spelling of them.
+const (
+	PostWorkflowDomain     = "post"
+	PostDraftStateCode     = "wip"
+	PostPublishedStateCode = "published"
+)
+
+// postPublishedExpr renders "this post is published" against
+// `qualifier` (an already-dotted alias, or ""). Binds no placeholders.
+//
+// FAIL-CLOSED, and the direction is load-bearing. It asks whether the
+// state IS `published`, not whether it is NOT `wip`. The two spellings
+// agree on every row whose state is one of the two and disagree on
+// every row whose state is unknown — NULL, or some third state a
+// future domain edit introduces — and the safe answer to "I cannot
+// tell whether this is published" is to withhold it. `state_id`'s FK
+// is ON DELETE SET NULL, so deleting a workflow state row is exactly
+// the event that produces unknown states in bulk: under the other
+// spelling, dropping the `wip` row would publish every draft on the
+// instance at once, silently. Under this one it hides them, which is
+// wrong in the direction somebody notices.
+//
+// Migration 00059 backfilled every pre-existing post to `published`
+// precisely so that fail-closed costs nothing on real data.
+//
+// The state id arrives as a scalar sub-select rather than a bound
+// parameter. `workflow_states` has a UNIQUE (domain, code) index, so
+// it is one index probe hoisted to an InitPlan and evaluated once per
+// statement — while binding it would have meant resolving the UUID in
+// Go, which every splice site here reaches WITHOUT a database handle
+// (the search engine builds predicates inside a per-caller cache key).
+// It also cannot drift: there is no Go-side copy of the id to go
+// stale if an install reseeds its state machine.
+// PostUnpublishedSQL is the complement — "this post is NOT published"
+// — as a bare SQL boolean against `qualifier`. Binds no placeholders.
+//
+// Exported for ONE caller: the drafts listing (`GET /posts?draft=true`),
+// which pairs it with [IncludeDrafts] so the page returns drafts and
+// only drafts. It is here rather than spelled out there so that the
+// listing and the rule name the same state row the same way, and a
+// domain that grew a third state could not have the listing and the
+// gate disagree about which side of the line it falls on.
+//
+// `IS DISTINCT FROM` rather than `<>`, and that is not decoration: a
+// row with no state at all is UNKNOWN under `<>`, so it would be
+// excluded from the published listing (correct — fail-closed) AND from
+// this one, leaving it in nobody's view. It belongs in the author's
+// drafts page, which is where they can see something is wrong with it.
+func PostUnpublishedSQL(qualifier string) string {
+	return fmt.Sprintf(
+		"%sstate_id IS DISTINCT FROM (SELECT id FROM workflow_states"+
+			" WHERE domain = '%s' AND code = '%s')",
+		qualifier, PostWorkflowDomain, PostPublishedStateCode,
+	)
+}
+
+func postPublishedExpr(qualifier string) string {
+	return fmt.Sprintf(
+		"%sstate_id = (SELECT id FROM workflow_states"+
+			" WHERE domain = '%s' AND code = '%s')",
+		qualifier, PostWorkflowDomain, PostPublishedStateCode,
+	)
+}
+
 // postReadableExpr renders the post read rule as a bare SQL boolean
 // expression (no leading " AND ", no outer parens) against `qualifier`
 // — an already-dotted table alias, or "". It binds at most one
@@ -146,7 +263,16 @@ func WithPostCaps(c PostCaps) Option {
 // the other two entity branches.
 func postReadableExpr(qualifier string, argIdx int, caller Caller, caps PostCaps) (expr string, args []any) {
 	if caller.IsAnonymous {
-		return fmt.Sprintf("%svisibility = 'public'", qualifier), nil
+		// A stranger never reads a draft, whatever its tier says. A
+		// `public` draft is a post its author has not put in front of
+		// anyone yet; `public` describes who may read it ONCE
+		// published, and reading the tier as consent to publish would
+		// make the compose form's visibility control double as a
+		// publish button.
+		return fmt.Sprintf(
+			"%s AND %svisibility = 'public'",
+			postPublishedExpr(qualifier), qualifier,
+		), nil
 	}
 	// Rendered as a literal rather than a bound arg: it is a Go bool
 	// turned into a SQL keyword, so there is nothing to inject, and a
@@ -155,16 +281,38 @@ func postReadableExpr(qualifier string, argIdx int, caller Caller, caps PostCaps
 	if caps.SeesAllPrivate {
 		privateOK = "TRUE"
 	}
+	// The DRAFT conjunct, and it is a conjunct rather than another
+	// disjunct beside the tiers for the reason above: an unpublished
+	// post is not readable by whoever its tier would admit, it is
+	// readable by its author and by a moderator. So it NARROWS
+	// whatever the tier disjunction below decides, and no option
+	// waives it — [IncludeDrafts] waives the surface conjunct in
+	// [Predicate.ToSQL], never this one. That separation is what lets
+	// the author's drafts listing exist without the listing becoming
+	// the hole.
+	//
+	// posts.admin is here for the same reason it opens the `private`
+	// tier: it is the instance-moderator claim, and a moderator who
+	// can read every private post but not the draft of a reported one
+	// has a gap nobody chose.
+	draftOK := fmt.Sprintf(
+		"(%s OR %sauthor_user_ref = $%d)",
+		postPublishedExpr(qualifier), qualifier, argIdx,
+	)
+	if caps.SeesAllPrivate {
+		draftOK = "TRUE"
+	}
 	return fmt.Sprintf(
-		"%[1]sauthor_user_ref = $%[2]d"+
+		"%[5]s AND ("+
+			"%[1]sauthor_user_ref = $%[2]d"+
 			" OR %[1]svisibility IN ('public', 'org-only')"+
 			" OR (%[1]svisibility = 'private' AND %[3]s)"+
 			" OR (%[1]svisibility = 'followers' AND EXISTS ("+
 			"SELECT 1 FROM user_follows f"+
 			" WHERE f.follower_user_ref = $%[2]d"+
 			" AND f.followee_user_ref = %[1]sauthor_user_ref))"+
-			" OR %[4]s",
-		qualifier, argIdx, privateOK, PostLiveGrantSQL(qualifier, argIdx),
+			" OR %[4]s)",
+		qualifier, argIdx, privateOK, PostLiveGrantSQL(qualifier, argIdx), draftOK,
 	), []any{caller.UserRef}
 }
 
@@ -256,7 +404,13 @@ func PostReadable(
 	caps PostCaps,
 	postID uuid.UUID,
 ) (bool, error) {
-	pred, err := Filter(ctx, EntityPost, caller, WithPostCaps(caps))
+	// IncludeDrafts, deliberately: this is the SINGLE-ITEM gate, and an
+	// author opening the draft they are writing is the whole point of
+	// the draft state. It waives only the shared-surface conjunct —
+	// postReadableExpr's own draft conjunct still holds a draft to its
+	// author and posts.admin, so this does not make one readable by
+	// anybody a listing would have refused.
+	pred, err := Filter(ctx, EntityPost, caller, WithPostCaps(caps), IncludeDrafts())
 	if err != nil {
 		return false, fmt.Errorf("visibility: post read gate: %w", err)
 	}

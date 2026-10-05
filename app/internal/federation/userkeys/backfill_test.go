@@ -89,7 +89,7 @@ func (s *auditSpy) calledFor(userRef int64) int {
 func TestBackfillMissingKeys_HappyPath_NoKeylessUsers_NoOpAndQuiet(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// Seed a user who DOES have a current key — sweep should
@@ -121,7 +121,7 @@ func TestBackfillMissingKeys_HappyPath_NoKeylessUsers_NoOpAndQuiet(t *testing.T)
 func TestBackfillMissingKeys_ApprovedKeylessUser_MintsAndAudits(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	ref := keylessUserAtState(t, ctx, pool, 1) // approved=1
@@ -164,7 +164,7 @@ func TestBackfillMissingKeys_ApprovedKeylessUser_MintsAndAudits(t *testing.T) {
 func TestBackfillMissingKeys_UnapprovedUser_Skipped(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// Two unapproved users — approved=0 (pending) and approved=2
@@ -224,7 +224,7 @@ func TestBackfillMissingKeys_UnapprovedUser_Skipped(t *testing.T) {
 func TestBackfillMissingKeys_OrphanRetiredKey_NotCountedAsError(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	ref := keylessUserAtState(t, ctx, pool, 1)
@@ -294,7 +294,7 @@ func TestBackfillMissingKeys_OrphanRetiredKey_NotCountedAsError(t *testing.T) {
 func TestBackfillMissingKeys_Idempotent_SecondCallIsNoOp(t *testing.T) {
 	initAtrestOnce(t)
 	pool := openPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	ref := keylessUserAtState(t, ctx, pool, 1)

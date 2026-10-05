@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func openPoolForSensitivity(t *testing.T) *pgxpool.Pool {
@@ -32,7 +33,7 @@ func openPoolForSensitivity(t *testing.T) *pgxpool.Pool {
 	host := envOrSens("AA_DB_HOST", "postgres")
 	port := envOrSens("AA_DB_PORT", "5432")
 	user := envOrSens("AA_DB_USER", "artist_alley")
-	name := envOrSens("AA_DB_NAME", "artist_alley")
+	name := testdb.Name(t)
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
 	ctx := t.Context()
@@ -76,7 +77,7 @@ func insertAssetAtTier(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ti
 
 func TestInboxSensitivityLookup_AssetExists_ReturnsTier(t *testing.T) {
 	pool := openPoolForSensitivity(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	for _, tier := range []string{"public", "team", "restricted", "embargo"} {
@@ -96,7 +97,7 @@ func TestInboxSensitivityLookup_AssetExists_ReturnsTier(t *testing.T) {
 
 func TestInboxSensitivityLookup_AssetMissing_ReturnsNotFound(t *testing.T) {
 	pool := openPoolForSensitivity(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	lookup := inboxSensitivityLookup(pool)
@@ -111,7 +112,7 @@ func TestInboxSensitivityLookup_AssetMissing_ReturnsNotFound(t *testing.T) {
 
 func TestInboxSensitivityLookup_UnknownKind_PassesThrough(t *testing.T) {
 	pool := openPoolForSensitivity(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	lookup := inboxSensitivityLookup(pool)

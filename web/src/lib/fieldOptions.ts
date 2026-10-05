@@ -28,6 +28,12 @@ export interface FieldOption {
   label: string;
   status: OptionStatus;
   replaced_by?: string;
+  /**
+   * Operator-entered extra match keys (ADR 0092 §4). Writing one
+   * stores this term's `value`. Always lowercase — the server
+   * normalises them on write, and the match index keys on that form.
+   */
+  aliases?: string[];
   children?: FieldOption[];
 }
 
@@ -39,6 +45,7 @@ type RawOption =
       label?: unknown;
       status?: unknown;
       replaced_by?: unknown;
+      aliases?: unknown;
       children?: unknown;
     };
 
@@ -60,6 +67,13 @@ function normalizeOne(raw: RawOption): FieldOption | null {
   const out: FieldOption = { value, label, status };
   if (typeof raw.replaced_by === 'string' && raw.replaced_by) {
     out.replaced_by = raw.replaced_by;
+  }
+  if (Array.isArray(raw.aliases)) {
+    const aliases = raw.aliases
+      .filter((a): a is string => typeof a === 'string')
+      .map((a) => a.trim().toLowerCase())
+      .filter(Boolean);
+    if (aliases.length) out.aliases = aliases;
   }
   if (Array.isArray(raw.children)) {
     const kids = normalizeOptions({ values: raw.children });
@@ -89,12 +103,14 @@ export function serializeOptions(opts: FieldOption[]): unknown[] {
       (o.label === '' || o.label === o.value) &&
       o.status === 'active' &&
       !o.replaced_by &&
+      !o.aliases?.length &&
       !o.children?.length;
     if (bare) return o.value;
     const out: Record<string, unknown> = { value: o.value };
     if (o.label && o.label !== o.value) out.label = o.label;
     if (o.status !== 'active') out.status = o.status;
     if (o.replaced_by) out.replaced_by = o.replaced_by;
+    if (o.aliases?.length) out.aliases = o.aliases;
     if (o.children?.length) out.children = serializeOptions(o.children);
     return out;
   });
@@ -194,6 +210,19 @@ export interface TermResolution {
  * as something creatable. The caller refuses it, which is the answer
  * the server gives.
  *
+ * Since ADR 0092 there are two more key kinds, and the PASS ORDER is
+ * the precedence rule — identical to the server's, because a picker
+ * that disagrees with the write path tells the operator a specific
+ * untruth about their own catalogue:
+ *
+ *   1. slugs and labels of live terms — a real term always wins;
+ *   2. aliases — a write-time redirect, which may only fill a key
+ *      nothing real occupies;
+ *   3. merge tombstones — an archived term with `replaced_by` forwards
+ *      to the live term at the end of its chain, so a value naming a
+ *      merged-away term still resolves instead of offering to create it
+ *      again.
+ *
  * First-writer-wins on a duplicate key, matching the server's `add`.
  */
 export function resolveTerm(all: FieldOption[], term: string): TermResolution {
@@ -201,15 +230,46 @@ export function resolveTerm(all: FieldOption[], term: string): TermResolution {
   const flat = flattenOptions(all);
   const matchable = new Map<string, FieldOption>();
   const taken = new Map<string, FieldOption>();
+  const put = (key: string, o: FieldOption) => {
+    if (key && !matchable.has(key)) matchable.set(key, o);
+  };
+
+  // Pass 1 — slugs and labels of live terms. A term that exists always
+  // wins, so nothing added below can shadow one.
   for (const o of flat) {
     const slug = o.value.trim();
     if (!slug) continue;
     const key = slug.toLowerCase();
     if (!taken.has(key)) taken.set(key, { ...o, value: slug });
     if (o.status === 'archived') continue;
-    if (!matchable.has(key)) matchable.set(key, o);
-    const label = o.label.trim().toLowerCase();
-    if (label && !matchable.has(label)) matchable.set(label, o);
+    put(key, o);
+    put(o.label.trim().toLowerCase(), o);
+  }
+  // Pass 2 — aliases.
+  for (const o of flat) {
+    if (!o.value.trim() || o.status === 'archived') continue;
+    for (const a of o.aliases ?? []) put(a, o);
+  }
+  // Pass 3 — merge tombstones. An archived term carrying replaced_by is
+  // a forwarding address, not a retirement: it resolves to the LIVE
+  // term at the end of its chain. Following the chain (rather than
+  // stopping at the immediate successor) is what makes two composed
+  // merges resolve to something a picker actually offers.
+  const liveTarget = (o: FieldOption, depth = 0): FieldOption | undefined => {
+    if (depth >= TOMBSTONE_CHAIN_MAX || !o.replaced_by) return undefined;
+    const next = taken.get(o.replaced_by.trim().toLowerCase());
+    if (!next) return undefined;
+    if (next.status !== 'archived') return next;
+    return liveTarget(next, depth + 1);
+  };
+  for (const o of flat) {
+    const slug = o.value.trim();
+    if (!slug || o.status !== 'archived' || !o.replaced_by) continue;
+    const target = liveTarget(o);
+    if (!target) continue;
+    put(slug.toLowerCase(), target);
+    put(o.label.trim().toLowerCase(), target);
+    for (const a of o.aliases ?? []) put(a, target);
   }
 
   const key = trimmed.toLowerCase();
@@ -218,10 +278,18 @@ export function resolveTerm(all: FieldOption[], term: string): TermResolution {
 
   const minted = slugify(trimmed);
   if (!minted) return { matched: false, slug: '' };
+  // The slugified form goes through the same key space, so "U.K."
+  // reaches `gb` via the alias `uk`. Mirrors resolveOrMint, which
+  // consults matchable before taken for exactly this reason.
+  const byMinted = matchable.get(minted);
+  if (byMinted) return { option: byMinted, matched: true, slug: byMinted.value };
   const clash = taken.get(minted);
   if (clash) return { option: clash, matched: true, slug: clash.value };
   return { matched: false, slug: minted };
 }
+
+/** Mirrors tombstoneChainMax in app/internal/metadata/open_vocabulary.go. */
+const TOMBSTONE_CHAIN_MAX = 8;
 
 /**
  * The column each field type's value lives in. ONE table, so a display

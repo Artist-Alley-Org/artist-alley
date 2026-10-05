@@ -29,10 +29,12 @@
 // The fields are REQUIRED here and nullable rather than optional, which
 // is the whole point: `null` is a real answer ("this asset has no
 // extension"), while a missing key is a caller that forgot. Only the
-// first is expressible now. The matching OpenAPI schemas (Asset,
-// CollectionResource) list them as required-but-nullable for the same
-// reason, so a surface passing an API row through verbatim satisfies
-// this contract for free and only hand-mapped literals have to think.
+// first is expressible now. The matching OpenAPI schemas (Asset, and
+// PostMember's nested asset) list them as required-but-nullable for the
+// same reason, so a surface passing an API row through verbatim
+// satisfies this contract for free and only hand-mapped literals have to
+// think. (`CollectionResource` was the third; it retired with its
+// endpoint in #1236.)
 //
 // If you add a field CardThumb reads to decide presentation, add it
 // here too — that is what keeps the next refactor honest.
@@ -134,6 +136,22 @@ export interface CardAsset {
    *  wrong reading of the constraint; making it look identical and
    *  UNATTRIBUTED is the other wrong reading. */
   origin?: ContentOrigin | null;
+  /** The maker's AI declaration (#1243, ADR 0094).
+   *
+   *  ⚠️ ABSENT/NULL MEANS UNDECLARED — nobody was asked — and it is NOT
+   *  `'none'`. Both draw nothing on a card, so the distinction is
+   *  invisible in pixels and load-bearing everywhere else: see
+   *  $lib/aiProvenance.
+   *
+   *  OPTIONAL, like `owner_user_ref` and the two display hints above it
+   *  rather than like the four presentation fields: a surface that
+   *  hand-maps a narrower row loses the marker on that surface and
+   *  renders a plainer card, never one that claims the wrong thing.
+   *  Making it required would be the stronger contract and the wrong
+   *  one here — the failure it would prevent (a missing icon) is
+   *  strictly less bad than the failure a required-but-defaulted field
+   *  invites, which is a surface filling it in with `'none'`. */
+  ai_provenance?: string | null;
 }
 
 /** The renderable identity a card draws — a face, a name, and somewhere

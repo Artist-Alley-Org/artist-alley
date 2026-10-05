@@ -104,6 +104,182 @@ is the thing that has to be correct, which is what `apply_upgrade.py`
 fixes. `seed/scripts/test_dataset_upgrade.py` fails if the committed
 profiles ever drift back.
 
+**`--check` is the pre-publish gate, and it now covers every pass (#1295).**
+It re-runs the whole upgrade in memory and exits non-zero if anything would
+change, naming only the passes that actually fired. ⚠️ The replacement pass
+was invisible to it until 2026-08-26, because `apply_replacements` returned
+records *processed* — `260/260 records repointed at the HQ pool` on every
+run, upgraded or not — and a number that is never zero cannot be a drift
+signal. It now returns processed **and** modified; the progress line prints
+both (`260/260 … (0 modified)`) and the gate reads the second. That gap is
+how studio-b carried 86 stale `file_size_bytes` past the gate for weeks
+while `file_path` — the only field the older test compared — was correct on
+every one of them.
+
+### ⛔ The publish guard (#1275)
+
+That "the per-site files are OUTPUTS" property has a sharp edge, and it
+drew blood. The per-site `MANIFEST.json` kept being edited by hand, so by
+2026-08-26 the **published** site_a was ahead of the committed profile by
+one whole asset and **12,096 values across 1,947 records** — and the next
+ordinary `populate_archive.py` run would have deleted every one of them
+without printing a word.
+
+Two things now stand in the way:
+
+- **`manifest_guard.py`** compares the profile against `<dest>/MANIFEST.json`
+  and `<dest>/posts.json` **before any write, in `--dry-run` too**, and
+  refuses if the destination holds records or values the profile does not.
+  A missing key, an emptied value and a *different* value are three cases:
+  the first two are losses and refuse; the third is an edit and is allowed,
+  because a profile that cannot correct what it has published is useless.
+  `--allow-regression` overrides it when the removal really is the point.
+  Duplicate ids in the source are refused outright and are **not**
+  overridable — a manifest cannot hold two records under one id, and
+  `aa seed` silently takes whichever it reads last.
+- **`seed/upgrades/manifest-reconcile.site_a.json`** carries the published
+  site's content back into the profile so the guard can ever pass. The pass
+  that applies it (`apply_manifest_reconcile`) **can only add, never
+  replace**, which is what makes it safe to re-run over a later edit.
+
+⛔ **Do not hand-edit a per-site `MANIFEST.json` again.** It is an output.
+Put the change in `seed/upgrades/` and let `apply_upgrade.py` fold it into
+the profile, which is the only side the pipeline reads.
+
+### ⚠️ A byte count is a MEASUREMENT, not content (#1294)
+
+The rule above is about *content* — which records exist and what values
+they carry. `file_size_bytes` on a pool record is a different kind of
+thing: it is the size of a file the pipeline **produces**, so there is
+only ever one right answer and the profile's job is to describe it.
+
+Nothing re-derived those numbers. `newSize` in
+`kenney-hq-replacements.<site>.json` was measured once, by hand, on
+whatever pool existed that day — and a pool file is a *render*, so every
+rasteriser fix invalidated a slice of them silently. #630 and #685 both
+changed what frame a vector is drawn into; #685 alone took
+`vector_backgrounds` from an 8.8%-of-the-artwork crop to the whole
+drawing, roughly tripling its bytes.
+
+Measured 2026-08-26 against a pool rebuilt from the committed manifest:
+**150 of site_a's 260 replacement rows and 472 of site_b's 656** named a
+size the file does not have. The repository was the stale side —
+site_a's published share agreed with the *rebuilt* pool on 776 of 777
+records, and `balance-assets.site_a.json` (emitted after the fixes) had
+been contradicting the replacements docs on **115 pool files** the whole
+time, entirely inside the repo.
+
+Re-measuring is a command, not a procedure:
+
+```bash
+python3 seed/scripts/kenney_hq.py build \
+    --pack "$DATASETS/Kenney Game Assets All-in-1 3.6.0" --out /tmp/kenney-hq
+python3 seed/scripts/kenney_hq.py sizes --pool /tmp/kenney-hq \
+    --replacements seed/upgrades/kenney-hq-replacements.site_a.json \
+    --replacements seed/upgrades/kenney-hq-replacements.site_b.json \
+    --balance      seed/upgrades/balance-assets.site_a.json \
+    --profile      seed/profiles/studio-a.assets.json \
+    --profile      seed/profiles/studio-b.assets.json --write
+python3 seed/scripts/apply_upgrade.py --site site_a \
+    --profile seed/profiles/studio-a.assets.json \
+    --posts   seed/profiles/studio-a.posts.json      # then site_b
+```
+
+⚠️ **The pool is BUILT, not shipped.** There is no `hq` directory on the
+archive share; `--out` has no default and the build takes the CC0 pack
+plus `npm install sharp` in `seed/scripts/`. Without `--write`, `sizes`
+reports and exits non-zero, so it can stand as a gate.
+
+⚠️ **A rebuilt pool is SIZE reproducible, not BYTE reproducible across
+`sharp` versions (#1304).** `kenney_hq.py`'s own header promises "same
+pack + same weights + same `--limit` produces the same pool, byte for
+byte", and on one machine with one `sharp` it does — a rebuild here
+against a pool built the day before came back byte-identical on all
+1,031 files. Across versions it does not, and the difference is not in
+the artwork:
+
+| | site_a's staged pool | rebuilt on `sharp` 0.35.3 |
+|---|---|---|
+| `IHDR`, `IDAT` | identical | identical |
+| file size | identical | identical |
+| `pHYs` | 23622 ppu (600 DPI) | 15118 ppu (384 DPI) |
+
+Measured 2026-08-27: **24** site_a files match on size and differ in
+exactly 8 bytes, every one of them inside the `pHYs` density chunk and
+its CRC. The pixels are the same pixels; libvips wrote a different
+default resolution into the metadata.
+
+So **compare sizes, never whole files.** A rebuild that "differs from
+the share" on bytes alone has not necessarily produced different art,
+and `kenney_hq.py sizes` is the check that answers the question that
+actually matters. ⛔ If a reproducibility test is ever wanted it must
+assert the file size and the `IDAT` chunk, and never the whole file: a
+byte-for-byte assertion would go red on the next `sharp` bump while the
+pool it is guarding is perfect.
+
+⚠️ This does **not** contradict the determinism note under *The corpus
+carries every AI state* below. That one is about `authored_plates.py`,
+which is stdlib only with no `sharp` anywhere in it — a different
+artifact with a stronger guarantee.
+
+⛔ **Two committed documents describing the same pool file must agree**,
+and that is now a test (`TestPoolSizesAgreeAcrossDocuments`) which needs
+neither the pool nor the share. It was red on 115 files before this
+repair.
+
+⛔ **`--balance` and `--profile` are not optional extras (#1303).**
+`balance-assets.site_a.json` carries **517** hq records with a
+`file_size_bytes` each, and until this flag existed no pass could reach
+them: `apply_upgrade.merge_added` appends only records ABSENT from the
+profile, and all 517 ids are already in it. They agreed with the pool by
+the accident of having been emitted after the rasteriser fixes, and a
+rasteriser change would have invalidated them exactly as #1294's 622
+`newSize` values were invalidated, with nothing to say so.
+`--profile` does the same for `newSha256`, which a replacement used to
+leave describing the file the record USED to be (#1302). A run that
+omits either re-measures less than it appears to.
+
+### The corpus carries every AI state (#1290)
+
+`ai_provenance` has four states and the dataset declared **one**.
+`assisted` and `none` existed only as soft-deleted test fixtures, so
+neither had ever been rendered for a human — and `none` is the state a
+wrong rendering damages most, because it must never become a visible
+"no AI" claim.
+
+Re-labelling existing records was not available. Every other asset here is
+a third party's work or one of #1260's 45 Stable Diffusion plates that
+already declare `generated` with their provenance saying so on the same
+row; writing `none` over somebody's photograph is the fabricated
+disclosure ADR 0094 forbids, and re-declaring an SD plate `assisted` would
+contradict its own `acquisition_source` — the #1260 error exactly. So the
+corpus gained **two new in-house plates** instead:
+
+| plate | declares | why that is true of it |
+|---|---|---|
+| `studio-colour-chart.png` | `none` | 24 patches, a 21-step ramp and registration marks, every pixel placed arithmetically. No model anywhere in it. |
+| `reference-mood-board.png` | `assisted` | One #1260 SD plate as its left panel and a palette sampled from that plate's own pixels, with the swatch grid and rules drawn here. Part model, part not — neither `generated` nor `none` would be true. |
+
+⚠️ **The repo carries the recipe, not the bytes**, same as `kenney_hq.py
+build`. Run this once against the dataset source before the next
+`populate_archive.py`:
+
+```bash
+python3 seed/scripts/authored_plates.py build \
+    --generated-source $DATASET_SRC/aurora-generated \
+    --out             $DATASET_SRC/aurora-authored
+```
+
+Deterministic — the same inputs give byte-identical output, so a rebuild
+does not churn `file_size_bytes`. Stdlib only, so a machine without
+`sharp` can still run it.
+
+⛔ `AI_DECLARABLE_SOURCE_PREFIXES` (Python) and
+`AIDeclarableSourcePrefixes` (Go, `app/internal/seed/catalogues.go`) gate
+**every** state, `none` included, and must be widened together — they are
+deliberately separate checks over different files, which also means they
+can drift.
+
 Three rules are encoded in the tooling because each one already caused a
 silent data bug — see the module docstrings for the full story:
 
@@ -328,6 +504,8 @@ Ships in the Phase 1.48 demo sandboxes that anyone can spin up at
 - Polyhaven HDRs (CC0, internet-fetched)
 - Khronos glTF sample models (CC-BY, internet-fetched)
 - LibriVox audiobook samples (public domain, internet-fetched)
+- 45 images generated in-house with Stable Diffusion 3.5 Large (CC0),
+  the only entries in the corpus that declare `ai_provenance` (#1260)
 
 ### Layer B — local-only, never published
 
@@ -373,6 +551,7 @@ transform):
 | `status` | `workflow_states.name` | Maps to 5-state workflow |
 | `confidentiality` | `assets.sensitivity_tier` | Public→public, Internal→team, Restricted→restricted |
 | — | `assets.mature` | Manifest `mature` (bool), a CONTENT RATING and a second axis — never derived from the tier (#1217, ADR 0090). Twelve public-domain classical nudes carry `true`; see ATTRIBUTIONS.md for the list and the reasoning. Posts get theirs from a DB trigger off membership, so `posts.json` says nothing about it |
+| — | `assets.ai_provenance` | Manifest `ai_provenance` (string), the MAKER'S declaration (#1251, ADR 0094). The key's ABSENCE is `NULL` = "nobody was asked", never `none` — writing `none` over a work nobody was asked about would fabricate that maker's disclaimer. 45 in-house generated images declare `generated`; nothing else in the corpus declares anything (#1260, and see ATTRIBUTIONS.md for why the four rows that used to are gone). Posts get `ai_provenance` + `ai_pure` from DB triggers off contributors, so `posts.json` says nothing about it |
 | `license` + `usage_rights` + `attribution` | `assets.metadata.rights` jsonb | |
 | `source` | `assets.metadata.acquisition_source` | Also drives Layer A/B |
 | — | `assets.metadata.fetched_from` | Source PAGE — attribution + licence evidence (#602) |
@@ -513,11 +692,74 @@ before concluding the data is gone.
 Verify without changing anything:
 
 ```bash
-python3 seed/scripts/test_dataset_upgrade.py          # 31 tests, no share needed
+python3 seed/scripts/run_guard_suite.py               # the CI gate: imports + count + run
+python3 seed/scripts/test_dataset_upgrade.py          # the same suite, bare (no share needed)
 python3 seed/scripts/apply_upgrade.py --site site_a \
     --profile seed/profiles/studio-a.assets.json \
     --posts   seed/profiles/studio-a.posts.json --check
 ```
+
+`run_guard_suite.py` is what `.github/workflows/seed-guard.yml` runs on
+every push and every PR (#1300). It is the same suite either way — the
+wrapper adds the three things a bare `unittest.main()` cannot assert:
+that every seed module imports (any one of them failing takes the whole
+suite with it), that the collected count is above a floor, and that the
+number of tests that ran is printed rather than implied. Run the bare
+module when you want `-k` and test selection; run the wrapper when you
+want to know what CI will say.
+
+Post ids are checked the same way. `python3 seed/scripts/migrate_post_ids.py
+--check` asserts every committed post id equals the id its own content
+derives (#1293) — it is a dry run by default and `--write` is the only
+thing that touches a file. `seed/upgrades/post-id-migration.*.json` is
+the old→new mapping the ids moved along, kept so a publish can tell a
+migration from a loss (ADR 0097).
+
+**The publish guard reads that mapping (#1319).** `populate_archive.py`
+locates `seed/upgrades/post-id-migration.<stem>.json` from the `--posts`
+file it is given (`<stem>.posts.json`), checks the document's `profile`
+names that file, validates it one-to-one, and reports a destination id
+the document moved as `migrated` rather than as a deleted record. The
+content carried across a move is still guarded with only the id
+excluded; a document that cannot be validated refuses the run and no
+flag overrides that. No new argument is needed; the usual
+`--posts seed/profiles/studio-a.posts.json --dry-run` is the whole
+invocation.
+
+Verify a published site after the run, read-only, one verifier per
+surface:
+
+```bash
+# the files: counts, every named file at its recorded size, the guard
+# profile-versus-site, the preserved files against a baseline recorded
+# BEFORE staging, ATTRIBUTIONS.md against the repository copy
+python3 seed/scripts/verify_site.py baseline --site "$DATASETS/site_a" \
+    --out /tmp/site_a.baseline.json                   # before publishing
+python3 seed/scripts/verify_site.py check \
+    --profile seed/profiles/studio-a.assets.json \
+    --posts   seed/profiles/studio-a.posts.json \
+    --site    "$DATASETS/site_a" \
+    --expect  site_a.expect.json \
+    --baseline /tmp/site_a.baseline.json              # after publishing
+
+# the database: every profile field value present as the typed row the
+# seeder writes, under set_by='import'; no seed-owned row the profile
+# does not carry; other provenances (computed pixel dimensions, defaults,
+# edits) counted, never failed; posts by id and content; the three drop
+# counters recomputed
+docker compose run --rm --no-deps \
+    -v "$DATASETS/site_a:/seed/site:ro" -v "$PWD/seed:/seed/repo:ro" \
+    app seed-verify --site /seed/site --catalogue /seed/repo/profiles \
+    --migration /seed/repo/upgrades/post-id-migration.studio-a.json \
+    --expect-asset 530cb8f1-1aa4-ab97-87e8-30ad58ac59fb:none:11404 \
+    --expect-asset c4542a8f-c9a1-edfa-f2f4-1fea6ab84d96:assisted:1290128
+```
+
+`verify_site.py` prints every verdict in three classes, profile-derived,
+site-specific (only what `--expect` supplies: exact counts, `once` ids,
+`require_attributions`) and preservation, and a class it cannot check
+says "not compared" rather than passing. `aa seed-verify` exits non-zero
+on any failed invariant after printing them all. Both write nothing.
 
 ## What's not in here yet
 
@@ -526,7 +768,7 @@ These are tracked as follow-ups:
 - **Internet-fetched gap-fillers.** `seed/scripts/fetch_gaps.py` will pull
   Sintel + BBB clips, Project Gutenberg EPUBs, Polyhaven HDRs, NASA
   imagery, Khronos glTF samples, LibriVox audiobook chapter samples.
-  Targets Layer A. Tracked in [Phase 1.22.I-a](https://github.com/mscrnt/artist-alley/issues/98).
+  Targets Layer A. Tracked in [Phase 1.22.I-a](https://github.com/Artist-Alley-Org/artist-alley/issues/98).
 - **`apply.sh` script.** Reads a profile JSON + asset bytes + drives AA's
   API to materialize the seeded instance. Tracked in same phase.
 - **R2 mirror of large assets.** Eventually move the source asset bytes

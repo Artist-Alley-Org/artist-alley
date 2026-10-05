@@ -23,10 +23,15 @@ import (
 // delegable read cap.
 const capAdmin = "system.admin"
 
-// HTTPHandler serves the two admin operations.
+// HTTPHandler serves the two admin operations, and (author.go) the
+// author's own publication-schedule surface, which is gated by the
+// post rather than by capAdmin.
 type HTTPHandler struct {
 	store  *Store
 	logger *slog.Logger
+	// postAuthority is the publication core's schedule-time gate for
+	// the author surface (#1119 21e). nil refuses that surface.
+	postAuthority PostAuthority
 }
 
 // NewHTTPHandler builds the admin handler over a Store.

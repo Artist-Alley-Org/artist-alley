@@ -65,7 +65,41 @@
 # version had was removed. A skipped dispatch and a working dispatch
 # must never look the same.
 #
-# Runs on the self-hosted OSS runner — zero hosted CI minutes.
+# ---------------------------------------------------------------------
+# WHY THE DISPATCH IS GATED (#1014)
+# ---------------------------------------------------------------------
+#
+# #1012 gave a malformed ADR an immediate red X here. It did not close
+# the loop: this workflow fired on the same `docs/adr/**` push, so the
+# site build was dispatched IN PARALLEL with the frontmatter check
+# rather than behind it. A bad ADR still reached the site repo, still
+# failed there minutes later, and still mailed the maintainer from a
+# repo nobody was watching — the red X shortened the diagnosis without
+# preventing the breakage. ADR 0086 broke the site for ~4 hours that way
+# on 2026-08-10.
+#
+# So `dispatch` now `needs: validate`, and `validate` runs the same
+# `scripts/check-adr-frontmatter.sh` that adr-frontmatter-check.yml
+# runs. A job dependency, not a `workflow_run` trigger: this workflow
+# also fires on roadmap.md, docs/install/**, openapi.yaml and
+# schema.sql, and the ADR check does not run on those paths at all — so
+# chaining off its completion would silently stop dispatching for every
+# non-ADR source. The whole ADR corpus validates in well under a second
+# regardless of which path moved, and a corpus that cannot build the
+# site should not dispatch a site build whatever triggered it.
+#
+# adr-frontmatter-check.yml is deliberately KEPT as a standalone gate.
+# It is the thing that tells an author what is wrong, on ADR pushes and
+# on PRs, and #1012 exists because that signal was missing.
+#
+# `validate` runs on ubuntu-latest rather than the self-hosted runner,
+# so this workflow is no longer zero-hosted-minutes: it costs roughly
+# half a minute of hosted time per docs push. That buys a validator with
+# a pinned Python and a guaranteed PyYAML, matching the standalone gate
+# exactly. Running it on the self-hosted runner instead would make the
+# site's rebuild path depend on that box keeping a working pip.
+#
+# The `dispatch` job still runs on the self-hosted OSS runner.
 
 name: Site rebuild trigger
 
@@ -88,8 +122,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The gate. Identical validation to adr-frontmatter-check.yml, run
+  # here so a failure BLOCKS the dispatch below instead of merely
+  # reporting beside it (#1014).
+  validate:
+    name: Validate ADR frontmatter before dispatching
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
+      # Invoked through `bash` rather than as `./script`, same as the
+      # standalone gate: the scripts in this repo are not uniformly mode
+      # 755, and a lost +x bit must not be able to block a site rebuild
+      # for the wrong reason.
+      - name: Run validator
+        run: bash scripts/check-adr-frontmatter.sh
+
   dispatch:
     name: Dispatch oss-docs-changed to the site repo
+    needs: validate
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 5
     steps:

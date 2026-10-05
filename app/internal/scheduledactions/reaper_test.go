@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func saPool(t *testing.T) *pgxpool.Pool {
@@ -42,7 +43,7 @@ func saPool(t *testing.T) *pgxpool.Pool {
 	dsn := "host=" + env("AA_DB_HOST", "postgres") +
 		" port=" + env("AA_DB_PORT", "5432") +
 		" user=" + env("AA_DB_USER", "artist_alley") +
-		" dbname=" + env("AA_DB_NAME", "artist_alley") +
+		" dbname=" + testdb.Name(t) +
 		" sslmode=disable password=" + pwd
 	ctx := t.Context()
 
@@ -86,7 +87,7 @@ func newReaper(t *testing.T, pool *pgxpool.Pool, n Notifier) *ReaperJob {
 // Handle tick without the re-enqueue. Returns (doneCount, failedCount).
 func drain(t *testing.T, h *ReaperJob) (int, int) {
 	t.Helper()
-	exec := &executor{rec: h.Rec, notifier: h.Notifier}
+	exec := h.newExecutor()
 	done, failed := 0, 0
 	for {
 		outcome, claimed, err := h.processOne(context.Background(), exec)

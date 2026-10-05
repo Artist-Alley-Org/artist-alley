@@ -33,6 +33,8 @@
   } from '$lib/fieldOptions';
   import { describeDefault, CONTEXT_KEYS } from '$lib/fieldDefaults';
   import VocabularyCombobox from '$components/VocabularyCombobox.svelte';
+  import AiProvenanceControl from '$components/AiProvenanceControl.svelte';
+  import CompanionRequirementsNote from './CompanionRequirementsNote.svelte';
 
   // What the server will put on this field if the artist leaves it
   // alone. Shown, never pre-filled: pre-filling would send the value
@@ -75,11 +77,12 @@
       input.value = ''; // reset so picking the same file again re-fires
     }
   }
+  // #1408: through addCompanionDrop, so a dropped FOLDER of textures
+  // keeps its relative structure and the suggested path can be the one
+  // the model actually declares instead of a bare filename.
   function onCompanionDrop(e: DragEvent) {
     e.preventDefault();
-    if (e.dataTransfer?.files?.length) {
-      upload.addCompanions(row.id, e.dataTransfer.files);
-    }
+    void upload.addCompanionDrop(row.id, e.dataTransfer);
   }
 
   interface Props {
@@ -246,6 +249,18 @@
       >{t('upload.file_row.field_default_hint', { value: hint })}</span>
     {/if}
   </span>
+  <!--
+    The operator's own note about what belongs in this field (#1173).
+    `field_definition.description` has always been authorable and was
+    never shown to the person filling the box in. It rides inside this
+    snippet rather than beside each control because both branches
+    already render the snippet, so one edit covers every type.
+  -->
+  {#if (f.description ?? '').trim()}
+    <span class="block text-[11px] leading-snug text-fg-muted" data-testid="upload-field-help-{f.code}">
+      {f.description}
+    </span>
+  {/if}
 {/snippet}
 
 <div class="flex gap-3 rounded-lg border border-border bg-surface-elevated p-3">
@@ -320,6 +335,25 @@
         <span class="text-fg-muted">{t('upload.file_row.mature')}</span>
       </label>
     {/if}
+
+    <!-- #1167, ADR 0094 — the maker's AI declaration. Beside the mature
+         label because both are one-decision self-labels the artist
+         makes about their own work, and different from it in two ways
+         that matter: it is never gated by operator policy (it withholds
+         nothing from anybody), and it has no zero value — untouched
+         stores NOTHING, because "undeclared" and "declares no AI" are
+         different statements. -->
+    <AiProvenanceControl
+      value={row.aiProvenance}
+      testid="row"
+      onchange={(v) => (row.aiProvenance = v)}
+    />
+
+    <!-- #754 — what this model still needs, once the server has read
+         it. Renders nothing at all for a format we cannot parse, which
+         is deliberate: "no companions needed" is a claim, and we have
+         no basis for it there. -->
+    <CompanionRequirementsNote requirements={row.requirements} testid="row" />
 
     <!-- Progress bar + size -->
     {#if row.state === 'uploading' || row.state === 'asset-creating' || row.state === 'queued'}
@@ -574,16 +608,19 @@
           </p>
 
           {#each row.companions as c (c.id)}
-            <div class="flex items-center gap-2 rounded bg-surface-elevated px-2 py-1.5">
+            <div class="flex items-center gap-2 rounded bg-surface-elevated px-2 py-1.5" data-testid="upload-companion-row">
               <span class="truncate text-xs text-fg-muted" title={c.file.name}>{c.file.name}</span>
               <input
                 type="text"
                 value={c.path}
+                data-testid="upload-companion-path"
+                aria-label={t('companions.decide_path_aria')}
                 oninput={(e) => upload.setCompanionPath(row.id, c.id, (e.currentTarget as HTMLInputElement).value)}
-                disabled={c.state === 'uploading' || c.state === 'done'}
+                onchange={() => upload.commitCompanionPaths(row.id)}
+                disabled={c.state === 'uploading'}
                 class="ml-auto w-44 rounded border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:opacity-60"
               />
-              <span class="w-14 text-right text-[10px] uppercase tracking-wider"
+              <span class="w-14 text-right text-[10px] uppercase tracking-wider" data-testid="upload-companion-state"
                 class:text-fg-muted={c.state === 'pending'}
                 class:text-accent={c.state === 'uploading'}
                 class:text-success={c.state === 'done'}
@@ -603,6 +640,7 @@
           <button
             type="button"
             onclick={openCompanionPicker}
+            data-testid="upload-add-companion"
             class="text-xs text-accent hover:underline"
           >{t('upload.file_row.add_companion')}</button>
         </div>

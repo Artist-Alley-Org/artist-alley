@@ -88,7 +88,7 @@ func TestRichTextWriteSideStoresSanitisedHTML(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
@@ -140,7 +140,7 @@ func TestRichTextReadSideSanitisesValuesWrittenAroundTheHandler(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
@@ -185,7 +185,7 @@ func TestRichTextCollectionValueIsSanitisedOnBothSides(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanCollectionTestRows(t, pool)
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
@@ -232,7 +232,7 @@ func TestRichTextSanitiserLeavesOtherTextTypesAlone(t *testing.T) {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
 	pool := openPool(t, pwd)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })

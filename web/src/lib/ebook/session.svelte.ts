@@ -14,6 +14,11 @@
 // persisted per-asset) and reading settings (per-tab so a user
 // who likes 22px persists across asset swaps inside one session).
 
+// #1255 — the shared web-storage accessor. This module used to hold a
+// private `readLS`/`writeLS` pair, and four sibling sessions held
+// byte-identical copies of it; one implementation now, imported by name.
+import { readStoredJSON, writeStoredJSON } from '$lib/util/storage';
+
 export interface EbookSpineEntry {
   idx: number;
   label: string;
@@ -121,33 +126,20 @@ const FONT_FAM_KEY   = 'aa.ebook.fontFamily';
 const THEME_KEY      = 'aa.ebook.theme';
 const WIDTH_KEY      = 'aa.ebook.maxWidth';
 
-function readLS<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    if (v == null) return fallback;
-    return JSON.parse(v) as T;
-  } catch {
-    return fallback;
-  }
-}
-function writeLS(key: string, value: unknown): void {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
-}
-
 export function createEbookSession(opts: EbookSessionOpts): EbookSessionInstance {
   const state = $state<EbookSession>({
     spine: [],
     spineLoading: false,
     spineError: null,
-    currentIdx: readLS<number>(POS_KEY(opts.assetId), 0),
+    currentIdx: readStoredJSON<number>(POS_KEY(opts.assetId), 0),
     chapterLoading: false,
     chapterError: null,
-    fontSize: readLS<number>(FONT_KEY, 18),
-    theme: readLS<EbookTheme>(THEME_KEY, 'dark'),
-    fontFamily: readLS<EbookFontFamily>(FONT_FAM_KEY, 'system'),
-    maxWidth: readLS<number>(WIDTH_KEY, 56),
-    scrollByChapter: readLS<Record<number, number>>(SCROLL_KEY(opts.assetId), {}),
-    bookmarks: readLS<EbookBookmark[]>(BOOKMARKS_KEY(opts.assetId), []),
+    fontSize: readStoredJSON<number>(FONT_KEY, 18),
+    theme: readStoredJSON<EbookTheme>(THEME_KEY, 'dark'),
+    fontFamily: readStoredJSON<EbookFontFamily>(FONT_FAM_KEY, 'system'),
+    maxWidth: readStoredJSON<number>(WIDTH_KEY, 56),
+    scrollByChapter: readStoredJSON<Record<number, number>>(SCROLL_KEY(opts.assetId), {}),
+    bookmarks: readStoredJSON<EbookBookmark[]>(BOOKMARKS_KEY(opts.assetId), []),
     searchQuery: '',
     searchResults: [],
     searchBusy: false,
@@ -182,7 +174,7 @@ export function createEbookSession(opts: EbookSessionOpts): EbookSessionInstance
     if (idx < 0 || idx >= state.spine.length) return;
     if (state.currentIdx === idx) return;
     state.currentIdx = idx;
-    writeLS(POS_KEY(opts.assetId), idx);
+    writeStoredJSON(POS_KEY(opts.assetId), idx);
   }
   function goNext() { goTo(state.currentIdx + 1); }
   function goPrev() { goTo(state.currentIdx - 1); }
@@ -195,27 +187,27 @@ export function createEbookSession(opts: EbookSessionOpts): EbookSessionInstance
       createdAt: new Date().toISOString(),
     };
     state.bookmarks = [...state.bookmarks, bm];
-    writeLS(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
+    writeStoredJSON(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
   }
   function removeBookmark(idx: number, createdAt: string) {
     state.bookmarks = state.bookmarks.filter(
       (b) => !(b.idx === idx && b.createdAt === createdAt),
     );
-    writeLS(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
+    writeStoredJSON(BOOKMARKS_KEY(opts.assetId), state.bookmarks);
   }
 
   function setFontSize(px: number) {
     const clamped = Math.max(12, Math.min(28, Math.round(px)));
     state.fontSize = clamped;
-    writeLS(FONT_KEY, clamped);
+    writeStoredJSON(FONT_KEY, clamped);
   }
   function setTheme(t: EbookTheme) {
     state.theme = t;
-    writeLS(THEME_KEY, t);
+    writeStoredJSON(THEME_KEY, t);
   }
   function setFontFamily(f: EbookFontFamily) {
     state.fontFamily = f;
-    writeLS(FONT_FAM_KEY, f);
+    writeStoredJSON(FONT_FAM_KEY, f);
   }
   function setMaxWidth(rem: number) {
     // Clamp generously — 32rem is paperback narrow, 90rem is
@@ -224,7 +216,7 @@ export function createEbookSession(opts: EbookSessionOpts): EbookSessionInstance
     // a single line comfortably.
     const clamped = Math.max(32, Math.min(90, Math.round(rem)));
     state.maxWidth = clamped;
-    writeLS(WIDTH_KEY, clamped);
+    writeStoredJSON(WIDTH_KEY, clamped);
   }
   function setScroll(chapterIdx: number, px: number) {
     if (px <= 0) {
@@ -234,12 +226,12 @@ export function createEbookSession(opts: EbookSessionOpts): EbookSessionInstance
         const next = { ...state.scrollByChapter };
         delete next[chapterIdx];
         state.scrollByChapter = next;
-        writeLS(SCROLL_KEY(opts.assetId), state.scrollByChapter);
+        writeStoredJSON(SCROLL_KEY(opts.assetId), state.scrollByChapter);
       }
       return;
     }
     state.scrollByChapter = { ...state.scrollByChapter, [chapterIdx]: Math.round(px) };
-    writeLS(SCROLL_KEY(opts.assetId), state.scrollByChapter);
+    writeStoredJSON(SCROLL_KEY(opts.assetId), state.scrollByChapter);
   }
 
   async function runSearch(query: string) {
