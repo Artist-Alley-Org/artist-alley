@@ -7,7 +7,7 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
-## [v0.11.0] - 2026-10-05 - Making and describing work
+## [v0.11.0] - 2026-10-04 - Making and describing work
 
 ### Added
 
