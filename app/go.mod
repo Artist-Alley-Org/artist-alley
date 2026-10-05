@@ -6,7 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/config v1.33.6
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.6
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.4
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.0
 	github.com/bodgit/sevenzip v1.6.5
 	github.com/chai2010/webp v1.4.0
 	github.com/dsoprea/go-exif/v3 v3.0.1
@@ -21,7 +21,7 @@ require (
 	github.com/mscrnt/mviewer/go v0.0.0-20260529200211-fe5325066d66
 	github.com/nwaples/rardecode/v2 v2.4.1
 	github.com/oapi-codegen/runtime v1.7.0
-	github.com/pdfcpu/pdfcpu v0.15.0
+	github.com/pdfcpu/pdfcpu v0.16.0
 	github.com/pgvector/pgvector-go v0.4.1
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/qmuntal/gltf v0.28.0
@@ -73,7 +73,7 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
-	github.com/mattn/go-runewidth v0.0.27 // indirect
+	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
