@@ -8,7 +8,7 @@
 
 A self-hosted **art review and archival tool for game studios**. Artist-first UX, reviewer-grade workflow, single-binary deploy.
 
-> **Status:** pre-1.0, active development. Releases are tagged and shipping (latest **v0.10.2**); the feature set is still landing. Not production-ready.
+> **Status:** pre-1.0, active development. Releases are tagged and shipping (latest **v0.11.0**); the feature set is still landing. Not production-ready.
 
 ---
 
