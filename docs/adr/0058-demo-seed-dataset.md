@@ -18,12 +18,14 @@ tags:
   - demo
   - screenshots
 excerpt: >-
-  The demo/seed dataset is split into two tiers. Layer A (site_a) is
-  CC0/CC-BY/public-domain only — safe to redistribute publicly under an
-  aggregate CC-BY-SA 4.0 license — and is the ONLY tier used for anything
-  public: marketing screenshots, the hosted demo, the README, and public
-  CI fixtures. Layer B (site_b) may carry IP-referenced or richer content
-  and is private — dogfood + local testing only, never published.
+  The demo/seed dataset is split into two tiers. Layer A (site_a) holds
+  public-safe sources, each governed by its own source-specific terms, and
+  is the ONLY tier used for anything public: marketing screenshots, the
+  hosted demo, the README, and public CI fixtures. Layer B (site_b) may
+  carry IP-referenced or richer content and is private, for dogfood and
+  local testing only, never published. The current dataset has no single
+  aggregate license; MANIFEST.json and seed/ATTRIBUTIONS.md are the
+  authoritative licensing and attribution record.
 ---
 
 ## Context
@@ -118,3 +120,13 @@ attribution list.
 - ADR 0034 — Capability add-ons (heavy media the dataset exercises)
 - `datasets/artist_alley/site_a/{MANIFEST.json, dataset-metadata.json,
   ATTRIBUTIONS.md}` — the canonical dataset provenance
+
+## Amendment, 2026-10-05: the dataset no longer has one aggregate license
+
+The 2026-07-12 decision concluded that Layer A was CC-BY-SA 4.0 in aggregate. That was correct for the sources Layer A held at the time, where CC-BY-SA was the most restrictive term. Layer A has since gained public sources under other terms, including Pexels content under the Pexels License, which is not a Creative Commons license. The current dataset therefore has no single aggregate license. The dataset attribution list was corrected to this model in #1482; this amendment brings the ADR in line with it, and the frontmatter excerpt was updated in the same change.
+
+- Layer A remains the only public-safe tier, and Layer B remains private. The Layer A and Layer B rules above are unchanged.
+- Public redistribution of Layer A content, or of a screenshot containing it, must honour the terms of every included source.
+- The authoritative licensing and attribution record is the per-asset `license` and `attribution` in `MANIFEST.json`, together with `seed/ATTRIBUTIONS.md`.
+- Public credit lines describe demo content as coming from mixed-license and public-domain sources and link to the attribution list. They do not name a single license.
+- Earlier wording in this ADR that calls the current dataset CC-BY-SA 4.0 in aggregate is superseded by this amendment. That covers the "Aggregate license" section and the credit line under "Attribution obligation".

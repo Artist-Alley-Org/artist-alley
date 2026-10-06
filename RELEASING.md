@@ -76,7 +76,9 @@ pullable tag.
 5. The Release workflow takes over and publishes:
    - Multi-arch Docker images (`linux/amd64,linux/arm64`) to
      `ghcr.io/artist-alley-org/artist-alley` and Docker Hub, with the tag
-     fan-out `:vX.Y.Z / :vX.Y / :vX / :latest`, plus provenance + SBOM
+     fan-out `:X.Y.Z / :X.Y / :X / :latest`, plus provenance + SBOM
+     (metadata-action's semver patterns drop the leading `v`, so Git tag
+     `v0.11.0` publishes Docker tag `:0.11.0`)
    - Sigstore/cosign keyless signatures on every image
    - GitHub Release with auto-generated notes
 
