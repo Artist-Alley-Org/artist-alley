@@ -34,12 +34,15 @@ name: CI
 on:
   push:
     branches: [main, dev]
-    # Skip CI on docs-only changes — no Go / TS / wire-format edit
-    # means nothing CI cares about. Branch protection on dev/main
-    # does NOT list any path-filtered check as required (single-
-    # maintainer + agent-collaborator model per ADR 0046 ops note);
-    # skipped workflows surface as "Skipped" not "Pending", so a
-    # docs-only PR can merge without burning ~12 min of runner time.
+    # Skip CI on docs-only PUSHES: no Go / TS / wire-format edit means
+    # nothing CI cares about, and a push is never a merge gate.
+    #
+    # Pull requests are deliberately NOT path-filtered (#1495). `main`
+    # requires `Integration tests (full compose stack)`, and a workflow
+    # skipped by a path filter leaves its required checks Pending, so a
+    # docs-only PR into main could never merge. Docs-only PRs are
+    # skipped per job instead, by the `docs-only` classifier below: a
+    # job skipped by its `if:` reports Success to the required check.
     #
     # Be aware: **.md excludes ALL markdown including in-tree
     # README files (e.g. app/internal/foo/README.md). Today none
@@ -53,12 +56,7 @@ on:
       - 'LICENSE'
   pull_request:
     branches: [main, dev]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - 'CHANGELOG.md'
-      - '.github/ISSUE_TEMPLATE/**'
-      - 'LICENSE'
+    # No paths-ignore here; see the comment on the push filter (#1495).
   workflow_dispatch:
 
 # Cancel superseded runs on the same SOURCE BRANCH so a force-push
@@ -123,6 +121,106 @@ permissions:
   contents: read
 
 jobs:
+  # ── Is this pull request docs-only? (#1495)
+  #
+  # The three expensive jobs below (frontend-check, codegen-drift, test)
+  # skip themselves when, and only when, this job SUCCEEDS and reports
+  # docs_only=true. Their `if:` uses `!cancelled()` so that a FAILED
+  # classifier makes them run: a plain `needs:` would skip them on
+  # failure, and a skipped required check does not block a merge.
+  #
+  # Fails closed. Anything other than a complete, readable file list in
+  # which every file matches DOCS_ONLY_PATTERNS answers docs_only=false:
+  # push, workflow_dispatch, an empty list, an API error (the job fails),
+  # 3000+ files (the files API's cap), or a pattern this script cannot
+  # translate exactly. A renamed file counts only if its old path
+  # (previous_filename) matches too.
+  #
+  # DOCS_ONLY_PATTERNS must stay identical to `on.push.paths-ignore`.
+  # GitHub `**` becomes a shell `*` (which crosses `/`); those five
+  # patterns use only `**` and literal paths, so the translation is
+  # exact. Any other glob character makes the job refuse to decide.
+  docs-only:
+    name: Docs-only classifier
+    runs-on: [self-hosted, artist-alley]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - name: Does this pull request change only docs?
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          DOCS_ONLY_PATTERNS: |
+            docs/**
+            **.md
+            CHANGELOG.md
+            .github/ISSUE_TEMPLATE/**
+            LICENSE
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "${GITHUB_EVENT_NAME} is not a pull request: run everything."
+            exit 0
+          fi
+
+          globs=()
+          while IFS= read -r p; do
+            [ -n "$p" ] || continue
+            g="${p//\*\*/*}"
+            case "${p//\*\*/}" in
+              *[\*?\[]*)
+                echo "::error title=Docs-only classifier refused::pattern '${p}' cannot be translated exactly."
+                exit 1 ;;
+            esac
+            globs+=("$g")
+          done <<< "${DOCS_ONLY_PATTERNS}"
+          if [ "${#globs[@]}" -eq 0 ]; then
+            echo "::error title=Docs-only classifier refused::DOCS_ONLY_PATTERNS is empty."
+            exit 1
+          fi
+
+          is_docs() {
+            local g
+            for g in "${globs[@]}"; do
+              # Unquoted on purpose: $g is a glob.
+              # shellcheck disable=SC2254
+              case "$1" in $g) return 0 ;; esac
+            done
+            return 1
+          }
+
+          # One line per file: filename<TAB>previous_filename (empty
+          # unless renamed). An API failure exits here, failing the job.
+          listing=$(gh api "/repos/${REPO}/pulls/${PR}/files" --paginate \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv')
+
+          count=0
+          code=0
+          while IFS=$'\t' read -r f prev; do
+            [ -n "$f" ] || continue
+            count=$((count + 1))
+            if ! is_docs "$f" || { [ -n "$prev" ] && ! is_docs "$prev"; }; then
+              code=$((code + 1))
+              echo "  not docs: ${f}${prev:+ (renamed from ${prev})}"
+            fi
+          done <<< "${listing}"
+
+          if [ "$count" -eq 0 ] || [ "$count" -ge 3000 ] || [ "$code" -gt 0 ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Full CI::${count} changed file(s), ${code} outside the docs patterns: run everything."
+          else
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Docs-only PR::All ${count} changed file(s) match the docs patterns, so Integration, frontend-check and codegen-drift skip (reported as Success)."
+          fi
+
   # ── Frontend type-check + production build. Pure Node work; uses
   # the self-hosted [artist-alley] runner to keep GitHub-hosted
   # minutes under the monthly quota (rebalance landed when the org
@@ -132,6 +230,8 @@ jobs:
   # this job spawns its own node toolchain, no compose stack.
   frontend-check:
     name: Frontend type-check + build
+    needs: docs-only
+    if: ${{ !cancelled() && !(needs.docs-only.result == 'success' && needs.docs-only.outputs.docs_only == 'true') }}
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 10
     # All node work runs inside `docker run` against node:24-alpine
@@ -255,11 +355,14 @@ jobs:
   #      assuming this job still covers it.
   codegen-drift:
     name: Codegen drift check
+    needs: docs-only
+    if: ${{ !cancelled() && !(needs.docs-only.result == 'success' && needs.docs-only.outputs.docs_only == 'true') }}
     runs-on: [self-hosted, artist-alley]
     # 20, not the 10 it carried while hosted. The job's own work is
     # ~20 seconds and always has been; the budget is for the wait in
-    # front of it. This file has no `needs:`, so a push to dev now
-    # wants four CI slots plus edge.yml's against a pool that has been
+    # front of it. Its only `needs:` is the docs-only classifier (a few
+    # seconds), so a push to dev still wants four CI slots plus
+    # edge.yml's against a pool that has been
     # measured making Integration queue eight minutes behind the image
     # build. 10 minutes of headroom over a 20-second job was generous
     # on a fresh hosted VM and is tight on a contended pool. Still far
@@ -423,6 +526,8 @@ jobs:
 
   test:
     name: Integration tests (full compose stack)
+    needs: docs-only
+    if: ${{ !cancelled() && !(needs.docs-only.result == 'success' && needs.docs-only.outputs.docs_only == 'true') }}
     # Self-hosted unconditionally — the runner-rebalance landing
     # collapsed the prior pick-runner / fromJSON branching into
     # a single label. Same rationale as frontend-check: keep
