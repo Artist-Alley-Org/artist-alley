@@ -199,7 +199,7 @@ jobs:
 
           # One line per file: filename<TAB>previous_filename (empty
           # unless renamed). An API failure exits here, failing the job.
-          listing=$(gh api "/repos/${REPO}/pulls/${PR}/files" --paginate \
+          listing=$(gh api "/repos/${REPO}/pulls/${PR}/files-FORCED-FAILURE-PROOF" --paginate \
             --jq '.[] | [.filename, (.previous_filename // "")] | @tsv')
 
           count=0
