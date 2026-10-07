@@ -141,10 +141,13 @@ jobs:
           images: |
             ${{ env.GHCR_IMAGE }}
             ${{ steps.dh.outputs.image }}
+          # `value=` feeds the resolved tag to the semver patterns. Without
+          # it they read github.ref, which on a workflow_dispatch run is a
+          # branch, so a dispatched release published no version tag at all.
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{version}},value=${{ needs.release-notes.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release-notes.outputs.tag }}
+            type=semver,pattern={{major}},value=${{ needs.release-notes.outputs.tag }}
             type=raw,value=latest,enable=${{ !contains(needs.release-notes.outputs.tag, '-') }}
           # metadata-action auto-derives `org.opencontainers.image.licenses`
           # from the repo's GitHub-detected licence and emits the SPDX id
