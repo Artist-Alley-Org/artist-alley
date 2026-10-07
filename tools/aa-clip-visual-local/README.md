@@ -1,5 +1,15 @@
 # aa-clip-visual-local
 
+> **Status (2026-10-07): experimental scaffolding, not a supported feature.** This
+> directory holds incomplete implementation scaffolding from earlier development. It is
+> not a supported Artist Alley operator feature or add-on: there is no published image,
+> no Docker Compose profile or service, and no supported way to enable visual search in
+> Artist Alley, so reverse-image search is not available to operators today. Do not treat
+> this sidecar as an available add-on. The rest of this README describes the original
+> design and is kept as development reference, not installation instructions. CLIP image
+> search is roadmap work, planned to arrive with the capability add-on registry
+> ([#54](https://github.com/Artist-Alley-Org/artist-alley/issues/54), currently in the v0.17.0 milestone).
+
 Optional sidecar that serves CLIP visual embeddings for artist-alley's reverse-image
 search endpoint (`POST /search/by-image`). Phase 1.16.B-3-followup — closes #183.
 
@@ -23,42 +33,22 @@ error body.
   support. Not laion-2b or datacomp — those checkpoints have different embedding
   distributions; operators who want them can override via `AA_CLIP_MODEL` and
   `AA_CLIP_CHECKPOINT`.
-- **Fat image with baked checkpoint.** The design downloads the model checkpoint
-  at image build time, not runtime, so a built image needs no network access at
-  boot and air-gapped installs work. Trade-off: the image is large. The image is
-  not published, and the build currently fails (see Install).
+- **Fat image with baked checkpoint.** Model checkpoint downloads at image build
+  time, not runtime. Deploy is one docker pull, no first-boot latency, and
+  air-gapped installs work. Trade-off: image is ~2 GB compressed.
 - **CPU-only default.** Inference takes ~200–500 ms per image on modern CPU;
   ~20–50 ms on GPU. GPU migration is documented below but not automated.
 - **Text encoder is deliberately NOT exposed.** This sidecar embeds images
   only. AA's existing text embedding path (Ollama nomic-embed-text) is
   untouched; the two embedding spaces coexist and are never cosine-compared.
-- **Runs beside AA as its own container.** There is no Compose profile or
-  service for it in the repo.
+- **Sidecar-visible-to-AA via Docker Compose profile `visual-search`** was the
+  intended deployment. That profile was never added to the repository.
 
 ## Install
 
-There is no working install path from this directory today:
-
-- The image is not published by any workflow, so it has to be built here, and
-  the build currently fails. The Dockerfile copies the downloaded model from
-  `~/.cache/clip`, but the `open_clip_torch` version the build now resolves
-  (3.3.0, allowed by `pyproject.toml`'s `>=2.30,<4`) downloads the OpenAI
-  checkpoint through the Hugging Face hub instead, so that directory does not
-  exist and the copy step fails.
-- There is no Docker Compose profile or service for the sidecar.
-
-For reference, what the app side needs once a sidecar is running:
-
-- Visual search is off by default, and there is not yet an admin screen or API
-  to turn it on. The setting is the `search` entry in the `system_config`
-  table: `visual.enabled`, and `visual.sidecar_url`, which defaults to
-  `http://aa-clip-visual-local:8402` (so a container named
-  `aa-clip-visual-local` on the app's Docker network needs no URL change).
-- The app registers the sidecar at boot, so it must be restarted after the
-  setting changes.
-- Once the sidecar is registered, reverse-image search (`POST /search/by-image`)
-  is served by it instead of the 501 stub, and existing images can be embedded
-  from the admin page `/admin/search/visual-backfill`.
+Not supported today; see the status note at the top. There is no published image or
+Docker Compose profile for this sidecar, and Artist Alley has no supported way to enable
+visual search.
 
 ## GPU migration
 
@@ -70,8 +60,9 @@ Swap the base image in the Dockerfile:
 + RUN apt-get update && apt-get install -y python3.12 python3-pip
 ```
 
-Add `--gpus all` to the `docker run` command. The `open_clip_torch` install
-auto-detects CUDA when available; the app code doesn't need to change.
+Add `--gpus all` to the `docker compose` invocation or set `deploy.resources.reservations.devices`
+in `docker-compose.yml`. The `open_clip_torch` install auto-detects CUDA when
+available; the app code doesn't need to change.
 
 ## Configuration (env vars)
 

@@ -352,6 +352,9 @@ the CLIP sidecar, so by-image returns 501/404 → the spec asserts the
 handled path per the audit's Q10). svelte-check 0 errors; i18n guard
 green (49 tests). The reverse-image feature is now end-to-end complete
 (backend 4 PRs + this frontend). Closes #251.
+
+> **Correction (2026-10-07):** the CLIP source and scaffolding exist, but Artist Alley does not currently expose a supported operator-installable CLIP sidecar or a supported way to enable visual search, so reverse-image search is not available to operators; CLIP remains roadmap work, planned with the capability add-on registry (Phase 1.42, #54).
+
 **1.55.X shipped 2026-07-09** — @-mention notifications wired to
 notify (closes §4.5). New `app/internal/social/mention/` package:
 `ParseMentions` extracts `@username` from post title+description +
@@ -838,7 +841,7 @@ current focus:
   itself remains in-flight** (issue #18): the inference + provenance
   scaffolding is there, but the upload-time tag inference call is
   not yet wired. Reverse-image search runs against the 1.14.B CLIP
-  embeddings today. Next AI sub-phases: 1.14.D (bridge consumption
+  embeddings today. *(Correction 2026-10-07: the CLIP source and scaffolding exist, but Artist Alley does not currently expose a supported operator-installable CLIP sidecar or a supported way to enable visual search, so reverse-image search is not available to operators; CLIP remains roadmap work, planned with the capability add-on registry (Phase 1.42, #54).)* Next AI sub-phases: 1.14.D (bridge consumption
   cleanup), 1.14.E-2 (full Creative tools panel + mask UI + four
   remaining ops), 1.14.F (caption persistence).
 
@@ -994,6 +997,7 @@ current focus:
     only; auth = row-level downstream; consolidation with
     `visibility.Filter` tracked at #185). Closes issue #183.
     Follow-ups filed as separate issues (#200–#204 range).
+    *(Correction 2026-10-07: the `visual-search` Compose profile was never added, and the CLIP source and scaffolding exist, but Artist Alley does not currently expose a supported operator-installable CLIP sidecar or a supported way to enable visual search, so reverse-image search is not available to operators; CLIP remains roadmap work, planned with the capability add-on registry (Phase 1.42, #54).)*
   - **1.16.B-3-followup-4** (PR #205, 2026-07-05): Admin visual-
     embedding backfill trigger. Migration 00027 adds
     `search_visual_backfill_run` table with partial UNIQUE INDEX
