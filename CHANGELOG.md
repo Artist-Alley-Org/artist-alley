@@ -21,11 +21,11 @@ where applicable, otherwise note "no-spec-impact."
 
 - **Image metadata and release announcements tell the truth.** The image description no longer
   advertises a commercial license, which is not offered today, and tagged releases now pin that
-  description instead of copying the GitHub repository description. A release started by hand from `main` published only
-  `:latest`, because the version tags were read from the branch rather than the release tag; it now
-  publishes the same version tags as a tag push. The Discord announcement named `:v0.11.0`, a tag
-  that was never published, and now names one the release actually pushed. Images already
-  published, including `:0.11.0`, keep their original labels (#1503, PR #1505).
+  description instead of copying the GitHub repository description. A release started by hand from
+  `main` published only `:latest`, because the version tags were read from the branch rather than
+  the release tag; it now publishes the same version tags as a tag push. The Discord announcement
+  named `:v0.11.0`, a tag that was never published, and now names one the release actually pushed.
+  Images already published, including `:0.11.0`, keep their original labels (#1503, PR #1505).
 
 ### Documentation
 
