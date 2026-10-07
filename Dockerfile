@@ -137,12 +137,15 @@ FROM debian:bookworm-slim AS runtime
 
 # These four are what an image built straight from this tree carries, and
 # what `edge.yml` inherits for any key it does not pass as a `--label`.
-# `release.yml` runs docker/metadata-action, whose `--label` args override
-# a Dockerfile LABEL of the same key — so keep these in sync with the
-# GitHub repo's own name/description, or edge and tagged images disagree
-# about what they are (#1091).
+# Tagged releases are labelled by docker/metadata-action in `release.yml`,
+# whose `--label` args override a Dockerfile LABEL of the same key. It pins
+# `description` and `licenses` explicitly, so the description below must
+# stay byte-identical to the value pinned there, or edge and tagged images
+# disagree about what they are (#1091). The GitHub repo description is a
+# separate public setting and no longer feeds the tagged-image description;
+# `title` still comes from the repo name, which matches the value here.
 LABEL org.opencontainers.image.title="artist-alley"
-LABEL org.opencontainers.image.description="Self-hosted art review and archive for game studios — artist-first, AGPL-3.0 (commercial license available), Go + Postgres + SvelteKit."
+LABEL org.opencontainers.image.description="Self-hosted art review and archive for game studios - artist-first, AGPL-3.0, Go + Postgres + SvelteKit."
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 LABEL org.opencontainers.image.source="https://github.com/Artist-Alley-Org/artist-alley"
 
