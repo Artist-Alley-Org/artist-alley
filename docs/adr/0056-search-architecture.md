@@ -24,6 +24,19 @@ excerpt: >-
   Locks the architecture of the 1.16.B search arc: unified /search endpoint over Postgres tsvector with field weighting, DSL parser with strict whitelist, cross-package visibility.Filter, pgvector hybrid ranking, LISTEN/NOTIFY cache invalidation, saved-searches with delta detection, and admin reindex + observability surface. Ships end-to-end via PRs #174 → #182.
 ---
 
+> **Status note (2026-10-07):** reverse-image (CLIP visual) search is not a
+> shipped or supported capability. PR #199 and its follow-ups (#205, #206, and the
+> 1.55.W frontend dropzone) added scaffolding: the repository contains the sidecar
+> source (`tools/aa-clip-visual-local/`) and the app-side plumbing
+> (`POST /search/by-image`, the visual-embedding jobs and the `clip_local` provider).
+> There is no supported published sidecar image, no supported Docker Compose service
+> or profile, and no supported operator path to enable visual search, so the
+> capability is not available to operators. CLIP support remains roadmap work,
+> planned with the capability add-on registry (Phase 1.42,
+> [#54](https://github.com/Artist-Alley-Org/artist-alley/issues/54), currently in the
+> v0.17.0 milestone). The "Activated 2026-07-05 via PR #199" and "SHIPPED PR #199"
+> wording below records what was merged at the time, not a supported feature.
+
 ## Status (updated 2026-07-06)
 
 **Accepted.** Search arc 1.16.B-1 through 1.16.B-5 shipped end-to-end via PRs #174, #176, #178, #180, #182 (dev head `b393eff2`). Issue #168 closed. Followups then extended the arc: reverse-image search coverage (1.16.B-3-followup via PR #199 + 1.16.B-3-followup-4 via PR #205 + 1.16.B-3-followup-2 via PR #206) and the search feedback loop (1.16.B-5-followup via PR #208 on 2026-07-06, closing #184). **Arc fully closed — all 5 sub-phases plus 3 followups shipped.** This ADR captures the load-bearing architectural decisions the arc locked so future arcs (saved-search team-sharing, cross-instance search, ranking-engine swap per ADR 0055, learned-ranking layer consuming feedback signal) build against a documented foundation instead of reverse-engineering the code.

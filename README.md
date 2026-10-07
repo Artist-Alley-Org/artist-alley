@@ -22,7 +22,7 @@ Artist Alley is built around three pillars:
 2. **Review mode.** Async review works today — threaded comments on posts and assets, and annotations that respect who can see the work. The rest of the arc is what the next release (v0.12.0) builds: a frame-accurate player, frame-scoped annotation, and live presenter sessions over SSE.
 3. **Three-click rule.** Any common action reachable in three clicks or fewer.
 
-Supporting all three: Artist Alley implements [**ArchivePub**](docs/protocol/archivepub.md), an open federation protocol built on the ActivityPub data model with DAM-shaped extensions for asset sharing, workflow state, and brand workspaces. Studios share work with partners without paying SaaS rent; the protocol is open to any DAM that wants to implement it.
+Supporting all three: [**ArchivePub**](docs/protocol/archivepub.md) is an open federation protocol built on the ActivityPub data model, with DAM-shaped vocabulary for asset sharing, workflow state, and brand kits. Artist Alley implements its studio-to-studio connection today: two instances pair over signed, encrypted connections, and likes and comments cross between them. Sharing work across studios, and the brand workspace, are planned. The protocol is open to any DAM that wants to implement it.
 
 ---
 
@@ -77,7 +77,7 @@ The target shape is intentionally small:
 
 Three production containers: `nginx`, `app`, `postgres`. No microservices, no message bus, no sidecars.
 
-Storage is pluggable — filesystem by default, S3-compatible optional. Heavier capabilities (semantic image embeddings, audio transcription, document OCR, 3D-render thumbnails, local image-generation runtimes) ship as out-of-band **capability add-ons** that operators install separately — never baked into the binary. The plugin model for third-party extensions is WASM-based, deferred until external authors arrive.
+Storage is pluggable: filesystem by default, S3-compatible optional. AI features are optional integrations, off by default, that call model servers or AI provider APIs the operator runs or configures: text embeddings and transcription (a model server or provider of the operator's choice), and AI image editing (through a ComfyUI bridge). Nothing is bundled or installed for the operator, and the integrations are experimental: none has yet been verified against a live provider endpoint ([#787](https://github.com/Artist-Alley-Org/artist-alley/issues/787)). Image similarity (reverse-image) search is not available today: CLIP support is roadmap work, planned with the capability add-on registry, which is itself planned, not shipped. 3D preview thumbnails render inside the main image and need nothing extra. The plugin model for third-party extensions is WASM-based, deferred until external authors arrive.
 
 ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decisions. Start with [ADR 0006](docs/adr/0006-go-as-target-backend.md) (architecture), [ADR 0008](docs/adr/0008-storage-architecture.md) (storage), [ADR 0017](docs/adr/0017-monetization-and-licensing.md) (licensing + enterprise gates), [ADR 0034](docs/adr/0034-capability-add-ons.md) (add-on layer), [ADR 0038](docs/adr/0038-premium-add-on-layer.md) (commercial model), and [ADR 0043](docs/adr/0043-federation-walled-garden-protocol.md) (federation — the ArchivePub reference spec lives at [`docs/protocol/archivepub.md`](docs/protocol/archivepub.md)).
 
@@ -93,8 +93,8 @@ ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decis
 | Migrations | [goose](https://github.com/pressly/goose) |
 | Storage | filesystem (default), S3-compatible (optional) |
 | Search | Postgres `tsvector` (text), pgvector (semantic) |
-| AI add-ons | local embedding / transcription / OCR runtimes, cloud AI-provider bridges — all opt-in |
-| License | AGPL-3.0-only (dual-licensed — commercial license available, see [LICENSING.md](LICENSING.md)) |
+| AI integrations | optional and off by default; connect to model servers or AI provider APIs the operator supplies (embeddings, transcription, image editing); experimental. Image similarity search is planned, not available |
+| License | AGPL-3.0-only; commercial licensing is planned, not currently offered (see [LICENSING.md](LICENSING.md)) |
 
 ---
 
@@ -167,4 +167,4 @@ Architectural changes need an ADR per the convention in [ADR 0035](docs/adr/0035
 
 ## License
 
-Artist Alley is **dual-licensed**: **AGPL-3.0-only** for open-source use (see [LICENSE](LICENSE)) **or** a separate **commercial license** for use without the AGPL copyleft obligations. See [LICENSING.md](LICENSING.md). This is the license direction set in [ADR 0016](docs/adr/0016-license-direction.md); the monetization model is [ADR 0017](docs/adr/0017-monetization-and-licensing.md); premium add-ons under a separate EULA per [ADR 0038](docs/adr/0038-premium-add-on-layer.md).
+Artist Alley is licensed **AGPL-3.0-only** (see [LICENSE](LICENSE)) and is free to self-host. Commercial licensing and paid tiers are planned but are not currently offered; see [LICENSING.md](LICENSING.md). The planned license direction is set in [ADR 0016](docs/adr/0016-license-direction.md), the planned monetization model in [ADR 0017](docs/adr/0017-monetization-and-licensing.md), and the planned premium add-ons in [ADR 0038](docs/adr/0038-premium-add-on-layer.md).
