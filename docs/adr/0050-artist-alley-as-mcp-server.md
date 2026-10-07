@@ -21,6 +21,15 @@ excerpt: >-
   Expose the instance's asset catalogue via the Model Context Protocol so AI coding agents (Claude Code, Cursor, Codex CLI, etc.) and creative agents can query and reason over a studio's archive the same way they query a codebase.
 ---
 
+> **Status note (2026-10-07):** this ADR's CLIP references (the "CLIP embeddings +
+> similarity search" listed in Context, precondition 2, and the CLIP-embedding
+> description of `asset.find_similar` and `mcp.assets.similarity`) describe planned or
+> incomplete infrastructure, not a shipped capability. Artist Alley does not currently
+> ship or support a CLIP sidecar, and CLIP visual search is not available to operators.
+> Future CLIP availability is roadmap work (Phase 1.42,
+> [#54](https://github.com/Artist-Alley-Org/artist-alley/issues/54), currently in the
+> v0.17.0 milestone). The MCP decisions below are unchanged.
+
 ## Context
 
 The Model Context Protocol (MCP) is an emerging open standard for
