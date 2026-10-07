@@ -7,6 +7,26 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Fixed
+
+- **The License page describes community mode as it is.** Without a license file, the admin
+  License page told operators they had the full feature set, capped at 15 seats and 20,000
+  assets, and could drop in a paid license to upgrade. None of that matched the app: community
+  mode applies no seat or asset cap, and the license-gated features listed on the same page (LDAP
+  and SAML sign-in, multi-tenant deployments) stay unavailable without a license that includes
+  them. The page now says exactly that, and a test holds the sentence to what community mode
+  actually does (#1502, PR #1504).
+
+### Internal
+
+- **Image metadata and release announcements tell the truth.** The image description no longer
+  advertises a commercial license, which is not offered today, and tagged releases now pin that
+  description instead of copying the GitHub repository description. A release started by hand from
+  `main` published only `:latest`, because the version tags were read from the branch rather than
+  the release tag; it now publishes the same version tags as a tag push. The Discord announcement
+  named `:v0.11.0`, a tag that was never published, and now names one the release actually pushed.
+  Images already published, including `:0.11.0`, keep their original labels (#1503, PR #1505).
+
 ### Documentation
 
 - **Changelog corrections (2026-10-07).** Entries filed under the wrong release now sit under the
