@@ -142,7 +142,7 @@ FROM debian:bookworm-slim AS runtime
 # GitHub repo's own name/description, or edge and tagged images disagree
 # about what they are (#1091).
 LABEL org.opencontainers.image.title="artist-alley"
-LABEL org.opencontainers.image.description="Self-hosted art review and archive for game studios — artist-first, AGPL-3.0 (commercial license available), Go + Postgres + SvelteKit."
+LABEL org.opencontainers.image.description="Self-hosted art review and archive for game studios - artist-first, AGPL-3.0, Go + Postgres + SvelteKit."
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 LABEL org.opencontainers.image.source="https://github.com/Artist-Alley-Org/artist-alley"
 

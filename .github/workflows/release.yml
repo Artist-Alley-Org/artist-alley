@@ -160,11 +160,17 @@ jobs:
           # LABEL of the same key. That override is exactly why the wrong
           # BSD-3-Clause LABEL never reached a TAGGED image — only the edge
           # ones, which build without metadata-action.
+          #
+          # The description is pinned for the same reason: left alone,
+          # metadata-action copies the GitHub repo description, a setting
+          # that can drift from the Dockerfile LABEL edge images carry.
+          # Keep the two values identical.
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.release-notes.outputs.tag }}
             org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.description=Self-hosted art review and archive for game studios - artist-first, AGPL-3.0, Go + Postgres + SvelteKit.
 
       - name: Build + push multi-arch image
         id: build
@@ -224,17 +230,21 @@ jobs:
         if: success()
         env:
           TAG: ${{ needs.release-notes.outputs.tag }}
+          # The pull command names metadata-action's version, not the git
+          # tag: the semver patterns drop the leading `v`, so `:v0.11.0`
+          # was never published while `:0.11.0` was.
+          VERSION: ${{ steps.meta.outputs.version }}
           REPO: ${{ github.repository }}
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_RELEASES }}
         # Best-effort: a missing webhook or a Discord outage must never
         # fail a release that has already published images.
         run: |
           [ -n "$WEBHOOK" ] || { echo "DISCORD_WEBHOOK_RELEASES not set; skipping"; exit 0; }
-          payload=$(jq -n --arg tag "$TAG" --arg repo "$REPO" '{
+          payload=$(jq -n --arg tag "$TAG" --arg version "$VERSION" --arg repo "$REPO" '{
             embeds: [{
               title: ("Artist Alley " + $tag + " released"),
               url: ("https://github.com/" + $repo + "/releases/tag/" + $tag),
-              description: ("Multi-arch images (amd64/arm64) are on GHCR and Docker Hub, signed via cosign.\n`docker pull ghcr.io/artist-alley-org/artist-alley:" + $tag + "`"),
+              description: ("Multi-arch images (amd64/arm64) are on GHCR and Docker Hub, signed via cosign.\n`docker pull ghcr.io/artist-alley-org/artist-alley:" + $version + "`"),
               color: 15102720
             }]
           }')
