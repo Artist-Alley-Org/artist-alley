@@ -39,6 +39,14 @@ excerpt: >-
   for self-hosters; the tier system stays orthogonal; no feature is
   ever clawed back into a paywall.
 ---
+
+> **Status note (2026-10-07):** Premium add-ons are planned, not shipped. As of
+> v0.11.0 the capability add-on registry this ADR builds on (ADR 0034) has not
+> been built ([#54](https://github.com/Artist-Alley-Org/artist-alley/issues/54), planned for v0.17.0), and no premium add-on, add-on EULA,
+> customer portal or billing exists. The Context's statements that the add-on
+> system and the license infrastructure "already exist" describe the intended
+> foundation, not shipped infrastructure. Monetization is planned for v0.18.0.
+
 ## Context
 
 [ADR 0016](/adr/0016-license-direction/) committed Artist Alley to an

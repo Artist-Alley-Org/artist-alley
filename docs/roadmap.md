@@ -53,23 +53,23 @@ Full user-facing notes live in [`CHANGELOG.md`](../CHANGELOG.md). This table is 
 | Version | Date | Headline |
 |---|---|---|
 | **v0.11.0** | 2026-10-05 | **Making and describing work** - drafts, scheduled publishing and a full post editor; required, conditional and grouped fields with previewed bulk metadata edits; file-kind search and advanced shortcuts; 3D uploads that keep their textures; AI-provenance declarations. |
-| **v0.10.2** | 2026-08-18 | Seed coverage for mature content, and a cover editor that uses its room. The mature-content controls shipped in v0.10.0 but **nothing in the sample library was ever marked**, so the whole system was invisible on a fresh install — twelve public-domain classical works are now labelled, carried end-to-end by the seeder, and `asset.mature=true` is a required CI coverage dimension so the fixture cannot silently vanish (#1217, Kaggle republished). Plus the cover editor's page 2 spends the dialog instead of reserving it (#1218) |
-| **v0.10.1** | 2026-08-17 | **The listening release** — thirty issues, every one found by using the app. Search waits for Enter and never suggests a dead end (#1155/#1156), Advanced Search speaks plainly and scales to real vocabularies (#1157/#1191), endless scrolling stays ahead of the reader after its trigger was found watching the wrong scroll container (#1159), grid tiles stop stretching the smallest rendition (#1169), the type filter sees inside posts (#1190), **public work became genuinely public** — the Public option had always been server-refused, and anonymous browsing now works end-to-end with every privacy rule verified on that path (#1176/#1181), collections hold posts only (#1185), the collection cover editor gained crop, zoom and separate card/strip covers (#1207/#1212), and every menu became keyboard-reachable including sign-out (#1109) |
+| **v0.10.2** | 2026-08-19 | Seed coverage for mature content, and a cover editor that uses its room. The mature-content controls shipped in v0.10.0 but **nothing in the sample library was ever marked**, so the whole system was invisible on a fresh install; twelve public-domain classical works are now labelled, carried end-to-end by the seeder, and `asset.mature=true` is a required CI coverage dimension so the fixture cannot silently vanish (#1217, Kaggle republished). Plus the cover editor's page 2 spends the dialog instead of reserving it (#1218) |
+| **v0.10.1** | 2026-08-18 | **The listening release**: thirty issues, every one found by using the app. Search waits for Enter and never suggests a dead end (#1155/#1156), Advanced Search speaks plainly and scales to real vocabularies (#1157/#1191), endless scrolling stays ahead of the reader after its trigger was found watching the wrong scroll container (#1159), grid tiles stop stretching the smallest rendition (#1169), the type filter sees inside posts (#1190), **public work became genuinely public**: the Public option had always been server-refused, and anonymous browsing now works end-to-end with every privacy rule verified on that path (#1176/#1181), collections hold posts only (#1185), the collection cover editor gained crop, zoom and separate card/strip covers (#1207/#1212), and every menu became keyboard-reachable including sign-out (#1109) |
 | **v0.10.0** | 2026-08-16 | **The browse experience release** — the masonry wall rebuilt on explicit placement, every view given its own identity (#1047), mature content as a second axis orthogonal to clearance (ADR 0090), teams and tags as ways to read the feed, featured collections and operator promo strips, desktop-style bulk selection, and the search-withholding family closed: a work you cannot see stops answering through its title, suggestions, similarity, counts and covers alike |
-| **v0.9.1** | 2026-08-11 | Security patch. `js-yaml` 4.3.0 → 4.3.1 in both lockfiles (#1038), closing two open high-severity advisories — quadratic CPU consumption resolving `!!omap`. Neither was covered by an open Dependabot PR: `js-yaml` is transitive via `cosmiconfig` and the patch was already inside the declared range, so this was a **stale lockfile resolution**, the same shape as `nanoid` in #1001 — the second time that shape has surfaced, and the reason "the remaining alerts will clear at the tag" is no longer an acceptable pre-flight answer. Plus the self-reported version bump (#1041) |
+| **v0.9.1** | 2026-08-12 | Security patch. `js-yaml` 4.3.0 → 4.3.1 in both lockfiles (#1038), closing two open high-severity advisories: quadratic CPU consumption resolving `!!omap`. Neither was covered by an open Dependabot PR: `js-yaml` is transitive via `cosmiconfig` and the patch was already inside the declared range, so this was a **stale lockfile resolution**, the same shape as `nanoid` in #1001, the second time that shape has surfaced, and the reason "the remaining alerts will clear at the tag" is no longer an acceptable pre-flight answer. Plus the self-reported version bump (#1041) |
 | **v0.9.0** | 2026-08-11 | User-facing surfaces, and the permission spine underneath them. Authorization became **one rule per plane**: a mutation capability confers the field plane but never the picture or the bytes (#939), publication is delegable one verb per transition (#938), team assignment runs through a single membership-gated rule (#954/#953), and a capability nobody can hold now fails CI (#958/#961). `UpdateAsset`/`DeleteAsset` had **no ownership gate at all** — closing that (#930) delivered team-scoped content management as a side effect. Deletion became **reversible and visible**: every account has a trash page with its recovery window (#937), all three delete affordances are live behind one confirm dialog with Undo (#981), and a restoration appeal is decided only by the deleter or a super-admin (#931). The surfaces that were half-built got finished — asset edit page (#549), a real social feed card with its author (#557), saving someone else's post to your collection (#882), teams as a browsable directory with channels (#684/#577), a page per field (#854), operator-chosen browse layouts (#709), and the view bar that comes back when you reach for it (#1020). Plus the OOM arc closed with measurement rather than guesswork (#888/#887/#890) and the account activity log that has no actor field by construction (#600) |
 | **v0.8.0** | 2026-08-03 | Operator configuration — the admin config spine (epic #519): controlled vocabularies are editable (#328), a field can be a hierarchy with a nested-term tree editor (#779, #825), keywords grow by typing and from files (open vocabulary, #830/#831), rich-text fields render as formatted text (#816), any interface wording is rewritable without forking (site text, #794, ADR 0081 §1) as are all transactional emails (#795, ADR 0081 §2), and `fields.admin` is now a grantable capability (#804); internal release numbers no longer surface in the UI (#801); re-seeding an instance serves fresh data without a restart (#845); plus SSO credential read-hardening (#718) and a long tail of field-type, preview, and seed-fidelity fixes |
 | **v0.7.0** | 2026-07-28 | Browse correctness, visibility security, and a real seed catalogue — five visibility leaks closed under one root cause (private posts readable by any signed-in user #660, ungated collections #661, anonymous `?tag=` exposing drafts #657, authenticated search 500ing #650, session IPs on the wrong capability #573; epic #665); Blender unpackaged, image 3.64GB → 1.82GB (#500, ADR 0069 amended); cards render correctly end to end (aspect ratios, append-stable masonry, blur-up for every asset type, honest `sizes`, designed no-preview tile); seed catalogue 1,007 → 1,946 assets with a 60-asset floor across 11 studios (#572, epic #562) |
 | **v0.6.0** | 2026-07-23 | Public read surface + demo hardening — public user-profile pages (#478), three.js 3D-preview migration (multi-file glTF fixed, arm64 3D previews) (#496 steps 1–2, #486), shared browse view controls (#511), CI-reliability epic (#485); fixes a federation-path query bug caught by the nightly (#538) |
 | **v0.5.2** | 2026-07-21 | `content.read.all` capability (#474) — a content-plane-only read cap so a read-only viewer (the public demo) sees `team`/`restricted` content without exposing admin surfaces; fixes the demo's blank "Preview unavailable" tiles |
 | **v0.5.1** | 2026-07-21 | Shareable asset pages (`/assets/[id]`, fixing dead-end collection clicks) + 3D previews restored to published images (Blender was missing from the release build); also promoted the accumulated foundation work — scheduled-action engine (ADR 0020), audit retention/export (ADR 0032), and a visibility-consolidation batch |
-| **v0.5.0** | 2026-07-20 | Public mode — anonymous browsing behind an operator toggle (off by default); single visibility enforcement point (ADR 0063); sensitivity gates content not rows (ADR 0064); featured rail on the placement model (ADR 0065); audit-IP PII gating |
+| **v0.5.0** | 2026-07-21 | Public mode: anonymous browsing behind an operator toggle (off by default); single visibility enforcement point (ADR 0063); sensitivity gates content not rows (ADR 0064); featured rail on the placement model (ADR 0065); audit-IP PII gating |
 | **v0.4.0** | 2026-07-18 | Operator visibility — jobs admin (queue / workers / failed / concurrency), storage usage + variant inventory, and integrity sweeps (orphan scan + checksum verify) as batched job kinds |
-| **v0.3.1** | 2026-07-17 | Admin UI for read-only capability holders; repo-wide `gofmt` gate; `make release` |
+| **v0.3.1** | 2026-07-18 | Admin UI for read-only capability holders; repo-wide `gofmt` gate; `make release` |
 | **v0.3.0** | 2026-07-17 | Media derivatives on seed/upload; read-only admin via `*.read` caps; responsive + WCAG-2.2-AA surface (390px → 4k) |
 | **v0.2.0** | 2026-07-16 | Admin tile unlock (Tier 1–3); public read-only demo; native `aa seed`; CI across three runners |
 | **v0.1.1** | 2026-07-13 | Worker-pool claim fix restoring media processing; dependency cleanup |
-| **v0.1.0** | 2026-07-11 | First public tag — AGPL-3.0-only + commercial dual licensing, org move, single baseline migration (ADR 0057), Docker-only distribution |
+| **v0.1.0** | 2026-07-12 | First public tag: AGPL-3.0-only + commercial dual licensing, org move, single baseline migration (ADR 0057), Docker-only distribution. *(Note 2026-10-07: commercial dual licensing was the stated direction; commercial licensing and paid tiers are planned but are not currently offered.)* |
 
 > Pre-1.0 means schemas can still break across minor versions.
 
@@ -161,7 +161,7 @@ Full user-facing notes live in [`CHANGELOG.md`](../CHANGELOG.md). This table is 
   per-peer POST + signing + exponential backoff; recipient resolver
   against `federation_shares`; admin queue UI with re-queue +
   cascade-cancel + audit. Sub-1s p99 end-to-end against production
-  defaults. First federated DAM, open-source or commercial. See
+  defaults. See
   ADR 0043. **Encrypted federation arc 1.22.I-a through 1.22.I-i
   COMPLETE + dogfood-validated end-to-end 2026-06-15** via
   ui-nightly 27558910639: all 8 conformance vectors (scenarios
@@ -201,7 +201,7 @@ first-ever tagged release. Seventeen sub-phases, 2026-07-07 → 2026-07-11.
 | **1.55.X** | 07-09 | @-mention notifications wired to notify |
 | **1.55.Y** | 07-10 | Email digest preferences + one-click unsubscribe |
 | **1.55.Z** | 07-11 | Removed `site/` from the OSS repo, rewired CI (site split) |
-| **1.55.AA** | 07-11 | Executed the AGPL + commercial relicense |
+| **1.55.AA** | 07-11 | Executed the AGPL + commercial relicense (only the AGPL half was executed; see the 2026-10-07 note under 1.55.AA below) |
 
 **Full phase-close log** — PR numbers, squash SHAs, gate checklists, audit findings:
 
@@ -380,6 +380,13 @@ DB-backed resolve (known/unknown/federated/cache-hit), service fire,
 and handler-level end-to-end (comment mention lands a notification row
 with target=post + actor threaded; plain comment fires nothing;
 self-mention doesn't notify self). Closes #253.
+
+> **Note (2026-10-07):** the 1.55.AA entry below records the licensing
+> direction at the time. Only the AGPL-3.0-only relicense was executed.
+> Commercial licensing and paid tiers are planned but are not currently
+> offered; questions about future commercial terms go through
+> `LICENSING.md`.
+
 **1.55.AA shipped 2026-07-11** — execute the AGPL + commercial
 relicense (closes #229). Flips the OSS repo from BSD-3 to
 **AGPL-3.0-only** (dual-licensed with a separate commercial license)
@@ -390,8 +397,8 @@ gnu.org = only the two "How to Apply" template lines: program name +
 `Copyright (C) 2026 Kenneth Blossom`). New `LICENSING.md` documents the
 dual model — AGPL-3.0-only for open-source use (§13 network copyleft),
 or a paid commercial license for embedding/SaaS without the copyleft,
-contact `licensing@artist-alley.org` (placeholder until the Cloudflare
-portal lands). **SPDX one-liner headers** (`SPDX-License-Identifier:
+contact the licensing address published in `LICENSING.md` (placeholder
+until the Cloudflare portal lands). **SPDX one-liner headers** (`SPDX-License-Identifier:
 AGPL-3.0-only` + `Copyright (C) 2026 Kenneth Blossom`) scripted onto
 **876 non-generated source files** (638 `.go` + 170 `.svelte` + 67
 `.ts` + the goose migration), correct comment syntax per language
@@ -677,7 +684,7 @@ map to the milestones below.
 > | **v1.0.0** | Release readiness (i18n, IIIF/search tails, dev-hygiene, preview-arc tail) — plus the **full mobile pass** (epic #903, owner 2026-08-04): the phone gets a *deliberately reduced* app (minimal menus, minimal viewer), because full capability belongs to the native Android/iOS apps (#802). Not to be spiked soon, but not after GA either |
 > | **v1.0.0-rc.N** | ⭐ **Release candidate — the gate between "the roadmap is done" and "1.0.0 is tagged"** (owner, 2026-08-06). Every epic and issue closed, then we ship an RC and **ask real people to run it against their own work** before GA. See [Release candidate](#release-candidate) below — it is a phase with entry and exit criteria, not a tag |
 >
-> Locked sequencing: platform (now v0.14) **before** monetization/premium (now v0.15). Each GitHub milestone's issue list is authoritative.
+> Locked sequencing: platform (v0.17.0) **before** monetization/premium (v0.18.0), which is gated on the v0.17.0 add-ons registry. Each GitHub milestone's issue list is authoritative.
 >
 > **Why the split matters beyond tidiness.** The two halves of the old v0.7.0 had no dependency on each other — admin configuration does not block browse correctness, and vice versa — so holding them in one milestone meant neither could ship. Separating them makes v0.7.0 tag-able on work that is already largely done.
 

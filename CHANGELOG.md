@@ -7,7 +7,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
-## [v0.11.0] - 2026-10-04 - Making and describing work
+### Documentation
+
+- **Changelog corrections (2026-10-07).** Entries filed under the wrong release now sit under the
+  release that shipped them: the post and collection membership privacy fix (#883) moved from
+  v0.8.0 to v0.9.0, and eleven sample-library and dataset tooling fixes (PRs #1297, #1299, #1311,
+  #1318 and #1327) moved from v0.10.1 to v0.11.0. Three inaccurate v0.5.1 statements are corrected
+  (see the note in that section), two security fixes that had no entry are added to v0.6.0 (#476)
+  and v0.7.0 (#567), and seven release dates now use the UTC date of the GitHub release. No
+  release's contents changed.
+- **Licensing documentation describes the current state.** Artist Alley is AGPL-3.0-only and free
+  to self-host; commercial licensing and paid tiers are planned but are not currently offered.
+
+## [v0.11.0] - 2026-10-05 - Making and describing work
 
 ### Added
 
@@ -496,6 +508,69 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Internal
 
+- **Rebuilding the sample library can no longer throw away hand-made edits without saying so.**
+  A regeneration used to skip any curated post it could not find, print a truncated list of
+  warnings, and report success. On a full rebuild that quietly discarded 200 of 841 edited posts.
+  It now stops before writing anything and says how many it could not place. The separate warning
+  about a post whose contents have shifted since it was edited stays a warning, because that one
+  needs a person to look rather than a run to fail (#1324, PR #1327).
+
+- **Re-running the sample data loader now says what it left alone.** It could always add new
+  records and never correct an existing one, and it reported the same clean result either way, so
+  reloading to pick up a corrected catalogue looked like it had worked when it had not. It now
+  counts and names the records whose stored values disagree with the catalogue, and points at the
+  full reset that actually applies them. It still changes nothing on its own and an interrupted
+  load can still be resumed safely, which is what the old behaviour was protecting (#1320,
+  PR #1327).
+
+- **The hand-made edits to the sample library are now part of the build.** Someone had gone
+  through the published feed by hand and chosen better dates, better orderings and better titles
+  for it, and none of that lived anywhere the build could see: the next regeneration would have
+  thrown all of it away. Those 1,513 choices across 841 posts are now recorded as data the build
+  applies, so the feed keeps the shape a person gave it (#1309, PR #1318).
+
+- **The pre-publish check can now tell a wrong measurement from a deliberate edit.** It used to
+  treat every disagreement between the repository and the published archive as an edit and let it
+  through, which is right for a title someone changed and wrong for a file size that has simply
+  gone stale. It now decides by where the file came from: where the published copy is the only
+  record of the bytes, a disagreeing repository is refused; where the file was copied from a source
+  the repository is built against, the disagreement is reported as a publish that has fallen behind
+  (#1312, PR #1318).
+
+- **The second sample site was missing catalogue detail the published copy already had.** 6,806
+  values across all 1,306 of its records existed only in the published archive, and a rebuild would
+  have stripped every one. They are restored, and the check above is what would now stop it
+  (#1313, PR #1318).
+
+- **The sample library's post titles read like a person wrote them.** They used to end with a
+  machine-written tally, "Project Heroes polish week, 9 assets across 1 team(s)", which was long,
+  repeated a count already shown on the card, and left an unresolved "(s)" in plain sight. Titles
+  that would otherwise have become identical are now numbered instead (#1306, PR #1311).
+- **The catalogue no longer overstates what the dataset contains.** Twelve records claimed sizes
+  their files do not have, 2.7 GB of overstatement in total, and a rebuild would have copied those
+  claims over the accurate published copy. The claims are re-measured from the files themselves, and
+  a re-download can no longer quietly substitute a full-length original for the short clip the
+  dataset actually ships (#1301, #1302, #1303, PR #1311).
+
+- **The dataset's pre-publish check can no longer pass a stale catalogue.** One of its own steps was
+  invisible to it, because that step reported how many records it looked at rather than how many it
+  changed, so a catalogue with outdated file sizes was reported as ready to publish. The check now
+  sees every step, and names the ones that actually found something (#1295, PR #1299).
+- **The catalogue's recorded file sizes now match the files themselves.** They had drifted from the
+  images they describe across four profiles; all 1,244 were re-measured from the source rather than
+  copied from anywhere downstream (#1294, PR #1299).
+
+- **The dataset build can no longer quietly undo published work.** Rebuilding the archive used to
+  copy the repository's copy of the catalogue over the published one, with nothing comparing the
+  two first, which would have removed one asset outright and stripped catalogue details from
+  nearly two thousand more. The build now refuses to overwrite a published archive that holds
+  content the repository does not, and the repository's copy has been brought back up to date
+  (#1275, PR #1297).
+- **The fixture cleanup tool runs again.** It had been refusing to delete anything after any test
+  run, because one test attached test-shaped posts to a real contributor and the tool correctly
+  would not guess. The refusal was right and is unchanged; it now names the rows it is refusing
+  over, and the test no longer creates them (#1276, PR #1297).
+
 - **The published sample library's site_a now carries the corrected catalogue.** On 2026-10-03 the
   owner-run republish replaced the published site_a with a staged copy built from the frozen
   pre-operation snapshot, the committed profiles and the archive contract: 2,006 assets and 863 posts,
@@ -738,7 +813,7 @@ where applicable, otherwise note "no-spec-impact."
 - **A malformed architecture record now blocks the docs-site rebuild** instead of merely
   reporting, proven by pushing a deliberately broken one (#1014, PR #1226).
 
-## [v0.10.2] — 2026-08-18 — Seed coverage for mature content, and a cover editor that uses its room
+## [v0.10.2] - 2026-08-19 - Seed coverage for mature content, and a cover editor that uses its room
 
 ### Added
 
@@ -754,7 +829,7 @@ where applicable, otherwise note "no-spec-impact."
   peering through a single clipped row, and the crop stage is materially larger once a picture
   is chosen (#1218).
 
-## [v0.10.1] — 2026-08-17 — The listening release: every finding from two days of owner testing, landed
+## [v0.10.1] - 2026-08-18 - The listening release: every finding from two days of owner testing, landed
 
 ### Changed
 
@@ -774,69 +849,6 @@ where applicable, otherwise note "no-spec-impact."
   (PR #1175, refining #1158/#1171).
 
 ### Fixed
-
-- **Rebuilding the sample library can no longer throw away hand-made edits without saying so.**
-  A regeneration used to skip any curated post it could not find, print a truncated list of
-  warnings, and report success. On a full rebuild that quietly discarded 200 of 841 edited posts.
-  It now stops before writing anything and says how many it could not place. The separate warning
-  about a post whose contents have shifted since it was edited stays a warning, because that one
-  needs a person to look rather than a run to fail (#1324, PR #1327).
-
-- **Re-running the sample data loader now says what it left alone.** It could always add new
-  records and never correct an existing one, and it reported the same clean result either way, so
-  reloading to pick up a corrected catalogue looked like it had worked when it had not. It now
-  counts and names the records whose stored values disagree with the catalogue, and points at the
-  full reset that actually applies them. It still changes nothing on its own and an interrupted
-  load can still be resumed safely, which is what the old behaviour was protecting (#1320,
-  PR #1327).
-
-- **The hand-made edits to the sample library are now part of the build.** Someone had gone
-  through the published feed by hand and chosen better dates, better orderings and better titles
-  for it, and none of that lived anywhere the build could see: the next regeneration would have
-  thrown all of it away. Those 1,513 choices across 841 posts are now recorded as data the build
-  applies, so the feed keeps the shape a person gave it (#1309, PR #1318).
-
-- **The pre-publish check can now tell a wrong measurement from a deliberate edit.** It used to
-  treat every disagreement between the repository and the published archive as an edit and let it
-  through, which is right for a title someone changed and wrong for a file size that has simply
-  gone stale. It now decides by where the file came from: where the published copy is the only
-  record of the bytes, a disagreeing repository is refused; where the file was copied from a source
-  the repository is built against, the disagreement is reported as a publish that has fallen behind
-  (#1312, PR #1318).
-
-- **The second sample site was missing catalogue detail the published copy already had.** 6,806
-  values across all 1,306 of its records existed only in the published archive, and a rebuild would
-  have stripped every one. They are restored, and the check above is what would now stop it
-  (#1313, PR #1318).
-
-- **The sample library's post titles read like a person wrote them.** They used to end with a
-  machine-written tally, "Project Heroes polish week, 9 assets across 1 team(s)", which was long,
-  repeated a count already shown on the card, and left an unresolved "(s)" in plain sight. Titles
-  that would otherwise have become identical are now numbered instead (#1306, PR #1311).
-- **The catalogue no longer overstates what the dataset contains.** Twelve records claimed sizes
-  their files do not have, 2.7 GB of overstatement in total, and a rebuild would have copied those
-  claims over the accurate published copy. The claims are re-measured from the files themselves, and
-  a re-download can no longer quietly substitute a full-length original for the short clip the
-  dataset actually ships (#1301, #1302, #1303, PR #1311).
-
-- **The dataset's pre-publish check can no longer pass a stale catalogue.** One of its own steps was
-  invisible to it, because that step reported how many records it looked at rather than how many it
-  changed — so a catalogue with outdated file sizes was reported as ready to publish. The check now
-  sees every step, and names the ones that actually found something (#1295, PR #1299).
-- **The catalogue's recorded file sizes now match the files themselves.** They had drifted from the
-  images they describe across four profiles; all 1,244 were re-measured from the source rather than
-  copied from anywhere downstream (#1294, PR #1299).
-
-- **The dataset build can no longer quietly undo published work.** Rebuilding the archive used to
-  copy the repository's copy of the catalogue over the published one, with nothing comparing the
-  two first — which would have removed one asset outright and stripped catalogue details from
-  nearly two thousand more. The build now refuses to overwrite a published archive that holds
-  content the repository does not, and the repository's copy has been brought back up to date
-  (#1275, PR #1297).
-- **The fixture cleanup tool runs again.** It had been refusing to delete anything after any test
-  run, because one test attached test-shaped posts to a real contributor and the tool correctly
-  would not guess. The refusal was right and is unchanged — it now names the rows it is refusing
-  over, and the test no longer creates them (#1276, PR #1297).
 
 - **Every menu works from the keyboard.** The shared menu component's default styling made its
   buttons invisible to keyboard focus — on the browse page not one menu could be reached by Tab,
@@ -1372,7 +1384,7 @@ where applicable, otherwise note "no-spec-impact."
   now checked monthly. They deliberately keep no lockfile: their images install from
   `pyproject.toml`, so a lockfile nothing reads would only drift from what actually ships (#928).
 
-## [v0.9.1] — 2026-08-11
+## [v0.9.1] - 2026-08-12
 
 ### Security
 
@@ -1444,6 +1456,53 @@ No-spec-impact.
   if they restore it, it comes back to those collections intact.
 
 ### Security
+
+- **Putting someone's work in a post or collection no longer makes it more visible.**
+  A post carried a complete asset record for every member, gated by nothing. A
+  collection carried the same fields flat. So attaching a **restricted** asset to a
+  **public** post published its title, its description, its file extension, its exact
+  byte size, its free-form metadata blob (EXIF, including GPS coordinates) and its
+  thumbhash, which is a blurred rendering of the actual picture, to anyone who opened
+  the post. Anonymous visitors included, for whom that asset does not exist at all
+  anywhere else on the site (#883).
+
+  A member you may not see is now a **placeholder**: a lock, the word *Restricted*, and
+  the owner's display name. Nothing else. Not the title: that is the whole point, and
+  it is why the fields are **absent** from the response rather than blanked, so there is
+  no empty-versus-withheld difference to read anything off. The permitted key set is a
+  closed list (the membership row's own columns, a `restricted` flag, and
+  `owner_display_name`), checked by a test that asserts the payload is a **subset** of
+  it. No column of the asset record can cross that boundary, including one added next
+  year; denylisting the fields we know about today is exactly how the SSO `config` blob
+  leaked credentials (fixed in v0.8.0).
+
+  The placeholder is **visible, not hidden**. Dropping the member from the list would
+  have been the smaller change and it is the wrong one: it conceals that a restriction
+  exists, and there would be nothing to attach "request access" to (#881, below).
+
+  Who sees a member is now decided in one place for the three surfaces that expose one
+  (post contents, collection contents, and IIIF collection manifests), and it is the
+  conjunction of the two rules an asset already lives under: could you have opened that
+  asset on its own, **and** are you entitled to its content tier (ADR 0064). The IIIF
+  manifest was leaking a restricted member's title as its label to every signed-in
+  caller; the check there had only ever run for anonymous ones. It now omits such
+  members rather than showing a placeholder, because a IIIF collection's entries are
+  links that viewers follow and a placeholder would be a broken one.
+
+  **Search counted them too, which is worse than showing them.** A post's search
+  document absorbed the text of every member, so a public post containing a restricted
+  asset was returned for a phrase that appeared only in that asset's title. Nothing in
+  the response named the asset; the *result count* was the tell, and a stranger could
+  walk a title token by token off it without ever being shown a field. Post documents
+  now include only members that everyone can see, and (separately, because a filter is
+  only worth as much as its refresh) a post's document is now rebuilt when a member
+  asset is restricted, unpublished or renamed, which nothing did before. Renaming an
+  asset used to leave every post containing it matching the old name indefinitely.
+
+  Wire-format change: `PostMember.asset` is absent on a restricted member and
+  `PostMember.restricted` is new; `CollectionResource`'s asset-derived fields moved out
+  of `required` for the same reason and gained the same flag. On a member you *can* see,
+  every one of those fields is sent exactly as before.
 
 - **A vulnerable copy of a small library no longer ships.** One of the packages bundled into
   the site pulled in an outdated version of `nanoid` with a known flaw. Five other copies in
@@ -2604,53 +2663,6 @@ No-spec-impact.
 
 ### Security
 
-- **Putting someone's work in a post or collection no longer makes it more visible.**
-  A post carried a complete asset record for every member, gated by nothing. A
-  collection carried the same fields flat. So attaching a **restricted** asset to a
-  **public** post published its title, its description, its file extension, its exact
-  byte size, its free-form metadata blob — EXIF, including GPS coordinates — and its
-  thumbhash, which is a blurred rendering of the actual picture, to anyone who opened
-  the post. Anonymous visitors included, for whom that asset does not exist at all
-  anywhere else on the site (#883).
-
-  A member you may not see is now a **placeholder**: a lock, the word *Restricted*, and
-  the owner's display name. Nothing else. Not the title — that is the whole point, and
-  it is why the fields are **absent** from the response rather than blanked, so there is
-  no empty-versus-withheld difference to read anything off. The permitted key set is a
-  closed list — the membership row's own columns, a `restricted` flag, and
-  `owner_display_name` — checked by a test that asserts the payload is a **subset** of
-  it. No column of the asset record can cross that boundary, including one added next
-  year; denylisting the fields we know about today is exactly how the SSO `config` blob
-  leaked credentials, two entries down this list.
-
-  The placeholder is **visible, not hidden**. Dropping the member from the list would
-  have been the smaller change and it is the wrong one: it conceals that a restriction
-  exists, and there would be nothing to attach "request access" to (#881, next).
-
-  Who sees a member is now decided in one place for the three surfaces that expose one —
-  post contents, collection contents, and IIIF collection manifests — and it is the
-  conjunction of the two rules an asset already lives under: could you have opened that
-  asset on its own, **and** are you entitled to its content tier (ADR 0064). The IIIF
-  manifest was leaking a restricted member's title as its label to every signed-in
-  caller; the check there had only ever run for anonymous ones. It now omits such
-  members rather than showing a placeholder, because a IIIF collection's entries are
-  links that viewers follow and a placeholder would be a broken one.
-
-  **Search counted them too, which is worse than showing them.** A post's search
-  document absorbed the text of every member, so a public post containing a restricted
-  asset was returned for a phrase that appeared only in that asset's title. Nothing in
-  the response named the asset — the *result count* was the tell, and a stranger could
-  walk a title token by token off it without ever being shown a field. Post documents
-  now include only members that everyone can see, and — separately, because a filter is
-  only worth as much as its refresh — a post's document is now rebuilt when a member
-  asset is restricted, unpublished or renamed, which nothing did before. Renaming an
-  asset used to leave every post containing it matching the old name indefinitely.
-
-  Wire-format change: `PostMember.asset` is absent on a restricted member and
-  `PostMember.restricted` is new; `CollectionResource`'s asset-derived fields moved out
-  of `required` for the same reason and gained the same flag. On a member you *can* see,
-  every one of those fields is sent exactly as before.
-
 - **postcss bumped past a path-traversal advisory.** The web build's copy of `postcss`
   was 8.5.17, which auto-loads source maps in a way that can be pointed at files outside
   the project. Build-time only — nothing shipped to a browser was affected, and an
@@ -3486,6 +3498,12 @@ than a rule that drifted — but it is the same data class, so it belongs here.
   fixes the naming so the next surface carrying personal data doesn't invent a third
   standard (#573, ADR 0072).
 
+- **The account sessions page no longer exposes client IP addresses.** `/account/sessions`
+  returned the IP address of every session on the account. On the public demo, where every
+  visitor shares one account, that showed each visitor the previous visitors' IP addresses,
+  browsers and login times. Session lists no longer include IP addresses, and in demo mode the
+  list and self-service revoke are limited to the session making the request (#567, PR #571).
+
 ### Operator-facing changes
 
 - **The server image is half the size: 3.64 GB → 1.82 GB.** Blender is no longer
@@ -3814,6 +3832,14 @@ than a rule that drifted — but it is the same data class, so it belongs here.
 
 ## [v0.6.0] — 2026-07-23 — Public read surface + demo hardening
 
+### Security
+
+- **IIIF tiles respect content permissions.** A signed-in user who could see that a
+  restricted, team-only or embargoed asset existed could still download its full-resolution
+  IIIF image tiles, because the tile endpoint streamed bytes without the content check the rest
+  of the app applies. Tiles now return 404 to anyone who may not read the asset's content, the
+  same answer as for an asset they cannot see at all (#476, PR #493).
+
 ### User-facing changes
 
 - **Public user-profile pages.** Every user now has a profile page, reachable by
@@ -3864,6 +3890,11 @@ their whole catalogue.
 
 ## [v0.5.1] — 2026-07-21
 
+> **Correction (2026-10-07):** three statements in this section were inaccurate and are
+> corrected below. Operators could not create scheduled actions in this release; the GDPR
+> anonymisation path and setting a legal hold were not reachable; and 3D previews on
+> published images were added for the first time, not restored.
+
 Promoted all of `dev` since v0.5.0 — the foundation work below (audit
 retention/export, scheduled actions) plus two demo-surfaced fixes and a
 visibility-consolidation batch. A patch version number, a substantial release.
@@ -3871,24 +3902,27 @@ visibility-consolidation batch. A patch version number, a substantial release.
 ### Operator-facing changes
 
 - **Audit-log retention and export.** The audit log now has a retention
-  policy — configurable per event category (a default of 7 years, with
-  shorter or longer holds per category), a legal-hold flag that exempts
-  individual events from purge, and a nightly enforcement pass. A GDPR
-  erasure request anonymises a user across the log — the events are
-  kept, the person is replaced by a `deleted-user` placeholder — so the
-  trail survives without the personal data. And the whole log can be
-  exported as CSV or NDJSON over a date range, streamed so exports of
-  millions of rows don't exhaust memory; IP addresses are withheld from
-  the export for callers who can't see them in the live view.
+  policy: retention periods stored per event category (a category without
+  its own row keeps a 7-year default), and a nightly pass that purges
+  expired events while skipping any event marked with a legal hold. This
+  release added no API or admin screen to change a category's retention or
+  to place a legal hold. A function that anonymises a user across the log
+  for a GDPR erasure request exists in code, but nothing in the app calls
+  it yet. The whole log can be exported as CSV or NDJSON over a date range,
+  streamed so exports of millions of rows don't exhaust memory; IP
+  addresses are withheld from the export for callers who can't see them in
+  the live view.
 
-- **Scheduled actions.** Operators (and, later, the privacy, commerce and
-  audit-retention features) can now schedule a change to run at a future
-  time — change an asset's sensitivity, soft-delete, change state, or
-  notify — and cancel it before it fires. Each action executes atomically
-  with its audit entry, so it either fully happens and is logged or fully
-  does not; a failure is recorded rather than half-applied. This is the
-  generic engine (ADR 0020); the asset-gating features that use it —
-  blur, reveal, timed embargo lift — land in later sprints.
+- **Scheduled actions engine.** The engine that runs a stored action at a
+  future time (change an asset's sensitivity, soft-delete, change state, or
+  notify) shipped, with admin endpoints to list pending actions and cancel
+  one before it fires. Each action executes atomically with its audit
+  entry, so it either fully happens and is logged or fully does not; a
+  failure is recorded rather than half-applied. This release added no way
+  to create a scheduled action: the first creation path arrived in v0.11.0,
+  when authors gained scheduled publishing for their posts. The
+  asset-gating features that would use the engine (blur, reveal, timed
+  embargo lift) are planned (ADR 0020).
 
 ### User-facing changes
 
@@ -3899,11 +3933,12 @@ visibility-consolidation batch. A patch version number, a substantial release.
   never existed (#475). A build-time link-integrity check now guards
   against dead internal links (ADR 0068).
 
-- **3D previews work on published builds again.** Turntable thumbnails
-  for 3D models (glTF / OBJ / FBX and more) had silently stopped
-  generating on released images — the published image shipped without
-  the renderer — so every 3D asset showed no preview (#470). Fixed for
-  amd64, with a build-and-render smoke so it can't regress unnoticed.
+- **3D previews work on published builds.** Turntable thumbnails for 3D
+  models (glTF / OBJ / FBX and more) had never been generated on released
+  images, because the published image had always shipped without the
+  renderer, so every 3D asset showed no preview (#470). This release added
+  the renderer to the published image for the first time. Fixed for amd64,
+  with a build-and-render smoke so it can't regress unnoticed.
 
 ### Fixes
 
@@ -3912,7 +3947,7 @@ visibility-consolidation batch. A patch version number, a substantial release.
   same visibility rule as the browse grid (#451, #460), plus audit and
   admin-gating cleanups (#458, #431).
 
-## [v0.5.0] — 2026-07-20 — Public mode: anonymous browsing
+## [v0.5.0] - 2026-07-21 - Public mode: anonymous browsing
 
 Content is now reachable without an account, on an operator's terms. The
 visibility model got a single enforcement point, sensitivity moved to the
@@ -4123,7 +4158,7 @@ observable and manageable from the admin surface. No-spec-impact.
 - Pre-checkout stale-`.git`-lock sweep on every self-hosted job, fixing
   intermittent checkout failures caused by cancelled mid-fetch runs.
 
-## [v0.3.1] — 2026-07-17
+## [v0.3.1] - 2026-07-18
 
 Admin read-cap UI + foundation cleanup. No-spec-impact.
 
@@ -4259,7 +4294,7 @@ vulnerabilities.
 - Shipped-artifact vulnerabilities cleared (torch floor raised, `aa-clip`
   bumped, npm sweep) — all open Dependabot alerts closed.
 
-## [v0.1.0] — 2026-07-11 — Encryption arc (Phase 1.22.I)
+## [v0.1.0] - 2026-07-12 - Encryption arc (Phase 1.22.I)
 
 The full encrypted-federation arc (1.22.I-a through 1.22.I-i) is
 shipped + dogfood-validated end-to-end. ArchivePub spec at

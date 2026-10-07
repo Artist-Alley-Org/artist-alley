@@ -179,6 +179,16 @@ Pre-releases: `v0.1.0-rc.1`, `v0.1.0-beta.2`. GoReleaser auto-detects
 `-` suffixes and marks them as GitHub pre-releases; the `:latest` tag
 only moves on a non-pre version.
 
+### Release dates
+
+A release's date is the **UTC date of its GitHub release's publish
+time** (`published_at`). Use that date in the `CHANGELOG.md` heading
+and in the release index in `docs/roadmap.md`. The release-prep PR is
+written before the tag exists, so it can only guess; once the release
+is published, check the date with
+`gh release view vX.Y.Z --json publishedAt` and correct both files if
+the guess was a local-time date that differs.
+
 ## Hotfix flow
 
 For a fix that can't wait for the next `dev → main` merge:
