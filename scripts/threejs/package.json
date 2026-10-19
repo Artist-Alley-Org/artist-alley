@@ -7,7 +7,7 @@
   "license": "AGPL-3.0-only",
   "packageManager": "npm@11.19.0",
   "dependencies": {
-    "puppeteer": "^25.13.0",
+    "puppeteer": "^25.14.0",
     "three": "^0.186.1"
   }
 }
