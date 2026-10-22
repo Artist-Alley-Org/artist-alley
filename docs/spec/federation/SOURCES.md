@@ -77,6 +77,8 @@ For each section of v1.md, the citations resolve as:
 - §5 Ed25519 → `RFC-8032`, `RFC-8410`
 - §5.2 base64url encoding → `RFC-4648`
 - §6 NaCl-box envelope → `NaCl-box-ref`, `RFC-7748`
+- §6.5 policy matrix and §6.6 per-recipient `encryption` block → ADR 0049 (Track B, Decisions 2, 4, 5)
+- Implementation status and errata → first-party observation of the reference implementation; not a third-party source, so the contamination gate does not apply
 - §7 vocabulary → `W3C-AS2-Vocab` + ADR 0043
 - §8 URI shape → ADR 0043; Mastodon's deployed username-immutability convention is a behavioral observation cited via `Mastodon-dev-1`
 - §10 HTTP-Sig algorithm allowlist → `draft-cavage-12`
