@@ -48,6 +48,17 @@ ArchivePub is at **v1.0-rc1** with a 7-day soak window through
 2026-06-22; v1.0 final ships as a no-code spec-only commit if
 the soak is clean.
 
+> **Implementation-status erratum (2026-10-21):** "fully
+> implemented" overstates one part of this record. Per-actor Ed25519
+> envelope signatures did not ship: the outbox does not sign envelopes
+> with the actor's key (the "signs the envelope (encrypt-then-sign)"
+> step listed under 1.22.I-e below), and the inbox does not verify them
+> (the "verify signature first" step under 1.22.I-f). Peers are
+> authenticated by the instance-level HTTP Signature only. See
+> [`docs/spec/federation/v1.md`](../spec/federation/v1.md),
+> *Implementation status* D1. This note corrects the implementation
+> record only; the accepted decision is unchanged.
+
 The frontmatter `status: accepted` reflects the project's ADR
 convention (no `implemented` value is used anywhere else in
 `docs/adr/`); this section is the implementation-milestone

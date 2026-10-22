@@ -7,10 +7,10 @@
 | **Title** | ArchivePub — Federated Digital Asset Management Protocol |
 | **Status** | Final (v1.0 — stamped 2026-07-13; soak window closed 2026-06-22 clean) |
 | **Latest version** | This document |
-| **Canonical home** | [`docs/protocol/archivepub.md`](.) (will move to a dedicated domain when v1.0 is finalised) |
+| **Normative contract** | [`docs/spec/federation/v1.md`](../spec/federation/v1.md). This document is the non-normative overview and design rationale; where they disagree, `v1.md` governs. |
 | **Reference implementation** | [Artist Alley](https://github.com/Artist-Alley-Org/artist-alley) — see [`app/internal/federation/`](../../app/internal/federation/) |
 | **Editor** | The Artist Alley contributors |
-| **Predecessor / data model** | [ActivityPub](https://www.w3.org/TR/activitypub/) (W3C Recommendation, 2018) |
+| **Related** | Vocabulary modelled on [ActivityPub](https://www.w3.org/TR/activitypub/) and Activity Streams 2.0; not ActivityPub-interoperable |
 
 ## Abstract
 
@@ -62,6 +62,42 @@ When v1.0 is published, this document will move to a dedicated
 home (provisional: `archivepub.org`) and a versioned change log
 will track breaking + non-breaking revisions per the standard
 major.minor.patch convention.
+
+## Current status and errata (2026-10-21)
+
+The normative contract is
+[`docs/spec/federation/v1.md`](../spec/federation/v1.md), including
+its *Implementation status* list of where the reference implementation
+does not yet conform (per-actor envelope signatures, unknown-field
+rejection, receiving handlers beyond `Like` and comment `Create`, the
+inbound share-grant check, CAS transfer). This document is kept as the
+overview and design rationale. These sections are known to disagree
+with the contract and are marked inline:
+
+- **§1.3, §2 (Envelope):** ArchivePub messages are plain JSON, not
+  JSON-LD. `@context` is the exact, opaque string
+  `https://artist-alley.org/protocol/v1`; no JSON-LD context is
+  published for it. ActivityPub implementations are not expected to
+  accept these envelopes, and Artist Alley does not interoperate with
+  ActivityPub servers.
+- **§3.1:** the namespace question is resolved: the prefix is `aa:`
+  (see *Status of this document*), and `@context` carries only the
+  version string.
+- **§4.1:** the example is a pre-v1 draft. The deployed envelope has
+  no `aa:Envelope` wrapper or nested `activity`; it uses `actor`,
+  `published`, and a top-level activity `type` (v1.md §3).
+- **§4.2:** the signature block fields are `type`, `publicKey`, and
+  `value` (v1.md §3, §5). The MUST below stands; the reference
+  implementation does not yet meet it.
+- **§4.3:** encryption shipped as the per-recipient `encryption`
+  block (v1.md §6.6; also this document's v0.5 change-log entry).
+- **§4.4:** the authoritative reject-reason list is v1.md §12.1.
+- **§5.2:** capability negotiation shipped as the
+  `supported_capabilities` array of capability tokens (ADR 0049,
+  Decision 3), not the object shown.
+- **§8 and Appendix A:** the MUSTs stand. The Appendix A scenarios run
+  the reference implementation against itself; they are application
+  scenarios, not evidence of independent interoperability.
 
 ## Conventions
 
@@ -125,6 +161,9 @@ ArchivePub explicitly does NOT:
   implementation detail.
 
 ### 1.3 Relationship to ActivityPub
+
+> **Erratum (2026-10-21):** this section describes an early JSON-LD
+> design. See [Current status and errata](#current-status-and-errata-2026-10-21).
 
 ArchivePub uses ActivityPub's data model verbatim:
 - Activities are JSON-LD documents with `@context`, `type`, `actor`,
@@ -274,9 +313,18 @@ unrecognised tier is "refused + visible in the operator audit log"
 rather than "leaked + invisible". Implementers adding a new tier MUST
 update this matrix in the same revision.
 
+This matrix is mirrored normatively in
+[`v1.md`](../spec/federation/v1.md) §6.5, and
+`outbox.ChoosePathFor` (`app/internal/federation/outbox/policy.go`)
+implements it. A change MUST update both documents and the function
+together.
+
 ## 4. Wire format
 
 ### 4.1 Envelope structure
+
+> **Erratum (2026-10-21):** historical pre-v1 draft; not the deployed
+> or normative shape. See v1.md §3.
 
 Every federation message is a signed JSON-LD envelope:
 
@@ -309,6 +357,10 @@ The Content-Type is `application/activity+json` (per ActivityPub) or
 
 ### 4.2 Signature
 
+> **Erratum (2026-10-21):** field names per v1.md §3 and §5; the
+> reference implementation does not yet create or verify per-actor
+> signatures (v1.md, *Implementation status* D1).
+
 All envelopes MUST be signed.
 
 - Algorithm: **Ed25519** (per [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032))
@@ -324,6 +376,8 @@ failures are rejected with reject reason `envelope_sig_invalid`
 (see [§ 4.4](#44-reject-reasons)).
 
 ### 4.3 Encryption (planned, v1.0)
+
+> **Erratum (2026-10-21):** shipped; see v1.md §6.6.
 
 Reserved. Per ADR 0049:
 - Algorithm: **NaCl-box** (Curve25519 + XSalsa20 + Poly1305)
@@ -382,6 +436,9 @@ provide discovery for the `directory-listed` tier. v0.x does not
 specify directory behaviour.
 
 ### 5.2 Capability negotiation (planned, v1.0)
+
+> **Erratum (2026-10-21):** shipped with a different shape; see
+> [Current status and errata](#current-status-and-errata-2026-10-21).
 
 During the pairing handshake, both sides exchange a capability set:
 
@@ -532,6 +589,11 @@ Placeholder. v1.0 MUST cover:
 - User-side data subject rights when their content is federated
 
 ## 8. Conformance
+
+> **Implementation status (2026-10-21):** the reference
+> implementation does not yet meet the first and fourth requirements
+> below, nor handle every core type (v1.md, *Implementation status*
+> D1, D3, D4).
 
 A conformant ArchivePub implementation MUST:
 - Implement Ed25519 envelope signing + verification
