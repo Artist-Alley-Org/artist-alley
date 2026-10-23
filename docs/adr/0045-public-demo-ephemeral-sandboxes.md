@@ -20,11 +20,11 @@ tags:
   - go-to-market
   - infrastructure
 excerpt: >-
-  artist-alley.org runs a public demo at demo.artist-alley.org that
-  spins up a personal, fully-isolated sandbox instance per visitor.
-  Each sandbox is pre-seeded with CC0 sample assets, auto-destroys
-  after a TTL, and federates with no other instance. Visitors get the
-  real product experience without any cross-visitor moderation surface.
+  A planned public demo at demo.artist-alley.org that would spin up a
+  personal, fully-isolated sandbox instance per visitor, pre-seeded with
+  CC0 sample assets, destroyed after a TTL and federating with no other
+  instance. Not built: the public demo that shipped in v0.2.0 was one
+  shared read-only instance (ADR 0060).
 ---
 
 > **Status note (2026-07-13):** the canonical GitHub org is now
@@ -33,6 +33,25 @@ excerpt: >-
 > the 1.55.Z site split. The `mscrnt/aa-demo-provisioner` repo
 > referenced below has not moved — satellite-repo homes are still
 > undecided.
+
+> **Status note (2026-10-23):** per-visitor sandboxes were not built, and the
+> Decision below remains the plan for them. Personal demo sandboxes are on the
+> roadmap (planned for v0.22.0). The `DEMO_MODE` flag planned in 1.48.A (seed
+> loader, quotas, disabled subsystems) was not built either; the `AA_DEMO_MODE`
+> setting that exists today does something narrower, described below.
+>
+> The demo design that shipped in v0.2.0 was the single shared read-only
+> instance described in [ADR 0060](/adr/0060-public-read-only-demo/). In its
+> checked-in deployment bundle, visitors share one account and read-only comes
+> from the edge: nginx passes only `GET`, `HEAD` and `OPTIONS` under `/api/v1/`,
+> allow-lists sign-in and sign-out, and answers other API methods with a JSON
+> 403. The app itself is reachable only through nginx. The shared account's role
+> is a second, limited layer: it does not hold `system.admin`, but it holds some
+> admin capabilities so those screens render, so the role alone does not block
+> every write. `AA_DEMO_MODE` is not a write barrier. It shows the demo sign-in
+> hint and the read-only banner, and it limits the session list and session
+> revoke to the visitor's own session (#567). This describes the checked-in
+> bundle; the live host's configuration was not inspected for this note.
 
 ## Context
 

@@ -16,18 +16,25 @@ tags:
 excerpt: >-
   Asset sensitivity is a content-access tier, not a row-exclusion tier.
   Restricted and embargoed assets remain listable; what is gated is the
-  bytes. The enforcement point is the binary plane, which today has no
-  check at all.
+  bytes. The enforcement point is the binary plane, which had no check
+  when this ADR was written; the content check shipped in v0.5.0.
 ---
 
 ## Context
 
 `assets.sensitivity` (`public | team | restricted | embargo`) has existed since the baseline
-schema but is consumed only by the federation send/receive gates. Nothing reads it for
-authorization, so **any authenticated caller can download any asset's bytes** — verified: the
-binary handlers (`asset_file.go`, `hls.go`, `archive_entry.go`, `archive_bundle.go`,
-`DownloadAssetFile`, `DownloadAssetVariant`) contain zero `visibility.` references and guard
-only `identity != nil`.
+schema. When this ADR was written it was consumed only by the federation send/receive gates.
+Nothing read it for authorization, so **any authenticated caller could download any asset's
+bytes**. That was verified at the time: the binary handlers (`asset_file.go`, `hls.go`,
+`archive_entry.go`, `archive_bundle.go`, `DownloadAssetFile`, `DownloadAssetVariant`) contained
+zero `visibility.` references and guarded only `identity != nil`.
+
+> **Status note (2026-10-23):** the paragraph above describes the code on 2026-07-19. The
+> content check this ADR decides shipped in v0.5.0. Each byte-serving path named above now goes
+> through one shared check, `visibility.CanReadContent` (the four handlers through
+> `requireContentAccess`), and IIIF image tiles joined it in v0.6.0 (#476). Answers derived from
+> the bytes use the same check (companion requirements, the similarity anchor). Grants still
+> unlock nothing; see "Why the grant path is deferred".
 
 [ADR 0063](0063-content-visibility-predicate.md) deferred "the authenticated sensitivity rule"
 as an undecided product call. That framing was wrong, in an instructive way: the decision was
@@ -164,6 +171,11 @@ should settle by picking a constant.
 because nothing checks anything. A grant-less checker is strictly better than the status quo, and
 fails closed by construction. The grant path lands once `requested_capability` has a defined
 vocabulary enforced by a CHECK or enum — which is its own finding, tracked separately.
+
+> *Dated label (2026-10-23): "today" and "nothing checks anything" in the paragraph above
+> describe 2026-07-19. The binary-plane check has since shipped and is still grant-less: an
+> approved request unlocks no bytes (`ContentReadable` does not honour grants). The grant path
+> is still deferred.*
 
 ### Corollary: `CanSee` is asymmetric between assets and collections (recorded 2026-07-19)
 
@@ -690,9 +702,10 @@ which is how a content-gating spine gets quietly repealed.
 ### Where it is enforced
 
 At the **binary plane** — the handlers listed above — because that is where bytes are served and
-where there is currently no check whatsoever. Not in the query predicate: pushing sensitivity
+where, when this ADR was written, there was no check whatsoever. Not in the query predicate: pushing sensitivity
 into row visibility would both contradict ADR 0020 and move behaviour at ~11 splice sites at
-once, which ADR 0063 identifies as the high-blast-radius surface.
+once, which ADR 0063 identifies as the high-blast-radius surface. The check has run there since
+v0.5.0 (see the status note under Context).
 
 ### What stays deferred, and why
 
