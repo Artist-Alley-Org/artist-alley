@@ -23,13 +23,23 @@ tags:
 excerpt: >-
   v0.1.0 (2026-07-11) is the first public tag, and it shipped as a
   bundle of coupled decisions rather than a feature release: org move
-  to Artist-Alley-Org, site split, AGPL-3.0-only + dual commercial
-  relicense, migration squash point #1, Docker-only distribution, and
+  to Artist-Alley-Org, site split, AGPL-3.0-only licensing (the planned
+  commercial half was not carried out; see the status note), migration
+  squash point #1, Docker-only distribution, and
   full removal of RS-derived code. This ADR records that bundle in one
   place so later readers don't have to reconstruct it from seven
   earlier ADRs, and records v0.1.1 (2026-07-13) as the first
   append-only patch proving the release train works.
 ---
+
+> **Corrections and updates (2026-10-23):** item 4 was inaccurate when it
+> was written. AGPL-3.0-only was executed as described, but the commercial
+> half was never carried out and no commercial license has ever been offered
+> (see the 2026-10-07 status note on
+> [ADR 0016](/adr/0016-license-direction/), and `LICENSING.md`). Updates since
+> the tag: the site repository (item 2) moved to
+> `Artist-Alley-Org/artist-alley-site`, and native packages and binaries
+> (item 3) are now planned for v0.22.0 on the roadmap, ahead of v1.0.0.
 
 ## Context
 

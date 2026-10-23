@@ -14,9 +14,10 @@ info:
       sets a `user` session cookie. Browser clients use this automatically.
     - **API token** — from a signed-in session, `POST /auth/tokens` mints a
       personal access token that looks like `aa_pat_…`. Send it on every
-      request: `Authorization: Bearer aa_pat_…`. Tokens carry scopes and an
-      optional expiry, so you can limit a script to just the endpoints it
-      needs.
+      request: `Authorization: Bearer aa_pat_…`. A token acts with your
+      account's full permissions: scopes can be recorded on a token, but
+      they are not enforced yet. Give each token an expiry and revoke the
+      ones you no longer use.
 
     ## A first request
 
@@ -36,7 +37,7 @@ info:
 
 servers:
   - url: /api/v1
-    description: Local development behind nginx (port 8088 by default)
+    description: Your instance (paths are relative to its base URL)
 
 tags:
   - name: auth
@@ -49,8 +50,9 @@ tags:
     description: |
       Upload, download, and pin management for asset bytes. Storage is
       content-addressed: every blob is keyed by sha256(contents), so
-      identical uploads dedup automatically and federated peers can
-      verify transfers by hash. See ADR 0008.
+      identical uploads dedup automatically, and a future transfer between
+      instances can be verified by hash. Instances don't exchange files
+      yet. See ADR 0008.
   - name: asset_types
     description: Configurable categories applied to every uploaded asset
       (Photo, Document, Video, Audio, custom types, etc.)
@@ -59,12 +61,12 @@ tags:
       Feed entity. A Post wraps 1+ Assets with descriptive metadata
       (title, description, tags, visibility) and carries
       like/comment counters. Browse-page reads from /posts; assets
-      are the file-bearing members beneath. Single-asset uploads
-      still become Posts (a Post with one member) so the shape is
-      uniform end-to-end.
+      are the file-bearing members beneath. An upload stays in its
+      owner's own library until it is made into a post (ADR 0091);
+      a post can hold one asset or many.
   - name: collections
     description: |
-      User-owned groupings of assets, per ADR 0009. UUID-keyed,
+      User-owned groupings of posts (ADR 0009, ADR 0091). UUID-keyed,
       federation-prepared. Three orthogonal axes — visibility
       (private/shared/public), membership (manual/query/hybrid), and
       lifecycle (permanent vs `expires_at`). Manual membership is
@@ -79,7 +81,7 @@ tags:
       `team_closure`. ADR 0010 Layer 4.
   - name: users
     description: |
-      Public-facing user profiles. The RS `user` table holds auth-bearing
+      Public-facing user profiles. The `user` table holds auth-bearing
       data we never expose; `user_profiles` holds the
       display-layer fields (display_name, bio, avatar_url, social_links).
       Reads merge both tables and substitute defaults when no profile
@@ -92,10 +94,10 @@ paths:
       operationId: login
       summary: Sign in with username and password
       description: |
-        Verifies credentials against the RS `user` table using the same
-        HMAC-then-bcrypt hashing scheme RS uses (so PHP-created users
-        log in unchanged). On success: writes a new session token to
-        `user.session` and sets the `rs_session` cookie.
+        Checks the username and password (passwords are stored as
+        HMAC-then-bcrypt hashes). On success it starts a new session and
+        sets the `user` session cookie. Each sign-in is its own session;
+        `GET /account/sessions` lists them.
       tags: [auth]
       requestBody:
         required: true
@@ -105,8 +107,8 @@ paths:
               $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
-          description: Authenticated. Returns the current user; an
-            `rs_session` cookie is set in the response headers.
+          description: Authenticated. Returns the current user; the
+            `user` session cookie is set in the response headers.
           content:
             application/json:
               schema:
@@ -156,9 +158,9 @@ paths:
       operationId: logout
       summary: End the current session
       description: |
-        Clears `user.session` for the calling user and expires the
-        `rs_session` cookie. Safe to call when unauthenticated
-        (returns 204 either way).
+        Ends the current session and clears the `user` cookie. Other
+        sessions of the same account stay signed in. Safe to call when
+        unauthenticated (returns 204 either way).
       tags: [auth]
       security:
         - cookieAuth: []
@@ -1129,6 +1131,10 @@ paths:
         Permission: caller must own the object OR have
         system.admin. Restricted objects require target_user_url
         (NaCl envelope wrap needs a key).
+
+        Remote instances do not act on shares yet: today only likes and
+        comments take effect between paired instances (see the ArchivePub
+        overview, "What works today").
       tags: [admin, federation]
       security:
         - cookieAuth: []
@@ -1173,9 +1179,10 @@ paths:
       description: |
         Marks revoked_at + emits aa:Unshare activity + writes
         federation.share.revoked audit event — atomically.
-        Recipient's local cache purges per design §4.2; their
-        own derivative work (comments/annotations) is preserved
-        per §4.3.
+        Once remote instances act on shares, the recipient is expected
+        to purge its cached copy and keep its own derivative work
+        (comments, annotations). Remote instances do not act on shares
+        yet.
       tags: [admin, federation]
       security:
         - cookieAuth: []
@@ -3179,7 +3186,7 @@ paths:
   /admin/featured:
     get:
       operationId: listFeaturedItems
-      summary: List admin-curated featured items (GitHub #341)
+      summary: List admin-curated featured items
       description: |
         Returns the featured curation list in display order (position
         ascending, then created_at). Each entry resolves its subject's
@@ -3302,7 +3309,7 @@ paths:
   /admin/featured/promo:
     get:
       operationId: getAdminPromoBand
-      summary: The operator promo band, for editing (GitHub #1118)
+      summary: The operator promo band, for editing
       description: |
         The band definition and its cards, with NO audience gate and no
         collapse: a disabled band, a band with no cards and a band whose
@@ -3339,7 +3346,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     put:
       operationId: savePromoBand
-      summary: Create or replace the operator promo band (GitHub #1118)
+      summary: Create or replace the operator promo band
       description: |
         Upserts THE band. v1 renders one band, so this is a singleton
         write rather than an id-addressed create — the table admits
@@ -3381,7 +3388,7 @@ paths:
           $ref: "#/components/responses/Forbidden"
     delete:
       operationId: deletePromoBand
-      summary: Delete the operator promo band (GitHub #1118)
+      summary: Delete the operator promo band
       description: |
         Removes the band. Its cards go with it, through the
         `featured_items.band_id` cascade — they are NOT orphaned onto
@@ -3408,7 +3415,7 @@ paths:
   /admin/featured/promo/items:
     post:
       operationId: addPromoBandItem
-      summary: Add a card to the operator promo band (GitHub #1118)
+      summary: Add a card to the operator promo band
       description: |
         Appends one asset or collection to the band, at the end of its
         own ordering — band positions are computed WITHIN the band, so
@@ -3922,8 +3929,8 @@ paths:
       summary: List assets (paginated)
       description: |
         Returns assets visible to the caller, newest first. Supports
-        cursor pagination plus simple filters; richer search lands
-        with ADR 0010.
+        cursor pagination plus simple filters. For structured queries,
+        use `/search`.
       tags: [assets]
       # Anonymous-readable (#415). Documentary only — the handler
       # guard enforces access, not this block: /search has served
@@ -3999,7 +4006,8 @@ paths:
             plainto_tsquery. Composes with `tag`: both narrow the same
             page (before #657 the by-tag branch was a separate query
             with no search_text column, so `q` was silently dropped).
-            A future search DSL (ADR 0010) will replace this.
+            This is plain-text search; the structured query language is
+            on `/search`.
           schema: { type: string, maxLength: 200 }
         - name: cursor
           in: query
@@ -4039,6 +4047,7 @@ paths:
         schema: { type: string, format: uuid }
     get:
       operationId: getAsset
+      summary: Get an asset
       tags: [assets]
       # Anonymous-readable (#415). Documentary only — the handler
       # guard enforces access, not this block: /search has served
@@ -4057,6 +4066,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     patch:
       operationId: updateAsset
+      summary: Update an asset
       description: |
         Partial update. Only fields present in the request body are
         modified. Use `tags` (array) to replace the full tag set; use
@@ -5272,6 +5282,7 @@ paths:
         schema: { type: string }
     delete:
       operationId: removeAssetTag
+      summary: Remove a tag from an asset
       tags: [assets]
       security:
         - cookieAuth: []
@@ -5404,6 +5415,7 @@ paths:
         schema: { type: string, format: uuid }
     get:
       operationId: getField
+      summary: Get a field definition
       tags: [metadata]
       security:
         - cookieAuth: []
@@ -6281,8 +6293,8 @@ paths:
           in: query
           required: false
           description: |
-            Plain-text search over the post's TSVECTOR. A future
-            search DSL will replace this with a full query language.
+            Plain-text search over the post's TSVECTOR. The structured
+            query language is on `/search`.
           schema: { type: string, maxLength: 200 }
         - name: tag
           in: query
@@ -6888,10 +6900,11 @@ paths:
         storage and publication are separate lifecycles, so removing a
         post never removes the files it showed.
 
-        Peers are told. A `Delete` activity goes to the federation
-        outbox so a remote instance drops its copy rather than
-        continuing to serve a post its author withdrew; re-publishing
-        emits a fresh `Create`.
+        A `Delete` activity is queued for paired peers, and
+        re-publishing queues a fresh `Create`. Remote instances don't
+        hold copies of posts yet (sharing between instances is planned),
+        so today this keeps the protocol record consistent rather than
+        removing a remote copy.
 
         Gated on the ordinary post-mutation rule — author, team-scoped
         or global `posts.admin`, or `system.admin` — which is WIDER
@@ -9055,7 +9068,7 @@ paths:
   /auth/me/followed-tags:
     get:
       operationId: getMyFollowedTags
-      summary: Tags the caller follows (the rail's # chips)
+      summary: Tags the caller follows (shown as chips on the rail)
       description: |
         The caller's `tag_follows` rows (#1123), most recently followed
         first.
@@ -9096,7 +9109,7 @@ paths:
         schema: { type: integer, format: int64 }
     get:
       operationId: getUserPublicByRef
-      summary: Public profile for a user (by RS ref)
+      summary: Public profile for a user (by numeric user ref)
       description: |
         Returns the merged user + user_profile view used to render
         author headers in the post modal, the /@username profile page,
@@ -11569,7 +11582,7 @@ paths:
   /featured/promo:
     get:
       operationId: getPromoBand
-      summary: The operator promo band for the browse feed (GitHub #1118)
+      summary: The operator promo band for the browse feed
       description: |
         The full-width strip the browse feed renders BETWEEN pages, or
         nothing.
@@ -11616,7 +11629,7 @@ paths:
   /featured/teams:
     get:
       operationId: listFeaturedTeams
-      summary: Operator-curated teams for the teams rail (GitHub #1084)
+      summary: Operator-curated teams for the teams rail
       description: |
         The `featured_items` placements with `subject_kind = 'team'` at
         `scope = 'org'`, in curation order — the slot that runs first in
@@ -12838,10 +12851,8 @@ components:
       in: cookie
       name: user
       description: |
-        PHP-compatible session cookie issued by `/auth/login`. The
-        cookie name `user` is the one RS reads (include/authenticate.php),
-        which is why we keep it for now; rename happens once PHP is
-        fully retired.
+        Session cookie issued by `POST /auth/login`. It is named `user`
+        for historical reasons; renaming it would sign every account out.
     bearerAuth:
       type: http
       scheme: bearer
@@ -13493,12 +13504,13 @@ components:
           type: string
           description: |
             Name of the identity provider to authenticate against.
-            Defaults to "password" (the built-in flow). Enterprise
-            installs can name a registered LDAP provider ("ldap" or
-            a per-server alias like "ldap-engineering"). Requests
-            naming an unregistered provider get 401 — same shape as
-            a bad password, so a probing client can't enumerate
-            which enterprise providers are active.
+            Defaults to "password" (the built-in flow). An install with
+            a registered LDAP provider can name it ("ldap" or a
+            per-server alias like "ldap-engineering"); LDAP and SAML
+            providers only register with a license feature, which can't
+            be obtained today. Requests naming an unregistered provider
+            get 401, the same shape as a bad password, so a probing
+            client can't enumerate which providers are active.
           example: password
         totp_code:
           type: string
@@ -15410,9 +15422,8 @@ components:
           nullable: true
           description: |
             Which tab of the edit surface this field sits in (ADR 0092
-            §3, #1173). `null` (the default) = unassigned, which is
-            today's behaviour: no surface has tabs yet and fields group
-            by `display_group`.
+            §3, #1173). `null` (the default) = unassigned; ADR 0099 §9
+            describes how unassigned fields are grouped.
 
             A COARSER grouping than `display_group`, not a replacement
             for it — a tab holds groups. The empty string is refused on
@@ -16684,7 +16695,7 @@ components:
     Collection:
       type: object
       description: |
-        A user-owned collection of assets, per ADR 0009. UUID-keyed,
+        A user-owned collection of posts, per ADR 0009 and ADR 0091. UUID-keyed,
         federation-prepared (`origin_server_id`), with three
         orthogonal axes: visibility, membership, and lifecycle.
       required:
@@ -16713,8 +16724,9 @@ components:
           type: string
           enum: [manual, query, hybrid]
           description: |
-            `manual` only for 1.11.A. `query` and `hybrid` ship in
-            1.11.B once the search DSL (ADR 0010) lands.
+            Always `manual` today. `query` and `hybrid` are reserved
+            values: a collection saved from a search is a fixed snapshot
+            of its results (ADR 0091, 2026-08-28 note).
         expires_at:
           type: string
           format: date-time
@@ -16725,7 +16737,6 @@ components:
           nullable: true
           description: |
             Free-form admin-set hint ("for_review", "for_proofing", …).
-            Replaces RS's single-purpose `archived` flag.
         origin_server_id:
           type: string
           format: uuid
@@ -17019,8 +17030,8 @@ components:
           enum: [manual, query, hybrid]
           default: manual
           description: |
-            Only `manual` is accepted in 1.11.A; passing `query` or
-            `hybrid` returns 400 until 1.11.B ships.
+            Only `manual` is accepted; passing `query` or `hybrid`
+            returns 400.
         expires_at:
           type: string
           format: date-time
@@ -19192,7 +19203,7 @@ components:
 
         RESTRICTED MEMBERS (#883). A post's author can attach an asset
         that the *reader* is not entitled to — their own restricted
-        work, or (once #882 lands) someone else's. Membership must never
+        work, or someone else's. Membership must never
         WIDEN an item, so when the reader fails
         `visibility.FieldsReadable` this object degrades to a
         placeholder: `restricted` flips to true, `asset` is ABSENT, and
@@ -19919,8 +19930,8 @@ components:
           nullable: true
           description: |
             Login provider for this user — empty / null = native, else
-            'simpleldap' / 'simplesaml' / etc. for the enterprise SSO
-            surfaces. Surfaced here so the admin
+            'simpleldap' / 'simplesaml' / etc. for the license-gated LDAP
+            and SAML providers (not available today). Surfaced here so the admin
             list can show the auth-source badge.
         profile_origin_server_id:
           type: string
@@ -20868,6 +20879,10 @@ components:
         negative when expired). Nullable cap fields (`seats`,
         `asset_cap`) → null = unlimited. Nullable temporal /
         identity fields are simply omitted in community mode.
+
+        No license can be obtained today: commercial licensing is
+        planned, not offered (see LICENSING.md), so installs run in
+        community mode.
       required: [loaded, tier, features, days_until_expiry, org_binding_required, org_bound]
       properties:
         loaded:
@@ -20877,7 +20892,9 @@ components:
           type: string
           description: |
             "community" (unlicensed default) | "pro" | "enterprise" |
-            "complementary" | "plugin" | "custom".
+            "complementary" | "plugin" | "custom". Every tier other than
+            "community" belongs to the planned licensing, which is not
+            offered today.
         features:
           type: array
           items: { type: string }
@@ -20940,7 +20957,7 @@ components:
           type: boolean
           description: |
             True when the loaded license declares an `org_pubkey`
-            claim — the customer must hold the matching org.key
+            claim — the install must hold the matching org.key
             seed file on disk for the license to activate. False for
             community / trial / dev licenses that opted out of
             cross-binding at issuance time.
@@ -20973,8 +20990,7 @@ components:
         Payload for POST /admin/license/validate and
         POST /admin/license/upload. Carries the
         verbatim .lic envelope text — BEGIN/END markers, key:
-        value fields, signature field — exactly as the customer
-        downloaded it.
+        value fields, signature field — exactly as it was issued.
       required: [license_text]
       properties:
         license_text:
@@ -21471,9 +21487,9 @@ components:
     FederationShare:
       type: object
       description: |
-        One federation_shares row per the 1.22.C design proposal.
-        Pairing alone shares nothing; each row here is an
-        explicit per-object grant.
+        One federation_shares row. Pairing alone shares nothing; each
+        row here is an explicit per-object grant. Remote instances do
+        not act on these grants yet.
       required:
         - id
         - grantor_user_ref

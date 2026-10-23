@@ -152,6 +152,17 @@ bundle a disqualified viewer must not be handed.
 
 ### 5. Search unfindability is deferred to #1117, and the obligation is named
 
+> **Status (2026-10-23): closed for the local channels; the federation question is
+> still open.** This section records the deferral as it stood on 2026-08-16. #1117
+> closed the same day with PR #1145, and v0.10.0 shipped it: for a viewer who does
+> not qualify (§2), mature work is withheld from search text (hits and counts),
+> facet counts, suggestions, the similarity channels (similar-image neighbours,
+> `similar_to:` and reverse-image search), the search result cache key, asset
+> browse and previews. The §2 exemptions still apply: a signed-in owner sees their
+> own work, and `system.admin` is exempt. The ⛔ warning below is kept as
+> history. The federation question in the last paragraph was not answered by
+> #1117; see the note at the end of this section.
+
 **A withheld value has DERIVED COPIES, and every copy must be withheld from
 the same viewer.** That rule cost #902 and #1066 a sprint each — `search_text`
 answered for a withheld title, then the CLIP embedding did.
@@ -165,6 +176,8 @@ nothing else.
 This is a **deferral, not an omission**, and the distinction is recorded here
 so the next reader does not mistake a half-built gate for a finished one:
 
+*Historical, as written on 2026-08-16 (closed by #1117; see the status above):*
+
 > ⛔ Until #1117 lands, a disqualified viewer can still find a mature asset by
 > searching its title, and can still see it counted in a facet. The row is not
 > returned by browse and its bytes are refused; its *existence and its words*
@@ -172,6 +185,17 @@ so the next reader does not mistake a half-built gate for a finished one:
 
 The federation question — does the flag travel to a peer? — is also #1117's,
 and ADR 0083's test applies to it.
+
+> **Status note (2026-10-23), federation:** #1117 closed, but the federation
+> question above was not answered, and it is still open. Nothing in the
+> federation code reads or writes `mature`, and the v1 envelope has no typed
+> field for it. That is a gap, not a protection. It does not make mature work
+> safe to federate, and it does not mean a peer would refuse such a field: the
+> reference implementation keeps unknown top-level envelope fields in
+> `Envelope.Extra` instead of rejecting them (ArchivePub v1 spec, implementation
+> deviation D2). How the rating, and the protection it needs, should travel to a
+> peer is undecided. ADR 0094 §6 pre-decides a wire mapping for AI provenance
+> only, as a design, and notes that `mature` has not taken that step either.
 
 ## Consequences
 
