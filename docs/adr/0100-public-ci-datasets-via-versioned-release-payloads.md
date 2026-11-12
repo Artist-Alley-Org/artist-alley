@@ -221,8 +221,9 @@ or CI change:
    `site_a` verification is complete. The new CI-release evidence still has to
    bind it to the frozen bytes:
    - the new 275-row draft rights ledger is still all `pending`;
-   - the private evidence crosswalk lists 24 rows as supported candidates,
-     143 as needing corroboration, and 108 as conflict or hold candidates.
+   - the private evidence crosswalk (v2) lists 24 of its 275 rows as
+     supported candidates, 163 as needing corroboration, and 88 as conflict
+     or hold candidates.
 2. **`site_b` rights review.** Every file of the replacement public `site_b`
    needs a formal per-file review. All 503 private evidence rows are
    `pending_review`.
