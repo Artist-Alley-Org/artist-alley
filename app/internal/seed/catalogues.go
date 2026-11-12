@@ -10,7 +10,9 @@ package seed
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -236,33 +238,40 @@ type catalogues struct {
 	SiteRoot string
 }
 
-func loadCatalogues(catalogueRoot, siteRoot string) (*catalogues, error) {
+// loadCatalogues reads every catalogue input through read, which is
+// os.ReadFile when nil. The CI-selection export (#1514) passes a reader
+// that hashes the exact bytes parsed here, so its input pins cannot drift
+// from what this function actually opens.
+func loadCatalogues(catalogueRoot, siteRoot string, read func(string) ([]byte, error)) (*catalogues, error) {
+	if read == nil {
+		read = os.ReadFile
+	}
 	c := &catalogues{SiteRoot: siteRoot}
-	if err := loadJSON(filepath.Join(catalogueRoot, "dataset.users.json"), &c.Users); err != nil {
+	if err := loadJSON(read, filepath.Join(catalogueRoot, "dataset.users.json"), &c.Users); err != nil {
 		return nil, err
 	}
-	if err := loadJSON(filepath.Join(catalogueRoot, "dataset.teams.json"), &c.Teams); err != nil {
+	if err := loadJSON(read, filepath.Join(catalogueRoot, "dataset.teams.json"), &c.Teams); err != nil {
 		return nil, err
 	}
-	if err := loadJSON(filepath.Join(catalogueRoot, "dataset.collections.json"), &c.Collections); err != nil {
+	if err := loadJSON(read, filepath.Join(catalogueRoot, "dataset.collections.json"), &c.Collections); err != nil {
 		return nil, err
 	}
-	if err := loadJSON(filepath.Join(catalogueRoot, "dataset.field_definitions.json"), &c.Fields); err != nil {
+	if err := loadJSON(read, filepath.Join(catalogueRoot, "dataset.field_definitions.json"), &c.Fields); err != nil {
 		return nil, err
 	}
-	if err := loadJSON(filepath.Join(siteRoot, "MANIFEST.json"), &c.Assets); err != nil {
+	if err := loadJSON(read, filepath.Join(siteRoot, "MANIFEST.json"), &c.Assets); err != nil {
 		return nil, err
 	}
-	if err := loadJSON(filepath.Join(siteRoot, "posts.json"), &c.Posts); err != nil {
+	if err := loadJSON(read, filepath.Join(siteRoot, "posts.json"), &c.Posts); err != nil {
 		return nil, err
 	}
+	// Optional: absent is not an error here (see catalogues.Fixtures).
 	fixPath := filepath.Join(catalogueRoot, "dataset.fixtures.json")
-	if _, err := os.Stat(fixPath); err == nil {
-		var f catFixtures
-		if err := loadJSON(fixPath, &f); err != nil {
-			return nil, err
-		}
+	var f catFixtures
+	if err := loadJSON(read, fixPath, &f); err == nil {
 		c.Fixtures = &f
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
 	}
 	return c, nil
 }
@@ -420,8 +429,8 @@ func (c *catalogues) validateAIDeclarations() error {
 	return nil
 }
 
-func loadJSON(path string, dst any) error {
-	b, err := os.ReadFile(path)
+func loadJSON(read func(string) ([]byte, error), path string, dst any) error {
+	b, err := read(path)
 	if err != nil {
 		return fmt.Errorf("read catalogue %s: %w", path, err)
 	}

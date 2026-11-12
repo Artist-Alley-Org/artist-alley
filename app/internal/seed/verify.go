@@ -223,7 +223,7 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, opts VerifyOptions) (*Verif
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	cat, err := loadCatalogues(opts.CatalogueRoot, opts.SiteRoot)
+	cat, err := loadCatalogues(opts.CatalogueRoot, opts.SiteRoot, nil)
 	if err != nil {
 		return nil, err
 	}
