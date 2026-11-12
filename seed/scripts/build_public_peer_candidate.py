@@ -22,6 +22,16 @@ It is a CANDIDATE, not a release: a pack-local CC0 notice and a current
 first-party page are pack-level evidence, not a per-file rights review,
 and nothing here changes a rights ledger.
 
+PAYLOAD DOCUMENTS
+-----------------
+The images do not travel alone. For each of the seven packs the candidate draws on (the five
+above plus the two packs of the staged rows), the pack-local License.txt is copied unmodified
+from the bundle to images/kenney/<pack>/License.txt, after its pin is checked. One provenance
+file, images/kenney/PROVENANCE.json, binds each pack to its notice SHA-256, first-party page,
+the bundle version and pinned Readme SHA-256, the selected-file scope and the caveats. Both are
+listed in SHA256SUMS, so they ship inside the release payload with the images. The full
+All-in-1 bundle is never copied: only the selected PNGs and these eight small documents.
+
 DETERMINISM
 -----------
 Members are visited in sorted path order, quotas are fixed, a pack that
@@ -103,6 +113,17 @@ class Config:
     min_side: int = 64
     epoch: str = "2026-11-10T00:00:00Z"
     extra: dict = field(default_factory=dict)
+    base_packs: list = field(default_factory=list)  # NoticePack: the packs of the staged base rows
+    readme_sha256: str = ""                        # pinned bundle Readme.html; empty = refuse
+
+
+@dataclass(frozen=True)
+class NoticePack:
+    folder: str
+    slug: str
+    name: str
+    page: str
+    notice_sha256: str
 
 
 PACKS = [
@@ -123,6 +144,28 @@ PACKS = [
          "5f404b883e7e1acb43f36a71d8698f9156e6e8bc6e842aadefb2f030fb2d0dd7", 136),
 ]
 SUPPORT_PAGE = "https://kenney.nl/support"
+BASE_PACKS = [
+    NoticePack("2D assets/Monster Builder Pack", "monster-builder-pack", "Monster Builder Pack",
+               "https://kenney.nl/assets/monster-builder-pack",
+               "b8c772c6ae1ae3d13fa3e9be9569b35c6b7671845e1d33ff9e2845d3e3ef3080"),
+    NoticePack("2D assets/Planets", "planets", "Planets",
+               "https://kenney.nl/assets/planets",
+               "f9151e3adda789dc96df0d826b7381c6587fd28c16e423cb7141778ab587d384"),
+]
+README_SHA256 = "b40161bba62e54f94a3dbbd818c0b24b5865fdb6555d5d6806b2dc623037a868"
+README_STATEMENTS = ("All content in this package is Creative Commons Zero (CC0) licensed",
+                     "Please do not distribute this bundle directly")
+NOTICE_NAME = "License.txt"
+PROVENANCE_PATH = "images/kenney/PROVENANCE.json"
+CAVEATS = [
+    "The files were copied byte-for-byte from a local copy of Kenney Game Assets All-in-1 3.6.0. That this local copy "
+    "is identical to the bundle Kenney distributes was not independently proven.",
+    "Kenney's current first-party pages describe these packs as CC0; they do not by themselves prove these exact historical bytes.",
+    "Scope: selected individual files from seven asset packs, grouped by pack folder, each with its pack-local License.txt. "
+    "This is NOT the All-in-1 bundle, whose Readme asks that the bundle not be distributed directly.",
+    "CC0 1.0 waives copyright and related rights. It does not grant trademark or publicity rights; do not imply endorsement by Kenney.",
+    "Not legal advice.",
+]
 
 DEFAULT_CONFIG = Config(
     packs=PACKS,
@@ -148,6 +191,8 @@ DEFAULT_CONFIG = Config(
     # The existing candidate rows follow "first username (sorted) whose primary_team is the
     # row's team"; Environment -> anya.volkov. Studio Library is a public collection.
     identity=Identity(owner="anya.volkov", team="Environment", collection="Studio Library"),
+    base_packs=BASE_PACKS,
+    readme_sha256=README_SHA256,
 )
 
 
@@ -199,6 +244,44 @@ def human(stem: str) -> str:
 def stamp(epoch: str, seconds: int) -> str:
     base = datetime.strptime(epoch, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     return (base + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def bundle_file(bundle: Path, rel: str) -> Path:
+    """bundle/rel as a regular file, refusing unsafe paths and a symlink in ANY component."""
+    parts = rel.split("/")
+    if not rel or rel.startswith("/") or any(c in ("", ".", "..") for c in parts) or "\\" in rel:
+        raise BuildError(f"unsafe bundle path {rel!r}")
+    cur = bundle
+    if cur.is_symlink() or not cur.is_dir():
+        raise BuildError("bundle root is missing or a symlink")
+    for i, c in enumerate(parts):
+        cur = cur / c
+        try:
+            st = os.lstat(cur)
+        except FileNotFoundError:
+            raise BuildError(f"bundle path {rel!r} is missing") from None
+        if stat.S_ISLNK(st.st_mode):
+            raise BuildError(f"bundle path {rel!r} has a symlink component")
+        if i < len(parts) - 1 and not stat.S_ISDIR(st.st_mode):
+            raise BuildError(f"bundle path {rel!r} has a non-directory component")
+    if not stat.S_ISREG(os.lstat(cur).st_mode):
+        raise BuildError(f"bundle path {rel!r} is not a regular file")
+    return cur
+
+
+def read_notice(bundle: Path, folder: str, pin: str) -> tuple[bytes, str]:
+    """The pinned pack-local License.txt and its CC0 statement, or BuildError."""
+    try:
+        p = bundle_file(bundle, folder + "/" + NOTICE_NAME)
+    except BuildError as e:
+        raise BuildError(f"pack notice {folder}/{NOTICE_NAME} is missing or not a regular file ({e})") from None
+    raw = p.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != pin:
+        raise BuildError(f"pack notice {folder}/{NOTICE_NAME} does not match its pin")
+    statement = notice_statement(raw)
+    if not statement:
+        raise BuildError(f"pack notice {folder}/{NOTICE_NAME} has no CC0 statement")
+    return raw, statement
 
 
 def notice_statement(raw: bytes) -> str | None:
@@ -262,15 +345,7 @@ def scan_pack(bundle: Path, pack: Pack, cfg: Config) -> tuple[list[dict], dict]:
     base = bundle / pack.folder
     if base.is_symlink() or not base.is_dir():
         raise BuildError(f"pack folder {pack.folder} is missing or a symlink")
-    notice = base / "License.txt"
-    if notice.is_symlink() or not notice.is_file():
-        raise BuildError(f"pack notice {pack.folder}/License.txt is missing or not a regular file")
-    raw = notice.read_bytes()
-    if hashlib.sha256(raw).hexdigest() != pack.notice_sha256:
-        raise BuildError(f"pack notice {pack.folder}/License.txt does not match its pin")
-    statement = notice_statement(raw)
-    if not statement:
-        raise BuildError(f"pack notice {pack.folder}/License.txt has no CC0 statement")
+    raw, statement = read_notice(bundle, pack.folder, pack.notice_sha256)
     out, info = [], {"symlinks": 0, "png": 0, "too_small": 0, "not_png": 0}
     for dp, dns, fns in os.walk(base, followlinks=False):
         dns.sort()
@@ -304,6 +379,20 @@ def scan_pack(bundle: Path, pack: Pack, cfg: Config) -> tuple[list[dict], dict]:
 def build(bundle: Path, site_a: Path, fixture: Path, contract_path: Path, out: Path, cfg: Config) -> dict:
     base_rows, base_files = load_base(fixture, cfg)
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    if not cfg.readme_sha256:
+        raise BuildError("no bundle Readme pin configured")
+    readme_raw = bundle_file(bundle, "Readme.html").read_bytes()
+    if hashlib.sha256(readme_raw).hexdigest() != cfg.readme_sha256:
+        raise BuildError("bundle Readme.html does not match its pin")
+    readme_text = readme_raw.decode("utf-8", "replace")
+    if not all(st in readme_text for st in README_STATEMENTS):
+        raise BuildError("bundle Readme.html lacks an expected licence statement")
+    base_notices = {}
+    for bp in cfg.base_packs:
+        base_notices[bp.folder] = read_notice(bundle, bp.folder, bp.notice_sha256)
+    for rel in cfg.base_files:
+        if not any(rel.startswith(f"images/kenney/{bp.slug}/") for bp in cfg.base_packs):
+            raise BuildError(f"staged base file {rel} is not under a declared base pack folder")
 
     packs = {p.folder: p for p in cfg.packs}
     cands, pack_info = {}, {}
@@ -447,6 +536,41 @@ def build(bundle: Path, site_a: Path, fixture: Path, contract_path: Path, out: P
     if k != len(new_rows):
         raise BuildError("posts do not reference every new asset exactly once")
 
+    # payload documents: seven pack-local notices and one provenance file
+    all_packs = [(p.folder, p.slug, p.name, p.page, p.notice_sha256) for p in cfg.packs] + \
+                [(bp.folder, bp.slug, bp.name, bp.page, bp.notice_sha256) for bp in cfg.base_packs]
+    notices, prov_packs = {}, []
+    occupied = {r["file_path"].lower() for r in base_rows + new_rows}
+    for folder, slug, name, page, pin in sorted(all_packs, key=lambda t: t[1]):
+        if safe_segment(slug) != slug:
+            raise BuildError(f"pack slug {slug!r} is not path-safe")
+        rel = f"images/kenney/{slug}/{NOTICE_NAME}"
+        if rel.lower() in occupied:
+            raise BuildError(f"pack notice path {rel} collides with another payload file")
+        occupied.add(rel.lower())
+        raw, statement = base_notices[folder] if folder in base_notices else read_notice(bundle, folder, pin)
+        notices[rel] = raw
+        n_files = sum(1 for r in base_rows + new_rows if r["file_path"].startswith(f"images/kenney/{slug}/"))
+        prov_packs.append({"slug": slug, "name": name, "bundle_folder": folder, "files": n_files,
+                           "notice": rel, "notice_sha256": pin, "notice_statement": statement,
+                           "first_party_page": page})
+    if PROVENANCE_PATH.lower() in occupied:
+        raise BuildError(f"{PROVENANCE_PATH} collides with another payload file")
+    if sum(p["files"] for p in prov_packs) != len(base_rows) + len(new_rows):
+        raise BuildError("not every image is under one of the declared pack folders")
+    provenance = {
+        "schema": "artist-alley.site-b-kenney-provenance/v1",
+        "scope": ("Selected individual PNG files from the asset packs below, grouped by pack folder, each folder "
+                  "with its pack-local License.txt. This is NOT the Kenney Game Assets All-in-1 bundle and must not "
+                  "be used to redistribute it."),
+        "source_bundle": {"name": BUNDLE_NAME, "version": BUNDLE_VERSION, "readme_sha256": cfg.readme_sha256},
+        "license": "CC0-1.0",
+        "attribution": "Not required. Optional credit: Kenney (kenney.nl)",
+        "support_page": SUPPORT_PAGE,
+        "packs": prov_packs,
+        "caveats": CAVEATS,
+    }
+
     # write
     out.mkdir(parents=True, exist_ok=True)
     manifest = base_rows + new_rows
@@ -463,6 +587,12 @@ def build(bundle: Path, site_a: Path, fixture: Path, contract_path: Path, out: P
         shutil.copyfile(c["full"], dst)
         if sha_file(dst) != c["sha256"]:
             raise BuildError(f"copy of {c['file_path']} does not match its source")
+    for rel, raw in notices.items():
+        dst = out / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(raw)
+    (out / PROVENANCE_PATH).write_text(json.dumps(provenance, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+                                       encoding="utf-8")
 
     report = {
         "assets": len(manifest), "new_assets": len(new_rows), "posts": len(posts),
@@ -474,6 +604,8 @@ def build(bundle: Path, site_a: Path, fixture: Path, contract_path: Path, out: P
         "site_a": site_stats,
         "anchors": anchors, "control_site_a_matches": 0,
         "new_bytes": sum(c["bytes"] for c in chosen),
+        "payload_docs": {"notices": sorted(notices), "provenance": PROVENANCE_PATH},
+        "provenance_packs": [(p["slug"], p["files"]) for p in prov_packs],
     }
     (out / "README.md").write_text(readme(cfg, report), encoding="utf-8")
     write_sums(out)
@@ -491,14 +623,16 @@ def readme(cfg: Config, rep: dict) -> str:
     pack_rows = "\n".join(
         f"| {p.name} | `{p.folder}` | {rep['per_pack'][p.name]} | `{p.notice_sha256}` | <{p.page}> |"
         for p in cfg.packs)
+    notice_rows = "\n".join(
+        f"| `{slug}` | {n} | `images/kenney/{slug}/License.txt` |" for slug, n in rep["provenance_packs"])
     dev = ("None: every pack filled its quota." if not rep["quota_deviations"] else
            "; ".join(f"{d['pack']} short by {d['short']} (filled from FILL_ORDER)" for d in rep["quota_deviations"]))
     return f"""# Public peer candidate (provisional)
 
 **Status: PROVISIONAL local candidate for issue #1514 (v0.11.1).**
 This is not a release, not a CI cutover and not permission to publish.
-No CI job, profile or seed reads this directory. It does not replace any
-existing peer corpus.
+No configured CI job or seed profile currently points to this candidate (a local,
+disposable seed has read it for testing), and it does not replace the existing peer corpus.
 
 This directory is GENERATED by `seed/scripts/build_public_peer_candidate.py` in the
 artist-alley application repository. Do not edit it by hand.
@@ -515,6 +649,9 @@ artist-alley application repository. Do not edit it by hand.
   73 needed to reach a third 36-item UI page. This is a manifest count; the visible count
   still has to be measured on a seeded instance.
 - {rep['new_bytes']} bytes of new images.
+- {len(rep['payload_docs']['notices'])} pack-local `License.txt` notices and one provenance file
+  (`{rep['payload_docs']['provenance']}`) under `images/kenney/`. They are payload documents, not
+  assets: they have no manifest rows, and they ship with the images in the release payload.
 
 ## What the original three rows exercise
 
@@ -564,13 +701,35 @@ also keeps `metadata.candidate` ("{CANDIDATE_MARK}").
 - The bytes match the local bundle. Whether they also equal what kenney.nl serves today
   was NOT checked.
 
+## Pack notices and provenance (payload documents)
+
+The images travel with their notices. For every pack folder under `images/kenney/`, the
+pack-local `License.txt` is copied unmodified from the bundle, after its SHA-256 is checked
+against the pin in the table above (the two staged-row packs, Monster Builder Pack and
+Planets, have their own pins in the generator):
+
+| Pack folder | Images | Notice |
+|---|---|---|
+{notice_rows}
+
+`{rep['payload_docs']['provenance']}` binds each pack folder to its notice SHA-256, its
+first-party page, the bundle name and version, and the pinned SHA-256 of the bundle's
+`Readme.html`. It also states the scope (selected files only, not the All-in-1 bundle, which
+its Readme asks not to be distributed directly) and the caveats: the local bundle copy's
+identity with Kenney's distribution is not proven, the first-party pages do not prove the
+exact bytes, and CC0 grants no trademark or publicity rights. It holds no machine paths.
+
 ## Rights and visibility limits
 
 - **Not a rights clearance.** A pack-local CC0 notice plus a current first-party page is
-  pack-level evidence. No per-file review was done, and no rights ledger changed.
+  pack-level evidence. A PRIVATE, conditional per-file review record covers the exact 503
+  selected PNGs only. It is not legal clearance and not public-release authorization, and it
+  does not establish the exact upstream origin of the local bundle copy. The seven licence
+  notices and the provenance file accompany the payload. No rights ledger changed.
 - **Not measured.** The {rep['posts']}-post feed and the {rep['assets']}-asset listing are manifest counts. The
   counts visible to a signed-in user on a seeded instance still have to be measured.
-- **Not shipped.** Nothing has been released, packaged or uploaded.
+- **Not shipped.** Nothing has been released or uploaded. Any release archive built from this
+  directory is a private local candidate only.
 
 ## Rebuild and verify
 
@@ -586,7 +745,8 @@ python3 seed/scripts/build_public_peer_candidate.py --bundle <bundle dir> --site
 byte-identical to this directory. Without `--check` it rewrites this directory.
 
 `SHA256SUMS` lists every other file in this directory, sorted by path
-(`LC_ALL=C`). To verify, from this directory: `sha256sum -c SHA256SUMS`.
+(`LC_ALL=C`): the metadata files, every image, and the payload documents above. To verify,
+from this directory: `sha256sum -c SHA256SUMS`.
 """
 
 

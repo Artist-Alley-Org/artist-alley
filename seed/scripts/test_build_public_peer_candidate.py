@@ -36,6 +36,9 @@ def png(w: int, h: int, seed: int) -> bytes:
 
 
 NOTICE = b"Some Pack\n\nLicense: (Creative Commons Zero, CC0)\nhttp://creativecommons.org/publicdomain/zero/1.0/\n"
+README = (b"<html><body>All content in this package is Creative Commons Zero (CC0) licensed. "
+          b"Please do not distribute this bundle directly. Version 3.6.0</body></html>")
+BASE_FOLDER = "2D assets/Delta Pack"
 
 
 class Fixture:
@@ -46,6 +49,12 @@ class Fixture:
         self.fixture = td / "fixture"
         self.out = td / "out"
         self.packs = []
+        self.bundle.mkdir(parents=True)
+        (self.bundle / "Readme.html").write_bytes(README)
+        (self.bundle / BASE_FOLDER).mkdir(parents=True)
+        (self.bundle / BASE_FOLDER / "License.txt").write_bytes(NOTICE + b"delta")
+        self.base_packs = [b.NoticePack(BASE_FOLDER, "delta-pack", "Delta Pack", "https://example.invalid/delta",
+                                        hashlib.sha256(NOTICE + b"delta").hexdigest())]
         names = ["2D assets/Alpha Pack", "2D assets/Beta Pack", "UI assets/Gamma Pack"]
         for i, (folder, q) in enumerate(zip(names, quotas)):
             base = self.bundle / folder
@@ -60,10 +69,11 @@ class Fixture:
                                      hashlib.sha256(NOTICE + folder.encode()).hexdigest(), q))
         # site_a with two anchors (bytes equal to two base files) and an unrelated file
         self.site_a.mkdir()
-        base_bytes = {"images/x/anchor1.png": png(70, 70, 201), "images/x/anchor2.png": png(71, 70, 202),
-                      "images/x/control.png": png(72, 70, 203)}
-        (self.site_a / "a1.png").write_bytes(base_bytes["images/x/anchor1.png"])
-        (self.site_a / "a2.png").write_bytes(base_bytes["images/x/anchor2.png"])
+        base_bytes = {"images/kenney/delta-pack/anchor1.png": png(70, 70, 201),
+                      "images/kenney/delta-pack/anchor2.png": png(71, 70, 202),
+                      "images/kenney/delta-pack/control.png": png(72, 70, 203)}
+        (self.site_a / "a1.png").write_bytes(base_bytes["images/kenney/delta-pack/anchor1.png"])
+        (self.site_a / "a2.png").write_bytes(base_bytes["images/kenney/delta-pack/anchor2.png"])
         (self.site_a / "other.png").write_bytes(png(80, 80, 250))
         # staged fixture: three base rows + files
         rows = []
@@ -78,9 +88,9 @@ class Fixture:
         self.rows = rows
         self.contract = td / "contract.json"
         self.contract.write_text(json.dumps({"fixtures": [
-            {"name": "overlap-image-1", "sha256": hashlib.sha256(base_bytes["images/x/anchor1.png"]).hexdigest(),
+            {"name": "overlap-image-1", "sha256": hashlib.sha256(base_bytes["images/kenney/delta-pack/anchor1.png"]).hexdigest(),
              "assets": {"site_a": {"file_path": "a1.png"}, "site_b": {"asset_id": rows[0]["id"]}}},
-            {"name": "overlap-image-2", "sha256": hashlib.sha256(base_bytes["images/x/anchor2.png"]).hexdigest(),
+            {"name": "overlap-image-2", "sha256": hashlib.sha256(base_bytes["images/kenney/delta-pack/anchor2.png"]).hexdigest(),
              "assets": {"site_a": {"file_path": "a2.png"}, "site_b": {"asset_id": rows[1]["id"]}}},
         ]}))
         total = sum(quotas)
@@ -92,7 +102,8 @@ class Fixture:
             base_rows={r["id"]: b.canonical_sha(r) for r in rows},
             base_files={rel: (hashlib.sha256(d).hexdigest(), len(d)) for rel, d in base_bytes.items()},
             control_id=rows[2]["id"], posts_of_three=three, posts_of_two=two,
-            identity=b.Identity("u1", "Team", "Collection"))
+            identity=b.Identity("u1", "Team", "Collection"),
+            base_packs=self.base_packs, readme_sha256=hashlib.sha256(README).hexdigest())
 
     def build(self, out: Path | None = None):
         return b.build(self.bundle, self.site_a, self.fixture, self.contract, out or self.out, self.cfg)
@@ -167,7 +178,7 @@ class BuildTests(unittest.TestCase):
 
     def test_control_in_site_a_blocks(self):
         f = Fixture(self.td)
-        (f.site_a / "control_copy.png").write_bytes((f.fixture / "images/x/control.png").read_bytes())
+        (f.site_a / "control_copy.png").write_bytes((f.fixture / "images/kenney/delta-pack/control.png").read_bytes())
         with self.assertRaisesRegex(b.BuildError, "BLOCKED"):
             f.build()
 
@@ -185,7 +196,7 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(b.BuildError, "changed"):
             f.build()
         f2 = Fixture(Path(tempfile.mkdtemp(dir=self.td)))
-        (f2.fixture / "images/x/anchor1.png").write_bytes(png(70, 70, 1))
+        (f2.fixture / "images/kenney/delta-pack/anchor1.png").write_bytes(png(70, 70, 1))
         with self.assertRaisesRegex(b.BuildError, "changed"):
             f2.build()
 
@@ -219,7 +230,7 @@ class BuildTests(unittest.TestCase):
     def test_no_absolute_paths_in_outputs(self):
         f = Fixture(self.td)
         f.build()
-        for name in ("MANIFEST.json", "posts.json", "README.md", "SHA256SUMS"):
+        for name in ("MANIFEST.json", "posts.json", "README.md", "SHA256SUMS", b.PROVENANCE_PATH):
             text = (f.out / name).read_text()
             for leak in (str(self.td), str(f.bundle), str(f.site_a)):
                 self.assertNotIn(leak, text, f"{name} leaks {leak}")
@@ -230,6 +241,78 @@ class BuildTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             b.main(["--bundle", str(self.td), "--site-a", str(self.td)])
         self.assertEqual(cm.exception.code, 2)
+
+    def test_pack_notices_and_provenance_are_payload_docs(self):
+        f = Fixture(self.td)
+        rep = f.build()
+        slugs = sorted([p.slug for p in f.packs] + ["delta-pack"])
+        notices = sorted(p.relative_to(f.out).as_posix() for p in f.out.rglob("License.txt"))
+        self.assertEqual(notices, [f"images/kenney/{s}/License.txt" for s in slugs])
+        for p in f.packs + f.base_packs:
+            self.assertEqual((f.out / f"images/kenney/{p.slug}/License.txt").read_bytes(),
+                             (f.bundle / p.folder / "License.txt").read_bytes(), "notice copied unmodified")
+        prov = json.loads((f.out / b.PROVENANCE_PATH).read_text())
+        self.assertEqual([p["slug"] for p in prov["packs"]], slugs)
+        self.assertEqual(prov["source_bundle"]["readme_sha256"], hashlib.sha256(README).hexdigest())
+        self.assertEqual(sum(p["files"] for p in prov["packs"]), 11)
+        self.assertTrue(any("NOT the Kenney Game Assets All-in-1 bundle" in prov["scope"] for _ in [0]))
+        self.assertTrue(any("trademark" in c for c in prov["caveats"]))
+        for p in prov["packs"]:
+            self.assertEqual(p["notice_sha256"], b.sha_file(f.out / p["notice"]))
+        m = json.loads((f.out / "MANIFEST.json").read_text())
+        self.assertFalse(any(r["file_path"].endswith((".txt", ".json")) for r in m), "payload docs get no manifest rows")
+        listed = {l[66:] for l in (f.out / "SHA256SUMS").read_text().splitlines()}
+        self.assertTrue(set(notices) | {b.PROVENANCE_PATH} <= listed, "payload docs are pinned by SHA256SUMS")
+        self.assertEqual(rep["payload_docs"]["notices"], notices)
+        self.assertNotIn("Readme.html", {p.name for p in f.out.rglob("*")}, "the bundle Readme is not copied")
+
+    def test_base_pack_notice_missing_or_mismatched_fails(self):
+        f = Fixture(self.td)
+        os.remove(f.bundle / BASE_FOLDER / "License.txt")
+        with self.assertRaisesRegex(b.BuildError, "Delta Pack/License.txt is missing"):
+            f.build()
+        f2 = Fixture(Path(tempfile.mkdtemp(dir=self.td)))
+        (f2.bundle / BASE_FOLDER / "License.txt").write_bytes(b"changed")
+        with self.assertRaisesRegex(b.BuildError, "does not match its pin"):
+            f2.build()
+
+    def test_bundle_readme_pin_and_statements_fail_closed(self):
+        f = Fixture(self.td)
+        (f.bundle / "Readme.html").write_bytes(README + b" ")
+        with self.assertRaisesRegex(b.BuildError, "Readme.html does not match its pin"):
+            f.build()
+        f2 = Fixture(Path(tempfile.mkdtemp(dir=self.td)))
+        f2.cfg.readme_sha256 = ""
+        with self.assertRaisesRegex(b.BuildError, "no bundle Readme pin"):
+            f2.build()
+
+    def test_symlinked_notice_or_parent_fails(self):
+        f = Fixture(self.td)
+        real = f.bundle / BASE_FOLDER / "License.txt"
+        moved = self.td / "moved.txt"
+        os.rename(real, moved)
+        os.symlink(moved, real)
+        with self.assertRaisesRegex(b.BuildError, r"Delta Pack/License.txt is missing or not a regular file \(.*symlink component"):
+            f.build()
+        f2 = Fixture(Path(tempfile.mkdtemp(dir=self.td)))
+        top = f2.bundle / "UI assets"
+        os.rename(top, f2.td / "ui-real")
+        os.symlink(f2.td / "ui-real", top)
+        with self.assertRaisesRegex(b.BuildError, r"Gamma Pack/License.txt is missing or not a regular file \(.*symlink component"):
+            f2.build()
+
+    def test_notice_path_collision_fails(self):
+        f = Fixture(self.td)
+        f.cfg.base_packs = f.base_packs + [b.NoticePack(BASE_FOLDER, f.packs[0].slug, "Dup", "https://example.invalid/d",
+                                                        f.base_packs[0].notice_sha256)]
+        with self.assertRaisesRegex(b.BuildError, r"pack notice path images/kenney/alpha-pack/License.txt collides"):
+            f.build()
+
+    def test_base_file_outside_base_packs_fails(self):
+        f = Fixture(self.td)
+        f.cfg.base_packs = []
+        with self.assertRaisesRegex(b.BuildError, "not under a declared base pack folder"):
+            f.build()
 
     def test_readme_has_no_app_relative_links(self):
         f = Fixture(self.td)
