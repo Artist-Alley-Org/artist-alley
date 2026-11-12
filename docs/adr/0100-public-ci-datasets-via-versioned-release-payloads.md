@@ -71,15 +71,17 @@ The owner chose (2026-11-11):
 A public repository cannot prevent cloning, so a clone must simply contain no
 payload and no LFS pointer.
 
-The owner also chose tiered testing. Full `site_a` (about 2,006 assets and 863
-posts) and the replacement public `site_b` (about 503 assets and 200 posts) are
-for scheduled or manually dispatched scale validation. PR CI stays a small,
+The owner also chose tiered testing. Full `site_a` (about 2,005 assets and 863
+posts, after the owner-directed exclusion of the Sponza scene on 2026-11-12)
+and the replacement public `site_b` (about 503 assets and 200 posts) are for
+scheduled or manually dispatched scale validation. PR CI stays a small,
 coverage-complete `site_a` subset. ADR 0080 explains why: seeding the whole
 catalogue cost 14 minutes of a 20-minute job. The measured local `site_a`
-candidate stream is 2,712,587,909 bytes, which is too large to download,
-verify and extract on every pull request. The PR subset selected by
-`--profile ci` with the overlap includes is 165 assets, 87 posts and
-666,675,617 unique bytes.
+candidate stream is 2,664,854,328 bytes after the exclusion (2,712,587,909
+before it), which is too large to download, verify and extract on every pull
+request. The PR subset selected by `--profile ci` with the overlap includes is
+164 assets, 84 posts, 204 files and 728,101,752 unique bytes after the
+exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
 
 ## Decision
 
@@ -148,17 +150,30 @@ verify and extract on every pull request. The PR subset selected by
   repositories, and `verify` reconstructed both sites from metadata-only
   copies:
 
-  | | Parts | Part bytes | Stream SHA-256 | `release.json` SHA-256 |
-  | --- | --- | --- | --- | --- |
-  | `site_a` | 2 | 1,899,999,999 and 812,587,910 | `25a50b8960089d4d9d066a4fc690eec88d73e601b970e3e51d83fc8102ff6a0e` | `8c28c6dcccb692c0c7b3c8858d8d74eeddf419ed675ae3010ae088bf08922e76` |
-  | `site_b` | 1 | 3,156,078 | `bc2a609fa88afc3a5424bb54dfde54242f1ad9a94e30718e966ddb09cffb9a85` | `cdc4b78a959461386a9053b92401c6381e86721dfd44db3b1f3e30c656e80184` |
+  | | Status | Payload files | Parts | Part bytes | Stream SHA-256 | `release.json` SHA-256 |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | `site_a` | current, post-Sponza exclusion | 2,180 | 2 | 1,899,999,999 and 764,854,329 | `d99a864052651f29b42b2dd05d5b719da991a98264b93b62b6f9b8a674c3f71c` | `c756c03880abd5729e90b9cd99262c81056965eb4e8c0b3305aed44fcd5220cd` |
+  | `site_a` | OBSOLETE, pre-exclusion, contains Sponza: must not be uploaded | 2,251 | 2 | 1,899,999,999 and 812,587,910 | `25a50b8960089d4d9d066a4fc690eec88d73e601b970e3e51d83fc8102ff6a0e` | `8c28c6dcccb692c0c7b3c8858d8d74eeddf419ed675ae3010ae088bf08922e76` |
+  | `site_b` | current | 503 | 1 | 3,156,078 | `bc2a609fa88afc3a5424bb54dfde54242f1ad9a94e30718e966ddb09cffb9a85` | `cdc4b78a959461386a9053b92401c6381e86721dfd44db3b1f3e30c656e80184` |
+
+  **The current `site_a` candidate:**
+  - **Source:** `site_a` metadata commit
+    `249c15fc0d2b7ea13acdbf26f4e5ff90a7796ed4`: 2,005 assets, 863 posts, and
+    2,187 `SHA256SUMS` entries (2,180 payload files of 2,709,016,036 bytes).
+  - **Why it was built from a private staging root:** the builder refuses
+    unlisted payload files, and the 71 excluded Sponza files remain, ignored
+    and unlisted, on local disk for reversibility.
+  - **Reproducibility:** two independent builds with Python 3.12.3 and zlib
+    1.3 were byte-identical.
 
   The `site_b` candidate was rebuilt after its metadata README and `SHA256SUMS`
   line were corrected. Its payload part is byte-identical to the earlier build.
+  After a 2026-11-12 host crash deleted an earlier temporary copy, the archive
+  was rebuilt byte-identically from the unchanged `site_b` metadata repository.
 
-  These are measurements of local candidates, kept privately. They are not
-  release pins, they authorize no upload, and they must not be embedded as CI
-  constants. A pin exists only after a reviewed publication.
+  These are measurements of local candidates. The two current candidates are
+  retained privately. They are not release pins, they authorize no upload, and
+  they must not be embedded as CI constants. A pin exists only after a reviewed publication.
 - No PR subset release exists. `aa seed-package` builds the coverage-selected
   subset package, but it is rights-gated, and its rights ledger is still
   pending, so it refuses to build.
@@ -220,10 +235,15 @@ or CI change:
 1. **`site_a` evidence reconciliation.** The owner states that the historical
    `site_a` verification is complete. The new CI-release evidence still has to
    bind it to the frozen bytes:
-   - the new 275-row draft rights ledger is still all `pending`;
-   - the private evidence crosswalk (v2) lists 24 of its 275 rows as
-     supported candidates, 163 as needing corroboration, and 88 as conflict
-     or hold candidates.
+   - the fresh structural draft ledger for the post-exclusion CI selection
+     has 204 rows, all `pending`, none reviewed;
+   - the private evidence crosswalk (v2) was made for the pre-exclusion
+     275-row draft. It lists 24 of those rows as supported candidates, 163
+     as needing corroboration, and 88 as conflict or hold candidates;
+   - 194 of the 204 current files are byte-identical files from that
+     275-row set. The 10 that entered with the exclusion have manifest labels
+     and attributions, but no row in that crosswalk, and they are `pending`
+     and unreviewed in the new ledger.
 2. **`site_b` rights review.** Every file of the replacement public `site_b`
    needs a formal per-file review. All 503 private evidence rows are
    `pending_review`.
@@ -241,7 +261,8 @@ or CI change:
    large tier.
 8. **Rollback.** The rollback procedure must be documented.
 
-The local candidate archives do not authorize an upload. Nothing in this ADR
+No local candidate archive authorizes an upload, and the obsolete
+pre-exclusion `site_a` candidate must never be uploaded. Nothing in this ADR
 calls the current sources rights-cleared.
 
 ## Reference
