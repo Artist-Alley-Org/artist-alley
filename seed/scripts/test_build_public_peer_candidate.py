@@ -16,6 +16,7 @@ import json
 import os
 import struct
 import sys
+import shutil
 import tempfile
 import unittest
 import uuid
@@ -230,7 +231,7 @@ class BuildTests(unittest.TestCase):
     def test_no_absolute_paths_in_outputs(self):
         f = Fixture(self.td)
         f.build()
-        for name in ("MANIFEST.json", "posts.json", "README.md", "SHA256SUMS", b.PROVENANCE_PATH):
+        for name in ("MANIFEST.json", "posts.json", b.GENERATED_DOC, "SHA256SUMS", b.PROVENANCE_PATH):
             text = (f.out / name).read_text()
             for leak in (str(self.td), str(f.bundle), str(f.site_a)):
                 self.assertNotIn(leak, text, f"{name} leaks {leak}")
@@ -317,9 +318,39 @@ class BuildTests(unittest.TestCase):
     def test_readme_has_no_app_relative_links(self):
         f = Fixture(self.td)
         f.build()
-        text = (f.out / "README.md").read_text()
+        self.assertEqual(b.GENERATED_DOC, "DATASET.md")
+        self.assertFalse((f.out / "README.md").exists(), "the generator must not write the curated README.md")
+        text = (f.out / b.GENERATED_DOC).read_text()
         self.assertNotIn("](../", text)
-        self.assertIn("--fixture <this directory>", text)
+        self.assertIn("--fixture <site_b repository root>", text)
+        self.assertIn("The curated `README.md` and `.gitignore` are not generated", text)
+
+    def test_repo_root_fixture_ignores_curated_files_and_git(self):
+        """The site root IS the repository root (same layout as site_a): --check compares only
+        the generated files and images/, never the curated README.md, .gitignore or .git/."""
+        f = Fixture(self.td)
+        f.build()
+        root = self.td / "repo"
+        shutil.copytree(f.out, root)
+        (root / "README.md").write_text("# curated, human-facing\n")
+        (root / ".gitignore").write_text("/images/\n")
+        (root / ".git" / "objects").mkdir(parents=True)
+        (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+        self.assertEqual(b.compare_to_fixture(f.out, root), [])
+        self.assertEqual(b.compare_trees_extra(root, {}), [])
+        (root / "README.md").write_text("# edited by a human\n")
+        self.assertEqual(b.compare_to_fixture(f.out, root), [], "a curated README edit is not a diff")
+        (root / "site_b").mkdir()
+        (root / "site_b" / "MANIFEST.json").write_text("[]\n")
+        self.assertEqual(b.compare_to_fixture(f.out, root), ["unexpected: site_b/MANIFEST.json"])
+        self.assertEqual(b.compare_trees_extra(root, {}), ["site_b/MANIFEST.json"])
+        shutil.rmtree(root / "site_b")
+        (root / b.GENERATED_DOC).write_text("hand edit\n")
+        self.assertEqual(b.compare_to_fixture(f.out, root), [b.GENERATED_DOC])
+        shutil.copyfile(f.out / b.GENERATED_DOC, root / b.GENERATED_DOC)
+        some_png = next(p for p in (root / "images").rglob("*.png"))
+        some_png.unlink()
+        self.assertEqual(b.compare_to_fixture(f.out, root), [some_png.relative_to(root).as_posix()])
 
 
 if __name__ == "__main__":

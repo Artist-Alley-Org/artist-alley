@@ -94,7 +94,11 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
   `.gitignore` rules, so `git add -A` cannot stage them.
   - `site_a` payload directories: `3d/`, `audio/`, `documents/`, `fonts/`,
     `images/`, `videos/`.
-  - `site_b` payload directory: `site_b/images/`.
+  - `site_b` payload directory: `images/`.
+  - Both repositories use the same root layout (2026-11-13): the site root is
+    the repository root. `site_b`'s generated metadata document is
+    `DATASET.md`, listed in `SHA256SUMS`, beside a curated, unlisted
+    `README.md`. Until then `site_b` kept its site root under `site_b/`.
 - Git LFS is not used, and no LFS pointer is committed.
 
 **The payload ships as versioned GitHub Release assets.**
@@ -170,6 +174,16 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
   line were corrected. Its payload part is byte-identical to the earlier build.
   After a 2026-11-12 host crash deleted an earlier temporary copy, the archive
   was rebuilt byte-identically from the unchanged `site_b` metadata repository.
+
+  On 2026-11-13 the `site_b` repository was re-laid out at its root (the
+  generated README became `DATASET.md`). Its rebuilt candidate's payload part
+  is byte-identical to the previous build (`96e2841b...`, 3,160,894 bytes);
+  only its `release.json` changed (`a4b1fa20...`), because its metadata pins
+  now name `DATASET.md` and the new `SHA256SUMS`.
+
+  Both metadata repositories are public on GitHub since 2026-11-13
+  (`Artist-Alley-Org/artist-alley-dataset-site-a` and `-site-b`), metadata
+  only, with no Release, tag or uploaded archive.
 
   These are measurements of local candidates. The two current candidates are
   retained privately. They are not release pins, they authorize no upload, and

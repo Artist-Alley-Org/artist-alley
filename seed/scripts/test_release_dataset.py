@@ -49,7 +49,9 @@ def write_root(root: Path, files: dict[str, bytes], extra: dict[str, bytes] | No
     return root
 
 
-SITE_B_META = {"MANIFEST.json": b'[{"id": "x"}]\n', "posts.json": b"[]\n", "README.md": b"# generated\n"}
+# site_b uses the same root layout as site_a (#1514): its generated metadata document is
+# DATASET.md, and the curated root README.md is not listed (see the test below).
+SITE_B_META = {"MANIFEST.json": b'[{"id": "x"}]\n', "posts.json": b"[]\n", "DATASET.md": b"# generated\n"}
 SITE_A_META = {n: f"{n} metadata\n".encode() for n in ("ATTRIBUTIONS.md", "MANIFEST.json", "dataset-metadata.json",
                                                         "groups.csv", "kenney-hq-replacements.json",
                                                         "metadata.csv", "posts.json")}
@@ -128,6 +130,24 @@ class RoundTrip(Base):
         self.assertEqual(got.pop("SHA256SUMS"), (root / "SHA256SUMS").read_bytes())
         self.assertEqual(got, files)
         self.assertNoTemp(self.t)
+
+    def test_site_b_repo_root_layout_with_curated_readme(self):
+        """#1514: site_b's site root is its repository root, like site_a. The curated README.md
+        and .gitignore sit there UNLISTED; they are not payload, not release metadata and do not
+        block a build. The generated DATASET.md is listed metadata."""
+        files = site_b_files(2)
+        root = write_root(self.t / "repo", files,
+                          extra={"README.md": b"# curated\n", ".gitignore": b"/images/\n"})
+        rel, m = self.build_ok(root, "site_b")
+        self.assertEqual([e["path"] for e in m["metadata"]], ["DATASET.md", "MANIFEST.json", "posts.json"])
+        meta = write_root(self.t / "clone", SITE_B_META,
+                          extra={"README.md": b"# curated\n", ".gitignore": b"/images/\n"},
+                          sums_text=(root / "SHA256SUMS").read_text(encoding="utf-8"))
+        out, r = self.verify_ok(meta, rel)
+        self.assertEqual(r["payload_count"], 2)
+        got = self.tree(out)
+        self.assertNotIn("README.md", got)
+        self.assertNotIn(".gitignore", got)
 
     def test_zero_payload_files(self):
         root = write_root(self.t / "src", dict(SITE_B_META))
@@ -353,9 +373,9 @@ class VerifyRejects(Base):
         self._expect_verify_fail("without following links")
 
     def test_tampered_metadata_root(self):
-        (self.root / "README.md").write_bytes(b"changed\n")
+        (self.root / "DATASET.md").write_bytes(b"changed\n")
         self._expect_verify_fail("does not match SHA256SUMS")
-        (self.root / "README.md").write_bytes(SITE_B_META["README.md"])
+        (self.root / "DATASET.md").write_bytes(SITE_B_META["DATASET.md"])
         sums = (self.root / "SHA256SUMS").read_text(encoding="utf-8")
         (self.root / "SHA256SUMS").write_text(sums + f"{'b' * 64}  images/new.png\n", encoding="utf-8")
         self._expect_verify_fail("release pin")
