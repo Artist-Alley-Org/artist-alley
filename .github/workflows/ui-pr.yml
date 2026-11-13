@@ -3,15 +3,26 @@
 # Runs the Playwright `standalone` project against the production
 # artifact on every PR + every push to a long-lived branch.
 #
-# Self-hosted only because:
-#   1. The `site_a` seed dataset lives at
-#      the seed dataset mount on the
-#      runner's mount. ~30 of the 133 standalone tests walk seeded
-#      posts / users / federation rows; without the dataset they
-#      fail on empty result sets, not on the regression they're
-#      meant to catch.
-#   2. Standard docker on the self-hosted runner publishes ports
-#      normally.
+# GitHub-hosted (#1514, ADR 0100). This used to run self-hosted
+# because the `site_a` seed dataset only existed on the owner's
+# machines. It is now a public, versioned GitHub Release: the job
+# checks out the metadata at the tag pinned in
+# seed/contracts/ci-datasets.v1.json, downloads the release archive
+# and verifies every byte against the pinned release.json before
+# seeding (scripts/ci/public-datasets.sh). ~30 of the 133 standalone
+# tests walk seeded posts / users / federation rows; without the
+# dataset they fail on empty result sets, not on the regression
+# they're meant to catch.
+#
+# The dataset is the site_a CI SUBSET edition, `v2026.11.01-sm`
+# (pins key `site_a_sm`): exactly the rows and files `--profile ci`
+# selects from the full edition `v2026.11.01`, plus the two overlap
+# anchors, so the seed below loads the same fixture it would load from
+# the full edition, from 658,160,717 bytes compressed (666,231,365
+# extracted) instead of 2,430,808,110 (2,513,030,786). The full edition
+# stays the nightly's dataset (ui-nightly.yml). The prepare/fetch steps
+# print free disk and elapsed time so the cost is measured on every run
+# rather than assumed.
 #
 # We test the PROD image, not the dev `vite dev` stack, because:
 #   1. Vite cold-boot in a fresh container runs the full dep
@@ -29,27 +40,18 @@
 #      test fails.
 #
 # Federation tests run in ui-nightly.yml — they additionally need
-# the dogfood compose profile + mkcert + /etc/hosts + pair.sh.
+# the dogfood compose profile + an ephemeral studio-b.local cert +
+# /etc/hosts + pair.sh.
 #
 # Pairs with ci.yml: ci.yml gates Go + frontend correctness; this
 # workflow gates the UI surface (navigation, forms, admin pages
 # render against the live API + seeded data).
 #
-# Fork-PR caveat: fork PRs won't run this workflow because trusted
-# runners aren't available to them. The status reports as
-# "workflow skipped" — explicit, not silent.
-#
-# Seed-secret caveat (#1040): the whole suite depends on the site_a
-# dataset, whose HOST path comes from the `SEED_SITE_A_PATH` secret.
-# GitHub withholds *repository* secrets from Dependabot-triggered
-# workflow runs, so on a Dependabot PR the variable resolved empty and
-# `-v ":/seed/site:ro"` made docker bail with `invalid spec: empty
-# section between colons` — a red X that describes a symptom, names
-# nothing, and could never go green no matter what the bump contained.
-# The `seed-preflight` job below turns that into an explicit SKIP.
-# Populating the same value in the *Dependabot* secret store
-# (Settings → Secrets and variables → Dependabot) makes these runs
-# execute for real instead of skipping.
+# Forks and Dependabot: this job uses no secret and no trusted
+# runner, only public data and the read-only GITHUB_TOKEN, so fork
+# and Dependabot PRs run the real suite. The old `seed-preflight`
+# job, which SKIPPED the suite whenever the `SEED_SITE_A_PATH`
+# secret was withheld (#1040), is gone with that secret.
 
 name: UI dogfood (standalone)
 
@@ -100,78 +102,46 @@ permissions:
   contents: read
 
 jobs:
-  # ── Can this run see the seed dataset at all? (#1040)
-  #
-  # ~30 of the 133 standalone tests walk seeded rows, and the seed step
-  # mounts a HOST path that only exists in the `SEED_SITE_A_PATH`
-  # secret. Runs that GitHub withholds secrets from — Dependabot-
-  # triggered runs, and forks if they ever get a trusted runner — can
-  # never satisfy that, so the honest verdict for them is "skipped",
-  # not "failed".
-  #
-  # This has to be its own job: the `secrets` context is available to a
-  # step's `if`/`env` but NOT to `jobs.<id>.if`, so the only way to make
-  # a whole job conditional on a secret being present is to have another
-  # job read it and publish a plain output. Gating the ~20 steps of
-  # ui-standalone individually would be the alternative, and it would
-  # end with a GREEN check that ran no tests — strictly worse than a
-  # skip, because green is a claim.
-  #
-  # Skipped jobs report success to branch protection and count as
-  # "skipping" (not failing) to `gh pr checks`, so the dependabot
-  # auto-merge gate treats this correctly without changes.
-  seed-preflight:
-    name: Seed dataset preflight
-    runs-on: [self-hosted, artist-alley]
-    timeout-minutes: 5
-    outputs:
-      available: ${{ steps.probe.outputs.available }}
-    steps:
-      - name: Probe for the seed dataset path
-        id: probe
-        env:
-          # Empty on any run GitHub withholds repository secrets from.
-          # Never echoed — only its emptiness is published.
-          SITE_A_PATH: ${{ secrets.SEED_SITE_A_PATH }}
-        run: |
-          if [ -n "${SITE_A_PATH}" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-            echo "SEED_SITE_A_PATH is set for this run — the UI suite will run."
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=UI suite skipped::SEED_SITE_A_PATH is empty for this run, so the site_a dataset cannot be mounted and the standalone suite would assert against an empty database. GitHub withholds repository secrets from Dependabot-triggered runs and from forks; add the same value under Settings -> Secrets and variables -> Dependabot to make these runs execute for real."
-          fi
-
   ui-standalone:
+    # Job id and name unchanged: `Playwright standalone` is the check
+    # name, and dependabot-automerge.yml keys on this workflow's name.
     name: Playwright standalone
-    runs-on: [self-hosted, artist-alley]
-    needs: seed-preflight
-    # Skip rather than fail when the dataset is unreachable — see the
-    # seed-preflight job above.
-    if: needs.seed-preflight.outputs.available == 'true'
-    timeout-minutes: 20
-    # No compose-stack concurrency group (#342, extending #337): each
-    # run gets its own COMPOSE_PROJECT_NAME + the resources override
-    # drops every host port, so this workflow no longer collides with
-    # ui-nightly / ci.yml or a second run of itself, and doesn't need
-    # to serialise. Workflow-level concurrency (per ref, above) still
-    # cancels superseded runs of this workflow.
+    # Standard GitHub-hosted runner: 4 CPU, 16 GiB RAM, 14 GiB SSD.
+    runs-on: ubuntu-24.04
+    # 45, not the self-hosted 20: a cold hosted VM builds the prod
+    # image on 4 cores and downloads the 0.66 GB site_a subset before
+    # the 480s render-drain cap and the suite. An estimate until the
+    # first hosted runs are measured; the step timings say where it goes.
+    timeout-minutes: 45
     env:
-      # Per-run project name isolates container names, the default
-      # network, and named volumes on the shared self-hosted runner.
+      # One project per run. On a fresh VM nothing else shares the
+      # daemon, but the name keeps compose-cleanup's scoping intact.
       COMPOSE_PROJECT_NAME: aa-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      # Layer the prod-image override + the resources override onto
-      # every `docker compose` call (steps + bare invocations). The
-      # resources override drops host ports (!reset) and caps memory.
-      COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.ci.yml:infra/docker/ci/docker-compose.resources.yml
-      GOFLAGS: -p=10
-      GOMAXPROCS: 10
+      # Prod-image override + resources override (drops every inherited
+      # host port, caps memory) + the hosted override, which publishes
+      # app on 127.0.0.1:8080 so the runner reaches it without the old
+      # `docker network connect` (see docker-compose.hosted.yml).
+      COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.ci.yml:infra/docker/ci/docker-compose.resources.yml:infra/docker/ci/docker-compose.hosted.yml
+      # Matched to the hosted runner's 4 CPUs (was 10 on the big box).
+      GOFLAGS: -p=4
+      GOMAXPROCS: 4
 
     steps:
-      - name: Clear stale git locks (persistent self-hosted workspace)
-        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
-
       - uses: actions/checkout@v7
+        with:
+          # Nothing after checkout needs git auth; don't leave the token
+          # in .git/config for the build or the PR's own scripts.
+          persist-credentials: false
+
+      # Disk is the scarce resource on a standard hosted runner (14 GB),
+      # so the job is ordered by its disk phases (seed/scripts/ci_capacity.py
+      # has the model and the measured inputs): build the image, prune
+      # this job's own build cache, THEN download the dataset, seed, and
+      # release it. This first check predicts the whole job's peak from
+      # the measured footprints and fails in the first minute, with the
+      # numbers, if the measured free space cannot hold it.
+      - name: Capacity preflight (whole job, before the build)
+        run: ./scripts/ci/public-datasets.sh preflight ui-pr
 
       - uses: actions/setup-node@v7
         with:
@@ -189,10 +159,6 @@ jobs:
           restore-keys: |
             ms-playwright-${{ runner.os }}-
 
-      # No host-port pins needed (#342): the resources override drops
-      # every published port, so nothing binds the host and concurrent
-      # runs can't collide. The runner reaches the app over the compose
-      # network by DNS (see the attach step below).
       - name: Materialise .env for the stack
         run: |
           cp .env.example .env
@@ -212,6 +178,22 @@ jobs:
         # docker-compose.ci.yml, so no aa-ci-<run>-web exists here.
         uses: ./.github/actions/compose-cleanup
 
+      # The runner and the Docker daemon share this VM, so the runner
+      # reaches the app on the loopback port docker-compose.hosted.yml
+      # publishes (127.0.0.1:8080), under the same `app.aa` name the
+      # containers resolve by Docker DNS. That replaces the self-hosted
+      # `docker network connect` of the runner container. The port must
+      # be free before compose tries to bind it, so check that first.
+      - name: Map app.aa to the published loopback port
+        run: |
+          if ss -Hltn 'sport = :8080' | grep -q .; then
+            echo "::error::127.0.0.1:8080 is already in use on this runner; docker-compose.hosted.yml needs it"
+            ss -Hltnp 'sport = :8080' || true
+            exit 1
+          fi
+          echo "127.0.0.1 app.aa" | sudo tee -a /etc/hosts >/dev/null
+          getent hosts app.aa
+
       # Replace the dev `app` service with the production image
       # (built from the root Dockerfile with `-tags embed_web`).
       # Only `app` + `postgres` are started — the prod image serves
@@ -222,19 +204,16 @@ jobs:
         # override + resources override, both applied.
         run: docker compose up -d --build app postgres
 
-      # The self-hosted runner runs inside its own docker
-      # container with the docker socket mounted, so containers it
-      # CREATES publish their ports onto the *host*'s localhost —
-      # the runner container itself can't reach `localhost:18188`.
-      # Solution: attach the runner container to the compose
-      # network so it can reach the app via docker DNS (`app:8080`)
-      # without any port-publish gymnastics.
-      - name: Attach runner to the compose network
-        # Per-run project → per-run network name (#342).
+      # This job's own BuildKit cache (measured ~3.9 GB of the ~5.7 GB
+      # cold footprint) is dead weight from here: nothing after this step
+      # builds (`compose run` reuses the built image), and compose-cleanup
+      # prunes it at the end anyway. Only build cache goes, not images or
+      # volumes, on a VM that is discarded after the job.
+      - name: Reclaim this job's build cache
         run: |
-          net="${COMPOSE_PROJECT_NAME}_default"
-          docker network connect "$net" "$(hostname)" || \
-            docker network connect "$net" "$(cat /etc/hostname)"
+          df -B1M / | tail -1 | sed 's/^/before: /'
+          docker builder prune -af
+          df -B1M / | tail -1 | sed 's/^/after:  /'
 
       - name: Wait for postgres to be ready
         run: |
@@ -251,7 +230,8 @@ jobs:
 
       - name: Wait for app to finish migrations + serve the SPA
         # Polls goose_db_version (migrations are run by the app at
-        # boot) + then a GET /healthz round-trip via docker DNS.
+        # boot) + then a GET /healthz round-trip to app.aa:8080 (the
+        # published loopback port, mapped in /etc/hosts above).
         # The embedded SPA returns 200 on /healthz once the Go
         # server is fully up.
         run: |
@@ -269,7 +249,7 @@ jobs:
             sleep 2
           done
           for i in $(seq 1 60); do
-            if curl -fsS -o /dev/null "http://app:8080/healthz"; then
+            if curl -fsS -o /dev/null "http://app.aa:8080/healthz"; then
               echo "app SPA ready after ${i} attempts"
               exit 0
             fi
@@ -317,30 +297,46 @@ jobs:
       #
       # ⛔ The demo does NOT get this flag. The principals' passwords are
       # committed in seed/profiles/dataset.fixtures.json.
+      # The binding capacity check: on the free space MEASURED now (image
+      # built, cache pruned, stack up), the dataset phases must fit:
+      # download + extracted, then extracted + seeded storage + previews +
+      # postgres, then the Playwright install after the dataset is
+      # released. `prepare` also picks the roomier of $RUNNER_TEMP and
+      # /mnt for the dataset. `fetch` checks the metadata checkout against
+      # the pinned commit, runs the reviewed
+      # seed/scripts/fetch_release_dataset.py with the pinned release.json
+      # SHA-256 and re-runs `sha256sum -c` on the tree that gets mounted.
+      # Two steps because `prepare` hands AA_CI_DATASET_ROOT to later steps
+      # through $GITHUB_ENV, which the same step cannot see.
+      - name: Capacity check + dataset root
+        run: ./scripts/ci/public-datasets.sh prepare ui-pr
+
+      - name: Fetch + verify the pinned public site_a CI subset (v2026.11.01-sm)
+        run: ./scripts/ci/public-datasets.sh fetch site_a_sm
+
       - name: Seed site_a via aa seed
-        env:
-          # HOST daemon path, NOT the runner's /datasets bind mount.
-          # `docker compose run -v` resolves the source on the host
-          # docker daemon, which sees the dataset here; the runner
-          # template maps this same host dir to /datasets *inside* the
-          # runner, but the daemon needs the real host path. ($PWD for
-          # the catalogue works because the runner's _work dir is
-          # bind-mounted at an identical host path.)
-          SITE_A_PATH: ${{ secrets.SEED_SITE_A_PATH }}
         run: |
-          # Unreachable while seed-preflight gates this job, and kept
-          # anyway: an empty path used to reach docker as
-          # `-v ":/seed/site:ro"` and come back as `invalid spec: empty
-          # section between colons`, which names neither the variable
-          # nor the secret behind it and cost real time to trace (#1040).
-          if [ -z "${SITE_A_PATH}" ]; then
-            echo "::error title=Seed dataset path missing::SITE_A_PATH is empty — it comes from the SEED_SITE_A_PATH secret, which GitHub withholds from Dependabot-triggered runs and forks. Set it under Settings -> Secrets and variables -> Actions (and -> Dependabot for dependency PRs)."
+          # The verified public site root from the fetch step. On a
+          # hosted VM the daemon and the runner see the same paths, so
+          # the runner's path is the bind source as-is. Checked rather
+          # than assumed: an empty or missing path used to reach docker
+          # as `-v ":/seed/site:ro"` and come back as `invalid spec:
+          # empty section between colons` (#1040).
+          SITE_A_PATH="${AA_CI_DATASET_ROOT:?the dataset prepare step did not run}/sites/site_a_sm"
+          if [ ! -f "${SITE_A_PATH}/SHA256SUMS" ] || [ ! -f "${SITE_A_PATH}/MANIFEST.json" ]; then
+            echo "::error title=Seed dataset missing::${SITE_A_PATH} is not a verified site root; the fetch step must have failed"
             exit 1
           fi
           docker compose run --rm --no-deps \
             -v "$SITE_A_PATH:/seed/site:ro" \
             -v "$PWD/seed/profiles:/seed/profiles:ro" \
             app seed --site /seed/site --catalogue /seed/profiles --profile ci --fixtures
+
+      # `aa seed` copied what it selected into the app's storage volume;
+      # nothing after this reads the dataset, so give its ~2.5 GB back
+      # before Playwright and the render queue need the disk.
+      - name: Release the dataset copy
+        run: ./scripts/ci/public-datasets.sh release
 
       - name: Seed diagnostic on failure
         if: failure()
@@ -497,7 +493,9 @@ jobs:
           # Playwright drives Chromium which auto-upgrades dotless
           # hostnames to HTTPS — `http://app:8080` fails with
           # ERR_SSL_PROTOCOL_ERROR. The CI compose override adds
-          # `app.aa` as a network alias so the SPA URL has a TLD.
+          # `app.aa` as a network alias so the SPA URL has a TLD; on the
+          # hosted runner the same name maps to the published loopback
+          # port through /etc/hosts (see "Map app.aa" above).
           STUDIO_A_HOST: http://app.aa:8080
           CI: "1"
         run: ./scripts/dogfood/run-ui.sh standalone
@@ -551,16 +549,14 @@ jobs:
         with:
           tail: "200"
 
-      - name: Detach runner from the compose network
-        if: always()
-        # Don't leave stale network attachments on the runner
-        # container across runs (matters for the next workflow if
-        # this run was force-cancelled).
-        run: |
-          docker network disconnect "${COMPOSE_PROJECT_NAME}_default" "$(hostname)" 2>/dev/null || true
-
       - name: Stop the stack
         # always(): a failed Playwright run built the same image a passing
         # one did, so it must reclaim it too.
         if: always()
         uses: ./.github/actions/compose-cleanup
+
+      - name: Release the dataset copy (always)
+        # Idempotent; covers a run that failed or was cancelled before
+        # the post-seed release. The VM is discarded afterwards anyway.
+        if: always()
+        run: ./scripts/ci/public-datasets.sh release

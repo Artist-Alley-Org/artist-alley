@@ -1,0 +1,71 @@
+{
+  "schema": "artist-alley.ci-datasets/v1",
+  "_why": "Issue #1514, ADR 0100. The ONE place the UI workflows (ui-pr.yml, ui-nightly.yml) take their seed datasets from: ui-pr seeds the site_a CI subset edition (key site_a_sm, tag v2026.11.01-sm, the release holds dataset site site_a), ui-nightly the full site_a and site_b editions. Each site is pinned by repository + immutable tag + the metadata commit that tag must resolve to + the SHA-256 of the release.json asset; a tag alone is not an integrity pin. scripts/ci/public-datasets.sh reads this file, checks the metadata checkout against `commit`, and hands repo/tag/release_json_sha256 to seed/scripts/fetch_release_dataset.py, which verifies every downloaded byte. `capacity` is ONLY the free-space estimate the preflight uses before downloading; it is not an integrity pin (release.json is) and nothing trusts it for verification.",
+  "issue": "https://github.com/Artist-Alley-Org/artist-alley/issues/1514",
+  "sites": {
+    "site_a": {
+      "repo": "Artist-Alley-Org/artist-alley-dataset-site-a",
+      "tag": "v2026.11.01",
+      "commit": "62ebfa6a642f96ceda829ffdad42601d4d9fe525",
+      "release_json_sha256": "84996745cda978476dacfe7cf8ae1030d0d0d21faa7f1593e3aa713e0c092da5",
+      "capacity": {
+        "download_bytes": 2430808110,
+        "extracted_bytes": 2513030786
+      }
+    },
+    "site_a_sm": {
+      "site": "site_a",
+      "repo": "Artist-Alley-Org/artist-alley-dataset-site-a",
+      "tag": "v2026.11.01-sm",
+      "commit": "3f078b1500ce066d5df04adeba11d38fc8ad7277",
+      "release_json_sha256": "c6838e5020b1bc56f048c0602c2021c1c840e3e3ddf236827eb7358b521a503f",
+      "capacity": {
+        "download_bytes": 658160717,
+        "extracted_bytes": 666231365
+      }
+    },
+    "site_b": {
+      "repo": "Artist-Alley-Org/artist-alley-dataset-site-b",
+      "tag": "v2026.11.01",
+      "commit": "9fa8fb76cf208d2b3e6a40d13ed6a44a715ef36e",
+      "release_json_sha256": "a4b1fa20ddefab64c161fdd27bf393abf85ea78ec240d9cfb9c3e4c9d8451093",
+      "capacity": {
+        "download_bytes": 3160894,
+        "extracted_bytes": 3400000
+      }
+    }
+  },
+  "capacity_model": {
+    "_why": "Disk phase model for the hosted UI workflows; arithmetic and phase order in seed/scripts/ci_capacity.py. The workflows build, prune their own build cache, then fetch, seed and release the dataset, so the peak is per phase, not one sum. Byte values are MEASURED unless marked as an allowance; scripts/ci/public-datasets.sh checks them against free space MEASURED on the runner and fails with the numbers.",
+    "advertised_runner": {
+      "name": "GitHub-hosted standard Linux runner, public repository (ubuntu-24.04)",
+      "storage_bytes": 14000000000,
+      "source": "https://docs.github.com/en/actions/reference/runners/github-hosted-runners (4 CPU, 16 GB RAM, 14 GB SSD); treated as the free space available to the job, with /mnt not assumed to be a separate disk"
+    },
+    "late_bytes": 1400000000,
+    "late_evidence": "Playwright 1.62 chromium-1252 (426,245,013 B) + chromium_headless_shell-1252 (289,119,991 B) + ffmpeg (5,296,998 B), measured unpacked 2026-11-13; plus an allowance of 512 MiB for --with-deps OS packages and ~150 MB for node_modules and the npm cache",
+    "profiles": {
+      "ui-pr": {
+        "sites": [
+          "site_a_sm"
+        ],
+        "build_peak_bytes": 5702983524,
+        "build_kept_bytes": 1758671905,
+        "seed_bytes": 800000000,
+        "runtime_bytes": 1610612736,
+        "evidence": "build_*: cold `docker build` of Dockerfile (GOFLAGS=-p=4) on a clean overlay2 daemon (docker 27.5.1, docker-in-docker on an empty volume) plus pgvector/pgvector:pg16 and nginx:1.27-alpine, `du -sb /var/lib/docker` before and after `docker builder prune -af`; two runs measured 5,702,970,237 and 5,702,983,524 peak. seed: the --profile ci closure measured 728,101,752 unique bytes with companions (2026-11-12 export) and 588.35 MiB primary (2026-11-13), rounded up; previews are budgeted at the same size again. runtime: 1.5 GiB allowance for postgres (default max_wal_size 1 GB plus data) and container logs. sites: ui-pr fetches the CI subset edition site_a_sm (v2026.11.01-sm), whose download and extracted sizes are measured from its release and a reconstructed root; build, seed and runtime are unchanged because it seeds the same --profile ci rows."
+      },
+      "ui-nightly": {
+        "sites": [
+          "site_b",
+          "site_a"
+        ],
+        "build_peak_bytes": 8679315187,
+        "build_kept_bytes": 2981508047,
+        "seed_bytes": 810000000,
+        "runtime_bytes": 3221225472,
+        "evidence": "build_*: as ui-pr, plus the dev image infra/docker/app/Dockerfile for app-b, both built cold in one sequence; two runs measured 8,678,254,465 and 8,679,315,187 peak. seed: ui-pr's site_a closure plus 10 MB for site_b --limit-per-extension 3. runtime: 3 GiB allowance for two postgres instances and two apps' logs."
+      }
+    }
+  }
+}

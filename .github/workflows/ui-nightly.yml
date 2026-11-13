@@ -8,13 +8,24 @@
 # Scheduled at 07:00 UTC daily; also dispatchable manually for
 # federation-touching branches before merge.
 #
-# Self-hosted-only — the federation stack needs:
-#   - mkcert installed + root CA in the host trust store
-#   - /etc/hosts entry for studio-b.local
-#   - sudo for the /etc/hosts edit
-# These are pre-provisioned on the `artist-alley` self-hosted
-# runner. up.sh validates the prereqs and bails with a clear
-# error if they're missing.
+# GitHub-hosted (#1514, ADR 0100). Everything the self-hosted runner
+# had pre-provisioned is now created per run on the hosted VM:
+#   - seed data: both public datasets at the tag pinned in
+#     seed/contracts/ci-datasets.v1.json, downloaded and verified
+#     against the pinned release.json (scripts/ci/public-datasets.sh),
+#     replacing the SEED_SITE_A_PATH / SEED_SITE_B_PATH host mounts;
+#   - TLS: a throwaway CA + studio-b.local cert
+#     (scripts/ci/ephemeral-studio-b-tls.sh), replacing /runner-tls;
+#   - reachability: the hosted override publishes app, nginx and
+#     nginx-b on loopback at their in-network port numbers, and the
+#     VM's /etc/hosts maps their names to 127.0.0.1, replacing the
+#     `docker network connect` of the runner container. Every URL
+#     below therefore means the same thing from the runner and from
+#     the containers (docker-compose.hosted.yml has the table).
+# Federation semantics are unchanged: the apps still dial each other
+# by Docker DNS at http://nginx and https://studio-b.local:9443, and
+# studio-a still verifies studio-b's chain through the dogfood
+# override's CA mount.
 
 name: UI dogfood (federation, nightly)
 
@@ -50,29 +61,25 @@ permissions:
 jobs:
   ui-federation:
     name: Playwright federation + shell scenarios
-    runs-on: [self-hosted, artist-alley]
-    # 60 min: build (~3 min) + parallel seed (~5.5 min) + pair
-    # (~30s) + shell scenarios + UI `all` (133 standalone + 4
-    # federation tests at ~2s each under load) + teardown. The
-    # ~5 min Vite cold-boot is gone (#365) but the budget stays —
-    # a run once got cancelled at 45 min halfway through the UI
-    # suite, so the headroom was already thin.
-    timeout-minutes: 60
-    # No compose-stack concurrency group (#342, extending #337): the
-    # per-run COMPOSE_PROJECT_NAME + the resources override (host ports
-    # dropped) isolate this run's containers, network, and volumes, so
-    # it no longer clobbers — or is clobbered by — ui-pr / ci.yml. The
-    # workflow-level concurrency (ui-nightly-*, above) still keeps two
-    # nightlies from overlapping.
+    # Standard GitHub-hosted runner: 4 CPU, 16 GiB RAM, 14 GiB SSD.
+    runs-on: ubuntu-24.04
+    # 90, up from the self-hosted 60 (whose own headroom was already
+    # thin: a run once got cancelled at 45 min halfway through the UI
+    # suite). A cold hosted VM builds TWO images (studio-a's prod image
+    # and studio-b's dev image) on 4 cores and downloads both datasets
+    # before the seed, pair, shell scenarios, render drain and UI `all`.
+    # An estimate until hosted runs are measured.
+    timeout-minutes: 90
     env:
-      # Per-run project name isolates the whole dual-stack (studio-a +
-      # studio-b) from any other run on the shared self-hosted runner.
+      # One project per run; keeps compose-cleanup's scoping intact.
       COMPOSE_PROJECT_NAME: aa-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      # Prod-image override (same as ui-pr) + the resources override,
-      # which drops every host port and caps per-service memory.
+      # Prod-image override (same as ui-pr) + the resources override
+      # (drops every inherited host port, caps per-service memory) + the
+      # hosted override (publishes app / nginx / nginx-b on loopback at
+      # their in-network ports; caps app-b lower, see that file).
       # scripts/dogfood/up.sh appends the dogfood override to this for
       # the studio-b half (#363), giving studio-a the prod image AND
-      # the mkcert CA mount. Applied to every `docker compose` call.
+      # the CA mount. Applied to every `docker compose` call.
       #
       # studio-a runs the prod image so the SPA is embedded in the Go
       # binary and there's no Vite container (#365). studio-b stays on
@@ -80,14 +87,16 @@ jobs:
       # point baseURL at STUDIO_A_HOST, and the federation project
       # reads studio-b *through studio-a's session* — so app-b only
       # ever serves /api/v1 + /federation, which the dev image does.
-      COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.ci.yml:infra/docker/ci/docker-compose.resources.yml
-      GOFLAGS: -p=10
-      GOMAXPROCS: 10
+      COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.ci.yml:infra/docker/ci/docker-compose.resources.yml:infra/docker/ci/docker-compose.hosted.yml
+      # Two apps share a 16 GiB VM here. studio-a gets the base stack's
+      # 8g ceiling (resources.yml would otherwise give it 10g); studio-b
+      # gets 4g from the hosted override. Ceilings, not reservations.
+      AA_APP_MEM_LIMIT: 8g
+      # Matched to the hosted runner's 4 CPUs (was 10 on the big box).
+      GOFLAGS: -p=4
+      GOMAXPROCS: 4
 
     steps:
-      - name: Clear stale git locks (persistent self-hosted workspace)
-        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
-
       - uses: actions/checkout@v7
         with:
           # inputs.ref is "" unless explicitly overridden, so this
@@ -95,6 +104,16 @@ jobs:
           # workflow_dispatch, the default branch (main) on schedule.
           # See the `ref` input above (#370).
           ref: ${{ github.event.inputs.ref || github.ref }}
+          # Nothing after checkout needs git auth.
+          persist-credentials: false
+
+      # Ordered by disk phase, exactly as ui-pr.yml (read its comments and
+      # seed/scripts/ci_capacity.py): build both images, prune this job's
+      # build cache, THEN fetch, seed, release. This predicts the whole
+      # job's peak (two images, two stacks, both datasets) from the
+      # measured footprints and fails in the first minute if it cannot fit.
+      - name: Capacity preflight (whole job, before the build)
+        run: ./scripts/ci/public-datasets.sh preflight ui-nightly
 
       - uses: actions/setup-node@v7
         with:
@@ -110,24 +129,7 @@ jobs:
           restore-keys: |
             ms-playwright-${{ runner.os }}-
 
-      # No mkcert / /etc/hosts host-prereq check here — both are
-      # neutralised at the workflow level:
-      #   - TLS certs come from the runner template's /srv/runner-tls
-      #     bind-mount (staged below into infra/docker/dogfood/certs/
-      #     so up.sh's capability check skips the mkcert step).
-      #   - studio-b.local resolves through the docker network alias
-      #     on nginx-b (see docker-compose.yml) — works from any
-      #     container attached to this run's ${COMPOSE_PROJECT_NAME}_default
-      #     network, including the runner once we `docker network connect`.
-      # See infra/runner/README.md for the runner-provisioning side.
-
       - name: Materialise .env for the stack
-        # No host-port pins needed (#342): the resources override drops
-        # every published port for both stacks, so nothing binds the
-        # host and concurrent runs can't collide. Everything downstream
-        # reaches the stack via docker DNS after the attach step —
-        # including pair.sh's `https://studio-b.local:9443`, which is
-        # docker-internal (nginx-b listens on 9443 inside the network).
         run: |
           cp .env.example .env
           sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
@@ -152,64 +154,57 @@ jobs:
         with:
           profiles: --profile dogfood
 
-      - name: Sweep stale /etc/hosts entries from previous runs
-        # Older up.sh versions wrote `127.0.0.1 studio-b.local`
-        # into the runner's own /etc/hosts (the runner is root +
-        # has its own filesystem). That entry is wrong inside the
-        # runner — its 127.0.0.1 isn't where nginx-b lives — and
-        # /etc/hosts takes precedence over docker DNS, so the bad
-        # entry breaks `curl https://studio-b.local:9443` even
-        # after we attach to the compose network. Strip the marker
-        # block once per run so the runner falls through to docker
-        # DNS cleanly.
-        #
-        # `sed -i` can't be used: docker manages /etc/hosts as a
-        # bind-mount and `sed`'s atomic-rename strategy fails with
-        # "Device or resource busy." Copy-back via temp file
-        # instead — that overwrites the contents in place without
-        # touching the inode.
+      # The runner and the Docker daemon share this VM: the hosted
+      # override publishes app / nginx / nginx-b on 127.0.0.1 at the same
+      # ports they listen on inside the network, and these names map to
+      # 127.0.0.1 here, so the runner's URLs (below) reach the same
+      # services, with the same Host header, as the containers' Docker
+      # DNS does. Containers keep their own resolver and never see this
+      # file. Before up.sh on purpose: its studio-b.local resolution
+      # check then passes instead of warning. The ports must be free
+      # before compose binds them.
+      - name: Map the stack's names to the published loopback ports
         run: |
-          tmp=$(mktemp)
-          grep -v -E '(# artist-alley dogfood|studio-b\.local)' /etc/hosts > "$tmp" || true
-          cat "$tmp" > /etc/hosts
-          rm -f "$tmp"
-
-      # The runner template bind-mounts /srv/runner-tls (on the host)
-      # to /runner-tls inside the runner container — that directory
-      # holds the pre-generated mkcert root CA + the studio-b.local
-      # server cert + key. Copying them into the workspace's certs
-      # dir before up.sh makes up.sh's capability check find them
-      # and skip the mkcert step (which would otherwise fail —
-      # mkcert isn't installed in the runner container).
-      #
-      # See infra/runner/README.md for the runner-provisioning side.
-      - name: Stage TLS prereqs from the runner bind-mount
-        run: |
-          mkdir -p infra/docker/dogfood/certs
-          if [ ! -d /runner-tls ]; then
-            echo "::error::/runner-tls missing — runner template hasn't been re-applied with the TLS bundle bind-mount. See infra/runner/README.md."
-            exit 1
-          fi
-          for f in studio-b.local.pem studio-b.local-key.pem mkcert-rootCA.pem; do
-            cp -f "/runner-tls/$f" "infra/docker/dogfood/certs/$f"
+          for p in 80 8080 9443; do
+            if ss -Hltn "sport = :${p}" | grep -q .; then
+              echo "::error::port ${p} is already in use on this runner; docker-compose.hosted.yml needs it"
+              ss -Hltnp "sport = :${p}" || true
+              exit 1
+            fi
           done
+          echo "127.0.0.1 app.aa nginx studio-b.local" | sudo tee -a /etc/hosts >/dev/null
+          getent hosts app.aa nginx studio-b.local
+
+      # A throwaway CA + studio-b.local cert, in the three files and
+      # names up.sh's "certs already provisioned" path looks for, so it
+      # skips mkcert (not installed on hosted runners). The CA key is
+      # destroyed by the script; see its header for what goes where.
+      - name: Provision ephemeral studio-b.local TLS
+        run: ./scripts/ci/ephemeral-studio-b-tls.sh infra/docker/dogfood/certs
 
       - name: Bring up the full dogfood stack
         run: ./scripts/dogfood/up.sh
 
-      # Same root cause that pushed ui-pr.yml self-hosted: the
-      # runner runs inside its own docker container (`docker ps`
-      # confirms `/.dockerenv` + a container-ID hostname), so
-      # containers it brings up via the mounted docker.sock
-      # publish their ports onto the *host* — the runner can't
-      # reach them via `localhost`. Attaching the runner to the
-      # compose network gives it docker DNS for `app`, `app-b`,
-      # and the seed step reaches both stacks' containers.
-      - name: Attach runner to the compose network
+      # Same as ui-pr.yml: nothing after up.sh builds (its second `up` is
+      # --force-recreate without --build, and `compose run` reuses the
+      # images), so this job's own BuildKit cache (measured ~6 GB of the
+      # two cold builds) is dead weight. Build cache only, on a VM that is
+      # discarded after the job; compose-cleanup prunes it at the end too.
+      - name: Reclaim this job's build cache
         run: |
-          net="${COMPOSE_PROJECT_NAME}_default"
-          docker network connect "$net" "$(hostname)" 2>/dev/null \
-            || docker network connect "$net" "$(cat /etc/hostname)"
+          df -B1M / | tail -1 | sed 's/^/before: /'
+          docker builder prune -af
+          df -B1M / | tail -1 | sed 's/^/after:  /'
+
+      # The binding check on MEASURED free space, then the fetches: site_b
+      # first (3 MB), then site_a (2.4 GB). Same helper and pins as ui-pr.yml.
+      - name: Capacity check + dataset root
+        run: ./scripts/ci/public-datasets.sh prepare ui-nightly
+
+      - name: Fetch + verify the pinned public datasets
+        run: |
+          ./scripts/ci/public-datasets.sh fetch site_b
+          ./scripts/ci/public-datasets.sh fetch site_a
 
       # Seeds users + teams + assets + posts + federation rows from the
       # upstream dataset. Without this, the federation tests assert
@@ -220,14 +215,13 @@ jobs:
       # postgres independently. The [a] / [b] prefix on each output line
       # keeps the interleaved parallel output readable in the run log.
       - name: Seed both sites in parallel via aa seed
-        env:
-          # HOST daemon paths, NOT the runner's /datasets bind mount:
-          # `docker compose run -v` resolves the source on the host
-          # daemon (the runner template maps this same host dir to
-          # /datasets inside the runner).
-          SITE_A_PATH: ${{ secrets.SEED_SITE_A_PATH }}
-          SITE_B_PATH: ${{ secrets.SEED_SITE_B_PATH }}
         run: |
+          # The verified public site roots from the fetch step. On a
+          # hosted VM the daemon and the runner see the same paths, so
+          # these are the bind sources as-is.
+          SITE_A_PATH="${AA_CI_DATASET_ROOT:?the dataset prepare step did not run}/sites/site_a"
+          SITE_B_PATH="${AA_CI_DATASET_ROOT}/sites/site_b"
+
           # `aa seed` (#321) writes straight to each stack's postgres +
           # storage volume via a one-off `compose run` off that stack's
           # app image — no HTTP, no login. site_a → app, site_b → app-b
@@ -265,25 +259,21 @@ jobs:
           # The two shrinks are never combined on one command: the seeder
           # refuses `--profile ci` together with `--limit-per-extension`.
           #
-          # Precondition, not a skip (#1040). ui-pr.yml SKIPS its suite
-          # when the dataset path is unavailable, because Dependabot and
-          # fork runs legitimately cannot see repository secrets. This
-          # workflow only ever runs from `schedule` or
-          # `workflow_dispatch`, both of which DO get secrets — so an
-          # empty value here means the secret is missing or misnamed,
-          # and a nightly that quietly skipped its seed would be a lost
-          # signal. Fail, and name the variable: an empty path reaches
-          # docker as `-v ":/seed/site:ro"` and comes back as
-          # `invalid spec: empty section between colons`, which names
-          # neither the variable nor the secret behind it.
-          if [ -z "${SITE_A_PATH}" ]; then
-            echo "::error title=Seed dataset path missing::SITE_A_PATH is empty — it comes from the SEED_SITE_A_PATH repository secret. Set it under Settings -> Secrets and variables -> Actions."
-            exit 1
-          fi
-          if [ -z "${SITE_B_PATH}" ]; then
-            echo "::error title=Seed dataset path missing::SITE_B_PATH is empty — it comes from the SEED_SITE_B_PATH repository secret. Set it under Settings -> Secrets and variables -> Actions."
-            exit 1
-          fi
+          # site_b is now the PUBLIC replacement peer (503 assets, 200
+          # posts), not the old private corpus the SEED_SITE_B_PATH
+          # secret pointed at. The command is unchanged.
+          #
+          # Precondition, not a skip (#1040): a missing site root fails
+          # here and names itself, instead of reaching docker as
+          # `-v ":/seed/site:ro"` (`invalid spec: empty section between
+          # colons`). A nightly that quietly skipped its seed would be a
+          # lost signal.
+          for p in "$SITE_A_PATH" "$SITE_B_PATH"; do
+            if [ ! -f "${p}/SHA256SUMS" ] || [ ! -f "${p}/MANIFEST.json" ]; then
+              echo "::error title=Seed dataset missing::${p} is not a verified site root; the fetch step must have failed"
+              exit 1
+            fi
+          done
 
           # --fixtures on BOTH: the nightly runs `all`, which includes
           # the standalone project, and its databases are fresh — so
@@ -315,6 +305,12 @@ jobs:
             exit 1
           fi
 
+      # Both seeds copied what they selected into their storage volumes;
+      # nothing after this reads the datasets, so give the ~2.5 GB back
+      # before two render queues and Playwright need the disk.
+      - name: Release the dataset copies
+        run: ./scripts/ci/public-datasets.sh release
+
       - name: Seed diagnostic on failure
         if: failure()
         # Row counts alone left #886 unanswerable: postgres dies mid-seed
@@ -332,16 +328,19 @@ jobs:
         # Pair waits for both health endpoints + sets site.base_url
         # on both sides + registers each as a peer of the other.
         #
-        # STUDIO_A_HOST + STUDIO_B_HOST point at docker DNS
-        # endpoints, NOT the runner's localhost:
-        #   - nginx is the dev nginx's network alias; its upstream
-        #     is `app:8080` (the Go server). Same /api/v1 prefix
-        #     pair.sh uses for /api/v1/auth/login etc.
-        #   - studio-b.local is the network alias on nginx-b
-        #     (declared in docker-compose.yml). nginx-b listens
-        #     on :9443 inside the network; pair.sh's curl -sk
-        #     skips cert verify so the studio-b.local cert chain
-        #     doesn't have to be trusted by the runner.
+        # STUDIO_A_HOST + STUDIO_B_HOST are the same service names the
+        # containers use. From this runner they resolve through the
+        # VM's /etc/hosts to the loopback ports the hosted override
+        # publishes at the same numbers (see "Map the stack's names"):
+        #   - nginx is the dev nginx (port 80); its upstream is
+        #     `app:8080` (the Go server). Same /api/v1 prefix pair.sh
+        #     uses for /api/v1/auth/login etc.
+        #   - studio-b.local is nginx-b (port 9443). pair.sh's curl -sk
+        #     skips cert verify, as before, so the runner does not have
+        #     to trust the ephemeral CA.
+        # The peer URLs pair.sh registers (http://nginx and
+        # https://studio-b.local:9443) are what the apps dial over
+        # Docker DNS, so federation traffic is unchanged.
         env:
           STUDIO_A_HOST: http://nginx:80
           STUDIO_B_HOST: https://studio-b.local:9443
@@ -358,8 +357,8 @@ jobs:
         # dispatch contract, inbox row presence. Outputs a JSON
         # report under scripts/dogfood/.dogfood-runs/<ts>/.
         #
-        # Same docker-DNS URLs as the pair step (the scenarios'
-        # lib.sh reads STUDIO_A_HOST + STUDIO_B_HOST).
+        # Same URLs as the pair step (the scenarios' lib.sh reads
+        # STUDIO_A_HOST + STUDIO_B_HOST).
         env:
           STUDIO_A_HOST: http://nginx:80
           STUDIO_B_HOST: https://studio-b.local:9443
@@ -568,15 +567,6 @@ jobs:
           profiles: --profile dogfood
           tail: "300"
 
-      - name: Detach runner from the compose network
-        if: always()
-        # Don't leave stale network attachments on the runner
-        # container across runs — a force-cancelled run otherwise
-        # leaves the next workflow attached to a network its
-        # containers no longer belong to.
-        run: |
-          docker network disconnect "${COMPOSE_PROJECT_NAME}_default" "$(hostname)" 2>/dev/null || true
-
       - name: Stop the stack
         if: always()
         # Both invocations are needed: the dogfood-profile down picks
@@ -589,6 +579,12 @@ jobs:
         uses: ./.github/actions/compose-cleanup
         with:
           profiles: --profile dogfood
+
+      - name: Release the dataset copies (always)
+        # Idempotent; covers a run that failed or was cancelled before
+        # the post-seed release. The VM is discarded afterwards anyway.
+        if: always()
+        run: ./scripts/ci/public-datasets.sh release
 
       - name: Alert Discord on failure
         if: failure()

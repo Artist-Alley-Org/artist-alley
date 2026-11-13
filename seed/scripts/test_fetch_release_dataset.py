@@ -26,6 +26,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import fetch_release_dataset as fe  # noqa: E402
+import ci_capacity as cc  # noqa: E402
+import ci_pins as cp  # noqa: E402
 
 rd = fe.load_release_dataset()
 REPO, TAG = "Artist-Alley-Org/test-dataset", "v0.0.1-test"
@@ -392,6 +394,218 @@ class Inputs(Base):
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 1)
         self.assertIn("FAILED", r.stderr)
+
+
+REPO_ROOT = HERE.parents[1]
+PINS = REPO_ROOT / "seed" / "contracts" / "ci-datasets.v1.json"
+HELPER = REPO_ROOT / "scripts" / "ci" / "public-datasets.sh"
+WORKFLOWS = {
+    "ui-pr": (REPO_ROOT / ".github" / "workflows" / "ui-pr.yml", ["site_a_sm"]),
+    "ui-nightly": (REPO_ROOT / ".github" / "workflows" / "ui-nightly.yml", ["site_b", "site_a"]),
+}
+
+
+def code_lines(path: Path) -> str:
+    """The file without its comment lines, so prose that NAMES a retired mechanism is not a hit."""
+    return "\n".join(ln for ln in path.read_text(encoding="utf-8").splitlines() if not ln.lstrip().startswith("#"))
+
+
+class CIDatasetPins(unittest.TestCase):
+    """The pins file the hosted UI workflows consume (#1514). Text checks only: stdlib, no network."""
+
+    def setUp(self):
+        self.pins = json.loads(PINS.read_text(encoding="utf-8"))
+
+    def test_schema_and_sites(self):
+        self.assertEqual(self.pins["schema"], "artist-alley.ci-datasets/v1")
+        self.assertEqual(sorted(self.pins["sites"]), ["site_a", "site_a_sm", "site_b"])
+
+    def test_every_pin_is_exact(self):
+        import re
+        for key, s in self.pins["sites"].items():
+            with self.subTest(key=key):
+                site = cp.value(self.pins, key, "site")
+                self.assertRegex(s["repo"], r"\AArtist-Alley-Org/artist-alley-dataset-site-[ab]\Z")
+                self.assertTrue(s["repo"].endswith(site.replace("_", "-")))
+                want_tag = r"\Av[0-9]{4}\.[0-9]{2}\.[0-9]{2}-sm\Z" if key == "site_a_sm" else r"\Av[0-9]{4}\.[0-9]{2}\.[0-9]{2}\Z"
+                self.assertRegex(s["tag"], want_tag)
+                self.assertNotEqual(s["tag"].lower(), "latest")
+                for field in ("repo", "tag", "commit", "release_json_sha256", "site", "need_bytes"):
+                    cp.value(self.pins, key, field)
+                self.assertRegex(s["commit"], r"\A[0-9a-f]{40}\Z")
+                self.assertRegex(s["release_json_sha256"], r"\A[0-9a-f]{64}\Z")
+                fe.check_inputs(s["repo"], s["tag"], s["release_json_sha256"])
+                for k in ("download_bytes", "extracted_bytes"):
+                    self.assertIsInstance(s["capacity"][k], int)
+                    self.assertGreater(s["capacity"][k], 0)
+                self.assertIsNone(re.search(r"https?://", json.dumps(s)))
+
+    def test_pinned_values_are_the_published_v2026_11_01(self):
+        a, b = self.pins["sites"]["site_a"], self.pins["sites"]["site_b"]
+        self.assertEqual((a["tag"], a["commit"], a["release_json_sha256"]),
+                         ("v2026.11.01", "62ebfa6a642f96ceda829ffdad42601d4d9fe525",
+                          "84996745cda978476dacfe7cf8ae1030d0d0d21faa7f1593e3aa713e0c092da5"))
+        self.assertEqual((b["tag"], b["commit"], b["release_json_sha256"]),
+                         ("v2026.11.01", "9fa8fb76cf208d2b3e6a40d13ed6a44a715ef36e",
+                          "a4b1fa20ddefab64c161fdd27bf393abf85ea78ec240d9cfb9c3e4c9d8451093"))
+
+    def test_pinned_values_of_the_site_a_ci_subset_edition(self):
+        sm, a = self.pins["sites"]["site_a_sm"], self.pins["sites"]["site_a"]
+        self.assertEqual((sm["site"], sm["repo"], sm["tag"], sm["commit"], sm["release_json_sha256"]),
+                         ("site_a", a["repo"], a["tag"] + "-sm", "3f078b1500ce066d5df04adeba11d38fc8ad7277",
+                          "c6838e5020b1bc56f048c0602c2021c1c840e3e3ddf236827eb7358b521a503f"))
+        self.assertEqual(sm["capacity"], {"download_bytes": 658160717, "extracted_bytes": 666231365})
+
+    def test_tag_shape_is_exact_per_key(self):
+        def with_tag(key, tag, **extra):
+            d = json.loads(json.dumps(self.pins))
+            d["sites"][key]["tag"] = tag
+            d["sites"][key].update(extra)
+            return d
+        good = {"site_a": "v2026.11.01", "site_b": "v2026.12.03", "site_a_sm": "v2026.11.01-sm"}
+        for key, tag in good.items():
+            self.assertEqual(cp.value(with_tag(key, tag), key, "tag"), tag)
+        bad = {"site_a": ["v2026.11.01-sm", "latest", "v2026.11.1", "main", "v2026.11.01 "],
+               "site_b": ["v2026.11.01-sm"],
+               "site_a_sm": ["v2026.11.01", "v2026.11.01-xs", "v2026.11.01-sm-2", "v2026.11.01-SM", "latest"]}
+        for key, tags in bad.items():
+            for tag in tags:
+                with self.subTest(key=key, tag=tag), self.assertRaises(cp.PinError):
+                    cp.value(with_tag(key, tag), key, "tag")
+        with self.assertRaises(cp.PinError):
+            cp.value(with_tag("site_a_sm", "v2026.11.01-sm", site="site_b"), "site_a_sm", "site")
+        with self.assertRaises(cp.PinError):
+            cp.value(self.pins, "site_c", "tag")
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cp.main([str(PINS), "site_a_sm", "site"]), 0)
+            self.assertEqual(cp.main([str(PINS), "site_a", "nope"]), 1)
+        self.assertEqual(out.getvalue(), "site_a\n")
+
+    def test_helper_uses_the_pins_and_the_reviewed_tool(self):
+        src = code_lines(HELPER)
+        self.assertIn("seed/contracts/ci-datasets.v1.json", src)
+        self.assertIn("seed/scripts/fetch_release_dataset.py", src)
+        self.assertIn("seed/scripts/ci_pins.py", src)
+        self.assertIn('--site "$dsite"', src)
+        self.assertIn("--expect-manifest-sha256", src)
+        self.assertIn("sha256sum --quiet --strict -c SHA256SUMS", src)
+        self.assertNotIn("latest", src)
+        self.assertNotIn("TOKEN", src)
+
+    def test_workflows_are_hosted_and_secret_free_for_data(self):
+        for wf, (path, sites) in WORKFLOWS.items():
+            src = code_lines(path)
+            with self.subTest(workflow=wf):
+                # assertTrue/False with a short message: assertIn would print the whole workflow.
+                for retired in ("self-hosted", "SEED_SITE", "runner-tls", "docker network"):
+                    self.assertFalse(retired in src, f"{wf}: still uses {retired!r}")
+                wanted = ["runs-on: ubuntu-24.04", "infra/docker/ci/docker-compose.hosted.yml",
+                          "public-datasets.sh prepare",
+                          "${AA_CI_DATASET_ROOT:?the dataset prepare step did not run}/sites/site_a"]
+                wanted += [f"public-datasets.sh fetch {site}" for site in sites]
+                for w in wanted:
+                    self.assertTrue(w in src, f"{wf}: missing {w!r}")
+
+    def test_check_names_preserved(self):
+        pr = WORKFLOWS["ui-pr"][0].read_text(encoding="utf-8")
+        self.assertIn("name: UI dogfood (standalone)", pr)
+        self.assertIn("name: Playwright standalone", pr)
+        nightly = WORKFLOWS["ui-nightly"][0].read_text(encoding="utf-8")
+        self.assertIn("name: Playwright federation + shell scenarios", nightly)
+
+
+
+
+class CICapacityModel(unittest.TestCase):
+    """The disk phase model the hosted UI workflows gate on (#1514). rev134 summed every phase and
+    could never pass on the advertised runner; these pin the model, its arithmetic and the order the
+    workflows must keep for the model to be true."""
+
+    def setUp(self):
+        self.pins = json.loads(PINS.read_text(encoding="utf-8"))
+        self.advertised = self.pins["capacity_model"]["advertised_runner"]["storage_bytes"]
+        self.m = {p: cc.load_profile(self.pins, p) for p in ("ui-pr", "ui-nightly")}
+
+    def test_every_profile_fits_the_advertised_standard_runner(self):
+        self.assertEqual(self.advertised, 14_000_000_000)
+        for p, m in self.m.items():
+            with self.subTest(profile=p):
+                self.assertLessEqual(cc.preflight_need(m), self.advertised)
+                self.assertLessEqual(cc.prepare_need(m), self.advertised)
+
+    def test_rev134_summed_floor_is_what_this_replaces(self):
+        # rev134: download + extracted of every site + 1 GiB, plus an 8 / 10 GiB docker floor on one disk.
+        floors = {"ui-pr": 8, "ui-nightly": 10}
+        for p, m in self.m.items():
+            rev134 = m["download"] + m["extracted"] + cc.GIB + floors[p] * cc.GIB
+            with self.subTest(profile=p):
+                self.assertGreater(rev134, cc.preflight_need(m))
+        nightly = self.m["ui-nightly"]
+        self.assertGreater(nightly["download"] + nightly["extracted"] + cc.GIB + 10 * cc.GIB, self.advertised)
+
+    def test_phase_arithmetic(self):
+        m = {"download": 10, "extracted": 20, "build_peak": 100, "build_kept": 40, "seed": 3,
+             "runtime": 5, "late": 7}
+        self.assertEqual(cc.data_phases(m), {"fetch": 30, "seed": 31, "late": 18})
+        self.assertEqual(cc.plan_phases(m), {"build": 107, "fetch": 77, "seed": 78, "late": 58})
+        self.assertEqual(cc.prepare_need(m), 31 + cc.GIB)
+        self.assertEqual(cc.preflight_need(m), 107 + cc.GIB)
+        big = dict(m, build_peak=20 * cc.GIB)
+        self.assertEqual(cc.preflight_need(big), 20 * cc.GIB + 7 + int((20 * cc.GIB + 7) * 0.10))
+        self.assertEqual(cc.prepare_need_split(m), (30 + cc.GIB, 18 + cc.GIB))
+
+    def test_cli_fails_closed_on_measured_shortfall(self):
+        import contextlib
+        import io
+        quiet = contextlib.ExitStack()
+        quiet.enter_context(contextlib.redirect_stdout(io.StringIO()))
+        quiet.enter_context(contextlib.redirect_stderr(io.StringIO()))
+        self.addCleanup(quiet.close)
+        need = cc.preflight_need(self.m["ui-nightly"])
+        args = ["preflight", "ui-nightly", "--pins", str(PINS)]
+        self.assertEqual(cc.main(args + ["--free", str(need)]), 0)
+        self.assertEqual(cc.main(args + ["--free", str(need - 1)]), 1)
+        pneed = cc.prepare_need(self.m["ui-pr"])
+        pargs = ["prepare", "ui-pr", "--pins", str(PINS), "--same-fs"]
+        self.assertEqual(cc.main(pargs + ["--dataset-free", str(pneed), "--docker-free", "0"]), 0)
+        self.assertEqual(cc.main(pargs + ["--dataset-free", str(pneed - 1), "--docker-free", "0"]), 1)
+        ds, dk = cc.prepare_need_split(self.m["ui-pr"])
+        split = ["prepare", "ui-pr", "--pins", str(PINS)]
+        self.assertEqual(cc.main(split + ["--dataset-free", str(ds), "--docker-free", str(dk)]), 0)
+        self.assertEqual(cc.main(split + ["--dataset-free", str(ds), "--docker-free", str(dk - 1)]), 1)
+
+    def test_malformed_model_is_refused(self):
+        bad = json.loads(json.dumps(self.pins))
+        bad["capacity_model"]["profiles"]["ui-pr"]["build_kept_bytes"] = 10 ** 12
+        with self.assertRaises(cc.CapacityError):
+            cc.load_profile(bad, "ui-pr")
+        bad = json.loads(json.dumps(self.pins))
+        bad["capacity_model"]["profiles"]["ui-pr"]["seed_bytes"] = "800000000"
+        with self.assertRaises(cc.CapacityError):
+            cc.load_profile(bad, "ui-pr")
+        with self.assertRaises(cc.CapacityError):
+            cc.load_profile(self.pins, "ui-everything")
+
+    def test_profiles_match_the_workflows_and_their_phase_order(self):
+        order = {
+            "ui-pr": ["public-datasets.sh preflight ui-pr", "docker compose up -d --build app postgres",
+                      "docker builder prune -af", "public-datasets.sh prepare ui-pr",
+                      "public-datasets.sh fetch site_a_sm", "app seed --site /seed/site",
+                      "public-datasets.sh release"],
+            "ui-nightly": ["public-datasets.sh preflight ui-nightly", "./scripts/dogfood/up.sh",
+                           "docker builder prune -af", "public-datasets.sh prepare ui-nightly",
+                           "public-datasets.sh fetch site_b", "public-datasets.sh fetch site_a",
+                           "app seed --profile ci", "public-datasets.sh release"],
+        }
+        for p, marks in order.items():
+            src = code_lines(WORKFLOWS[p][0])
+            with self.subTest(workflow=p):
+                at = [src.find(x) for x in marks]
+                self.assertNotIn(-1, at, f"{p}: missing one of {marks}")
+                self.assertEqual(at, sorted(at), f"{p}: steps out of the modelled phase order")
+                self.assertEqual(self.m[p]["sites"], WORKFLOWS[p][1])
 
 
 if __name__ == "__main__":
