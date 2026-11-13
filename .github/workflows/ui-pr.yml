@@ -108,11 +108,12 @@ jobs:
     name: Playwright standalone
     # Standard GitHub-hosted runner: 4 CPU, 16 GiB RAM, 14 GiB SSD.
     runs-on: ubuntu-24.04
-    # 45, not the self-hosted 20: a cold hosted VM builds the prod
-    # image on 4 cores and downloads the 0.66 GB site_a subset before
-    # the 480s render-drain cap and the suite. An estimate until the
-    # first hosted runs are measured; the step timings say where it goes.
-    timeout-minutes: 45
+    # 75, not the self-hosted 20. The first hosted run (43520041934)
+    # took ~4.5 min from checkout through the build, the 0.66 GB site_a
+    # subset fetch, the seed and the Playwright install; the render
+    # drain below is now capped at 25 min; the suite and teardown get the
+    # rest. The step timings say where it goes.
+    timeout-minutes: 75
     env:
       # One project per run. On a fresh VM nothing else shares the
       # daemon, but the name keeps compose-cleanup's scoping intact.
@@ -155,9 +156,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ hashFiles('scripts/dogfood/ui/package-lock.json') }}
+          # Namespaced for the hosted runner. The old `ms-playwright-Linux-`
+          # entries were saved by the self-hosted runner from /root/.cache,
+          # and the first hosted runs (43520041934, 43520575280) restored
+          # one and hit permission denied unpacking it (nonfatal). A key
+          # and restore prefix of their own mean a hosted job can never
+          # match a self-hosted entry.
+          key: ms-playwright-gh-hosted-ubuntu-24.04-${{ hashFiles('scripts/dogfood/ui/package-lock.json') }}
           restore-keys: |
-            ms-playwright-${{ runner.os }}-
+            ms-playwright-gh-hosted-ubuntu-24.04-
 
       - name: Materialise .env for the stack
         run: |
@@ -419,17 +426,25 @@ jobs:
       # so the suite dies at `app not ready after 30000ms` — a
       # load-dependent coin flip indistinguishable from a real hang.
       # Failing loudly with the outstanding count + slowest job turns
-      # that into a legible, deterministic signal. The cap is set well
-      # above a normal drain (a clean run finishes far inside it, with
-      # ~8 min of the 20-min job budget still unused), so the failure
-      # only ever fires on genuine trouble, never a healthy tail.
+      # that into a legible, deterministic signal.
+      #
+      # 1500s (25 min), raised from 480s for the GitHub-hosted runner
+      # (#1514). The 480s cap was sized on the self-hosted box, where a
+      # clean drain finished far inside it. On the first hosted run
+      # (43520041934, 4 CPUs) the gate started with 112 gated jobs and
+      # still had 81 outstanding when the 480s cap expired; the slowest
+      # was a preview.video at 271.5s. The nightly's first hosted run
+      # showed the same 112 -> 81 shape. A cold hosted run renders the
+      # same work on fewer cores, so the bound is a 25-minute ceiling,
+      # not an expected wait; a stuck queue still fails the step with
+      # the outstanding count and slowest job.
       #
       # Placed AFTER the Playwright install on purpose: that step takes
       # ~15s and the workers are draining throughout it, so the wait
       # only ever pays for the tail the install did not already cover.
       - name: Wait for the preview render queue to drain
         env:
-          DRAIN_TIMEOUT_SECONDS: "480"
+          DRAIN_TIMEOUT_SECONDS: "1500"
         run: |
           q() {
             docker compose exec -T postgres psql -U artist_alley \

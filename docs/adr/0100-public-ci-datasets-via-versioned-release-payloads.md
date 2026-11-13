@@ -351,7 +351,7 @@ edition:
   download of every asset was verified against the pinned `release.json`
   SHA-256s (see "Published 2026-11-13" above).
 - Gate 6 is staged, not met: the CI wiring below exists in the application
-  working tree for review and is not merged.
+  PR #1533 (open, not merged) and is under review.
 - Gates 3, 7 and 8 remain open.
 
 **CI cutover (staged, unmerged).** The owner directed that the dataset CI run
@@ -446,13 +446,21 @@ overlap anchors and the selected rows' licence notice.
   CI dimensions; the downloaded assets' digests equal the published ones. The
   temporary copy was deleted afterwards.
 
-No hosted run has happened yet, so gate 7's cold hosted smoke is NOT passed:
-the CI cutover that uses these editions is still uncommitted and unmerged. The
-release notes still say that no CI job uses these editions; they stay
-unchanged until the cutover is merged.
+The CI cutover is committed on the feature branch and open as PR #1533 to
+`dev`; it is not merged, so the merged CI still runs the old workflows. Gate
+7's cold hosted smoke is NOT passed: the first hosted runs, `ui-pr` 43520041934 and `ui-nightly` 43520575280 (a dispatch of the feature branch), both on commit 232cbb44, fetched and verified the
+pinned public editions, passed both capacity checks and seeded, then failed at
+the bounded preview-render drain. Each gate started with 112 gated jobs and
+still had 81 outstanding when the 480 s cap expired (slowest `preview.video`
+271.5 s and 290.1 s), so Playwright never ran. The nightly's federation
+bring-up and shell scenarios passed. A correction raising the cap to 1,500 s
+and giving the hosted browser cache its own key is under review; no hosted
+Playwright run has passed yet. The release notes, which describe the merged
+CI, still say that no CI job uses these editions; they stay unchanged until
+the cutover is merged.
 
-The next steps are: review the staged cutover, open the application PR, run
-the first cold hosted smoke of both workflows, then update the release notes
+The next steps are: review the drain and cache correction on PR #1533, get a
+hosted `ui-pr` and nightly run to pass, merge, then update the release notes
 and close gates 7 and 8.
 
 A local candidate archive by itself authorizes no upload; for `v2026.11.01`

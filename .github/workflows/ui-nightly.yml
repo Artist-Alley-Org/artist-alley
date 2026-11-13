@@ -68,7 +68,9 @@ jobs:
     # suite). A cold hosted VM builds TWO images (studio-a's prod image
     # and studio-b's dev image) on 4 cores and downloads both datasets
     # before the seed, pair, shell scenarios, render drain and UI `all`.
-    # An estimate until hosted runs are measured.
+    # The first hosted run (43520575280) took ~8 min from checkout to the
+    # end of the shell scenarios; with the 25-min drain cap below, the
+    # UI suite and teardown still fit inside 90.
     timeout-minutes: 90
     env:
       # One project per run; keeps compose-cleanup's scoping intact.
@@ -125,9 +127,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ hashFiles('scripts/dogfood/ui/package-lock.json') }}
+          # Namespaced for the hosted runner. The old `ms-playwright-Linux-`
+          # entries were saved by the self-hosted runner from /root/.cache,
+          # and the first hosted runs (43520041934, 43520575280) restored
+          # one and hit permission denied unpacking it (nonfatal). A key
+          # and restore prefix of their own mean a hosted job can never
+          # match a self-hosted entry.
+          key: ms-playwright-gh-hosted-ubuntu-24.04-${{ hashFiles('scripts/dogfood/ui/package-lock.json') }}
           restore-keys: |
-            ms-playwright-${{ runner.os }}-
+            ms-playwright-gh-hosted-ubuntu-24.04-
 
       - name: Materialise .env for the stack
         run: |
@@ -376,8 +384,11 @@ jobs:
       #
       #   - the same NAMED list of gated preview kinds; preview.3d stays
       #     ungated (no spec reads 3D output, and it is the slowest kind);
-      #   - the same 480s bound, and expiry FAILS the step with the
-      #     outstanding count and slowest job;
+      #   - the same 1500s (25 min) bound, raised from 480s for the
+      #     hosted runner: this workflow's first hosted run (43520575280)
+      #     went from 112 gated jobs to 81 outstanding at the 480s cap,
+      #     slowest preview.video 290.1s; expiry still FAILS the step
+      #     with the outstanding count and slowest job;
       #   - studio-a only (postgres), because every Playwright project
       #     targets studio-a. studio-b's queue is printed, never gated.
       #
@@ -386,7 +397,7 @@ jobs:
       # only pays for the tail they did not already cover.
       - name: Wait for the preview render queue to drain
         env:
-          DRAIN_TIMEOUT_SECONDS: "480"
+          DRAIN_TIMEOUT_SECONDS: "1500"
         run: |
           q() {
             docker compose exec -T postgres psql -U artist_alley \
