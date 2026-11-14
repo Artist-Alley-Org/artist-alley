@@ -1,0 +1,74 @@
+# TEMPORARY, branch-scoped rehearsal (#1514). Not a release workflow.
+#
+# Measures how long release.yml's multi-platform Dockerfile build
+# (linux/amd64,linux/arm64) takes on a GitHub-hosted ubuntu-24.04
+# runner, before any decision to move release.yml off the self-hosted
+# pool. The arm64 half of the image runs the Dockerfile's
+# `threejs-deps` and `runtime` stages under QEMU emulation, which is
+# the cost this run exists to measure.
+#
+# It publishes nothing:
+#   * triggered only by a push to the one rehearsal branch below
+#     (a new workflow_dispatch workflow would first have to exist on
+#     the default branch);
+#   * `permissions: contents: read`, no registry login, no secrets;
+#   * `push: false`, `load: false`, `outputs: type=cacheonly` (the full
+#     build runs, no image is exported), no tags;
+#   * reads the release-scope Actions cache for a realistic warm start
+#     but writes no cache (no cache-to), so it does not add to the
+#     repository's cache usage;
+#   * no GitHub Release, tag, cosign signing, Discord announce or
+#     artifact upload.
+#
+# Delete this file, and the branch, once the measurement is recorded.
+
+name: Release hosted rehearsal (temporary)
+
+on:
+  push:
+    branches:
+      - feat/1514-hosted-release-rehearsal
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Rehearse release multi-platform build (no publish)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Record runner capacity
+        run: |
+          echo "nproc: $(nproc)"
+          free -m
+          df -B1M / | tail -1 | sed 's/^/disk before: /'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build linux/amd64,linux/arm64 (no push, no export)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          load: false
+          outputs: type=cacheonly
+          build-args: |
+            BUILD_VERSION=rehearsal-not-a-release
+          cache-from: type=gha,scope=release
+          provenance: false
+          sbom: false
+
+      - name: Record disk after build
+        if: always()
+        run: |
+          df -B1M / | tail -1 | sed 's/^/disk after:  /'
