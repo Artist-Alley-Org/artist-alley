@@ -5,6 +5,16 @@ Download a pinned public dataset release and reconstruct a verified site root (#
     fetch_release_dataset.py --repo Artist-Alley-Org/<repo> --tag <immutable-tag> --site {site_a,site_b}
         --expect-manifest-sha256 <64 hex> --metadata-root <checked-out metadata-only site root>
         --output <NEW site root> [--work-dir <parent for the private download directory>]
+        [--release-format {v1,v2}]
+
+--release-format says which asset layout the pinned release uses (release_dataset.py has both):
+  v2  every new edition. The tag must be an edition (vYYYY.MM.NN[-variant]: month 01-12, edition
+      number 01-99) and is checked before any request. The manifest asset is `<site>-<tag>-release.json`; after its hash is checked it
+      must be a v2 manifest of exactly this site and edition, so a manifest of another edition is
+      refused before any payload part is requested. Parts are `<site>-<tag>-payload.tar.gz.partNNNN`.
+  v1  the default, for the published unversioned editions (v2026.11.01, v2026.11.01-sm):
+      `release.json` and `<site>-payload.tar.gz.partNNNN`, exactly as before. A v2 manifest served
+      as `release.json` is refused.
 
 A tag alone is not an integrity pin, so the expected release.json SHA-256 is required on every
 invocation. The release.json asset is downloaded first, under a small size cap, and its SHA-256 is
@@ -40,7 +50,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-RELEASE_DATASET_SHA256 = "5f486228d2a874afc0b48a2fd3fef72df57ca4b6340a3ff320d3c020d9c52ae0"
+RELEASE_DATASET_SHA256 = "1a58d64a7831865e186566e8292cbf70851721509f7deb00d0d86fad652bebdd"
 PRODUCTION_BASE = "https://github.com"
 ALLOWED_OWNER = "Artist-Alley-Org"
 REPO_RE = re.compile(r"\AArtist-Alley-Org/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
@@ -199,23 +209,32 @@ def download(opener, policy: _Policy, url: str, dir_fd: int, name: str, *, cap: 
 
 # ---------------------------------------------------------------------------- main flow
 
+RELEASE_FORMATS = ("v1", "v2")
+
+
 def fetch(repo: str, tag: str, site: str, expect_manifest_sha256: str, metadata_root: str, output: str,
-          *, work_dir: str | None = None, _base_url: str = PRODUCTION_BASE, _test_origin_only: bool = False,
-          _opener=None) -> dict:
+          *, work_dir: str | None = None, release_format: str = "v1", _base_url: str = PRODUCTION_BASE,
+          _test_origin_only: bool = False, _opener=None) -> dict:
     """Download, check and reconstruct. `_base_url`, `_test_origin_only`, `_opener` are for tests only."""
     rd = load_release_dataset()
     try:
         return _fetch(rd, repo, tag, site, expect_manifest_sha256, metadata_root, output, work_dir,
-                      _base_url, _test_origin_only, _opener)
+                      release_format, _base_url, _test_origin_only, _opener)
     except rd.ReleaseError as e:
         raise FetchError(str(e)) from None
 
 
 def _fetch(rd, repo, tag, site, expect_manifest_sha256, metadata_root, output, work_dir,
-           _base_url, _test_origin_only, _opener) -> dict:
+           release_format, _base_url, _test_origin_only, _opener) -> dict:
     check_inputs(repo, tag, expect_manifest_sha256)
     if site not in rd.SITE_PREFIXES:
         raise FetchError(f"--site must be one of {sorted(rd.SITE_PREFIXES)}")
+    if release_format not in RELEASE_FORMATS:
+        raise FetchError(f"--release-format must be one of {list(RELEASE_FORMATS)}")
+    # v2: the tag IS the edition, so it must pass the edition rule before anything is requested;
+    # v1 releases carry no edition (the tag is only the download path).
+    edition = rd.check_edition(tag) if release_format == "v2" else None
+    manifest = rd.manifest_name(site, edition)
     if not _test_origin_only and _base_url != PRODUCTION_BASE:
         raise FetchError("a non-production base URL is only allowed in test mode")
     metadata_root = os.path.abspath(metadata_root)
@@ -235,19 +254,22 @@ def _fetch(rd, repo, tag, site, expect_manifest_sha256, metadata_root, output, w
     try:
         dfd = os.open(dl, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
-            # 1. release.json: capped, hash-checked while streaming, BEFORE parsing or any part request
-            download(opener, policy, asset_url(_base_url, repo, tag, rd.MANIFEST_NAME), dfd, rd.MANIFEST_NAME,
+            # 1. the manifest: capped, hash-checked while streaming, BEFORE parsing or any part request
+            download(opener, policy, asset_url(_base_url, repo, tag, manifest), dfd, manifest,
                      cap=MAX_MANIFEST_BYTES, exact=None, want_sha=expect_manifest_sha256)
-            # 2. parse with the reviewed offline loader (re-checks the same pin)
+            # 2. parse with the reviewed offline loader (re-checks the same pin; for v2 also that the
+            #    manifest is of exactly this edition and every part name carries it)
             try:
-                m, _ = rd.load_manifest(dl, expect_manifest_sha256)
+                m, _ = rd.load_manifest(dl, expect_manifest_sha256, edition)
             except rd.ReleaseError as e:
-                raise FetchError(f"release.json rejected: {e}") from None
+                raise FetchError(f"{manifest} rejected: {e}") from None
             if m["site"] != site:
-                raise FetchError(f"release.json is for {m['site']!r}, not {site!r}")
+                raise FetchError(f"{manifest} is for {m['site']!r}, not {site!r}")
+            if rd.manifest_file(m) != manifest:
+                raise FetchError(f"{manifest} is not a {release_format} manifest")
             names = [p["name"] for p in m["parts"]]
-            if len(set(names)) != len(names) or rd.MANIFEST_NAME in names:
-                raise FetchError("release.json names a part twice")
+            if len(set(names)) != len(names) or manifest in names:
+                raise FetchError(f"{manifest} names a part twice")
             # 3. only the named parts, in order, each capped at its declared size
             for p in m["parts"]:
                 rd.check_rel_path(p["name"])
@@ -255,18 +277,20 @@ def _fetch(rd, repo, tag, site, expect_manifest_sha256, metadata_root, output, w
                     raise FetchError(f"unsafe part name {p['name']!r}")
                 download(opener, policy, asset_url(_base_url, repo, tag, p["name"]), dfd, p["name"],
                          cap=p["bytes"], exact=p["bytes"], want_sha=p["sha256"])
-            if sorted(os.listdir(dl)) != sorted([rd.MANIFEST_NAME] + names):
+            if sorted(os.listdir(dl)) != sorted([manifest] + names):
                 raise FetchError("unexpected local entries in the download directory")
         finally:
             os.close(dfd)
         # 4. offline verification and extraction into a NEW site root
         try:
-            result = rd.verify(metadata_root, dl, output, expect_manifest_sha256)
+            result = rd.verify(metadata_root, dl, output, expect_manifest_sha256, edition)
         except (rd.ReleaseError, OSError) as e:
             raise FetchError(f"offline verification failed: {e}") from None
     finally:
         shutil.rmtree(dl, ignore_errors=True)
-    return {"repo": repo, "tag": tag, "site": result["site"], "release_json_sha256": result["release_json_sha256"],
+    return {"repo": repo, "tag": tag, "site": result["site"], "release_format": release_format,
+            "edition": result["edition"], "manifest": result["manifest"],
+            "release_json_sha256": result["release_json_sha256"],
             "parts": result["parts"], "payload_count": result["payload_count"],
             "payload_bytes": result["payload_bytes"], "stream_sha256": result["stream_sha256"]}
 
@@ -280,9 +304,13 @@ def main(argv=None) -> int:
     ap.add_argument("--metadata-root", required=True)
     ap.add_argument("--output", required=True)
     ap.add_argument("--work-dir")
+    ap.add_argument("--release-format", choices=list(RELEASE_FORMATS), default="v1",
+                    help="v2 for every new edition (site + tag in every asset name); v1 for the published "
+                         "unversioned editions")
     a = ap.parse_args(argv)
     try:
-        out = fetch(a.repo, a.tag, a.site, a.expect_manifest_sha256, a.metadata_root, a.output, work_dir=a.work_dir)
+        out = fetch(a.repo, a.tag, a.site, a.expect_manifest_sha256, a.metadata_root, a.output,
+                    work_dir=a.work_dir, release_format=a.release_format)
     except FetchError as e:
         print(f"fetch_release_dataset: FAILED: {e}", file=sys.stderr)
         return 1

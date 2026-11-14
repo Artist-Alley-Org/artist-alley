@@ -6,8 +6,23 @@ The public dataset repositories hold metadata only. The binary payload ships as 
 GitHub Release made of sequential parts of one deterministic tar.gz stream. This tool:
 
   inspect  check a dataset root (SHA256SUMS, payload listing) without writing anything
-  build    package the listed payload files of a root into release parts + release.json
+  build    package the listed payload files of a root into release parts + a release manifest
   verify   check a release against a metadata-only root and reconstruct a NEW site root
+
+Two release formats (both verified offline and fetched online):
+  v2 (every new build)  `build --tag vYYYY.MM.NN[-variant]`: year, month 01-12 and edition number
+                        01-99 within the month (checked before any output is created). Every asset basename carries the site
+                        AND the immutable edition tag, so two editions downloaded into one folder
+                        can never overwrite each other:
+                          <site>-<tag>-release.json
+                          <site>-<tag>-payload.tar.gz.part0000, ...0001, ...
+                        The manifest (schema artist-alley.dataset-release/v2) records `edition` and
+                        its own `manifest` name; both must agree with the file names and, when
+                        given, with the expected tag.
+  v1 (legacy)           `release.json` + `<site>-payload.tar.gz.partNNNN`, schema .../v1. The
+                        published v2026.11.01 and v2026.11.01-sm editions use it. It stays fully
+                        verifiable, and `build --legacy-v1` reproduces it byte for byte; it is not
+                        for new editions.
 
 It is stdlib-only, makes no network access and knows no URLs. Packaging or verifying a payload
 checks BYTES only: it is not rights clearance, not release approval and not permission to publish.
@@ -24,9 +39,9 @@ Safety rules (all fail closed):
 Usage:
   release_dataset.py inspect --root ROOT --site {site_a,site_b}
   release_dataset.py build   --root ROOT --site {site_a,site_b} --output NEW_RELEASE_DIR
-                             [--max-part-bytes N]
+                             (--tag EDITION | --legacy-v1) [--max-part-bytes N]
   release_dataset.py verify  --root METADATA_ROOT --release RELEASE_DIR --output NEW_SITE_ROOT
-                             [--expect-manifest-sha256 HEX]
+                             [--expect-manifest-sha256 HEX] [--tag EDITION]
 Exit status: 0 success, 1 check failed, 2 usage error.
 """
 
@@ -48,9 +63,10 @@ import tarfile
 import tempfile
 import zlib
 
-SCHEMA = "artist-alley.dataset-release/v1"
+SCHEMA = "artist-alley.dataset-release/v1"          # legacy, unversioned asset names
+SCHEMA_V2 = "artist-alley.dataset-release/v2"       # every asset name carries site + edition
 TOOL_VERSION = 1
-MANIFEST_NAME = "release.json"
+MANIFEST_NAME = "release.json"                      # the v1 manifest's (only) name
 SUMS_NAME = "SHA256SUMS"
 SITE_PREFIXES = {
     "site_a": ("3d/", "audio/", "documents/", "fonts/", "images/", "videos/"),
@@ -65,6 +81,12 @@ CHUNK = 1 << 20
 NOTICE = ("CANDIDATE PAYLOAD ONLY. Packaging and verification check bytes, not rights: this is not "
           "rights clearance, not release approval and not permission to publish.")
 HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
+# An immutable edition tag: calendar edition vYYYY.MM.NN (year, month, edition number within the month; see
+# check_edition), optional lowercase variant (v2026.11.02, v2026.11.02-sm).
+# Deliberately narrow: no `/`, no `..`, no upper case, nothing that could change a path or a URL.
+EDITION_PATTERN = r"v[0-9]{4}\.[0-9]{2}\.[0-9]{2}(?:-[a-z][a-z0-9]{0,15})?"
+EDITION_RE = re.compile(r"\A" + EDITION_PATTERN + r"\Z")
+V2_MANIFEST_RE = re.compile(r"\A(site_a|site_b)-(" + EDITION_PATTERN + r")-release\.json\Z")
 
 
 class ReleaseError(Exception):
@@ -324,9 +346,9 @@ def inspect_root(root: str, site: str) -> dict:
 class PartWriter(io.RawIOBase):
     """Splits one byte stream into sequential part files, each strictly smaller than max_bytes."""
 
-    def __init__(self, dir_fd: int, site: str, max_bytes: int):
+    def __init__(self, dir_fd: int, site: str, max_bytes: int, edition: str | None = None):
         super().__init__()
-        self.dir_fd, self.site, self.max = dir_fd, site, max_bytes
+        self.dir_fd, self.site, self.max, self.edition = dir_fd, site, max_bytes, edition
         self.parts: list[dict] = []
         self.fd = None
         self.cur = 0
@@ -341,7 +363,7 @@ class PartWriter(io.RawIOBase):
         self._close_part()
         if len(self.parts) >= MAX_PARTS:
             raise ReleaseError(f"more than {MAX_PARTS} parts; raise --max-part-bytes")
-        name = part_name(self.site, len(self.parts))
+        name = part_name(self.site, len(self.parts), self.edition)
         self.fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=self.dir_fd)
         self.parts.append({"name": name, "bytes": 0, "sha256": None})
         self.cur = 0
@@ -374,8 +396,43 @@ class PartWriter(io.RawIOBase):
         self._close_part()
 
 
-def part_name(site: str, i: int) -> str:
-    return f"{site}-payload.tar.gz.part{i:04d}"
+def check_edition(tag) -> str:
+    """The edition tag of a v2 release, refused unless it is exactly the narrow pattern and names a real
+    calendar edition (ADR 0100): year 0001 or later, month 01-12, then NN, the edition number 01-99 within
+    that month. NN counts editions, it is not a day of the month, so v2026.02.30 (the 30th February
+    edition) is valid while v2026.13.01, v2026.00.01 and v2026.11.00 are not."""
+    if not isinstance(tag, str) or not EDITION_RE.match(tag):
+        raise ReleaseError(f"edition tag {tag!r} is not vYYYY.MM.NN with an optional lowercase -variant")
+    year, month, number = (int(x) for x in tag[1:11].split("."))
+    if year < 1 or not 1 <= month <= 12 or number < 1:
+        raise ReleaseError(f"edition tag {tag!r} does not name a real calendar edition "
+                           "(year 0001 or later, month 01-12, edition number 01-99)")
+    return tag
+
+
+def manifest_name(site: str, edition: str | None = None) -> str:
+    """The manifest's asset name: `release.json` for v1, `<site>-<edition>-release.json` for v2."""
+    return MANIFEST_NAME if edition is None else f"{site}-{check_edition(edition)}-release.json"
+
+
+def part_name(site: str, i: int, edition: str | None = None) -> str:
+    if edition is None:
+        return f"{site}-payload.tar.gz.part{i:04d}"
+    return f"{site}-{check_edition(edition)}-payload.tar.gz.part{i:04d}"
+
+
+def manifest_file(m: dict) -> str:
+    """The asset name a loaded manifest must be stored under."""
+    return MANIFEST_NAME if m.get("schema") == SCHEMA else m["manifest"]
+
+
+def find_manifest(release: str) -> str:
+    """The one manifest in a release directory: `release.json` (v1) or `<site>-<edition>-release.json`
+    (v2). None or more than one is refused, so a folder mixing editions cannot be verified by accident."""
+    found = sorted(n for n in os.listdir(release) if n == MANIFEST_NAME or V2_MANIFEST_RE.match(n))
+    if len(found) != 1:
+        raise ReleaseError(f"release directory must hold exactly one manifest, found {found[:4]}")
+    return found[0]
 
 
 class HashingReader(io.RawIOBase):
@@ -402,7 +459,12 @@ def _tarinfo(path: str, size: int) -> tarfile.TarInfo:
     return ti
 
 
-def build(root: str, site: str, output: str, max_part_bytes: int = DEFAULT_MAX_PART_BYTES) -> dict:
+def build(root: str, site: str, output: str, max_part_bytes: int = DEFAULT_MAX_PART_BYTES,
+          edition: str | None = None) -> dict:
+    """Build a release. With `edition` (every new edition) the result is v2, every asset named
+    `<site>-<edition>-...`; without it, the legacy v1 layout, byte-identical to earlier builds."""
+    if edition is not None:
+        check_edition(edition)
     if not (MIN_MAX_PART_BYTES <= max_part_bytes <= HARD_MAX_PART_BYTES):
         raise ReleaseError(f"--max-part-bytes must be in [{MIN_MAX_PART_BYTES}, {HARD_MAX_PART_BYTES}]")
     output = check_new_output(output, root)
@@ -411,7 +473,7 @@ def build(root: str, site: str, output: str, max_part_bytes: int = DEFAULT_MAX_P
     try:
         dfd = _open_dir_nofollow(tmp)
         try:
-            sink = PartWriter(dfd, site, max_part_bytes)
+            sink = PartWriter(dfd, site, max_part_bytes, edition)
             gz = gzip.GzipFile(filename="", mode="wb", compresslevel=GZIP_LEVEL, fileobj=sink, mtime=0)
             tf = tarfile.open(fileobj=gz, mode="w|", format=tarfile.PAX_FORMAT, encoding="utf-8")
             for p, want, n in facts["payload"]:
@@ -447,8 +509,12 @@ def build(root: str, site: str, output: str, max_part_bytes: int = DEFAULT_MAX_P
                 "parts": sink.parts,
                 "stream": {"bytes": sink.stream_bytes, "sha256": sink.stream_hash.hexdigest()},
             }
+            if edition is not None:
+                manifest.update({"schema": SCHEMA_V2, "tool_version": 2, "edition": edition,
+                                 "manifest": manifest_name(site, edition)})
             blob = (json.dumps(manifest, indent=1, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
-            mfd = os.open(MANIFEST_NAME, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dfd)
+            mfd = os.open(manifest_name(site, edition), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                          0o644, dir_fd=dfd)
             try:
                 write_all(mfd, blob)
                 os.fsync(mfd)
@@ -521,20 +587,41 @@ def _req(d, key, typ):
     return d[key]
 
 
-def load_manifest(release: str, expect_sha: str | None) -> tuple[dict, str]:
-    blob = read_regular(release, MANIFEST_NAME)
+def load_manifest(release: str, expect_sha: str | None, edition: str | None = None) -> tuple[dict, str]:
+    """Load and check the release directory's one manifest (see find_manifest).
+
+    The pinned SHA-256 is checked on the raw bytes before parsing. A v1 manifest must be named
+    `release.json` and carry no edition. A v2 manifest must be named `<site>-<edition>-release.json`,
+    record that same name and edition, and name every part `<site>-<edition>-payload...`. With
+    `edition` (the expected tag) the manifest MUST be v2 and of exactly that edition."""
+    if edition is not None:
+        check_edition(edition)
+    name = find_manifest(release)
+    blob = read_regular(release, name)
     got = hashlib.sha256(blob).hexdigest()
     if expect_sha is not None and got != expect_sha:
-        raise ReleaseError(f"release.json SHA-256 {got} != expected {expect_sha}")
+        raise ReleaseError(f"{name} SHA-256 {got} != expected {expect_sha}")
     try:
         m = json.loads(blob.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
-        raise ReleaseError(f"release.json is not valid JSON: {e}") from None
-    if not isinstance(m, dict) or m.get("schema") != SCHEMA:
-        raise ReleaseError(f"release.json schema is not {SCHEMA!r}")
+        raise ReleaseError(f"{name} is not valid JSON: {e}") from None
+    if not isinstance(m, dict) or m.get("schema") not in (SCHEMA, SCHEMA_V2):
+        raise ReleaseError(f"{name} schema is not {SCHEMA!r} or {SCHEMA_V2!r}")
     site = _req(m, "site", str)
     if site not in SITE_PREFIXES or m.get("payload_prefixes") != list(SITE_PREFIXES[site]):
         raise ReleaseError("release.json site / payload_prefixes do not match this tool")
+    if m["schema"] == SCHEMA:
+        if name != MANIFEST_NAME or "edition" in m or "manifest" in m:
+            raise ReleaseError(f"a v1 manifest must be {MANIFEST_NAME!r} with no edition (found {name!r})")
+        if edition is not None:
+            raise ReleaseError(f"expected edition {edition!r}, but this is an unversioned v1 release")
+        ed = None
+    else:
+        ed = check_edition(_req(m, "edition", str))
+        if m.get("manifest") != manifest_name(site, ed) or name != manifest_name(site, ed):
+            raise ReleaseError(f"manifest {name!r} does not match its recorded site/edition {site!r}/{ed!r}")
+        if edition is not None and ed != edition:
+            raise ReleaseError(f"release edition {ed!r} != expected tag {edition!r}")
     mx = _req(m, "max_part_bytes", int)
     if not (MIN_MAX_PART_BYTES <= mx <= HARD_MAX_PART_BYTES):
         raise ReleaseError("release.json max_part_bytes out of range")
@@ -543,7 +630,7 @@ def load_manifest(release: str, expect_sha: str | None) -> tuple[dict, str]:
         raise ReleaseError("release.json has no parts or too many")
     total = 0
     for i, p in enumerate(parts):
-        if not isinstance(p, dict) or p.get("name") != part_name(site, i):
+        if not isinstance(p, dict) or p.get("name") != part_name(site, i, ed):
             raise ReleaseError(f"release.json part {i} is missing, renamed or out of order")
         n, s = _req(p, "bytes", int), _req(p, "sha256", str)
         if not HEX64.match(s) or not (0 < n < mx):
@@ -564,10 +651,11 @@ def load_manifest(release: str, expect_sha: str | None) -> tuple[dict, str]:
     return m, got
 
 
-def verify(root: str, release: str, output: str, expect_manifest_sha256: str | None = None) -> dict:
+def verify(root: str, release: str, output: str, expect_manifest_sha256: str | None = None,
+           edition: str | None = None) -> dict:
     root, release = os.path.abspath(root), os.path.abspath(release)
     output = check_new_output(output, root, release)
-    m, msha = load_manifest(release, expect_manifest_sha256)
+    m, msha = load_manifest(release, expect_manifest_sha256, edition)
     site = m["site"]
     # metadata-only root: pinned SHA256SUMS and metadata files
     sums_bytes = read_regular(root, SUMS_NAME)
@@ -589,7 +677,7 @@ def verify(root: str, release: str, output: str, expect_manifest_sha256: str | N
         meta_bytes[p] = b
     # release directory: exactly release.json + the listed parts, all regular files
     names = {e.name: e for e in os.scandir(release)}
-    want_names = {MANIFEST_NAME} | {p["name"] for p in m["parts"]}
+    want_names = {manifest_file(m)} | {p["name"] for p in m["parts"]}
     if set(names) != want_names:
         extra, missing = sorted(set(names) - want_names), sorted(want_names - set(names))
         raise ReleaseError(f"release directory mismatch: extra {extra[:3]}, missing {missing[:3]}")
@@ -694,7 +782,8 @@ def verify(root: str, release: str, output: str, expect_manifest_sha256: str | N
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
-    return {"site": site, "release_json_sha256": msha, "payload_count": final["payload_count"],
+    return {"site": site, "edition": m.get("edition"), "manifest": manifest_file(m),
+            "release_json_sha256": msha, "payload_count": final["payload_count"],
             "payload_bytes": final["payload_bytes"], "metadata_files": len(metadata), "parts": len(m["parts"]),
             "stream_sha256": m["stream"]["sha256"], "output": output}
 
@@ -712,11 +801,16 @@ def main(argv=None) -> int:
     pb.add_argument("--site", required=True, choices=sorted(SITE_PREFIXES))
     pb.add_argument("--output", required=True)
     pb.add_argument("--max-part-bytes", type=int, default=DEFAULT_MAX_PART_BYTES)
+    fmt = pb.add_mutually_exclusive_group(required=True)
+    fmt.add_argument("--tag", help="immutable edition tag; builds the v2 layout (every new edition)")
+    fmt.add_argument("--legacy-v1", action="store_true",
+                     help="build the unversioned v1 layout, only to reproduce an existing v1 edition")
     pv = sub.add_parser("verify")
     pv.add_argument("--root", required=True)
     pv.add_argument("--release", required=True)
     pv.add_argument("--output", required=True)
     pv.add_argument("--expect-manifest-sha256")
+    pv.add_argument("--tag", help="expected edition; requires a v2 release of exactly this edition")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "inspect":
@@ -726,11 +820,12 @@ def main(argv=None) -> int:
                    "payload_bytes": f["payload_bytes"], "payload_list_sha256": f["payload_list_sha256"],
                    "by_prefix": f["by_prefix"]}
         elif a.cmd == "build":
-            m = build(a.root, a.site, a.output, a.max_part_bytes)
-            out = {"site": m["site"], "parts": [(p["name"], p["bytes"]) for p in m["parts"]],
+            m = build(a.root, a.site, a.output, a.max_part_bytes, None if a.legacy_v1 else a.tag)
+            out = {"site": m["site"], "edition": m.get("edition"), "manifest": manifest_file(m),
+                   "parts": [(p["name"], p["bytes"]) for p in m["parts"]],
                    "stream": m["stream"], "payload": {k: m["payload"][k] for k in ("count", "bytes", "list_sha256")}}
         else:
-            out = verify(a.root, a.release, a.output, a.expect_manifest_sha256)
+            out = verify(a.root, a.release, a.output, a.expect_manifest_sha256, a.tag)
     except (ReleaseError, OSError, tarfile.TarError, EOFError, zlib.error) as e:
         print(f"release_dataset: FAILED: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
