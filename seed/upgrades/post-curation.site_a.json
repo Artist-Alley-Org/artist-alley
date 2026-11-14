@@ -91,7 +91,9 @@
   "It has to: reproducing a chosen date means replacing a derived one. Its safety",
   "property is narrower and stated in its docstring: it writes only the fields",
   "NAMED in an entry, only onto a post that already exists, and it never creates,",
-  "deletes or reorders posts."
+  "deletes or reorders posts.",
+  "",
+  "#1514 (2026-11-13): the Sponza scene (4d30ea15-aec9-f53a-647c-3d4034b9f3a2) was removed from the public site_a by owner decision (unresolved terms for the exact local revision). Its id is dropped from the three curated member orders that held it (18017920, 27f945f0, adafa798); every other member keeps its curated position. `pipeline_members` is left as authored, so those three report as moved, which is true."
  ],
  "curate": [
   {
@@ -730,21 +732,6 @@
    "created_at": "2025-05-30T20:53:59Z"
   },
   {
-   "id": "18017920-fcd4-67e3-04b8-60d930544cf5",
-   "pipeline_members": "e5379b9507e79b104fee2d8cb52be353b9ede37e",
-   "created_at": "2026-05-07T03:25:37Z",
-   "asset_ids": [
-    "8d7bb22e-bd82-8879-8d49-d165d5c58c4d",
-    "d7783c97-929b-cc9b-8706-9f007778cb1a",
-    "a3b49969-02e6-ed6e-1b0b-e39a89d77bc0",
-    "4d30ea15-aec9-f53a-647c-3d4034b9f3a2",
-    "2adf45b0-8dd0-9818-ffef-bb1c04a7e8f9",
-    "2ae44464-891f-2d61-7dc7-b66a8637c36e",
-    "89fc34b8-1791-dc48-79c7-861861571469",
-    "f7db31e1-9d40-79c9-e328-7caffc0de9cd"
-   ]
-  },
-  {
    "id": "180b4764-a7f1-4d6e-f57e-a0c86a6692be",
    "pipeline_members": "612f4ac96a77b2e601b114b2f2baead220786084",
    "created_at": "2025-11-14T14:57:16Z"
@@ -1155,21 +1142,6 @@
     "332f2a9a-a70d-5063-a85f-d79119956e9d",
     "3358cc88-e257-1b50-4392-8349a7483a16",
     "37c204ae-0bf4-4472-c540-d8dff98a8b6f"
-   ]
-  },
-  {
-   "id": "27f945f0-070e-413f-26d3-356d8293e95e",
-   "pipeline_members": "7a448f199baade87e4a8d2853ac63f4646c5aee7",
-   "created_at": "2026-05-14T18:52:05Z",
-   "updated_at": "2026-05-05T08:07:41Z",
-   "asset_ids": [
-    "d20f56f9-9161-7a73-2640-cc0d02f8a5b0",
-    "a3b49969-02e6-ed6e-1b0b-e39a89d77bc0",
-    "bf05361b-aa10-9b58-d6d0-9102b4742dcb",
-    "bf72cc9a-94e7-7a10-7beb-976702289528",
-    "da72edcb-61f4-5265-a903-6946462aa5a5",
-    "5c937df2-0b12-3032-736e-7de304e8b7b1",
-    "4d30ea15-aec9-f53a-647c-3d4034b9f3a2"
    ]
   },
   {
@@ -1692,6 +1664,20 @@
    ]
   },
   {
+   "id": "39e69231-a8a3-34aa-208d-1fb1898b387b",
+   "pipeline_members": "7a448f199baade87e4a8d2853ac63f4646c5aee7",
+   "created_at": "2026-05-14T18:52:05Z",
+   "updated_at": "2026-05-05T08:07:41Z",
+   "asset_ids": [
+    "d20f56f9-9161-7a73-2640-cc0d02f8a5b0",
+    "a3b49969-02e6-ed6e-1b0b-e39a89d77bc0",
+    "bf05361b-aa10-9b58-d6d0-9102b4742dcb",
+    "bf72cc9a-94e7-7a10-7beb-976702289528",
+    "da72edcb-61f4-5265-a903-6946462aa5a5",
+    "5c937df2-0b12-3032-736e-7de304e8b7b1"
+   ]
+  },
+  {
    "id": "3a267bd8-87c5-1dd2-6152-9159c11e797e",
    "pipeline_members": "95f2fd70aa9c402adfb98bfb0fda78ebf7f00975",
    "created_at": "2026-05-10T11:51:08Z",
@@ -1897,6 +1883,20 @@
     "a3b49969-02e6-ed6e-1b0b-e39a89d77bc0",
     "319bb9c0-75ea-bdb7-5fb4-fa8ee9b0eedc",
     "7e68bbce-2c68-6810-3713-f9cb2cff1f51"
+   ]
+  },
+  {
+   "id": "4488bcc4-670d-f804-d11c-760d9d07fd49",
+   "pipeline_members": "e5379b9507e79b104fee2d8cb52be353b9ede37e",
+   "created_at": "2026-05-07T03:25:37Z",
+   "asset_ids": [
+    "8d7bb22e-bd82-8879-8d49-d165d5c58c4d",
+    "d7783c97-929b-cc9b-8706-9f007778cb1a",
+    "a3b49969-02e6-ed6e-1b0b-e39a89d77bc0",
+    "2adf45b0-8dd0-9818-ffef-bb1c04a7e8f9",
+    "2ae44464-891f-2d61-7dc7-b66a8637c36e",
+    "89fc34b8-1791-dc48-79c7-861861571469",
+    "f7db31e1-9d40-79c9-e328-7caffc0de9cd"
    ]
   },
   {
@@ -4476,6 +4476,16 @@
    "created_at": "2025-12-05T06:03:00Z"
   },
   {
+   "id": "a783324e-47a9-355b-a480-610b6d21a4d0",
+   "pipeline_members": "262fc63722cf8971406d591579cab0d48472129d",
+   "created_at": "2025-11-11T09:34:00Z",
+   "asset_ids": [
+    "a843ee18-f9ee-c3a3-ed06-928a3210a5b4",
+    "bf05361b-aa10-9b58-d6d0-9102b4742dcb",
+    "be6618e8-3d1c-e182-80f8-5c210fdb1b66"
+   ]
+  },
+  {
    "id": "a7cb4fb3-05d5-5ba0-cd19-377fb5077e75",
    "pipeline_members": "23ef82b713619263779674e8f089ab4b96f9915b",
    "created_at": "2025-12-26T21:31:24Z",
@@ -4665,17 +4675,6 @@
    "id": "ad9fc378-cb81-1f3a-b935-647fa8a00d83",
    "pipeline_members": "412c7ae8be12fd542b58de062375ac9c2bf6d1c2",
    "created_at": "2026-02-14T06:06:20Z"
-  },
-  {
-   "id": "adafa798-73a2-90a9-b45a-fc5e6c258853",
-   "pipeline_members": "262fc63722cf8971406d591579cab0d48472129d",
-   "created_at": "2025-11-11T09:34:00Z",
-   "asset_ids": [
-    "4d30ea15-aec9-f53a-647c-3d4034b9f3a2",
-    "a843ee18-f9ee-c3a3-ed06-928a3210a5b4",
-    "bf05361b-aa10-9b58-d6d0-9102b4742dcb",
-    "be6618e8-3d1c-e182-80f8-5c210fdb1b66"
-   ]
   },
   {
    "id": "add45e8a-4fe6-582b-8c34-dd9f0615aec1",

@@ -124,6 +124,21 @@
   const featuredEffectiveId = $derived(featuredCoverAssetId ?? coverAssetId);
   const featuredIsInherited = $derived(featuredCoverAssetId === null && coverAssetId !== null);
 
+  /** The tab-row hint for a slot. A function of the slot rather than of
+   *  `isFeatured`, because the row renders BOTH slots' hints (the other
+   *  one invisible) so that switching slots cannot change its height. */
+  function slotHint(slot: CoverSlot): string {
+    if (!cropOffered) return t('collections.cover_hint');
+    if (slot === 'featured') {
+      return featuredIsInherited
+        ? t('collections.cover_editor_featured_inherited')
+        : t('collections.cover_editor_featured_hint');
+    }
+    return coverAssetId === null
+      ? t('collections.cover_hint')
+      : t('collections.cover_editor_cover_crop_hint');
+  }
+
   // ── EVERYTHING THE SLOT DECIDES, RESOLVED ONCE (#1213) ────────────
   //
   // The whole difference between the two visits, in one place, so the
@@ -698,19 +713,24 @@
          its minimum gets its own line. Without it a 390px row gave the
          hint the ~40px the tabs left over and rendered one word per
          line down the side of the dialog. -->
-    <p class="min-w-[16rem] flex-1 text-xs text-fg-muted" data-testid="cover-page-hint">
-      {#if !cropOffered}
-        {t('collections.cover_hint')}
-      {:else if isFeatured}
-        {featuredIsInherited
-          ? t('collections.cover_editor_featured_inherited')
-          : t('collections.cover_editor_featured_hint')}
-      {:else}
-        {coverAssetId === null
-          ? t('collections.cover_hint')
-          : t('collections.cover_editor_cover_crop_hint')}
-      {/if}
-    </p>
+    <!-- ⚠️ BOTH SLOTS' HINTS SHARE ONE CELL, so a slot switch cannot
+         resize the dialog (#1264). The two hints are different sentences
+         and wrap at different widths, and the dialog's height follows its
+         content (#1220), so whichever hint ran to a second line used to
+         grow this row from the tabs' 28.656px to two text lines (37.313px)
+         and move the whole panel when the curator switched slots: the
+         first GitHub-hosted run measured exactly that 8.656px jump, while
+         the self-hosted runner's font happened to fit both on one line.
+         Stacked in one grid cell, the row is as tall as the TALLER of the
+         two in whatever font renders it; the other slot's copy is only
+         `invisible` and `aria-hidden`, reserving its space without being
+         seen or read. -->
+    <div class="grid min-w-[16rem] flex-1 text-xs text-fg-muted">
+      <p class="col-start-1 row-start-1" data-testid="cover-page-hint">{slotHint(coverSlot)}</p>
+      <p class="invisible col-start-1 row-start-1" aria-hidden="true">
+        {slotHint(coverSlot === 'featured' ? 'collection' : 'featured')}
+      </p>
+    </div>
     </div>
 
     {#if warn}

@@ -60,6 +60,7 @@ import hashlib
 import json
 import re
 import sys
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -119,6 +120,193 @@ def _head_length(url: str, timeout: int = 60) -> int | None:
             return int(n) if n else None
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# #1514: the signed download-link transport.
+#
+# Most records name a direct pack zip (`kenney.nl/media/pages/assets/...zip`)
+# and carry no `transport` key; that path is unchanged. A record whose pack
+# is served only through Kenney's download button instead records
+#
+#     source_archive.url            https://kenney.nl/download-link/<hex>
+#     source_archive.transport      "kenney-download-link-json"
+#     source_archive.archive_bytes  exact length of the zip it resolves to
+#     source_archive.archive_sha256 sha256 of that whole zip
+#     source_archive.member/sha256  as for every other record
+#
+# The endpoint is the stable locator. It does NOT serve the zip: a GET
+# returns JSON `{"url": <short-lived signed zip URL>}`. The signed URL
+# expires, so it is never recorded, logged or put in an error message; the
+# archive hash is what proves a fresh link reached the same pack, and it is
+# checked on the whole zip BEFORE anything is extracted from it.
+# ---------------------------------------------------------------------------
+
+TRANSPORT_SIGNED_LINK = "kenney-download-link-json"
+_DOWNLOAD_LINK_RE = re.compile(r"\Ahttps://kenney\.nl/download-link/([0-9a-f]{2,256})\Z")
+# The endpoint's hex is the ASCII asset path it belongs to ("assets/<slug>").
+# Kenney answers the endpoint only with that asset page as Referer (HTTP 403
+# without it, observed 2026-11-13), so the Referer is DERIVED from the hex,
+# never taken from anywhere else, and only a plain asset slug is accepted.
+_ASSET_PATH_RE = re.compile(r"\Aassets/([a-z0-9]+(?:-[a-z0-9]+)*)\Z")
+# Hosts a signed zip URL (and any redirect on the way to it) may name. Only
+# Kenney's own host: anything else fails closed and needs a deliberate edit.
+SIGNED_ZIP_HOSTS = frozenset({"kenney.nl"})
+LINK_RESPONSE_MAX_BYTES = 64 * 1024
+ARCHIVE_MAX_BYTES = 512 * 1024 * 1024
+_HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
+
+
+class ArchiveError(Exception):
+    """A source archive that cannot be fetched or authenticated. The message
+    never contains a signed URL."""
+
+
+def _host_ok(url: str, hosts: frozenset[str]) -> bool:
+    from urllib.parse import urlsplit
+    try:
+        p = urlsplit(url)
+        port = p.port
+    except ValueError:
+        return False
+    return (p.scheme == "https" and p.hostname in hosts and port in (None, 443)
+            and p.username is None and p.password is None)
+
+
+class _HostLockedRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to an allowed https host, so a link cannot walk
+    the download off Kenney before the final-URL check would see it."""
+
+    def __init__(self, hosts: frozenset[str]):
+        super().__init__()
+        self.hosts = hosts
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _host_ok(newurl, self.hosts):
+            raise ArchiveError(f"refused a redirect (HTTP {code}) to a host "
+                               f"outside {sorted(self.hosts)}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _default_open(req, timeout):
+    opener = urllib.request.build_opener(_HostLockedRedirect(SIGNED_ZIP_HOSTS))
+    return opener.open(req, timeout=timeout)
+
+
+def _read_bounded(resp, limit: int, what: str) -> bytes:
+    declared = resp.headers.get("Content-Length") if resp.headers else None
+    if declared is not None:
+        try:
+            if int(declared) > limit:
+                raise ArchiveError(f"{what} declares {int(declared):,} B, over the "
+                                   f"{limit:,} B bound")
+        except ValueError:
+            raise ArchiveError(f"{what} has a malformed Content-Length") from None
+    blob = resp.read(limit + 1)
+    if len(blob) > limit:
+        raise ArchiveError(f"{what} is over the {limit:,} B bound")
+    return blob
+
+
+def asset_page_for_download_link(url: str) -> str:
+    """The kenney.nl asset page a download-link endpoint belongs to, decoded
+    strictly from its hex path. Raises ArchiveError for anything else."""
+    m = _DOWNLOAD_LINK_RE.match(url or "")
+    if not m or len(m.group(1)) % 2:
+        raise ArchiveError("not a https://kenney.nl/download-link/<hex> endpoint")
+    try:
+        path = bytes.fromhex(m.group(1)).decode("ascii")
+    except (ValueError, UnicodeDecodeError):
+        raise ArchiveError("download-link hex does not decode to an ASCII path") from None
+    slug = _ASSET_PATH_RE.match(path)
+    if not slug:
+        raise ArchiveError("download-link hex does not decode to assets/<slug>")
+    return PAGE_BASE + slug.group(1)
+
+
+def _fetch(url: str, what: str, limit: int, timeout: int, opener, accept: str,
+           referer: str | None = None) -> bytes:
+    headers = {"User-Agent": UA, "Accept": accept}
+    if referer is not None:
+        if not (_host_ok(referer, SIGNED_ZIP_HOSTS) and referer.startswith(PAGE_BASE)):
+            raise ArchiveError("refused a Referer that is not a kenney.nl asset page")
+        headers["Referer"] = referer
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with opener(req, timeout) as resp:
+            if not _host_ok(resp.geturl(), SIGNED_ZIP_HOSTS):
+                raise ArchiveError(f"{what} ended on a host outside {sorted(SIGNED_ZIP_HOSTS)}")
+            return _read_bounded(resp, limit, what)
+    except ArchiveError:
+        raise
+    except urllib.error.HTTPError as e:
+        hint = " (the signed link may have expired)" if e.code in (401, 403, 404, 410) \
+            and what == "signed zip" else ""
+        raise ArchiveError(f"{what} request failed: HTTP {e.code}{hint}") from None
+    except Exception as e:  # URLError, timeout, TLS: name the kind, never the URL
+        raise ArchiveError(f"{what} request failed: {type(e).__name__}") from None
+
+
+def validate_signed_archive(sa: dict) -> None:
+    """Offline shape check for a signed-link `source_archive`. Raises."""
+    if sa.get("transport") != TRANSPORT_SIGNED_LINK:
+        raise ArchiveError(f"transport is {sa.get('transport')!r}, not {TRANSPORT_SIGNED_LINK!r}")
+    if not isinstance(sa.get("url"), str):
+        raise ArchiveError("url is not a https://kenney.nl/download-link/<hex> endpoint")
+    asset_page_for_download_link(sa["url"])
+    n = sa.get("archive_bytes")
+    if not isinstance(n, int) or isinstance(n, bool) or not 0 < n <= ARCHIVE_MAX_BYTES:
+        raise ArchiveError("archive_bytes must be a positive byte count within the bound")
+    for k in ("archive_sha256", "sha256"):
+        if not isinstance(sa.get(k), str) or not _HEX64.match(sa[k]):
+            raise ArchiveError(f"{k} is not a sha256")
+    if not isinstance(sa.get("member"), str) or not sa["member"]:
+        raise ArchiveError("member is missing")
+
+
+def resolve_download_link(url: str, *, page: str | None = None, timeout: int = 60,
+                          opener=None) -> str:
+    """GET the endpoint and return the fresh signed zip URL. Raises.
+
+    The request carries the endpoint's own asset page as Referer (derived from
+    the hex). `page`, when given (a record's `fetched_from`), must be that same
+    page: an endpoint and a page that disagree are refused before any request."""
+    derived = asset_page_for_download_link(url)
+    if page is not None and page != derived:
+        raise ArchiveError("the record's asset page does not match the download-link endpoint")
+    body = _fetch(url, "download-link endpoint", LINK_RESPONSE_MAX_BYTES, timeout,
+                  opener or _default_open, "application/json", referer=derived)
+    try:
+        doc = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise ArchiveError("download-link response is not JSON") from None
+    signed = doc.get("url") if isinstance(doc, dict) else None
+    if not isinstance(signed, str) or not signed:
+        raise ArchiveError("download-link response has no `url` string")
+    if not _host_ok(signed, SIGNED_ZIP_HOSTS):
+        raise ArchiveError(f"download-link returned a URL that is not https on "
+                           f"{sorted(SIGNED_ZIP_HOSTS)}")
+    return signed
+
+
+def fetch_signed_archive(sa: dict, *, page: str | None = None, timeout: int = 600,
+                         opener=None) -> bytes:
+    """The whole zip a signed-link `source_archive` names, authenticated by
+    length and sha256 before it is returned. Raises ArchiveError. `page` is
+    the record's `fetched_from` where the caller has it; see
+    `resolve_download_link`. The signed zip GET sends no Referer."""
+    validate_signed_archive(sa)
+    signed = resolve_download_link(sa["url"], page=page, opener=opener)
+    blob = _fetch(signed, "signed zip", sa["archive_bytes"], timeout,
+                  opener or _default_open, "application/zip")
+    if len(blob) != sa["archive_bytes"]:
+        raise ArchiveError(f"signed zip is {len(blob):,} B, recorded "
+                           f"{sa['archive_bytes']:,} B; the pack changed upstream")
+    got = hashlib.sha256(blob).hexdigest()
+    if got != sa["archive_sha256"]:
+        raise ArchiveError(f"archive sha256 mismatch: recorded {sa['archive_sha256'][:12]}..., "
+                           f"served {got[:12]}...; the pack changed upstream")
+    return blob
 
 
 def resolve_one(pack_dir: str) -> dict:
@@ -290,20 +478,72 @@ def cmd_verify_records(args: argparse.Namespace) -> int:
     import io
     entries = load_doc()
     records = json.loads(args.records.read_text(encoding="utf-8"))
+    # ⛔ ANY FAILURE IS NONZERO (#1514). This used to set its exit code from
+    # member mismatches alone, so a zip that failed to download or parse
+    # printed FAIL and still exited 0, and a provenance gate went green on a
+    # pack nobody verified. Every way a record can go unverified is counted
+    # below and every one of them fails the run, as does verifying nothing.
     by_url: dict[str, list[dict]] = {}
-    for r in records:
-        sa = (r.get("metadata") or {}).get("source_archive") or {}
-        if sa.get("url"):
-            by_url.setdefault(sa["url"], []).append(r)
-    ok = bad = absent = 0
+    malformed: list[str] = []
+    skipped = 0
+    for i, r in enumerate(records if isinstance(records, list) else ()):
+        # A row that is not an object, or whose metadata is present but not
+        # an object, is MALFORMED, never "unchecked": counting it as skipped
+        # let a broken row ride along with a valid group to exit 0. Only a
+        # well-formed row with no source_archive is legitimately skipped.
+        if not isinstance(r, dict):
+            malformed.append(f"record[{i}] (not a JSON object: {type(r).__name__})")
+            continue
+        rid = str(r["id"])[:80] if "id" in r else f"record[{i}]"
+        meta = r.get("metadata")
+        if meta is None:
+            skipped += 1
+            continue
+        if not isinstance(meta, dict):
+            malformed.append(f"{rid} (metadata is not a JSON object: {type(meta).__name__})")
+            continue
+        sa = meta.get("source_archive")
+        if sa is None:
+            skipped += 1
+            continue
+        if not (isinstance(sa, dict) and isinstance(sa.get("url"), str) and sa["url"]
+                and isinstance(sa.get("member"), str) and sa["member"]
+                and isinstance(sa.get("sha256"), str) and _HEX64.match(sa["sha256"])):
+            malformed.append(f"{rid} (source_archive needs url, member and a sha256)")
+            continue
+        if sa.get("transport") is not None and not isinstance(sa["transport"], str):
+            malformed.append(f"{rid} (source_archive.transport must be a string, got "
+                             f"{type(sa['transport']).__name__})")
+            continue
+        by_url.setdefault(sa["url"], []).append(r)
+    if not isinstance(records, list):
+        malformed.append(f"{args.records}: expected a JSON list of records")
+    ok = mismatch = absent = unfetched = 0
     offenders: list[str] = []
+    failed_archives: list[str] = []
     for url, recs in sorted(by_url.items()):
+        sa0 = recs[0]["metadata"]["source_archive"]
+        transports = {r["metadata"]["source_archive"].get("transport") for r in recs}
         try:
-            blob = _get(url, timeout=600)
+            if len(transports) != 1:
+                raise ArchiveError(f"records disagree on the transport ({sorted(map(str, transports))})")
+            if sa0.get("transport") is None:
+                blob = _get(url, timeout=600)
+            elif sa0["transport"] == TRANSPORT_SIGNED_LINK:
+                blob = fetch_signed_archive(
+                    sa0, page=(recs[0]["metadata"].get("fetched_from") or None))
+            else:
+                raise ArchiveError(f"unknown transport {sa0['transport']!r}")
             z = zipfile.ZipFile(io.BytesIO(blob))
         except Exception as exc:
-            print(f"  FAIL {url}: {exc}", file=sys.stderr)
-            bad += len(recs)
+            # `url` is the recorded locator (a direct zip or the stable
+            # download-link endpoint), never a signed URL, and ArchiveError
+            # text never carries one either.
+            why = str(exc) if isinstance(exc, (ArchiveError, zipfile.BadZipFile)) \
+                else f"{type(exc).__name__}: {exc}"
+            print(f"  FAIL {url}: {why}", file=sys.stderr)
+            unfetched += len(recs)
+            failed_archives.append(url)
             continue
         names = set(z.namelist())
         for r in recs:
@@ -317,17 +557,31 @@ def cmd_verify_records(args: argparse.Namespace) -> int:
             if got == sa["sha256"]:
                 ok += 1
             else:
-                bad += 1
+                mismatch += 1
                 offenders.append(member)
         print(f"  {url.rsplit('/', 1)[-1]:<44} {len(recs):4d} record(s)",
               file=sys.stderr)
-    print(f"\n{ok} record(s) reproduce from their pack zip, {bad} hash "
-          f"mismatch, {absent} member absent", file=sys.stderr)
+    print(f"\n{ok} record(s) reproduce from their pack zip, {mismatch} hash "
+          f"mismatch, {absent} member absent, {unfetched} in {len(failed_archives)} "
+          f"archive(s) that could not be fetched or opened, {len(malformed)} malformed, "
+          f"{skipped} without a source_archive (not checked)", file=sys.stderr)
+    for o in malformed[:25]:
+        print(f"  MALFORMED: {o}", file=sys.stderr)
     for o in offenders[:25]:
         print(f"  NOT REPRODUCIBLE: {o}", file=sys.stderr)
     if len(offenders) > 25:
         print(f"  … and {len(offenders) - 25} more", file=sys.stderr)
-    return 1 if offenders else 0
+    failed = bool(offenders or failed_archives or malformed)
+    if not failed and ok == 0:
+        print("FAIL: no record was verified; an empty selection proves nothing",
+              file=sys.stderr)
+        return 1
+    if failed:
+        print("FAIL: not every record reproduces from its recorded provenance",
+              file=sys.stderr)
+        return 1
+    print(f"OK: all {ok} record(s) verified", file=sys.stderr)
+    return 0
 
 
 def main() -> int:
