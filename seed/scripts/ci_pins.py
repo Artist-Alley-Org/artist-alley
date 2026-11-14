@@ -7,7 +7,16 @@ Pin validation for the CI dataset editions (#1514, ADR 0100).
 Prints one format-checked value from seed/contracts/ci-datasets.v1.json, or exits non-zero naming what is
 malformed. scripts/ci/public-datasets.sh reads every pin through this, so a malformed pin fails before any
 network request. Fields: repo, tag, commit, release_json_sha256, site (the dataset site the release
-holds, passed to fetch_release_dataset.py --site) and need_bytes (download + extracted capacity estimate).
+holds, passed to fetch_release_dataset.py --site), release_format (the release asset layout, passed to
+fetch_release_dataset.py --release-format) and need_bytes (download + extracted capacity estimate).
+
+`release_format` is `v1` (the published unversioned editions: `release.json` and
+`<site>-payload.tar.gz.partNNNN`) or `v2` (every new edition: `<site>-<tag>-release.json` and
+`<site>-<tag>-payload.tar.gz.partNNNN`, ADR 0100). A pin without the field is a v1 pin, so the current
+pins need no change. Any other value fails here. A v2 pin's tag must also be a real calendar edition
+(month 01-12, edition number 01-99), checked by the reviewed release_dataset.py (loaded hash-pinned
+through fetch_release_dataset.py), so a tag such as v2026.13.01 fails before the metadata clone rather
+than in the fetch. The v1 pin tag shapes below are unchanged.
 
 Each key has an exact tag shape. Full editions are calendar tags `vYYYY.MM.NN`; the PR CI subset of site_a
 (`site_a_sm`) is the same shape with the `-sm` suffix and nothing else. No other suffix, `latest` or
@@ -16,7 +25,9 @@ branch name is accepted, and a key cannot borrow another key's shape.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import re
 import sys
 
@@ -28,6 +39,8 @@ KEYS = {
     "site_b": ("site_b", CALVER),
     "site_a_sm": ("site_a", CALVER + r"-sm"),
 }
+RELEASE_FORMATS = ("v1", "v2")  # == fetch_release_dataset.RELEASE_FORMATS (a test keeps them equal)
+DEFAULT_RELEASE_FORMAT = "v1"
 FIELDS = {
     "repo": r"Artist-Alley-Org/[A-Za-z0-9][A-Za-z0-9._-]{0,99}",
     "commit": r"[0-9a-f]{40}",
@@ -50,11 +63,38 @@ def entry(pins: dict, key: str) -> dict:
     return s
 
 
+def release_format(s: dict, key: str) -> str:
+    v = s.get("release_format", DEFAULT_RELEASE_FORMAT)
+    if not isinstance(v, str) or v not in RELEASE_FORMATS:
+        raise PinError(f"pin {key}.release_format must be one of {list(RELEASE_FORMATS)}")
+    return v
+
+
+def check_v2_edition(key: str, tag: str) -> None:
+    """A v2 pin's tag must be an edition release_dataset.py accepts (a real month and edition number)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fetch_release_dataset.py")
+    spec = importlib.util.spec_from_file_location("fetch_release_dataset", path)
+    fe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fe)
+    try:
+        rd = fe.load_release_dataset()
+    except (OSError, fe.FetchError) as e:
+        raise PinError(f"cannot load the reviewed release tool to check pin {key}.tag: {e}") from None
+    try:
+        rd.check_edition(tag)
+    except rd.ReleaseError as e:
+        raise PinError(f"pin {key}.tag is not a v2 edition: {e}") from None
+
+
 def value(pins: dict, key: str, field: str) -> str:
     s = entry(pins, key)
     site, tag_re = KEYS[key]
+    if field == "release_format":
+        return release_format(s, key)
     if field == "tag":
         v, pat = s.get("tag"), tag_re
+        if isinstance(v, str) and re.fullmatch(pat, v) and release_format(s, key) == "v2":
+            check_v2_edition(key, v)
     elif field == "site":
         v = s.get("site", key)
         if v != site:

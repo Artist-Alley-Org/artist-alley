@@ -13,7 +13,8 @@
 # ever deleted to make room.
 #
 # Every pin comes from seed/contracts/ci-datasets.v1.json: repository, immutable tag, the metadata
-# commit the tag must resolve to, and the release.json SHA-256. The bytes are downloaded and verified
+# commit the tag must resolve to, the manifest SHA-256 and the release asset layout (release_format: v1,
+# the default when a pin omits it, or v2 for versioned asset names). The bytes are downloaded and verified
 # by the reviewed seed/scripts/fetch_release_dataset.py; this script only wires it up. It never uses a
 # token, never asks for `latest`, and prints no URL (the release asset redirects carry signed query
 # strings, so nothing here echoes a request or response URL).
@@ -143,10 +144,11 @@ require_root() {
 cmd_fetch() {
     [ $# -eq 1 ] || die "usage: fetch <site>"
     local site="$1"; check_site "$site"; require_root
-    local repo tag commit sha dsite meta out t0
+    local repo tag commit sha dsite fmt meta out t0
     repo="$(pin "$site" repo)"; tag="$(pin "$site" tag)"
     commit="$(pin "$site" commit)"; sha="$(pin "$site" release_json_sha256)"
-    dsite="$(pin "$site" site)"
+    dsite="$(pin "$site" site)"; fmt="$(pin "$site" release_format)"
+    case "$fmt" in v1|v2) ;; *) die "${site}: release format '${fmt}' is not v1 or v2" ;; esac
     meta="${AA_CI_DATASET_ROOT}/meta/${site}"; out="${AA_CI_DATASET_ROOT}/sites/${site}"
     [ ! -e "$meta" ] && [ ! -e "$out" ] || die "${site}: a previous checkout or site root exists; refusing to reuse it"
 
@@ -164,12 +166,12 @@ cmd_fetch() {
     local head
     head="$(git -C "$meta" rev-parse HEAD)"
     [ "$head" = "$commit" ] || die "${site}: checkout HEAD ${head} is not the pinned ${commit}"
-    note "${site}: ${repo}@${tag} metadata HEAD ${head} ($(git -C "$meta" ls-files | wc -l) tracked files, $(( $(date +%s) - t0 ))s)"
+    note "${site}: ${repo}@${tag} (release format ${fmt}) metadata HEAD ${head} ($(git -C "$meta" ls-files | wc -l) tracked files, $(( $(date +%s) - t0 ))s)"
 
     # 2. Download + verify + extract into a NEW site root (the reviewed tool refuses an existing one).
     t0=$(date +%s)
-    python3 -I "$FETCH" --repo "$repo" --tag "$tag" --site "$dsite" --expect-manifest-sha256 "$sha" \
-        --metadata-root "$meta" --output "$out" --work-dir "${AA_CI_DATASET_ROOT}/dl" \
+    python3 -I "$FETCH" --repo "$repo" --tag "$tag" --site "$dsite" --release-format "$fmt" \
+        --expect-manifest-sha256 "$sha" --metadata-root "$meta" --output "$out" --work-dir "${AA_CI_DATASET_ROOT}/dl" \
         || die "${site}: download or verification failed (see the fetch_release_dataset message above)"
     note "${site}: downloaded + verified in $(( $(date +%s) - t0 ))s"
     [ -z "$(ls -A "${AA_CI_DATASET_ROOT}/dl")" ] || die "${site}: download directory was not cleaned up"

@@ -481,15 +481,209 @@ class Cli(Base):
         r = run("inspect", "--root", str(root), "--site", "site_b")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["payload_count"], 2)
-        r = run("build", "--root", str(root), "--site", "site_b", "--output", str(self.t / "rel"))
+        r = run("build", "--root", str(root), "--site", "site_b", "--output", str(self.t / "rel"), "--legacy-v1")
         self.assertEqual(r.returncode, 0, r.stderr)
         r = run("verify", "--root", str(root), "--release", str(self.t / "rel"), "--output", str(self.t / "out"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        r = run("build", "--root", str(root), "--site", "site_b", "--output", str(self.t / "rel"))
+        r = run("build", "--root", str(root), "--site", "site_b", "--output", str(self.t / "rel"), "--legacy-v1")
         self.assertEqual(r.returncode, 1)
         self.assertIn("FAILED", r.stderr)
         r = run("build", "--root", str(root))
         self.assertEqual(r.returncode, 2)
+        # A new build must say which layout: no --tag and no --legacy-v1 is a usage error.
+        r = run("build", "--root", str(root), "--site", "site_b", "--output", str(self.t / "rel3"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--tag", r.stderr)
+        # v2 through the CLI, and verify with the expected tag.
+        r = run("build", "--root", str(root), "--site", "site_b", "--output", str(self.t / "rel2"),
+                "--tag", "v2026.12.01")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["manifest"], "site_b-v2026.12.01-release.json")
+        r = run("verify", "--root", str(root), "--release", str(self.t / "rel2"), "--output", str(self.t / "out2"),
+                "--tag", "v2026.12.01")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["edition"], "v2026.12.01")
+        r = run("verify", "--root", str(root), "--release", str(self.t / "rel2"), "--output", str(self.t / "out3"),
+                "--tag", "v2026.12.02")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("expected tag", r.stderr)
+        r = run("build", "--root", str(root), "--site", "site_b", "--output", str(self.t / "rel4"),
+                "--tag", "latest")
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse((self.t / "rel4").exists())
+        r = run("build", "--root", str(root), "--site", "site_b", "--output", str(self.t / "rel5"),
+                "--tag", "v2026.13.01")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("real calendar edition", r.stderr)
+        self.assertFalse((self.t / "rel5").exists())
+
+
+class V2Format(Base):
+    """The versioned layout (#1514 follow-up): site + edition in every asset name."""
+
+    ED = "v2026.11.02"
+
+    def v2(self, root, site="site_b", ed=ED, name=None, **kw):
+        return self.build_ok(root, site, name=name or f"rel-{ed}", edition=ed, **kw)
+
+    def test_round_trip_names_every_asset_with_site_and_edition(self):
+        root = write_root(self.t / "src", site_b_files(6))
+        rel, m = self.v2(root, max_part_bytes=6000)
+        names = sorted(os.listdir(rel))
+        self.assertGreater(len(m["parts"]), 1)
+        self.assertEqual(names, sorted(["site_b-v2026.11.02-release.json"]
+                                       + [f"site_b-v2026.11.02-payload.tar.gz.part{i:04d}" for i in range(len(m["parts"]))]))
+        self.assertTrue(all(n.startswith("site_b-v2026.11.02-") for n in names))
+        self.assertEqual((m["schema"], m["edition"], m["manifest"], m["tool_version"]),
+                         (rd.SCHEMA_V2, self.ED, "site_b-v2026.11.02-release.json", 2))
+        sha = hashlib.sha256((rel / m["manifest"]).read_bytes()).hexdigest()
+        out, r = self.verify_ok(root, rel, expect_manifest_sha256=sha, edition=self.ED)
+        self.assertEqual((r["edition"], r["manifest"], r["release_json_sha256"]), (self.ED, m["manifest"], sha))
+        src = self.tree(root)
+        self.assertEqual(self.tree(out), src)
+        out2, r2 = self.verify_ok(root, rel, name="site2")          # without an expected tag: still checked
+        self.assertEqual(r2["edition"], self.ED)
+        self.assertEqual(self.tree(out2), src)
+
+    def test_two_editions_of_one_site_never_collide(self):
+        root = write_root(self.t / "src", site_b_files(6))
+        a, ma = self.v2(root, ed="v2026.11.02", max_part_bytes=6000)
+        b, mb = self.v2(root, ed="v2026.12.01-sm", max_part_bytes=6000)
+        na, nb = set(os.listdir(a)), set(os.listdir(b))
+        self.assertEqual(na & nb, set(), "two editions share an asset name")
+        # side by side in ONE download folder, each still verifies on its own names only
+        both = self.t / "downloads"
+        both.mkdir()
+        for d in (a, b):
+            for f in os.listdir(d):
+                (both / f).write_bytes((d / f).read_bytes())
+        self.assertEqual(len(os.listdir(both)), len(na) + len(nb))
+        self.assertFails(rd.verify, str(root), str(both), str(self.t / "mixed"), contains="exactly one manifest")
+        # ...and the legacy names would have collided: v1 always uses release.json + <site>-payload...
+        l1, _ = self.build_ok(root, "site_b", name="v1-a", max_part_bytes=6000)
+        l2, _ = self.build_ok(root, "site_b", name="v1-b", max_part_bytes=6000)
+        self.assertEqual(set(os.listdir(l1)), set(os.listdir(l2)))
+
+    def test_legacy_v1_build_is_unchanged(self):
+        root = write_root(self.t / "src", site_b_files(4))
+        rel, m = self.build_ok(root, "site_b", max_part_bytes=6000)
+        self.assertEqual(m["schema"], rd.SCHEMA)
+        self.assertEqual(m["tool_version"], 1)
+        self.assertNotIn("edition", m)
+        self.assertNotIn("manifest", m)
+        self.assertEqual(sorted(os.listdir(rel)),
+                         sorted(["release.json"] + [rd.part_name("site_b", i) for i in range(len(m["parts"]))]))
+        _, r = self.verify_ok(root, rel)
+        self.assertIsNone(r["edition"])
+        self.assertEqual(r["manifest"], "release.json")
+        # v1 cannot be verified as an edition: the expected tag has nothing to match
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "x"), edition=self.ED, contains="unversioned v1")
+
+    def test_malformed_tags_are_refused_before_writing(self):
+        root = write_root(self.t / "src", site_b_files(2))
+        for bad in ("latest", "v2026.11.2", "2026.11.02", "V2026.11.02", "v2026.11.02-", "v2026.11.02-SM",
+                    "v2026.11.02-sm.1", "v2026.11.02/../x", "v2026.11.02-sm/x", "v2026.11.02 ", "",
+                    "v2026.11.02-" + "a" * 17):
+            with self.subTest(tag=bad):
+                out = self.t / f"bad-{abs(hash(bad))}"
+                self.assertFails(rd.build, str(root), "site_b", str(out), edition=bad, contains="edition tag")
+                self.assertFalse(out.exists())
+        self.assertNoTemp(self.t)
+
+    # vYYYY.MM.NN is year, month and edition number within the month (ADR 0100), not a day of the month.
+    IMPOSSIBLE_EDITIONS = ("v2026.13.01", "v2026.00.01", "v2026.99.01", "v2026.11.00", "v0000.11.01",
+                           "v2026.13.01-sm", "v2026.00.01-sm", "v2026.11.00-sm")
+    REAL_EDITIONS = ("v2026.11.01", "v2026.12.99", "v2026.02.30", "v2026.02.29", "v2026.04.31-sm",
+                     "v0001.01.01", "v9999.12.99-sm")
+
+    def test_impossible_editions_are_refused_before_writing(self):
+        root = write_root(self.t / "src", site_b_files(2))
+        for bad in self.IMPOSSIBLE_EDITIONS:
+            with self.subTest(tag=bad):
+                out = self.t / f"bad-{bad}"
+                self.assertFails(rd.build, str(root), "site_b", str(out), edition=bad,
+                                 contains="real calendar edition")
+                self.assertFalse(out.exists())
+                with self.assertRaises(rd.ReleaseError):
+                    rd.manifest_name("site_b", bad)
+        rel, m = self.v2(root)                                     # verify --tag refuses one too, installs nothing
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "out"), edition="v2026.13.01",
+                         contains="real calendar edition")
+        self.assertFalse((self.t / "out").exists())
+        self.assertNoTemp(self.t)
+
+    def test_real_editions_are_accepted_and_nn_is_not_a_day(self):
+        for good in self.REAL_EDITIONS:
+            with self.subTest(tag=good):
+                self.assertEqual(rd.check_edition(good), good)
+        root = write_root(self.t / "src", site_b_files(2))
+        rel, m = self.v2(root, ed="v2026.02.30")                   # the 30th February edition
+        self.assertEqual(m["manifest"], "site_b-v2026.02.30-release.json")
+        self.verify_ok(root, rel, edition="v2026.02.30")
+
+    def test_tag_mismatch_is_refused_and_installs_nothing(self):
+        root = write_root(self.t / "src", site_b_files(3))
+        rel, m = self.v2(root)
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "out"), edition="v2026.11.03",
+                         contains="expected tag")
+        self.assertFalse((self.t / "out").exists())
+        self.assertNoTemp(self.t)
+
+    def test_renamed_manifest_is_refused(self):
+        root = write_root(self.t / "src", site_b_files(3))
+        rel, m = self.v2(root)
+        os.rename(rel / m["manifest"], rel / "site_b-v2026.11.03-release.json")    # claims another edition
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "o1"), contains="does not match its recorded")
+        os.rename(rel / "site_b-v2026.11.03-release.json", rel / "site_a-v2026.11.02-release.json")  # another site
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "o2"), contains="does not match its recorded")
+        os.rename(rel / "site_a-v2026.11.02-release.json", rel / "release.json")   # passed off as v1
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "o3"), contains="does not match its recorded")
+        self.assertFalse(any((self.t / o).exists() for o in ("o1", "o2", "o3")))
+
+    def test_edited_edition_field_is_refused_with_or_without_the_pin(self):
+        root = write_root(self.t / "src", site_b_files(3))
+        rel, m = self.v2(root)
+        mp = rel / m["manifest"]
+        sha = hashlib.sha256(mp.read_bytes()).hexdigest()
+        doc = json.loads(mp.read_text())
+        doc["edition"] = "v2026.11.03"
+        mp.write_text(json.dumps(doc), encoding="utf-8")
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "o1"), expect_manifest_sha256=sha,
+                         contains="SHA-256")                                     # the pin catches it first
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "o2"), contains="does not match its recorded")
+
+    def test_renamed_or_extra_part_is_refused(self):
+        root = write_root(self.t / "src", site_b_files(6))
+        rel, m = self.v2(root, max_part_bytes=6000)
+        first = rel / m["parts"][0]["name"]
+        os.rename(first, rel / rd.part_name("site_b", 0))                         # back to a v1 part name
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "o1"), contains="release directory mismatch")
+        os.rename(rel / rd.part_name("site_b", 0), first)
+        (rel / rd.part_name("site_b", len(m["parts"]), self.ED)).write_bytes(b"extra")
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "o2"), contains="release directory mismatch")
+        self.assertFalse((self.t / "o1").exists() or (self.t / "o2").exists())
+
+    def test_part_list_naming_another_edition_is_refused(self):
+        root = write_root(self.t / "src", site_b_files(3))
+        rel, m = self.v2(root)
+        mp = rel / m["manifest"]
+        doc = json.loads(mp.read_text())
+        old = doc["parts"][0]["name"]
+        doc["parts"][0]["name"] = rd.part_name("site_b", 0, "v2026.11.03")
+        mp.write_text(json.dumps(doc), encoding="utf-8")
+        os.rename(rel / old, rel / doc["parts"][0]["name"])
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "o"), contains="renamed or out of order")
+
+    def test_tampered_part_bytes_are_refused_before_extraction(self):
+        root = write_root(self.t / "src", site_b_files(3))
+        rel, m = self.v2(root)
+        pn = rel / m["parts"][0]["name"]
+        b = bytearray(pn.read_bytes())
+        b[len(b) // 2] ^= 0xFF
+        pn.write_bytes(bytes(b))
+        self.assertFails(rd.verify, str(root), str(rel), str(self.t / "o"), contains="does not match release.json")
+        self.assertFalse((self.t / "o").exists())
+        self.assertNoTemp(self.t)
 
 
 if __name__ == "__main__":

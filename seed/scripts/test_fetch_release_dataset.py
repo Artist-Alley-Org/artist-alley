@@ -396,6 +396,121 @@ class Inputs(Base):
         self.assertIn("FAILED", r.stderr)
 
 
+TAG2 = "v2026.11.02"
+PREFIX2 = f"/{REPO}/releases/download/{TAG2}/"
+
+
+class FetchV2(Base):
+    """The versioned layout (#1514 follow-up): `--release-format v2`, every asset named <site>-<tag>-..."""
+
+    def make_release_v2(self, files, edition=TAG2, site="site_b", max_part_bytes=rd.DEFAULT_MAX_PART_BYTES, name="v2"):
+        src = write_root(self.t / name, files)
+        rel = self.t / f"{name}-release"
+        m = rd.build(str(src), site, str(rel), max_part_bytes, edition)
+        meta = metadata_only_copy(src, self.t / f"{name}-meta", site)
+        sha = hashlib.sha256((rel / m["manifest"]).read_bytes()).hexdigest()
+        return src, rel, meta, sha, m
+
+    def publish_at(self, rel, prefix, rename=None):
+        for f in sorted(os.listdir(rel)):
+            self.srv.routes[prefix + (rename or {}).get(f, f)] = {"kind": "ok", "body": (rel / f).read_bytes()}
+
+    def fetch_v2(self, meta, sha, tag=TAG2, out=None):
+        out = out or self.t / "out"
+        return fe.fetch(REPO, tag, "site_b", sha, str(meta), str(out), work_dir=str(self.work),
+                        release_format="v2", _base_url=self.srv.base, _test_origin_only=True)
+
+    def test_v2_round_trip_requests_only_versioned_names(self):
+        src, rel, meta, sha, m = self.make_release_v2(site_b_files(9), max_part_bytes=12000)
+        self.assertGreater(len(m["parts"]), 1)
+        self.publish_at(rel, PREFIX2)
+        r = self.fetch_v2(meta, sha)
+        self.assertEqual((r["release_format"], r["edition"], r["manifest"]), ("v2", TAG2, "site_b-v2026.11.02-release.json"))
+        self.assertEqual(self.srv.log, [PREFIX2 + m["manifest"]] + [PREFIX2 + p["name"] for p in m["parts"]])
+        self.assertTrue(all(x.rsplit("/", 1)[1].startswith("site_b-v2026.11.02-") for x in self.srv.log))
+        self.assertEqual(os.listdir(self.work), [])
+        out = self.t / "out"                       # same output check as the v1 success test
+        for line in (src / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+            h, p = line.split("  ", 1)
+            self.assertEqual(hashlib.sha256((out / p).read_bytes()).hexdigest(), h)
+        self.assertEqual((out / "SHA256SUMS").read_bytes(), (src / "SHA256SUMS").read_bytes())
+
+    def test_manifest_of_another_edition_is_refused_before_any_part(self):
+        # the v2026.11.02 release served under v2026.11.03 with its manifest renamed to that edition
+        src, rel, meta, sha, m = self.make_release_v2(site_b_files(3))
+        p3 = f"/{REPO}/releases/download/v2026.11.03/"
+        self.publish_at(rel, p3, rename={m["manifest"]: "site_b-v2026.11.03-release.json"})
+        e = self.assertFetchFails("edition", meta, sha, release_format="v2", tag="v2026.11.03")
+        self.assertIn("rejected", str(e))
+        self.assertEqual(self.srv.log, [p3 + "site_b-v2026.11.03-release.json"])
+
+    def test_malformed_tag_makes_no_request(self):
+        src, rel, meta, sha, m = self.make_release_v2(site_b_files(2))
+        self.publish_at(rel, PREFIX2)
+        for bad in ("v2026.11.2", "latest-ish", "v2026.11.02-SM", "v0.0.1-test"):
+            with self.subTest(tag=bad):
+                self.assertFetchFails("edition tag", meta, sha, release_format="v2", tag=bad)
+        self.assertEqual(self.srv.log, [])
+
+    def test_impossible_edition_makes_no_request(self):
+        src, rel, meta, sha, m = self.make_release_v2(site_b_files(2))
+        for bad in ("v2026.13.01", "v2026.00.01", "v2026.11.00", "v0000.11.01", "v2026.13.01-sm"):
+            with self.subTest(tag=bad):
+                self.publish_at(rel, f"/{REPO}/releases/download/{bad}/")
+                self.assertFetchFails("real calendar edition", meta, sha, release_format="v2", tag=bad)
+        self.assertEqual(self.srv.log, [])
+
+    def test_edition_number_past_the_month_length_round_trip(self):
+        # NN counts editions within the month (ADR 0100), so the 30th February edition is a real one.
+        src, rel, meta, sha, m = self.make_release_v2(site_b_files(2), edition="v2026.02.30")
+        prefix = f"/{REPO}/releases/download/v2026.02.30/"
+        self.publish_at(rel, prefix)
+        r = self.fetch_v2(meta, sha, tag="v2026.02.30")
+        self.assertEqual((r["edition"], r["manifest"]), ("v2026.02.30", "site_b-v2026.02.30-release.json"))
+        self.assertEqual(self.srv.log[0], prefix + "site_b-v2026.02.30-release.json")
+
+    def test_v1_tag_parsing_is_unchanged(self):
+        # The legacy v1 layout carries no edition, so its tag rule is the old one: no calendar check.
+        for tag in ("v2026.11.01", "v2026.11.01-sm", "v0.0.1-test", "v2026.13.01"):
+            with self.subTest(tag=tag):
+                fe.check_inputs(REPO, tag, "0" * 64)
+
+    def test_tampered_v2_manifest_is_refused_before_any_part(self):
+        src, rel, meta, sha, m = self.make_release_v2(site_b_files(3))
+        mp = rel / m["manifest"]
+        doc = json.loads(mp.read_text())
+        doc["payload"]["count"] += 1
+        mp.write_text(json.dumps(doc), encoding="utf-8")
+        self.publish_at(rel, PREFIX2)
+        self.assertFetchFails("does not match the pin", meta, sha, release_format="v2", tag=TAG2)
+        self.assertEqual(self.srv.log, [PREFIX2 + m["manifest"]])
+
+    def test_v1_request_against_a_v2_release_fails_closed(self):
+        src, rel, meta, sha, m = self.make_release_v2(site_b_files(2))
+        self.publish_at(rel, PREFIX2)
+        self.assertFetchFails("HTTP 404", meta, sha, tag=TAG2)                    # default format is v1
+        self.assertEqual(self.srv.log, [PREFIX2 + "release.json"])
+
+    def test_v2_request_against_a_v1_release_fails_closed(self):
+        src, rel, meta, sha = self.make_release(site_b_files(2))
+        self.publish_at(rel, PREFIX2)
+        self.assertFetchFails("HTTP 404", meta, sha, release_format="v2", tag=TAG2)
+        self.assertEqual(self.srv.log, [PREFIX2 + "site_b-v2026.11.02-release.json"])
+
+    def test_v2_manifest_served_as_release_json_is_refused(self):
+        # a v1 fetch whose pinned bytes are a v2 manifest: the loader refuses the name/schema pairing
+        src, rel, meta, sha, m = self.make_release_v2(site_b_files(2))
+        self.publish_at(rel, PREFIX2, rename={m["manifest"]: "release.json"})
+        self.assertFetchFails("does not match its recorded", meta, sha, tag=TAG2)
+        self.assertEqual(self.srv.log, [PREFIX2 + "release.json"])
+
+    def test_unknown_release_format_makes_no_request(self):
+        src, rel, meta, sha, m = self.make_release_v2(site_b_files(2))
+        self.publish_at(rel, PREFIX2)
+        self.assertFetchFails("release-format", meta, sha, release_format="v3", tag=TAG2)
+        self.assertEqual(self.srv.log, [])
+
+
 REPO_ROOT = HERE.parents[1]
 PINS = REPO_ROOT / "seed" / "contracts" / "ci-datasets.v1.json"
 HELPER = REPO_ROOT / "scripts" / "ci" / "public-datasets.sh"
@@ -483,12 +598,67 @@ class CIDatasetPins(unittest.TestCase):
             self.assertEqual(cp.main([str(PINS), "site_a", "nope"]), 1)
         self.assertEqual(out.getvalue(), "site_a\n")
 
+    def with_pin(self, key, **fields):
+        d = json.loads(json.dumps(self.pins))
+        for k, v in fields.items():
+            if v is None:
+                d["sites"][key].pop(k, None)
+            else:
+                d["sites"][key][k] = v
+        return d
+
+    def test_release_format_defaults_to_v1_for_the_current_pins(self):
+        self.assertEqual(cp.RELEASE_FORMATS, fe.RELEASE_FORMATS)
+        for key, s in self.pins["sites"].items():
+            with self.subTest(key=key):
+                self.assertNotIn("release_format", s)              # the published pins stay byte-identical
+                self.assertEqual(cp.value(self.pins, key, "release_format"), "v1")
+                self.assertEqual(cp.value(self.pins, key, "tag"), s["tag"])
+        d = self.with_pin("site_b", release_format="v1")           # an explicit v1 is the same pin
+        self.assertEqual(cp.value(d, "site_b", "release_format"), "v1")
+
+    def test_release_format_v2_future_pin(self):
+        future = {"site_a": "v2026.12.01", "site_b": "v2026.11.02", "site_a_sm": "v2026.12.01-sm"}
+        for key, tag in future.items():
+            with self.subTest(key=key):
+                d = self.with_pin(key, release_format="v2", tag=tag)
+                self.assertEqual(cp.value(d, key, "release_format"), "v2")
+                self.assertEqual(cp.value(d, key, "tag"), tag)
+                for field in ("repo", "commit", "release_json_sha256", "site", "need_bytes"):
+                    cp.value(d, key, field)
+
+    def test_release_format_invalid_values_fail(self):
+        for bad in ("v3", "V2", "v2 ", "", "2", "release.json", 2, ["v2"], {"v": 2}, True):
+            with self.subTest(release_format=bad):
+                d = self.with_pin("site_b", release_format=bad)
+                with self.assertRaises(cp.PinError):
+                    cp.value(d, "site_b", "release_format")
+                with self.assertRaises(cp.PinError):             # the tag is not usable without a valid format
+                    cp.value(d, "site_b", "tag")
+        d = json.loads(json.dumps(self.pins))
+        d["sites"]["site_b"]["release_format"] = None             # JSON null is not "absent"
+        with self.assertRaises(cp.PinError):
+            cp.value(d, "site_b", "release_format")
+
+    def test_v2_pin_needs_a_real_calendar_edition(self):
+        for key, tag in (("site_b", "v2026.13.01"), ("site_b", "v2026.00.01"), ("site_a", "v2026.11.00"),
+                         ("site_a_sm", "v2026.13.01-sm")):
+            with self.subTest(key=key, tag=tag):
+                with self.assertRaises(cp.PinError) as cm:
+                    cp.value(self.with_pin(key, release_format="v2", tag=tag), key, "tag")
+                self.assertIn("real calendar edition", str(cm.exception))
+                # The legacy v1 pin tag shape is unchanged: the same string is still a v1-shaped tag.
+                self.assertEqual(cp.value(self.with_pin(key, tag=tag), key, "tag"), tag)
+
     def test_helper_uses_the_pins_and_the_reviewed_tool(self):
         src = code_lines(HELPER)
         self.assertIn("seed/contracts/ci-datasets.v1.json", src)
         self.assertIn("seed/scripts/fetch_release_dataset.py", src)
         self.assertIn("seed/scripts/ci_pins.py", src)
         self.assertIn('--site "$dsite"', src)
+        self.assertIn('fmt="$(pin "$site" release_format)"', src)
+        self.assertIn('--release-format "$fmt"', src)
+        self.assertLess(src.index('pin "$site" release_format'), src.index("ls-remote"))   # before any network
         self.assertIn("--expect-manifest-sha256", src)
         self.assertIn("sha256sum --quiet --strict -c SHA256SUMS", src)
         self.assertNotIn("latest", src)
@@ -516,6 +686,108 @@ class CIDatasetPins(unittest.TestCase):
         self.assertIn("name: Playwright federation + shell scenarios", nightly)
 
 
+
+
+STUB_GIT = r"""#!/usr/bin/env bash
+# Records every call; answers ls-remote / clone / rev-parse / ls-files for the pinned commit. No network.
+printf '%s\n' "$*" >> "$STUB_GIT_LOG"
+case " $* " in
+  *" ls-remote "*) printf '%s\trefs/tags/x\n' "$STUB_COMMIT" ;;
+  *" clone "*) mkdir -p "${@: -1}" ;;
+  *" rev-parse HEAD"*) echo "$STUB_COMMIT" ;;
+  *" ls-files"*) : ;;
+  *) exit 97 ;;
+esac
+"""
+
+STUB_FETCH = r"""import json, os, sys
+if __name__ == "__main__":
+    # Run by the helper: record the argv it was handed, then fail so the helper stops.
+    with open(os.environ["STUB_FETCH_LOG"], "w", encoding="utf-8") as fh:
+        json.dump(sys.argv[1:], fh)
+    sys.exit(3)
+# Imported by ci_pins.py for the v2 tag check: behave as the real reviewed fetcher.
+__file__ = os.environ["STUB_REAL_FETCH"]
+exec(compile(open(__file__, encoding="utf-8").read(), __file__, "exec"))
+"""
+
+
+class CIHelperReleaseFormat(unittest.TestCase):
+    """scripts/ci/public-datasets.sh fetch hands the pin's validated release_format to the fetcher, and a bad
+    format or impossible v2 date stops it before any git call. Run on a copy of the helper + ci_pins.py with a
+    stub git on PATH and a stub fetcher that only records its argv: nothing reaches the network."""
+
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp(prefix="aa-helper-fmt-"))
+        self.addCleanup(subprocess.run, ["rm", "-rf", "--", str(self.t)])
+        tree = self.t / "tree"
+        (tree / "scripts" / "ci").mkdir(parents=True)
+        (tree / "seed" / "scripts").mkdir(parents=True)
+        (tree / "seed" / "contracts").mkdir(parents=True)
+        (tree / "scripts" / "ci" / "public-datasets.sh").write_bytes(HELPER.read_bytes())
+        (tree / "seed" / "scripts" / "ci_pins.py").write_bytes((HERE / "ci_pins.py").read_bytes())
+        (tree / "seed" / "scripts" / "fetch_release_dataset.py").write_text(STUB_FETCH, encoding="utf-8")
+        bin_ = self.t / "bin"
+        bin_.mkdir()
+        (bin_ / "git").write_text(STUB_GIT, encoding="utf-8")
+        os.chmod(bin_ / "git", 0o755)
+        self.tree, self.bin = tree, bin_
+        self.git_log, self.fetch_log = self.t / "git.log", self.t / "fetch.json"
+
+    def run_helper(self, pins: dict, key: str):
+        (self.tree / "seed" / "contracts" / "ci-datasets.v1.json").write_text(json.dumps(pins), encoding="utf-8")
+        root = self.t / "run" / "aa-ci-datasets"
+        subprocess.run(["rm", "-rf", "--", str(self.t / "run")], check=True)
+        for d in ("meta", "dl", "sites"):
+            (root / d).mkdir(parents=True)
+        for f in (self.git_log, self.fetch_log):
+            if f.exists():
+                f.unlink()
+        env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": str(self.t), "AA_CI_DATASET_ROOT": str(root),
+               "STUB_GIT_LOG": str(self.git_log), "STUB_FETCH_LOG": str(self.fetch_log),
+               "STUB_COMMIT": pins["sites"][key]["commit"],
+               "STUB_REAL_FETCH": str(HERE / "fetch_release_dataset.py")}
+        return subprocess.run(["bash", str(self.tree / "scripts" / "ci" / "public-datasets.sh"), "fetch", key],
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    def pins_with(self, key, **fields):
+        d = json.loads(PINS.read_text(encoding="utf-8"))
+        d["sites"][key].update(fields)
+        return d
+
+    def fetch_argv(self):
+        return json.loads(self.fetch_log.read_text(encoding="utf-8"))
+
+    def test_current_pin_without_the_field_fetches_v1(self):
+        r = self.run_helper(json.loads(PINS.read_text(encoding="utf-8")), "site_b")
+        self.assertEqual(r.returncode, 1, r.stderr)                 # the stub fetcher exits 3 after recording
+        a = self.fetch_argv()
+        self.assertEqual(a[a.index("--release-format") + 1], "v1")
+        self.assertEqual(a[a.index("--tag") + 1], "v2026.11.01")
+        self.assertIn("ls-remote", self.git_log.read_text())
+
+    def test_v2_future_pin_fetches_v2(self):
+        r = self.run_helper(self.pins_with("site_a_sm", release_format="v2", tag="v2026.12.01-sm"), "site_a_sm")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        a = self.fetch_argv()
+        self.assertEqual(a[a.index("--release-format") + 1], "v2")
+        self.assertEqual((a[a.index("--tag") + 1], a[a.index("--site") + 1]), ("v2026.12.01-sm", "site_a"))
+        self.assertIn("release format v2", r.stdout)
+        self.assertIn("ls-remote", self.git_log.read_text())
+
+    def test_bad_format_or_date_stops_before_any_git_call(self):
+        cases = [("site_b", dict(release_format="v3")), ("site_b", dict(release_format="")),
+                 ("site_a", dict(release_format=["v2"])),
+                 ("site_b", dict(release_format="v2", tag="v2026.00.01")),
+                 ("site_a_sm", dict(release_format="v2", tag="v2026.13.01-sm"))]
+        for key, fields in cases:
+            with self.subTest(key=key, **{k: str(v) for k, v in fields.items()}):
+                r = self.run_helper(self.pins_with(key, **fields), key)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("ci_pins:", r.stderr)
+                self.assertIn("real calendar edition" if "tag" in fields else "release_format", r.stderr)
+                self.assertFalse(self.git_log.exists(), "git ran despite a malformed pin")
+                self.assertFalse(self.fetch_log.exists(), "the fetcher ran despite a malformed pin")
 
 
 class CICapacityModel(unittest.TestCase):

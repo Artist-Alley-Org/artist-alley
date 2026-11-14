@@ -20,9 +20,12 @@ excerpt: >-
   CI needs the public seed datasets without a private runner mount, and the binary
   payload cannot live in Git. Each public dataset repository holds metadata and
   tooling only. The payload ships as versioned GitHub Release assets: ordered parts
-  of one deterministic tar.gz stream, each under 2 GiB, described by a release.json.
-  CI will pin the repository, the tag and the expected release.json SHA-256, and
-  verify every part before extracting or seeding. This records the transport only.
+  of one deterministic tar.gz stream, each under 2 GiB, described by a manifest
+  (release.json in the published v1 editions; in v2 a manifest named for its site
+  and edition).
+  The UI workflows on dev pin the repository, the tag, the metadata commit it
+  resolves to and the expected manifest SHA-256, with an optional release format,
+  and verify every part before extracting or seeding. This records the transport only.
   It grants no rights clearance and publishes nothing.
 ---
 
@@ -39,7 +42,7 @@ private `site_a` mount path (`.github/workflows/ui-pr.yml:42`-`:48`). Fork
 pull requests do not run the workflow at all, because trusted self-hosted
 runners are not available to them (`.github/workflows/ui-pr.yml:38`-`:40`).
 These line references describe the workflows as of 2026-11-12, before the
-hosted-runner cutover recorded under "CI cutover (staged)" below.
+hosted-runner cutover recorded under "CI cutover (merged into `dev`)" below.
 
 ADR 0058 makes `site_a` (Layer A) the public-safe tier and keeps the current
 `site_b` private. Its proposed 2026-11-11 amendment replaces `site_b` with a new
@@ -105,14 +108,30 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
 
 **The payload ships as versioned GitHub Release assets.**
 
-- A release version is one tag on the dataset repository. Its assets are:
-  - the sequential parts `<site>-payload.tar.gz.partNNNN` of ONE
-    deterministic tar.gz stream of the payload files only;
-  - one `release.json`.
+- A release version is one tag on the dataset repository. Its assets are one
+  manifest and the sequential parts of ONE deterministic tar.gz stream of the
+  payload files only.
+- **Every new edition uses the versioned asset layout (v2).** Each asset name
+  carries the site AND the edition tag, so downloads of two editions never
+  overwrite each other in one folder (owner request, 2026-11-14):
+  - the manifest `<site>-<tag>-release.json` (schema
+    `artist-alley.dataset-release/v2`), which also records its `edition` and
+    its own `manifest` name;
+  - the parts `<site>-<tag>-payload.tar.gz.partNNNN`.
+
+  `release_dataset.py build --tag <tag>` writes it. The verifier refuses a
+  manifest whose name, recorded name, edition or part names disagree, and,
+  given an expected tag, any other edition.
+- **The published editions keep the legacy layout (v1)**: `release.json` and
+  `<site>-payload.tar.gz.partNNNN`, schema `artist-alley.dataset-release/v1`.
+  `v2026.11.01` (both sites) and `v2026.11.01-sm` use it. They are not rebuilt
+  or renamed; the tools still verify and fetch them, and `build --legacy-v1`
+  reproduces the layout byte for byte. Their names are the same in every v1
+  edition, which is why new editions do not use it.
 - Every part is strictly smaller than the configured limit: default
   1,900,000,000 bytes, never 2 GiB or more.
-- `release.json` records:
-  - the schema and the site;
+- The manifest (`release.json` in v1) records:
+  - the schema and the site (v2 also the edition and the manifest's own name);
   - the `SHA256SUMS` pin (SHA-256, bytes, entries);
   - the metadata files (path, SHA-256, bytes);
   - the payload count, bytes and sorted-list digest;
@@ -125,28 +144,56 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
 - **Version tags are calendar editions, `vYYYY.MM.NN`** (owner direction,
   2026-11-13): the year and month of the edition, then a two-digit edition
   number that increases within that month. `v2026.11.01` is the first
-  November 2026 edition. A tag versions the DATASET and is independent of the
+  November 2026 edition. A variant of the same numbered edition takes a
+  lowercase variant suffix, as the PR CI subset `v2026.11.01-sm` of
+  `v2026.11.01` does; the tools accept
+  only `vYYYY.MM.NN` with an optional `-variant` of lowercase letters and
+  digits. For a v2 edition the tools also require a real month (01 to 12)
+  and edition number (01 to 99), and a year from 0001, before any output or
+  request, so `v2026.13.01` and `v2026.11.00` are refused. `NN` counts
+  editions, it is not a day of the month, so a month may have more editions
+  than days. A tag versions the DATASET and is independent of the
   application's milestones (for example v0.11.1). Both dataset repositories
   may carry the same edition tag when they are cut together, but each tag
   pins only its own repository's payload.
 
 **CI pins, downloads, verifies, then extracts.**
 
-- A CI job that consumes a public payload will be configured with three pins:
+- A CI job that consumes a public payload is configured with four pins and
+  one optional field:
   - the dataset repository;
   - an immutable version tag, never a mutable `latest`;
-  - the expected `release.json` SHA-256.
+  - the metadata commit that tag must resolve to, checked against the remote
+    tag and against the clone's HEAD;
+  - the expected SHA-256 of the manifest (`release.json` for v1,
+    `<site>-<tag>-release.json` for v2), kept under the existing
+    `release_json_sha256` key for both layouts;
+  - `release_format`: `v1` when the field is absent, and required as `v2` for
+    a versioned edition.
 
   The tag name alone is not trusted. Release assets can be replaced under an
-  existing tag, so the `release.json` pin is what binds the bytes.
+  existing tag, so the manifest pin is what binds the bytes, and the commit
+  pin binds the metadata checkout.
 
-  For example, once `v2026.11.01` is published, a `site_a` job would pin
-  `Artist-Alley-Org/artist-alley-dataset-site-a`, `v2026.11.01` and
-  `release.json` SHA-256 `84996745...`. No CI job is configured with such a
-  pin yet.
-- The job will:
-  1. check out the metadata repository at that tag;
-  2. download `release.json` and check it against the pinned SHA-256;
+  For example, the nightly pins `Artist-Alley-Org/artist-alley-dataset-site-a`,
+  `v2026.11.01` and `release.json` SHA-256 `84996745...`. Since PR #1533 the
+  UI workflows on `dev` take every pin from `seed/contracts/ci-datasets.v1.json`;
+  all current pins are v1 editions. A v2 edition is fetched with
+  `fetch_release_dataset.py --release-format v2`, which refuses a tag that is
+  not an edition before any request and a manifest of another edition before
+  any part. A pin declares its layout in `release_format` (`v1`, the default
+  when the field is absent, or `v2`). `seed/scripts/ci_pins.py` validates it
+  (and a v2 pin's tag) before any clone or download, and
+  `scripts/ci/public-datasets.sh` passes it to the fetcher as
+  `--release-format`, so the CI helper consumes a v2 edition once a future
+  pin declares it. The current pins omit the field and are unchanged.
+- The job (`scripts/ci/public-datasets.sh` with
+  `seed/scripts/fetch_release_dataset.py`) does the following:
+  1. check out the metadata repository at that tag and require it to resolve
+     to the pinned commit;
+  2. download the manifest (`release.json` for v1, `<site>-<tag>-release.json`
+     for v2) and check it against the pinned SHA-256; for v2 it must also be a
+     manifest of exactly that edition before any part is requested;
   3. download every listed part, and reject a missing, extra or reordered part;
   4. check every part's size and SHA-256, and the whole stream's SHA-256,
      BEFORE extraction;
@@ -162,8 +209,9 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
   - `build` writes the parts and `release.json`.
   - `verify` checks a local release against a metadata-only root, extracts it
     into a new root and installs that root only after it passes `SHA256SUMS`.
-  - It has no network code and knows no URLs. It is not a downloader, and no
-    CI job uses it yet.
+  - It has no network code and knows no URLs. It is not a downloader. The CI
+    fetch (`fetch_release_dataset.py`, used by the UI workflows on `dev` since
+    PR #1533) loads it hash-pinned for its offline checks and `verify`.
 - On 2026-11-12 it built LOCAL CANDIDATE archives from the local metadata-only
   repositories, and `verify` reconstructed both sites from metadata-only
   copies:
@@ -249,7 +297,7 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
 
 ## Consequences
 
-- With the hosted cutover (staged, see below), the two UI workflows seed from
+- With the hosted cutover (merged into `dev`, see below), the two UI workflows seed from
   the pinned public editions on GitHub-hosted runners. Dependabot and fork
   pull requests then run the seeded UI suite: it needs no secret and no
   trusted runner, only public data and the read-only token. This ADR still
@@ -265,11 +313,12 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
   its pins, and rollback means restoring the previous pins. No published
   version is overwritten.
 - Download and verification add CI time, and part splitting is part of every
-  build. The cold-start cost on a hosted runner is unmeasured until the first
-  hosted run. On the owner's development machine the CI helper fetched and
-  verified `site_a` in about 40 seconds and `site_b` in about 1 second; that
-  is not a hosted-runner measurement, and the workflows print free disk and
-  per-phase time on every run so the hosted cost is recorded, not assumed.
+  build. On the hosted runner, the passing feature-branch runs fetched and
+  verified the small `site_a` edition in 19 s (`ui-pr` 43529102983) and both
+  full editions in 1 min 21 s (`ui-nightly` 43529650255). On the owner's
+  development machine the CI helper took about 40 seconds for the full
+  `site_a` and about 1 second for `site_b`. The workflows print free disk and
+  per-phase time on every run, so the cost is recorded, not assumed.
 - Byte-identical rebuilds hold for one Python and zlib toolchain, which
   `release.json` records. A toolchain change may change the bytes but not the
   payload list.
@@ -350,13 +399,15 @@ edition:
   prerelease whose tag resolves to the pinned commit, and a fresh public
   download of every asset was verified against the pinned `release.json`
   SHA-256s (see "Published 2026-11-13" above).
-- Gate 6 is staged, not met: the CI wiring below exists in the application
-  PR #1533 (open, not merged) and is under review.
-- Gates 3, 7 and 8 remain open.
+- Gate 6 is met on `dev`: the CI wiring below (PR #1533) was squash-merged into `dev` on 2026-11-14 as `7b5eaa0e`, whose tree is identical to the tested head `e1b5d950`.
+  `main` keeps the old workflows until the next dev → main promotion.
+- Gate 7's cold hosted smoke passed before the merge (see below); its
+  large-tier scale checks are still open.
+- Gates 3 and 8 remain open.
 
-**CI cutover (staged, unmerged).** The owner directed that the dataset CI run
+**CI cutover (merged into `dev`).** The owner directed that the dataset CI run
 on public GitHub-hosted runners rather than the owner's self-hosted machines.
-The staged change:
+The change:
 
 - `ui-pr.yml` and `ui-nightly.yml` run on `ubuntu-24.04` (4 CPU, 16 GiB RAM,
   14 GiB SSD). They no longer use `SEED_SITE_A_PATH`, `SEED_SITE_B_PATH`,
@@ -384,7 +435,8 @@ The staged change:
   `v2026.11.01-sm`, passed to the fetch tool as dataset site `site_a`);
   `ui-nightly` keeps the full `site_a` and `site_b` `v2026.11.01` editions.
   Pin validation lives in `seed/scripts/ci_pins.py`: full editions accept only
-  `vYYYY.MM.NN`, and `site_a_sm` only `vYYYY.MM.NN-sm`.
+  `vYYYY.MM.NN`, and `site_a_sm` only `vYYYY.MM.NN-sm`; `release_format` is
+  `v1` (the default when absent) or `v2`.
 - Disk is the binding constraint on the advertised standard runner (14 GB).
   The jobs are ordered by disk phase: build the image(s), prune the job's own
   build cache, then fetch, seed and release the dataset. A phase model
@@ -406,8 +458,8 @@ The staged change:
   10 GiB Docker floor, all at once) needed 14,607,515,312 and 16,761,559,854
   bytes and could not pass. The seed growth, postgres, Playwright and margin
   terms are partly allowances, and the hosted Docker storage layout may
-  differ from the measured one; the first hosted runs replace them with
-  measurements.
+  differ from the measured one. Both capacity checks passed on the hosted
+  runs; the allowances themselves have not been re-measured.
 
 **Small PR edition `v2026.11.01-sm` (published 2026-11-13, public prerelease).** By
 owner direction, PR CI uses a smaller `site_a` edition; the full edition stays
@@ -446,22 +498,40 @@ overlap anchors and the selected rows' licence notice.
   CI dimensions; the downloaded assets' digests equal the published ones. The
   temporary copy was deleted afterwards.
 
-The CI cutover is committed on the feature branch and open as PR #1533 to
-`dev`; it is not merged, so the merged CI still runs the old workflows. Gate
-7's cold hosted smoke is NOT passed: the first hosted runs, `ui-pr` 43520041934 and `ui-nightly` 43520575280 (a dispatch of the feature branch), both on commit 232cbb44, fetched and verified the
-pinned public editions, passed both capacity checks and seeded, then failed at
-the bounded preview-render drain. Each gate started with 112 gated jobs and
-still had 81 outstanding when the 480 s cap expired (slowest `preview.video`
-271.5 s and 290.1 s), so Playwright never ran. The nightly's federation
-bring-up and shell scenarios passed. A correction raising the cap to 1,500 s
-and giving the hosted browser cache its own key is under review; no hosted
-Playwright run has passed yet. The release notes, which describe the merged
-CI, still say that no CI job uses these editions; they stay unchanged until
-the cutover is merged.
+The CI cutover (PR #1533) was squash-merged into `dev` on 2026-11-14 as `7b5eaa0e`, whose tree is identical to the tested head `e1b5d950`. Before the merge, at `e1b5d950`, both
+UI workflows ran on GitHub-hosted runners and passed, which is gate 7's cold
+hosted smoke:
 
-The next steps are: review the drain and cache correction on PR #1533, get a
-hosted `ui-pr` and nightly run to pass, merge, then update the release notes
-and close gates 7 and 8.
+- `ui-pr` run 43529102983 (pull request) fetched and verified the small
+  edition, seeded, drained the preview queue (112 gated jobs, cleared in about
+  13 min 44 s under the 1,500 s cap) and passed all 556 Playwright tests (0
+  failed, skipped, not run or flaky).
+- The `ui-nightly` dispatch 43529650255 fetched and verified both full
+  editions, passed 8 shell scenarios (3 outline scenarios skip by design),
+  drained in about 10 min 8 s and passed all 560 Playwright tests.
+- The other PR checks passed too, including the required self-hosted
+  integration tests.
+
+Getting there took two corrections. The first hosted runs (43520041934 and
+43520575280, on `232cbb44`) fetched, verified and seeded, then hit the
+original 480 s drain cap with 81 of 112 jobs outstanding. With the cap raised
+to 1,500 s and the hosted browser cache given its own key, run 43523595164
+(on `9bede5a4`) cleared the drain but failed one layout test by 8.65625 px: a
+slot switch in the collection cover editor resized the dialog when one slot's
+hint wrapped on the hosted font. `e1b5d950` fixed that in the component and
+kept the test's strict assertion.
+
+`ci.yml`'s six jobs, `release.yml`, `edge.yml` and one `site-rebuild-trigger.yml`
+job still run on the self-hosted pool. `main`, and so the scheduled nightly
+(which runs `main`), keeps the old workflows until the next dev → main
+promotion. The dataset release notes still say that no CI job uses these
+editions; updating them is the next step.
+
+The next steps are: update the dataset release notes, and carry the cutover
+to `main` with the next dev → main promotion. The next dataset edition uses
+the versioned (v2) asset layout, and its pin declares `release_format: v2`. Gate 3 (the ADR 0058 policy amendment), gate 8
+(rollback) and gate 7's large-tier scale checks stay open and are tracked
+separately; this cutover does not resolve or waive them.
 
 A local candidate archive by itself authorizes no upload; for `v2026.11.01`
 the owner's decision does. The obsolete pre-exclusion `site_a` candidate
