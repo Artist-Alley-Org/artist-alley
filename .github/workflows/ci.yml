@@ -2,21 +2,21 @@
 # (main, dev) and on every PR targeting main or dev.
 #
 # Runners (#1514): the four light jobs (docs-only, render-chain,
-# frontend-check, codegen-drift) run on GitHub-hosted `ubuntu-24.04`.
-# Integration (`test`) and the production image build (`docker-build`)
-# stay on the self-hosted `[self-hosted, artist-alley]` pool for now.
+# frontend-check, codegen-drift) and the production image build
+# (`docker-build`) run on GitHub-hosted `ubuntu-24.04`. Integration
+# (`test`) stays on the self-hosted `[self-hosted, artist-alley]` pool
+# for now.
 #
 # History: this paragraph used to say "PRs use `ubuntu-latest` so fork
 # PRs can't run code on the self-hosted runner". That stopped being
 # true when the runner rebalance made frontend-check and test
 # unconditional, and #942 moved the last hosted job (codegen-drift)
-# over too. #1514 moved the four light jobs back to hosted runners.
-# A fork PR can still run `test`, and `docker-build` when the
-# render-chain gate fires, on the self-hosted pool; GitHub's fork-PR
-# approval policy for this repository (currently first-time
-# contributors only) decides whether a maintainer must approve it
-# first. Fork code is not kept off the trusted pool until those two
-# jobs move as well.
+# over too. #1514 moved the four light jobs back to hosted runners,
+# then `docker-build` too. A fork PR can still run `test` on the
+# self-hosted pool; GitHub's fork-PR approval policy for this
+# repository (currently first-time contributors only) decides whether
+# a maintainer must approve it first. Fork code is not kept off the
+# trusted pool until `test` moves as well.
 #
 # This is the merge-gate. Edge/release workflows assume CI was green.
 #
@@ -562,8 +562,8 @@ jobs:
     # zero forks and a fork PR is hand-reviewed anyway. The full
     # trade-off, including the portability coverage we gave up, is
     # written out over codegen-drift above. Since #1514 the four light
-    # jobs are hosted again; this job and docker-build are the
-    # remaining self-hosted ones.
+    # jobs and docker-build are hosted; this job is the remaining
+    # self-hosted one.
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 30
     # No compose-stack concurrency group any more (#331). Each run gets
@@ -847,8 +847,11 @@ jobs:
 
   # ── Build the production image to confirm the multi-stage Dockerfile
   # still produces a clean amd64 artifact. Doesn't push anything —
-  # publishing lives in edge.yml + release.yml. Self-hosted-only
-  # because Docker buildx wants the daemon and the cache mounts.
+  # publishing lives in edge.yml + release.yml. Runs on GitHub-hosted
+  # ubuntu-24.04 since #1514: the hosted image ships the Docker daemon
+  # and buildx, and the build cache is the Actions cache (`type=gha`).
+  # History: it was self-hosted-only before, on the grounds that Docker
+  # buildx wanted the daemon and the cache mounts.
   #
   # Runs on every push/dispatch, and on a PR only when render-chain says
   # the PR touches the 3D chain (#1049 — see that job's comment). The
@@ -859,13 +862,10 @@ jobs:
     name: Verify production image build
     needs: render-chain
     if: github.event_name != 'pull_request' || needs.render-chain.outputs.touched == 'true'
-    runs-on: [self-hosted, artist-alley]
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
-      - name: Clear stale git locks (persistent self-hosted workspace)
-        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
-
       - uses: actions/checkout@v7
 
       - name: Set up Docker buildx
@@ -934,6 +934,11 @@ jobs:
           docker run --rm --entrypoint node "$IMG" /app/threejs/smoke.mjs
 
       - name: Reclaim the loaded production image
+        # On a hosted VM (since #1514) this is housekeeping only: the VM
+        # and its daemon are discarded after the job. It is kept,
+        # unchanged, because it is harmless there and is needed again if
+        # this job ever returns to a shared self-hosted daemon. History,
+        # from the self-hosted period:
         # `load: true` above puts artist-alley:ci-<sha> into the shared
         # daemon's image store, and this job had NO cleanup at all — so
         # every push leaked one full release image (Go binary + Chromium +
