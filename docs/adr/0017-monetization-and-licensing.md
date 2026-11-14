@@ -25,6 +25,15 @@ excerpt: >-
   ADR 0016 establishes the legal license direction (AGPL + commercial dual-license). This ADR specifies the runtime monetization model: the tier shape, the .lic file format, the enforcement architecture, and what we explicitly are not doing.
 ---
 
+> **Status note (2026-10-07):** As of v0.11.0 the tiers below are the planned
+> design, and none is offered: no Pro or Enterprise license is sold, and there
+> is no purchase or customer portal. The license signing service is deployed,
+> but the 2026-06-04 status below overstates the Cloudflare side: the customer
+> portal was not deployed. Community mode applies no seat or asset cap today;
+> the built-in community defaults set none and no code enforces either. The
+> tangled value derivation (Phase 1.24.B) is not built. Commercial licensing
+> and paid tiers are planned but are not currently offered.
+
 > **Status note (2026-07-13):** the canonical GitHub org is now
 > **Artist-Alley-Org** (v0.1.0 org move, 2026-07-11) — repo links in
 > this ADR have been host-swapped. The pre-fold migration links in

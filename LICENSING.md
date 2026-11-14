@@ -1,15 +1,15 @@
 # Licensing
 
-artist-alley is **dual-licensed**. You may use it under **either**:
+artist-alley is licensed under the **GNU Affero General Public License,
+version 3.0** (AGPL-3.0-only), and is free to self-host.
 
-1. the **GNU Affero General Public License, version 3.0** (AGPL-3.0-only), **or**
-2. a separate **commercial license** from the copyright holder.
+Commercial licensing and paid tiers are planned but are **not currently
+offered**. That direction is recorded in
+[ADR 0016](docs/adr/0016-license-direction.md) (license direction) and
+[ADR 0017](docs/adr/0017-monetization-and-licensing.md) (monetization model);
+see section 2.
 
-Choose whichever fits your use. This is the licensing direction set in
-[ADR 0016](docs/adr/0016-license-direction.md) and the monetization model in
-[ADR 0017](docs/adr/0017-monetization-and-licensing.md).
-
-## 1. Open-source use — AGPL-3.0-only
+## 1. Open-source use: AGPL-3.0-only
 
 The default license is the AGPL-3.0, in full at [`LICENSE`](LICENSE) and
 identified in every source file by the SPDX tag:
@@ -29,31 +29,30 @@ obligates you to publish your changes.
 If those obligations work for you, use artist-alley under the AGPL at no
 cost. You owe nothing but the copyleft.
 
-## 2. Commercial use — separate paid license
+## 2. Commercial licensing (planned, not currently offered)
 
-If you want to **embed, redistribute, or offer artist-alley (or a derivative)
-as a service without the AGPL's source-sharing obligations** — for example,
-bundling it into a closed-source product or running a modified fork as a
-commercial service without publishing your changes — a **commercial license**
-is available. It grants those rights without the AGPL copyleft, and its terms
-forbid removing or bypassing the license check for commercial deployment
-(per [ADR 0017](docs/adr/0017-monetization-and-licensing.md)).
+A separate commercial license from the copyright holder, Kenneth Blossom, is
+the accepted long-term direction for anyone who wants to **embed,
+redistribute, or offer artist-alley (or a derivative) as a service without
+the AGPL's source-sharing obligations**. It is not available today: no
+commercial license, paid tier or premium add-on can be obtained, and until
+one is offered, AGPL-3.0-only is the only license artist-alley is available
+under.
 
-**To obtain a commercial license, contact:**
+For questions about future commercial terms, contact:
 
 > **licensing@artist-alley.org**
 
-_(A self-serve purchase/management portal is planned; until it lands, reach
-out by email.)_
-
 ## Contributions
 
-Contributions are accepted under the AGPL-3.0 (the project's open-source
-license). By submitting a contribution you agree it may be distributed under
-both the AGPL and the commercial license above.
+Contributions are accepted under AGPL-3.0-only. If commercial licensing is
+introduced later, the necessary contributor agreement or permission must be
+established before third-party contributions are commercially relicensed. No
+contributor agreement exists today; that future work is tracked in
+[#263](https://github.com/Artist-Alley-Org/artist-alley/issues/263).
 
 ## Third-party components
 
-Bundled third-party dependencies retain their own licenses; this dual license
-covers artist-alley's own source. No AGPL-incompatible code is shipped in the
-tracked source tree (attribution audit, Phase 1.55.S).
+Bundled third-party dependencies retain their own licenses; the AGPL-3.0-only
+license covers artist-alley's own source. No AGPL-incompatible code is shipped
+in the tracked source tree (attribution audit, Phase 1.55.S).

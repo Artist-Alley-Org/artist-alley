@@ -134,6 +134,16 @@ type Options struct {
 	// actually supplied, so a missing hasher fails loudly instead of
 	// writing plaintext or silently dropping the credential.
 	HashPassword PasswordHasher
+
+	// Includes asks the ci profile to also seed one peer's overlap
+	// anchors from a contract (#1514, includes.go). Nil = coverage only,
+	// which is unchanged. Only valid with ProfileCI.
+	Includes *DeclaredIncludes
+	// IncludePin is what PreflightCISelection measured before any
+	// mutation. When set, the run must reproduce it exactly, so a change
+	// between the preflight and the seed fails instead of seeding
+	// different rows.
+	IncludePin *IncludePin
 }
 
 // Counts is the verify-phase tally.
@@ -238,16 +248,18 @@ func NewRunner(pool *pgxpool.Pool, storageSvc *storage.Service, opts Options) *R
 	}
 }
 
-// Run loads the catalogues + manifest and executes every phase in
-// order, returning the verify counts.
-func (r *Runner) Run(ctx context.Context) (Counts, error) {
+// selectCatalogue loads the catalogues + manifest and applies the
+// selected profile, touching no database. It is everything Run does
+// before its first phase, so the selection can be tested on its own, and
+// its CI branch is selectCIProfile, the same function the exporter uses.
+func (r *Runner) selectCatalogue() (*catalogues, error) {
 	// Validate the profile name BEFORE touching disk: a typo should say
 	// so, not fail thirty seconds later on something unrelated, and must
 	// never fall through to seeding the full catalogue.
 	switch r.opts.Profile {
 	case "", ProfileFull, ProfileCI:
 	default:
-		return Counts{}, fmt.Errorf("unknown seed profile %q (want %q or %q)",
+		return nil, fmt.Errorf("unknown seed profile %q (want %q or %q)",
 			r.opts.Profile, ProfileFull, ProfileCI)
 	}
 	// The two shrinks select on opposite axes and the extension limit
@@ -256,13 +268,30 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 	// posts whose assets it cut. Refuse rather than produce a fixture
 	// whose coverage report is a lie.
 	if r.opts.Profile == ProfileCI && r.opts.LimitPerExt > 0 {
-		return Counts{}, errors.New(
+		return nil, errors.New(
 			"seed: --profile ci and --limit-per-extension are mutually exclusive; " +
 				"the profile's own depth floor is the extension control (--coverage-depth)")
 	}
-	cat, err := loadCatalogues(r.opts.CatalogueRoot, r.opts.SiteRoot)
+	// Declared includes exist only on top of the ci profile; anywhere
+	// else they would be silently meaningless.
+	if r.opts.Includes != nil && r.opts.Profile != ProfileCI {
+		return nil, fmt.Errorf("seed: declared includes need --profile %s", ProfileCI)
+	}
+	// With includes, read through a recorder so the anchors can be tied
+	// to the exact manifest bytes parsed. Without, the plain reader, as
+	// before.
+	var rec *inputRecorder
+	var read func(string) ([]byte, error)
+	if r.opts.Includes != nil {
+		rec = newInputRecorder(r.opts.CatalogueRoot, r.opts.SiteRoot)
+		read = rec.read
+	}
+	cat, err := loadCatalogues(r.opts.CatalogueRoot, r.opts.SiteRoot, read)
+	if rec != nil && rec.err != nil {
+		return nil, rec.err
+	}
 	if err != nil {
-		return Counts{}, err
+		return nil, err
 	}
 	// Before the shrinks, and long before any bytes move: a manifest
 	// that declares AI over somebody else's work must not reach the
@@ -270,19 +299,31 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 	// checked here as well as in apply_upgrade.py — the two read
 	// different files, and the manifest is the one the repo cannot see.
 	if err := cat.validateAIDeclarations(); err != nil {
-		return Counts{}, err
+		return nil, err
 	}
 	if r.opts.Profile == ProfileCI {
 		depth := r.opts.CoverageDepth
 		if depth <= 0 {
 			depth = defaultCoverageDepth
 		}
-		rep, cErr := cat.applyCoverageProfile(depth, r.log)
+		var inc *resolvedIncludes
+		manifestSHA := ""
+		if r.opts.Includes != nil {
+			if inc, err = resolveDeclaredIncludes(r.opts.Includes, r.opts.SiteRoot); err != nil {
+				return nil, err
+			}
+			manifestSHA = rec.seen["site/MANIFEST.json"].SHA256
+		}
+		rep, cErr := cat.selectCIProfile(depth, inc, manifestSHA, r.log)
 		if rep != nil {
 			fmt.Print(rep.Summary())
 		}
 		if cErr != nil {
-			return Counts{}, cErr
+			return nil, cErr
+		}
+		if inc != nil && r.opts.IncludePin != nil && !jsonEqual(inc.pin, *r.opts.IncludePin) {
+			return nil, errors.New("seed: the declared includes (contract, manifest or anchors) changed " +
+				"between the preflight and the seed; refusing to seed different rows")
 		}
 	}
 	if r.opts.LimitPerExt > 0 {
@@ -292,6 +333,16 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 		"users", len(cat.Users), "teams", len(cat.Teams),
 		"collections", len(cat.Collections), "fields", len(cat.Fields),
 		"assets", len(cat.Assets), "posts", len(cat.Posts))
+	return cat, nil
+}
+
+// Run loads the catalogues + manifest and executes every phase in
+// order, returning the verify counts.
+func (r *Runner) Run(ctx context.Context) (Counts, error) {
+	cat, err := r.selectCatalogue()
+	if err != nil {
+		return Counts{}, err
+	}
 
 	type phase struct {
 		name string

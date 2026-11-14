@@ -13,18 +13,16 @@ content you include.
 
 There is **no single aggregate license** any more.
 
-The dataset was published under **CC-BY-SA 4.0**, chosen because that
+The dataset was once published under **CC-BY-SA 4.0**, chosen because that
 was the most restrictive license among the sources (the Tux Racer /
-Hedgewars / OpenArena gameplay videos from Wikimedia). The Pexels
-videos added in #605 and extended in #572 are covered by the **Pexels
-License**, which is free-to-use but is not a Creative Commons license
-and carries its own prohibitions (see below). A CC-BY-SA claim over the
-whole set would therefore be false.
+Hedgewars / OpenArena gameplay videos from Wikimedia). A single
+aggregate claim is no longer used: the sources carry different terms, and
+the 75 National Park Service videos (see below) carry a provisional
+public-domain label whose basis is still under review.
 
 **Per-asset `license` + `attribution` in `MANIFEST.json` are
-authoritative.** Everything except the Pexels videos remains CC-BY-SA
-4.0 compatible; redistributors must attribute every source and honour
-the Pexels terms for the `videos/internet/pexels-*` files.
+authoritative.** Redistributors must attribute every source and honour
+each source's own terms.
 
 > This paragraph lived only in the copy of this file staged on the
 > archive share. Correcting an output and not its input is how a fix
@@ -52,6 +50,11 @@ the Pexels terms for the `videos/internet/pexels-*` files.
     prototype-kit, ranks-pack, robot-pack, shape-characters, skyboxes,
     splat-pack, survival-kit, toon-characters, ui-pack,
     ui-pack-adventure, ui-pack-sci-fi
+  - Factory Kit 3.0: one model (`machine.glb`), the kit's `colormap.png`
+    texture it references, and the kit's own `License.txt` (CC0), copied
+    from the Kenney Game Assets All-in-1 3.6.0 bundle into
+    `3d/kenney-allin1/3d-assets-factory-kit/`. Source page:
+    https://kenney.nl/assets/factory-kit
   - License: **CC0 1.0** (public domain dedication)
   - All Kenney content is dedicated to the public domain by the author
   - Machine-readable provenance for the #572 packs — page URL, direct
@@ -82,11 +85,9 @@ the Pexels terms for the `videos/internet/pexels-*` files.
   - BoomBox — © Microsoft, CC0 1.0
   - Duck — © Sony Computer Entertainment Inc, CC-BY-SA 3.0
   - Lantern — © Microsoft, CC0 1.0
-  - Sponza — © Marko Dabrovic / Frank Meinl, CC-BY 3.0
   - WaterBottle — © Microsoft, CC0 1.0
   - BrainStem — © Keith Hunter / Smith Micro, CC0 1.0
   - CesiumMan — © Cesium, CC-BY 4.0
-  - 2CylinderEngine — © Sony Computer Entertainment Inc, SCEA Shared Source License
   - ToyCar — © 2017 Microsoft, CC0 1.0
 
 ### Video (CC-BY / CC-BY-SA / Public Domain)
@@ -104,27 +105,39 @@ the Pexels terms for the `videos/internet/pexels-*` files.
   - **Pong** gameplay loop (1972) — Public Domain
   - **Donkey Kong arcade** — CC-BY 2.0 (Wikimedia contributor)
 
-### Video — Pexels (Pexels License, NOT CC0 / public domain)
+### Video: U.S. National Park Service B-roll (provisional public domain)
 
-`videos/internet/pexels-*` — **75 clips**: 30 added in #605, plus 45
-game-adjacent clips added in #572 from these searches — arcade machine,
-video game controller, neon lights abstract, particles floating, smoke
-effect black background, glitch effect screen, pixel art animation,
-keyboard gaming rgb, abstract motion background loop, sparks fire slow
-motion, esports tournament, retro gaming console.
+`videos/nps/<park>/<item-id>.mp4`: **75 clips** that replace the earlier
+Pexels videos one-to-one, keeping the same asset IDs and posts: 63 from
+Grand Canyon National Park, 7 from Death Valley National Park, 4 from
+Joshua Tree National Park and 1 from Acadia National Park. Each is the
+480p MP4 that the clip's NPS media page serves.
 
-- Each clip's videographer is credited per-asset in `MANIFEST.json`
-  (`attribution`), and `metadata.fetched_from` is the Pexels page the
-  licence and the credit live on.
-- **Permitted:** free use and modification; attribution not required
-  (given anyway).
-- **Prohibited:** selling unaltered copies; redistributing on other
-  stock-photo or wallpaper platforms; use in trade marks; implying
-  endorsement by the depicted people or by Pexels.
-- **Approved for both site_a and site_b** (owner decision 2026-07-25).
-  Any "site_b only" wording elsewhere is stale — it was a #607
-  regression, corrected in #675, and is asserted against in
-  `test_dataset_upgrade.py`.
+- Each clip's NPS credit is on its record (`attribution`), with its NPS
+  collection page, media page, source URL and review flags under
+  `metadata`.
+- **What the collection pages say.** The Grand Canyon B-roll pages:
+  "The video files that may be downloaded from these web pages are
+  "public domain" videos", and the videos must not be used to imply NPS
+  endorsement. The Joshua Tree index: "All video files in this archive
+  are "public domain" clips", with the same endorsement limit and a
+  statement that the NPS arrowhead is a protected symbol. The Death
+  Valley page: "These silent videos are in the public domain and can be
+  used for any purpose", with the request "Please credit "Courtsey of the
+  National Park Service."" (spelling as published). The Acadia page:
+  "All footage listed below is in the public domain."
+- **What every NPS media page also says:** "Multimedia made available by
+  NPS should not be presumed to be public domain. ... Contact the host
+  park or program to ascertain who owns the material." This notice is
+  recorded on every record (`metadata.media_page_notice`) and is not
+  resolved here.
+- **Status: provisional.** The `license` label records the collection
+  pages' statement; it is not legal clearance or release approval. Each
+  clip was reviewed from four sampled frames, ffprobe, a full decode and
+  its audio level (all 75 are silent); that does not prove a whole clip
+  is free of people, logos or other rights issues.
+- Do not use these clips to imply endorsement by the National Park
+  Service.
 
 ### Audio (CC0)
 

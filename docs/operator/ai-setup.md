@@ -125,7 +125,9 @@ runs on demand. Use the period picker to inspect past months.
 ## Federation
 
 AI calls are local-instance only. No AI activity federates
-cross-instance — the AI-generated tags / captions ride along
-with their parent asset as ordinary metadata. The receiving
-instance MAY run its own AI on top (provenance is preserved via
-the audit row's `provider` + `model` fields).
+cross-instance. Assets themselves do not cross instances yet
+(sharing work across instances is planned); once they do,
+AI-generated tags and captions will travel with their parent
+asset as ordinary metadata, and the receiving instance may run
+its own AI on top (provenance is preserved via the audit row's
+`provider` + `model` fields).

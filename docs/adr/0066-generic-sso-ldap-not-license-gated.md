@@ -24,6 +24,12 @@ excerpt: >-
   security tax. Amends the tier tables in 0017 / 0038 / 0041.
 ---
 
+> **Status note (2026-10-07):** This decision is accepted but not yet
+> implemented. As of v0.11.0 the generic LDAP and SAML providers are still
+> license-gated (`sso_ldap`, `sso_saml`) and are still stub implementations,
+> so generic SSO is not available on any tier. The implementation follow-up
+> described under Consequences has not yet been filed as a dedicated issue.
+
 ## Context
 
 [ADR 0041](0041-identity-provider-registry-and-enterprise-gates.md) made

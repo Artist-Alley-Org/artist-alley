@@ -27,6 +27,14 @@ excerpt: >-
   block never ran for unlicensed features.
 ---
 
+> **Status note (2026-10-07), correcting the 2026-07-20 amendment below:** that
+> amendment describes the ADR 0066 change as done. As of v0.11.0 it is not:
+> the generic LDAP and SAML providers still declare `sso_ldap` and `sso_saml`
+> as their required license features, so they register only under a license
+> that carries them, and both are still stub implementations. Generic SSO is
+> therefore not available today. The ADR 0066 decision stands; its
+> implementation has not landed.
+
 > **Status note (2026-07-13):** the canonical GitHub org is now
 > **Artist-Alley-Org** (v0.1.0 org move, 2026-07-11) — repo links in
 > this ADR have been host-swapped.

@@ -34,6 +34,20 @@ excerpt: >-
   network. Trust is per-instance allowlist + optional curated
   directory.
 ---
+
+> **Status note (2026-10-23):** this ADR records the protocol design, and
+> its requirements stand. What Artist Alley implements today is narrower; the
+> ArchivePub overview's "What works today" section is the current list.
+> Implemented: pairing between instances; HTTP requests signed with the
+> instance key and sent over HTTPS; extra envelope (payload) encryption when
+> the peer supports it and the needed keys are available, with public and
+> team material otherwise sent as an unencrypted envelope over HTTPS and
+> restricted or embargoed material refused; likes and comments crossing
+> between paired instances. Not implemented yet: real per-actor envelope
+> signatures (the envelope carries a placeholder), sharing assets and posts,
+> the inbound check against the share list, and the custom review and
+> workflow activities.
+
 ## Context
 
 [ADR 0007](/adr/0007-federation-thinking-ahead/) committed Artist Alley

@@ -21,6 +21,18 @@ excerpt: >-
   ADR 0002 placed the project under BSD-3-Clause on the explicit premise that "we have no monetization intent for artist-alley itself." That premise no longer holds.
 ---
 
+> **Status note (2026-10-07):** AGPL-3.0-only is in force, as executed on
+> 2026-07-11. The commercial half of this decision has not been carried out:
+> no `LICENSE.commercial.md` was added (`LICENSING.md` documents the licensing
+> instead), no commercial license is offered, and the contributor agreement
+> this ADR names as the legal basis for dual licensing does not exist yet
+> ([#263](https://github.com/Artist-Alley-Org/artist-alley/issues/263)). Commercial licensing and paid tiers remain the accepted, planned
+> direction and are not currently offered. Contributions are accepted under
+> AGPL-3.0-only; the necessary contributor agreement or permission must be in
+> place before any third-party contribution is commercially relicensed. The
+> 2026-07-11 note's "dual model is documented in LICENSING.md" describes the
+> wording at that time.
+
 > **Executed 2026-07-11 (Phase 1.55.AA):** the relicense is live. The
 > root `LICENSE` is now the full AGPL-3.0 text (SPDX `AGPL-3.0-only`),
 > the dual model is documented in [`LICENSING.md`](../../LICENSING.md),

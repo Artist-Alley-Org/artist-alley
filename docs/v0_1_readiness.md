@@ -267,6 +267,14 @@ cadence.
 | 1.16.B-followup-2 | #215 | AdminBackfillPanel extraction | 2026-07-06 |
 | 1.16.B-followup-3 | #217 | `search.Counter` split | 2026-07-07 |
 
+> **Correction (2026-10-07):** the three 1.16.B-3-followup rows above (#199, #205,
+> #206) recorded CLIP reverse-image search as shipped. Later verification found it was
+> not operator-shippable: there is no supported published sidecar image, no Docker
+> Compose service or profile, and no supported way to enable visual search, so
+> reverse-image search is not currently available. CLIP support is roadmap work (Phase
+> 1.42, [#54](https://github.com/Artist-Alley-Org/artist-alley/issues/54), currently
+> in the v0.17.0 milestone).
+
 **Twenty-five PRs in seventeen days.** Foundation work is essentially
 complete; the remaining work is the "boring fundamentals" tier +
 finish-line hygiene.
@@ -295,6 +303,14 @@ the open remainder.
   ranking (PR #178); saved searches (PR #180); reindex admin + disk
   usage + dashboard (PR #182); CLIP visual encoder + reverse image
   (PR #199, PR #205, PR #206); feedback loop (PR #208).
+
+> **Correction (2026-10-07):** the "CLIP visual encoder + reverse image" entry above
+> records merged scaffolding, not a shipped feature. Later verification found it was
+> not operator-shippable: there is no supported published sidecar image, no Docker
+> Compose service or profile, and no supported way to enable visual search, so
+> reverse-image search is not currently available. CLIP support is roadmap work (Phase
+> 1.42, [#54](https://github.com/Artist-Alley-Org/artist-alley/issues/54), currently
+> in the v0.17.0 milestone).
 
 ### Shipped IIIF interop
 
@@ -1399,6 +1415,14 @@ end-to-end complete — backend across 4 PRs (#199 CLIP sidecar + #205
 backfill + #206 async auto-embed + the by-image handler) plus this
 frontend. Research depth: `light`.
 **Roadmap phase:** 1.55.W (shipped 2026-07-09).
+
+> **Correction (2026-10-07):** this section records the reverse-image feature as
+> end-to-end complete. Later verification found it was not operator-shippable: there
+> is no supported published sidecar image, no Docker Compose service or profile, and
+> no supported way to enable visual search, so reverse-image search is not currently
+> available. CLIP support is roadmap work (Phase 1.42,
+> [#54](https://github.com/Artist-Alley-Org/artist-alley/issues/54), currently in the
+> v0.17.0 milestone).
 
 **Shipped shape (deltas from the sketch below).**
 

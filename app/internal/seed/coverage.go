@@ -187,6 +187,7 @@ var requiredDims = []dim{
 type coverageReport struct {
 	Universe      int
 	Covered       int
+	CoveredDims   []dim
 	Uncovered     []dim
 	MissingReq    []dim
 	GreedyPosts   int
@@ -204,6 +205,9 @@ type coverageReport struct {
 	// spends its wall clock on.
 	Bytes       int64
 	BytesBefore int64
+	// DeclaredIncludesAdded counts anchor rows the declared includes added
+	// on top of the coverage selection (includes.go). 0 without includes.
+	DeclaredIncludesAdded int
 	// EmptyCollections are catalogue collections with no content in the
 	// FULL catalogue either. They are empty in the demo seed too; listed
 	// so a reader does not read them as damage this profile did.
@@ -227,6 +231,9 @@ func (r *coverageReport) Summary() string {
 	fmt.Fprintf(&b, "  posts per collection   %s\n", countLine(r.PerCollection))
 	if r.AddedOrphans > 0 {
 		fmt.Fprintf(&b, "  added %d asset(s) no post reaches\n", r.AddedOrphans)
+	}
+	if r.DeclaredIncludesAdded > 0 {
+		fmt.Fprintf(&b, "  declared includes added %d overlap anchor asset(s) (no posts)\n", r.DeclaredIncludesAdded)
 	}
 	if len(r.EmptyCollections) > 0 {
 		fmt.Fprintf(&b, "  NOTE: %d collection(s) hold no catalogue content at all and are "+
@@ -755,6 +762,7 @@ func (c *catalogues) applyCoverageProfile(depth int, log *slog.Logger) (*coverag
 	sortDims(rep.Uncovered)
 	sortDims(rep.MissingReq)
 	rep.Covered = len(universe) - len(rep.Uncovered)
+	rep.CoveredDims = sortedDims(final)
 
 	for _, name := range collectionNames(c.Collections) {
 		if !collSeen[name] && !assetCollSeen(keptAssets, name) {

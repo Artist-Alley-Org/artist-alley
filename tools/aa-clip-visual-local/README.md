@@ -1,5 +1,15 @@
 # aa-clip-visual-local
 
+> **Status (2026-10-07): experimental scaffolding, not a supported feature.** This
+> directory holds incomplete implementation scaffolding from earlier development. It is
+> not a supported Artist Alley operator feature or add-on: there is no published image,
+> no Docker Compose profile or service, and no supported way to enable visual search in
+> Artist Alley, so reverse-image search is not available to operators today. Do not treat
+> this sidecar as an available add-on. The rest of this README describes the original
+> design and is kept as development reference, not installation instructions. CLIP image
+> search is roadmap work, planned to arrive with the capability add-on registry
+> ([#54](https://github.com/Artist-Alley-Org/artist-alley/issues/54), currently in the v0.17.0 milestone).
+
 Optional sidecar that serves CLIP visual embeddings for artist-alley's reverse-image
 search endpoint (`POST /search/by-image`). Phase 1.16.B-3-followup — closes #183.
 
@@ -31,37 +41,14 @@ error body.
 - **Text encoder is deliberately NOT exposed.** This sidecar embeds images
   only. AA's existing text embedding path (Ollama nomic-embed-text) is
   untouched; the two embedding spaces coexist and are never cosine-compared.
-- **Sidecar-visible-to-AA via Docker Compose profile `visual-search`.** Same
-  optional-profile pattern as `comfyui-mcp-bridge` (aa's ComfyUI sidecar).
+- **Sidecar-visible-to-AA via Docker Compose profile `visual-search`** was the
+  intended deployment. That profile was never added to the repository.
 
 ## Install
 
-```bash
-# From artist-alley repo root:
-docker compose --profile visual-search up -d aa-clip-visual-local
-
-# Wait for the model to load (~10–30 s cold on first boot):
-docker compose logs -f aa-clip-visual-local | grep -m1 "clip visual sidecar ready"
-
-# Verify:
-curl http://localhost:8402/health
-# {"status": "ok", "model": "ViT-L-14", "checkpoint": "openai", "dim": 768}
-```
-
-Then in AA sysconfig (via `/admin/system/*`):
-
-- `search.visual.enabled = true`
-- `search.visual.sidecar_url = http://aa-clip-visual-local:8402` (Docker DNS)
-
-Restart the AA app container. Boot logs should show:
-
-```
-INFO  search.visual.provider.registered  url=... model=ViT-L-14 dim=768
-```
-
-`POST /search/by-image` now serves 200 instead of the 501 stub. Existing image
-assets don't have embeddings yet — trigger a backfill via `POST /admin/search/reindex`
-with `modality=visual` (see the AA docs for the exact shape).
+Not supported today; see the status note at the top. There is no published image or
+Docker Compose profile for this sidecar, and Artist Alley has no supported way to enable
+visual search.
 
 ## GPU migration
 
