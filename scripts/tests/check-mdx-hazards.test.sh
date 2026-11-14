@@ -109,13 +109,58 @@ else
     bad "flagged safe constructs" "$out"
 fi
 
-# ── 4. The autolink allowance is unchanged
-echo '4. autolink allowance preserved'
-out="$(scan "$FIX/autolink-allowed.md")"; rc=$?
-if [ "$rc" -eq 0 ]; then
-    ok "exits 0 on <http(s)://…> autolinks"
+# ── 4. Autolinks are rejected (PR #1533 / ADR 0100 site break)
+#
+# The scanner used to strip `<http(s)://...>` before scanning, so the
+# three autolinks PR #1533 put in ADR 0100 scanned clean while every
+# site `Build verify` died at `...0100-...mdx:478:10` with
+# "Unexpected character `/` (U+002F) before local name". 4a pins that
+# fail-before the same way test 1 does; 4b-4d pin the correction.
+echo '4. autolinks are rejected, ordinary and quoted links pass'
+old_autolink_hits="$(python3 - "$FIX/autolinks.md" <<'PY'
+import re, sys
+content = open(sys.argv[1]).read()
+content = re.sub(r'```.*?```', lambda m: '\n' * m.group(0).count('\n'), content, flags=re.DOTALL)
+content = re.sub(r'`[^`]+`', lambda m: ' ' * len(m.group(0)), content, flags=re.DOTALL)
+# The exact pre-correction autolink strip.
+content = re.sub(r'<https?://[^>\s]+>', '', content)
+print(sum(1 for l in content.split('\n') if l.startswith('Unsafe') and '<' in l))
+PY
+)"
+if [ "$old_autolink_hits" = "0" ]; then
+    ok "old strip hides both unsafe autolinks from the \`<\` rule (this is the bug)"
 else
-    bad "autolink behaviour changed" "$out"
+    bad "old strip unexpectedly left an unsafe autolink visible ($old_autolink_hits)" \
+        "the fail-before premise no longer holds; re-derive it"
+fi
+
+out="$(scan "$FIX/autolinks.md")"; rc=$?
+if [ "$rc" -ne 0 ]; then
+    ok "exits non-zero ($rc) on <http(s)://...> autolinks"
+else
+    bad "exited 0 on the autolink fixture" "$out"
+fi
+
+# Both schemes must be named in the report.
+while IFS= read -r needle; do
+    [ -z "$needle" ] && continue
+    if printf '%s' "$out" | grep -qF -- "$needle"; then
+        ok "reports: $needle"
+    else
+        bad "did not report: $needle" "$out"
+    fi
+done <<'NEEDLES'
+Unsafe http: then open <http://localhost:8080>.
+Unsafe https: see <https://example.com/a?b=1> for more.
+NEEDLES
+
+# ...and nothing else: the [text](url) link, inline code, the escaped
+# bracket, the entity and the fenced block all compile under MDX.
+reported="$(printf '%s\n' "$out" | grep -c -- ': <-prefix: ')"
+if [ "$reported" = "2" ]; then
+    ok "reports exactly the 2 unsafe lines; link, code, \\<, &lt; and fence pass"
+else
+    bad "expected exactly 2 autolink hazards, got $reported" "$out"
 fi
 
 # ── 5. The real corpus is clean

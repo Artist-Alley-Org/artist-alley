@@ -61,7 +61,7 @@ The constraints measured in the v0.11.1 preflight
   10 GiB each. A full `site_a` payload fetched on every CI run would consume
   a material share of that.
 - GitHub's release documentation
-  (<https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases>)
+  ([docs.github.com/en/repositories/releasing-projects-on-github/about-releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases))
   requires each release asset to be under 2 GiB. It states no limit on total
   release size or bandwidth.
 
@@ -482,7 +482,7 @@ overlap anchors and the selected rows' licence notice.
   describes the subset; `EDITION.json` records the source pins, the selection
   and every change. The rights caveats are carried unchanged.
 - Release (built with `release_dataset.py`): public prerelease
-  <https://github.com/Artist-Alley-Org/artist-alley-dataset-site-a/releases/tag/v2026.11.01-sm>,
+  [github.com/Artist-Alley-Org/artist-alley-dataset-site-a/releases/tag/v2026.11.01-sm](https://github.com/Artist-Alley-Org/artist-alley-dataset-site-a/releases/tag/v2026.11.01-sm),
   release id 444795243. Its `release.json` has SHA-256
   `c6838e5020b1bc56f048c0602c2021c1c840e3e3ddf236827eb7358b521a503f`, and its
   one part is 658,160,717 bytes, SHA-256
@@ -562,4 +562,4 @@ rights-cleared.
   `scripts/ci/ephemeral-studio-b-tls.sh`, `infra/docker/ci/docker-compose.hosted.yml`
 - `.github/workflows/ui-pr.yml`, `.github/workflows/ui-nightly.yml`
 - GitHub, About releases:
-  <https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases>
+  [docs.github.com/en/repositories/releasing-projects-on-github/about-releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
