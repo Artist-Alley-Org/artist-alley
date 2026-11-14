@@ -1,22 +1,21 @@
 # PR + branch validation. Runs on every push to a long-lived branch
 # (main, dev) and on every PR targeting main or dev.
 #
-# Runners (#1514): the four light jobs (docs-only, render-chain,
-# frontend-check, codegen-drift) and the production image build
-# (`docker-build`) run on GitHub-hosted `ubuntu-24.04`. Integration
-# (`test`) stays on the self-hosted `[self-hosted, artist-alley]` pool
-# for now.
+# Runners (#1514): every job in this file runs on GitHub-hosted
+# `ubuntu-24.04`: the four light jobs (docs-only, render-chain,
+# frontend-check, codegen-drift), the production image build
+# (`docker-build`) and Integration (`test`).
 #
 # History: this paragraph used to say "PRs use `ubuntu-latest` so fork
 # PRs can't run code on the self-hosted runner". That stopped being
 # true when the runner rebalance made frontend-check and test
 # unconditional, and #942 moved the last hosted job (codegen-drift)
 # over too. #1514 moved the four light jobs back to hosted runners,
-# then `docker-build` too. A fork PR can still run `test` on the
-# self-hosted pool; GitHub's fork-PR approval policy for this
-# repository (currently first-time contributors only) decides whether
-# a maintainer must approve it first. Fork code is not kept off the
-# trusted pool until `test` moves as well.
+# then `docker-build`, then `test`. With every job hosted, a fork PR's
+# code no longer reaches the self-hosted pool through this workflow;
+# GitHub's fork-PR approval policy for this repository (currently
+# first-time contributors only) still decides whether a maintainer
+# must approve the run first.
 #
 # This is the merge-gate. Edge/release workflows assume CI was green.
 #
@@ -541,17 +540,19 @@ jobs:
     name: Integration tests (full compose stack)
     needs: docs-only
     if: ${{ !cancelled() && !(needs.docs-only.result == 'success' && needs.docs-only.outputs.docs_only == 'true') }}
-    # Self-hosted unconditionally — the runner-rebalance landing
-    # collapsed the prior pick-runner / fromJSON branching into
-    # a single label. The original rationale was the same as
-    # frontend-check's then: keep GitHub-hosted minutes under the
-    # monthly quota. It stays self-hosted after #1514 until a measured
-    # hosted rehearsal shows it fits (it takes about 17 minutes here).
+    # GitHub-hosted ubuntu-24.04 since #1514, the last job in this file
+    # to move. On the self-hosted pool it took about 16-17 minutes with
+    # 10-way Go parallelism and a warm local image cache; the hosted
+    # runner has 4 CPUs and builds the app image cold, so the first
+    # hosted runs are a measured rehearsal (see timeout-minutes and the
+    # capacity steps below).
     #
-    # Fork-PR caveat: on this public repository a fork PR can run this
-    # job on the self-hosted pool. GitHub's fork-PR approval policy
-    # (currently first-time contributors only) decides whether a
-    # maintainer must approve the run first.
+    # History: it was self-hosted unconditionally after the
+    # runner-rebalance landing collapsed the prior pick-runner /
+    # fromJSON branching into a single label, with the same rationale
+    # as frontend-check's then: keep GitHub-hosted minutes under the
+    # monthly quota. While it was self-hosted, a fork PR could run it on
+    # that pool, subject to GitHub's fork-PR approval policy.
     #
     # This comment used to end "...the codegen-drift job stays on
     # ubuntu-latest so a fork PR still gets at least the portability +
@@ -561,11 +562,13 @@ jobs:
     # a maintainer approves it. Accepted deliberately: the repo has
     # zero forks and a fork PR is hand-reviewed anyway. The full
     # trade-off, including the portability coverage we gave up, is
-    # written out over codegen-drift above. Since #1514 the four light
-    # jobs and docker-build are hosted; this job is the remaining
-    # self-hosted one.
-    runs-on: [self-hosted, artist-alley]
-    timeout-minutes: 30
+    # written out over codegen-drift above. Since #1514 every job in
+    # this file, this one included, is hosted.
+    runs-on: ubuntu-24.04
+    # 45 for the hosted rehearsal (was 30 on the self-hosted pool), so a
+    # slow first hosted run reports its real duration instead of being
+    # killed at 30. The target is still comfortably under 30.
+    timeout-minutes: 45
     # No compose-stack concurrency group any more (#331). Each run gets
     # its own COMPOSE_PROJECT_NAME (isolated containers/network/volumes)
     # and the resources override drops every host port, so two runs on
@@ -574,14 +577,19 @@ jobs:
     # ref) still cancels superseded runs of this workflow itself.
     env:
       # Per-run project name: isolates container names, the default
-      # network, and named volumes from every other run on this
-      # shared self-hosted runner. run_attempt keeps re-runs distinct.
+      # network, and named volumes per run. A hosted VM runs one job,
+      # so this matters only if the job returns to a shared runner (it
+      # was written for the shared self-hosted pool). run_attempt keeps
+      # re-runs distinct.
       COMPOSE_PROJECT_NAME: aa-ci-${{ github.run_id }}-${{ github.run_attempt }}
       # Layer the CI resources override onto every `docker compose`
       # invocation — the workflow steps AND scripts/test.sh (which
       # calls bare `docker compose`) both inherit this. It drops host
       # ports and caps per-service memory.
       COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.resources.yml
+      # Go build + test parallelism matched to the hosted runner's 4
+      # CPUs (#1514), the same values ui-pr.yml uses on ubuntu-24.04.
+      # History, from the self-hosted pool, where it was -p=10 / 10:
       # Cap Go build + test parallelism so three stacks at once leave
       # CPU for everything else the shared runner hosts. The runner has
       # 125 GiB of RAM (~40 GiB free with its other workloads up), so
@@ -590,14 +598,20 @@ jobs:
       # was reasoned from during #886 (#887). Flows into the app image
       # build (via the override's build args) and into test.sh's golang
       # containers (forwarded with -e).
-      GOFLAGS: -p=10
-      GOMAXPROCS: 10
+      GOFLAGS: -p=4
+      GOMAXPROCS: 4
 
     steps:
-      - name: Clear stale git locks (persistent self-hosted workspace)
-        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
-
       - uses: actions/checkout@v7
+
+      # Read-only capacity record for the hosted rehearsal (#1514): CPU,
+      # memory and disk before the stack, so headroom is measured rather
+      # than inferred. The matching disk line is the job's last step.
+      - name: Record runner capacity
+        run: |
+          echo "nproc: $(nproc)"
+          free -m
+          df -B1M / | tail -1 | sed 's/^/disk before: /'
 
       # ---- Compose stack mirrors local dev so CI and
       # `./scripts/test.sh` exercise the same artifact (our app
@@ -727,6 +741,13 @@ jobs:
         # built aa-ci-<run>-app and aa-ci-<run>-web.
         if: always()
         uses: ./.github/actions/compose-cleanup
+
+      # Read-only: disk after the stack is torn down, paired with the
+      # "Record runner capacity" step above.
+      - name: Record disk after cleanup
+        if: always()
+        run: |
+          df -B1M / | tail -1 | sed 's/^/disk after:  /'
 
   # ── Does this PR touch the 3D render chain? (#1049)
   #
