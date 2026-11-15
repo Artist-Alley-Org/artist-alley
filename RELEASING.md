@@ -93,7 +93,6 @@ pullable tag.
    the multi-arch image job is still running. **The release is not done
    until that second job completes** — `:latest` only moves at the end,
    and the demo's autoupdate keys off `:latest`.
-   - Cosign keyless signatures on every image
 
 ## Gates before the tag
 
@@ -121,6 +120,21 @@ After the `dev -> main` merge in step 3, the CI runs on the resulting
 
 ## Releases that republish the seed dataset
 
+This section is about the **demo seed published on Kaggle**
+(`mscrnt/dam-population-seed`), and only for a release that republishes
+it. A release that does not republish the demo seed skips this section;
+it has no Kaggle step and is not blocked on one.
+
+The **CI datasets** are a different thing. They are the public `site_a`,
+`site_a_sm` and `site_b` editions in
+`Artist-Alley-Org/artist-alley-dataset-site-a` and `-site-b`, published
+as GitHub Releases and pinned in `seed/contracts/ci-datasets.v1.json`
+(ADR 0100). They are versioned independently of application releases:
+an application tag neither publishes nor republishes them, and a new
+edition reaches CI only through a reviewed pin change. Rollback for them
+is the pin procedure in ADR 0100, "Rollback". The current editions,
+`v2026.11.01` and `v2026.11.01-sm`, were published on 2026-11-13.
+
 When a release republishes the seed dataset, its steps run in this
 order, and none starts before the previous one is done:
 
@@ -129,7 +143,8 @@ order, and none starts before the previous one is done:
 3. The milestone reaches zero open issues.
 4. The dataset is published to Kaggle, as `mscrnt/dam-population-seed`.
 5. The served dataset is verified.
-6. The tag (step 4 above), after the gates in "Gates before the tag".
+6. The tag (step 4 of "Cutting a release"), after the gates in
+   "Gates before the tag".
 
 The dataset publish is part of this release procedure, not of the
 dataset issue. Its acceptance criteria are:
@@ -141,33 +156,37 @@ If a publish or release gate fails after the dataset issue has closed,
 the release stops and the failure is reported. The dataset issue is not
 silently reopened.
 
-### The scheduled nightly and a promoted archive
+### Scheduled dataset runs and dataset changes
 
-The scheduled federation nightly runs `main`'s code against the live
-archive. Promoting a new archive before the release merge therefore puts
-the new corpus in front of the old `main` code until that merge, so a
-promotion is preceded by a rehearsal of the current `main` nightly
-against the staged corpus:
+**No current workflow reads a live, unpinned archive.**
 
-- **Control first.** The same `main` SHA is run against the current
-  corpus. A green control is required before any conclusion is drawn. A
-  red control makes the rehearsal inconclusive, not an infrastructure
-  failure by default: its logs are inspected, one controlled rerun is
-  allowed only for a demonstrated transient flake, and a real defect is
-  resolved through the normal reviewed workflow first.
-- **Compatible (Branch A)** means the control and the test run are both
-  green. That evidence is valid only while `main` stays at the exact
-  rehearsed SHA and the live archive stays byte-identical to the
-  rehearsed corpus. Both are checked before every scheduled nightly
-  until the release merge. If either changes, the evidence lapses at
-  once: the new `main` SHA is rehearsed before a nightly may consume the
-  corpus, or the promotion is reversed.
-- **Incompatible (Branch B)** means release-readiness comes before the
-  promotion: the Dependabot gate resolved, the version bump landed on
-  `dev`, and the release PR open with its checks green. The promotion
-  then runs inside one bounded window that starts after that day's
-  scheduled nightly has concluded and ends at the release merge, with a
-  06:00 UTC rollback cutoff ahead of the nightly's 07:00 UTC schedule.
+- **Pinned editions only.** Since PRs #1533 and #1535 (2026-11-14),
+  `ui-pr`, `ui-nightly` and `ui-scale` seed only from the pinned public
+  editions above.
+- **A corpus change is a pin change.** It is a reviewed PR to
+  `seed/contracts/ci-datasets.v1.json`. That PR's own CI fetches and
+  verifies the new edition.
+- **Code and corpus move together.** Scheduled runs read `main`, so a pin
+  change reaches them only together with `main`'s code, and there is never
+  a window where old `main` code meets a new corpus.
+- **Rollback** is the pin procedure in ADR 0100, "Rollback".
+
+**Schedules are nominal.** `ui-nightly` is scheduled at 07:00 UTC and
+`ui-scale` at 02:17 UTC. GitHub may start a scheduled run late or skip it.
+Scheduled nightlies have started between about 13:40 and 17:10 UTC, hours
+after their 07:00 slot. When a release depends on a scheduled run, check
+the actual run and its head SHA, not the clock.
+
+**Historical:** the retired live-archive procedure. Before #1533 and
+#1535, the nightly read a live archive mounted on the self-hosted runner,
+so promoting a new archive put it in front of the old `main` code until
+the release merge. That required a control-first rehearsal, with
+"Compatible (Branch A)" and "Incompatible (Branch B)" outcomes and a
+06:00 UTC rollback cutoff. No workflow needs it now, so it is no longer
+part of this procedure; its text is in this file's git history before
+2026-11-15. If a workflow or deployment ever reads an unpinned archive
+again, re-establish an equivalent rehearsal in a reviewed change before
+the first promotion.
 
 ## Versioning
 
@@ -211,9 +230,10 @@ When optional secrets are unset, the matching steps no-op silently.
 
 ## GitHub-hosted runners
 
-Every workflow job on `dev` runs on a GitHub-hosted runner
+Every workflow job on `dev` and `main` runs on a GitHub-hosted runner
 (`ubuntu-24.04`, or `ubuntu-latest` for the small gates), so there is no
-self-hosted runner to set up. The tools come from the runner image
+self-hosted runner to set up. `main` has carried the hosted revisions
+since PR #1547 (merge `a379e5cc`, 2026-11-15). The tools come from the runner image
 (Docker with `buildx`, `gh`, `jq`, `curl`) or from setup actions in the
 workflows (`setup-go`, `setup-node`, `setup-qemu-action`,
 `setup-buildx-action`, `cosign-installer`).
@@ -226,9 +246,18 @@ workflows (`setup-go`, `setup-node`, `setup-qemu-action`,
   tag after this change reaches `main` is its first live test.
 - A tag runs `release.yml` as committed at the tagged commit, so the
   hosted version applies only to tags cut after a `dev` to `main`
-  promotion that carries it. As of 2026-11-15, `main` (`2fff3580`) still
+  promotion that carries it. Before PR #1547, `main` (`2fff3580`) still
   had the earlier self-hosted revisions of `ci.yml`, `edge.yml`,
-  `release.yml` and `site-rebuild-trigger.yml`.
+  `release.yml` and `site-rebuild-trigger.yml`. Every tag cut from
+  `main` at or after `a379e5cc` uses the hosted `release.yml`. The first
+  such tag is the first live test of its publishing path, so watch both
+  release jobs to completion.
+- **Dependabot minor and patch PRs can merge themselves.**
+  `dependabot-automerge.yml` labels them `automerge` and squash-merges
+  them once their CI passes. That bot merge triggers no `dev` push
+  workflows, so the resulting `dev` head has no push CI of its own (no
+  Edge, no Verify production image build) until the next human merge.
+  Check the latest `dev` push runs before promoting.
 - With every CI job hosted, a fork PR's code no longer runs on
   self-hosted hardware through these workflows. GitHub's fork-PR approval
   policy still applies.
