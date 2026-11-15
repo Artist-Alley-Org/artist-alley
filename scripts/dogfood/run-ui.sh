@@ -20,7 +20,11 @@
 # Modes (positional, first arg):
 #   standalone   standalone tests only (default if omitted)
 #   federation   federation tests only
-#   all          both projects
+#   all          standalone + federation (named explicitly, so a project
+#                added later never joins it by default)
+#   scale        the full-corpus scale project (tests/scale, #1514), run
+#                only by .github/workflows/ui-scale.yml against a stack
+#                seeded with a whole public edition; one worker
 #
 # Extra args after the mode are forwarded to `playwright test`
 # verbatim — so `--grep PATTERN`, `--reporter line`, etc. work
@@ -55,6 +59,7 @@ case "${1:-}" in
     standalone) mode="standalone"; shift ;;
     federation) mode="federation"; shift ;;
     all)        mode="all"; shift ;;
+    scale)      mode="scale"; shift ;;
     -h|--help)
         sed -n '2,40p' "$SCRIPT_PATH"
         exit 0
@@ -304,7 +309,7 @@ fi
 # --- 2. run tests --------------------------------------------------------
 
 if [ "$mode" = "all" ]; then
-    step "Running Playwright UI suite (both projects)"
+    step "Running Playwright UI suite (standalone + federation)"
 else
     step "Running Playwright UI suite (mode: $mode)"
 fi
@@ -330,10 +335,17 @@ rm -f "$AA_LOCK_AUDIT"
 export AA_FIXTURE_LEDGER="${UI_DIR}/.pw-artifacts/fixture-ledger.jsonl"
 rm -f "$AA_FIXTURE_LEDGER"
 
+# `all` NAMES its two projects rather than passing no --project (#1514).
+# With no --project Playwright runs every project in the config, so the
+# `scale` project (a whole-edition check that needs its own seeded stack
+# and SCALE_EXPECTED) would silently join the nightly's `all`. `setup`
+# still runs, as standalone's dependency.
 pw_args=()
-if [ "$mode" != "all" ]; then
-    pw_args+=(--project "$mode")
-fi
+case "$mode" in
+    all)   pw_args+=(--project standalone --project federation) ;;
+    scale) pw_args+=(--project scale --workers 1) ;;
+    *)     pw_args+=(--project "$mode") ;;
+esac
 if [ "${#passthrough[@]}" -gt 0 ]; then
     pw_args+=("${passthrough[@]}")
 fi
@@ -431,7 +443,10 @@ fi
 # Under `--grep` an absent test means the selection and not a deletion,
 # and failing there would make the flag unusable.
 audit_full=""
-if [ "${#passthrough[@]}" -eq 0 ] && [ "$mode" != "federation" ]; then
+# Standalone and `all` only: the manifest lists standalone tests, so a
+# federation or scale run (neither selects the standalone suite) would see
+# every entry as stale.
+if [ "${#passthrough[@]}" -eq 0 ] && { [ "$mode" = "standalone" ] || [ "$mode" = "all" ]; }; then
     audit_full="--full"
 fi
 

@@ -33,7 +33,9 @@
   "",
   "⛔ DO NOT hand-edit site_a/MANIFEST.json again. It is an OUTPUT. That habit is what",
   "created this document, and `manifest_guard.py` now refuses the run that would have",
-  "silently thrown the result away."
+  "silently thrown the result away.",
+  "",
+  "#1514 (2026-11-13): the fill entry for the Sponza scene (4d30ea15-aec9-f53a-647c-3d4034b9f3a2) was dropped. The record left the public site_a by owner decision and is not a byte-collapse retirement, so no asset-collapse document can account for it, and an unknown fill id fails `apply_upgrade.py --check` (#1328). The entry filled only `mature: false` and four fixture field values. The fills for the 76 records whose bytes #1514 replaced (75 Pexels videos to NPS B-roll, 2CylinderEngine to Kenney machine.glb) now carry the published credit, copyright and usage_rights values instead of the old fixture rights claims, so this add-only pass can never re-fill those claims."
  ],
  "added": [
   {
@@ -13200,19 +13202,6 @@
    }
   },
   {
-   "id": "4d30ea15-aec9-f53a-647c-3d4034b9f3a2",
-   "mature": false,
-   "field_values": {
-    "production_area": "environment-props",
-    "country": "cn",
-    "keywords": [
-     "photograph",
-     "texture"
-    ],
-    "credit": "Aurora R&D / Archive"
-   }
-  },
-  {
    "id": "f7c409e9-f363-3b23-3c6c-3f494700806e",
    "mature": false,
    "field_values": {
@@ -13267,7 +13256,7 @@
      "people",
      "reference"
     ],
-    "credit": "Aurora R&D / Field Unit"
+    "credit": "Kenney (kenney.nl)"
    }
   },
   {
@@ -13919,13 +13908,13 @@
    "field_values": {
     "production_area": "film-footage",
     "production_notes": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock.",
-    "usage_rights": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "jp",
     "keywords": [
      "editorial"
     ],
-    "credit": "Aurora R&D / Archive",
-    "copyright": "© Aurora R&D. All rights reserved.",
+    "credit": "NPS Video: Blum, Wang and Well",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending.",
     "capture_date": "2026-01-21T12:12:00Z"
    },
    "mature": false
@@ -13953,7 +13942,7 @@
      "illustration",
      "photograph"
     ],
-    "credit": "Aurora R&D / Contract"
+    "credit": "NPS/M. Quinn"
    },
    "mature": false
   },
@@ -13968,7 +13957,7 @@
     "keywords": [
      "logo"
     ],
-    "copyright": "© Aurora R&D. Licensed for editorial use."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -13976,13 +13965,13 @@
    "id": "e9285d8e-3939-b1f3-a07a-332ce7c15105",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p>Public domain source.</p><ul><li>Attribution optional</li><li>Derivatives allowed</li></ul>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "de",
     "keywords": [
      "archival",
      "reference"
     ],
-    "credit": "Aurora R&D / Field Unit",
+    "credit": "NPS Video: Blum, Wells, and Wang",
     "capture_date": "2026-05-25T16:16:00Z"
    },
    "mature": false
@@ -14009,8 +13998,8 @@
     "keywords": [
      "portrait"
     ],
-    "credit": "Aurora R&D / Studio B",
-    "copyright": "Public domain — no rights reserved."
+    "credit": "NPS Video: Richard Burton",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -14030,7 +14019,7 @@
    "id": "52d65ad0-7e6c-7335-450f-42418cf34180",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p><em>Restricted.</em> Do not include in showreels before the announcement window.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "ingested_at": "2026-09-01T20:20:00Z",
     "derived_from": "993a12f1-5a07-21f4-de47-94a4a095b820",
     "license_expires": "2026-09-01T00:00:00Z",
@@ -14040,7 +14029,7 @@
      "nature",
      "promotional"
     ],
-    "credit": "Aurora R&D",
+    "credit": "NPS Video: Richard Burton",
     "capture_date": "2026-09-01T20:20:00Z"
    },
    "mature": false
@@ -14054,7 +14043,7 @@
     "keywords": [
      "texture"
     ],
-    "copyright": "© Aurora R&D. Internal use only."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -14067,7 +14056,7 @@
      "illustration",
      "photograph"
     ],
-    "credit": "Aurora R&D / Archive"
+    "credit": "NPS Video: Richard Burton"
    },
    "mature": false
   },
@@ -14089,13 +14078,13 @@
    "field_values": {
     "production_area": "film-footage",
     "production_notes": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock.",
-    "usage_rights": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "eg",
     "keywords": [
      "archival"
     ],
-    "credit": "Aurora R&D / Contract",
-    "copyright": "© Aurora R&D. All rights reserved.",
+    "credit": "NPS Video: Richard Burton",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending.",
     "capture_date": "2026-01-05T00:24:00Z"
    },
    "mature": false
@@ -14124,7 +14113,7 @@
      "event",
      "people"
     ],
-    "credit": "Aurora R&D / Field Unit"
+    "credit": "NPS Video: Richard Burton"
    },
    "mature": false
   },
@@ -14138,7 +14127,7 @@
     "keywords": [
      "landscape"
     ],
-    "copyright": "© Aurora R&D. Licensed for editorial use."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -14146,13 +14135,13 @@
    "id": "f3ed130c-0e38-85f0-fbfe-bcd0f5c88611",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p>Public domain source.</p><ul><li>Attribution optional</li><li>Derivatives allowed</li></ul>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "za",
     "keywords": [
      "architecture",
      "promotional"
     ],
-    "credit": "Aurora R&D / Studio B",
+    "credit": "NPS Video: Blum, Well, and Wang",
     "capture_date": "2026-05-09T04:28:00Z"
    },
    "mature": false
@@ -14181,8 +14170,8 @@
     "keywords": [
      "photograph"
     ],
-    "credit": "Aurora R&D",
-    "copyright": "Public domain — no rights reserved."
+    "credit": "NPS Video: Blum, Wells, and Wang",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -14202,14 +14191,14 @@
    "id": "c40b4e9e-bffe-b425-5ef8-7e619af40bc3",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p><em>Restricted.</em> Do not include in showreels before the announcement window.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "mx",
     "keywords": [
      "animation",
      "logo",
      "product"
     ],
-    "credit": "Aurora R&D / Archive",
+    "credit": "NPS Vidoo: Blum, Wells, and Wang",
     "capture_date": "2026-09-13T08:32:00Z"
    },
    "mature": false
@@ -14223,7 +14212,7 @@
     "keywords": [
      "reference"
     ],
-    "copyright": "© Aurora R&D. Internal use only."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -14237,7 +14226,7 @@
      "event",
      "people"
     ],
-    "credit": "Aurora R&D / Contract"
+    "credit": "NPS Video/M. Quinn"
    },
    "mature": false
   },
@@ -14261,13 +14250,13 @@
    "field_values": {
     "production_area": "film-footage",
     "production_notes": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock.",
-    "usage_rights": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "jp",
     "keywords": [
      "architecture"
     ],
-    "credit": "Aurora R&D / Field Unit",
-    "copyright": "© Aurora R&D. All rights reserved.",
+    "credit": "NPS Video: Blum, Wang, and Well",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending.",
     "capture_date": "2026-01-17T12:36:00Z"
    },
    "mature": false
@@ -14294,7 +14283,7 @@
      "nature",
      "texture"
     ],
-    "credit": "Aurora R&D / Studio B"
+    "credit": "NPS Video/M. Quinn"
    },
    "mature": false
   },
@@ -14307,7 +14296,7 @@
     "keywords": [
      "illustration"
     ],
-    "copyright": "© Aurora R&D. Licensed for editorial use."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -14315,7 +14304,7 @@
    "id": "2e15c79c-8017-d645-bdcf-938594a28af7",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p>Public domain source.</p><ul><li>Attribution optional</li><li>Derivatives allowed</li></ul>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "ingested_at": "2026-05-21T16:40:00Z",
     "license_expires": "2026-05-21T00:00:00Z",
     "country": "de",
@@ -14323,7 +14312,7 @@
      "animation",
      "product"
     ],
-    "credit": "Aurora R&D",
+    "credit": "NPS / Renata Harrison",
     "capture_date": "2026-05-21T16:40:00Z"
    },
    "mature": false
@@ -27145,8 +27134,8 @@
     "keywords": [
      "archival"
     ],
-    "credit": "Aurora R&D / Archive",
-    "copyright": "Public domain — no rights reserved."
+    "credit": "NPS Video: Blum, Wells, and Wang",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27166,7 +27155,7 @@
    "id": "80030f88-3efd-900c-880f-ba0e0af35f0c",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p><em>Restricted.</em> Do not include in showreels before the announcement window.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "derived_from": "07b88331-2301-8263-11a6-96aea5ce5f84",
     "country": "mx",
     "keywords": [
@@ -27174,7 +27163,7 @@
      "event",
      "people"
     ],
-    "credit": "Aurora R&D / Contract",
+    "credit": "NPS Video: Blum, Wells, and Wang",
     "capture_date": "2026-09-01T08:44:00Z"
    },
    "mature": false
@@ -27190,7 +27179,7 @@
     "keywords": [
      "landscape"
     ],
-    "copyright": "© Aurora R&D. Internal use only."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27203,7 +27192,7 @@
      "architecture",
      "promotional"
     ],
-    "credit": "Aurora R&D / Field Unit"
+    "credit": "NPS Video: Blum, Wells, and Wang"
    },
    "mature": false
   },
@@ -27225,13 +27214,13 @@
    "field_values": {
     "production_area": "film-footage",
     "production_notes": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock.",
-    "usage_rights": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "jp",
     "keywords": [
      "photograph"
     ],
-    "credit": "Aurora R&D / Studio B",
-    "copyright": "© Aurora R&D. All rights reserved.",
+    "credit": "NPS Video: Blum, Wells, and Wang",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending.",
     "capture_date": "2026-01-05T12:48:00Z"
    },
    "mature": false
@@ -27260,7 +27249,7 @@
      "logo",
      "product"
     ],
-    "credit": "Aurora R&D"
+    "credit": "NPS Video: Blum, Well, and Wang"
    },
    "mature": false
   },
@@ -27274,7 +27263,7 @@
     "keywords": [
      "reference"
     ],
-    "copyright": "© Aurora R&D. Licensed for editorial use."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27282,13 +27271,13 @@
    "id": "ec149ea4-ba70-c760-4a1d-3de0262df091",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p>Public domain source.</p><ul><li>Attribution optional</li><li>Derivatives allowed</li></ul>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "de",
     "keywords": [
      "event",
      "people"
     ],
-    "credit": "Aurora R&D / Archive",
+    "credit": "NPS Video: Richard Burton",
     "capture_date": "2026-05-09T16:52:00Z"
    },
    "mature": false
@@ -27315,8 +27304,8 @@
     "keywords": [
      "architecture"
     ],
-    "credit": "Aurora R&D / Contract",
-    "copyright": "Public domain — no rights reserved."
+    "credit": "National Park Service (Courtesy of the National Park Service)",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27338,14 +27327,14 @@
    "id": "6835f00f-995a-45c9-481a-a5efc732398e",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p><em>Restricted.</em> Do not include in showreels before the announcement window.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "se",
     "keywords": [
      "editorial",
      "nature",
      "texture"
     ],
-    "credit": "Aurora R&D / Field Unit",
+    "credit": "NPS Video (Courtesy of the National Park Service)",
     "capture_date": "2026-09-13T20:56:00Z"
    },
    "mature": false
@@ -27359,7 +27348,7 @@
     "keywords": [
      "illustration"
     ],
-    "copyright": "© Aurora R&D. Internal use only."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27373,7 +27362,7 @@
      "animation",
      "product"
     ],
-    "credit": "Aurora R&D / Studio B"
+    "credit": "NPS Video (Courtesy of the National Park Service)"
    },
    "mature": false
   },
@@ -27395,15 +27384,15 @@
    "field_values": {
     "production_area": "film-footage",
     "production_notes": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock.",
-    "usage_rights": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "ingested_at": "2026-01-17T00:00:00Z",
     "license_expires": "2026-01-17T00:00:00Z",
     "country": "eg",
     "keywords": [
      "people"
     ],
-    "credit": "Aurora R&D",
-    "copyright": "© Aurora R&D. All rights reserved.",
+    "credit": "NPS Video/M. Quinn",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending.",
     "capture_date": "2026-01-17T00:00:00Z"
    },
    "mature": false
@@ -27430,7 +27419,7 @@
      "landscape",
      "portrait"
     ],
-    "credit": "Aurora R&D / Archive"
+    "credit": "NPS Video: Richard Burton"
    },
    "mature": false
   },
@@ -27443,7 +27432,7 @@
     "keywords": [
      "promotional"
     ],
-    "copyright": "© Aurora R&D. Licensed for editorial use."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27451,13 +27440,13 @@
    "id": "c214d72e-2240-b1a2-5b39-39be5493eea7",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p>Public domain source.</p><ul><li>Attribution optional</li><li>Derivatives allowed</li></ul>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "za",
     "keywords": [
      "editorial",
      "nature"
     ],
-    "credit": "Aurora R&D / Contract",
+    "credit": "NPS Video: Richard Burton",
     "capture_date": "2026-05-21T04:04:00Z"
    },
    "mature": false
@@ -27487,8 +27476,8 @@
     "keywords": [
      "animation"
     ],
-    "credit": "Aurora R&D / Field Unit",
-    "copyright": "Public domain — no rights reserved."
+    "credit": "NPS Video: Blum, Wang and Well",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27508,14 +27497,14 @@
    "id": "23fd2bcc-fc30-18af-fc73-0ceaf3bf38f9",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p><em>Restricted.</em> Do not include in showreels before the announcement window.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "mx",
     "keywords": [
      "archival",
      "logo",
      "reference"
     ],
-    "credit": "Aurora R&D / Studio B",
+    "credit": "NPS Video: Blum, Wells, and Wang",
     "capture_date": "2026-09-25T08:08:00Z"
    },
    "mature": false
@@ -27529,7 +27518,7 @@
     "keywords": [
      "event"
     ],
-    "copyright": "© Aurora R&D. Internal use only."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27544,7 +27533,7 @@
      "abstract",
      "portrait"
     ],
-    "credit": "Aurora R&D"
+    "credit": "NPS Video: Michael Quinn"
    },
    "mature": false
   },
@@ -27566,14 +27555,14 @@
    "field_values": {
     "production_area": "film-footage",
     "production_notes": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock.",
-    "usage_rights": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "derived_from": "37e67261-efb0-e435-9c43-baecfb823c90",
     "country": "jp",
     "keywords": [
      "nature"
     ],
-    "credit": "Aurora R&D / Archive",
-    "copyright": "© Aurora R&D. All rights reserved.",
+    "credit": "NPS Video",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending.",
     "capture_date": "2026-01-01T12:12:00Z"
    },
    "mature": false
@@ -27600,7 +27589,7 @@
      "photograph",
      "texture"
     ],
-    "credit": "Aurora R&D / Contract"
+    "credit": "NPS Video: Michael Quinn"
    },
    "mature": false
   },
@@ -27615,7 +27604,7 @@
     "keywords": [
      "product"
     ],
-    "copyright": "© Aurora R&D. Licensed for editorial use."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27623,13 +27612,13 @@
    "id": "042c2bbc-3362-9cdc-b9a2-93f20eaa0e2e",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p>Public domain source.</p><ul><li>Attribution optional</li><li>Derivatives allowed</li></ul>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "de",
     "keywords": [
      "archival",
      "logo"
     ],
-    "credit": "Aurora R&D / Field Unit",
+    "credit": "NPS Video: Blum, Wang and Well",
     "capture_date": "2026-05-05T16:16:00Z"
    },
    "mature": false
@@ -27656,8 +27645,8 @@
     "keywords": [
      "abstract"
     ],
-    "credit": "Aurora R&D / Studio B",
-    "copyright": "Public domain — no rights reserved."
+    "credit": "NPS Video (Courtesy of the National Park Service)",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27678,7 +27667,7 @@
    "id": "6d714647-7a8e-189f-e61e-dedb48cb4335",
    "field_values": {
     "production_area": "film-footage",
-    "usage_rights": "<p><em>Restricted.</em> Do not include in showreels before the announcement window.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "ingested_at": "2026-09-09T20:20:00Z",
     "license_expires": "2026-09-09T00:00:00Z",
     "country": "se",
@@ -27687,7 +27676,7 @@
      "landscape",
      "promotional"
     ],
-    "credit": "Aurora R&D",
+    "credit": "NPS Video: Blum, Wells, and Wang",
     "capture_date": "2026-09-09T20:20:00Z"
    },
    "mature": false
@@ -27701,7 +27690,7 @@
     "keywords": [
      "editorial"
     ],
-    "copyright": "© Aurora R&D. Internal use only."
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending."
    },
    "mature": false
   },
@@ -27714,7 +27703,7 @@
      "photograph",
      "texture"
     ],
-    "credit": "Aurora R&D / Archive"
+    "credit": "NPS Video: Blum, Wells, and Wang"
    },
    "mature": false
   },
@@ -27736,13 +27725,13 @@
    "field_values": {
     "production_area": "film-footage",
     "production_notes": "Reviewed against the Aurora R&D style guide; flagged for a lighting pass before lock.",
-    "usage_rights": "<p>Cleared for <strong>internal</strong> use.</p><p>External distribution needs sign-off.</p>",
+    "usage_rights": "<p>The NPS collection page states this footage is public domain.</p><p>NPS media pages say NPS multimedia should not be presumed public domain. Rights review is pending; this is not legal or publication clearance.</p>",
     "country": "eg",
     "keywords": [
      "logo"
     ],
-    "credit": "Aurora R&D / Contract",
-    "copyright": "© Aurora R&D. All rights reserved.",
+    "credit": "NPS Video/ M. Quinn",
+    "copyright": "Public domain per the NPS collection page (U.S. National Park Service). Rights review pending.",
     "capture_date": "2026-01-13T00:24:00Z"
    },
    "mature": false
@@ -27772,7 +27761,7 @@
      "people",
      "reference"
     ],
-    "credit": "Aurora R&D / Field Unit"
+    "credit": "NPS Video: Blum, Wang and Well"
    },
    "mature": false
   }

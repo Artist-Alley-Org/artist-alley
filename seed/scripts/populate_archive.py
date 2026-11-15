@@ -146,6 +146,7 @@ import zipfile
 from pathlib import Path
 
 import asset_collapse as ac
+import kenney_pack_sources as kps
 import manifest_guard as mg
 import preserved_archive as pa
 
@@ -185,8 +186,30 @@ UA = ("artist-alley-seed-fetcher/2.0 "
 _ZIP_CACHE: dict[str, "zipfile.ZipFile"] = {}
 
 
+def _signed_archive_zip(archive: dict) -> tuple["zipfile.ZipFile | None", str]:
+    """The authenticated zip for a `kenney-download-link-json` source_archive
+    (#1514): the endpoint returns a fresh signed URL, the whole zip is checked
+    against `archive_bytes`/`archive_sha256` before it is opened, and the
+    signed URL is never cached, logged or returned. Cached per (endpoint,
+    archive hash), so a cached zip is always one that passed that check."""
+    key = f"{archive.get('url')}#{archive.get('archive_sha256')}"
+    z = _ZIP_CACHE.get(key)
+    if z is not None:
+        return z, ""
+    try:
+        blob = kps.fetch_signed_archive(archive)
+    except kps.ArchiveError as e:
+        return None, f"signed-link archive refused: {e}"
+    try:
+        z = zipfile.ZipFile(io.BytesIO(blob))
+    except zipfile.BadZipFile as e:
+        return None, f"not a zip: {e}"
+    _ZIP_CACHE[key] = z
+    return z, ""
+
+
 def refetch_member(url: str, member: str, expect_sha256: str,
-                   dest: Path) -> tuple[bool, str]:
+                   dest: Path, archive: dict | None = None) -> tuple[bool, str]:
     """Extract one file from a remote zip into `dest` (#572).
 
     The Kenney half of the library has no per-file URL: the bundle it
@@ -199,8 +222,25 @@ def refetch_member(url: str, member: str, expect_sha256: str,
     checked BEFORE the bytes are moved into place, so a pack that changed
     upstream fails loudly instead of staging different art under an
     unchanged manifest entry.
+
+    `archive` is the record's whole `metadata.source_archive`. With no
+    `transport` key (every direct-zip record) it changes nothing. With
+    `transport: kenney-download-link-json` (#1514) `url` is an endpoint that
+    RETURNS JSON naming a short-lived signed zip URL; see
+    `kenney_pack_sources.fetch_signed_archive`.
     """
-    z = _ZIP_CACHE.get(url)
+    transport = (archive or {}).get("transport")
+    if transport is not None:
+        if transport != kps.TRANSPORT_SIGNED_LINK:
+            return False, f"unknown source_archive transport {transport!r}"
+        if archive.get("url") != url or archive.get("member") != member \
+                or archive.get("sha256") != expect_sha256:
+            return False, "source_archive disagrees with the member being re-fetched"
+        z, note = _signed_archive_zip(archive)
+        if z is None:
+            return False, note
+    else:
+        z = _ZIP_CACHE.get(url)
     if z is None:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         try:
@@ -228,6 +268,230 @@ def refetch_member(url: str, member: str, expect_sha256: str,
     tmp.write_bytes(data)
     tmp.replace(dest)
     return True, f"{len(data):,} B from {url.rsplit('/', 1)[-1]}"
+
+
+def _companion_dest(comp: dict, model_rel: str) -> tuple[str, str]:
+    """(companion dest path relative to the site, "") for a declared
+    companion of `model_rel`, or ("", reason) when it is unusable: the `uri`
+    must stay inside the model directory and land exactly on the recorded
+    `path`. Shared by the re-fetch and by a dry run's --prune accounting."""
+    import posixpath
+    uri, want, path = comp.get("uri"), comp.get("sha256"), comp.get("path")
+    if not (isinstance(uri, str) and uri and isinstance(want, str) and want
+            and isinstance(path, str) and path):
+        return "", "companion needs uri, path and sha256"
+    if uri.startswith("/") or "\\" in uri or ".." in uri.split("/"):
+        return "", f"companion uri {uri!r} escapes the model directory"
+    rel = posixpath.normpath(posixpath.join(posixpath.dirname(model_rel), uri))
+    if rel != path:
+        return "", f"companion uri {uri!r} lands at {rel}, but the record says {path}"
+    return rel, ""
+
+
+def _refetch_companion(sa: dict, comp: dict, model_rel: str,
+                       dest_root: Path) -> tuple[bool, str, str]:
+    """Re-fetch one declared companion of a re-fetched pack model (#1514).
+
+    Returns (ok, companion dest path relative to the site, note). The member
+    is the companion `uri` resolved against the model member's directory in
+    the zip, and the destination is the same `uri` beside the model, which
+    must equal the companion's recorded `path`; a uri that escapes either
+    directory is refused. Bytes are checked against the companion's own
+    sha256 before they are staged."""
+    import posixpath
+    rel, why = _companion_dest(comp, model_rel)
+    if not rel:
+        return False, "", why
+    uri, want = comp["uri"], comp["sha256"]
+    member = posixpath.normpath(posixpath.join(posixpath.dirname(sa["member"]), uri))
+    ok, note = refetch_member(sa["url"], member, want, dest_root / rel,
+                              archive={**sa, "member": member, "sha256": want})
+    return ok, rel, note
+
+
+# ⛔ --prune IS CONFINED TO THE PAYLOAD ROOTS (#1514). It used to walk the
+# whole destination and delete every file that was not a wanted profile path
+# (only metadata.csv, groups.csv and MANIFEST.json were exempt), so on a
+# metadata repo checkout it would have deleted posts.json, ATTRIBUTIONS.md,
+# README.md, SHA256SUMS, dataset-metadata.json, .gitignore and the .git
+# internals. A dataset's payload lives only under these typed folders; every
+# other top-level file and directory is metadata, control or repository state
+# and is never pruned.
+PRUNE_ROOTS = ("3d", "audio", "comics", "documents", "fonts", "images", "videos")
+
+
+def prune_payload(dest: Path, wanted: set[str], *,
+                  dry_run: bool) -> tuple[int, int, list[tuple[str, str]]]:
+    """Delete stale payload files under `dest/<PRUNE_ROOTS>`.
+
+    Returns (files pruned or, in a dry run, that would be; empty directories
+    removed; [(reason, path)] entries deliberately left untouched).
+
+    Never follows or deletes a symlink, never enters or deletes a hidden
+    entry (a name starting with "."), and confirms every file's real path is
+    inside its payload root before unlinking it. Only empty subdirectories
+    under a payload root are removed, never a root itself, and nothing at all
+    in a dry run.
+    """
+    pruned = dirs_removed = 0
+    left: list[tuple[str, str]] = []
+    dest_real = os.path.realpath(dest)
+    for root_name in PRUNE_ROOTS:
+        top = os.path.join(dest, root_name)
+        if os.path.islink(top):
+            left.append(("symlinked payload root, not followed", root_name))
+            continue
+        if not os.path.isdir(top):
+            continue
+        top_real = os.path.realpath(top)
+        if os.path.dirname(top_real) != dest_real:
+            left.append(("payload root resolves outside the destination", root_name))
+            continue
+        for cur, dirs, files in os.walk(top, topdown=True, followlinks=False):
+            keep_dirs = []
+            for dname in dirs:
+                full = os.path.join(cur, dname)
+                rel = os.path.relpath(full, dest).replace(os.sep, "/")
+                if dname.startswith("."):
+                    left.append(("hidden directory", rel))
+                elif os.path.islink(full):
+                    left.append(("symlinked directory, not followed", rel))
+                else:
+                    keep_dirs.append(dname)
+            dirs[:] = keep_dirs
+            for fname in files:
+                full = os.path.join(cur, fname)
+                rel = os.path.relpath(full, dest).replace(os.sep, "/")
+                if rel in wanted:
+                    continue
+                if fname.startswith("."):
+                    left.append(("hidden file", rel))
+                    continue
+                if os.path.islink(full):
+                    left.append(("symlink", rel))
+                    continue
+                real = os.path.realpath(full)
+                if os.path.commonpath([real, top_real]) != top_real or not os.path.isfile(real):
+                    left.append(("not a regular file inside its payload root", rel))
+                    continue
+                pruned += 1
+                if not dry_run:
+                    os.unlink(full)
+        if not dry_run:
+            for cur, dirs, files in os.walk(top, topdown=False, followlinks=False):
+                if cur == top or os.path.islink(cur):
+                    continue
+                if any(part.startswith(".") for part in
+                       os.path.relpath(cur, top).split(os.sep)):
+                    continue
+                try:
+                    if not os.listdir(cur):
+                        os.rmdir(cur)
+                        dirs_removed += 1
+                except OSError:
+                    pass
+    return pruned, dirs_removed, left
+
+
+def plan_license_notices(profile: list[dict]) -> tuple[dict[str, dict], list[tuple[str, str]]]:
+    """Every declared `metadata.license_notice` file, keyed by its site path (#1514).
+
+    A notice is a rights file that ships beside an asset but is not itself a
+    profile row or a model companion (the Kenney pack's `License.txt`). It is
+    declared on the record it covers:
+
+        license_notice.path    where it ships in the site
+        license_notice.sha256  its bytes
+        license_notice.bytes   its byte count
+        license_notice.member  the same file inside the record's
+                               `source_archive` zip, so a clean rebuild can
+                               restore it through the authenticated re-fetch
+
+    Returns (path -> {"root", "notice", "archive", "ids"}, problems). Records
+    that share a notice path must declare the same sha256, bytes, member and
+    archive; a disagreement, an unsafe path or a malformed notice is a problem
+    (a refusal), never a guess.
+    """
+    import posixpath
+    plan: dict[str, dict] = {}
+    problems: list[tuple[str, str]] = []
+    for rec in profile:
+        meta = rec.get("metadata") or {}
+        ln = meta.get("license_notice")
+        if ln is None:
+            continue
+        rid = str(rec.get("id", "?"))
+        if not isinstance(ln, dict):
+            problems.append((rid, "license_notice is not an object"))
+            continue
+        path, want, n = ln.get("path"), ln.get("sha256"), ln.get("bytes")
+        if not (isinstance(path, str) and path and not path.startswith("/")
+                and "\\" not in path and ".." not in path.split("/")
+                and posixpath.normpath(path) == path):
+            problems.append((rid, f"license_notice.path {path!r} is not a safe relative path"))
+            continue
+        if not (isinstance(want, str) and len(want) == 64
+                and all(c in "0123456789abcdef" for c in want)):
+            problems.append((path, f"{rid}: license_notice.sha256 is not a sha256"))
+            continue
+        if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+            problems.append((path, f"{rid}: license_notice.bytes must be a positive byte count"))
+            continue
+        member = ln.get("member")
+        if member is not None and not (isinstance(member, str) and member):
+            problems.append((path, f"{rid}: license_notice.member must be a non-empty string"))
+            continue
+        sa = meta.get("source_archive") if isinstance(meta.get("source_archive"), dict) else None
+        key = (want, n, member, (sa or {}).get("url"), (sa or {}).get("archive_sha256"))
+        entry = plan.get(path)
+        if entry is None:
+            plan[path] = {"root": rec.get("source_root", "local"), "notice": ln,
+                          "archive": sa, "key": key, "ids": [rid]}
+        elif entry["key"] != key:
+            problems.append((path, f"records {entry['ids'][0]} and {rid} declare this "
+                                   f"notice differently"))
+        else:
+            entry["ids"].append(rid)
+    for p, _ in problems:
+        plan.pop(p, None)
+    return plan, problems
+
+
+def stage_license_notice(rel: str, entry: dict, dest_root: Path, *, dry_run: bool,
+                         no_refetch: bool) -> tuple[str, str]:
+    """Authenticate, or restore, one declared notice. Returns (status, note).
+
+    status: "ok" (the destination holds exactly the declared bytes, by sha256
+    and length; a same-size file is NOT accepted), "would_restore" (dry run),
+    "restored" (re-fetched from the record's source_archive member and
+    authenticated before it was moved into place), or "refuse".
+    """
+    ln = entry["notice"]
+    dest = dest_root / rel
+    if dest.is_file() and not dest.is_symlink():
+        if dest.stat().st_size == ln["bytes"] and sha256_file(dest) == ln["sha256"]:
+            return "ok", "declared sha256 and size"
+        state = "holds different bytes"
+    elif dest.exists() or dest.is_symlink():
+        return "refuse", "the notice path exists but is not a regular file"
+    else:
+        state = "is absent"
+    sa, member = entry["archive"], ln.get("member")
+    if not (sa and isinstance(sa.get("url"), str) and sa["url"] and member):
+        return "refuse", (f"the notice {state} and the record declares no "
+                          "license_notice.member in a source_archive to restore it from")
+    if no_refetch:
+        return "refuse", f"the notice {state} and --no-refetch forbids restoring it"
+    if dry_run:
+        return "would_restore", f"the notice {state}; member {member}"
+    ok, note = refetch_member(sa["url"], member, ln["sha256"], dest,
+                              archive={**sa, "member": member, "sha256": ln["sha256"]})
+    if not ok:
+        return "refuse", f"the notice {state} and could not be restored: {note}"
+    if dest.stat().st_size != ln["bytes"]:
+        dest.unlink()
+        return "refuse", "the restored notice does not have the declared byte count"
+    return "restored", note
 
 
 def refetch(url: str, dest: Path, expect_size: int | None,
@@ -763,7 +1027,8 @@ def _produced_file(root_name: str, source_path: str, sources: dict[str, Path],
         return None, ("not under --pack-source and no re-fetchable "
                       "metadata.source_archive")
     dest = tmp / f"{abs(hash(source_path))}-{Path(source_path).name}"
-    ok, note = refetch_member(sa["url"], sa["member"], sa.get("sha256", ""), dest)
+    ok, note = refetch_member(sa["url"], sa["member"], sa.get("sha256", ""), dest,
+                              archive=sa)
     if not ok:
         return None, f"pack member could not be authenticated: {note}"
     return dest, f"pack zip member {sa['member']}"
@@ -1714,7 +1979,10 @@ def main() -> int:
                              "document's `profile` field must still name the "
                              "--profile file. For fixtures laid out elsewhere.")
     parser.add_argument("--prune", action="store_true",
-                        help="Delete files at <dest> not in the profile")
+                        help="Delete stale payload files: only under <dest>/{3d,audio,comics,"
+                             "documents,fonts,images,videos}, keeping wanted profile paths, "
+                             "declared companions and license notices. Top-level files, "
+                             "hidden entries and symlinks are never touched")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report what would copy without writing")
     parser.add_argument("--no-refetch", action="store_true",
@@ -2291,14 +2559,40 @@ def main() -> int:
                           f"{dest_desc})", file=sys.stderr)
                     if args.dry_run:
                         would_refetch += 1
+                        # A dry run must account for the declared companions
+                        # the real run would re-fetch, or --prune reports them
+                        # as stale (#1514).
+                        for comp in (rec.get("metadata") or {}).get("companions") or ():
+                            c_rel, _ = _companion_dest(comp, dest_rel)
+                            if c_rel:
+                                wanted_dest_paths.add(c_rel)
                         continue
                     ok, note = refetch_member(sa["url"], sa["member"],
-                                              sa["sha256"], dest_file)
+                                              sa["sha256"], dest_file,
+                                              archive=sa)
                     if ok:
                         refetched += 1
                         bytes_copied += dest_file.stat().st_size
                         print(f"  REFETCHED [{root}]: {dest_rel} ({note})",
                               file=sys.stderr)
+                        # #1514: a model whose textures sit beside it in the
+                        # pack declares them in `metadata.companions` with
+                        # their own sha256. They come from the SAME
+                        # authenticated archive, relative to the member, so a
+                        # re-fetched model is never staged without them. Only
+                        # records that declare companions reach this.
+                        for comp in (rec.get("metadata") or {}).get("companions") or ():
+                            c_ok, c_rel, c_note = _refetch_companion(
+                                sa, comp, dest_rel, args.dest)
+                            if c_rel:
+                                wanted_dest_paths.add(c_rel)  # survive --prune
+                            if c_ok:
+                                companions_copied += 1
+                                print(f"  REFETCHED COMPANION [{root}]: {c_rel} "
+                                      f"({c_note})", file=sys.stderr)
+                            else:
+                                refuse(root, c_rel or dest_rel,
+                                       f"companion could not be re-fetched: {c_note}")
                         continue
                     print(f"  REFETCH FAILED [{root}]: {dest_rel} — {note}",
                           file=sys.stderr)
@@ -2397,6 +2691,37 @@ def main() -> int:
             print(f"  ... {i+1:,}/{len(path_map):,} "
                   f"({bytes_copied / 2**20:.1f} MB)", file=sys.stderr)
 
+    # Declared rights notices (#1514). A notice ships beside the asset it
+    # covers but is neither a profile row nor a model companion, so nothing
+    # above stages it and --prune below would delete it. Each one the profile
+    # declares is kept in the wanted set and authenticated by sha256 and
+    # length; a missing or different notice is restored from the record's own
+    # source_archive member or the run is refused.
+    notices_ok = notices_restored = 0
+    notice_plan, notice_problems = plan_license_notices(profile)
+    for where, why in notice_problems:
+        refuse("notice", where, why)
+    for rel, entry in sorted(notice_plan.items()):
+        wanted_dest_paths.add(rel)  # survive --prune
+        status, note = stage_license_notice(rel, entry, args.dest,
+                                            dry_run=args.dry_run,
+                                            no_refetch=args.no_refetch)
+        if status == "ok":
+            notices_ok += 1
+        elif status == "would_restore":
+            would_refetch += 1
+            print(f"  REFETCH NOTICE [{entry['root']}]: {rel} ({note})", file=sys.stderr)
+        elif status == "restored":
+            notices_restored += 1
+            refetched += 1
+            print(f"  REFETCHED NOTICE [{entry['root']}]: {rel} ({note})", file=sys.stderr)
+        else:
+            refuse(entry["root"], rel, f"license notice: {note}")
+    if notice_plan or notice_problems:
+        print(f"  notices: {notices_ok:,} authenticated in place, "
+              f"{notices_restored:,} restored, {len(notice_plan):,} declared",
+              file=sys.stderr)
+
     retired_removed = 0
     retired_ok = True
     if collapses:
@@ -2406,25 +2731,17 @@ def main() -> int:
 
     pruned = 0
     if args.prune and args.dest.is_dir():
-        print(f"pruning files not in profile", file=sys.stderr)
-        for f in args.dest.rglob("*"):
-            if not f.is_file():
-                continue
-            rel = f.relative_to(args.dest).as_posix()
-            if rel in ("metadata.csv", "groups.csv", "MANIFEST.json"):
-                continue
-            if rel not in wanted_dest_paths:
-                if args.dry_run:
-                    pruned += 1
-                else:
-                    f.unlink()
-                    pruned += 1
-        # Clean empty dirs
-        if not args.dry_run:
-            for d in sorted(args.dest.rglob("*"), key=lambda p: -len(str(p))):
-                if d.is_dir() and not any(d.iterdir()):
-                    d.rmdir()
+        print(f"pruning files not in profile (payload roots only: "
+              f"{', '.join(PRUNE_ROOTS)})", file=sys.stderr)
+        pruned, dirs_removed, left = prune_payload(args.dest, wanted_dest_paths,
+                                                   dry_run=args.dry_run)
         print(f"  pruned {pruned:,} stale files", file=sys.stderr)
+        if dirs_removed:
+            print(f"  removed {dirs_removed:,} empty payload directories", file=sys.stderr)
+        for why, rel in left[:20]:
+            print(f"  LEFT [{why}]: {rel}", file=sys.stderr)
+        if len(left) > 20:
+            print(f"  ... and {len(left) - 20} more left untouched", file=sys.stderr)
 
     print(f"\n=== Summary ===", file=sys.stderr)
     print(f"  copied:      {copied:,} files ({bytes_copied / 2**30:.2f} GB)", file=sys.stderr)

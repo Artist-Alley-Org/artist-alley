@@ -32,7 +32,7 @@ dependencies = [
     "open_clip_torch>=2.30,<4",
     # FastAPI + uvicorn for the HTTP surface; multipart for the
     # /embed/image upload path.
-    "fastapi==0.141.1",
+    "fastapi==0.162.0",
     "uvicorn[standard]==0.54.0",
     "python-multipart>=0.0.31,<0.1",
     # Pillow for image decoding — open_clip's preprocess pipeline

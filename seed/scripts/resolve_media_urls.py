@@ -110,6 +110,14 @@ DIRECT_MEDIA_HOSTS = frozenset({
     # `www.metmuseum.org/art/collection/search/<id>` and lives in
     # `fetched_from`.
     "images.metmuseum.org",
+    # U.S. National Park Service B-roll (#1514), the 75 site_a videos that
+    # replaced the Pexels clips. ⚠️ Unlike the CDNs above, this host serves
+    # pages AND bytes: the byte URLs are `https://www.nps.gov/nps-audiovideo/
+    # .../*.mp4`, while the media PAGE (`/media/video/view.htm?id=...`) lives
+    # in `fetched_from`. Every committed record already carries its byte URL,
+    # and `TestSiteAMediaReplacement1514` pins each one to that path, so a
+    # page URL cannot pass as a media_url unnoticed.
+    "www.nps.gov",
 })
 
 # Pexels' own resolution ladder. `hd` first because every record we hold

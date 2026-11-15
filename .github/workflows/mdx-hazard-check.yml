@@ -2,9 +2,10 @@
 #
 # Prose in synced-to-Astro docs paths (docs/adr/**, docs/install/**,
 # docs/roadmap.md) that contains a bare `{[a-zA-Z_]`, or a bare `<`
-# not followed by whitespace, outside inline code / fenced blocks /
-# autolinks gets parsed as JSX by MDX and blows up the docs site
-# build. Three outages hit us:
+# not followed by whitespace, outside inline code / fenced blocks,
+# gets parsed as JSX by MDX and blows up the docs site build. That
+# includes CommonMark autolinks such as `<https://...>`, which MDX
+# rejects: write `[text](url)`. Three outages hit us:
 #
 #   - PR #208 introduced `{up,down,undo,rate_limit,disabled}` in
 #     feedback-loop docs and broke Cloudflare Pages for ~12h until

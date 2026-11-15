@@ -5966,6 +5966,7 @@
   "tags": [
    "public-domain",
    "reference",
+   "source:kenney",
    "source:khronos-sample-models"
   ],
   "asset_ids": [
@@ -7142,6 +7143,7 @@
    "reference",
    "rpg",
    "sfx",
+   "source:kenney",
    "source:khronos-sample-models",
    "source:polyhaven",
    "source:project-gutenberg",
@@ -9455,6 +9457,7 @@
   "tags": [
    "public-domain",
    "reference",
+   "source:kenney",
    "source:khronos-sample-models",
    "source:polyhaven",
    "source:project-gutenberg",
@@ -9677,7 +9680,7 @@
   "layer": "A"
  },
  {
-  "id": "adafa798-73a2-90a9-b45a-fc5e6c258853",
+  "id": "a783324e-47a9-355b-a480-610b6d21a4d0",
   "title": "Internet Reference: Reference model pass - part 3",
   "description": "Reference working set for Internet Reference. 4 3d assets pulled together for review.",
   "author_username": "seed.bot",
@@ -9690,7 +9693,6 @@
    "source:khronos-sample-models"
   ],
   "asset_ids": [
-   "4d30ea15-aec9-f53a-647c-3d4034b9f3a2",
    "a843ee18-f9ee-c3a3-ed06-928a3210a5b4",
    "bf05361b-aa10-9b58-d6d0-9102b4742dcb",
    "be6618e8-3d1c-e182-80f8-5c210fdb1b66"
@@ -14027,7 +14029,7 @@
   "layer": "A"
  },
  {
-  "id": "27f945f0-070e-413f-26d3-356d8293e95e",
+  "id": "39e69231-a8a3-34aa-208d-1fb1898b387b",
   "title": "Internet Reference milestone alpha",
   "description": "Milestone Alpha for Internet Reference. Pulls work from Reference — 3d, document, image.",
   "author_username": "seed.bot",
@@ -14049,8 +14051,7 @@
    "bf05361b-aa10-9b58-d6d0-9102b4742dcb",
    "bf72cc9a-94e7-7a10-7beb-976702289528",
    "da72edcb-61f4-5265-a903-6946462aa5a5",
-   "5c937df2-0b12-3032-736e-7de304e8b7b1",
-   "4d30ea15-aec9-f53a-647c-3d4034b9f3a2"
+   "5c937df2-0b12-3032-736e-7de304e8b7b1"
   ],
   "asset_types_in_post": [
    "3d",
@@ -14559,7 +14560,7 @@
   "layer": "A"
  },
  {
-  "id": "18017920-fcd4-67e3-04b8-60d930544cf5",
+  "id": "4488bcc4-670d-f804-d11c-760d9d07fd49",
   "title": "Reference sprint roundup - part 1",
   "description": "Reference team output across 2 project(s): Internet Reference, Project Echo. Mix of 3d, audio, image, video.",
   "author_username": "sam.obrien",
@@ -14582,7 +14583,6 @@
    "8d7bb22e-bd82-8879-8d49-d165d5c58c4d",
    "d7783c97-929b-cc9b-8706-9f007778cb1a",
    "a3b49969-02e6-ed6e-1b0b-e39a89d77bc0",
-   "4d30ea15-aec9-f53a-647c-3d4034b9f3a2",
    "2adf45b0-8dd0-9818-ffef-bb1c04a7e8f9",
    "2ae44464-891f-2d61-7dc7-b66a8637c36e",
    "89fc34b8-1791-dc48-79c7-861861571469",
@@ -16960,7 +16960,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-05-15T19:44:43Z",
-  "description": "Pexels 38500911 Mytho Digital — open-licence video reference.",
+  "description": "Smooth Water in Marble Canyon: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "02696cea-cd86-8500-1f3a-2a3d3cf55c2b",
   "is_mixed_type": false,
   "layer": "A",
@@ -16969,10 +16969,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 38500911 Mytho Digital",
+  "title": "Smooth Water in Marble Canyon",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -16987,7 +16989,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-07-27T12:00:00Z",
-  "description": "Pexels 5094475 Cherisha Norman — open-licence video reference.",
+  "description": "Falls Straight On: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "07d3c50c-3c2d-24a0-6656-8cebe20eb35f",
   "is_mixed_type": false,
   "layer": "A",
@@ -16996,10 +16998,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 5094475 Cherisha Norman",
+  "title": "Falls Straight On",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17014,7 +17018,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-03-13T18:50:00Z",
-  "description": "Pexels 6755158 Tima Miroshnichenko — open-licence video reference.",
+  "description": "Springtime in Grand Canyon - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "0e1af576-ee1f-b104-11a8-abee39ab25dd",
   "is_mixed_type": false,
   "layer": "A",
@@ -17023,10 +17027,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 6755158 Tima Miroshnichenko",
+  "title": "Springtime in Grand Canyon - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17068,7 +17074,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-03-20T17:40:00Z",
-  "description": "Pexels 7480487 Mart Production — open-licence video reference.",
+  "description": "Bright Angel Pan at Sunset, a little closer: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "1630e855-3968-2cf5-0b97-27105eb8dec7",
   "is_mixed_type": false,
   "layer": "A",
@@ -17077,10 +17083,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 7480487 Mart Production",
+  "title": "Bright Angel Pan at Sunset - a little closer",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17122,7 +17130,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-07-03T15:49:00Z",
-  "description": "Pexels 10161903 Carlos — open-licence video reference.",
+  "description": "Time-lapse Pan of Summer Clouds - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "2d0b9a13-7740-1608-8bf3-2e6d6ba9db0e",
   "is_mixed_type": false,
   "layer": "A",
@@ -17131,10 +17139,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 10161903 Carlos",
+  "title": "Time-lapse Pan of Summer Clouds - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17149,7 +17159,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-02-26T17:33:00Z",
-  "description": "Pexels 6396111 Pavel Danilyuk — open-licence video reference.",
+  "description": "Cacti and Pollinators - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "359982ad-27ea-fee6-b8ff-00806421b48f",
   "is_mixed_type": false,
   "layer": "A",
@@ -17158,10 +17168,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 6396111 Pavel Danilyuk",
+  "title": "Cacti and Pollinators - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17176,7 +17188,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-08-03T03:35:00Z",
-  "description": "Pexels 36774101 Nicola Narracci — open-licence video reference.",
+  "description": "Wide Sunset (Aerial View) from Tower of Ra to Cheops Pyramid - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "4672ba9b-763e-3825-45de-33a1b003a6bd",
   "is_mixed_type": false,
   "layer": "A",
@@ -17185,10 +17197,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 36774101 Nicola Narracci",
+  "title": "Wide Sunset (Aerial View) from Tower of Ra to Cheops Pyramid - B-roll Video",
   "updated_at": "2026-09-13T02:26:00Z",
   "workflow_state": "draft"
  },
@@ -17203,7 +17217,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2025-06-17T09:48:28Z",
-  "description": "Pexels 27980029 Nicola Narracci — open-licence video reference.",
+  "description": "Desert View Rim Country - B-Roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "52ac59f9-4c65-1974-ea99-896ab0bdaa9f",
   "is_mixed_type": false,
   "layer": "A",
@@ -17212,10 +17226,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 27980029 Nicola Narracci",
+  "title": "Desert View Rim Country - B-Roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17230,7 +17246,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-04-25T04:37:59Z",
-  "description": "Pexels 8064422 Ai25 Studio Studio — open-licence video reference.",
+  "description": "Split Rock Falls: Details - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "5773e923-b605-622f-7e71-829d8782bd94",
   "is_mixed_type": false,
   "layer": "A",
@@ -17239,10 +17255,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 8064422 Ai25 Studio Studio",
+  "title": "Split Rock Falls: Details - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17257,7 +17275,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2025-06-23T21:23:51Z",
-  "description": "Pexels 5386815 Katrin Bolovtsova — open-licence video reference.",
+  "description": "Patios at Deer Creek: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "65794cb9-4b58-db43-6e17-3611ed417d4d",
   "is_mixed_type": false,
   "layer": "A",
@@ -17266,10 +17284,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 5386815 Katrin Bolovtsova",
+  "title": "Patios at Deer Creek",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17311,7 +17331,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2025-06-15T10:32:35Z",
-  "description": "Pexels 1288012 Zuzanna Musial — open-licence video reference.",
+  "description": "Winter Sunrise at Point Imperial: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "6bb88140-e371-17ff-b94d-87d1afdc52c2",
   "is_mixed_type": false,
   "layer": "A",
@@ -17320,10 +17340,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 1288012 Zuzanna Musial",
+  "title": "Winter Sunrise at Point Imperial",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17338,7 +17360,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-05-21T21:51:19Z",
-  "description": "Pexels 3866849 Steve B — open-licence video reference.",
+  "description": "Whitewater Boils: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "6f22aa77-d046-d637-61aa-da5d8b99c923",
   "is_mixed_type": false,
   "layer": "A",
@@ -17347,10 +17369,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 3866849 Steve B",
+  "title": "Whitewater Boils",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17365,7 +17389,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2025-08-31T04:27:58Z",
-  "description": "Pexels 38173106 Dongsoo Yu — open-licence video reference.",
+  "description": "River Detail: Colorful Reflections: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "735b7bf8-d57d-1df6-d038-06cbd436be69",
   "is_mixed_type": false,
   "layer": "A",
@@ -17374,10 +17398,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 38173106 Dongsoo Yu",
+  "title": "River Detail: Colorful Reflections",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17392,7 +17418,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-04-10T07:58:03Z",
-  "description": "Pexels 6754820 Tima Miroshnichenko — open-licence video reference.",
+  "description": "Spring Wildflowers Within the Canyon - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "7ab18367-6b95-06ab-dd60-de51862cef99",
   "is_mixed_type": false,
   "layer": "A",
@@ -17401,10 +17427,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 6754820 Tima Miroshnichenko",
+  "title": "Spring Wildflowers Within the Canyon - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17419,7 +17447,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-04-07T10:36:40Z",
-  "description": "Pexels 38572488 Bibek Bohara — open-licence video reference.",
+  "description": "Rapid in Detail: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "80ae8028-67c2-7965-a230-6788924039f4",
   "is_mixed_type": false,
   "layer": "A",
@@ -17428,10 +17456,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 38572488 Bibek Bohara",
+  "title": "Rapid in Detail",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17446,7 +17476,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-04-03T12:07:50Z",
-  "description": "Pexels 8037387 Kampus Production — open-licence video reference.",
+  "description": "Split Rock Falls - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "901dc468-9c9d-0080-be90-02421102d6cd",
   "is_mixed_type": false,
   "layer": "A",
@@ -17455,10 +17485,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 8037387 Kampus Production",
+  "title": "Split Rock Falls - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17473,7 +17505,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-01-15T02:07:54Z",
-  "description": "Pexels 11265968 Zg R S Rmeli — open-licence video reference.",
+  "description": "Total Inversion Time-lapse from Yaki Point: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "a1538bd8-ccd1-43a4-ea41-bafd986e5106",
   "is_mixed_type": false,
   "layer": "A",
@@ -17482,10 +17514,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 11265968 Zg R S Rmeli",
+  "title": "Total Inversion Time-lapse from Yaki Point",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17500,7 +17534,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-12-01T13:13:00Z",
-  "description": "Pexels 7271824 Mart Production — open-licence video reference.",
+  "description": "Winter Sunset Pan Bright Angel Trailhead: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "add45e8a-4fe6-582b-8c34-dd9f0615aec1",
   "is_mixed_type": false,
   "layer": "A",
@@ -17509,10 +17543,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 7271824 Mart Production",
+  "title": "Winter Sunset Pan Bright Angel Trailhead",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17527,7 +17563,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-04-22T09:28:43Z",
-  "description": "Pexels 27844618 Nam Phong B I — open-licence video reference.",
+  "description": "Unkar Delta - Overhead: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "b78138b4-2a0b-5e3e-1097-066eed1cd47a",
   "is_mixed_type": false,
   "layer": "A",
@@ -17536,10 +17572,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 27844618 Nam Phong B I",
+  "title": "Unkar Delta - Overhead",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17554,7 +17592,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-04-14T03:24:29Z",
-  "description": "Pexels 18138660 Nasih Najim — open-licence video reference.",
+  "description": "Over River, View of Lava Chuar: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "b97e1a0f-c973-f481-961c-119fda6f445d",
   "is_mixed_type": false,
   "layer": "A",
@@ -17563,10 +17601,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 18138660 Nasih Najim",
+  "title": "Over River - View of Lava Chuar",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17581,7 +17621,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-01-24T16:31:43Z",
-  "description": "Pexels 8538614 Ron Lach — open-licence video reference.",
+  "description": "Sunset near the North Entrance: U.S. National Park Service B-roll from Joshua Tree National Park. Video reference.",
   "id": "bf2179d4-45d2-40ec-d79b-d180b922701e",
   "is_mixed_type": false,
   "layer": "A",
@@ -17590,10 +17630,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "joshua-tree"
   ],
   "team_name": "Audio",
-  "title": "Pexels 8538614 Ron Lach",
+  "title": "Sunset near the North Entrance",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17635,7 +17677,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-02-12T09:45:42Z",
-  "description": "Pexels 10444089 Timo Volz — open-licence video reference.",
+  "description": "Time-lapse of Clouds over the Canyon - November 20, 2025: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "c7cb7862-8439-afa0-abbe-1a871f1b99ad",
   "is_mixed_type": false,
   "layer": "A",
@@ -17644,10 +17686,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 10444089 Timo Volz",
+  "title": "Time-lapse of Clouds over the Canyon - 20 November 2025",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17662,7 +17706,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-05-05T08:07:41Z",
-  "description": "Pexels 853996 Coverr — open-licence video reference.",
+  "description": "Sunset near the West Entrance: U.S. National Park Service B-roll from Joshua Tree National Park. Video reference.",
   "id": "cd517fa2-eb90-41d2-c0f3-f46b1b6be17b",
   "is_mixed_type": false,
   "layer": "A",
@@ -17671,10 +17715,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "joshua-tree"
   ],
   "team_name": "Audio",
-  "title": "Pexels 853996 Coverr",
+  "title": "Sunset near the West Entrance",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17716,7 +17762,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2025-06-14T16:43:38Z",
-  "description": "Pexels 10225518 Nikita Nikitin — open-licence video reference.",
+  "description": "Time-lapse Video of Rain Moving Through Grand Canyon - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "db18fc00-63ec-330b-1fc4-6632895d9793",
   "is_mixed_type": false,
   "layer": "A",
@@ -17725,10 +17771,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 10225518 Nikita Nikitin",
+  "title": "Time-lapse Video of Rain Moving Through Grand Canyon - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17770,7 +17818,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-04-20T02:58:28Z",
-  "description": "Pexels 33704412 Larkkid Dung — open-licence video reference.",
+  "description": "Over the Rim, Into the Eastern End of Grand Canyon - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "e03d0108-2724-b9d3-fd70-86c3b42f878f",
   "is_mixed_type": false,
   "layer": "A",
@@ -17779,10 +17827,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 33704412 Larkkid Dung",
+  "title": "Over the Rim into the Eastern End of Grand Canyon - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17797,7 +17847,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-04-30T09:39:21Z",
-  "description": "Pexels 32093955 Gera Cejas — open-licence video reference.",
+  "description": "Inner Canyon Flight Across the Tonto Platform to Hermit and Monument Creeks - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "e553994e-cf6a-ca5b-ddba-56a659a1d611",
   "is_mixed_type": false,
   "layer": "A",
@@ -17806,10 +17856,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 32093955 Gera Cejas",
+  "title": "Inner Canyon Flight Across the Tonto Platform to Hermit and Monument Creeks - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17824,7 +17876,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-06-15T13:03:00Z",
-  "description": "Pexels 28570000 Hakan Kayahan — open-licence video reference.",
+  "description": "Redwall Limestone Abutment in Sun - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "eb8252f4-3b2d-4723-48c0-fff4fa83a4eb",
   "is_mixed_type": false,
   "layer": "A",
@@ -17833,10 +17885,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 28570000 Hakan Kayahan",
+  "title": "Redwall Limestone Abutment in Sun - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17851,7 +17905,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2026-03-20T12:03:06Z",
-  "description": "Pexels 3116760 Atakan Ozkan — open-licence video reference.",
+  "description": "Vishnu Temple Close up - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "f786c218-3228-fed3-8f77-d88f7df59792",
   "is_mixed_type": false,
   "layer": "A",
@@ -17860,10 +17914,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 3116760 Atakan Ozkan",
+  "title": "Vishnu Temple Close up - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17878,7 +17934,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2025-06-28T07:19:05Z",
-  "description": "Pexels 31590904 Altaf Shah — open-licence video reference.",
+  "description": "Along the Cliffs Leading to the Little Colorado Gorge - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "fd85f3c7-efbc-0b89-b35b-99c7dd1174ff",
   "is_mixed_type": false,
   "layer": "A",
@@ -17887,10 +17943,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 31590904 Altaf Shah",
+  "title": "Along the Cliffs Leading to the Little Colorado Gorge - B-roll Video",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -17905,7 +17963,7 @@
   "brand_workspace": "Echo",
   "collection_name": "Project Echo",
   "created_at": "2025-10-18T01:03:26Z",
-  "description": "Pexels 27580032 Dmitry Ovsyannikov — open-licence video reference.",
+  "description": "River and Tonto Pivot: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "febe1cc4-b588-31dc-db1a-109282b45818",
   "is_mixed_type": false,
   "layer": "A",
@@ -17914,10 +17972,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Audio",
-  "title": "Pexels 27580032 Dmitry Ovsyannikov",
+  "title": "River and Tonto Pivot",
   "updated_at": "2026-04-15T02:04:04Z",
   "workflow_state": "draft"
  },
@@ -25113,7 +25173,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-07-27T12:00:00Z",
-  "description": "1920x1080 5s — cabinet + CRT reference for the retro art direction — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Close Up of Falls: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "f3cc20ed-2f58-4254-a936-349d74b393f7",
   "is_mixed_type": false,
   "layer": "A",
@@ -25123,11 +25183,11 @@
   "tags": [
    "video",
    "reference",
-   "arcade",
-   "gaming"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 4978051 Anibal Diaz",
+  "title": "Close Up of Falls",
   "updated_at": "2026-10-03T07:00:00Z",
   "workflow_state": "approved"
  },
@@ -25142,7 +25202,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-11-11T16:45:00Z",
-  "description": "1366x720 19s — cabinet + CRT reference for the retro art direction — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Pan Down Creek Close Up: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "a0c36cfe-5c7e-3b66-b147-9635892391dd",
   "is_mixed_type": false,
   "layer": "A",
@@ -25152,11 +25212,11 @@
   "tags": [
    "video",
    "reference",
-   "arcade",
-   "gaming"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 4841204 cottonbro studio",
+  "title": "Pan Down Creek Close Up",
   "updated_at": "2026-09-02T14:56:00Z",
   "workflow_state": "approved"
  },
@@ -25171,7 +25231,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-05-24T01:52:02Z",
-  "description": "1920x1080 8s — cabinet + CRT reference for the retro art direction — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Sunrise at Yaki Point: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "0bff6ff8-9eac-22a4-ed07-7681ea56ce3b",
   "is_mixed_type": false,
   "layer": "A",
@@ -25181,11 +25241,11 @@
   "tags": [
    "video",
    "reference",
-   "arcade",
-   "gaming"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 7914769 RDNE Stock project",
+  "title": "Sunrise at Yaki Point",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25200,7 +25260,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-03-27T15:10:12Z",
-  "description": "1920x1080 18s — cabinet + CRT reference for the retro art direction — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Hermit Creek - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "ad71e106-f79e-a1d2-ef98-b2ae37fb0fa6",
   "is_mixed_type": false,
   "layer": "A",
@@ -25210,11 +25270,11 @@
   "tags": [
    "video",
    "reference",
-   "arcade",
-   "gaming"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 7986590 Mikhail Nilov",
+  "title": "Hermit Creek - B-roll Video",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25229,7 +25289,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-05-20T08:50:05Z",
-  "description": "1920x1080 9s — input-prompt reference for the UI team's controller glyphs — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Turquoise Waters Mix: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "d4842643-db1c-cd1c-bd98-e7f8efb4df36",
   "is_mixed_type": false,
   "layer": "A",
@@ -25239,11 +25299,11 @@
   "tags": [
    "video",
    "reference",
-   "input",
-   "controller"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "UI",
-  "title": "Pexels 8174193 Kampus Production",
+  "title": "Turquoise Waters Mix",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25258,7 +25318,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-03-27T12:04:23Z",
-  "description": "1920x1080 5s — input-prompt reference for the UI team's controller glyphs — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Pan Down Falls, Close: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "40070025-550f-5f0c-b791-945952deb784",
   "is_mixed_type": false,
   "layer": "A",
@@ -25268,11 +25328,11 @@
   "tags": [
    "video",
    "reference",
-   "input",
-   "controller"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "UI",
-  "title": "Pexels 4523105 Polina Tankilevitch",
+  "title": "Pan Down Falls - Close",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25287,7 +25347,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2025-06-22T15:27:14Z",
-  "description": "1920x1080 6s — input-prompt reference for the UI team's controller glyphs — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Pan up from Creek: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "5f567fb6-d25b-3cae-32ba-d65830bd88f3",
   "is_mixed_type": false,
   "layer": "A",
@@ -25297,11 +25357,11 @@
   "tags": [
    "video",
    "reference",
-   "input",
-   "controller"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "UI",
-  "title": "Pexels 4523109 Polina Tankilevitch",
+  "title": "Pan up from Creek",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25316,7 +25376,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-05-25T14:54:51Z",
-  "description": "1366x720 10s — input-prompt reference for the UI team's controller glyphs — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "North Rim Summer Timelapse - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "2e3fc5f9-294e-3218-5edb-e3aef08a37ca",
   "is_mixed_type": false,
   "layer": "A",
@@ -25326,11 +25386,11 @@
   "tags": [
    "video",
    "reference",
-   "input",
-   "controller"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "UI",
-  "title": "Pexels 7942902 VAZHNIK",
+  "title": "North Rim Summer Timelapse - B-roll Video",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25345,7 +25405,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-09-17T16:28:00Z",
-  "description": "1920x1080 27s — menu / key-art backplates — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Light on Mt. Hayden, Zooming Out: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "3847b03d-5333-563e-4272-4d87e98d4a8f",
   "is_mixed_type": false,
   "layer": "A",
@@ -25354,12 +25414,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "keyart",
-   "neon",
-   "loop"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Marketing Art",
-  "title": "Pexels 12781233 Magda Ehlers",
+  "title": "Light on Mt. Hayden - Zooming Out",
   "updated_at": "2026-10-09T20:08:00Z",
   "workflow_state": "approved"
  },
@@ -25374,7 +25434,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-09-03T16:58:00Z",
-  "description": "1920x1080 95s — menu / key-art backplates — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Grand Canyon Total Cloud Inversion Timelapse - Jan. 28, 2015: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "98c42a36-86fc-4413-2f48-02a9ed0d655f",
   "is_mixed_type": false,
   "layer": "A",
@@ -25383,12 +25443,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "keyart",
-   "neon",
-   "loop"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Marketing Art",
-  "title": "Pexels 11164611 Luis Quintero",
+  "title": "Grand Canyon Total Cloud Inversion Timelapse - 28 January 2015",
   "updated_at": "2026-09-25T18:18:00Z",
   "workflow_state": "approved"
  },
@@ -25403,7 +25463,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-07-27T12:00:00Z",
-  "description": "1920x1080 20s — menu / key-art backplates — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "River Close Up: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "81c827b3-fd32-1378-86c2-098430ce695e",
   "is_mixed_type": false,
   "layer": "A",
@@ -25412,12 +25472,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "keyart",
-   "neon",
-   "loop"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Marketing Art",
-  "title": "Pexels 15157535 Magda Ehlers",
+  "title": "River Close Up",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25432,7 +25492,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-12-04T20:42:00Z",
-  "description": "1920x1080 20s — menu / key-art backplates — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Winter Forest Scene: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "82ec6a10-0543-89ff-b68f-b1870f83fbe3",
   "is_mixed_type": false,
   "layer": "A",
@@ -25441,12 +25501,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "keyart",
-   "neon",
-   "loop"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Marketing Art",
-  "title": "Pexels 14203831 Merlin Lightpainting",
+  "title": "Winter Forest Scene",
   "updated_at": "2026-11-24T17:33:00Z",
   "workflow_state": "approved"
  },
@@ -25461,7 +25521,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2025-06-05T15:28:16Z",
-  "description": "1920x1080 67s — particle plates the VFX team matches against — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Mosaic Canyon: U.S. National Park Service B-roll from Death Valley National Park. Video reference.",
   "id": "fa93f375-35c1-62ce-aea7-9ff8171ae475",
   "is_mixed_type": false,
   "layer": "A",
@@ -25470,12 +25530,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "particles",
-   "plate"
+   "reference",
+   "source:nps",
+   "death-valley"
   ],
   "team_name": "VFX",
-  "title": "Pexels 9665236 cottonbro studio",
+  "title": "Mosaic Canyon",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25490,7 +25550,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-05-06T10:23:00Z",
-  "description": "1920x1080 26s — particle plates the VFX team matches against — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Downstream in Marble Canyon: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "f4ba7761-08c9-8694-80e5-d25eaffe244d",
   "is_mixed_type": false,
   "layer": "A",
@@ -25499,12 +25559,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "particles",
-   "plate"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "VFX",
-  "title": "Pexels 3695383 Luis Quintero",
+  "title": "Downstream in Marble Canyon",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25519,7 +25579,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-05-07T12:54:33Z",
-  "description": "1920x1080 13s — particle plates the VFX team matches against — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Panamint Mountains: U.S. National Park Service B-roll from Death Valley National Park. Video reference.",
   "id": "4bfd1193-e5e0-a4fc-86fc-db86bbb968ed",
   "is_mixed_type": false,
   "layer": "A",
@@ -25528,12 +25588,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "particles",
-   "plate"
+   "reference",
+   "source:nps",
+   "death-valley"
   ],
   "team_name": "VFX",
-  "title": "Pexels 9667568 cottonbro studio",
+  "title": "Panamint Mountains",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25548,7 +25608,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2025-09-23T09:36:00Z",
-  "description": "1920x1080 58s — particle plates the VFX team matches against — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Slow Motion Whitewater Triptych: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "afb34d79-5327-8f15-130b-fae0df8db585",
   "is_mixed_type": false,
   "layer": "A",
@@ -25557,12 +25617,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "particles",
-   "plate"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "VFX",
-  "title": "Pexels 3978418 StefWithAnF",
+  "title": "Slow Motion Whitewater Triptych",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25577,7 +25637,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-01-31T09:13:00Z",
-  "description": "1920x1080 41s — smoke plates, alpha-friendly on black — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Sand Dunes: U.S. National Park Service B-roll from Death Valley National Park. Video reference.",
   "id": "08cf403d-1662-62f2-c33b-b4e59c41e138",
   "is_mixed_type": false,
   "layer": "A",
@@ -25586,12 +25646,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "smoke",
-   "plate"
+   "reference",
+   "source:nps",
+   "death-valley"
   ],
   "team_name": "VFX",
-  "title": "Pexels 9694808 cottonbro studio",
+  "title": "Sand Dunes",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25606,7 +25666,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-02-01T01:59:22Z",
-  "description": "1920x1080 43s — smoke plates, alpha-friendly on black — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Racetrack: U.S. National Park Service B-roll from Death Valley National Park. Video reference.",
   "id": "06633c1c-0055-e1b2-26e4-ecfbe0901cd8",
   "is_mixed_type": false,
   "layer": "A",
@@ -25615,12 +25675,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "smoke",
-   "plate"
+   "reference",
+   "source:nps",
+   "death-valley"
   ],
   "team_name": "VFX",
-  "title": "Pexels 9694233 cottonbro studio",
+  "title": "Racetrack",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25635,7 +25695,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-04-10T12:37:08Z",
-  "description": "1920x1080 13s — smoke plates, alpha-friendly on black — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Skunkbush, Cottonwoods, Western Redbud and Blackbrush - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "1709f94a-1f6e-9cc6-f64e-fd3d19675593",
   "is_mixed_type": false,
   "layer": "A",
@@ -25644,12 +25704,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "smoke",
-   "plate"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "VFX",
-  "title": "Pexels 7122120 Kmeel.com Videos",
+  "title": "Skunkbush and Cottonwoods with Western Redbud and Blackbrush - B-roll Video",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25664,7 +25724,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2025-12-11T04:12:07Z",
-  "description": "1920x1080 39s — smoke plates, alpha-friendly on black — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Salt Creek: U.S. National Park Service B-roll from Death Valley National Park. Video reference.",
   "id": "698aa57b-612c-eaa0-d0f2-dc74edb1bb99",
   "is_mixed_type": false,
   "layer": "A",
@@ -25673,12 +25733,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "smoke",
-   "plate"
+   "reference",
+   "source:nps",
+   "death-valley"
   ],
   "team_name": "VFX",
-  "title": "Pexels 9694807 cottonbro studio",
+  "title": "Salt Creek",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25693,7 +25753,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2025-09-17T02:47:00Z",
-  "description": "1920x1080 10s — screen-space corruption reference — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Flying Downstream: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "e3e713c8-fce4-5f90-25ee-65efc4d27860",
   "is_mixed_type": false,
   "layer": "A",
@@ -25702,12 +25762,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "glitch",
-   "screenspace"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "VFX",
-  "title": "Pexels 14904105 Milan Matos",
+  "title": "Flying Downstream",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25722,7 +25782,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2025-08-15T20:32:58Z",
-  "description": "1920x1080 10s — screen-space corruption reference — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Straight River Corridor: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "7f329035-5c1d-39e9-e312-d69d7655e75b",
   "is_mixed_type": false,
   "layer": "A",
@@ -25731,12 +25791,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "glitch",
-   "screenspace"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "VFX",
-  "title": "Pexels 14904127 Milan Matos",
+  "title": "Straight River Corridor",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25751,7 +25811,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2025-05-23T10:51:18Z",
-  "description": "1920x1080 10s — screen-space corruption reference — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Little Colorado River Confluence: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "3ed21250-29b6-4540-5ad0-db460620ae19",
   "is_mixed_type": false,
   "layer": "A",
@@ -25760,12 +25820,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "glitch",
-   "screenspace"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "VFX",
-  "title": "Pexels 14904109 Milan Matos",
+  "title": "Little Colorado River Confluence",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25780,7 +25840,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-10-09T07:44:00Z",
-  "description": "1920x1080 7s — screen-space corruption reference — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Bar Island: U.S. National Park Service B-roll from Acadia National Park. Video reference.",
   "id": "39a1b906-99b9-b96f-95a5-4e5ccea4051f",
   "is_mixed_type": false,
   "layer": "A",
@@ -25789,12 +25849,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "glitch",
-   "screenspace"
+   "reference",
+   "source:nps",
+   "acadia"
   ],
   "team_name": "VFX",
-  "title": "Pexels 8478572 Sergey  Meshkov",
+  "title": "Bar Island",
   "updated_at": "2026-11-05T04:35:00Z",
   "workflow_state": "approved"
  },
@@ -25809,7 +25869,7 @@
   "brand_workspace": null,
   "collection_name": "Project Echo",
   "created_at": "2026-07-27T12:00:00Z",
-  "description": "1920x1080 15s — 2D animation timing reference for the pixel work — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Clouds Sweeping Across Bright Angel Fault - Time-lapse: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "2950b68e-fd8c-8199-354c-2307a8983f2d",
   "is_mixed_type": false,
   "layer": "A",
@@ -25818,12 +25878,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "animation",
-   "pixel",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Animation",
-  "title": "Pexels 12471039 Milan Matos",
+  "title": "Clouds Sweeping Across Bright Angel Fault - Time-lapse",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25838,7 +25898,7 @@
   "brand_workspace": null,
   "collection_name": "Project Echo",
   "created_at": "2025-10-21T06:01:41Z",
-  "description": "1920x1080 10s — 2D animation timing reference for the pixel work — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Pan of Grand Canyon with Summer Clouds - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "a1462a98-7139-b98d-c5b7-533c660981ed",
   "is_mixed_type": false,
   "layer": "A",
@@ -25847,12 +25907,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "animation",
-   "pixel",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Animation",
-  "title": "Pexels 10222930 Oleg Gamulinskii",
+  "title": "Pan of Grand Canyon with Summer Clouds - B-roll Video",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25867,7 +25927,7 @@
   "brand_workspace": null,
   "collection_name": "Project Echo",
   "created_at": "2025-10-14T10:53:08Z",
-  "description": "1920x1080 10s — 2D animation timing reference for the pixel work — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "North Rim Winter Triptych: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "b6ac7dcb-0ddf-2d27-430f-f22fefd07810",
   "is_mixed_type": false,
   "layer": "A",
@@ -25876,12 +25936,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "animation",
-   "pixel",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Animation",
-  "title": "Pexels 14904104 Milan Matos",
+  "title": "North Rim Winter Triptych",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25896,7 +25956,7 @@
   "brand_workspace": null,
   "collection_name": "Project Echo",
   "created_at": "2026-04-17T08:52:59Z",
-  "description": "1920x1080 120s — 2D animation timing reference for the pixel work — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "River Corridor looking at Horizon: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "1f673b85-d75a-f76b-bdf0-2dca019e655f",
   "is_mixed_type": false,
   "layer": "A",
@@ -25905,12 +25965,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "animation",
-   "pixel",
-   "reference"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Animation",
-  "title": "Pexels 15897404 Colin Jones",
+  "title": "River Corridor looking at Horizon",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25925,7 +25985,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-04-28T10:31:11Z",
-  "description": "1920x1080 8s — peripheral reference to sit next to the controller capture — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Young Desert Bighorn Sheep: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "5da5bb16-889d-36c7-49f7-53e29b4f74a6",
   "is_mixed_type": false,
   "layer": "A",
@@ -25935,11 +25995,11 @@
   "tags": [
    "video",
    "reference",
-   "input",
-   "hardware"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "UI",
-  "title": "Pexels 7915043 RDNE Stock project",
+  "title": "Young Desert Bighorn Sheep",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25954,7 +26014,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2025-05-07T05:22:00Z",
-  "description": "1920x1080 13s — peripheral reference to sit next to the controller capture — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Zabriskie Point: U.S. National Park Service B-roll from Death Valley National Park. Video reference.",
   "id": "4cfcf91d-0355-e26f-d04b-c3eb5ec4ff66",
   "is_mixed_type": false,
   "layer": "A",
@@ -25964,11 +26024,11 @@
   "tags": [
    "video",
    "reference",
-   "input",
-   "hardware"
+   "source:nps",
+   "death-valley"
   ],
   "team_name": "UI",
-  "title": "Pexels 9972272 Stan \"Kenzo\" K",
+  "title": "Zabriskie Point",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -25983,7 +26043,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-07-27T12:00:00Z",
-  "description": "1920x1080 13s — peripheral reference to sit next to the controller capture — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Desert Tortoise: U.S. National Park Service B-roll from Joshua Tree National Park. Video reference.",
   "id": "bd8f136a-d801-488e-20d7-9bf712414245",
   "is_mixed_type": false,
   "layer": "A",
@@ -25993,11 +26053,11 @@
   "tags": [
    "video",
    "reference",
-   "input",
-   "hardware"
+   "source:nps",
+   "joshua-tree"
   ],
   "team_name": "UI",
-  "title": "Pexels 9396143 Stan \"Kenzo\" K",
+  "title": "Desert Tortoise",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26012,7 +26072,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-04-16T13:22:54Z",
-  "description": "1920x1080 6s — peripheral reference to sit next to the controller capture — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "North Rim Bison in Meadow - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "1be0dae7-5974-a7d6-1aa5-ab6e631a0495",
   "is_mixed_type": false,
   "layer": "A",
@@ -26022,11 +26082,11 @@
   "tags": [
    "video",
    "reference",
-   "input",
-   "hardware"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "UI",
-  "title": "Pexels 7914801 RDNE Stock project",
+  "title": "North Rim Bison in Meadow - B-roll Video",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26041,7 +26101,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-12-11T16:05:00Z",
-  "description": "1920x1080 21s — looping menu backgrounds — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Winter Storm Rolls In: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "d634665b-51ed-c59c-c5d7-a0ba415ec854",
   "is_mixed_type": false,
   "layer": "A",
@@ -26050,12 +26110,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "keyart",
-   "loop",
-   "motion"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Marketing Art",
-  "title": "Pexels 12546959 Colors Motion  Graphics",
+  "title": "Winter Storm Rolls In",
   "updated_at": "2026-12-11T16:05:00Z",
   "workflow_state": "approved"
  },
@@ -26070,7 +26130,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-07-24T15:22:00Z",
-  "description": "1920x1080 43s — ember + spark plates — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Beavertail Cactus - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "c3884555-2422-15d9-3139-ceec57a61eec",
   "is_mixed_type": false,
   "layer": "A",
@@ -26079,12 +26139,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "sparks",
-   "plate"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "VFX",
-  "title": "Pexels 7006552 Eduardo  Cano Photo Co.",
+  "title": "Beavertail Cactus - B-roll Video",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26099,7 +26159,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-03-07T16:48:35Z",
-  "description": "1920x1080 15s — ember + spark plates — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Sunset Time-lapse from Bright Angel Trailhead - B-roll: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "5d51dc20-6a96-b659-e957-4f6122bbbbf1",
   "is_mixed_type": false,
   "layer": "A",
@@ -26108,12 +26168,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "sparks",
-   "plate"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "VFX",
-  "title": "Pexels 12298312 Artur Szczubelek",
+  "title": "Sunset Time-lapse from Bright Angel Trailhead - B-roll",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26128,7 +26188,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2026-07-27T12:00:00Z",
-  "description": "1366x720 10s — ember + spark plates — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Rough Splashy Waters: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "6974ce8c-33a5-3d76-2d72-87b1ebc758e2",
   "is_mixed_type": false,
   "layer": "A",
@@ -26137,12 +26197,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "sparks",
-   "plate"
+   "reference",
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "VFX",
-  "title": "Pexels 4389495 TREEDEO.ST",
+  "title": "Rough Splashy Waters",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26157,7 +26217,7 @@
   "brand_workspace": null,
   "collection_name": "Project Mirror",
   "created_at": "2025-07-02T19:26:00Z",
-  "description": "1920x1080 16s — ember + spark plates — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Badwater Basin: U.S. National Park Service B-roll from Death Valley National Park. Video reference.",
   "id": "08697d16-1312-bb3b-ea91-c23ceff10966",
   "is_mixed_type": false,
   "layer": "A",
@@ -26166,12 +26226,12 @@
   "studio": "shared",
   "tags": [
    "video",
-   "vfx",
-   "sparks",
-   "plate"
+   "reference",
+   "source:nps",
+   "death-valley"
   ],
   "team_name": "VFX",
-  "title": "Pexels 9665456 cottonbro studio",
+  "title": "Badwater Basin",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26186,7 +26246,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-03-05T04:19:04Z",
-  "description": "1920x1080 7s — audience + stage reference for the tournament mode mock-ups — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Close Up View of Desert Bighorn Ewe: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "6db74f91-b7dc-64a9-2ecd-54f89338779e",
   "is_mixed_type": false,
   "layer": "A",
@@ -26196,11 +26256,11 @@
   "tags": [
    "video",
    "reference",
-   "esports",
-   "gaming"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 7914809 RDNE Stock project",
+  "title": "Close Up View of Desert Bighorn Ewe",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26215,7 +26275,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-07-27T12:00:00Z",
-  "description": "1920x1080 6s — audience + stage reference for the tournament mode mock-ups — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Little Colorado River and View Mix: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "80522398-005e-21cf-0ada-7614d0b77b91",
   "is_mixed_type": false,
   "layer": "A",
@@ -26225,11 +26285,11 @@
   "tags": [
    "video",
    "reference",
-   "esports",
-   "gaming"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 8128426 Alena Darmel",
+  "title": "Little Colorado River and View Mix",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26244,7 +26304,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-03-24T19:48:06Z",
-  "description": "1920x1080 18s — audience + stage reference for the tournament mode mock-ups — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Fog: U.S. National Park Service B-roll from Joshua Tree National Park. Video reference.",
   "id": "74be7e63-50f2-4fe3-ead0-0b15dec5c1e3",
   "is_mixed_type": false,
   "layer": "A",
@@ -26254,11 +26314,11 @@
   "tags": [
    "video",
    "reference",
-   "esports",
-   "gaming"
+   "source:nps",
+   "joshua-tree"
   ],
   "team_name": "Reference",
-  "title": "Pexels 9071228 Yan Krukau",
+  "title": "Fog",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26273,7 +26333,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-05-03T19:17:34Z",
-  "description": "1920x1080 17s — audience + stage reference for the tournament mode mock-ups — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Winter Static Shot: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "ec364eba-6ebf-e836-2a7d-623a59d537ed",
   "is_mixed_type": false,
   "layer": "A",
@@ -26283,11 +26343,11 @@
   "tags": [
    "video",
    "reference",
-   "esports",
-   "gaming"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 7914800 RDNE Stock project",
+  "title": "Winter Static Shot",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26302,7 +26362,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-02-07T02:36:39Z",
-  "description": "1366x720 15s — hardware reference for the retro fantasy kit's framing — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Tilt Up from Canyon to Rim: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "bccdc94a-b333-77ac-fd40-b4e660ef035c",
   "is_mixed_type": false,
   "layer": "A",
@@ -26312,11 +26372,11 @@
   "tags": [
    "video",
    "reference",
-   "retro",
-   "hardware"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 7856705 Ron Lach",
+  "title": "Tilt Up from Canyon to Rim",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26331,7 +26391,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2025-12-31T07:18:38Z",
-  "description": "1920x1080 9s — hardware reference for the retro fantasy kit's framing — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Roaring Springs - B-roll Video: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "99b0c556-7141-b145-c05c-98d3764fa87c",
   "is_mixed_type": false,
   "layer": "A",
@@ -26341,11 +26401,11 @@
   "tags": [
    "video",
    "reference",
-   "retro",
-   "hardware"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 7988056 SHVETS production",
+  "title": "Roaring Springs - B-roll Video",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26360,7 +26420,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-05-09T17:55:50Z",
-  "description": "1920x1080 14s — hardware reference for the retro fantasy kit's framing — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Winter Sunrise Pan at Yaki Point: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "b15a4ed7-feea-dcc4-1b5f-7ad2239db507",
   "is_mixed_type": false,
   "layer": "A",
@@ -26370,11 +26430,11 @@
   "tags": [
    "video",
    "reference",
-   "retro",
-   "hardware"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 7667954 Pavel Danilyuk",
+  "title": "Winter Sunrise Pan at Yaki Point",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },
@@ -26389,7 +26449,7 @@
   "brand_workspace": null,
   "collection_name": "Internet Reference",
   "created_at": "2026-07-09T05:18:00Z",
-  "description": "1920x1080 9s — hardware reference for the retro fantasy kit's framing — Pexels License — free to use, not CC0/PD (see ATTRIBUTIONS.md)",
+  "description": "Desert Bighorn Sheep Walking by Colorado River: U.S. National Park Service B-roll from Grand Canyon National Park. Video reference.",
   "id": "5c6ac432-e978-4b7c-6be3-7a9d31e025ae",
   "is_mixed_type": false,
   "layer": "A",
@@ -26399,11 +26459,11 @@
   "tags": [
    "video",
    "reference",
-   "retro",
-   "hardware"
+   "source:nps",
+   "grand-canyon"
   ],
   "team_name": "Reference",
-  "title": "Pexels 7915029 RDNE Stock project",
+  "title": "Desert Bighorn Sheep Walking by Colorado River",
   "updated_at": "2026-07-27T12:00:00Z",
   "workflow_state": "approved"
  },

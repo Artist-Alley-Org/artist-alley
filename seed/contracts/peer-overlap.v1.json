@@ -1,0 +1,77 @@
+{
+  "schema": "artist-alley.peer-overlap/v1",
+  "_why": "Issue #1514. The public site_a and the NEW public replacement site_b must deliberately share at least two different byte-identical assets, so CI can check that one byte stream on two federation peers keeps two separate peer-local identities. Each fixture names the exact bytes (sha256 + length), the asset row that carries them on each peer, and where the bytes come from. This file is a fixture contract, not a rights clearance and not a selection: a manifest license label is not a redistribution decision, and nothing here makes the coverage selector include these rows. It is separate from seed/profiles/dataset.fixtures.json, which is test-account substrate. Validate with `aa seed-overlap` (app/internal/seed/overlap.go).",
+  "status": "proposed",
+  "issue": "https://github.com/Artist-Alley-Org/artist-alley/issues/1514",
+  "peers": ["site_a", "site_b"],
+  "peer_notes": {
+    "site_a": "The public site_a dataset.",
+    "site_b": "The NEW public replacement peer built from cleared sources. Not the current private site_b, whose records and IDs must not be used here."
+  },
+  "fixtures": [
+    {
+      "name": "overlap-image-1",
+      "sha256": "52ac0ca27297ac18457727ed79edc19de1c1b896a465559cdd9260ec2a4740c1",
+      "bytes": 146573,
+      "assets": {
+        "site_a": {
+          "asset_id": "9780ee7c-ce76-6022-dfa2-46aae7d50428",
+          "file_path": "images/kenney-allin1/2d-assets-monster-builder-pack/spritesheet/spritesheet_default.png"
+        },
+        "site_b": {
+          "asset_id": "40aa74bc-da53-5ace-885e-521a292c1201",
+          "id_derivation": {
+            "method": "uuidv5",
+            "namespace": "url",
+            "name": "artist-alley:v0.11.1:public-site-b:overlap-image-1"
+          }
+        }
+      },
+      "source": {
+        "asset_page": "https://kenney.nl/assets/monster-builder-pack",
+        "archive_url": "https://kenney.nl/media/pages/assets/monster-builder-pack/663e4ef6de-1677495438/kenney_monster-builder-pack.zip",
+        "archive_member": "Spritesheet/spritesheet_default.png",
+        "license": "CC0-1.0",
+        "manifest_license": "CC0 1.0",
+        "license_evidence": [
+          "https://kenney.nl/assets/monster-builder-pack (asset page states CC0)",
+          "License.txt inside the source pack (states CC0; recorded in docs/proposals/v0.11.1-ci-datasets-preflight.md, 2026-11-11)"
+        ],
+        "attribution": "Kenney (kenney.nl)"
+      },
+      "rights_status": "evidence recorded; not release-cleared"
+    },
+    {
+      "name": "overlap-image-2",
+      "sha256": "b1d6e3414762406a9724549876b4286c41a5b2b60007ccbfb5305001d94c9fb7",
+      "bytes": 170097,
+      "assets": {
+        "site_a": {
+          "asset_id": "337d3a4d-1b3d-80b7-b448-39283bd58319",
+          "file_path": "images/kenney-allin1/2d-assets-planets/parts/sphere1.png"
+        },
+        "site_b": {
+          "asset_id": "c0082a12-3ebb-5997-90bf-0d18b745bbf3",
+          "id_derivation": {
+            "method": "uuidv5",
+            "namespace": "url",
+            "name": "artist-alley:v0.11.1:public-site-b:overlap-image-2"
+          }
+        }
+      },
+      "source": {
+        "asset_page": "https://kenney.nl/assets/planets",
+        "archive_url": "https://kenney.nl/media/pages/assets/planets/512b578338-1677495391/kenney_planets.zip",
+        "archive_member": "Parts/sphere1.png",
+        "license": "CC0-1.0",
+        "manifest_license": "CC0 1.0",
+        "license_evidence": [
+          "https://kenney.nl/assets/planets (asset page states CC0)",
+          "License.txt inside the source pack (states CC0; recorded in docs/proposals/v0.11.1-ci-datasets-preflight.md, 2026-11-11)"
+        ],
+        "attribution": "Kenney (kenney.nl)"
+      },
+      "rights_status": "evidence recorded; not release-cleared"
+    }
+  ]
+}

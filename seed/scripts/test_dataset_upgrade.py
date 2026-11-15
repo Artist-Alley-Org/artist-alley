@@ -35,6 +35,8 @@ import tempfile
 import threading
 import unittest
 import unittest.mock
+import urllib.error
+import urllib.request
 import zlib
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -1216,6 +1218,14 @@ class TestProvenanceIsRefetchable(unittest.TestCase):
         for site, profile in self.profiles():
             px = [e for e in profile
                   if (e.get("metadata") or {}).get("acquisition_source") == "Pexels"]
+            if site == "site_a":
+                # #1514: site_a's 75 Pexels videos were replaced one-to-one by
+                # NPS B-roll, so the public profile must hold none; the byte
+                # URLs of their replacements are pinned in
+                # TestSiteAMediaReplacement1514. site_b keeps every check below.
+                self.assertEqual([e["id"] for e in px], [],
+                                 "site_a: a Pexels record is back in the profile")
+                continue
             self.assertGreater(len(px), 0, f"{site}: no Pexels records to check")
             for e in px:
                 meta = e["metadata"]
@@ -2761,6 +2771,956 @@ class TestArchiveMemberRefetch(unittest.TestCase):
         self.assertIn("member not in zip", note)
 
 
+class TestSignedLinkArchiveRefetch1514(unittest.TestCase):
+    """#1514: a `source_archive` whose `url` is Kenney's download-link
+    endpoint. The endpoint RETURNS JSON naming a short-lived signed zip URL,
+    so the re-fetch resolves a fresh link, authenticates the WHOLE zip by
+    length and sha256 before opening it, then the member by its own sha256
+    before staging it. Every failure is closed, and the signed URL never
+    appears in a returned note. Offline: the network is a fake opener."""
+
+    ENDPOINT = "https://kenney.nl/download-link/6173736574732f666163746f72792d6b6974"
+    SIGNED = "https://kenney.nl/media/signed/kenney_factory-kit_3.0.zip?expires=1&signature=SECRETSIG"
+    MEMBER = "Models/GLB format/machine.glb"
+
+    class _Resp:
+        def __init__(self, url, body, headers=None):
+            self.url, self.body, self.headers = url, body, headers or {}
+
+        def geturl(self):
+            return self.url
+
+        def read(self, n=-1):
+            return self.body if n is None or n < 0 else self.body[:n]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _zip_bytes(self, members):
+        import zipfile as zf
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            for name, data in members.items():
+                z.writestr(name, data)
+        return buf.getvalue()
+
+    def _archive(self, blob, member_bytes, **over):
+        sa = {"url": self.ENDPOINT, "transport": kps.TRANSPORT_SIGNED_LINK,
+              "archive": "kenney_factory-kit_3.0.zip", "archive_bytes": len(blob),
+              "archive_sha256": hashlib.sha256(blob).hexdigest(), "member": self.MEMBER,
+              "sha256": hashlib.sha256(member_bytes).hexdigest()}
+        sa.update(over)
+        return sa
+
+    def _opener(self, routes, calls=None):
+        def op(req, timeout):
+            if calls is not None:
+                calls.append(req.full_url)
+            r = routes[req.full_url]
+            if isinstance(r, Exception):
+                raise r
+            return r
+        return op
+
+    def _routes(self, blob, link_body=None, signed=None):
+        signed = signed or self.SIGNED
+        body = link_body if link_body is not None else json.dumps({"url": signed}).encode()
+        return {self.ENDPOINT: self._Resp(self.ENDPOINT, body),
+                signed: self._Resp(signed, blob, {"Content-Length": str(len(blob))})}
+
+    def _refetch(self, sa, routes, calls=None):
+        pa._ZIP_CACHE.clear()
+        with tempfile.TemporaryDirectory() as d, \
+                unittest.mock.patch.object(kps, "_default_open", self._opener(routes, calls)):
+            out = Path(d) / "machine.glb"
+            ok, note = pa.refetch_member(sa["url"], sa["member"], sa["sha256"], out, archive=sa)
+            got = out.read_bytes() if out.is_file() else None
+            leftovers = [p.name for p in Path(d).iterdir()]
+        pa._ZIP_CACHE.clear()
+        self.assertNotIn("SECRETSIG", note)
+        self.assertNotIn("/media/signed/", note)
+        return ok, note, got, leftovers
+
+    def test_a_fresh_link_stages_the_authenticated_member(self):
+        model = b"glb" * 100
+        blob = self._zip_bytes({self.MEMBER: model, "License.txt": b"CC0"})
+        calls = []
+        ok, note, got, _ = self._refetch(self._archive(blob, model), self._routes(blob), calls)
+        self.assertTrue(ok, note)
+        self.assertEqual(got, model)
+        self.assertEqual(calls, [self.ENDPOINT, self.SIGNED])
+
+    def test_the_endpoint_request_carries_its_own_asset_page_as_referer(self):
+        """Kenney answers the endpoint only with the asset page as Referer
+        (403 without it). The page is derived from the endpoint's hex; the
+        signed zip GET sends none."""
+        model = b"glb" * 10
+        blob = self._zip_bytes({self.MEMBER: model})
+        seen = []
+        routes = self._routes(blob)
+
+        def op(req, timeout):
+            seen.append((req.full_url, dict(req.header_items())))
+            return routes[req.full_url]
+        pa._ZIP_CACHE.clear()
+        with unittest.mock.patch.object(kps, "_default_open", op):
+            got = kps.fetch_signed_archive(self._archive(blob, model))
+        pa._ZIP_CACHE.clear()
+        self.assertEqual(got, blob)
+        (ep_url, ep_h), (zip_url, zip_h) = seen
+        self.assertEqual(ep_url, self.ENDPOINT)
+        self.assertEqual(ep_h.get("Referer"), "https://kenney.nl/assets/factory-kit")
+        self.assertEqual(ep_h.get("User-agent"), kps.UA)
+        self.assertEqual(ep_h.get("Accept"), "application/json")
+        self.assertEqual(zip_url, self.SIGNED)
+        self.assertNotIn("Referer", zip_h)
+        self.assertEqual(zip_h.get("User-agent"), kps.UA)
+
+    def test_a_page_that_disagrees_with_the_endpoint_is_refused_before_any_request(self):
+        calls = []
+        op = self._opener({}, calls)
+        for page in ("https://kenney.nl/assets/other-kit", "https://evil.example/assets/factory-kit",
+                     "https://kenney.nl/assets/factory-kit/", ""):
+            with self.subTest(page=page), self.assertRaises(kps.ArchiveError):
+                kps.resolve_download_link(self.ENDPOINT, page=page, opener=op)
+        self.assertEqual(calls, [])
+        self.assertEqual(kps.asset_page_for_download_link(self.ENDPOINT),
+                         "https://kenney.nl/assets/factory-kit")
+
+    def test_an_endpoint_hex_that_is_not_an_asset_slug_is_refused(self):
+        calls = []
+        op = self._opener({}, calls)
+        for path in ("assets/../media/x", "media/factory-kit", "assets/Factory_Kit",
+                     "assets/", "assets/factory-kit?x=1", "assets/factory kit",
+                     "https://evil.example/", "assets/a/b"):
+            url = "https://kenney.nl/download-link/" + path.encode().hex()
+            with self.subTest(path=path), self.assertRaises(kps.ArchiveError):
+                kps.resolve_download_link(url, opener=op)
+        for url in ("https://kenney.nl/download-link/617", "https://kenney.nl/download-link/ff00"):
+            with self.subTest(url=url), self.assertRaises(kps.ArchiveError):
+                kps.resolve_download_link(url, opener=op)
+        self.assertEqual(calls, [])
+        with self.assertRaises(kps.ArchiveError):
+            kps.validate_signed_archive(self._archive(
+                b"z", b"m", url="https://kenney.nl/download-link/" + b"media/x".hex()))
+
+    def test_verify_records_refuses_a_fetched_from_that_disagrees(self):
+        model = b"glb" * 10
+        blob = self._zip_bytes({self.MEMBER: model})
+        rec = {"id": "r1", "metadata": {"fetched_from": "https://kenney.nl/assets/other-kit",
+                                        "source_archive": self._archive(blob, model)}}
+        calls = []
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "records.json"
+            p.write_text(json.dumps([rec]), encoding="utf-8")
+            with unittest.mock.patch.object(kps, "_default_open",
+                                            self._opener(self._routes(blob), calls)), \
+                    contextlib.redirect_stderr(err):
+                rc = kps.cmd_verify_records(unittest.mock.Mock(records=p))
+        self.assertEqual(rc, 1, "a refused archive must fail the gate (#1514)")
+        self.assertIn("does not match the download-link endpoint", err.getvalue())
+        self.assertIn("1 in 1 archive(s) that could not be fetched", err.getvalue())
+        self.assertEqual(calls, [])
+
+    def test_the_companion_comes_from_the_same_archive_beside_the_model(self):
+        model, tex = b"glb" * 100, b"png" * 50
+        comp_member = "Models/GLB format/Textures/colormap.png"
+        blob = self._zip_bytes({self.MEMBER: model, comp_member: tex})
+        sa = self._archive(blob, model)
+        model_rel = "3d/kit/models/glb-format/machine.glb"
+        comp = {"uri": "Textures/colormap.png", "path": "3d/kit/models/glb-format/Textures/colormap.png",
+                "sha256": hashlib.sha256(tex).hexdigest(), "bytes": len(tex)}
+        pa._ZIP_CACHE.clear()
+        with tempfile.TemporaryDirectory() as d, \
+                unittest.mock.patch.object(kps, "_default_open", self._opener(self._routes(blob))):
+            ok, rel, note = pa._refetch_companion(sa, comp, model_rel, Path(d))
+            got = (Path(d) / comp["path"]).read_bytes() if ok else None
+            bad = pa._refetch_companion(sa, {**comp, "uri": "../x.png"}, model_rel, Path(d))
+            wrong = pa._refetch_companion(sa, {**comp, "sha256": "0" * 64}, model_rel, Path(d))
+            misplaced = pa._refetch_companion(sa, {**comp, "path": "elsewhere/colormap.png"},
+                                              model_rel, Path(d))
+        pa._ZIP_CACHE.clear()
+        self.assertTrue(ok, note)
+        self.assertEqual(rel, comp["path"])
+        self.assertEqual(got, tex)
+        self.assertFalse(bad[0])
+        self.assertIn("escapes", bad[2])
+        self.assertFalse(wrong[0])
+        self.assertIn("sha256 mismatch", wrong[2])
+        self.assertFalse(misplaced[0])
+
+    def test_malformed_json_fails_closed(self):
+        model = b"m"
+        blob = self._zip_bytes({self.MEMBER: model})
+        for body in (b"<html>not json</html>", b"[1,2]", b'{"href": "x"}', b'{"url": 7}'):
+            with self.subTest(body=body):
+                ok, note, got, _ = self._refetch(self._archive(blob, model),
+                                                 self._routes(blob, link_body=body))
+                self.assertFalse(ok)
+                self.assertIsNone(got)
+                self.assertIn("download-link", note)
+
+    def test_a_signed_url_off_kenney_or_not_https_is_refused(self):
+        model = b"m"
+        blob = self._zip_bytes({self.MEMBER: model})
+        for signed in ("https://cdn.example.net/kenney_factory-kit_3.0.zip?sig=SECRETSIG",
+                       "http://kenney.nl/media/signed/kenney_factory-kit_3.0.zip?sig=SECRETSIG",
+                       "https://kenney.nl.example.net/x.zip?sig=SECRETSIG",
+                       "https://user@kenney.nl/x.zip?sig=SECRETSIG"):
+            with self.subTest(signed=signed):
+                calls = []
+                ok, note, got, _ = self._refetch(self._archive(blob, model),
+                                                 self._routes(blob, signed=signed), calls)
+                self.assertFalse(ok)
+                self.assertIsNone(got)
+                self.assertEqual(calls, [self.ENDPOINT], "the refused URL was fetched")
+
+    def test_a_response_that_ends_off_host_is_refused(self):
+        model = b"m"
+        blob = self._zip_bytes({self.MEMBER: model})
+        routes = self._routes(blob)
+        routes[self.SIGNED] = self._Resp("https://elsewhere.example/x.zip", blob)
+        ok, note, got, _ = self._refetch(self._archive(blob, model), routes)
+        self.assertFalse(ok)
+        self.assertIsNone(got)
+
+    def test_the_redirect_handler_will_not_leave_kenney(self):
+        h = kps._HostLockedRedirect(kps.SIGNED_ZIP_HOSTS)
+        req = urllib.request.Request(self.ENDPOINT)
+        with self.assertRaises(kps.ArchiveError):
+            h.redirect_request(req, None, 302, "Found", {}, "https://elsewhere.example/x.zip")
+        self.assertIsNotNone(h.redirect_request(req, None, 302, "Found", {},
+                                                "https://kenney.nl/media/x.zip"))
+
+    def test_a_changed_archive_fails_before_anything_is_extracted(self):
+        model = b"m" * 10
+        blob = self._zip_bytes({self.MEMBER: model})
+        other = self._zip_bytes({self.MEMBER: model, "new.txt": b"upstream changed"})
+        sa = self._archive(blob, model)
+        for served, why in ((other, "B"), (blob[:5] + bytes([blob[5] ^ 0xFF]) + blob[6:], "archive sha256 mismatch")):
+            with self.subTest(why=why):
+                routes = self._routes(served)
+                routes[self.SIGNED].headers = {}
+                ok, note, got, _ = self._refetch(sa, routes)
+                self.assertFalse(ok)
+                self.assertIsNone(got)
+                self.assertIn(why, note)
+
+    def test_a_changed_member_fails_and_stages_nothing(self):
+        model = b"m" * 10
+        blob = self._zip_bytes({self.MEMBER: model})
+        ok, note, got, left = self._refetch(self._archive(blob, b"what we recorded"),
+                                            self._routes(blob))
+        self.assertFalse(ok)
+        self.assertIn("sha256 mismatch", note)
+        self.assertIsNone(got)
+        self.assertEqual(left, [])
+
+    def test_an_expired_link_fails_closed_without_naming_it(self):
+        model = b"m"
+        blob = self._zip_bytes({self.MEMBER: model})
+        routes = self._routes(blob)
+        routes[self.SIGNED] = urllib.error.HTTPError(self.SIGNED, 403, "Forbidden", {}, None)
+        ok, note, got, _ = self._refetch(self._archive(blob, model), routes)
+        self.assertFalse(ok)
+        self.assertIsNone(got)
+        self.assertIn("HTTP 403", note)
+        self.assertIn("expired", note)
+        routes[self.SIGNED] = urllib.error.URLError("timed out")
+        ok, note, _, _ = self._refetch(self._archive(blob, model), routes)
+        self.assertFalse(ok)
+
+    def test_a_bad_zip_fails_closed(self):
+        blob = b"this is not a zip at all"
+        ok, note, got, _ = self._refetch(self._archive(blob, b"m"), self._routes(blob))
+        self.assertFalse(ok)
+        self.assertIn("not a zip", note)
+        self.assertIsNone(got)
+
+    def test_a_missing_member_is_named(self):
+        blob = self._zip_bytes({"other.glb": b"x"})
+        ok, note, got, _ = self._refetch(self._archive(blob, b"m"), self._routes(blob))
+        self.assertFalse(ok)
+        self.assertIn("member not in zip", note)
+
+    def test_responses_are_bounded(self):
+        model = b"m"
+        blob = self._zip_bytes({self.MEMBER: model})
+        big = self._routes(blob, link_body=b"{" + b" " * (kps.LINK_RESPONSE_MAX_BYTES + 1) + b"}")
+        ok, note, _, _ = self._refetch(self._archive(blob, model), big)
+        self.assertFalse(ok)
+        self.assertIn("bound", note)
+        routes = self._routes(blob)
+        routes[self.SIGNED].headers = {"Content-Length": str(len(blob) + 1)}
+        ok, note, _, _ = self._refetch(self._archive(blob, model), routes)
+        self.assertFalse(ok)
+        self.assertIn("bound", note)
+        routes = self._routes(blob + b"extra")
+        routes[self.SIGNED].headers = {}
+        ok, note, _, _ = self._refetch(self._archive(blob, model), routes)
+        self.assertFalse(ok)
+        self.assertIn("bound", note)
+
+    def test_the_record_shape_is_checked_before_any_request(self):
+        model = b"m"
+        blob = self._zip_bytes({self.MEMBER: model})
+        cases = {
+            "zip url as locator": {"url": "https://kenney.nl/media/pages/assets/x.zip"},
+            "foreign endpoint": {"url": "https://example.net/download-link/6173"},
+            "no archive hash": {"archive_sha256": None},
+            "no archive bytes": {"archive_bytes": None},
+            "bool archive bytes": {"archive_bytes": True},
+        }
+        for why, over in cases.items():
+            with self.subTest(why=why):
+                calls = []
+                sa = self._archive(blob, model, **over)
+                ok, note, got, _ = self._refetch(sa, self._routes(blob), calls)
+                self.assertFalse(ok)
+                self.assertEqual(calls, [], "a malformed record reached the network")
+        sa = self._archive(blob, model, transport="kenney-something-else")
+        ok, note, _, _ = self._refetch(sa, self._routes(blob))
+        self.assertFalse(ok)
+        self.assertIn("unknown source_archive transport", note)
+
+    def test_a_direct_zip_record_keeps_the_direct_path(self):
+        """No `transport` key: the archive argument changes nothing, and the
+        signed-link code is never consulted."""
+        payload = b"glb-bytes" * 8
+        with tempfile.TemporaryDirectory() as d:
+            served = Path(d) / "served"
+            served.mkdir()
+            TestArchiveMemberRefetch._zip(served / "pack.zip", {"Models/x.glb": payload})
+            handler = partial(SimpleHTTPRequestHandler, directory=str(served))
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{httpd.server_address[1]}"
+            try:
+                pa._ZIP_CACHE.clear()
+                sa = {"url": f"{base}/pack.zip", "member": "Models/x.glb",
+                      "sha256": hashlib.sha256(payload).hexdigest()}
+                with unittest.mock.patch.object(kps, "fetch_signed_archive",
+                                                side_effect=AssertionError("signed path used")):
+                    out = Path(d) / "out" / "x.glb"
+                    ok, note = pa.refetch_member(sa["url"], sa["member"], sa["sha256"], out,
+                                                 archive=sa)
+                got = out.read_bytes() if out.is_file() else None
+            finally:
+                pa._ZIP_CACHE.clear()
+                httpd.shutdown()
+                httpd.server_close()
+        self.assertTrue(ok, note)
+        self.assertEqual(got, payload)
+
+    def test_verify_records_uses_the_signed_transport(self):
+        model = b"glb" * 10
+        blob = self._zip_bytes({self.MEMBER: model})
+        rec = {"id": "r1", "metadata": {"source_archive": self._archive(blob, model)}}
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "records.json"
+            p.write_text(json.dumps([rec]), encoding="utf-8")
+            err = io.StringIO()
+            with unittest.mock.patch.object(kps, "_default_open", self._opener(self._routes(blob))), \
+                    contextlib.redirect_stderr(err):
+                rc = kps.cmd_verify_records(unittest.mock.Mock(records=p))
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertNotIn("SECRETSIG", err.getvalue())
+
+    def test_the_factory_kit_record_carries_the_signed_link_contract(self):
+        """The committed row, offline: a reconstructible contract with the
+        endpoint as locator, never a signed URL and never a false media_url."""
+        rows = json.loads((PROFILES / "studio-a.assets.json").read_text(encoding="utf-8"))
+        (r,) = [x for x in rows if x["id"] == TestSiteAMediaReplacement1514.MODEL_ID]
+        m = r["metadata"]
+        sa = m["source_archive"]
+        kps.validate_signed_archive(sa)
+        self.assertEqual(sa["url"], self.ENDPOINT)
+        self.assertEqual(sa["transport"], "kenney-download-link-json")
+        self.assertEqual(sa["archive_bytes"], 4511890)
+        self.assertEqual(sa["archive_sha256"],
+                         "7e31fb2308e90304672bd15cd18fa9d9f02c03731a8cbc57a8e3e1c181dfb0a7")
+        self.assertEqual(sa["member"], self.MEMBER)
+        self.assertEqual(sa["sha256"], m["sha256"])
+        self.assertTrue(m["source_member"].endswith("/" + sa["member"]))
+        self.assertNotIn("media_url", m)
+        self.assertNotIn("?", sa["url"])
+        self.assertIn("returns JSON", sa["transport_note"])
+        self.assertIn("not recorded", sa["transport_note"])
+        self.assertEqual(r["source_root"], "pack")
+        self.assertEqual(m["fetched_from"], "https://kenney.nl/assets/factory-kit")
+        self.assertEqual(kps.asset_page_for_download_link(sa["url"]), m["fetched_from"],
+                         "the Referer the endpoint is asked with must be the record's page")
+        (comp,) = m["companions"]
+        self.assertEqual(comp["path"], r["file_path"].rsplit("/", 1)[0] + "/" + comp["uri"])
+        self.assertEqual(rmu.internet_records([r]), [],
+                         "the row must be gated as an archive member, not a media_url")
+
+
+class TestVerifyRecordsExitCode1514(unittest.TestCase):
+    """`kenney_pack_sources.py verify-records` is a provenance gate, so ANY
+    record it could not verify fails the run: a zip that would not download
+    or open, an unsupported transport, a malformed record, a missing member,
+    a hash mismatch, and a selection that verified nothing. It used to set
+    the exit code from mismatches alone, so a failed download printed FAIL
+    and exited 0. Offline: the fetchers are mocked."""
+
+    DIRECT = "https://kenney.nl/media/pages/assets/x/abc-1/kenney_x.zip"
+    SIGNED_EP = TestSignedLinkArchiveRefetch1514.ENDPOINT
+    SIGNED = TestSignedLinkArchiveRefetch1514.SIGNED
+
+    @staticmethod
+    def _zip(members):
+        buf = io.BytesIO()
+        import zipfile as zf
+        with zf.ZipFile(buf, "w") as z:
+            for n, d in members.items():
+                z.writestr(n, d)
+        return buf.getvalue()
+
+    def _direct_rec(self, rid, member, data, url=None):
+        return {"id": rid, "metadata": {"pack": "X/", "source_archive": {
+            "url": url or self.DIRECT, "member": member,
+            "sha256": hashlib.sha256(data).hexdigest()}}}
+
+    def _signed_rec(self, rid, blob, member, data, **over):
+        sa = {"url": self.SIGNED_EP, "transport": kps.TRANSPORT_SIGNED_LINK,
+              "archive_bytes": len(blob), "archive_sha256": hashlib.sha256(blob).hexdigest(),
+              "member": member, "sha256": hashlib.sha256(data).hexdigest()}
+        sa.update(over)
+        return {"id": rid, "metadata": {"fetched_from": "https://kenney.nl/assets/factory-kit",
+                                        "source_archive": sa}}
+
+    def _signed_opener(self, blob, zip_resp=None):
+        R = TestSignedLinkArchiveRefetch1514._Resp
+        routes = {self.SIGNED_EP: R(self.SIGNED_EP, json.dumps({"url": self.SIGNED}).encode()),
+                  self.SIGNED: zip_resp if zip_resp is not None else R(self.SIGNED, blob)}
+
+        def op(req, timeout):
+            r = routes[req.full_url]
+            if isinstance(r, Exception):
+                raise r
+            return r
+        return op
+
+    def _run(self, records, direct=None, signed_open=None):
+        """direct: blob or exception for the direct `_get`; signed_open: fake opener."""
+        def fake_get(url, timeout=60):
+            if isinstance(direct, Exception):
+                raise direct
+            if direct is None:
+                raise AssertionError("unexpected direct fetch")
+            return direct
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "records.json"
+            p.write_text(json.dumps(records), encoding="utf-8")
+            with unittest.mock.patch.object(kps, "_get", fake_get), \
+                    unittest.mock.patch.object(kps, "_default_open",
+                                               signed_open or (lambda r, t: (_ for _ in ()).throw(
+                                                   AssertionError("unexpected signed fetch")))), \
+                    contextlib.redirect_stderr(err):
+                rc = kps.cmd_verify_records(unittest.mock.Mock(records=p))
+        out = err.getvalue()
+        self.assertNotIn("SECRETSIG", out)
+        self.assertNotIn("/media/signed/", out)
+        return rc, out
+
+    def _good(self):
+        a, b = b"model-a" * 9, b"model-b" * 7
+        direct = self._zip({"A/a.glb": a, "B/b.glb": b})
+        m = TestSignedLinkArchiveRefetch1514.MEMBER
+        sdata = b"glb" * 11
+        sblob = self._zip({m: sdata})
+        recs = [self._direct_rec("d1", "A/a.glb", a), self._direct_rec("d2", "B/b.glb", b),
+                self._signed_rec("s1", sblob, m, sdata)]
+        return recs, direct, sblob
+
+    def test_a_true_success_across_both_transports(self):
+        recs, direct, sblob = self._good()
+        rc, out = self._run(recs + [{"id": "plain", "metadata": {}}], direct=direct,
+                            signed_open=self._signed_opener(sblob))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("3 record(s) reproduce from their pack zip, 0 hash mismatch, "
+                      "0 member absent, 0 in 0 archive(s)", out)
+        self.assertIn("0 malformed, 1 without a source_archive (not checked)", out)
+        self.assertIn("OK: all 3 record(s) verified", out)
+
+    def test_a_failed_direct_download_fails_even_when_the_rest_passes(self):
+        recs, _, sblob = self._good()
+        rc, out = self._run(recs, direct=urllib.error.URLError("timed out"),
+                            signed_open=self._signed_opener(sblob))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL " + self.DIRECT, out)
+        self.assertIn("1 record(s) reproduce", out)
+        self.assertIn("2 in 1 archive(s) that could not be fetched or opened", out)
+
+    def test_a_failed_signed_link_fails_and_never_prints_the_link(self):
+        recs, direct, sblob = self._good()
+        expired = urllib.error.HTTPError(self.SIGNED, 403, "Forbidden", {}, None)
+        rc, out = self._run(recs, direct=direct, signed_open=self._signed_opener(sblob, expired))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("HTTP 403", out)
+        self.assertIn("FAIL " + self.SIGNED_EP, out)
+        self.assertIn("2 record(s) reproduce", out)
+        self.assertIn("1 in 1 archive(s)", out)
+
+    def test_a_changed_signed_archive_fails(self):
+        recs, direct, sblob = self._good()
+        tampered = sblob[:5] + bytes([sblob[5] ^ 0xFF]) + sblob[6:]
+        R = TestSignedLinkArchiveRefetch1514._Resp
+        rc, out = self._run(recs, direct=direct,
+                            signed_open=self._signed_opener(sblob, R(self.SIGNED, tampered)))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("archive sha256 mismatch", out)
+
+    def test_an_invalid_zip_fails(self):
+        a = b"x"
+        rc, out = self._run([self._direct_rec("d1", "A/a.glb", a)], direct=b"not a zip")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("1 in 1 archive(s)", out)
+        self.assertIn("0 record(s) reproduce", out)
+
+    def test_an_unsupported_transport_fails(self):
+        rec = self._direct_rec("d1", "A/a.glb", b"x")
+        rec["metadata"]["source_archive"]["transport"] = "carrier-pigeon"
+        rc, out = self._run([rec])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("unknown transport 'carrier-pigeon'", out)
+
+    def test_records_disagreeing_on_transport_for_one_url_fail(self):
+        recs, direct, sblob = self._good()
+        odd = self._direct_rec("d3", "A/a.glb", b"model-a" * 9)
+        odd["metadata"]["source_archive"]["transport"] = kps.TRANSPORT_SIGNED_LINK
+        rc, out = self._run(recs[:2] + [odd], direct=direct)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("disagree on the transport", out)
+
+    def test_a_missing_member_fails(self):
+        a = b"model-a"
+        direct = self._zip({"A/a.glb": a})
+        rc, out = self._run([self._direct_rec("d1", "A/a.glb", a),
+                             self._direct_rec("d2", "A/gone.glb", b"y")], direct=direct)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("1 record(s) reproduce from their pack zip, 0 hash mismatch, 1 member absent", out)
+        self.assertIn("NOT REPRODUCIBLE: X/A/gone.glb (absent)", out)
+
+    def test_a_hash_mismatch_mixed_with_good_records_fails(self):
+        recs, direct, sblob = self._good()
+        bad = self._direct_rec("d3", "B/b.glb", b"what we recorded")
+        rc, out = self._run(recs + [bad], direct=direct, signed_open=self._signed_opener(sblob))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("3 record(s) reproduce from their pack zip, 1 hash mismatch", out)
+        self.assertIn("NOT REPRODUCIBLE: B/b.glb", out)
+
+    def test_a_malformed_source_archive_fails(self):
+        recs, direct, sblob = self._good()
+        for over in ({"sha256": None}, {"member": ""}, {"url": None}, {"sha256": "abc"}):
+            with self.subTest(over=over):
+                bad = self._direct_rec("m1", "A/a.glb", b"x")
+                bad["metadata"]["source_archive"].update(over)
+                rc, out = self._run(recs + [bad], direct=direct,
+                                    signed_open=self._signed_opener(sblob))
+                self.assertEqual(rc, 1, out)
+                self.assertIn("1 malformed", out)
+                self.assertIn("MALFORMED: m1", out)
+        rc, out = self._run({"not": "a list"})
+        self.assertEqual(rc, 1, out)
+
+    def test_a_non_object_record_mixed_with_valid_groups_fails(self):
+        """A row that is not an object is malformed, not unchecked, so it
+        cannot ride along with a verified group to exit 0."""
+        for bad in ("a string row", ["a", "list"], 7, None, True):
+            with self.subTest(bad=bad):
+                recs, direct, sblob = self._good()
+                rc, out = self._run(recs + [bad], direct=direct,
+                                    signed_open=self._signed_opener(sblob))
+                self.assertEqual(rc, 1, out)
+                self.assertIn("3 record(s) reproduce", out)
+                self.assertIn("1 malformed, 0 without a source_archive", out)
+                self.assertIn("MALFORMED: record[3] (not a JSON object", out)
+                self.assertNotIn("OK: all", out)
+
+    def test_truthy_non_object_metadata_fails_with_diagnostics(self):
+        for meta in ("source_archive", ["source_archive"], 1, {"a"} and "x"):
+            with self.subTest(meta=meta):
+                recs, direct, sblob = self._good()
+                rc, out = self._run(recs + [{"id": "m1", "metadata": meta}], direct=direct,
+                                    signed_open=self._signed_opener(sblob))
+                self.assertEqual(rc, 1, out)
+                self.assertIn("1 malformed, 0 without a source_archive", out)
+                self.assertIn("MALFORMED: m1 (metadata is not a JSON object", out)
+        rc, out = self._run([{"id": "m2", "metadata": "x"}])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("1 malformed", out)
+
+    def test_an_unhashable_transport_mixed_with_a_valid_group_fails(self):
+        for transport in (["kenney-download-link-json"], {"kind": "x"}, 5):
+            with self.subTest(transport=transport):
+                recs, direct, sblob = self._good()
+                odd = self._direct_rec("t1", "A/a.glb", b"model-a" * 9)
+                odd["metadata"]["source_archive"]["transport"] = transport
+                rc, out = self._run(recs + [odd], direct=direct,
+                                    signed_open=self._signed_opener(sblob))
+                self.assertEqual(rc, 1, out)
+                self.assertIn("3 record(s) reproduce", out)
+                self.assertIn("1 malformed", out)
+                self.assertIn("MALFORMED: t1 (source_archive.transport must be a string", out)
+
+    def test_rows_without_a_source_archive_are_still_skipped(self):
+        recs, direct, sblob = self._good()
+        extra = [{"id": "p1"}, {"id": "p2", "metadata": None}, {"id": "p3", "metadata": {}},
+                 {"id": "p4", "metadata": {"source_archive": None}}]
+        rc, out = self._run(recs + extra, direct=direct, signed_open=self._signed_opener(sblob))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("0 malformed, 4 without a source_archive (not checked)", out)
+        self.assertIn("OK: all 3 record(s) verified", out)
+
+    def test_an_empty_selection_is_not_a_success(self):
+        for records in ([], [{"id": "plain", "metadata": {}}, {"id": "p2"}]):
+            with self.subTest(n=len(records)):
+                rc, out = self._run(records)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("no record was verified", out)
+                self.assertNotIn("OK: all", out)
+
+
+class TestLicenseNotice1514(unittest.TestCase):
+    """A declared `metadata.license_notice` ships beside its asset but is
+    neither a profile row nor a model companion, so `--prune` used to delete
+    the Kenney pack's License.txt and a clean rebuild never restored it. The
+    copier now keeps every declared notice, accepts it only by sha256 and
+    length (never by size alone), restores it from the record's own
+    source_archive member, and refuses the run when it cannot."""
+
+    def _rec(self, rid="r1", path="pack/kit/License.txt", data=b"CC0 notice", **over):
+        ln = {"path": path, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
+              "member": "License.txt", "text": "Kit, CC0"}
+        ln.update(over)
+        return {"id": rid, "source_root": "pack", "file_path": "pack/kit/m.glb",
+                "metadata": {"license_notice": ln, "source_archive": {
+                    "url": "https://kenney.nl/media/pages/assets/kit/abc-1/kit.zip",
+                    "member": "Models/m.glb", "sha256": "0" * 64}}}
+
+    def test_the_plan_refuses_malformed_or_unsafe_notices(self):
+        good, problems = pa.plan_license_notices([self._rec()])
+        self.assertEqual((list(good), problems), (["pack/kit/License.txt"], []))
+        bad_cases = {
+            "traversal": {"path": "pack/../License.txt"}, "absolute": {"path": "/etc/x"},
+            "backslash": {"path": "pack\\License.txt"}, "not normalised": {"path": "pack/./License.txt"},
+            "empty path": {"path": ""}, "bad sha": {"sha256": "abc"}, "zero bytes": {"bytes": 0},
+            "bool bytes": {"bytes": True}, "string bytes": {"bytes": "700"}, "empty member": {"member": ""},
+        }
+        for why, over in bad_cases.items():
+            with self.subTest(why=why):
+                plan, problems = pa.plan_license_notices([self._rec(**over)])
+                self.assertEqual(plan, {})
+                self.assertEqual(len(problems), 1, problems)
+        plan, problems = pa.plan_license_notices([{"id": "x", "metadata": {"license_notice": "txt"}}])
+        self.assertEqual((plan, len(problems)), ({}, 1))
+
+    def test_records_sharing_a_notice_must_declare_it_the_same_way(self):
+        plan, problems = pa.plan_license_notices([self._rec("a"), self._rec("b")])
+        self.assertEqual(problems, [])
+        self.assertEqual(plan["pack/kit/License.txt"]["ids"], ["a", "b"])
+        plan, problems = pa.plan_license_notices([self._rec("a"), self._rec("b", data=b"other")])
+        self.assertEqual(plan, {})
+        self.assertIn("declare this notice differently", problems[0][1])
+
+    def _stage(self, d, entry_rec, dest_bytes=None, dir_instead=False, **kw):
+        plan, _ = pa.plan_license_notices([entry_rec])
+        (rel, entry), = plan.items()
+        dest = Path(d) / rel
+        if dir_instead:
+            dest.mkdir(parents=True)
+        elif dest_bytes is not None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(dest_bytes)
+        return pa.stage_license_notice(rel, entry, Path(d), **{"dry_run": False,
+                                                               "no_refetch": False, **kw}), dest
+
+    def test_an_exact_notice_is_accepted_and_a_same_size_one_is_not(self):
+        data = b"CC0 notice"
+        with tempfile.TemporaryDirectory() as d, \
+                unittest.mock.patch.object(pa, "refetch_member",
+                                           side_effect=AssertionError("no restore expected")):
+            (status, note), _ = self._stage(d, self._rec(data=data), dest_bytes=data)
+        self.assertEqual(status, "ok", note)
+        calls = []
+
+        def fake(url, member, sha, dest, archive=None):
+            calls.append((member, sha, archive["member"], archive["sha256"]))
+            dest.write_bytes(data)
+            return True, "restored"
+        with tempfile.TemporaryDirectory() as d, \
+                unittest.mock.patch.object(pa, "refetch_member", side_effect=fake):
+            (status, note), dest = self._stage(d, self._rec(data=data), dest_bytes=b"X" * len(data))
+            got = dest.read_bytes()
+        self.assertEqual(status, "restored", note)
+        self.assertEqual(got, data)
+        sha = hashlib.sha256(data).hexdigest()
+        self.assertEqual(calls, [("License.txt", sha, "License.txt", sha)])
+
+    def test_refusals_are_explicit(self):
+        data = b"CC0 notice"
+        never = unittest.mock.patch.object(pa, "refetch_member",
+                                           side_effect=AssertionError("must not fetch"))
+        with tempfile.TemporaryDirectory() as d, never:
+            (status, note), _ = self._stage(d, self._rec(data=data), no_refetch=True)
+            self.assertEqual(status, "refuse")
+            self.assertIn("--no-refetch", note)
+        with tempfile.TemporaryDirectory() as d, never:
+            rec = self._rec(data=data)
+            del rec["metadata"]["license_notice"]["member"]
+            (status, note), _ = self._stage(d, rec)
+            self.assertEqual(status, "refuse")
+            self.assertIn("declares no license_notice.member", note)
+        with tempfile.TemporaryDirectory() as d, never:
+            rec = self._rec(data=data)
+            del rec["metadata"]["source_archive"]
+            (status, note), _ = self._stage(d, rec)
+            self.assertEqual(status, "refuse")
+        with tempfile.TemporaryDirectory() as d, never:
+            (status, note), _ = self._stage(d, self._rec(data=data), dir_instead=True)
+            self.assertEqual(status, "refuse")
+            self.assertIn("not a regular file", note)
+        with tempfile.TemporaryDirectory() as d, never:
+            (status, note), dest = self._stage(d, self._rec(data=data), dry_run=True)
+            self.assertEqual(status, "would_restore")
+            self.assertFalse(dest.exists())
+        with tempfile.TemporaryDirectory() as d, \
+                unittest.mock.patch.object(pa, "refetch_member",
+                                           return_value=(False, "sha256 mismatch for License.txt")):
+            (status, note), dest = self._stage(d, self._rec(data=data))
+            self.assertEqual(status, "refuse")
+            self.assertIn("sha256 mismatch", note)
+            self.assertFalse(dest.exists())
+
+    def test_prune_keeps_and_a_clean_rebuild_restores_the_notice(self):
+        """End to end through the real copier (direct zip over a local HTTP
+        server): --prune keeps the authenticated notice and removes a stray;
+        with the notice gone a rebuild restores it; a same-size impostor is
+        replaced; --no-refetch on a missing notice fails the run."""
+        notice, model = b"Kit (1.0) by Kenney, CC0\n", b"glb" * 40
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "local").mkdir()
+            (d / "local" / "metadata.csv").write_text("file_path,title\n", encoding="utf-8")
+            (d / "internet").mkdir()
+            served = d / "served"
+            served.mkdir()
+            TestArchiveMemberRefetch._zip(served / "kit.zip", {"Models/m.glb": model,
+                                                               "License.txt": notice})
+            handler = partial(SimpleHTTPRequestHandler, directory=str(served))
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            self.addCleanup(httpd.server_close)
+            self.addCleanup(httpd.shutdown)
+            base = f"http://127.0.0.1:{httpd.server_address[1]}"
+            rec = {"id": "m1", "asset_type": "3d", "file_path": "3d/kit/models/m.glb",
+                   "source_root": "pack", "source_path": "Kit/Models/m.glb",
+                   "file_extension": "glb", "file_size_bytes": len(model),
+                   "metadata": {"filename": "m.glb",
+                                "source_archive": {"url": f"{base}/kit.zip", "member": "Models/m.glb",
+                                                   "sha256": hashlib.sha256(model).hexdigest()},
+                                "license_notice": {"path": "3d/kit/License.txt",
+                                                   "sha256": hashlib.sha256(notice).hexdigest(),
+                                                   "bytes": len(notice), "member": "License.txt"}}}
+            (d / "profile.json").write_text(json.dumps([rec]), encoding="utf-8")
+            dest = d / "dest"
+
+            def run(*extra):
+                return subprocess.run(
+                    [sys.executable, str(SCRIPTS / "populate_archive.py"),
+                     "--local-source", str(d / "local"), "--internet-source", str(d / "internet"),
+                     "--profile", str(d / "profile.json"), "--dest", str(dest), *extra],
+                    capture_output=True, text=True)
+            n = dest / "3d/kit/License.txt"
+            n.parent.mkdir(parents=True)
+            n.write_bytes(notice)
+            (dest / "3d/kit/stray.txt").write_text("x")
+            dry = run("--prune", "--dry-run")
+            self.assertEqual(dry.returncode, 0, dry.stderr)
+            self.assertIn("notices: 1 authenticated in place", dry.stderr)
+            self.assertTrue((dest / "3d/kit/stray.txt").exists())
+            real = run("--prune")
+            self.assertEqual(real.returncode, 0, real.stderr)
+            self.assertEqual(n.read_bytes(), notice)
+            self.assertFalse((dest / "3d/kit/stray.txt").exists())
+            n.unlink()
+            rebuilt = run("--prune")
+            self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr)
+            self.assertIn("REFETCHED NOTICE [pack]: 3d/kit/License.txt", rebuilt.stderr)
+            self.assertEqual(n.read_bytes(), notice)
+            n.write_bytes(b"Z" * len(notice))
+            again = run()
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertEqual(n.read_bytes(), notice, "a same-size impostor was accepted")
+            n.unlink()
+            refused = run("--no-refetch")
+            self.assertEqual(refused.returncode, 1, refused.stderr)
+            self.assertIn("REFUSE [pack]: 3d/kit/License.txt: license notice", refused.stderr)
+            self.assertFalse(n.exists())
+
+    def test_the_factory_kit_notice_is_declared_for_restore(self):
+        rows = json.loads((PROFILES / "studio-a.assets.json").read_text(encoding="utf-8"))
+        (r,) = [x for x in rows if x["id"] == TestSiteAMediaReplacement1514.MODEL_ID]
+        ln, sa = r["metadata"]["license_notice"], r["metadata"]["source_archive"]
+        self.assertEqual(ln["path"], "3d/kenney-allin1/3d-assets-factory-kit/License.txt")
+        self.assertEqual(ln["sha256"], "61e86565dd297e143ad631594980eda0a17fc81a4cd7c6d71acf2f5e0cad30b6")
+        self.assertEqual(ln["bytes"], 700)
+        self.assertEqual(ln["member"], "License.txt")
+        self.assertEqual(sa["transport"], kps.TRANSPORT_SIGNED_LINK)
+        plan, problems = pa.plan_license_notices(rows)
+        self.assertEqual(problems, [])
+        self.assertEqual(sorted(plan), [ln["path"]])
+        site = os.environ.get("AA_SITE_A_ROOT")
+        if site:
+            p = Path(site) / ln["path"]
+            self.assertEqual(hashlib.sha256(p.read_bytes()).hexdigest(), ln["sha256"])
+            self.assertEqual(p.stat().st_size, ln["bytes"])
+
+
+class TestPruneBoundary1514(unittest.TestCase):
+    """`--prune` deletes stale files ONLY under the payload roots. It used to
+    walk the whole destination and delete everything except metadata.csv,
+    groups.csv, MANIFEST.json and wanted paths, which on a metadata repo
+    checkout meant posts.json, README.md, SHA256SUMS, .gitignore and .git."""
+
+    TOP = {"posts.json": b"[]\n", "README.md": b"# readme\n", "SHA256SUMS": b"sums\n",
+           "ATTRIBUTIONS.md": b"attr\n", "dataset-metadata.json": b"{}\n",
+           ".gitignore": b"3d/\n", "notes.txt": b"unrelated top-level file\n",
+           ".git/HEAD": b"ref: refs/heads/main\n", ".git/objects/ab/cdef0123": b"blob"}
+
+    def _world(self, d):
+        d = Path(d)
+        notice, model, tex = b"Kit by Kenney, CC0\n", b"glb" * 40, b"png" * 30
+        (d / "local").mkdir()
+        (d / "local" / "metadata.csv").write_text("file_path,title\n", encoding="utf-8")
+        (d / "internet").mkdir()
+        served = d / "served"
+        served.mkdir()
+        TestArchiveMemberRefetch._zip(served / "kit.zip", {
+            "Models/m.glb": model, "Models/Textures/c.png": tex, "License.txt": notice})
+        handler = partial(SimpleHTTPRequestHandler, directory=str(served))
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        rec = {"id": "m1", "asset_type": "3d", "file_path": "3d/kit/models/m.glb",
+               "source_root": "pack", "source_path": "Kit/Models/m.glb",
+               "file_extension": "glb", "file_size_bytes": len(model),
+               "metadata": {"filename": "m.glb",
+                            "source_archive": {"url": f"{base}/kit.zip", "member": "Models/m.glb",
+                                               "sha256": hashlib.sha256(model).hexdigest()},
+                            "companions": [{"uri": "Textures/c.png",
+                                            "path": "3d/kit/models/Textures/c.png",
+                                            "sha256": hashlib.sha256(tex).hexdigest(),
+                                            "bytes": len(tex)}],
+                            "license_notice": {"path": "3d/kit/License.txt",
+                                               "sha256": hashlib.sha256(notice).hexdigest(),
+                                               "bytes": len(notice), "member": "License.txt"}}}
+        (d / "profile.json").write_text(json.dumps([rec]), encoding="utf-8")
+        dest = d / "dest"
+        files = {**self.TOP,
+                 "3d/kit/models/m.glb": model, "3d/kit/models/Textures/c.png": tex,
+                 "3d/kit/License.txt": notice,
+                 "3d/kit/stale.glb": b"stale payload",
+                 "images/old/x.png": b"stale in a dir that becomes empty",
+                 "images/.hidden/keep.bin": b"hidden dir", "images/.DS_Store": b"hidden file"}
+        for rel, data in files.items():
+            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+            (dest / rel).write_bytes(data)
+        os.symlink("../README.md", dest / "images" / "link.png")
+        outside = d / "outside"
+        outside.mkdir()
+        (outside / "victim.bin").write_bytes(b"outside the destination")
+        os.symlink(str(outside), dest / "3d" / "linked-dir")
+        return d, dest, outside
+
+    def _run(self, d, *extra):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "populate_archive.py"),
+             "--local-source", str(d / "local"), "--internet-source", str(d / "internet"),
+             "--profile", str(d / "profile.json"), "--dest", str(d / "dest"), *extra],
+            capture_output=True, text=True)
+
+    @staticmethod
+    def _tree(dest):
+        out = {}
+        for cur, dirs, files in os.walk(dest, followlinks=False):
+            for n in files + [x for x in dirs if os.path.islink(os.path.join(cur, x))]:
+                full = os.path.join(cur, n)
+                rel = os.path.relpath(full, dest).replace(os.sep, "/")
+                out[rel] = ("link:" + os.readlink(full)) if os.path.islink(full) else \
+                    hashlib.sha256(Path(full).read_bytes()).hexdigest()
+        return out
+
+    def test_dry_run_real_prune_and_rerun_stay_inside_the_payload_roots(self):
+        with tempfile.TemporaryDirectory() as td:
+            d, dest, outside = self._world(td)
+            before = self._tree(dest)
+            dry = self._run(d, "--prune", "--dry-run")
+            self.assertEqual(dry.returncode, 0, dry.stderr)
+            self.assertEqual(self._tree(dest), before, "a dry run changed the destination")
+            self.assertIn("pruned 2 stale files", dry.stderr)
+            self.assertIn("payload roots only", dry.stderr)
+
+            real = self._run(d, "--prune")
+            self.assertEqual(real.returncode, 0, real.stderr)
+            self.assertIn("pruned 2 stale files", real.stderr)
+            after = self._tree(dest)
+            gone = {"3d/kit/stale.glb", "images/old/x.png"}
+            expect = {k: v for k, v in before.items() if k not in gone}
+            # A real run also writes the manifest files from the profile.
+            self.assertEqual({k: v for k, v in after.items()
+                              if k not in ("MANIFEST.json", "metadata.csv")}, expect)
+            for rel, data in self.TOP.items():
+                self.assertEqual((dest / rel).read_bytes(), data, rel)
+            self.assertFalse((dest / "images" / "old").exists(), "an emptied payload dir stays")
+            self.assertTrue((dest / "images").is_dir() and (dest / "3d").is_dir())
+            self.assertTrue(os.path.islink(dest / "images" / "link.png"))
+            self.assertTrue(os.path.islink(dest / "3d" / "linked-dir"))
+            self.assertEqual((outside / "victim.bin").read_bytes(), b"outside the destination")
+            for kept in ("3d/kit/models/m.glb", "3d/kit/models/Textures/c.png",
+                         "3d/kit/License.txt", "images/.hidden/keep.bin", "images/.DS_Store"):
+                self.assertIn(kept, after)
+            self.assertIn("LEFT [symlink]: images/link.png", real.stderr)
+            self.assertIn("LEFT [symlinked directory, not followed]: 3d/linked-dir", real.stderr)
+            self.assertIn("LEFT [hidden directory]: images/.hidden", real.stderr)
+
+            again = self._run(d, "--prune")
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertIn("pruned 0 stale files", again.stderr)
+            self.assertEqual(self._tree(dest), after)
+
+    def test_a_symlinked_payload_root_is_not_followed(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            dest, outside = td / "dest", td / "outside"
+            dest.mkdir()
+            outside.mkdir()
+            (outside / "clip.mp4").write_bytes(b"not ours")
+            os.symlink(str(outside), dest / "videos")
+            (dest / "fonts").mkdir()
+            (dest / "fonts" / "stale.ttf").write_bytes(b"x")
+            (dest / "top.txt").write_bytes(b"keep")
+            for dry in (True, False):
+                n, removed, left = pa.prune_payload(dest, set(), dry_run=dry)
+                self.assertEqual(n, 1, "the stale font (a dry run deletes nothing, so both count it)")
+                self.assertIn(("symlinked payload root, not followed", "videos"), left)
+            self.assertEqual((outside / "clip.mp4").read_bytes(), b"not ours")
+            self.assertFalse((dest / "fonts" / "stale.ttf").exists())
+            self.assertTrue((dest / "fonts").is_dir(), "a payload root itself is never removed")
+            self.assertEqual((dest / "top.txt").read_bytes(), b"keep")
+            self.assertEqual(pa.PRUNE_ROOTS, ("3d", "audio", "comics", "documents",
+                                              "fonts", "images", "videos"))
+
+
 class TestCompanionsSurviveASkippedModel(unittest.TestCase):
     """Sponza's actual bug: companions were staged only on the COPY path.
 
@@ -3230,6 +4190,275 @@ class TestAliasProfilesTrackTheirSource(unittest.TestCase):
         self.assertEqual(
             json.loads((p / "dev.assets.json").read_text(encoding="utf-8")),
             json.loads((p / "studio-b.assets.json").read_text(encoding="utf-8")))
+
+
+class TestSiteAMediaReplacement1514(unittest.TestCase):
+    """#1514: the public site_a replaced its 75 Pexels videos with NPS B-roll
+    and the 2CylinderEngine model with Kenney Factory Kit `machine.glb`,
+    keeping every asset id and post, and dropped the Sponza scene.
+
+    `populate_archive.py` copies these profiles OVER the site's MANIFEST.json
+    and posts.json, and `manifest_guard.py` treats them as the content
+    authority, so they must carry that state. And because `apply_upgrade.py`
+    re-applies the committed upgrade documents on every ordinary run, none of
+    those documents may carry the old media back in. The replacement is a
+    provisional local staging selection, not rights clearance.
+    """
+
+    SPONZA_ID = "4d30ea15-aec9-f53a-647c-3d4034b9f3a2"
+    SPONZA_PATH = "3d/internet/Sponza.gltf"
+    MODEL_ID = "4b4a3022-7c20-f978-2017-e43dca00870a"
+    MODEL_PATH = "3d/kenney-allin1/3d-assets-factory-kit/models/glb-format/machine.glb"
+    # sha256 of the local site_a MANIFEST.json and posts.json #1514 produced
+    # (the replacement, then the eight comma-free NPS titles and the three
+    # post id moves pinned in TestSiteAPostIdMigration1514, then the Factory
+    # Kit row's signed-link source_archive, TestSignedLinkArchiveRefetch1514,
+    # then its License.txt member and byte count, TestLicenseNotice1514).
+    # The profiles ARE those files: a later edit to one must land in the
+    # other, and this pin is where the two meet offline.
+    SITE_A_MANIFEST_SHA256 = (
+        "4f80ad88bf121c51982dc03652c0885fb5c8602c11e193cf7377d03267fdd225")
+    SITE_A_POSTS_SHA256 = (
+        "5c3f9dca5ad81196246a29e0bb2894696361a698abb7860b858f1272a1b6a7eb")
+    NPS_MEDIA = re.compile(r"\Ahttps://www\.nps\.gov/nps-audiovideo/[^?#]+\.mp4\Z")
+    NPS_PAGE = "https://www.nps.gov/media/video/view.htm?id="
+
+    @classmethod
+    def setUpClass(cls):
+        cls.assets_bytes = (PROFILES / "studio-a.assets.json").read_bytes()
+        cls.assets = json.loads(cls.assets_bytes)
+        cls.posts = json.loads((PROFILES / "studio-a.posts.json").read_text(encoding="utf-8"))
+        cls.replaced = {a["id"]: a for a in cls.assets
+                        if "replaced" in (a.get("metadata") or {})}
+
+    def test_profiles_are_the_published_site_a_files(self):
+        self.assertEqual(hashlib.sha256(self.assets_bytes).hexdigest(),
+                         self.SITE_A_MANIFEST_SHA256)
+        self.assertEqual(hashlib.sha256((PROFILES / "studio-a.posts.json").read_bytes())
+                         .hexdigest(), self.SITE_A_POSTS_SHA256)
+        self.assertEqual((PROFILES / "demo.assets.json").read_bytes(), self.assets_bytes,
+                         "the demo alias is not the studio-a profile byte-for-byte")
+
+    def test_profiles_match_a_mounted_site_a(self):
+        """The same claim against the live tree, where one is available."""
+        root = os.environ.get("AA_SITE_A_ROOT")
+        if not root:
+            self.skipTest("AA_SITE_A_ROOT not set; the pinned digests above carry the claim offline")
+        site = Path(root)
+        self.assertEqual((site / "MANIFEST.json").read_bytes(), self.assets_bytes)
+        self.assertEqual((site / "posts.json").read_bytes(),
+                         (PROFILES / "studio-a.posts.json").read_bytes())
+
+    def test_no_profile_names_a_replaced_file_or_sponza(self):
+        old = {r["metadata"]["replaced"]["file_path"] for r in self.replaced.values()}
+        self.assertEqual(len(self.replaced), 76)
+        self.assertEqual(len(old), 76)
+        for name in ("studio-a", "demo"):
+            rows = json.loads((PROFILES / f"{name}.assets.json").read_text(encoding="utf-8"))
+            ids = [r["id"] for r in rows]
+            paths = {r["file_path"] for r in rows}
+            self.assertEqual(len(rows), 2005, name)
+            self.assertEqual(len(set(ids)), 2005, name)
+            self.assertEqual(paths & old, set(), f"{name}: an old file is back")
+            self.assertNotIn(self.SPONZA_ID, ids, name)
+            self.assertNotIn(self.SPONZA_PATH, paths, name)
+            self.assertEqual([r["id"] for r in rows if r["license"] in
+                              ("Pexels License", "SCEA Shared Source License")], [], name)
+        have = {r["id"] for r in self.assets}
+        self.assertEqual(len(self.posts), 863)
+        self.assertEqual(len({p["id"] for p in self.posts}), 863)
+        for p in self.posts:
+            self.assertNotIn(self.SPONZA_ID, p["asset_ids"], p["id"])
+            self.assertEqual([a for a in p["asset_ids"] if a not in have], [], p["id"])
+
+    def test_every_replacement_carries_its_provenance(self):
+        videos = [r for r in self.replaced.values() if r["asset_type"] == "video"]
+        self.assertEqual(len(videos), 75)
+        for r in videos:
+            m = r["metadata"]
+            with self.subTest(id=r["id"]):
+                self.assertTrue(r["file_path"].startswith("videos/nps/"))
+                self.assertEqual(r["license"], "Public Domain (NPS collection page statement)")
+                self.assertRegex(m["media_url"], self.NPS_MEDIA)
+                self.assertTrue(m["fetched_from"].startswith(self.NPS_PAGE))
+                self.assertNotEqual(m["media_url"], m["fetched_from"])
+                self.assertIn("should not be presumed to be public domain", m["media_page_notice"])
+                self.assertTrue(m["rights_status"].startswith("PROVISIONAL"))
+                self.assertTrue(m["replaced"]["file_path"].startswith("videos/internet/pexels-"))
+                self.assertEqual(m["replaced"]["license"], "Pexels License")
+                for k in ("copyright", "usage_rights"):
+                    self.assertNotIn("Aurora R&D", (r["field_values"].get(k) or ""))
+        model = self.replaced[self.MODEL_ID]
+        self.assertEqual(model["file_path"], self.MODEL_PATH)
+        self.assertEqual(model["license"], "CC0 1.0")
+        self.assertEqual(model["metadata"]["replaced"]["license"], "SCEA Shared Source License")
+        self.assertEqual([c["uri"] for c in model["metadata"]["companions"]], ["Textures/colormap.png"])
+
+    def test_no_upgrade_document_carries_the_old_media_back(self):
+        staged = json.loads((UPGRADES / "staged-measurements.site_a.json").read_text(encoding="utf-8"))
+        self.assertEqual([e["id"] for e in staged if e["id"] in self.replaced], [],
+                         "a staged measurement would overwrite a replacement's size/hash")
+        curation = json.loads((UPGRADES / "post-curation.site_a.json").read_text(encoding="utf-8"))
+        self.assertEqual([e["id"] for e in curation["curate"]
+                          if self.SPONZA_ID in (e.get("asset_ids") or ())], [],
+                         "a curated member order would re-insert Sponza")
+        reconcile = json.loads((UPGRADES / "manifest-reconcile.site_a.json").read_text(encoding="utf-8"))
+        self.assertNotIn(self.SPONZA_ID, {e["id"] for e in reconcile["fill"]})
+        self.assertNotIn(self.SPONZA_ID, {e["id"] for e in reconcile["added"]})
+        # The merge documents still hold the Pexels rows as history; they must
+        # merge as no-ops because every id is already in the profile.
+        profile = json.loads(self.assets_bytes)
+        before = json.dumps(profile, sort_keys=True)
+        for doc in ("pexels-assets.site_a.json", "added-assets.site_a.json"):
+            rows = json.loads((UPGRADES / doc).read_text(encoding="utf-8"))
+            n, repaired, _ = up.merge_added(profile, rows)
+            self.assertEqual((n, repaired), (0, 0), doc)
+        self.assertEqual(json.dumps(profile, sort_keys=True), before)
+
+    def test_an_ordinary_upgrade_run_changes_nothing(self):
+        """End to end on copies of the committed profiles: the pass a normal
+        regeneration runs must find nothing to do and write the same bytes."""
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            names = ("studio-a.assets.json", "studio-a.posts.json", "demo.assets.json")
+            for n in names:
+                shutil.copyfile(PROFILES / n, d / n)
+            base = [sys.executable, str(SCRIPTS / "apply_upgrade.py"), "--site", "site_a",
+                    "--profile", str(d / "studio-a.assets.json"),
+                    "--posts", str(d / "studio-a.posts.json")]
+            chk = subprocess.run(base + ["--check"], capture_output=True, text=True)
+            self.assertEqual(chk.returncode, 0, chk.stdout + chk.stderr)
+            run = subprocess.run(base, capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            for n in names:
+                self.assertEqual((d / n).read_bytes(), (PROFILES / n).read_bytes(), n)
+
+
+class TestSiteAPostIdMigration1514(unittest.TestCase):
+    """#1514 follow-up: the title rule and the derived-id invariant on site_a.
+
+    Eight NPS source titles hold commas, which no asset title may (#1319). The
+    display title is a hand-written comma-free one and the verbatim NPS title
+    is kept in `metadata.source_title`; the asset's solo post carries the same
+    title. Nothing else on those records moved.
+
+    Dropping Sponza changed the membership of three posts, so their ids no
+    longer derived from the post (ADR 0098). `migrate_post_ids.py --write`
+    moved them. Its document then composed each hop onto the earlier
+    #1293/#1310 entry, but the published wall was republished after those
+    migrations and holds the MIDDLE ids, so those three entries record the
+    published id as `old_id` (the parser is one-to-one, so both hops cannot
+    be listed). The mapping below is the whole of that move.
+    """
+
+    MOVES = {  # old (published) id -> membership-derived id
+        "18017920-fcd4-67e3-04b8-60d930544cf5": "4488bcc4-670d-f804-d11c-760d9d07fd49",
+        "27f945f0-070e-413f-26d3-356d8293e95e": "39e69231-a8a3-34aa-208d-1fb1898b387b",
+        "adafa798-73a2-90a9-b45a-fc5e6c258853": "a783324e-47a9-355b-a480-610b6d21a4d0",
+    }
+    TITLES = {  # asset id -> (verbatim NPS source title, display title)
+        "0c3f29d9-da72-8308-6b1c-ae8052b6ac49": (
+            "Time-lapse of Clouds over the Canyon - November 20, 2025",
+            "Time-lapse of Clouds over the Canyon - 20 November 2025"),
+        "12432a16-0991-8a2a-1c67-d7a192bcc831": (
+            "Grand Canyon Total Cloud Inversion Timelapse - Jan. 28, 2015",
+            "Grand Canyon Total Cloud Inversion Timelapse - 28 January 2015"),
+        "3ce1326c-8fe5-b649-afef-efb1198bd2f3": (
+            "Light on Mt. Hayden, Zooming Out",
+            "Light on Mt. Hayden - Zooming Out"),
+        "ac604c4f-90bb-ed26-d877-bc37810bf0a7": (
+            "Over River, View of Lava Chuar",
+            "Over River - View of Lava Chuar"),
+        "2876307a-f128-bfc9-a421-46cfe41c8951": (
+            "Over the Rim, Into the Eastern End of Grand Canyon - B-roll Video",
+            "Over the Rim into the Eastern End of Grand Canyon - B-roll Video"),
+        "484f7b1e-cd09-6e37-8343-87d98d3a4943": (
+            "Pan Down Falls, Close",
+            "Pan Down Falls - Close"),
+        "6505903f-10ec-4e6b-f45a-d579a66bac2e": (
+            "Skunkbush, Cottonwoods, Western Redbud and Blackbrush - B-roll Video",
+            "Skunkbush and Cottonwoods with Western Redbud and Blackbrush - B-roll Video"),
+        "03657a84-0d0a-1013-39e1-d1a14674452b": (
+            "Bright Angel Pan at Sunset, a little closer",
+            "Bright Angel Pan at Sunset - a little closer"),
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.assets = json.loads((PROFILES / "studio-a.assets.json").read_text(encoding="utf-8"))
+        cls.posts = json.loads((PROFILES / "studio-a.posts.json").read_text(encoding="utf-8"))
+        cls.doc_path = UPGRADES / "post-id-migration.studio-a.json"
+        cls.doc = json.loads(cls.doc_path.read_text(encoding="utf-8"))
+
+    def test_the_eight_nps_titles_keep_their_source_title(self):
+        by_id = {a["id"]: a for a in self.assets}
+        keyed = [a["id"] for a in self.assets if "source_title" in (a.get("metadata") or {})]
+        self.assertEqual(sorted(keyed), sorted(self.TITLES))
+        for aid, (source, title) in self.TITLES.items():
+            a = by_id[aid]
+            with self.subTest(id=aid):
+                self.assertEqual(a["title"], title)
+                self.assertEqual(a["metadata"]["source_title"], source)
+                self.assertEqual(sa.normalize_title(title), title, "title breaks the rule")
+                self.assertNotIn(",", title)
+                self.assertNotIn("\u2014", title)
+                self.assertNotEqual(sa.normalize_title(source), source,
+                                    "the source title is the reason for the fix")
+                self.assertTrue(a["file_path"].startswith("videos/nps/"))
+                self.assertIn("replaced", a["metadata"])
+                solo = [p for p in self.posts if aid in p["asset_ids"]]
+                self.assertEqual(len(solo), 1)
+                self.assertEqual(solo[0]["post_kind"], "solo_showcase")
+                self.assertEqual(solo[0]["asset_ids"], [aid])
+                self.assertEqual(solo[0]["title"], title)
+
+    def test_the_three_moved_ids_are_the_derived_ones(self):
+        live = {p["id"]: p for p in self.posts}
+        self.assertEqual(len(self.posts), 863)
+        self.assertEqual(len(live), 863)
+        for old, new in self.MOVES.items():
+            with self.subTest(old=old):
+                self.assertNotIn(old, live)
+                self.assertIn(new, live)
+                self.assertEqual(mpi.derived_id(live[new]), new)
+                self.assertNotIn(TestSiteAMediaReplacement1514.SPONZA_ID, live[new]["asset_ids"])
+
+    def test_the_document_records_the_published_ids_one_to_one(self):
+        moves = {m["old_id"]: m["new_id"] for m in self.doc["moves"]}
+        self.assertEqual({o: n for o, n in moves.items() if n in set(self.MOVES.values())},
+                         self.MOVES)
+        mig = mg.load_migration_document(self.doc_path, profile_name="studio-a.posts.json")
+        self.assertEqual(len(mig.moves), 175)
+        for old in ("79bf9aeb-77c0-c6b5-2d3a-9c99ee725aa2", "b0992740-62e9-2147-c507-686f161d3d4d",
+                    "b9259691-f45d-329f-490d-ab9f80a73e52"):
+            self.assertNotIn(old, mig.moves, "a composed entry names an id no destination holds")
+        curation = json.loads((UPGRADES / "post-curation.site_a.json").read_text(encoding="utf-8"))
+        cur = {e["id"] for e in curation["curate"]}
+        self.assertEqual(len(cur), 842)
+        self.assertEqual(set(self.MOVES) & cur, set())
+        self.assertEqual(set(self.MOVES.values()) - cur, set())
+
+    def test_the_mapping_applies_exactly(self):
+        """Rewind the three ids, then run the real planner and the real guard:
+        the planner must move exactly these three back, the result must be the
+        profile byte-for-byte, and the guard must see three migrations and no
+        loss against the rewound (published) shape."""
+        raw = (PROFILES / "studio-a.posts.json").read_bytes()
+        back = {n: o for o, n in self.MOVES.items()}
+        published = json.loads(raw)
+        for p in published:
+            p["id"] = back.get(p["id"], p["id"])
+        moves = mpi.plan(published)
+        self.assertEqual({m["old_id"]: m["new_id"] for m in moves}, self.MOVES)
+        self.assertEqual(mpi.check_safe(published, moves), [])
+        redo = json.loads(json.dumps(published))
+        self.assertEqual(mpi.apply(redo, moves), 3)
+        self.assertEqual((json.dumps(redo, indent=1, ensure_ascii=False) + "\n").encode("utf-8"), raw)
+        mig = mg.load_migration_document(self.doc_path, profile_name="studio-a.posts.json")
+        cmp = mg.compare(json.loads(raw), published, label="studio-a posts", migration=mig)
+        self.assertTrue(cmp.ok, str(cmp.losses))
+        self.assertEqual(sorted(cmp.migrated), sorted(self.MOVES.items()))
+        self.assertEqual(cmp.added, [])
 
 
 class TestAIProvenance(unittest.TestCase):
@@ -4165,6 +5394,178 @@ class TestMigrationDocumentAccumulates(unittest.TestCase):
                                  f"{path.name}: {row['id']} does not derive")
 
 
+
+class TestChainedMoveBaseline1514(unittest.TestCase):
+    """A chain (a recorded A->B whose B moves again to C) is decided by what
+    the PUBLISHED site holds (#1514): A->C when only A is live, B->C when only
+    B is live, refusal when both or neither are, and refusal for --write with
+    no published baseline. Every refusal happens before any file is written."""
+
+    PRIOR = {"old_id": "A", "new_id": "B", "post_kind": "multi_asset", "title": "t", "members": 2}
+    HOP = {"old_id": "B", "new_id": "C", "post_kind": "multi_asset", "title": "t", "members": 2}
+
+    def test_chain_choices_follow_the_published_ids(self):
+        self.assertEqual(mpi.chain_choices([self.PRIOR], [self.HOP], {"A", "x"}), {"B": "A"})
+        self.assertEqual(mpi.chain_choices([self.PRIOR], [self.HOP], {"B", "x"}), {"B": "B"})
+        for live in ({"A", "B"}, {"x"}, set()):
+            with self.subTest(live=live), self.assertRaises(mpi.ChainError):
+                mpi.chain_choices([self.PRIOR], [self.HOP], live)
+        with self.assertRaises(mpi.ChainError):
+            mpi.chain_choices([self.PRIOR], [self.HOP], None)
+        other = {"old_id": "X", "new_id": "Y", "post_kind": "multi_asset", "title": "u", "members": 1}
+        self.assertEqual(mpi.chain_choices([self.PRIOR], [other], None), {})
+
+    def test_accumulate_with_a_baseline(self):
+        other = {"old_id": "X", "new_id": "Y", "post_kind": "multi_asset", "title": "u", "members": 1}
+        keep = {"old_id": "M", "new_id": "N", "post_kind": "team_roundup", "title": "v", "members": 3}
+        a_live = mpi.accumulate_moves([self.PRIOR, keep], [self.HOP, other], {"A", "M"})
+        b_live = mpi.accumulate_moves([self.PRIOR, keep], [self.HOP, other], {"B", "M"})
+        self.assertEqual(sorted((m["old_id"], m["new_id"]) for m in a_live),
+                         [("A", "C"), ("M", "N"), ("X", "Y")])
+        self.assertEqual(sorted((m["old_id"], m["new_id"]) for m in b_live),
+                         [("B", "C"), ("M", "N"), ("X", "Y")])
+        with self.assertRaises(mpi.ChainError):
+            mpi.accumulate_moves([self.PRIOR], [self.HOP], {"A", "B"})
+        # No baseline keeps the existing composition (the caller asserts A).
+        self.assertEqual([(m["old_id"], m["new_id"])
+                          for m in mpi.accumulate_moves([self.PRIOR], [self.HOP])], [("A", "C")])
+
+    def test_the_three_site_a_ids_resolve_to_their_published_old_ids(self):
+        """The real #1514 case, offline: the three Sponza posts rewound to the
+        ids the published site holds (B), with the #1293/#1310 entries that
+        named them as new ids (A->B). The baseline-aware composition must give
+        exactly the committed B->C entries, never A->C."""
+        A_TO_B = {"79bf9aeb-77c0-c6b5-2d3a-9c99ee725aa2": "18017920-fcd4-67e3-04b8-60d930544cf5",
+                  "b0992740-62e9-2147-c507-686f161d3d4d": "adafa798-73a2-90a9-b45a-fc5e6c258853",
+                  "b9259691-f45d-329f-490d-ab9f80a73e52": "27f945f0-070e-413f-26d3-356d8293e95e"}
+        moves_b_to_c = TestSiteAPostIdMigration1514.MOVES
+        posts = json.loads((PROFILES / "studio-a.posts.json").read_text(encoding="utf-8"))
+        back = {n: o for o, n in moves_b_to_c.items()}
+        for q in posts:
+            q["id"] = back.get(q["id"], q["id"])
+        published = {q["id"] for q in posts}
+        self.assertTrue(set(moves_b_to_c) <= published)
+        self.assertFalse(set(A_TO_B) & published)
+        fresh = mpi.plan(posts)
+        prior = [{"old_id": a, "new_id": b, "post_kind": "x", "title": "t", "members": 1}
+                 for a, b in A_TO_B.items()]
+        out = mpi.accumulate_moves(prior, fresh, published)
+        self.assertEqual({m["old_id"]: m["new_id"] for m in out}, moves_b_to_c)
+        doc = json.loads((UPGRADES / "post-id-migration.studio-a.json").read_text(encoding="utf-8"))
+        committed = {m["old_id"]: m["new_id"] for m in doc["moves"]
+                     if m["new_id"] in set(moves_b_to_c.values())}
+        self.assertEqual(committed, moves_b_to_c)
+        with self.assertRaises(mpi.ChainError):
+            mpi.chain_choices(prior, fresh, None)
+
+    # ---- the CLI, end to end, on scratch fixtures -------------------------
+
+    def _fixture(self, d, live, with_chain=True):
+        d = Path(d)
+        chain_post = {"id": "B", "post_kind": "multi_asset", "asset_ids": ["a1", "a2"], "title": "t"}
+        other_post = {"id": "X", "post_kind": "multi_asset", "asset_ids": ["b1", "b2"], "title": "u"}
+        stable = {"id": sa.bundle_post_id(["c1"]), "post_kind": "multi_asset",
+                  "asset_ids": ["c1"], "title": "s"}
+        posts = [chain_post, other_post, stable] if with_chain else [other_post, stable]
+        (d / "fixture.posts.json").write_text(json.dumps(posts, indent=1) + "\n", encoding="utf-8")
+        prior = [{"old_id": "A", "new_id": "B", "post_kind": "multi_asset", "title": "t", "members": 2},
+                 {"old_id": "M", "new_id": "N", "post_kind": "team_roundup", "title": "v", "members": 3}]
+        (d / "doc.json").write_text(json.dumps({"_why": ["x"], "profile": "fixture.posts.json",
+                                                "moves": prior}, indent=2) + "\n", encoding="utf-8")
+        (d / "published.json").write_text(json.dumps([{"id": i} for i in live]), encoding="utf-8")
+        return d
+
+    def _run(self, d, *args):
+        return subprocess.run([sys.executable, str(SCRIPTS / "migrate_post_ids.py"),
+                               "--profile", str(d / "fixture.posts.json"),
+                               "--doc", str(d / "doc.json"), *args],
+                              capture_output=True, text=True)
+
+    @staticmethod
+    def _bytes(d, *names):
+        return {n: (d / n).read_bytes() for n in names}
+
+    def _upgrades_digest(self):
+        return {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(UPGRADES.glob("*.json"))}
+
+    def test_the_cli_records_the_live_old_id(self):
+        before_upgrades = self._upgrades_digest()
+        c = sa.bundle_post_id(["a1", "a2"])
+        y = sa.bundle_post_id(["b1", "b2"])
+        for live, want in ((["B", "X", "N"], ("B", c)), (["A", "X", "N"], ("A", c))):
+            with self.subTest(live=live), tempfile.TemporaryDirectory() as td:
+                d = self._fixture(td, live)
+                pub = (d / "published.json").read_bytes()
+                proc = self._run(d, "--write", "--reconcile", str(d / "published.json"))
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                moves = json.loads((d / "doc.json").read_text())["moves"]
+                self.assertEqual(sorted((m["old_id"], m["new_id"]) for m in moves),
+                                 sorted([want, ("M", "N"), ("X", y)]))
+                ids = [q["id"] for q in json.loads((d / "fixture.posts.json").read_text())]
+                self.assertEqual(ids[:2], [c, y])
+                self.assertEqual((d / "published.json").read_bytes(), pub)
+        self.assertEqual(self._upgrades_digest(), before_upgrades)
+
+    def test_every_undecidable_or_unbaselined_write_is_refused_before_writing(self):
+        before_upgrades = self._upgrades_digest()
+        cases = {
+            "both live": (["A", "B"], ["--reconcile", "published.json"], 2, "holds both"),
+            "neither live": (["X"], ["--reconcile", "published.json"], 2, "holds neither"),
+            "no baseline": (["B"], [], 2, "no published baseline"),
+            "unreadable baseline": (None, ["--reconcile", "published.json"], 2, "unreadable"),
+            "reconcile problem": ([sa.bundle_post_id(["a1", "a2"]), "B"],
+                                  ["--reconcile", "published.json"], 1, "reconcile reported a problem"),
+        }
+        for why, (live, extra, rc, text) in cases.items():
+            with self.subTest(why=why), tempfile.TemporaryDirectory() as td:
+                d = self._fixture(td, live or [])
+                if live is None:
+                    (d / "published.json").write_text("{not json", encoding="utf-8")
+                before = self._bytes(d, "fixture.posts.json", "doc.json", "published.json")
+                args = [str(d / a) if a == "published.json" else a for a in extra]
+                proc = self._run(d, "--write", *args)
+                self.assertEqual(proc.returncode, rc, proc.stderr)
+                self.assertIn(text, proc.stderr)
+                self.assertNotIn("  wrote ", proc.stderr)
+                self.assertEqual(self._bytes(d, "fixture.posts.json", "doc.json", "published.json"),
+                                 before, f"{why}: a file changed on refusal")
+        self.assertEqual(self._upgrades_digest(), before_upgrades)
+
+    def test_a_write_without_a_chain_still_needs_no_baseline(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = self._fixture(td, [], with_chain=False)
+            proc = self._run(d, "--write")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            moves = json.loads((d / "doc.json").read_text())["moves"]
+            self.assertEqual(sorted((m["old_id"], m["new_id"]) for m in moves),
+                             sorted([("A", "B"), ("M", "N"), ("X", sa.bundle_post_id(["b1", "b2"]))]))
+
+    def test_a_refusal_on_a_later_profile_writes_nothing_for_an_earlier_one(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = self._fixture(td, ["A", "B"])
+            first = d / "first.posts.json"
+            first.write_text(json.dumps([{"id": "Q", "post_kind": "multi_asset",
+                                          "asset_ids": ["z1"], "title": "q"}], indent=1) + "\n",
+                             encoding="utf-8")
+            before = self._bytes(d, "first.posts.json", "fixture.posts.json", "doc.json")
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "migrate_post_ids.py"),
+                                   "--profile", str(first), "--profile", str(d / "fixture.posts.json"),
+                                   "--doc", str(d / "doc.json"), "--write",
+                                   "--reconcile", str(d / "published.json")],
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 2, proc.stderr)
+            self.assertEqual(self._bytes(d, "first.posts.json", "fixture.posts.json", "doc.json"),
+                             before)
+
+    def test_a_dry_run_with_a_chain_writes_nothing_and_succeeds(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = self._fixture(td, ["B"])
+            before = self._bytes(d, "fixture.posts.json", "doc.json")
+            proc = self._run(d)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(self._bytes(d, "fixture.posts.json", "doc.json"), before)
+
 class TestPostCuration(unittest.TestCase):
     """#1309 — the hand-made feed ordering, reproduced by the build."""
 
@@ -4396,17 +5797,64 @@ class TestPostCuration(unittest.TestCase):
         self.assertEqual(dict(counts),
                          {"created_at": 840, "updated_at": 297, "asset_ids": 383})
 
+    # #1514 later changed studio-a.posts.json on purpose, so the whole-file
+    # hash above can no longer be rebuilt from today's file. The proof is
+    # kept for every byte #1514 did NOT touch: the digest below is the
+    # pre-#1469 file (reproduced above, byte-for-byte, from the profile as
+    # committed before #1514) with exactly these #1514 fields masked out:
+    #   * the 75 solo posts of the replaced videos: title, description, tags;
+    #   * the 3 posts holding the replaced model: tags (source:kenney added);
+    #   * the 3 posts that held the dropped Sponza scene: asset_ids, and their
+    #     id, which moved to the membership-derived value (ADR 0098). The id is
+    #     mapped BACK through the exact #1514 mapping rather than masked, so a
+    #     wrong or extra move still changes the digest.
+    # The replaced records are read from the assets profile
+    # (`metadata.replaced`), so the mask is data, not a hand list.
+    SPONZA_POSTS_1514 = frozenset({
+        "18017920-fcd4-67e3-04b8-60d930544cf5",
+        "27f945f0-070e-413f-26d3-356d8293e95e",
+        "adafa798-73a2-90a9-b45a-fc5e6c258853"})
+    SPONZA_POST_MOVED_FROM_1514 = {
+        "4488bcc4-670d-f804-d11c-760d9d07fd49": "18017920-fcd4-67e3-04b8-60d930544cf5",
+        "39e69231-a8a3-34aa-208d-1fb1898b387b": "27f945f0-070e-413f-26d3-356d8293e95e",
+        "a783324e-47a9-355b-a480-610b6d21a4d0": "adafa798-73a2-90a9-b45a-fc5e6c258853"}
+    PROFILE_BEFORE_1469_MASKED_1514_SHA256 = (
+        "7d46737c56aee7d68d84d50047873ef0d44f42a570459e9713892d85604c5015")
+
+    def _mask_1514(self, posts):
+        assets = json.loads(
+            (PROFILES / "studio-a.assets.json").read_text(encoding="utf-8"))
+        replaced = {a["id"] for a in assets if "replaced" in (a.get("metadata") or {})}
+        self.assertEqual(len(replaced), 76)
+        out = []
+        for p in posts:
+            q = dict(p)
+            if p["id"] in self.SPONZA_POST_MOVED_FROM_1514:
+                q["id"] = self.SPONZA_POST_MOVED_FROM_1514[p["id"]]
+            p = q
+            if set(p["asset_ids"]) & replaced:
+                q.pop("tags")
+                if len(p["asset_ids"]) == 1:
+                    q.pop("title")
+                    q.pop("description")
+            if p["id"] in self.SPONZA_POSTS_1514:
+                q.pop("asset_ids")
+            out.append(q)
+        return out
+
     def test_1469_changed_exactly_seven_dates_and_nothing_else(self):
         _, posts = self._shipped()
         by_id = {p["id"]: p for p in posts}
         for pid, (curated, before) in self.SEVEN_UPDATED_AT.items():
             self.assertEqual(by_id[pid]["updated_at"], curated, pid)
             by_id[pid]["updated_at"] = before
-        rebuilt = (json.dumps(posts, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
+        rebuilt = (json.dumps(self._mask_1514(posts), indent=1, ensure_ascii=False)
+                   + "\n").encode("utf-8")
         self.assertEqual(hashlib.sha256(rebuilt).hexdigest(),
-                         self.PROFILE_BEFORE_1469_SHA256,
+                         self.PROFILE_BEFORE_1469_MASKED_1514_SHA256,
                          "studio-a.posts.json differs from its pre-#1469 bytes "
-                         "in something other than the seven curated dates")
+                         "in something other than the seven curated dates and "
+                         "the documented #1514 fields")
 
 
 class TestCurationLossStopsTheRun(unittest.TestCase):
@@ -5069,8 +6517,9 @@ class TestSiteAProfileIsNotBehindItsPublishedSite(unittest.TestCase):
         self.assertEqual(bare, [], f"{len(bare)} asset(s) carry no field values")
         # 2,005 reconciled from the share (#1275) + 2 authored plates
         # (#1290), less the 1 record retired onto its survivor because it
-        # could never materialize beside it (#1319, ADR 0097).
-        self.assertEqual(len(assets), 2006)
+        # could never materialize beside it (#1319, ADR 0097), less the
+        # Sponza scene the public site_a dropped by owner decision (#1514).
+        self.assertEqual(len(assets), 2005)
         self.assertEqual(len(_documented_retired_ids("studio-a")), 1)
 
     def test_the_extra_published_asset_is_in_the_profile(self):

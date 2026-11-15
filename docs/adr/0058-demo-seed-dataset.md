@@ -130,3 +130,33 @@ The 2026-07-12 decision concluded that Layer A was CC-BY-SA 4.0 in aggregate. Th
 - The authoritative licensing and attribution record is the per-asset `license` and `attribution` in `MANIFEST.json`, together with `seed/ATTRIBUTIONS.md`.
 - Public credit lines describe demo content as coming from mixed-license and public-domain sources and link to the attribution list. They do not name a single license.
 - Earlier wording in this ADR that calls the current dataset CC-BY-SA 4.0 in aggregate is superseded by this amendment. That covers the "Aggregate license" section and the credit line under "Attribution obligation".
+
+## Proposed amendment, 2026-11-11: replace private `site_b` with a public CI peer
+
+The owner chose to replace the current private `site_b` with a public-safe
+corpus for reproducible CI and federation testing under issue #1514. This is
+a decision about the target corpus, not permission to publish the existing
+`site_b` directory. Its Layer B records remain private and must not enter a
+public repository, release asset, CI artifact, or log.
+
+The replacement will be assembled in a separate staging location from
+records whose exact bytes have passed per-asset redistribution and
+attribution review. A record's `layer: "A"` label is a candidate filter,
+not proof of rights. Every current `site_b` record is excluded from the
+public replacement; a private per-row ledger records that disposition.
+Reusing audited `site_a` bytes is
+allowed where it helps exercise cross-instance behavior. The two public
+peers must deliberately share at least two distinct, byte-identical assets
+as declared fixtures so CI can check the same-file boundary across sites.
+Those records retain separate peer-local identities.
+
+The replacement becomes the public `site_b` only after the rights audit,
+fixture coverage contract, byte verification, and release procedure have
+passed. Until that cutover, the private `site_b` rule above remains in force.
+At cutover, retain the former private corpus only in private storage under
+a distinct identity; do not copy it into the public release. The `site_a`
+rules and the source-specific attribution obligation remain in force.
+
+The release contract and storage choice are separate decisions. This
+amendment neither chooses GitHub Releases over another host nor changes
+the existing Kaggle steps in `RELEASING.md`.
