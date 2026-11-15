@@ -35,14 +35,19 @@
 # no private path. The datasets are fetched anonymously from public
 # releases and verified against pinned SHA-256s.
 #
-# TRIGGERS. workflow_dispatch only: no push and no pull_request trigger.
-# Dispatch (and a schedule, added in a later PR) works only once this file
-# is on the DEFAULT branch (main). Its first hosted runs came from a
-# branch-scoped push trigger on the feature branch, removed before merge.
+# TRIGGERS. A daily schedule plus workflow_dispatch; no push and no
+# pull_request trigger. Both work only from the DEFAULT branch (main): a
+# scheduled run tests main's latest commit. Its first hosted runs came from
+# a branch-scoped push trigger on the feature branch, removed before merge.
 
 name: UI scale (full corpus)
 
 on:
+  schedule:
+    # Nominal 02:17 UTC daily, off the top of the hour. GitHub may start a
+    # scheduled run late (or drop it under load), so this is a cadence, not
+    # a wall-clock guarantee.
+    - cron: "17 2 * * *"
   workflow_dispatch:
     inputs:
       ref:

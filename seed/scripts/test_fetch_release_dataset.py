@@ -942,20 +942,24 @@ class CIScaleWorkflow(unittest.TestCase):
         self.assertIn("infra/docker/ci/docker-compose.hosted.yml", self.src)
         self.assertIn("permissions:\n  contents: read", self.src)
 
-    def test_dispatch_is_the_only_trigger(self):
-        # The final workflow runs only when dispatched (a schedule comes in a later, reviewed change).
-        # No push trigger (the first hosted runs used a temporary branch-scoped one, now removed) and
-        # never pull_request, so fork and contributor PRs cannot start it. Stdlib text parse of the
-        # top-level `on:` block: its two-space keys are the triggers.
+    def test_triggers_are_the_daily_schedule_and_dispatch_only(self):
+        # A daily schedule (02:17 UTC, nominal: GitHub may start it late) plus workflow_dispatch, both
+        # of which run only from the default branch. No push trigger (the first hosted runs used a
+        # temporary branch-scoped one, removed before merge) and never pull_request, so fork and
+        # contributor PRs cannot start it. Stdlib text parse of the comment-stripped top-level `on:`
+        # block: its two-space keys are the triggers.
         lines = self.src.splitlines()
         self.assertEqual(sum(1 for ln in lines if ln == "on:"), 1, "exactly one top-level on: block")
         start = lines.index("on:") + 1
         end = next(i for i in range(start, len(lines)) if lines[i] and not lines[i].startswith(" "))
-        triggers = [ln.strip().rstrip(":") for ln in lines[start:end]
+        block = lines[start:end]
+        triggers = [ln.strip().rstrip(":") for ln in block
                     if ln.startswith("  ") and not ln.startswith("   ") and ln.strip()]
-        self.assertEqual(triggers, ["workflow_dispatch"])
-        for banned in ("push:", "pull_request", "pull_request_target", "schedule:", "workflow_run"):
-            self.assertNotIn(banned, "\n".join(lines[start:end]), banned)
+        self.assertEqual(triggers, ["schedule", "workflow_dispatch"])
+        crons = [ln.strip() for ln in block if ln.strip().startswith("- cron:")]
+        self.assertEqual(crons, ['- cron: "17 2 * * *"'], "exactly one schedule entry, 02:17 UTC daily")
+        for banned in ("push:", "pull_request", "pull_request_target", "workflow_run"):
+            self.assertNotIn(banned, "\n".join(block), banned)
 
     def test_concurrency_is_job_level(self):
         # Workflow-level concurrency may only read github / inputs / vars; matrix is job-level only.
