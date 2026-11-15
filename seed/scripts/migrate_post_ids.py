@@ -230,7 +230,55 @@ def apply(posts: list[dict], moves: list[dict]) -> int:
 PROFILE_SITE = {"studio-a": "site_a", "studio-b": "site_b"}
 
 
-def accumulate_moves(existing: list[dict], fresh: list[dict]) -> list[dict]:
+class ChainError(ValueError):
+    """A chained move whose old id cannot be decided from the published
+    baseline. Always fatal, and raised before anything is written."""
+
+
+def chain_choices(existing: list[dict], fresh: list[dict],
+                  published_ids: set[str] | None) -> dict[str, str]:
+    """For every chain (a recorded A->B whose B moves again, B->C), which id
+    the document must record as `old_id`: "A" or "B". Raises ChainError.
+
+    ⛔ THE ANSWER IS WHAT THE PUBLISHED SITE HOLDS (#1514). Composing to A->C
+    is right only while the destination still holds A. The site_a wall was
+    republished after #1293/#1310, so it held B for the three ids #1514 moved
+    again, and a composed A->C made the publish guard read all three as
+    deleted records. The parser is one-to-one, so A->C and B->C cannot both
+    be listed: exactly one of A and B must be live.
+
+    `published_ids` is the id set of the published posts.json (`--reconcile`,
+    read only). None means no baseline was supplied, which is a refusal for
+    any chain.
+    """
+    fresh_by_old = {m["old_id"]: m for m in fresh}
+    out: dict[str, str] = {}
+    problems: list[str] = []
+    for prior in existing:
+        hop = fresh_by_old.get(prior["new_id"])
+        if hop is None:
+            continue
+        a, b, c = prior["old_id"], prior["new_id"], hop["new_id"]
+        if published_ids is None:
+            problems.append(f"{a} -> {b} -> {c}: no published baseline was given "
+                            f"(pass --reconcile <published posts.json>)")
+            continue
+        a_live, b_live = a in published_ids, b in published_ids
+        if a_live and not b_live:
+            out[b] = "A"
+        elif b_live and not a_live:
+            out[b] = "B"
+        else:
+            problems.append(f"{a} -> {b} -> {c}: the published site holds "
+                            f"{'both' if a_live else 'neither'} of {a} and {b}")
+    if problems:
+        raise ChainError("cannot decide which old id a chained move records:\n  "
+                         + "\n  ".join(problems))
+    return out
+
+
+def accumulate_moves(existing: list[dict], fresh: list[dict],
+                     published_ids: set[str] | None = None) -> list[dict]:
     """Fold a new migration into the mapping a previous one recorded.
 
     ⛔ THE DOCUMENT MUST NOT BE REPLACED, AND IT WAS. Its whole job is to
@@ -246,7 +294,16 @@ def accumulate_moves(existing: list[dict], fresh: list[dict]) -> list[dict]:
     published site holds. Recording both hops would leave the reader to
     do the composition, and the one that matters is the one the site can
     actually look up.
+
+    ⭐ WITH A BASELINE (#1514) each chain is decided by `chain_choices`:
+    A->C when the published site holds A, B->C when it holds B, ChainError
+    otherwise. Without one (`published_ids=None`) a chain is composed to
+    A->C, which ASSERTS the destination still holds A. The CLI never relies
+    on that: `--write` with a chain refuses unless `--reconcile` supplies the
+    published ids.
     """
+    choices = (chain_choices(existing, fresh, published_ids)
+               if published_ids is not None else {})
     fresh_by_old = {m["old_id"]: m for m in fresh}
     out: list[dict] = []
     chained: set[str] = set()
@@ -256,7 +313,10 @@ def accumulate_moves(existing: list[dict], fresh: list[dict]) -> list[dict]:
             out.append(prior)
             continue
         chained.add(hop["old_id"])
-        out.append({**hop, "old_id": prior["old_id"]})
+        if choices.get(hop["old_id"]) == "B":
+            out.append(dict(hop))
+        else:
+            out.append({**hop, "old_id": prior["old_id"]})
     out.extend(m for m in fresh if m["old_id"] not in chained)
     return sorted(out, key=lambda m: m["old_id"])
 
@@ -393,8 +453,26 @@ def main() -> int:
 
     profiles = args.profile or [PROFILES / n for n in DEFAULT_PROFILES]
 
+    # ⛔ TWO PHASES (#1514). Every profile is planned, checked, reconciled and
+    # its chains decided BEFORE any file is written, so a refusal on the last
+    # profile can never leave the first one half-migrated.
+    published_ids: set[str] | None = None
+    if args.reconcile:
+        try:
+            published_rows = json.loads(args.reconcile.read_text(encoding="utf-8"))
+            if not isinstance(published_rows, list) or not all(
+                    isinstance(r, dict) and isinstance(r.get("id"), str) for r in published_rows):
+                raise ValueError("expected a JSON list of posts with string ids")
+        except (OSError, ValueError) as exc:
+            print(f"error: --reconcile {args.reconcile}: unreadable ({exc}). "
+                  f"Nothing was written.", file=sys.stderr)
+            return 2
+        published_ids = {r["id"] for r in published_rows}
+
     total_moves = 0
     rc = 0
+    staged: list[tuple] = []
+    pending_docs: dict[Path, list[dict]] = {}
     for path in profiles:
         if not path.is_file():
             print(f"error: {path} not found", file=sys.stderr)
@@ -440,6 +518,32 @@ def main() -> int:
 
         doc_path = args.doc or (UPGRADES /
                                 f"post-id-migration.{path.stem.split('.')[0]}.json")
+        # A document named by several profiles (--doc) accumulates in order,
+        # exactly as the old write-as-you-go loop did.
+        if doc_path in pending_docs:
+            existing = pending_docs[doc_path]
+        else:
+            existing = (json.loads(doc_path.read_text(encoding="utf-8")).get("moves", [])
+                        if doc_path.is_file() else [])
+        try:
+            chain_choices(existing, moves, published_ids)  # refuses an undecidable chain
+            accumulated = accumulate_moves(existing, moves, published_ids)
+        except ChainError as exc:
+            print(f"error: {path.name}: {exc}", file=sys.stderr)
+            print("       Nothing was written. A chained id must be recorded under "
+                  "the old id the published site actually holds; pass the "
+                  "published posts.json with --reconcile, and resolve a site "
+                  "that holds both or neither by hand.", file=sys.stderr)
+            return 2
+        pending_docs[doc_path] = accumulated
+        staged.append((path, posts, moves, indent, eof, doc_path, accumulated))
+
+    if args.write and rc:
+        print("error: --reconcile reported a problem; nothing was written.",
+              file=sys.stderr)
+        return rc
+
+    for path, posts, moves, indent, eof, doc_path, accumulated in staged:
         doc = {
             "_why": [
                 "POST IDS MOVED ONTO THE IDENTITY-DERIVED KEY (#1293, ADR 0098).",
@@ -464,10 +568,7 @@ def main() -> int:
                 "changed.",
             ],
             "profile": path.name,
-            "moves": accumulate_moves(
-                (json.loads(doc_path.read_text(encoding="utf-8")).get("moves", [])
-                 if doc_path.is_file() else []),
-                moves),
+            "moves": accumulated,
         }
         doc_path.parent.mkdir(parents=True, exist_ok=True)
         doc_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n",

@@ -61,6 +61,43 @@ func main() {
 		}
 		return
 	}
+	// `aa seed-selection ...` exports the `--profile ci` selection for a
+	// site root as JSON (#1514). Offline: no config, database or storage.
+	if len(os.Args) > 1 && os.Args[1] == "seed-selection" {
+		if err := runSeedSelection(os.Args[2:]); err != nil {
+			slog.Error("seed-selection failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
+	// `aa seed-overlap ...` checks the cross-peer overlap contract against
+	// explicitly named peer roots (#1514). Offline and read-only.
+	if len(os.Args) > 1 && os.Args[1] == "seed-overlap" {
+		if err := runSeedOverlap(os.Args[2:]); err != nil {
+			slog.Error("seed-overlap failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
+	// `aa seed-rights ...` drafts or structurally checks the rights ledger
+	// for a CI selection report (#1514). Offline; prints to stdout only.
+	if len(os.Args) > 1 && os.Args[1] == "seed-rights" {
+		if err := runSeedRights(os.Args[2:]); err != nil {
+			slog.Error("seed-rights failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
+	// `aa seed-package ...` builds the local CI seed package from a report
+	// and a structurally eligible ledger (#1514). Offline; writes only
+	// --output.
+	if len(os.Args) > 1 && os.Args[1] == "seed-package" {
+		if err := runSeedPackage(os.Args[2:]); err != nil {
+			slog.Error("seed-package failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
 	// `aa rebuild-previews ...` re-enqueues preview jobs for existing
 	// assets with force set, so a renderer fix reaches the catalogue
 	// that predates it (#760). Enqueue-only; the server's worker pool
@@ -124,11 +161,37 @@ func runSeed(args []string) error {
 			"--reset does NOT erase the content-addressed variant store, so a "+
 			"re-seed of the same dataset normally re-uses every existing render; "+
 			"use this when the renderer changed and the stored ones are stale")
+	overlapContract := fs.String("overlap-contract", "",
+		"with --profile ci and --overlap-peer: also seed that peer's overlap anchors from this "+
+			"contract (e.g. seed/contracts/peer-overlap.v1.json), checked byte for byte first (#1514). "+
+			"Opt-in; no default")
+	overlapPeer := fs.String("overlap-peer", "",
+		"with --overlap-contract: the contract peer this site is (e.g. site_a); never inferred")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *site == "" {
 		return errors.New("seed: --site is required")
+	}
+	// Declared includes are checked OFFLINE and FIRST: before config,
+	// migrate, the bootstrap admin or --reset. A bad contract, peer or
+	// anchor must cost nothing, and must never fall back to seeding
+	// without the anchors. The run then has to reproduce this pin.
+	includes, err := seed.CheckDeclaredIncludeFlags(*overlapContract, *overlapPeer, *profile)
+	if err != nil {
+		return fmt.Errorf("seed: %w", err)
+	}
+	var includePin *seed.IncludePin
+	if includes != nil {
+		if *limitPerExt > 0 {
+			return errors.New("seed: declared includes need --profile ci, which excludes --limit-per-extension")
+		}
+		includePin, err = seed.PreflightCISelection(seed.CISelectionOptions{
+			SiteRoot: *site, CatalogueRoot: *catalogue, CoverageDepth: *coverageDepth, Includes: includes,
+		})
+		if err != nil {
+			return fmt.Errorf("seed: declared includes refused before any change: %w", err)
+		}
 	}
 
 	cfg, err := config.Load()
@@ -237,6 +300,8 @@ func runSeed(args []string) error {
 		Previews:      *previews,
 		ForcePreviews: *forcePreviews,
 		Fixtures:      *fixtures,
+		Includes:      includes,
+		IncludePin:    includePin,
 		// Same hasher the setup flow and the bootstrap package use, so a
 		// seeded principal's password verifies through the ordinary login
 		// path (api.go wires the identical closure for the seed admin

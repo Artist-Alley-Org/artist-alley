@@ -18,10 +18,11 @@
 # trigger.yml). NO self-hosted job has ever run python3, so "the runners
 # already have python" is true of the hosted ones only. This suite is
 # stdlib-only, needs no compose stack, no database and no archive share,
-# and finishes in under five seconds — so it has no reason to queue
+# and finishes in under five seconds — so it had no reason to queue
 # behind the contended [self-hosted, artist-alley] pool that ci.yml's
-# own comments describe as putting Integration eight minutes behind the
-# image build. Running hosted also means the gate fires on fork PRs and
+# comments then described as putting Integration eight minutes behind
+# the image build (ci.yml's jobs have since moved to GitHub-hosted
+# runners, #1514). Running hosted also means the gate fires on fork PRs and
 # on Dependabot runs, which self-hosted jobs cannot.
 #
 # ── Why there is no `paths:` filter

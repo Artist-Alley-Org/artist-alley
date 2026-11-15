@@ -1,0 +1,46 @@
+# Compose override for the UI workflows on GitHub-HOSTED runners (#1514).
+#
+# Layered LAST onto COMPOSE_FILE, after docker-compose.resources.yml:
+#
+#   COMPOSE_FILE=docker-compose.yml:infra/docker/ci/docker-compose.ci.yml:infra/docker/ci/docker-compose.resources.yml:infra/docker/ci/docker-compose.hosted.yml
+#
+# The self-hosted runner was a container next to the Docker daemon: it could not reach published host
+# ports, so the workflows attached it to the compose network and used Docker DNS. A hosted VM is the
+# opposite case: the runner and the daemon share one host, there is no runner container to attach, and
+# a published port IS reachable from the runner.
+#
+# So this override publishes the three endpoints the runner uses, on loopback only and at the SAME port
+# number as inside the network, and the workflow maps the same service names to 127.0.0.1 in the VM's
+# /etc/hosts. Every URL then means the same thing from the runner and from a container:
+#
+#   http://app.aa:8080             runner: 127.0.0.1:8080 -> app       containers: Docker DNS -> app
+#   http://nginx:80                runner: 127.0.0.1:80   -> nginx     containers: Docker DNS -> nginx
+#   https://studio-b.local:9443    runner: 127.0.0.1:9443 -> nginx-b   containers: Docker DNS -> nginx-b
+#
+# The Host header a client sends is therefore unchanged (federation HTTP signatures sign it verbatim),
+# and the URLs pair.sh registers (http://nginx, https://studio-b.local:9443) are the ones the apps dial
+# over Docker DNS, exactly as before.
+#
+# resources.yml empties every inherited `ports:` list with `!reset []`; a later file's list is merged
+# onto that empty list, so only these loopback bindings exist. 127.0.0.1 keeps them off the VM's
+# network interfaces. Profile-gated or unstarted services (nginx, nginx-b on ui-pr) bind nothing.
+
+services:
+  app:
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  nginx:
+    ports:
+      - "127.0.0.1:80:80"
+
+  nginx-b:
+    ports:
+      - "127.0.0.1:9443:9443"
+
+  # A hosted runner has 16 GiB of RAM in total, not the self-hosted box's ~40 GiB free. studio-a keeps
+  # the AA_APP_MEM_LIMIT ceiling the workflow sets; studio-b is seeded with `--limit-per-extension 3`
+  # (a few dozen assets) and nothing renders a large catalogue there, so it gets its own, smaller
+  # ceiling instead of a second copy of studio-a's. mem_limit is a ceiling, not a reservation.
+  app-b:
+    mem_limit: ${AA_APP_B_MEM_LIMIT:-4g}

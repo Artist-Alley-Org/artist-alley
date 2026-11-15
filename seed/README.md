@@ -354,6 +354,37 @@ carries:
 | `metadata.source_archive.member` | the path inside that zip |
 | `metadata.source_archive.sha256` | that member's bytes |
 
+**Signed download links (#1514).** A pack served only through Kenney's
+download button records `metadata.source_archive.transport:
+"kenney-download-link-json"`. Its `url` is then the stable
+`https://kenney.nl/download-link/<hex>` endpoint, which does **not** serve
+the zip: a GET returns JSON `{"url": <short-lived signed zip URL>}`. The
+signed URL expires, so it is never recorded or logged. The record adds
+`archive_bytes` and `archive_sha256`, and `populate_archive.py`
+(through `kenney_pack_sources.fetch_signed_archive`) resolves a fresh link,
+asking the endpoint with its own asset page as `Referer` (decoded strictly
+from the endpoint's hex, `assets/<slug>`; Kenney answers 403 without it),
+accepts only `https://kenney.nl` for the link, its redirects and the zip,
+bounds both responses, checks the whole zip's length and sha256 before
+opening it, then checks the member's sha256 before staging. A model's
+declared `metadata.companions` come from the same authenticated zip. A
+record with no `transport` is a direct zip and behaves as before.
+
+**Rights notices.** A record may declare `metadata.license_notice`
+`{path, sha256, bytes, member}`: a notice file (the pack's `License.txt`)
+that ships beside it without being a profile row or a companion.
+`populate_archive.py` keeps every declared notice through `--prune`,
+accepts the shipped file only when its sha256 and byte count both match,
+and otherwise restores `member` from the record's own `source_archive`
+(any transport) before the run can pass. A notice it cannot authenticate
+or restore, or one declared inconsistently, is a refusal.
+
+**`--prune` stays inside the payload roots.** It deletes stale files only
+under `3d/`, `audio/`, `comics/`, `documents/`, `fonts/`, `images/` and
+`videos/`, keeping wanted profile paths, declared companions and notices.
+Top-level files (`posts.json`, `README.md`, `SHA256SUMS`, ...), hidden
+entries such as `.git/`, and symlinks are never touched or followed.
+
 **Not `media_url`.** A `media_url` means "a URL that serves exactly
 `file_size_bytes`", and `populate_archive.py` refuses a mismatch. A zip
 serves the whole pack, so writing one there would either break that
@@ -713,7 +744,11 @@ Post ids are checked the same way. `python3 seed/scripts/migrate_post_ids.py
 derives (#1293) — it is a dry run by default and `--write` is the only
 thing that touches a file. `seed/upgrades/post-id-migration.*.json` is
 the old→new mapping the ids moved along, kept so a publish can tell a
-migration from a loss (ADR 0097).
+migration from a loss (ADR 0097). When an id moves again (a recorded A→B
+whose B now moves to C), `--write` needs `--reconcile <published posts.json>`
+and records whichever of A or B the published site actually holds; it refuses,
+before writing anything, when the site holds both or neither, when no baseline
+is given, or when the reconcile reports a problem (#1514).
 
 **The publish guard reads that mapping (#1319).** `populate_archive.py`
 locates `seed/upgrades/post-id-migration.<stem>.json` from the `--posts`
