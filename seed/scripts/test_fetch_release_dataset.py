@@ -942,12 +942,20 @@ class CIScaleWorkflow(unittest.TestCase):
         self.assertIn("infra/docker/ci/docker-compose.hosted.yml", self.src)
         self.assertIn("permissions:\n  contents: read", self.src)
 
-    def test_push_trigger_is_only_the_temporary_feature_branch(self):
-        if "\n  push:" in self.src:
-            block = self.src[self.src.find("\n  push:"):self.src.find("\n  workflow_dispatch:")]
-            self.assertIn("branches: [feat/1514-ui-scale]", block)
-            self.assertNotIn("dev", block.replace("feat/1514-ui-scale", ""))
-            self.assertNotIn("main", block)
+    def test_dispatch_is_the_only_trigger(self):
+        # The final workflow runs only when dispatched (a schedule comes in a later, reviewed change).
+        # No push trigger (the first hosted runs used a temporary branch-scoped one, now removed) and
+        # never pull_request, so fork and contributor PRs cannot start it. Stdlib text parse of the
+        # top-level `on:` block: its two-space keys are the triggers.
+        lines = self.src.splitlines()
+        self.assertEqual(sum(1 for ln in lines if ln == "on:"), 1, "exactly one top-level on: block")
+        start = lines.index("on:") + 1
+        end = next(i for i in range(start, len(lines)) if lines[i] and not lines[i].startswith(" "))
+        triggers = [ln.strip().rstrip(":") for ln in lines[start:end]
+                    if ln.startswith("  ") and not ln.startswith("   ") and ln.strip()]
+        self.assertEqual(triggers, ["workflow_dispatch"])
+        for banned in ("push:", "pull_request", "pull_request_target", "schedule:", "workflow_run"):
+            self.assertNotIn(banned, "\n".join(lines[start:end]), banned)
 
     def test_concurrency_is_job_level(self):
         # Workflow-level concurrency may only read github / inputs / vars; matrix is job-level only.
