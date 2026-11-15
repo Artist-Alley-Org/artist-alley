@@ -1,13 +1,21 @@
 # PR + branch validation. Runs on every push to a long-lived branch
 # (main, dev) and on every PR targeting main or dev.
 #
-# Every job here is self-hosted `[self-hosted, artist-alley]`, on both
-# pushes and PRs. This paragraph used to say "PRs use `ubuntu-latest`
-# so fork PRs can't run code on the self-hosted runner" — that stopped
-# being true when the runner rebalance made frontend-check and test
+# Runners (#1514): every job in this file runs on GitHub-hosted
+# `ubuntu-24.04`: the four light jobs (docs-only, render-chain,
+# frontend-check, codegen-drift), the production image build
+# (`docker-build`) and Integration (`test`).
+#
+# History: this paragraph used to say "PRs use `ubuntu-latest` so fork
+# PRs can't run code on the self-hosted runner". That stopped being
+# true when the runner rebalance made frontend-check and test
 # unconditional, and #942 moved the last hosted job (codegen-drift)
-# over too. Fork PRs get no CI here until a maintainer approves the
-# run; see the note over codegen-drift for why we accepted that.
+# over too. #1514 moved the four light jobs back to hosted runners,
+# then `docker-build`, then `test`. With every job hosted, a fork PR's
+# code no longer reaches the self-hosted pool through this workflow;
+# GitHub's fork-PR approval policy for this repository (currently
+# first-time contributors only) still decides whether a maintainer
+# must approve the run first.
 #
 # This is the merge-gate. Edge/release workflows assume CI was green.
 #
@@ -142,7 +150,7 @@ jobs:
   # exact. Any other glob character makes the job refuse to decide.
   docs-only:
     name: Docs-only classifier
-    runs-on: [self-hosted, artist-alley]
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -221,10 +229,12 @@ jobs:
             echo "::notice title=Docs-only PR::All ${count} changed file(s) match the docs patterns, so Integration, frontend-check and codegen-drift skip (reported as Success)."
           fi
 
-  # ── Frontend type-check + production build. Pure Node work; uses
-  # the self-hosted [artist-alley] runner to keep GitHub-hosted
-  # minutes under the monthly quota (rebalance landed when the org
-  # hit 90% of 3000-min during the encryption + 1.17 arcs).
+  # ── Frontend type-check + production build. Pure Node work. Runs
+  # on GitHub-hosted ubuntu-24.04 since #1514; from the runner
+  # rebalance (landed when the org hit 90% of 3000-min during the
+  # encryption + 1.17 arcs) until then it ran on the self-hosted
+  # [artist-alley] pool to keep GitHub-hosted minutes under the
+  # monthly quota.
   # Sidesteps the bind-mount / docker-from-docker EACCES + SIGKILL
   # issues we hit trying to run svelte-check inside the dev image —
   # this job spawns its own node toolchain, no compose stack.
@@ -232,7 +242,7 @@ jobs:
     name: Frontend type-check + build
     needs: docs-only
     if: ${{ !cancelled() && !(needs.docs-only.result == 'success' && needs.docs-only.outputs.docs_only == 'true') }}
-    runs-on: [self-hosted, artist-alley]
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # All node work runs inside `docker run` against node:24-alpine
     # rather than via the workflow's `container:` directive. Why:
@@ -251,9 +261,6 @@ jobs:
     # matching the lockfile and dodging the gnu rolldown parser
     # regression.
     steps:
-      - name: Clear stale git locks (persistent self-hosted workspace)
-        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
-
       - uses: actions/checkout@v7
 
       # Pre-pull once so the five steps below don't each pay the
@@ -330,7 +337,11 @@ jobs:
   # result. Catches the common footgun of editing openapi.yaml or a
   # queries.sql file without committing the regenerated output.
   #
-  # Self-hosted since #942. It was the last `ubuntu-latest` job in this
+  # Back on GitHub-hosted ubuntu-24.04 since #1514 (owner direction to
+  # move suitable CI to hosted runners), which restores the portability
+  # gate in point 2 below and brings back the provisioning-incident
+  # exposure described next. History: it was self-hosted from #942
+  # until then. It was the last `ubuntu-latest` job in this
   # file, and during the 2026-08-06 Actions incident that made it the
   # only red X on an otherwise-green `dev`: `Set up job` — GitHub's own
   # provisioning, before a line of our code runs — went 2s -> 175s ->
@@ -344,7 +355,10 @@ jobs:
   #   1. Fork PRs get no gate here. Forks cannot use self-hosted
   #      runners, so this check simply will not run on one. The repo is
   #      public with zero forks to date, and a fork PR gets manual
-  #      review regardless. Owner's explicit call.
+  #      review regardless. Owner's explicit call. (Correction, #1514:
+  #      on a public repository a fork PR CAN run on self-hosted
+  #      runners; GitHub's fork-PR approval policy decides whether a
+  #      maintainer must approve the run first.)
   #   2. The portability gate. `ubuntu-latest` was a vanilla box, so a
   #      green run also proved codegen reproduces off our own machines.
   #      Exposure is small — the job installs its own Go 1.26, its own
@@ -357,7 +371,10 @@ jobs:
     name: Codegen drift check
     needs: docs-only
     if: ${{ !cancelled() && !(needs.docs-only.result == 'success' && needs.docs-only.outputs.docs_only == 'true') }}
-    runs-on: [self-hosted, artist-alley]
+    runs-on: ubuntu-24.04
+    # Kept at 20 on the hosted runner (#1514): the 2026-08-06 incident
+    # above shows GitHub's own provisioning can eat minutes before a
+    # step runs. History, from its self-hosted period:
     # 20, not the 10 it carried while hosted. The job's own work is
     # ~20 seconds and always has been; the budget is for the wait in
     # front of it. Its only `needs:` is the docs-only classifier (a few
@@ -370,14 +387,9 @@ jobs:
     # codegen run is still caught quickly.
     timeout-minutes: 20
     steps:
-      # See infra/runner/README.md (#350) — the self-hosted workspace
-      # persists across jobs, so a run killed mid-fetch can leave
-      # .git/*.lock behind and break the NEXT job's checkout.
-      - name: Clear stale git locks (persistent self-hosted workspace)
-        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
-
-      # clean: true (the default) is load-bearing now that the
-      # workspace is reused: checkout runs `git clean -ffdx` +
+      # A hosted VM starts with an empty workspace. clean: true (the
+      # default) still matters if this job ever returns to a reused
+      # self-hosted workspace: checkout runs `git clean -ffdx` +
       # `git reset --hard HEAD` before fetching, so a generated file
       # left dirty by an earlier job cannot survive into the
       # `git status --porcelain` check at the bottom of this job and
@@ -528,14 +540,19 @@ jobs:
     name: Integration tests (full compose stack)
     needs: docs-only
     if: ${{ !cancelled() && !(needs.docs-only.result == 'success' && needs.docs-only.outputs.docs_only == 'true') }}
-    # Self-hosted unconditionally — the runner-rebalance landing
-    # collapsed the prior pick-runner / fromJSON branching into
-    # a single label. Same rationale as frontend-check: keep
-    # GitHub-hosted minutes under the monthly quota.
+    # GitHub-hosted ubuntu-24.04 since #1514, the last job in this file
+    # to move. On the self-hosted pool it took about 16-17 minutes with
+    # 10-way Go parallelism and a warm local image cache; the hosted
+    # runner has 4 CPUs and builds the app image cold, so the first
+    # hosted runs are a measured rehearsal (see timeout-minutes and the
+    # capacity steps below).
     #
-    # Fork-PR caveat: fork PRs won't run this on the self-hosted
-    # runner; GitHub gates that via the "Approve first-time
-    # contributors" setting.
+    # History: it was self-hosted unconditionally after the
+    # runner-rebalance landing collapsed the prior pick-runner /
+    # fromJSON branching into a single label, with the same rationale
+    # as frontend-check's then: keep GitHub-hosted minutes under the
+    # monthly quota. While it was self-hosted, a fork PR could run it on
+    # that pool, subject to GitHub's fork-PR approval policy.
     #
     # This comment used to end "...the codegen-drift job stays on
     # ubuntu-latest so a fork PR still gets at least the portability +
@@ -545,9 +562,13 @@ jobs:
     # a maintainer approves it. Accepted deliberately: the repo has
     # zero forks and a fork PR is hand-reviewed anyway. The full
     # trade-off, including the portability coverage we gave up, is
-    # written out over codegen-drift above.
-    runs-on: [self-hosted, artist-alley]
-    timeout-minutes: 30
+    # written out over codegen-drift above. Since #1514 every job in
+    # this file, this one included, is hosted.
+    runs-on: ubuntu-24.04
+    # 45 for the hosted rehearsal (was 30 on the self-hosted pool), so a
+    # slow first hosted run reports its real duration instead of being
+    # killed at 30. The target is still comfortably under 30.
+    timeout-minutes: 45
     # No compose-stack concurrency group any more (#331). Each run gets
     # its own COMPOSE_PROJECT_NAME (isolated containers/network/volumes)
     # and the resources override drops every host port, so two runs on
@@ -556,14 +577,19 @@ jobs:
     # ref) still cancels superseded runs of this workflow itself.
     env:
       # Per-run project name: isolates container names, the default
-      # network, and named volumes from every other run on this
-      # shared self-hosted runner. run_attempt keeps re-runs distinct.
+      # network, and named volumes per run. A hosted VM runs one job,
+      # so this matters only if the job returns to a shared runner (it
+      # was written for the shared self-hosted pool). run_attempt keeps
+      # re-runs distinct.
       COMPOSE_PROJECT_NAME: aa-ci-${{ github.run_id }}-${{ github.run_attempt }}
       # Layer the CI resources override onto every `docker compose`
       # invocation — the workflow steps AND scripts/test.sh (which
       # calls bare `docker compose`) both inherit this. It drops host
       # ports and caps per-service memory.
       COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.resources.yml
+      # Go build + test parallelism matched to the hosted runner's 4
+      # CPUs (#1514), the same values ui-pr.yml uses on ubuntu-24.04.
+      # History, from the self-hosted pool, where it was -p=10 / 10:
       # Cap Go build + test parallelism so three stacks at once leave
       # CPU for everything else the shared runner hosts. The runner has
       # 125 GiB of RAM (~40 GiB free with its other workloads up), so
@@ -572,14 +598,20 @@ jobs:
       # was reasoned from during #886 (#887). Flows into the app image
       # build (via the override's build args) and into test.sh's golang
       # containers (forwarded with -e).
-      GOFLAGS: -p=10
-      GOMAXPROCS: 10
+      GOFLAGS: -p=4
+      GOMAXPROCS: 4
 
     steps:
-      - name: Clear stale git locks (persistent self-hosted workspace)
-        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
-
       - uses: actions/checkout@v7
+
+      # Read-only capacity record for the hosted rehearsal (#1514): CPU,
+      # memory and disk before the stack, so headroom is measured rather
+      # than inferred. The matching disk line is the job's last step.
+      - name: Record runner capacity
+        run: |
+          echo "nproc: $(nproc)"
+          free -m
+          df -B1M / | tail -1 | sed 's/^/disk before: /'
 
       # ---- Compose stack mirrors local dev so CI and
       # `./scripts/test.sh` exercise the same artifact (our app
@@ -710,6 +742,13 @@ jobs:
         if: always()
         uses: ./.github/actions/compose-cleanup
 
+      # Read-only: disk after the stack is torn down, paired with the
+      # "Record runner capacity" step above.
+      - name: Record disk after cleanup
+        if: always()
+        run: |
+          df -B1M / | tail -1 | sed 's/^/disk after:  /'
+
   # ── Does this PR touch the 3D render chain? (#1049)
   #
   # `docker-build` below carries `if: github.event_name != 'pull_request'`
@@ -740,9 +779,10 @@ jobs:
   # `needs:` + `if:`.
   #
   # No checkout: this reads the pattern file over the contents API
-  # instead. A `sparse-checkout` would leave the persistent self-hosted
-  # workspace sparse for whatever job lands in it next, and a full
-  # checkout is 20 s of nothing for a 5 s decision.
+  # instead. A full checkout is 20 s of nothing for a 5 s decision.
+  # (While this job was self-hosted, before #1514, a `sparse-checkout`
+  # would also have left the persistent workspace sparse for the next
+  # job.)
   #
   # Fails CLOSED. If the pattern file cannot be read or parses to nothing,
   # this job errors rather than emitting `false` — an unreadable policy
@@ -751,7 +791,7 @@ jobs:
   # merge, which is the correct direction for both.
   render-chain:
     name: Render-chain path detector
-    runs-on: [self-hosted, artist-alley]
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read         # read scripts/ci/render-chain-paths.txt
@@ -828,8 +868,11 @@ jobs:
 
   # ── Build the production image to confirm the multi-stage Dockerfile
   # still produces a clean amd64 artifact. Doesn't push anything —
-  # publishing lives in edge.yml + release.yml. Self-hosted-only
-  # because Docker buildx wants the daemon and the cache mounts.
+  # publishing lives in edge.yml + release.yml. Runs on GitHub-hosted
+  # ubuntu-24.04 since #1514: the hosted image ships the Docker daemon
+  # and buildx, and the build cache is the Actions cache (`type=gha`).
+  # History: it was self-hosted-only before, on the grounds that Docker
+  # buildx wanted the daemon and the cache mounts.
   #
   # Runs on every push/dispatch, and on a PR only when render-chain says
   # the PR touches the 3D chain (#1049 — see that job's comment). The
@@ -840,20 +883,17 @@ jobs:
     name: Verify production image build
     needs: render-chain
     if: github.event_name != 'pull_request' || needs.render-chain.outputs.touched == 'true'
-    runs-on: [self-hosted, artist-alley]
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
-      - name: Clear stale git locks (persistent self-hosted workspace)
-        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
-
       - uses: actions/checkout@v7
 
       - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build production image (no push)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -915,6 +955,11 @@ jobs:
           docker run --rm --entrypoint node "$IMG" /app/threejs/smoke.mjs
 
       - name: Reclaim the loaded production image
+        # On a hosted VM (since #1514) this is housekeeping only: the VM
+        # and its daemon are discarded after the job. It is kept,
+        # unchanged, because it is harmless there and is needed again if
+        # this job ever returns to a shared self-hosted daemon. History,
+        # from the self-hosted period:
         # `load: true` above puts artist-alley:ci-<sha> into the shared
         # daemon's image store, and this job had NO cleanup at all — so
         # every push leaked one full release image (Go binary + Chromium +

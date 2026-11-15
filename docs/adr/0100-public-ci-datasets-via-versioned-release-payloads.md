@@ -61,7 +61,7 @@ The constraints measured in the v0.11.1 preflight
   10 GiB each. A full `site_a` payload fetched on every CI run would consume
   a material share of that.
 - GitHub's release documentation
-  (<https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases>)
+  ([docs.github.com/en/repositories/releasing-projects-on-github/about-releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases))
   requires each release asset to be under 2 GiB. It states no limit on total
   release size or bandwidth.
 
@@ -176,8 +176,9 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
   pin binds the metadata checkout.
 
   For example, the nightly pins `Artist-Alley-Org/artist-alley-dataset-site-a`,
-  `v2026.11.01` and `release.json` SHA-256 `84996745...`. Since PR #1533 the
-  UI workflows on `dev` take every pin from `seed/contracts/ci-datasets.v1.json`;
+  `v2026.11.01` and `release.json` SHA-256 `84996745...`. The UI workflows
+  take every pin from `seed/contracts/ci-datasets.v1.json`, on `dev` since
+  PR #1533 and on `main` since PR #1535;
   all current pins are v1 editions. A v2 edition is fetched with
   `fetch_release_dataset.py --release-format v2`, which refuses a tag that is
   not an edition before any request and a manifest of another edition before
@@ -211,7 +212,8 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
     into a new root and installs that root only after it passes `SHA256SUMS`.
   - It has no network code and knows no URLs. It is not a downloader. The CI
     fetch (`fetch_release_dataset.py`, used by the UI workflows on `dev` since
-    PR #1533) loads it hash-pinned for its offline checks and `verify`.
+    PR #1533 and on `main` since PR #1535) loads it hash-pinned for its
+    offline checks and `verify`.
 - On 2026-11-12 it built LOCAL CANDIDATE archives from the local metadata-only
   repositories, and `verify` reconstructed both sites from metadata-only
   copies:
@@ -297,16 +299,19 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
 
 ## Consequences
 
-- With the hosted cutover (merged into `dev`, see below), the two UI workflows seed from
+- With the hosted cutover (merged into `dev` and promoted to `main`, see below), the two UI workflows seed from
   the pinned public editions on GitHub-hosted runners. Dependabot and fork
   pull requests then run the seeded UI suite: it needs no secret and no
   trusted runner, only public data and the read-only token. This ADR still
   does not authorize running untrusted fork code on trusted runners, and the
   cutover does not do so.
-- Not every workflow moves. `ci.yml` (including the required
-  `Integration tests (full compose stack)` check), `release.yml`, `edge.yml`
-  and one job of `site-rebuild-trigger.yml` still run on the self-hosted
-  pool. Only the two dataset-consuming UI workflows are hosted.
+- On `dev`, every workflow now runs on GitHub-hosted runners (as of
+  2026-11-15, after PRs #1536 and #1539 to #1545), including `ci.yml` with the
+  required `Integration tests (full compose stack)` check, `edge.yml` and
+  `release.yml`. On that date `main` still had the earlier self-hosted
+  revisions of `ci.yml`, `edge.yml`, `release.yml` and the site dispatch job,
+  until a later `dev` to `main` promotion. See "Runner state on `dev`,
+  2026-11-15" below.
 - The Git history stays small, and nothing in it is a binary payload. A clone
   is metadata. The bytes come only from a pinned, verified release.
 - A dataset change is a deliberate new version. CI moves to it only by changing
@@ -400,7 +405,8 @@ edition:
   download of every asset was verified against the pinned `release.json`
   SHA-256s (see "Published 2026-11-13" above).
 - Gate 6 is met on `dev`: the CI wiring below (PR #1533) was squash-merged into `dev` on 2026-11-14 as `7b5eaa0e`, whose tree is identical to the tested head `e1b5d950`.
-  `main` keeps the old workflows until the next dev → main promotion.
+  PR #1535 promoted it to `main` on 2026-11-14 (merge `2fff3580`), so the
+  scheduled nightly now runs the hosted workflows.
 - Gate 7's cold hosted smoke passed before the merge (see below); its
   large-tier scale checks are still open.
 - Gates 3 and 8 remain open.
@@ -477,7 +483,7 @@ overlap anchors and the selected rows' licence notice.
   describes the subset; `EDITION.json` records the source pins, the selection
   and every change. The rights caveats are carried unchanged.
 - Release (built with `release_dataset.py`): public prerelease
-  <https://github.com/Artist-Alley-Org/artist-alley-dataset-site-a/releases/tag/v2026.11.01-sm>,
+  [github.com/Artist-Alley-Org/artist-alley-dataset-site-a/releases/tag/v2026.11.01-sm](https://github.com/Artist-Alley-Org/artist-alley-dataset-site-a/releases/tag/v2026.11.01-sm),
   release id 444795243. Its `release.json` has SHA-256
   `c6838e5020b1bc56f048c0602c2021c1c840e3e3ddf236827eb7358b521a503f`, and its
   one part is 658,160,717 bytes, SHA-256
@@ -521,14 +527,31 @@ slot switch in the collection cover editor resized the dialog when one slot's
 hint wrapped on the hosted font. `e1b5d950` fixed that in the component and
 kept the test's strict assertion.
 
-`ci.yml`'s six jobs, `release.yml`, `edge.yml` and one `site-rebuild-trigger.yml`
-job still run on the self-hosted pool. `main`, and so the scheduled nightly
-(which runs `main`), keeps the old workflows until the next dev → main
-promotion. The dataset release notes still say that no CI job uses these
-editions; updating them is the next step.
+**Promotion and runner split on 2026-11-14.** PR #1535 promoted
+`dev` to `main` (merge `2fff35808ac124d94c8cfa1693d8ebbf6023a3d5`), so the
+scheduled nightly, which runs `main`, now uses the hosted UI workflows. Before
+the merge, the hosted nightly passed on the exact promoted tree (dispatch
+43610213570 on `dev` `ce34d692`). The public dataset release descriptions and
+README files now state these CI uses.
 
-The next steps are: update the dataset release notes, and carry the cutover
-to `main` with the next dev → main promotion. The next dataset edition uses
+At that date `ci.yml`'s six jobs, `release.yml` and `edge.yml` still ran on
+the self-hosted pool, and PR #1536 (merged into `dev` as `d2650d74`) had moved
+`site-rebuild-trigger.yml`'s dispatch job to a GitHub-hosted runner.
+
+**Runner state on `dev`, 2026-11-15.** PRs #1539 to #1545 moved the rest:
+the four light `ci.yml` jobs (#1539), the production image build check
+(#1540), the Edge image job (#1541), Integration (#1542, 13 min 17 s on the
+hosted PR run 43649134640), both `release.yml` jobs (#1543), `actions/cache`
+v5 (#1544) and the Node 24 Docker actions (#1545). On `dev` at `a3c9611f` no
+workflow job uses a self-hosted runner, and the CI, Edge, Seed guard and UI
+push runs there passed with no Node 20 annotations. A no-push hosted
+rehearsal of the release image build passed (run 43654921519, build step
+5 min 44 s), but the release publishing path (registry push, cosign signing,
+GitHub Release creation) has not yet run on a hosted runner; the first real
+tag is its first live test. On that date `main` (`2fff3580`) still had the
+earlier self-hosted revisions until a later `dev` to `main` promotion.
+
+The next dataset edition uses
 the versioned (v2) asset layout, and its pin declares `release_format: v2`. Gate 3 (the ADR 0058 policy amendment), gate 8
 (rollback) and gate 7's large-tier scale checks stay open and are tracked
 separately; this cutover does not resolve or waive them.
@@ -550,4 +573,4 @@ rights-cleared.
   `scripts/ci/ephemeral-studio-b-tls.sh`, `infra/docker/ci/docker-compose.hosted.yml`
 - `.github/workflows/ui-pr.yml`, `.github/workflows/ui-nightly.yml`
 - GitHub, About releases:
-  <https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases>
+  [docs.github.com/en/repositories/releasing-projects-on-github/about-releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)

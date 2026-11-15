@@ -74,7 +74,7 @@ docker run -d \
 > it encrypts secrets at rest, and losing it means losing access to
 > everything it protects.
 
-Then open <http://localhost:8080>.
+Then open [localhost:8080](http://localhost:8080).
 
 The repo-root [`docker-compose.yml`](../../docker-compose.yml) is the
 reference Compose stack with Postgres (pgvector image) bundled.

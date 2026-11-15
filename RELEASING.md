@@ -17,8 +17,8 @@ feat/baz  ─┘    (continuous edge images)
 
 | Action                       | Trigger        | Output |
 |------------------------------|----------------|--------|
-| PR opens / pushes            | `pull_request` | CI on `ubuntu-latest` |
-| Push to `feat/*` / `dev` / `main` | `push`    | CI on self-hosted runner |
+| PR opens / pushes            | `pull_request` | CI on GitHub-hosted runners (`ubuntu-24.04` and `ubuntu-latest`) |
+| Push to `dev` / `main`       | `push`         | CI on GitHub-hosted runners (`ubuntu-24.04` and `ubuntu-latest`) |
 | Push to `dev` (post-merge)   | `push: [dev]`  | `:edge` + `:edge-{sha}` images |
 | Push tag `vX.Y.Z`            | `push: tags`   | Full release matrix |
 
@@ -209,18 +209,29 @@ For a fix that can't wait for the next `dev → main` merge:
 
 When optional secrets are unset, the matching steps no-op silently.
 
-## Self-hosted runner setup
+## GitHub-hosted runners
 
-Label your runner `self-hosted,artist-alley`. The runner needs:
+Every workflow job on `dev` runs on a GitHub-hosted runner
+(`ubuntu-24.04`, or `ubuntu-latest` for the small gates), so there is no
+self-hosted runner to set up. The tools come from the runner image
+(Docker with `buildx`, `gh`, `jq`, `curl`) or from setup actions in the
+workflows (`setup-go`, `setup-node`, `setup-qemu-action`,
+`setup-buildx-action`, `cosign-installer`).
 
-- Docker (with `buildx` and `qemu` plugins for cross-arch builds)
-- Go (matches `app/go.mod`'s declared version)
-- Node 24 (Active LTS)
-- `goreleaser` (the `goreleaser-action` will install if missing)
-- `cosign` (the `cosign-installer` action will install if missing)
-
-PR workflows run on GitHub-hosted `ubuntu-latest` to keep fork PRs
-from touching your hardware.
+- `release.yml` moved to hosted runners on `dev` in PR #1543
+  (2026-11-15). A no-push rehearsal of its linux/amd64,linux/arm64 image
+  build passed on `ubuntu-24.04` (run 43654921519). The publishing path
+  itself (registry push, cosign signing, `gh release create` and the
+  Discord announce) has not yet run on a hosted runner; the first real
+  tag after this change reaches `main` is its first live test.
+- A tag runs `release.yml` as committed at the tagged commit, so the
+  hosted version applies only to tags cut after a `dev` to `main`
+  promotion that carries it. As of 2026-11-15, `main` (`2fff3580`) still
+  had the earlier self-hosted revisions of `ci.yml`, `edge.yml`,
+  `release.yml` and `site-rebuild-trigger.yml`.
+- With every CI job hosted, a fork PR's code no longer runs on
+  self-hosted hardware through these workflows. GitHub's fork-PR approval
+  policy still applies.
 
 ## Local dry-run
 

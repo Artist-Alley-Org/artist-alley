@@ -11,8 +11,8 @@
 # Both are ONLY hazards when they appear in prose. Anything inside
 # a triple-backtick fenced block or a single-backtick inline code
 # span (including multi-line spans) is fine, as is an escaped `\<`
-# and the HTML entity `&lt;`. Autolinks like <https://...> are also
-# skipped (see the caveat below).
+# and the HTML entity `&lt;`. Autolinks like <https://...> ARE
+# hazards (see "Autolinks" below): write `[text](url)` instead.
 #
 # The scanner exits non-zero + prints file:line: <pattern>: <line>
 # for each real hazard, so CI can fail the PR + the operator sees
@@ -63,13 +63,23 @@
 # old rule caught is still caught, and `A < B`-style prose stays
 # legal because the parser genuinely accepts it.
 #
-# Caveat on autolinks: `<https://example.com>` is valid CommonMark
-# but is NOT valid MDX - the compiler reads `https:` as a namespaced
-# tag name and chokes on the `/`. This scanner still skips them,
-# preserving long-standing behaviour; the only autolink in the
-# synced corpus lives in docs/install/README.md, which the site
-# consumes as a config partial rather than rendering as an MDX page.
-# Do not add new autolinks to ADRs.
+# Autolinks: `<https://example.com>` is valid CommonMark but is NOT
+# valid MDX - the compiler reads `https:` as a namespaced tag name and
+# chokes on the `/`. This scanner used to strip `<http(s)://...>`
+# before scanning, on the grounds that the only autolink lived in
+# docs/install/README.md (a config partial, not an MDX page). That
+# exception let a real break through: PR #1533 added three autolinks
+# to ADR 0100, this scanner reported 0 hazards, and every site
+# `Build verify` for `oss-docs-changed` failed from then on (runs
+# 43534688881, 43554152937, 43624472034) with
+#
+#   [@mdx-js/rollup] Unexpected character `/` (U+002F) before local
+#   name, expected a character that can start a name ...
+#   .../adr/0100-public-ci-datasets-via-versioned-release-payloads.mdx:478:10
+#
+# The strip is gone, so an autolink is reported by the `<` rule like
+# any other tag-like `<`. Every synced file, the install partial
+# included, uses `[text](url)` links, so there is no exception.
 #
 # Two prior dev-side breakages informed the brace half of this gate:
 #   - PR #208's {up,down,undo,...} in feedback-loop docs
@@ -139,8 +149,8 @@ def scan(path: str):
     content = re.sub(r'```.*?```', lambda m: '\n' * m.group(0).count('\n'), content, flags=re.DOTALL)
     # Strip inline code spans (single-backtick, may span lines).
     content = re.sub(r'`[^`]+`', lambda m: ' ' * len(m.group(0)) if '\n' not in m.group(0) else '\n' * m.group(0).count('\n'), content, flags=re.DOTALL)
-    # Strip autolinks — <http(s)://…> is valid markdown syntax, not JSX.
-    content = re.sub(r'<https?://[^>\s]+>', '', content)
+    # Autolinks (<http(s)://...>) are deliberately NOT stripped: MDX
+    # rejects them, so the `<` rule below must see them.
 
     hz = []
     lines = content.split('\n')
@@ -209,5 +219,6 @@ print(f'\nmdx-hazard-check: {total_hazards} hazard(s) found across {len(paths)} 
 print('Wrap braced identifiers ({name}), angle-bracketed identifiers (<name>) and', file=sys.stderr)
 print('comparison expressions (A <= B, size < A, 1<2) in inline code:', file=sys.stderr)
 print('`{name}`, `<name>`, `A <= B`. Or escape the bracket as \\< / &lt;.', file=sys.stderr)
+print('Write links as [text](url): MDX rejects <https://...> autolinks.', file=sys.stderr)
 sys.exit(1)
 PY
