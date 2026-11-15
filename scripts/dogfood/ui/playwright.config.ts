@@ -97,6 +97,30 @@ export default defineConfig({
         ignoreHTTPSErrors: true,
       },
     },
+    {
+      // Full-corpus paging and endless scroll (#1514). Runs ONLY via
+      // `run-ui.sh scale` from .github/workflows/ui-scale.yml, against a
+      // disposable stack seeded with a whole public edition and recorded by
+      // scripts/ci/scale_expected.py (SCALE_EXPECTED). `run-ui.sh all`
+      // names standalone + federation explicitly, so this never enters the
+      // nightly or the PR suite.
+      name: 'scale',
+      testDir: './tests/scale',
+      dependencies: ['setup'],
+      // No retries: a page boundary that drops or repeats a row is a
+      // defect, and a retry would hide exactly the intermittent one.
+      retries: 0,
+      // Serial: each file resets a seeded user's one-shot password, which
+      // revokes that user's other sessions (run-ui.sh also pins one worker).
+      fullyParallel: false,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: STUDIO_A_HOST,
+        ignoreHTTPSErrors: true,
+        storageState: ADMIN_STATE_PATH,
+        locale: 'en-US',
+      },
+    },
   ],
   fullyParallel: true,
   // Cap at 2 workers — observed flake at 4+ where parallel auth +
