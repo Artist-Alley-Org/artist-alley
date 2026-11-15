@@ -305,12 +305,13 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
   trusted runner, only public data and the read-only token. This ADR still
   does not authorize running untrusted fork code on trusted runners, and the
   cutover does not do so.
-- Not every workflow moves. `ci.yml` (including the required
-  `Integration tests (full compose stack)` check), `release.yml` and
-  `edge.yml` still run on the self-hosted pool. Besides the two
-  dataset-consuming UI workflows, `site-rebuild-trigger.yml` is fully hosted
-  on `dev` since PR #1536 moved its dispatch job; `main` keeps the
-  self-hosted dispatch job until the next promotion.
+- On `dev`, every workflow now runs on GitHub-hosted runners (as of
+  2026-11-15, after PRs #1536 and #1539 to #1545), including `ci.yml` with the
+  required `Integration tests (full compose stack)` check, `edge.yml` and
+  `release.yml`. On that date `main` still had the earlier self-hosted
+  revisions of `ci.yml`, `edge.yml`, `release.yml` and the site dispatch job,
+  until a later `dev` to `main` promotion. See "Runner state on `dev`,
+  2026-11-15" below.
 - The Git history stays small, and nothing in it is a binary payload. A clone
   is metadata. The bytes come only from a pinned, verified release.
 - A dataset change is a deliberate new version. CI moves to it only by changing
@@ -526,19 +527,29 @@ slot switch in the collection cover editor resized the dialog when one slot's
 hint wrapped on the hosted font. `e1b5d950` fixed that in the component and
 kept the test's strict assertion.
 
-**Promotion and current runner split (2026-11-14).** PR #1535 promoted
+**Promotion and runner split on 2026-11-14.** PR #1535 promoted
 `dev` to `main` (merge `2fff35808ac124d94c8cfa1693d8ebbf6023a3d5`), so the
 scheduled nightly, which runs `main`, now uses the hosted UI workflows. Before
 the merge, the hosted nightly passed on the exact promoted tree (dispatch
 43610213570 on `dev` `ce34d692`). The public dataset release descriptions and
 README files now state these CI uses.
 
-`ci.yml`'s six jobs, `release.yml` and `edge.yml` still run on the
-self-hosted pool. PR #1536 (merged into `dev` as `d2650d74`) moved
-`site-rebuild-trigger.yml`'s dispatch job to a GitHub-hosted runner, so that
-workflow is fully hosted on `dev`. `main` keeps the self-hosted dispatch job
-until the next promotion; only a manual dispatch from `main` would use it,
-because the workflow's push trigger runs on `dev`.
+At that date `ci.yml`'s six jobs, `release.yml` and `edge.yml` still ran on
+the self-hosted pool, and PR #1536 (merged into `dev` as `d2650d74`) had moved
+`site-rebuild-trigger.yml`'s dispatch job to a GitHub-hosted runner.
+
+**Runner state on `dev`, 2026-11-15.** PRs #1539 to #1545 moved the rest:
+the four light `ci.yml` jobs (#1539), the production image build check
+(#1540), the Edge image job (#1541), Integration (#1542, 13 min 17 s on the
+hosted PR run 43649134640), both `release.yml` jobs (#1543), `actions/cache`
+v5 (#1544) and the Node 24 Docker actions (#1545). On `dev` at `a3c9611f` no
+workflow job uses a self-hosted runner, and the CI, Edge, Seed guard and UI
+push runs there passed with no Node 20 annotations. A no-push hosted
+rehearsal of the release image build passed (run 43654921519, build step
+5 min 44 s), but the release publishing path (registry push, cosign signing,
+GitHub Release creation) has not yet run on a hosted runner; the first real
+tag is its first live test. On that date `main` (`2fff3580`) still had the
+earlier self-hosted revisions until a later `dev` to `main` promotion.
 
 The next dataset edition uses
 the versioned (v2) asset layout, and its pin declares `release_format: v2`. Gate 3 (the ADR 0058 policy amendment), gate 8
