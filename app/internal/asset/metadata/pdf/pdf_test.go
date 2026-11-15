@@ -180,6 +180,25 @@ func TestExtract_MalformedSource(t *testing.T) {
 	}
 }
 
+// A cancelled request must surface as the caller's cancellation, never
+// as malformed_file. pdfcpu v0.16 takes the context and fails the info
+// call itself, so this pins the mapping on that path (#1532).
+func TestExtract_CancelledContextIsNotMalformed(t *testing.T) {
+	src := minimalPDF("T", "A", "S", "K", "C", "P")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, err := pdf.New().Extract(ctx, bytes.NewReader(src), "application/pdf")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if errors.Is(err, metadata.ErrMalformedFile) {
+		t.Errorf("cancellation reported as ErrMalformedFile: %v", err)
+	}
+	if res.Format != "application/pdf" {
+		t.Errorf("Format = %q, want application/pdf", res.Format)
+	}
+}
+
 func TestExtract_KeywordsFiltering(t *testing.T) {
 	// PDFs with sloppy keyword strings (extra whitespace, empty
 	// tokens between commas) shouldn't produce ", ," noise in the

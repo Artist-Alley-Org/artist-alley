@@ -128,8 +128,16 @@ func (e *Extractor) Extract(ctx context.Context, r io.Reader, mimeType string) (
 			len(raw), MaxSourceBytes, metadata.ErrMalformedFile)
 	}
 
-	info, err := pdfcpuapi.PDFInfo(bytes.NewReader(raw), "", nil, false, e.conf)
+	// pdfcpu v0.16 takes the context and stops on cancellation. It
+	// clones e.conf before setting its command, so the shared
+	// configuration is never mutated across calls.
+	info, err := pdfcpuapi.PDFInfo(ctx, bytes.NewReader(raw), "", nil, false, e.conf)
 	if err != nil {
+		// A cancelled request is the caller's cancellation, not a bad
+		// file: return it as such, the same as the check below does.
+		if cerr := ctx.Err(); cerr != nil {
+			return metadata.Result{Format: mimeType}, cerr
+		}
 		// pdfcpu's surface for "this isn't a PDF" / "header bad" is
 		// a plain error string. We can't classify finely without
 		// fragile string matching, so any failure here is
@@ -140,10 +148,9 @@ func (e *Extractor) Extract(ctx context.Context, r io.Reader, mimeType string) (
 		return metadata.Result{Format: mimeType}, metadata.ErrNoMetadata
 	}
 
-	// Context cancellation: pdfcpu doesn't take a context; we
-	// check between the (synchronous) info call and the field-map
-	// build. Practically the info call is fast on any
-	// under-the-cap document.
+	// Context cancellation between the info call and the field-map
+	// build. Practically the info call is fast on any under-the-cap
+	// document.
 	if err := ctx.Err(); err != nil {
 		return metadata.Result{Format: mimeType}, err
 	}
