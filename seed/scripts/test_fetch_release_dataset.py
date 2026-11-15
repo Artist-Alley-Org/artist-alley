@@ -880,5 +880,92 @@ class CICapacityModel(unittest.TestCase):
                 self.assertEqual(self.m[p]["sites"], WORKFLOWS[p][1])
 
 
+SCALE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ui-scale.yml"
+SCALE_PROFILES = {"ui-scale-site_a": ["site_a"], "ui-scale-site_b": ["site_b"]}
+
+
+class CIScaleWorkflow(unittest.TestCase):
+    """The full-corpus scale check (#1514): one disposable single-stack job per full public edition.
+    Pins its capacity profiles, its phase order, and what it must never do (PR trigger, secrets, a
+    shrinking seed flag, the fixture principals)."""
+
+    def setUp(self):
+        self.pins = json.loads(PINS.read_text(encoding="utf-8"))
+        self.m = {p: cc.load_profile(self.pins, p) for p in SCALE_PROFILES}
+        self.src = code_lines(SCALE_WORKFLOW)
+
+    def test_profiles_are_one_full_edition_on_the_ui_pr_stack(self):
+        pr = cc.load_profile(self.pins, "ui-pr")
+        for p, sites in SCALE_PROFILES.items():
+            with self.subTest(profile=p):
+                m = self.m[p]
+                self.assertEqual(m["sites"], sites)
+                # One prod stack, as ui-pr: the same measured build and runtime budget.
+                for k in ("build_peak", "build_kept", "runtime", "late"):
+                    self.assertEqual(m[k], pr[k], k)
+                # The seed copies the whole edition, so it is budgeted at least at its extracted size.
+                self.assertGreaterEqual(m["seed"], m["extracted"] - 6_000_000)
+
+    def test_modelled_need_and_its_margin_are_what_the_workflow_states(self):
+        # A MODEL check, not a capacity promise: each run is decided by MEASURED free space.
+        advertised = self.pins["capacity_model"]["advertised_runner"]["storage_bytes"]
+        a = cc.preflight_need(self.m["ui-scale-site_a"])
+        self.assertEqual(round(a / 1e9, 2), 13.55)
+        self.assertLess(a, advertised)
+        self.assertLess(advertised - a, 1_000_000_000)          # under 1 GB of modelled headroom: tight
+        self.assertLess(cc.preflight_need(self.m["ui-scale-site_b"]), a)
+        self.assertIn("13.55 GB against the 14 GB advertised runner", SCALE_WORKFLOW.read_text(encoding="utf-8"))
+
+    def test_phase_order(self):
+        marks = ['public-datasets.sh preflight "ui-scale-${SITE}"', "docker compose up -d --build app postgres",
+                 "docker builder prune -af", 'public-datasets.sh prepare "ui-scale-${SITE}"',
+                 'public-datasets.sh fetch "${SITE}"', "app seed --site /seed/site",
+                 "python3 -I scripts/ci/scale_expected.py --site",
+                 "public-datasets.sh release", "run-ui.sh scale"]
+        at = [self.src.find(x) for x in marks]
+        self.assertNotIn(-1, at, f"missing one of {marks}")
+        self.assertEqual(at, sorted(at), "steps out of the modelled phase order")
+        for site in ("site_a", "site_b"):
+            self.assertIn(f"- site: {site}", self.src)
+
+    def test_whole_edition_seed_without_shrink_fixtures_or_previews(self):
+        seed = self.src[self.src.find("app seed --site /seed/site"):]
+        seed = seed[:seed.find("\n", seed.find("--catalogue"))]
+        self.assertIn("--previews=false", seed)
+        for banned in ("--profile ci", "--limit-per-extension", "--fixtures", "--overlap"):
+            self.assertNotIn(banned, seed, banned)
+
+    def test_hosted_secret_free_and_never_on_pull_requests(self):
+        for banned in ("self-hosted", "SEED_SITE", "secrets.", "pull_request", "runner-tls", "docker network"):
+            self.assertFalse(banned in self.src, f"ui-scale.yml must not use {banned!r}")
+        self.assertIn("runs-on: ubuntu-24.04", self.src)
+        self.assertIn("infra/docker/ci/docker-compose.hosted.yml", self.src)
+        self.assertIn("permissions:\n  contents: read", self.src)
+
+    def test_push_trigger_is_only_the_temporary_feature_branch(self):
+        if "\n  push:" in self.src:
+            block = self.src[self.src.find("\n  push:"):self.src.find("\n  workflow_dispatch:")]
+            self.assertIn("branches: [feat/1514-ui-scale]", block)
+            self.assertNotIn("dev", block.replace("feat/1514-ui-scale", ""))
+            self.assertNotIn("main", block)
+
+    def test_concurrency_is_job_level(self):
+        # Workflow-level concurrency may only read github / inputs / vars; matrix is job-level only.
+        self.assertNotIn("\nconcurrency:", self.src)
+        self.assertIn("    concurrency:\n      group: ui-scale-${{ github.ref }}-${{ matrix.site }}", self.src)
+
+    def test_runs_its_own_unit_tests_before_any_capacity_or_build_step(self):
+        unit = self.src.find("python3 -I seed/scripts/test_fetch_release_dataset.py")
+        self.assertNotEqual(unit, -1)
+        self.assertNotEqual(self.src.find("python3 -I scripts/ci/test_scale_expected.py"), -1)
+        self.assertLess(unit, self.src.find('public-datasets.sh preflight "ui-scale-${SITE}"'))
+
+    def test_helper_accepts_exactly_the_modelled_profiles(self):
+        src = code_lines(HELPER)
+        self.assertIn("ui-pr|ui-nightly|ui-scale-site_a|ui-scale-site_b) ;;", src)
+        self.assertEqual(sorted(self.pins["capacity_model"]["profiles"]),
+                         ["ui-nightly", "ui-pr", "ui-scale-site_a", "ui-scale-site_b"])
+
+
 if __name__ == "__main__":
     unittest.main()

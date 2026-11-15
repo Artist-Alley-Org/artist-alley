@@ -7,7 +7,7 @@
 #   public-datasets.sh fetch <site>          pinned checkout + verified download
 #   public-datasets.sh release               delete the dataset root (idempotent)
 #
-# <profile> is a workflow profile in the pins file's `capacity_model` (ui-pr, ui-nightly). The phase
+# <profile> is a workflow profile in the pins file's `capacity_model` (ui-pr, ui-nightly, ui-scale-site_a, ui-scale-site_b). The phase
 # model, its inputs and their measurements are documented in seed/scripts/ci_capacity.py, which does the
 # arithmetic. Both checks use free space MEASURED at that moment and fail with the numbers; nothing is
 # ever deleted to make room.
@@ -66,7 +66,10 @@ docker_root() {
 }
 
 check_profile() {
-    case "$1" in ui-pr|ui-nightly) ;; *) die "unknown profile '$1' (want ui-pr or ui-nightly)" ;; esac
+    case "$1" in
+        ui-pr|ui-nightly|ui-scale-site_a|ui-scale-site_b) ;;
+        *) die "unknown profile '$1' (want ui-pr, ui-nightly, ui-scale-site_a or ui-scale-site_b)" ;;
+    esac
 }
 
 profile_sites() {

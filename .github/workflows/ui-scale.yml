@@ -1,0 +1,319 @@
+# UI scale: full-corpus paging and endless scroll (#1514, ADR 0100).
+#
+# The owner's tiered dataset choice: PR CI seeds the small site_a_sm
+# edition (ui-pr.yml) and the nightly seeds a coverage-selected subset
+# (ui-nightly.yml). Neither ever pages through a whole corpus. This
+# workflow does, once per public edition, each on its OWN disposable
+# single-stack VM:
+#
+#   site_a  v2026.11.01  2,005 assets / 863 posts, 31 owners, mixed tiers
+#   site_b  v2026.11.01    503 assets / 200 posts, all public
+#
+# Each job builds the prod image, fetches and verifies the pinned public
+# edition (scripts/ci/public-datasets.sh, the same helper and pins as the
+# UI workflows), seeds ALL of it with the default profile and
+# --previews=false, records the expected sets straight from the database
+# (scripts/ci/scale_expected.py), then runs the `scale` Playwright project
+# (scripts/dogfood/run-ui.sh scale): cursor walks of /posts and /assets to
+# the end at page sizes 36 and 200, and a real browser scroll of the home
+# feed to its end marker.
+#
+# Why its own workflow and not the nightly: the nightly's capacity model
+# needs 16.87 GB with a full site_a seed (two images, two stacks), over the
+# 14 GB advertised runner; its specs need previews, which a full seed would
+# queue ~2,005 of; and its standalone specs assert against the coverage
+# profile's subset. Nothing here changes ui-pr.yml, ui-nightly.yml, their
+# pins or the fixture principals.
+#
+# Disk is a FAIL-CLOSED risk, not a guarantee: the site_a job's modelled
+# whole-job need is 13.55 GB against the 14 GB advertised runner. The
+# helper compares that model with MEASURED free space before the build and
+# again after it, and fails with the numbers rather than deleting anything.
+# Every phase also records `df` so a run states what it actually had.
+#
+# Fork safety: no pull_request trigger, `contents: read` only, no secret,
+# no private path. The datasets are fetched anonymously from public
+# releases and verified against pinned SHA-256s.
+#
+# TRIGGERS. workflow_dispatch and schedule only work once this file is on
+# the DEFAULT branch (main). The first runs therefore come from the
+# TEMPORARY push trigger below, restricted to this feature branch; it is
+# removed before the PR merges, and a schedule is added in a later PR.
+
+name: UI scale (full corpus)
+
+on:
+  # TEMPORARY first-run gate (#1514): pushes to this one feature branch
+  # only. Remove before merge; the PR's final diff must not contain it.
+  push:
+    branches: [feat/1514-ui-scale]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch / tag / SHA to test (default: the ref you dispatch from)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  scale:
+    name: Full-corpus paging (${{ matrix.site }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Seeded users come from the app catalogue
+          # (seed/profiles/dataset.users.json), not from the edition's
+          # MANIFEST; scale_expected.py verifies each one exists.
+          # chen.wei: an ordinary site_a artist (14 posts, many rows withheld).
+          - site: site_a
+            principals: "chen.wei"
+          # chen.wei owns and authors nothing on site_b; anya.volkov owns 502
+          # of its assets and authored all 200 posts (the owner path).
+          - site: site_b
+            principals: "chen.wei anya.volkov"
+    # Job level: workflow-level concurrency cannot read `matrix`.
+    concurrency:
+      group: ui-scale-${{ github.ref }}-${{ matrix.site }}
+      cancel-in-progress: true
+    env:
+      SITE: ${{ matrix.site }}
+      SCALE_SITE: ${{ matrix.site }}
+      SCALE_PRINCIPALS: ${{ matrix.principals }}
+      COMPOSE_PROJECT_NAME: aa-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.site }}
+      # The ui-pr stack: prod image + resources override + hosted override
+      # (app published on 127.0.0.1:8080).
+      COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.ci.yml:infra/docker/ci/docker-compose.resources.yml:infra/docker/ci/docker-compose.hosted.yml
+      GOFLAGS: -p=4
+      GOMAXPROCS: 4
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          persist-credentials: false
+
+      # Stdlib, no network beyond loopback, no Docker. These are the only CI
+      # runs of the pins / capacity / ui-scale workflow tests
+      # (seed/scripts/test_fetch_release_dataset.py is not part of the seed
+      # guard suite) and of the expected-set recorder's own tests.
+      - name: Unit tests (pins, capacity model, expected-set recorder)
+        run: |
+          python3 -I seed/scripts/test_fetch_release_dataset.py
+          python3 -I scripts/ci/test_scale_expected.py
+
+      - name: "Disk: job start"
+        run: |
+          mkdir -p "$RUNNER_TEMP/scale"
+          { echo "phase start $(date -u +%FT%TZ)"; df -B1 --output=source,size,used,avail,target / /mnt 2>/dev/null; } \
+            | tee -a "$RUNNER_TEMP/scale/disk.txt"
+
+      - name: Capacity preflight (whole job, before the build)
+        run: ./scripts/ci/public-datasets.sh preflight "ui-scale-${SITE}"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: scripts/dogfood/ui/package-lock.json
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-gh-hosted-ubuntu-24.04-${{ hashFiles('scripts/dogfood/ui/package-lock.json') }}
+          restore-keys: |
+            ms-playwright-gh-hosted-ubuntu-24.04-
+
+      - name: Materialise .env for the stack
+        run: |
+          cp .env.example .env
+          sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
+          echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" >> .env
+
+      - name: Sweep this run's project
+        uses: ./.github/actions/compose-cleanup
+
+      - name: Map app.aa to the published loopback port
+        run: |
+          if ss -Hltn 'sport = :8080' | grep -q .; then
+            echo "::error::127.0.0.1:8080 is already in use on this runner; docker-compose.hosted.yml needs it"
+            ss -Hltnp 'sport = :8080' || true
+            exit 1
+          fi
+          echo "127.0.0.1 app.aa" | sudo tee -a /etc/hosts >/dev/null
+          getent hosts app.aa
+
+      - name: Build + start the prod stack
+        run: docker compose up -d --build app postgres
+
+      - name: Reclaim this job's build cache
+        run: |
+          docker builder prune -af
+          { echo "phase after-build-prune $(date -u +%FT%TZ)"; df -B1 --output=source,size,used,avail,target / /mnt 2>/dev/null; } \
+            | tee -a "$RUNNER_TEMP/scale/disk.txt"
+
+      - name: Wait for postgres to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U artist_alley -d artist_alley >/dev/null 2>&1; then
+              echo "postgres ready after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres never became ready" >&2
+          docker compose logs postgres
+          exit 1
+
+      - name: Wait for app to finish migrations + serve the SPA
+        run: |
+          target_version=$(ls app/internal/db/migrations/*.sql \
+              | sed -E 's@.*/0*([0-9]+)_.*@\1@' | sort -n | tail -1)
+          for i in $(seq 1 60); do
+            current=$(docker compose exec -T postgres \
+                psql -U artist_alley -d artist_alley -tAc \
+                "SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version" \
+                2>/dev/null || echo 0)
+            if [ "${current}" = "${target_version}" ]; then
+              echo "migrations at version ${current} after ${i} attempts"
+              break
+            fi
+            sleep 2
+          done
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null "http://app.aa:8080/healthz"; then
+              echo "app SPA ready after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "app SPA never became ready" >&2
+          docker compose logs app --tail=80 || true
+          exit 1
+
+      - name: Capacity check + dataset root
+        run: ./scripts/ci/public-datasets.sh prepare "ui-scale-${SITE}"
+
+      - name: Fetch + verify the pinned public edition
+        run: |
+          ./scripts/ci/public-datasets.sh fetch "${SITE}"
+          { echo "phase after-fetch $(date -u +%FT%TZ)"; df -B1 --output=source,size,used,avail,target / /mnt 2>/dev/null; } \
+            | tee -a "$RUNNER_TEMP/scale/disk.txt"
+
+      # The WHOLE edition: the default profile (full), no --profile ci, no
+      # --limit-per-extension, no --fixtures (no committed-password accounts;
+      # the specs sign in through a one-shot admin reset instead), and no
+      # preview jobs (nothing here reads a rendition).
+      - name: Seed the whole edition via aa seed
+        run: |
+          SITE_PATH="${AA_CI_DATASET_ROOT:?the dataset prepare step did not run}/sites/${SITE}"
+          if [ ! -f "${SITE_PATH}/SHA256SUMS" ] || [ ! -f "${SITE_PATH}/MANIFEST.json" ]; then
+            echo "::error title=Seed dataset missing::${SITE_PATH} is not a verified site root; the fetch step must have failed"
+            exit 1
+          fi
+          t0=$(date +%s)
+          set -o pipefail
+          docker compose run --rm --no-deps \
+            -v "$SITE_PATH:/seed/site:ro" \
+            -v "$PWD/seed/profiles:/seed/profiles:ro" \
+            app seed --site /seed/site --catalogue /seed/profiles --previews=false \
+            2>&1 | tee "$RUNNER_TEMP/scale/seed.log"
+          echo "seed_seconds=$(( $(date +%s) - t0 ))" | tee -a "$RUNNER_TEMP/scale/timing.txt"
+          { echo "phase after-seed $(date -u +%FT%TZ)"; df -B1 --output=source,size,used,avail,target / /mnt 2>/dev/null; } \
+            | tee -a "$RUNNER_TEMP/scale/disk.txt"
+
+      # Before the release: it reads the verified MANIFEST.json and posts.json.
+      - name: Record the expected sets from the database
+        run: |
+          SITE_PATH="${AA_CI_DATASET_ROOT}/sites/${SITE}"
+          args=()
+          for p in $SCALE_PRINCIPALS; do args+=(--principal "$p"); done
+          python3 -I scripts/ci/scale_expected.py --site "${SITE}" --site-root "$SITE_PATH" \
+            --seed-log "$RUNNER_TEMP/scale/seed.log" "${args[@]}" \
+            --out "$RUNNER_TEMP/scale/expected.json"
+          echo "SCALE_EXPECTED=$RUNNER_TEMP/scale/expected.json" >> "$GITHUB_ENV"
+
+      - name: Release the dataset copy
+        run: ./scripts/ci/public-datasets.sh release
+
+      - name: Seed diagnostic on failure
+        if: failure()
+        uses: ./.github/actions/seed-forensics
+        with:
+          services: postgres
+
+      - name: Install Playwright + browsers
+        working-directory: scripts/dogfood/ui
+        run: |
+          npm install --no-audit
+          npx playwright install --with-deps chromium
+
+      - name: Run the scale project
+        env:
+          STUDIO_A_HOST: http://app.aa:8080
+          CI: "1"
+        run: |
+          t0=$(date +%s)
+          rc=0
+          ./scripts/dogfood/run-ui.sh scale || rc=$?
+          echo "scale_suite_seconds=$(( $(date +%s) - t0 ))" | tee -a "$RUNNER_TEMP/scale/timing.txt"
+          exit "$rc"
+
+      - name: "Disk: end"
+        if: always()
+        run: |
+          { echo "phase end $(date -u +%FT%TZ)"; df -B1 --output=source,size,used,avail,target / /mnt 2>/dev/null; } \
+            | tee -a "$RUNNER_TEMP/scale/disk.txt" || true
+
+      # Counts, timings and disk only. No credential exists in any of these
+      # files; the expected-set file holds ids and counts.
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### UI scale: ${SITE}"
+            echo '```'
+            cat "$RUNNER_TEMP/scale/timing.txt" 2>/dev/null || echo "(no timings)"
+            cat "$RUNNER_TEMP/scale/disk.txt" 2>/dev/null || echo "(no disk records)"
+            echo '```'
+            if [ -f "$RUNNER_TEMP/scale/expected.json" ]; then
+              python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print("expected:", json.dumps({"manifest": d["manifest"], "seed_report": d["seed_report"], "db": {k: v for k, v in d["db"].items() if k != "jobs_by_type"}, "principals": {n: {"ref": p["ref"], "assets": len(p["assets"]), "authored_posts": len(p["authored_posts"])} for n, p in d["principals"].items()}}))' "$RUNNER_TEMP/scale/expected.json"
+            fi
+            # Runtime annotations sit on the test or on its results,
+            # depending on the Playwright version; read both, once each.
+            node -e 'const r=require(process.argv[1]); const out=new Set(); const take=(as)=>{for(const a of as??[]) if(a.type==="scale") out.add(a.description);}; const walk=(s)=>{for(const x of s.suites??[])walk(x); for(const sp of s.specs??[])for(const t of sp.tests??[]){take(t.annotations); for(const res of t.results??[]) take(res.annotations);}}; for(const s of r.suites??[]) walk(s); console.log([...out].join("\n"));' \
+              "$PWD/scripts/dogfood/ui/.pw-results/report.json" 2>/dev/null || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pw-report-scale-${{ matrix.site }}-${{ github.run_id }}
+          # admin-state.json is the suite's live admin session; never uploaded.
+          path: |
+            scripts/dogfood/ui/.pw-report/
+            scripts/dogfood/ui/.pw-results/
+            !scripts/dogfood/ui/.pw-results/admin-state.json
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Container logs on failure
+        if: failure()
+        uses: ./.github/actions/container-logs
+        with:
+          tail: "200"
+
+      - name: Stop the stack
+        if: always()
+        uses: ./.github/actions/compose-cleanup
+
+      - name: Release the dataset copy (always)
+        if: always()
+        run: ./scripts/ci/public-datasets.sh release

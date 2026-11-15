@@ -1,6 +1,6 @@
 {
   "schema": "artist-alley.ci-datasets/v1",
-  "_why": "Issue #1514, ADR 0100. The ONE place the UI workflows (ui-pr.yml, ui-nightly.yml) take their seed datasets from: ui-pr seeds the site_a CI subset edition (key site_a_sm, tag v2026.11.01-sm, the release holds dataset site site_a), ui-nightly the full site_a and site_b editions. Each site is pinned by repository + immutable tag + the metadata commit that tag must resolve to + the SHA-256 of the release.json asset; a tag alone is not an integrity pin. scripts/ci/public-datasets.sh reads this file, checks the metadata checkout against `commit`, and hands repo/tag/release_json_sha256 to seed/scripts/fetch_release_dataset.py, which verifies every downloaded byte. `capacity` is ONLY the free-space estimate the preflight uses before downloading; it is not an integrity pin (release.json is) and nothing trusts it for verification.",
+  "_why": "Issue #1514, ADR 0100. The ONE place the UI workflows (ui-pr.yml, ui-nightly.yml, ui-scale.yml) take their seed datasets from: ui-pr seeds the site_a CI subset edition (key site_a_sm, tag v2026.11.01-sm, the release holds dataset site site_a), ui-nightly the full site_a and site_b editions, ui-scale each full edition on its own stack. Each site is pinned by repository + immutable tag + the metadata commit that tag must resolve to + the SHA-256 of the release.json asset; a tag alone is not an integrity pin. scripts/ci/public-datasets.sh reads this file, checks the metadata checkout against `commit`, and hands repo/tag/release_json_sha256 to seed/scripts/fetch_release_dataset.py, which verifies every downloaded byte. `capacity` is ONLY the free-space estimate the preflight uses before downloading; it is not an integrity pin (release.json is) and nothing trusts it for verification.",
   "issue": "https://github.com/Artist-Alley-Org/artist-alley/issues/1514",
   "sites": {
     "site_a": {
@@ -65,6 +65,26 @@
         "seed_bytes": 810000000,
         "runtime_bytes": 3221225472,
         "evidence": "build_*: as ui-pr, plus the dev image infra/docker/app/Dockerfile for app-b, both built cold in one sequence; two runs measured 8,678,254,465 and 8,679,315,187 peak. seed: ui-pr's site_a closure plus 10 MB for site_b --limit-per-extension 3. runtime: 3 GiB allowance for two postgres instances and two apps' logs."
+      },
+      "ui-scale-site_a": {
+        "sites": [
+          "site_a"
+        ],
+        "build_peak_bytes": 5702983524,
+        "build_kept_bytes": 1758671905,
+        "seed_bytes": 2520000000,
+        "runtime_bytes": 1610612736,
+        "evidence": "ui-scale.yml, site_a matrix job: ONE prod stack (the ui-pr build, so build_* and runtime are ui-pr's measured values and allowance). seed: the full v2026.11.01 payload the default profile copies into storage, 2,507,224,795 bytes listed in its SHA256SUMS (2,182 payload files), rounded up. The seed runs with --previews=false, but the model still budgets previews at the seed size again, so this profile over-states the seed phase by about 2.5 GB on purpose. The modelled whole-job need (13.73 GB) is close to the 14 GB advertised runner: the measured-free checks in scripts/ci/public-datasets.sh, not this figure, decide each run, and a short runner fails the job with the numbers."
+      },
+      "ui-scale-site_b": {
+        "sites": [
+          "site_b"
+        ],
+        "build_peak_bytes": 5702983524,
+        "build_kept_bytes": 1758671905,
+        "seed_bytes": 10000000,
+        "runtime_bytes": 1610612736,
+        "evidence": "ui-scale.yml, site_b matrix job: ONE prod stack, build_* and runtime as ui-pr. seed: the full v2026.11.01 payload (511 payload files, 3,400,000 bytes extracted), rounded up to 10 MB; previews off, budgeted as the model does."
       }
     }
   }
