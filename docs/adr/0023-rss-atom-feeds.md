@@ -135,7 +135,7 @@ Cron / Slack / Zapier / etc. that need shorter cadence use webhooks
 
 ## Reference
 
-- Phase 1.31 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.31 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Saved searches (Phase 1.12 Search 2.0) supply the
   `/feed/search/{saved-search-id}` source.
 - Webhook notifications (Phase 1.18) cover the push-style equivalent

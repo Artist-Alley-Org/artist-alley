@@ -103,6 +103,6 @@ runs its own news. Cross-instance announcements are a v2 if needed.
 
 ## Reference
 
-- Phase 1.37 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.37 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Chat platform integrations (Phase 1.30) — Slack mirrors new
   announcements.

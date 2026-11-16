@@ -237,7 +237,7 @@ Enforced via the tangled-derivation model from ADR 0017.
 
 ## Reference
 
-- Phase 1.40 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.40 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Existing `app/internal/audit/` package — the consolidation
   extends, not replaces.
 - ADR 0017 monetization — Enterprise signed export uses the same
