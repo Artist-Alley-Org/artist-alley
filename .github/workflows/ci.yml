@@ -789,6 +789,7 @@ jobs:
   # file must not silently turn the gate off. `docker-build` then does not
   # run, and the automerge gate in dependabot-automerge.yml refuses the
   # merge, which is the correct direction for both.
+
   render-chain:
     name: Render-chain path detector
     runs-on: ubuntu-24.04
@@ -978,3 +979,20 @@ jobs:
           docker image rm "artist-alley:ci-${{ github.sha }}" || true
           docker image prune -f || true  # dangling only (shared daemon: never -a)
           docker builder prune -f --filter until=48h || true
+
+  # The version in web/package.json is what the next tag will carry, and
+  # release.yml publishes docs/release-notes/v<version>.md verbatim as the
+  # GitHub Release body (it never generates notes). Checking here means a
+  # version bump without its reviewed notes file fails in the PR, not at the
+  # tag. Ungated on purpose: it is cheap and must also run on docs-only PRs
+  # that edit or delete a notes file. See RELEASING.md, "Release notes".
+  release-notes:
+    name: Release notes present for the current version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Release-notes checker self-test
+        run: python3 -I scripts/ci/test_release_notes.py
+      - name: Reviewed notes exist for the web/package.json version
+        run: python3 -I scripts/ci/release_notes.py --package-json web/package.json

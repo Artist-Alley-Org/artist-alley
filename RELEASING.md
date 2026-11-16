@@ -80,7 +80,11 @@ pullable tag.
      (metadata-action's semver patterns drop the leading `v`, so Git tag
      `v0.11.0` publishes Docker tag `:0.11.0`)
    - Sigstore/cosign keyless signatures on every image
-   - GitHub Release with auto-generated notes
+   - GitHub Release whose body is the reviewed notes file
+     `docs/release-notes/vX.Y.Z.md` from the tagged commit, published
+     verbatim with `--notes-file`. Notes are never generated, and the job
+     fails before the Release exists if that file is missing or invalid
+     (see "Release notes" under "Gates before the tag").
 
    **`assets=0` on the GitHub Release is expected.** Docker is the sole
    distribution channel right now. Static binaries, `.deb`/`.rpm` and
@@ -117,6 +121,63 @@ milestone reaching zero open issues does not clear them.
 
 After the `dev -> main` merge in step 3, the CI runs on the resulting
 `main` commit must be green before the tag in step 4 is created.
+
+### Release notes
+
+The GitHub Release body is human-reviewed public prose, never an
+auto-generated list of PR titles. The prose may be drafted by anyone,
+including an AI assistant; what makes it releasable is that a person
+reviews and approves the wording in the release-prep PR. For tag
+`vX.Y.Z` it is the file `docs/release-notes/vX.Y.Z.md`, and
+`release.yml` publishes that file verbatim with `--notes-file`. The
+first example is `docs/release-notes/v0.11.1.md`, which is the v0.11.1
+Release body as reviewed and published.
+
+**What goes in it.** Write plain prose for the people who run Artist
+Alley, in the voice of the v0.11.0 and v0.11.1 Releases:
+- a `## Artist Alley vX.Y.Z: <theme>` heading;
+- a short paragraph on what the release is for;
+- a few headed sections on what changed and why it matters;
+- the "Full details" link to `CHANGELOG.md` at the tag and the "Every
+  merged change" compare link.
+
+It is a summary, not a list of PR titles, and it may state only what the
+tagged `CHANGELOG.md` section supports. Keep any caveat the CHANGELOG
+carries, such as the provisional status of a dataset edition.
+
+**Procedure:**
+1. Add the file in the same release-prep PR that bumps the version
+   (`make release`).
+2. Get the prose reviewed in that PR like any other public text. The
+   review is the gate for the wording. No script judges it.
+3. The `release-notes` job in `ci.yml` runs
+   `scripts/ci/release_notes.py --package-json web/package.json` on every
+   PR and fails while the version in `web/package.json` has no file. A
+   version bump without its notes cannot merge green.
+4. At the tag, `release.yml` runs
+   `scripts/ci/release_notes.py --tag "$TAG" --package-json web/package.json`
+   before `gh release create`. It fails, and no Release is created, if:
+   - the file for that exact tag is missing, blank or not UTF-8;
+   - its first line is not a Markdown heading that names that exact tag
+     (`v0.11.1`, not `v0.11.10` or a copied `v0.11.0`);
+   - the tag does not agree with `web/package.json`. A stable tag
+     `vX.Y.Z` must equal the package version. A prerelease tag
+     `vX.Y.Z-rc.1` or `vX.Y.Z-beta.2` may carry either that exact version
+     or its base `X.Y.Z`, and needs its own file
+     `docs/release-notes/vX.Y.Z-rc.1.md`. A prerelease of any other
+     version fails.
+
+   The CI job in step 3 checks the file for the `web/package.json`
+   version. With the package at a base version, that is the stable file;
+   a prerelease tag cut from it also needs its own file, checked at the tag.
+
+   These checks guard the mechanics only. They do not replace the review.
+
+**Fixing notes after publication.** Edit only the body, from a reviewed
+file: `gh release edit vX.Y.Z --notes-file docs/release-notes/vX.Y.Z.md`.
+Then read the body back and compare it with the file. Editing the body
+re-runs no workflow and does not re-announce the release. Correct the
+tracked file in the same change, so the next reader finds the same text.
 
 ## Releases that republish the seed dataset
 
