@@ -191,7 +191,7 @@ Cross-instance ad bidding is explicitly out of scope.
 
 ## Reference
 
-- Phase 1.38 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.38 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Privacy & consent (Phase 1.32, ADR 0024) gates whether the slot
   fires.
 - Monetization model (ADR 0017) — ad revenue is not a paid tier

@@ -167,7 +167,7 @@ Enforced via the tangled-derivation model from ADR 0017 (a
 
 ## Reference
 
-- Phase 1.29 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.29 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Federation (Phase 1.22) uses the same `origin_*` mechanism on the
   resource row.
 - Chat integrations (Phase 1.30, ADR 0022) use a sibling provider

@@ -235,7 +235,7 @@ each operator's commerce relationship is theirs.
 
 ## Reference
 
-- Phase 1.39 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.39 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Share links (Phase 1.26, ADR 0018) — digital fulfillment uses these.
 - Scheduled-action engine (Phase 1.28, ADR 0020) — subscription
   expiry revokes access.
