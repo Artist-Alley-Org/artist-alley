@@ -107,7 +107,7 @@ model.
 
 ## Reference
 
-- Phase 1.36 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.36 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - 3D viewer (Phase 1.18.B-10, shipped).
 - Texture inspector (Phase 1.18.B-16).
 - A/B comparison (Phase 1.18.B-8).

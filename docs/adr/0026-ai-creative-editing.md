@@ -138,6 +138,6 @@ a `provider_terms_acknowledged_at` audit entry.
 
 ## Reference
 
-- Phase 1.34 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.34 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Federation (Phase 1.22) — `creative_lineage` rows replicate across
   peers via the same outbox mechanism.

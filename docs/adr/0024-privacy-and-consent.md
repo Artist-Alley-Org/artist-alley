@@ -163,7 +163,7 @@ for the actual obligations.
 
 ## Reference
 
-- Phase 1.32 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.32 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Scheduled-action engine (ADR 0020) executes retention policies.
 - Audit log (Phase 1.17 + 1.20.A) is the data being protected.
 - ADR 0017 monetization model — privacy is NOT a paid differentiator.

@@ -154,7 +154,7 @@ Enforced via the tangled-derivation model from ADR 0017.
 
 ## Reference
 
-- Phase 1.30 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.30 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Notification rules (Phase 1.18 Integrations) consume chat providers
   as one of the delivery channels alongside email + in-app + webhook.
 - ADR 0021 (external platform integrations) for the parallel

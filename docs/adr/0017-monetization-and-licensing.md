@@ -303,5 +303,5 @@ Public references for the as-built shape:
 
 - ADR 0016 — license direction (AGPL + commercial dual-license).
 - ADR 0018 (planned) — Blender as optional worker container.
-- Phase 1.24 in [`docs/roadmap.md`](../roadmap.md) — implementation
+- Phase 1.24 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md) — implementation
   sequence.

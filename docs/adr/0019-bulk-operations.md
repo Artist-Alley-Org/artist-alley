@@ -859,7 +859,7 @@ does not have to rediscover them.
 
 ## Reference
 
-- Phase 1.27 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.27 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Search engine (Phase 1.12 Search 2.0) supplies the selection-by-
   filter mechanism.
 - Job queue (Phase 1.18.A — shipped) executes bulk actions.
