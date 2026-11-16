@@ -1,7 +1,7 @@
 ---
 id: "0100"
 title: Public CI datasets are metadata-only repositories with versioned, pinned release payloads
-status: proposed
+status: accepted
 date: 2026-11-12
 area: process
 phases: []
@@ -23,11 +23,20 @@ excerpt: >-
   of one deterministic tar.gz stream, each under 2 GiB, described by a manifest
   (release.json in the published v1 editions; in v2 a manifest named for its site
   and edition).
-  The UI workflows on dev pin the repository, the tag, the metadata commit it
-  resolves to and the expected manifest SHA-256, with an optional release format,
-  and verify every part before extracting or seeding. This records the transport only.
-  It grants no rights clearance and publishes nothing.
+  The UI workflows (ui-pr, ui-nightly and the full-corpus ui-scale) pin the
+  repository, the tag, the metadata commit it resolves to and the expected
+  manifest SHA-256, with an optional release format, and verify every part
+  before extracting or seeding. A bad edition or pin is rolled back by a reviewed
+  pin change, never by editing a published edition. This records the transport
+  only. It grants no rights clearance and publishes nothing.
 ---
+
+> **Status note (2026-11-15):** proposed on 2026-11-12, accepted on 2026-11-15.
+> By then the editions were published, pinned and verified, every workflow
+> ran on hosted runners on `dev` and `main`, the full-corpus scale check had
+> passed, and the open gates 3, 7 and 8 were met (see "Gate status update,
+> 2026-11-15"). Gates 1 and 2 stay accepted by the owner's provisional
+> publication decision; this is not rights clearance.
 
 ## Context
 
@@ -292,8 +301,9 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
   `site_a` seeded with `--profile ci`, and `site_b` as a paired peer for peer
   presence (`.github/workflows/ui-nightly.yml:298`, `:306`).
 - Full `site_a` and the replacement public `site_b` belong to a SEPARATE
-  scheduled or manually dispatched scale job. That job and its tests are not
-  written yet.
+  scheduled or manually dispatched scale job. That job is
+  `.github/workflows/ui-scale.yml` (PRs #1548 and #1550); see "Full-corpus
+  scale validation" below.
 - The old private `site_b` is excluded entirely: it is in no public repository,
   release asset, CI artifact or log.
 
@@ -308,15 +318,15 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
 - On `dev`, every workflow now runs on GitHub-hosted runners (as of
   2026-11-15, after PRs #1536 and #1539 to #1545), including `ci.yml` with the
   required `Integration tests (full compose stack)` check, `edge.yml` and
-  `release.yml`. On that date `main` still had the earlier self-hosted
-  revisions of `ci.yml`, `edge.yml`, `release.yml` and the site dispatch job,
-  until a later `dev` to `main` promotion. See "Runner state on `dev`,
-  2026-11-15" below.
+  `release.yml`. `main` received the same revisions through PR #1547 (merge
+  `a379e5cc`, 2026-11-15), so no workflow job on `main` uses a self-hosted
+  runner either. See "Runner state on `dev`, 2026-11-15" below.
 - The Git history stays small, and nothing in it is a binary payload. A clone
   is metadata. The bytes come only from a pinned, verified release.
 - A dataset change is a deliberate new version. CI moves to it only by changing
   its pins, and rollback means restoring the previous pins. No published
-  version is overwritten.
+  version is overwritten. See "Rollback" below for the procedure, including
+  the case where no older public edition exists.
 - Download and verification add CI time, and part splitting is part of every
   build. On the hosted runner, the passing feature-branch runs fetched and
   verified the small `site_a` edition in 19 s (`ui-pr` 43529102983) and both
@@ -339,8 +349,10 @@ exclusion (165 assets, 87 posts, 275 files and 666,675,617 bytes before it).
   the binary history in the repository's LFS store.
 - **Kaggle.** `RELEASING.md` uses it for the published demo dataset. It is not
   chosen for CI, because version-pinned anonymous downloads were not
-  established. This ADR does not change the Kaggle procedure, and the two must
-  be reconciled before cutover.
+  established. This ADR does not change the Kaggle procedure. Since 2026-11-15,
+  `RELEASING.md` states that its Kaggle steps apply only to a release that
+  republishes the demo seed, and that the CI editions are published and pinned
+  separately.
 - **Public object storage.** It would work, but adds cost, credentials and
   operational burden that Releases do not.
 - **Actions artifacts or cache.** Their retention and eviction make them
@@ -410,6 +422,18 @@ edition:
 - Gate 7's cold hosted smoke passed before the merge (see below); its
   large-tier scale checks are still open.
 - Gates 3 and 8 remain open.
+
+**Gate status update, 2026-11-15.** The three open gates above are now met:
+
+- **Gate 3.** ADR 0058's amendment is accepted ("Amendment accepted,
+  2026-11-15").
+- **Gate 7.** The large-tier scale checks passed on hosted runners, both on
+  the feature branch and from `main`; see "Full-corpus scale validation"
+  below. The first SCHEDULED run had not yet been observed when this was
+  written.
+- **Gate 8.** The rollback procedure is documented under "Rollback" below.
+
+Gates 1 and 2 remain accepted by the owner's decision, not completed.
 
 **CI cutover (merged into `dev`).** The owner directed that the dataset CI run
 on public GitHub-hosted runners rather than the owner's self-hosted machines.
@@ -549,12 +573,135 @@ rehearsal of the release image build passed (run 43654921519, build step
 5 min 44 s), but the release publishing path (registry push, cosign signing,
 GitHub Release creation) has not yet run on a hosted runner; the first real
 tag is its first live test. On that date `main` (`2fff3580`) still had the
-earlier self-hosted revisions until a later `dev` to `main` promotion.
+earlier self-hosted revisions until a later `dev` to `main` promotion. That
+promotion was PR #1547 (merge `a379e5cc`, 2026-11-15). Since then no workflow
+job on `main` uses a self-hosted runner, and the first application tag cut
+from `main` after it is the first live test of the hosted release path.
 
 The next dataset edition uses
 the versioned (v2) asset layout, and its pin declares `release_format: v2`. Gate 3 (the ADR 0058 policy amendment), gate 8
 (rollback) and gate 7's large-tier scale checks stay open and are tracked
-separately; this cutover does not resolve or waive them.
+separately; this cutover does not resolve or waive them. All three were met
+on 2026-11-15; see the gate status update above.
+
+## Full-corpus scale validation (2026-11-15)
+
+`.github/workflows/ui-scale.yml` (PR #1548; daily schedule added in PR #1550,
+promoted to `main` in PRs #1549 and #1551) checks paging and endless scroll on
+each whole public edition. It leaves `ui-pr`, `ui-nightly`, their pins and the
+fixture principals untouched.
+
+**How it works.**
+
+- **One job per edition.** A matrix of `site_a` and `site_b`, each on its own
+  disposable single-stack `ubuntu-24.04` VM.
+- **Fetch and seed.** Each job fetches and verifies its pinned edition with
+  `scripts/ci/public-datasets.sh`. It then seeds ALL of it, with the default
+  profile and `--previews=false`, and without `--fixtures`.
+- **Expected sets.** `scripts/ci/scale_expected.py` records them straight from
+  the database, in read-only transactions, and fails the job if any of these
+  disagree: the seed report, the edition's `MANIFEST.json`, preview jobs that
+  should not exist, or the seeded principals.
+- **The `scale` Playwright project** (`scripts/dogfood/run-ui.sh scale`,
+  retries 0, one worker):
+  - walks `/api/v1/assets` and `/api/v1/posts` to their end at page sizes 36
+    and 200, as the admin (equal to the database) and as seeded users
+    (`chen.wei` on `site_a`; `chen.wei` and `anya.volkov` on `site_b`);
+  - scrolls the home feed to its end marker in a browser, and compares the
+    pages it loaded with an API replay of its own first query.
+- **Triggers.** `workflow_dispatch`, and a nominal daily `schedule` at
+  `17 2 * * *` (02:17 UTC). Both run only from `main`. GitHub may start a
+  scheduled run late, or drop it under load.
+- **Disk.** The `site_a` profile's modelled whole-job need is 13.55 GB,
+  against the 14 GB advertised runner. That is a fail-closed risk, not a
+  guarantee: measured free space decides each run.
+
+**Runs.**
+
+| run | trigger | ref / head | `site_a` job | `site_b` job |
+| --- | --- | --- | --- | --- |
+| 43687177547 attempt 1 | push (temporary branch-scoped trigger, since removed) | `feat/1514-ui-scale` @ `c2d02cf6` | 132729983049 success | 132729982839 success |
+| 43687177547 attempt 2 | rerun | same | 132731850375 success | 132731850584 success |
+| 43696272244 | `workflow_dispatch` | `main` @ `9f430645` | 132757387430 success | 132757387103 success |
+
+All three runs recorded identical counts:
+
+- **`site_a`:**
+  - 2,005 assets and 900 posts (the 863 dataset posts plus the
+    collection-post backfill), with 0 per-asset preview jobs;
+  - `chen.wei` can list 1,993 assets: the 2,005 live assets minus the 12
+    mature rows that user does not own, which are the only rows the listing
+    excludes. 1,111 of those 1,993 rows come back as `restricted`
+    placeholders that keep their id, counted at page size 36, so they are
+    listed but their fields are withheld;
+  - `chen.wei` sees 598 of the 900 posts, with 24 short non-final post pages
+    at page size 36;
+  - the browser loaded 25 feed pages to the end marker.
+- **`site_b`:** 503 assets and 203 posts. Both principals see exactly the
+  admin set; the browser loaded 6 feed pages.
+- **Disk:** measured peak growth on the `site_a` job was about 7.8 GB, on
+  runners with about 91 GB free at the start.
+
+**The first scheduled run had not been observed when this was written.** Its
+first nominal slot after the schedule reached `main` (`d812efd2`) was
+2026-11-16T02:17Z. A scheduled result is recorded when one exists; the runs
+above are not a substitute for it.
+
+## Rollback
+
+A published edition is never changed: its tag, its release and its assets
+stay as they are. Replacing an asset would not help anyway, because the pinned
+manifest SHA-256 would refuse the new bytes. Rollback therefore moves CI, never
+the data.
+
+**A bad edition, or a pin or workflow regression.**
+
+1. **Revert through a reviewed PR.** Restore the last known-good entry in
+   `seed/contracts/ci-datasets.v1.json`: repository, tag, commit,
+   `release_json_sha256`, `release_format` and `capacity`. Also revert the
+   workflow or helper change if that is the cause. The PR goes through
+   `dev`, then `main`, like any change. The scheduled `ui-nightly` and
+   `ui-scale` runs read `main`.
+2. **Re-verify.** The PR's own CI fetches the restored edition and verifies
+   it again. That means `scripts/ci/public-datasets.sh` and
+   `seed/scripts/fetch_release_dataset.py` against the pinned manifest, then
+   `sha256sum -c` on the extracted tree.
+3. **Then, separately, a corrected edition.** A fixed dataset is a NEW
+   edition (for example `v2026.11.02`, in the v2 layout). It passes the gates
+   above and is pinned by its own reviewed PR.
+
+**When there is no older public edition** (as now: `v2026.11.01` and
+`v2026.11.01-sm` are the first):
+
+- A pin regression is reverted to the pins file's previous commit.
+- If the edition itself is bad, there is nothing earlier to pin. The
+  affected dataset jobs (`ui-pr`, `ui-nightly`, `ui-scale`) FAIL CLOSED and
+  stay red until a corrected edition is published and pinned.
+- They are NOT pointed at the former private `site_b`, a private path, a
+  cache or an unverified download.
+- These dataset jobs are not the required checks: `main` requires
+  Integration and the Seed guard. So a red dataset job does not block other
+  merges, but it stays visible on every run.
+
+**Release rule.** For v0.11.1 and every later application release, a red
+`ui-pr`, `ui-nightly` or `ui-scale` dataset job on the release line STOPS
+the release until it is resolved.
+
+- **Resolved means** a green run on the release candidate's `main` SHA, or a
+  documented root cause fixed through the reviewed procedure above.
+- **Not a waiver:** that branch protection does not mark these jobs as
+  required is a technicality, not a waiver. A red dataset job is never
+  released over, re-pinned around, or treated as passed.
+
+**Never:**
+
+- edit or delete a published tag or asset to "fix" CI;
+- skip or soften verification, or mark a failed fetch as passed;
+- substitute unpinned bytes.
+
+Withdrawing a published edition from public view, for example for a rights
+reason, is an owner decision outside this procedure. CI moves off it through
+the pins first.
 
 A local candidate archive by itself authorizes no upload; for `v2026.11.01`
 the owner's decision does. The obsolete pre-exclusion `site_a` candidate
@@ -563,7 +710,7 @@ rights-cleared.
 
 ## Reference
 
-- ADR 0058 (demo seed dataset tiers; proposed `site_b` replacement amendment)
+- ADR 0058 (demo seed dataset tiers; `site_b` replacement amendment, accepted 2026-11-15)
 - ADR 0080 (coverage-selected CI fixture; nightly two-contract amendment)
 - ADR 0097, ADR 0098 (archive outputs, deterministic assembly)
 - `docs/proposals/v0.11.1-ci-datasets-preflight.md`
@@ -571,6 +718,7 @@ rights-cleared.
 - `seed/scripts/fetch_release_dataset.py`, `seed/scripts/test_fetch_release_dataset.py`
 - `seed/contracts/ci-datasets.v1.json`, `scripts/ci/public-datasets.sh`,
   `scripts/ci/ephemeral-studio-b-tls.sh`, `infra/docker/ci/docker-compose.hosted.yml`
-- `.github/workflows/ui-pr.yml`, `.github/workflows/ui-nightly.yml`
+- `.github/workflows/ui-pr.yml`, `.github/workflows/ui-nightly.yml`,
+  `.github/workflows/ui-scale.yml`, `scripts/ci/scale_expected.py`
 - GitHub, About releases:
   [docs.github.com/en/repositories/releasing-projects-on-github/about-releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)

@@ -7,6 +7,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+## [v0.11.1] - 2026-11-16 - Public CI datasets on GitHub-hosted runners
+
+### Security
+
+- **Runtime web dependencies resolved past fourteen advisories in five packages.** In the web
+  lockfile, `dompurify` moves 3.4.16 to 3.4.18 (one critical, one high and one low advisory), `zod`
+  4.6.5 to 4.6.7 (one high), and `vue` with its `@vue/*` packages 3.5.41 to 3.5.45 (one high, in
+  `@vue/server-renderer`). `undici` 7.29.1 to 7.30.1 (four high, four medium) and
+  `@ai-sdk/provider-utils` 4.0.5 to 4.0.33 (one low) are pinned exactly by the API reference page's
+  `@scalar` packages, so `@scalar/api-reference` moves 1.73.1 to 1.75.1, the first release whose
+  dependencies carry both fixes; its own dependency tree moves with it. `package.json` is unchanged.
+  Development-only advisories are not part of this release.
+
 ### Fixed
 
 - **The License page describes community mode as it is.** Without a license file, the admin
@@ -27,6 +40,32 @@ where applicable, otherwise note "no-spec-impact."
   named `:v0.11.0`, a tag that was never published, and now names one the release actually pushed.
   Images already published, including `:0.11.0`, keep their original labels (#1503, PR #1505).
 
+- **CI runs on GitHub-hosted runners against public, pinned datasets.** The sample corpora CI
+  seeds from now come from two public dataset repositories, `artist-alley-dataset-site-a` and
+  `artist-alley-dataset-site-b`, which hold metadata only. The files are versioned GitHub Release
+  payloads (`site_a` `v2026.11.01` and its `v2026.11.01-sm` PR-sized subset, and a new public
+  `site_b` `v2026.11.01`, all published as prereleases). CI pins each edition by commit and manifest
+  SHA-256 in `seed/contracts/ci-datasets.v1.json` and verifies every file before seeding, so a run
+  can be reproduced exactly and an outside contributor can run the same tests without the owner's
+  archive. The UI workflows (PR #1533), the site rebuild dispatch (PR #1536), the CI jobs including
+  the integration tests, the image builds and the release workflow (PRs #1539 to #1543, with Node 24
+  action updates in PRs #1544 and #1545) moved to GitHub-hosted runners, and no workflow job uses a
+  self-hosted runner any more. A daily full-corpus check pages through every post and asset of each
+  edition as the admin and as seeded users and compares the results with expected sets recorded
+  from the database (PRs #1548 and #1550). Future dataset editions name every release asset after
+  their site and edition, and the published layout stays byte-compatible (PR #1534). The
+  published `v2026.11.01` editions are a provisional prerelease accepted by the owner, not a rights
+  clearance: the per-file rights review is not complete (ADR 0100). The demo seed and its Kaggle
+  dataset are unchanged (#1514).
+- **A malformed link in the documentation can no longer break the docs-site build.** Autolinks that
+  MDX cannot parse were replaced, and the docs hazard check now rejects them (#1514, PR #1538).
+- **Dependency updates.** Go modules in two minor and patch groups (PRs #1552 and #1553), including
+  pdfcpu 0.16, whose PDF metadata call now takes the request's context; the web app's minor and
+  patch group (PR #1507); `three` (PR #1531) and `puppeteer` (PRs #1512, #1516 and #1527) in the 3D
+  preview worker; `sharp` in the seed scripts (PR #1510); `@playwright/test` in the browser test
+  harness (PR #1511); and `fastapi` and `websockets` in two optional local tools (PRs #1528 and
+  #1529).
+
 ### Documentation
 
 - **Changelog corrections (2026-10-07).** Entries filed under the wrong release now sit under the
@@ -38,6 +77,14 @@ where applicable, otherwise note "no-spec-impact."
   release's contents changed.
 - **Licensing documentation describes the current state.** Artist Alley is AGPL-3.0-only and free
   to self-host; commercial licensing and paid tiers are planned but are not currently offered.
+- **The federation contract is named.** `federation/v1.md` is identified as the normative
+  ArchivePub contract, the legacy overview and encryption examples are labelled historical, and the
+  current implementation gaps are written down. ADR 0049's implementation-status record is
+  corrected without changing its accepted decision (PR #1521).
+- **API and install documentation match the current product.** Endpoint descriptions, install
+  guidance and the recorded status of federation, the demo, content access and mature-content
+  decisions were corrected; the embedded API description was regenerated with no change to API
+  structure or executable code (PR #1523).
 
 ## [v0.11.0] - 2026-10-05 - Making and describing work
 
