@@ -1,7 +1,10 @@
 # Release workflow — fires on `v*` tags pushed to main. Produces:
 #
-#   1. GitHub Release page with auto-generated notes (via `gh release
-#      create --generate-notes`, categorized by .github/release.yml)
+#   1. GitHub Release page whose body is the reviewed release-notes file
+#      docs/release-notes/<tag>.md, published with `gh release create
+#      --notes-file`. Notes are never generated: a tag without a valid
+#      file for that exact tag fails before the Release page is created
+#      (scripts/ci/release_notes.py; RELEASING.md, "Release notes").
 #   2. Docker buildx → multi-arch images for linux/amd64,linux/arm64,
 #      pushed to BOTH ghcr.io and Docker Hub with the tag fan-out
 #      :vX.Y.Z, :vX.Y, :vX, :latest — with provenance + SBOM
@@ -51,7 +54,7 @@ env:
 
 jobs:
   release-notes:
-    name: GitHub Release + auto-generated notes
+    name: GitHub Release + reviewed notes
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -72,7 +75,15 @@ jobs:
             echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create GitHub Release with auto-generated notes
+      # Fails the job, before any Release exists, unless the tagged commit
+      # carries docs/release-notes/$TAG.md for this exact tag and
+      # web/package.json at that commit names the same version.
+      - name: Check the reviewed release notes
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+        run: python3 -I scripts/ci/release_notes.py --tag "$TAG" --package-json web/package.json
+
+      - name: Create GitHub Release with the reviewed notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.value }}
@@ -82,14 +93,9 @@ jobs:
           case "$TAG" in
             *-*) extra_flags="--prerelease" ;;
           esac
-          # If a prior tag exists, seed --notes-start-tag; otherwise
-          # GitHub uses the repo genesis (first-release case).
-          if prev=$(git describe --tags --abbrev=0 "$TAG"^ 2>/dev/null); then
-            extra_flags="$extra_flags --notes-start-tag $prev"
-          fi
           gh release create "$TAG" \
             --title "artist-alley $TAG" \
-            --generate-notes \
+            --notes-file "docs/release-notes/$TAG.md" \
             $extra_flags
 
   docker:
