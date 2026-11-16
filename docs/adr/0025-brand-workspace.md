@@ -105,6 +105,6 @@ conditional terms feature).
 
 ## Reference
 
-- Phase 1.33 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.33 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Theme tokens (shipped) — the design-token export reuses this model.
 - Conditional terms (Phase 1.18) — usage-rule click-throughs.

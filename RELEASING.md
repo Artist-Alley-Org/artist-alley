@@ -263,11 +263,11 @@ only moves on a non-pre version.
 
 A release's date is the **UTC date of its GitHub release's publish
 time** (`published_at`). Use that date in the `CHANGELOG.md` heading
-and in the release index in `docs/roadmap.md`. The release-prep PR is
-written before the tag exists, so it can only guess; once the release
-is published, check the date with
-`gh release view vX.Y.Z --json publishedAt` and correct both files if
-the guess was a local-time date that differs.
+and in any dated summary of the current release. The release-prep PR
+is written before the tag exists, so it can only guess; once the
+release is published, check the date with
+`gh release view vX.Y.Z --json publishedAt` and correct any date that
+does not match.
 
 ## Hotfix flow
 

@@ -109,6 +109,6 @@ embargo lifts.
 
 ## Reference
 
-- Phase 1.35 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.35 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Anonymous browse policy (Phase 1.21).
 - Sensitivity tier interplay (ADR 0020).

@@ -323,7 +323,7 @@ We log a warning and proceed.
 
 ## Reference
 
-- Phase 1.42 in [`docs/roadmap.md`](../roadmap.md) — the registry
+- Phase 1.42 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md) — the registry
   + installer + initial add-ons.
 - ADR 0017 — license-tier model (cloud-bridge tier interaction).
 - ADR 0021 / 0022 / 0026 / 0030 / 0031 — existing provider

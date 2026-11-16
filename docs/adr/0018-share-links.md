@@ -135,7 +135,7 @@ deny depending on admin config).
 
 ## Reference
 
-- Phase 1.26 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.26 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Related: federation share-with-anyone — Phase 1.18.B-14.
 - License gating: share-link creation respects per-tier asset-cap and
   active-seat limits via the tangled-derivation model in ADR 0017.

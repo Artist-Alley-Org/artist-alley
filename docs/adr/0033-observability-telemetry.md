@@ -210,7 +210,7 @@ exposes a `vendor_observability_enabled` derived value).
 
 ## Reference
 
-- Phase 1.41 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.41 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Audit log (Phase 1.40, ADR 0032) is the separate substrate.
 - Plugin SDK (Phase 1.23) — plugins register custom metrics.
 - ADR 0017 monetization — Enterprise BYO-vendor + SLA.

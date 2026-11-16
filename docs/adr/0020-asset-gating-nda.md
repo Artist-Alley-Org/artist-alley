@@ -348,7 +348,7 @@ export does include scheduled-action history as part of compliance.
 
 ## Reference
 
-- Phase 1.28 in [`docs/roadmap.md`](../roadmap.md).
+- Phase 1.28 in [`docs/roadmap-planning-notes.md`](../roadmap-planning-notes.md).
 - Job queue (Phase 1.18.A — shipped) executes scheduled actions.
 - Audit log (Phase 1.17 + 1.20.A) records sensitivity changes + reveal
   events.
