@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -252,5 +253,87 @@ func TestActorKeys_CacheHitAfterEnsure(t *testing.T) {
 	}
 	if a.ActorURI != b.ActorURI {
 		t.Error("two Get calls returned different actor URIs")
+	}
+}
+
+// #1526: concurrent first mints for one user end with ONE key, the
+// one every caller is handed back (so a peer can never pin a key the
+// instance then stops signing with).
+func TestActorKeys_EnsureConcurrent_OneKey(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	ctx := t.Context()
+	pool := openPool(t, pwd)
+	t.Cleanup(pool.Close)
+	initAtrestForTest(t)
+	h := users.NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	ref, username := newTestUser(t, ctx, pool)
+
+	const n = 8
+	got := make([]string, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			m, err := h.EnsureActorKeyMaterial(ctx, ref, "https://test.example", username)
+			if err == nil {
+				got[i] = string(m.SigningPublicKeyPEM)
+			}
+			errs[i] = err
+		}(i)
+	}
+	wg.Wait()
+	var stored string
+	if err := pool.QueryRow(ctx, `SELECT signing_public_key_pem FROM "user" WHERE ref = $1`, ref).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Errorf("caller %d: %v", i, errs[i])
+		} else if got[i] != stored {
+			t.Errorf("caller %d was handed a key that is not the stored one", i)
+		}
+	}
+}
+
+// #1526: the boot backfill mints for keyless users (with or without a
+// base URL) and leaves existing keys alone.
+func TestBackfillActorKeys(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	ctx := t.Context()
+	pool := openPool(t, pwd)
+	t.Cleanup(pool.Close)
+	initAtrestForTest(t)
+	h := users.NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	keyed, keyedName := newTestUser(t, ctx, pool)
+	before, err := h.EnsureActorKeyMaterial(ctx, keyed, "https://test.example", keyedName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyless, _ := newTestUser(t, ctx, pool)
+
+	minted, failed, err := users.BackfillActorKeys(ctx, h, "")
+	if err != nil || failed != 0 || minted < 1 {
+		t.Fatalf("backfill: minted=%d failed=%d err=%v", minted, failed, err)
+	}
+	m, err := h.GetActorKeyMaterial(ctx, keyless)
+	if err != nil || len(m.SigningPublicKeyPEM) == 0 {
+		t.Errorf("keyless user still has no key: %v", err)
+	}
+	after, err := h.GetActorKeyMaterial(ctx, keyed)
+	if err != nil || string(after.SigningPublicKeyPEM) != string(before.SigningPublicKeyPEM) {
+		t.Errorf("backfill changed an existing key: %v", err)
+	}
+	var missing int
+	_ = pool.QueryRow(ctx, `SELECT COUNT(*) FROM "user" WHERE signing_private_key_enc IS NULL`).Scan(&missing)
+	if missing != 0 {
+		t.Errorf("%d users still without a signing key after backfill", missing)
 	}
 }

@@ -63,7 +63,7 @@ func (fx *fixture) envelopeOf(t federation.ActivityType, id string) []byte {
 	if err != nil {
 		fx.t.Fatal(err)
 	}
-	return b
+	return fx.signEnvelope(b)
 }
 
 func activityIDOf(t *testing.T, envelope []byte) string {
@@ -710,6 +710,7 @@ func (fx *fixture) flakyHandler() (*inbox.Handler, *flakyDB) {
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		RejectAudit: fx.rejects.audit,
 	})
+	h.SetActorKeyResolver(fx.actorKeys)
 	return h, db
 }
 
@@ -815,7 +816,7 @@ func TestPostInboxBatch_StoreFailure_503_SiblingsReplayedOnRetry(t *testing.T) {
 // the object-ref host check, so an object on another host is
 // unknown_object for an applied type.
 func (fx *fixture) receiver(localBase string) *inbox.Handler {
-	return inbox.NewHandler(inbox.HandlerDeps{
+	h := inbox.NewHandler(inbox.HandlerDeps{
 		Pool: fx.q,
 		Lookup: &staticPeerLookup{peerID: fx.peerID, peerURL: fx.peerURL, keyID: fx.peerKeyID,
 			pubKey: fx.peerPub, enabled: true, connected: true},
@@ -823,6 +824,8 @@ func (fx *fixture) receiver(localBase string) *inbox.Handler {
 		LocalBaseURL: func(context.Context) string { return localBase },
 		RejectAudit:  fx.rejects.audit,
 	})
+	h.SetActorKeyResolver(fx.actorKeys)
+	return h
 }
 
 func (fx *fixture) postTo(h *inbox.Handler, envelope []byte) *httptest.ResponseRecorder {
@@ -930,6 +933,7 @@ func TestPostInboxBatch_StoredUnsupported_FreshReceiverAfterHandlerLands_SameAns
 	_ = json.Unmarshal(fx.envelopeOf(federation.ActivityLike, ""), &likeMap)
 	likeMap["object"] = "https://local.example/posts/" + uuid.NewString()
 	like, _ := json.Marshal(likeMap)
+	like = fx.signEnvelope(like) // re-sign after the edit (#1526)
 	id, likeID := activityIDOf(t, undo), activityIDOf(t, like)
 	rr := fx.postBatchTo(first, undo, like)
 	var firstResp struct {

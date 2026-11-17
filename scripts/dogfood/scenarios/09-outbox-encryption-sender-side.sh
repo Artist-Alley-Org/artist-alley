@@ -107,7 +107,11 @@ b_keylen=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alle
      WHERE user_ref = ${b_admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
 [ "$b_keylen" = "32" ] || fail "studio-b admin has no current keypair (I-b not bootstrapped)"
 
-actor_uri="http://studio-a.local/users/admin"
+# #1526: the actor URI must be studio-a's canonical origin (its
+# site.base_url, which is how studio-b registered it); checked
+# before anything is staged.
+actor_uri="$(studio_a_actor_uri admin)"
+assert_actor_bound_to_peer "$actor_uri"
 target_uri="https://studio-b.local:9443/posts/${post_id}"
 
 # --- Phase A: confirm I-f capability advertisement + re-pair if needed ---
@@ -261,10 +265,13 @@ INSERT INTO activities (
 -- remote.GetEncryptionKey(actorURI) — passing the inbox URL would
 -- miss the cache + fall back to plaintext (the bug this comment
 -- exists to prevent re-introducing).
+-- Stamp the tier the outbox dispatcher stamps for a post with public
+-- assets: a NULL tier is unresolved since #1525 and is refused
+-- unless it can be encrypted.
 INSERT INTO federation_outbox (
-    activity_id, peer_id, target_user_url, status
+    activity_id, peer_id, target_user_url, status, sensitivity
 )
-SELECT id, '${peer_id}'::uuid, '${b_admin_actor_uri}', 'queued'
+SELECT id, '${peer_id}'::uuid, '${b_admin_actor_uri}', 'queued', 'public'
 FROM activities WHERE activity_uri = '${activity_uri}';
 
 NOTIFY federation_outbox_queued;

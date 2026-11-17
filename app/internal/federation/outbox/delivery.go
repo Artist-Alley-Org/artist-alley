@@ -155,6 +155,11 @@ type Worker struct {
 	recipientEncKey RecipientEncKeyFunc
 	audit           *audit.Recorder
 
+	// actorSigningKey supplies the emitting actor's Ed25519 private
+	// key (#1526). Required: with it unwired no envelope is signed,
+	// so none is sent.
+	actorSigningKey ActorSigningKeyFunc
+
 	// currentSensitivity re-reads the object's tier just before
 	// each POST (#1525); see effectiveSensitivity. nil-safe: when
 	// unwired only the tier stamped at dispatch is used.
@@ -182,6 +187,22 @@ func (w *Worker) SetPeerSupportsE2E(f PeerSupportsE2EFunc) { w.peerSupportsE2E =
 // (the gate would have to soft-fail anyway, so the cleaner
 // thing is to skip the whole path).
 func (w *Worker) SetRecipientEncKey(f RecipientEncKeyFunc) { w.recipientEncKey = f }
+
+// ActorSigningKeyFunc returns the PEM-encoded Ed25519 private key
+// to sign an envelope emitted by local user actorUserRef under
+// actorURI (#1526). Boot wires it to the users package: it mints the
+// key on first use and refuses an actorURI that is not the user's
+// current actor URI. The Worker zeroes the returned bytes after
+// signing.
+type ActorSigningKeyFunc func(ctx context.Context, actorUserRef int64, actorURI string) (privPEM []byte, err error)
+
+// ErrActorSigningUnavailable wraps every reason an envelope could not
+// be signed. Such an envelope is never sent.
+var ErrActorSigningUnavailable = errors.New("outbox: actor signing key unavailable")
+
+// SetActorSigningKey wires the per-actor signing key source (#1526).
+// Required in production; see ActorSigningKeyFunc.
+func (w *Worker) SetActorSigningKey(f ActorSigningKeyFunc) { w.actorSigningKey = f }
 
 // SetSensitivityLookup wires the delivery-time sensitivity
 // recheck (#1525). Boot passes the same lookup the dispatcher
@@ -817,8 +838,7 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 		ccURIs       []byte
 		payload      []byte
 		publishedAt  pgtype.Timestamptz
-		sigValue     *string
-		sigPubKey    *string
+		actorUserRef *int64
 
 		encKeyBytes      []byte      // 32 bytes if the actor has a current key, nil otherwise
 		encKeyVersion    pgtype.Int4 // matches encKeyBytes — both Valid=false or both Valid=true
@@ -830,7 +850,7 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	err := w.pool.QueryRow(ctx, `
 		SELECT a.activity_uri, a.activity_type, a.actor_uri, a.object_uri,
 		       a.to_uris, a.cc_uris, a.payload, a.published_at,
-		       a.signature_value, a.signature_pubkey,
+		       a.actor_user_ref,
 		       fuk.public_key, fuk.version, fuk.private_key_enc,
 		       a.object_kind, a.object_local_id
 		  FROM activities a
@@ -841,7 +861,7 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	`, activityID).Scan(
 		&activityURI, &activityType, &actorURI, &objectURI,
 		&toURIs, &ccURIs, &payload, &publishedAt,
-		&sigValue, &sigPubKey,
+		&actorUserRef,
 		&encKeyBytes, &encKeyVersion, &encKeyPrivateEnc,
 		&objectKind, &objectLocalID,
 	)
@@ -866,25 +886,10 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 		_ = json.Unmarshal(ccURIs, &env.CC)
 	}
 
-	// Per-actor signature block. Phase 1.22.D-b ships
-	// structural-only verify on the receiver (per §5.6); we
-	// emit the same Ed25519 placeholder shape as the inbox
-	// expects. 1.22.I will swap this for real per-actor crypto.
-	if sigValue != nil && sigPubKey != nil {
-		env.Signature = &federation.Signature{
-			Type:      federation.SignatureAlgEd25519,
-			PublicKey: *sigPubKey,
-			Value:     *sigValue,
-		}
-	} else {
-		// No persisted signature — synthesize the placeholder
-		// the inbox needs for the structural-sig check.
-		env.Signature = &federation.Signature{
-			Type:      federation.SignatureAlgEd25519,
-			PublicKey: actorURI + "#main-key",
-			Value:     "AAAAAAAAAAAA",
-		}
-	}
+	// The per-actor signature is added last, by signEnvelope, once
+	// the envelope is final (#1526). The activities.signature_*
+	// columns are not used: a signature stored at record time could
+	// not cover the per-recipient encryption block or inline key.
 
 	// Surface activity-specific fields from the payload JSON
 	// into env.Extra so the receiver sees the verb's payload
@@ -935,7 +940,43 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 		tier, encKeyVersion, encKeyPrivateEnc); err != nil {
 		return nil, err
 	}
+	// #1526: sign the FINAL envelope for this recipient, after any
+	// encryption replaced its payload, so the signature covers the
+	// ciphertext (spec §6.4) or the plaintext plus the inline
+	// encryption key. Both delivery paths build every envelope here
+	// before their POST; an envelope that cannot be signed is never
+	// sent (the caller records a failed attempt).
+	if err := w.signEnvelope(ctx, env, actorUserRef); err != nil {
+		return nil, err
+	}
 	return env, nil
+}
+
+// signEnvelope signs env with the emitting actor's Ed25519 key under
+// the key id env.Actor + "#main-key" (spec §5.1-§5.3, erratum E1;
+// #1526). It fails closed: no signing hook, an activity without a
+// local actor, or a key that cannot be obtained all return an error,
+// and the decrypted private key PEM is zeroed after use.
+func (w *Worker) signEnvelope(ctx context.Context, env *federation.Envelope, actorUserRef *int64) error {
+	if w.actorSigningKey == nil {
+		return fmt.Errorf("%w: no signing hook wired", ErrActorSigningUnavailable)
+	}
+	if actorUserRef == nil {
+		return fmt.Errorf("%w: activity has no local actor", ErrActorSigningUnavailable)
+	}
+	privPEM, err := w.actorSigningKey(ctx, *actorUserRef, env.Actor)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrActorSigningUnavailable, err)
+	}
+	defer func() {
+		for i := range privPEM {
+			privPEM[i] = 0
+		}
+	}()
+	if err := env.Sign(privPEM, env.Actor+"#main-key"); err != nil {
+		return fmt.Errorf("outbox: sign envelope: %w", err)
+	}
+	return nil
 }
 
 // sensitivityRank orders tiers by protection. unresolved and any

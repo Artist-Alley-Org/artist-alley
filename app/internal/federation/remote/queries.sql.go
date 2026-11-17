@@ -86,6 +86,27 @@ func (q *Queries) GetRemoteActorEncryptionKey(ctx context.Context, actorUri stri
 	return i, err
 }
 
+const getRemoteActorSigningKey = `-- name: GetRemoteActorSigningKey :one
+SELECT peer_id, signing_public_key, signing_key_id
+FROM federation_remote_actors
+WHERE actor_uri = $1
+`
+
+type GetRemoteActorSigningKeyRow struct {
+	PeerID           pgtype.UUID
+	SigningPublicKey []byte
+	SigningKeyID     *string
+}
+
+// #1526: the pinned signing key of a remote actor, with the peer it
+// is pinned to. signing_public_key is NULL until first pinned.
+func (q *Queries) GetRemoteActorSigningKey(ctx context.Context, actorUri string) (GetRemoteActorSigningKeyRow, error) {
+	row := q.db.QueryRow(ctx, getRemoteActorSigningKey, actorUri)
+	var i GetRemoteActorSigningKeyRow
+	err := row.Scan(&i.PeerID, &i.SigningPublicKey, &i.SigningKeyID)
+	return i, err
+}
+
 const listRemoteActorsByPeer = `-- name: ListRemoteActorsByPeer :many
 SELECT actor_uri, peer_id, display_name, avatar_url,
        first_seen_at, last_seen_at, updated_at
@@ -137,6 +158,52 @@ func (q *Queries) ListRemoteActorsByPeer(ctx context.Context, arg ListRemoteActo
 		return nil, err
 	}
 	return items, nil
+}
+
+const pinRemoteActorSigningKey = `-- name: PinRemoteActorSigningKey :one
+INSERT INTO federation_remote_actors (
+    actor_uri, peer_id, signing_public_key, signing_key_id, signing_key_pinned_at
+)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (actor_uri) DO UPDATE
+SET peer_id               = EXCLUDED.peer_id,
+    signing_public_key    = EXCLUDED.signing_public_key,
+    signing_key_id        = EXCLUDED.signing_key_id,
+    signing_key_pinned_at = EXCLUDED.signing_key_pinned_at,
+    updated_at            = NOW()
+WHERE federation_remote_actors.signing_public_key IS NULL
+RETURNING peer_id, signing_public_key
+`
+
+type PinRemoteActorSigningKeyParams struct {
+	ActorUri         string
+	PeerID           pgtype.UUID
+	SigningPublicKey []byte
+	SigningKeyID     *string
+}
+
+type PinRemoteActorSigningKeyRow struct {
+	PeerID           pgtype.UUID
+	SigningPublicKey []byte
+}
+
+// #1526: pin a fetched signing key, trust on first use. Inserts the
+// actor row when absent. On an existing row it only sets the key when
+// none is pinned yet, so a pinned key is never replaced. The row is
+// then claimed for the pinning peer: the caller has already bound the
+// actor URI to that peer's origin, which is what owns the actor
+// namespace (a row left by an older display upsert does not). No row
+// comes back when the update was refused; the caller re-reads.
+func (q *Queries) PinRemoteActorSigningKey(ctx context.Context, arg PinRemoteActorSigningKeyParams) (PinRemoteActorSigningKeyRow, error) {
+	row := q.db.QueryRow(ctx, pinRemoteActorSigningKey,
+		arg.ActorUri,
+		arg.PeerID,
+		arg.SigningPublicKey,
+		arg.SigningKeyID,
+	)
+	var i PinRemoteActorSigningKeyRow
+	err := row.Scan(&i.PeerID, &i.SigningPublicKey)
+	return i, err
 }
 
 const setRemoteActorEncryptionKey = `-- name: SetRemoteActorEncryptionKey :execrows

@@ -158,6 +158,14 @@ func TestFederation_EndToEnd_ProductionDefaults_SubSecond(t *testing.T) {
 		Logger:       logger,
 		LocalBaseURL: func(context.Context) string { return "" }, // skip host check (we're flexible in tests)
 	})
+	// #1526: alice on A signs with this key; B verifies against it
+	// (a stub resolver stands in for the actor-document fetch, which
+	// the http production-wiring tests cover).
+	aliceSignPub, aliceSignPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bInboxHandler.SetActorKeyResolver(e2eActorKeys{aBaseURL + "/users/alice": aliceSignPub})
 	// Inbox dispatcher with PRODUCTION DEFAULTS — 30s ticker
 	// is correctness backstop only; LISTEN/NOTIFY (via
 	// SetRawPool below) is the primary signal per spec §3.5.
@@ -292,6 +300,13 @@ func TestFederation_EndToEnd_ProductionDefaults_SubSecond(t *testing.T) {
 		},
 		logger,
 	)
+	aliceSignPEM, err := federation.PrivateKeyToPEM(aliceSignPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aDelivery.SetActorSigningKey(func(context.Context, int64, string) ([]byte, error) {
+		return append([]byte(nil), aliceSignPEM...), nil
+	})
 	go aDelivery.Run(ctx)
 
 	// Wait for the LISTEN goroutines (outbox dispatcher's +
@@ -473,4 +488,14 @@ func dumpDiag(t *testing.T, pool *pgxpool.Pool, likeURI string, aPeerID, bPeerID
 	_ = http.StatusOK
 	_ = httptest.NewServer
 	_ = sync.Mutex{}
+}
+
+// e2eActorKeys is a fixed ActorKeyResolver for the e2e test.
+type e2eActorKeys map[string]ed25519.PublicKey
+
+func (k e2eActorKeys) SigningKey(_ context.Context, _ inbox.PeerInfo, actorURI string) (ed25519.PublicKey, error) {
+	if pub, ok := k[actorURI]; ok {
+		return pub, nil
+	}
+	return nil, inbox.ErrActorUnknown
 }

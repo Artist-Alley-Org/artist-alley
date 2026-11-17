@@ -83,6 +83,8 @@ type pairedFixture struct {
 	senderKeyID   string
 	senderPriv    ed25519.PrivateKey
 	senderActor   string // https://senderBaseURL/users/bob
+	// actorPriv signs envelopes as senderActor (#1526).
+	actorPriv ed25519.PrivateKey
 }
 
 // spyNotifier records every Notify call so the test can assert
@@ -217,6 +219,13 @@ func newPairedFixture(t *testing.T) *pairedFixture {
 		Logger:       logger,
 		LocalBaseURL: func(context.Context) string { return localBaseURL },
 	})
+	// #1526: the sender actor's signing key, served by a stub
+	// resolver in place of the actor-document fetch.
+	actorPub, actorPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.SetActorKeyResolver(&stubActorKeys{keys: map[string]ed25519.PublicKey{senderActor: actorPub}})
 
 	dispatcher := inbox.NewDispatcher(
 		inbox.DispatcherConfig{
@@ -256,6 +265,7 @@ func newPairedFixture(t *testing.T) *pairedFixture {
 		senderKeyID:   senderKeyID,
 		senderPriv:    senderPriv,
 		senderActor:   senderActor,
+		actorPriv:     actorPriv,
 	}
 }
 
@@ -324,7 +334,7 @@ func (fx *pairedFixture) buildLikeEnvelope() (envelopeJSON []byte, activityURI s
 		},
 	}
 	b, _ := json.Marshal(env)
-	return b, activityURI
+	return signEnvelopeWith(fx.t, b, fx.actorPriv), activityURI
 }
 
 func (fx *pairedFixture) buildCommentEnvelope(body string) (envelopeJSON []byte, activityURI string) {
@@ -348,7 +358,7 @@ func (fx *pairedFixture) buildCommentEnvelope(body string) (envelopeJSON []byte,
 		},
 	}
 	b, _ := json.Marshal(env)
-	return b, activityURI
+	return signEnvelopeWith(fx.t, b, fx.actorPriv), activityURI
 }
 
 func (fx *pairedFixture) deliverToInbox(envelope []byte) *httptest.ResponseRecorder {

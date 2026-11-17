@@ -47,7 +47,11 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
+	"github.com/mscrnt/artist-alley/app/internal/users"
 )
+
+// wiringBaseURL is the sending instance's base URL in these tests.
+const wiringBaseURL = "https://local.example"
 
 func initAtrestForOutboxWiring(t *testing.T) {
 	t.Helper()
@@ -172,9 +176,14 @@ func runOutboxWiringCase(t *testing.T, tc outboxWiringCase) {
 	}
 
 	var userRef int64
+	username := "outbox-wiring-" + uuid.NewString()[:8]
+	// The activities name this user's actor URI on the test base URL,
+	// as activities/emit would (#1526: the signing hook refuses any
+	// other actor URI).
+	actorURI := wiringBaseURL + "/users/" + username
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO "user" (username, fullname, approved) VALUES ($1, 'Outbox Wiring', 1) RETURNING ref`,
-		"outbox-wiring-"+uuid.NewString()[:8],
+		username,
 	).Scan(&userRef); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
@@ -235,8 +244,8 @@ func runOutboxWiringCase(t *testing.T, tc outboxWiringCase) {
 	var grantActivityID uuid.UUID
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref, payload)
-		 VALUES ($1, 'aa:Share', 'https://local.example/users/wiring', $2, '{}'::jsonb) RETURNING id`,
-		"https://local.example/activities/"+uuid.NewString(), userRef,
+		 VALUES ($1, 'aa:Share', $3, $2, '{}'::jsonb) RETURNING id`,
+		"https://local.example/activities/"+uuid.NewString(), userRef, actorURI,
 	).Scan(&grantActivityID); err != nil {
 		t.Fatalf("seed grant activity: %v", err)
 	}
@@ -281,11 +290,11 @@ func runOutboxWiringCase(t *testing.T, tc outboxWiringCase) {
 		if err := pool.QueryRow(ctx,
 			`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
 			    object_uri, object_kind, object_local_id, payload)
-			 VALUES ($1, 'Update', 'https://local.example/users/wiring', $2, $3, 'post', $4,
+			 VALUES ($1, 'Update', $6, $2, $3, 'post', $4,
 			         jsonb_build_object('content', $5::text))
 			 RETURNING id`,
 			"https://local.example/activities/"+uuid.NewString(), userRef,
-			"https://local.example/posts/"+postID.String(), postID.String(), marker,
+			"https://local.example/posts/"+postID.String(), postID.String(), marker, actorURI,
 		).Scan(&activityIDs[i]); err != nil {
 			t.Fatalf("seed activity: %v", err)
 		}
@@ -329,6 +338,7 @@ func runOutboxWiringCase(t *testing.T, tc outboxWiringCase) {
 			}
 			return recipientPub, 1, nil
 		}, auditRec)
+	wireOutboxActorSigning(w, users.NewHandler(pool, logger, nil), func(context.Context) string { return wiringBaseURL })
 	w.RunOnce(ctx)
 
 	var (

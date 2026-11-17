@@ -361,6 +361,12 @@ The Content-Type is `application/activity+json` (per ActivityPub) or
 > **Erratum (2026-10-21):** field names per v1.md §3 and §5; the
 > reference implementation does not yet create or verify per-actor
 > signatures (v1.md, *Implementation status* D1).
+>
+> **Update (2026-11-17, #1526):** it now signs every envelope with the
+> actor's key and verifies every received one against the sending
+> actor's key, pinned from that peer's actor document (v1.md §8.3 and
+> *Implementation status*, resolved D1). A peer on an earlier release
+> is refused until it upgrades.
 
 All envelopes MUST be signed.
 
@@ -606,6 +612,9 @@ Placeholder. v1.0 MUST cover:
 > implementation does not yet meet the first and fourth requirements
 > below, nor handle every core type (v1.md, *Implementation status*
 > D1, D3, D4).
+>
+> **Update (2026-11-17, #1526):** the per-actor signature part is met
+> (resolved D1); D3 and D4 remain open.
 
 A conformant ArchivePub implementation MUST:
 - Implement Ed25519 envelope signing + verification

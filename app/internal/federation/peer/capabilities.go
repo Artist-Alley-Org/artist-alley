@@ -59,11 +59,17 @@ const (
 	// from CapNaClBox so future versions can add CapP256, CapX448.
 	CapX25519 PeerCapability = "x25519"
 
-	// CapEd25519EnvelopeSig — Ed25519 envelope signature
-	// (per spec §5). Existing 1.22.D capability; advertised for
-	// completeness so a peer that doesn't advertise it is treated
-	// as legacy (1.22.D dispatched against everyone unconditionally
-	// — this capability lets future versions tighten the gate).
+	// CapEd25519EnvelopeSig: per-actor Ed25519 envelope
+	// signatures (spec §5, erratum E1). Since #1526 the token is
+	// true of this implementation: the outbox signs every envelope
+	// with its actor's key and the inbox (single and batch) verifies
+	// every envelope against the sending actor's pinned key, with
+	// no unverified path. Builds before #1526 advertised the same
+	// token while sending a placeholder signature; such a peer stays
+	// paired (no re-pair is needed, the key id format is unchanged)
+	// but its envelopes are refused with sig_malformed until it
+	// upgrades. Nothing dispatches on the token itself: verification
+	// applies to every peer.
 	CapEd25519EnvelopeSig PeerCapability = "ed25519-envelope-sig"
 
 	// CapHTTP2BatchedInbox — peer's /federation/inbox/batch
@@ -136,7 +142,7 @@ func purposeOf(c PeerCapability) string {
 	case CapX25519:
 		return "X25519 key agreement for NaCl-box recipient encryption"
 	case CapEd25519EnvelopeSig:
-		return "Ed25519 envelope signature (existing 1.22.D wire)"
+		return "per-actor Ed25519 envelope signatures, signed and verified (#1526)"
 	case CapHTTP2BatchedInbox:
 		return "/federation/inbox/batch endpoint accepts multi-envelope POSTs"
 	default:

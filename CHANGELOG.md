@@ -9,6 +9,22 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Federated activities are now signed and verified per user (#1526).** Every envelope was
+  sent with a placeholder signature and received envelopes were checked only for shape, so an
+  activity was authenticated per instance, never per user, and a paired instance could send
+  activities in the name of a user on another instance. Now every envelope is signed with its
+  author's Ed25519 key (after any encryption, so the signature covers what is sent) and is never
+  sent if it cannot be signed. Each user's key is created at startup for existing users and on
+  first use for new ones. Each instance serves an actor document at `/users/{username}`, only to
+  paired peers that sign the request with their instance key; a browser still gets the web app
+  there. A receiving instance accepts an envelope only from a user of the instance that sent it,
+  fetches that user's key once from the sender's actor document and keeps it, and refuses an
+  envelope whose signature is missing, malformed or wrong (`sig_malformed`, `sig_invalid`,
+  `unknown_key`, `unknown_actor`); a key it cannot fetch right now is a retryable `503`, never a
+  reason to accept unverified. **Compatibility:** an instance on an earlier release stays paired
+  (no re-pair needed) but everything it sends is refused with `sig_malformed` until it upgrades.
+  A kept key is never replaced automatically; key rotation is not available yet (#1581), so a
+  user whose key changes is refused until an operator clears the stored key.
 - **Restricted and embargoed material is no longer federated in plaintext (#1525).** The outbox
   never looked up what it was sending: every outbound activity was treated as `public`, so a post
   carrying a restricted or embargoed asset could reach a peer without encryption support as an

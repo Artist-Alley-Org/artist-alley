@@ -96,7 +96,11 @@ if [ "$a_keylen" != "32" ]; then
 fi
 pass "studio-a admin has a 32-byte X25519 public key"
 
-actor_uri="http://studio-a.local/users/admin"
+# #1526: the actor URI must be studio-a's canonical origin (its
+# site.base_url, which is how studio-b registered it); checked
+# before anything is staged.
+actor_uri="$(studio_a_actor_uri admin)"
+assert_actor_bound_to_peer "$actor_uri"
 target_uri="https://studio-b.local:9443/posts/${post_id}"
 recipient_inbox="https://studio-b.local:9443/federation/inbox"
 
@@ -142,10 +146,13 @@ INSERT INTO activities (
     'local'
 );
 
+-- Stamp the tier the outbox dispatcher stamps for a post with public
+-- assets: a NULL tier is unresolved since #1525 and is refused
+-- unless it can be encrypted.
 INSERT INTO federation_outbox (
-    activity_id, peer_id, target_user_url, status
+    activity_id, peer_id, target_user_url, status, sensitivity
 )
-SELECT id, '${peer_id}'::uuid, '${recipient_inbox}', 'queued'
+SELECT id, '${peer_id}'::uuid, '${recipient_inbox}', 'queued', 'public'
 FROM activities
 WHERE activity_uri = '${activity_uri}';
 

@@ -35,6 +35,8 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/preview"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/users"
 )
 
 // Version is overwritten at build time via -ldflags "-X main.Version=...".
@@ -624,6 +626,19 @@ func run() error {
 		// surface to the caller so the boot fails loudly.
 		// Per-user mint failures are counted in stats + logged
 		// but DON'T propagate; the sweep continues.
+		return err
+	}
+
+	// #1526: every user gets the Ed25519 signing key its federation
+	// envelopes are signed with (and that its actor document serves).
+	// Idempotent and race-safe; users created later are minted on
+	// their first outbound envelope. The base URL only feeds the
+	// informational actor_uri column; empty before setup is fine.
+	siteBaseURL := ""
+	if site, err := sysconfig.NewStore(pool).GetSite(ctx); err == nil {
+		siteBaseURL = site.BaseURL
+	}
+	if _, _, err := users.BackfillActorKeys(ctx, users.NewHandler(pool, logger, nil), siteBaseURL); err != nil {
 		return err
 	}
 

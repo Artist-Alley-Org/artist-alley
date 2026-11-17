@@ -36,6 +36,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 )
 
@@ -146,8 +147,30 @@ func newDeliveryFixture(t *testing.T, inboxStatus int, captureBody *[]byte) (wor
 		},
 		logger,
 	)
+	wireTestActorSigner(t, worker)
 	_ = sigSeen // captured by closure; assertion happens via post-RunOnce DB check + body capture
 	return worker, peerID, postID, grantorRef, activityID, srv
+}
+
+// wireTestActorSigner gives the worker a per-actor signing key
+// (#1526): a fresh Ed25519 key returned for every actor, so the
+// worker signs exactly as in production. Returns the public key for
+// tests that verify the signature.
+func wireTestActorSigner(t *testing.T, w *outbox.Worker) ed25519.PublicKey {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privPEM, err := federation.PrivateKeyToPEM(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.SetActorSigningKey(func(context.Context, int64, string) ([]byte, error) {
+		// A copy: the worker zeroes what it is given.
+		return append([]byte(nil), privPEM...), nil
+	})
+	return pub
 }
 
 func TestDelivery_HappyPath_2xx_TransitionsToSent(t *testing.T) {
@@ -338,7 +361,7 @@ func TestDelivery_TwoQueuedForSamePeer_UseBatchEndpoint(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	peerID := seedTwoQueuedForPeer(t, pool, srv.URL)
-	worker := newTestBatchWorker(pool, srv.URL, logger)
+	worker := newTestBatchWorker(t, pool, srv.URL, logger)
 
 	sent, _, _ := worker.RunOnce(context.Background())
 	if sent != 2 {
@@ -445,7 +468,8 @@ func seedTwoQueuedForPeer(t *testing.T, pool *pgxpool.Pool, srvURL string) uuid.
 }
 
 // newTestBatchWorker builds a delivery worker whose only peer is srvURL.
-func newTestBatchWorker(pool *pgxpool.Pool, srvURL string, logger *slog.Logger) *outbox.Worker {
+func newTestBatchWorker(t *testing.T, pool *pgxpool.Pool, srvURL string, logger *slog.Logger) *outbox.Worker {
+	t.Helper()
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	signer := &outbox.IdentitySigner{
 		PrivateKey: priv,
@@ -459,6 +483,7 @@ func newTestBatchWorker(pool *pgxpool.Pool, srvURL string, logger *slog.Logger) 
 		},
 		logger,
 	)
+	wireTestActorSigner(t, worker)
 
 	return worker
 }
@@ -515,7 +540,7 @@ func TestDelivery_Batch_503Retried_UnsupportedFinal(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	peerID := seedTwoQueuedForPeer(t, pool, srv.URL)
-	worker := newTestBatchWorker(pool, srv.URL, logger)
+	worker := newTestBatchWorker(t, pool, srv.URL, logger)
 
 	// 1. 503: both rows deferred, still queued, one attempt recorded.
 	sent, failed, deferred := worker.RunOnce(ctx)
