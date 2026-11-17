@@ -56,6 +56,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/federation/inboundgrants"
 )
 
 // DispatchOutcome is the typed result of a per-verb handler.
@@ -179,6 +180,12 @@ type Dispatcher struct {
 	// See policy_gate.go for the gate contract; SetSensitivityLookup
 	// is the boot-wiring hook.
 	sensitivityLookup SensitivityLookup
+
+	// #1571 inbound grants: the record aa:Share / aa:Unshare apply to,
+	// and this instance's base URL for the dispatch-time member check.
+	// See handler_share.go.
+	inboundGrants *inboundgrants.Store
+	localBaseURL  func(ctx context.Context) string
 
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_inbox_pending notification. Buffered=1 so the
@@ -466,6 +473,22 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) Dispa
 		return OutcomeFailed
 	}
 
+	// A profile-gated verb (#1571: aa:Share / aa:Unshare need
+	// share-lifecycle-1) is unsupported for a peer whose CURRENT stored
+	// intersection lacks the profile, even if a row was stored while it
+	// had it: never applied, terminal.
+	if !profileAllows(verb, peer.Capabilities) {
+		if _, err := d.pool.MarkInboxRejected(ctx, MarkInboxRejectedParams{
+			ID:           row.ID,
+			RejectReason: ptrTo(string(federation.InboxStatusUnsupportedActivity)),
+			LastError:    UnsupportedActivityMessage(row.ActivityType),
+		}); err != nil {
+			d.markFailed(ctx, row, "mark unsupported: "+err.Error())
+			return OutcomeFailed
+		}
+		return OutcomeRejected
+	}
+
 	// Phase 1.22.I-h stage 3.5: receiver-side encryption policy
 	// gate. Catches plaintext envelopes whose target object's
 	// sensitivity tier mandates encryption. Defense in depth:
@@ -511,8 +534,11 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) Dispa
 	// decryption so a sealed payload is checked like a plaintext one
 	// (the handler stage 10a saw only its clear members). A refusal
 	// marks the row rejected and applies nothing.
-	applies := func(t federation.ActivityType) bool { _, ok := d.registry[normalizeVerb(t)]; return ok }
-	if err := federation.ValidateMembers(env, MemberContext(peer.Capabilities, applies)); err != nil {
+	applies := func(t federation.ActivityType) bool {
+		_, ok := d.registry[normalizeVerb(t)]
+		return ok && profileAllows(t, peer.Capabilities)
+	}
+	if err := federation.ValidateMembers(env, MemberContext(peer.Capabilities, applies, d.localOrigin(ctx))); err != nil {
 		status, _ := MemberReason(err)
 		if _, merr := d.pool.MarkInboxRejected(ctx, MarkInboxRejectedParams{
 			ID:           row.ID,

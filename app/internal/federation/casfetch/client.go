@@ -13,9 +13,12 @@
 //   - the origin, asked with a signed HEAD for this exact caller, asset,
 //     hash and size, on every fetch and every reuse.
 //
-// Identical bytes already in local storage grant nothing. Until #1571
-// provides the inbound model, production uses FailClosedInboundGrants,
-// which refuses everything (no_inbound_grant): receiving is inert.
+// Identical bytes already in local storage grant nothing. The inbound
+// record is the database model of #1571 (inboundgrants.Store), asked
+// again inside every commit (state 7) with the grant row held FOR SHARE.
+// Production has no caller of Fetch until ingest (#1574), and
+// original-transfer-1 is not advertised, so no production pair fetches
+// yet.
 //
 // # State machine (Fetch)
 //
@@ -45,9 +48,12 @@
 //  7. storage.ImportVerified (live-import lock, intent, Put, one
 //     transaction for object, variant, ingest pin, intent delete and
 //     lease release). Inside that transaction the lease must still be
-//     this caller's and the peer row is re-checked FOR SHARE, so a
-//     concurrent disable or downgrade either commits first (and this
-//     import records nothing) or waits for this commit.
+//     this caller's, the peer row is re-checked FOR SHARE and the
+//     inbound grant is re-checked (InboundGrants.AllowsTx) with its row
+//     held FOR SHARE, so a concurrent disable, downgrade, revoke or
+//     supersede either commits first (and this import records nothing)
+//     or waits for this commit. Expiry is decided by the database clock
+//     in that same statement.
 //
 // The result carries the ingest pin. Nothing here creates an asset row
 // or shows anything to a user: that is #1574.
@@ -154,21 +160,29 @@ type GrantQuery struct {
 // InboundGrants is the receiver's own record of what peers granted it
 // (#1571). Allows returns nil only for a live grant from that peer, for
 // that asset (or a covering container), applicable to the signer, with
-// allow_original for the original class.
+// allow_original for the original class. AllowsTx is the same decision
+// inside tx, holding the grant it relies on until tx ends, so an end of
+// that grant serialises with the caller's commit.
 type InboundGrants interface {
 	Allows(ctx context.Context, q GrantQuery) error
+	AllowsTx(ctx context.Context, tx pgx.Tx, q GrantQuery) error
 }
 
 // ErrNoInboundGrant is the inbound record's refusal.
 var ErrNoInboundGrant = errors.New("casfetch: no live inbound grant")
 
-// FailClosedInboundGrants is the production InboundGrants until #1571
-// provides the inbound model: every query is refused.
+// FailClosedInboundGrants refuses every query. It is the client's
+// default when no record is wired.
 type FailClosedInboundGrants struct{}
 
 // Allows always refuses.
 func (FailClosedInboundGrants) Allows(context.Context, GrantQuery) error {
-	return fmt.Errorf("%w: the inbound grant model is not implemented yet (#1571)", ErrNoInboundGrant)
+	return fmt.Errorf("%w: no inbound grant record is wired", ErrNoInboundGrant)
+}
+
+// AllowsTx always refuses.
+func (FailClosedInboundGrants) AllowsTx(context.Context, pgx.Tx, GrantQuery) error {
+	return fmt.Errorf("%w: no inbound grant record is wired", ErrNoInboundGrant)
 }
 
 // Signer is the local identity a fetch is made as.
@@ -574,10 +588,9 @@ func (c *Client) authorize(ctx context.Context, req Request) (Peer, error) {
 // disable, downgrade or origin change during the read records no pin.
 // No transaction is held over the file read or the network.
 //
-// The receiver's inbound grant (#1571) is asked over the network-free
-// InboundGrants interface; when it becomes a database model it must also
-// be re-checked inside the pin transaction, like the peer row, to close
-// the race between that check and the commit.
+// The receiver's inbound grant (#1571) is re-checked inside the pin
+// transaction too (AllowsTx), like the peer row, so a revoke between the
+// check and the commit either commits first or waits.
 func (c *Client) reuse(ctx context.Context, req Request) (*Result, bool, error) {
 	obj, err := storage.New(c.d.Pool).FindObject(ctx, req.SHA256)
 	if err != nil {
@@ -617,6 +630,9 @@ func (c *Client) reuse(ctx context.Context, req Request) (*Result, bool, error) 
 	pin := storage.PinRef{SubjectType: IngestPinType, SubjectID: ingest.String()}
 	err = pgx.BeginFunc(ctx, c.d.Pool, func(tx pgx.Tx) error {
 		if err := checkPeerTx(ctx, tx, p.ID, req); err != nil {
+			return err
+		}
+		if err := c.grantTx(ctx, tx, p.ID, req); err != nil {
 			return err
 		}
 		// One statement: the object still exists at this size, and it is
@@ -660,6 +676,19 @@ func checkPeerTx(ctx context.Context, tx pgx.Tx, peerID uuid.UUID, req Request) 
 	}
 	cur.Connected = status == "connected"
 	return checkPeer(cur, req)
+}
+
+// grantTx re-checks the inbound grant inside tx (state 7, and the reuse
+// pin). A refusal there means the grant ended after the earlier checks:
+// revoked_during_fetch, with no_inbound_grant as the cause.
+func (c *Client) grantTx(ctx context.Context, tx pgx.Tx, peerID uuid.UUID, req Request) error {
+	if err := c.d.Grants.AllowsTx(ctx, tx, GrantQuery{
+		PeerID: peerID, SignerKeyID: req.Signer.KeyID, ActorURI: req.Signer.ActorURI,
+		OriginAssetURI: req.OriginAssetURI, Class: req.Class,
+	}); err != nil {
+		return reauthFailure(fail(ReasonNoInboundGrant, err))
+	}
+	return nil
 }
 
 // reauthFailure turns a failed re-authorisation into revoked_during_fetch
@@ -860,9 +889,12 @@ func (c *Client) download(ctx context.Context, req Request, p Peer, key leaseKey
 				FOR UPDATE`, key.PeerID, key.AssetID, key.Hash, key.Signer, leaseID).Scan(&held); err != nil {
 				return errLeaseNotHeld
 			}
-			// The peer as it is now, held until commit. (#1571's
-			// database-backed inbound grant belongs here too.)
+			// The peer and the inbound grant as they are now, both
+			// held until commit (#1571).
 			if err := checkPeerTx(ctx, tx, p.ID, req); err != nil {
+				return err
+			}
+			if err := c.grantTx(ctx, tx, p.ID, req); err != nil {
 				return err
 			}
 			_, err := tx.Exec(ctx, releaseSQL, key.PeerID, key.AssetID, key.Hash, key.Signer, leaseID)

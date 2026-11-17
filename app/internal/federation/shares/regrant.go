@@ -29,11 +29,12 @@ import (
 // "expired"). Instead the grant path does exactly what the sweeper would
 // have done for that one row, first, and then grants.
 //
-// What this does NOT do yet: tell the peer. The outbox resolver routes an
-// activity only to LIVE shares of its object, so an aa:Unshare recorded
-// after the share is revoked has no recipient, and no receiver applies
-// aa:Unshare today. Delivering it and purging on the peer is #1571. The
-// same holds for admin and sweeper revokes.
+// Telling the peer (#1571): the aa:Unshare names the grant it ends
+// (aa:revokes, the share's own aa:Share activity URI) and the outbox
+// resolver addresses it by the share row, revoked or not, to that share's
+// peer when the peer negotiated share-lifecycle-1. The same holds for
+// admin and sweeper revokes. The peer ends the grant; what it already
+// received is not recalled.
 //
 // Expiry never AUTHORISES anything in the meantime: the inbox gate
 // re-checks Share.Active(now) on every decision and the outbox resolver
@@ -80,6 +81,10 @@ func (d expiryRetirer) retire(ctx context.Context, share *Share, notes string, e
 	if share.TargetUserURL != nil {
 		targetURL = *share.TargetUserURL
 	}
+	revokes, err := grantedActivityURI(ctx, d.registry.Pool, share)
+	if err != nil {
+		return false, err
+	}
 	em := emit.Unshare(actor, emit.ShareRef{
 		ShareID:       share.ID,
 		ObjectKind:    share.ObjectKind,
@@ -88,7 +93,7 @@ func (d expiryRetirer) retire(ctx context.Context, share *Share, notes string, e
 		TargetUserURL: targetURL,
 		Scope:         share.Scope,
 		Notes:         notes,
-	}, "" /* original aa:Share activity URI; reserved for future correlation */)
+	}, revokes)
 
 	tx, err := d.registry.Pool.Begin(ctx)
 	if err != nil {

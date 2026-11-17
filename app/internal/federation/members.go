@@ -46,6 +46,26 @@ const (
 	MemberScope         = "scope"
 	MemberExpiresAt     = "expires_at"
 
+	// share-lifecycle-1 members (§16.6, #1571). aa:supersedes names the
+	// aa:Share this grant replaces for the same grant tuple (absent on a
+	// tuple's first grant); aa:revokes names the aa:Share an aa:Unshare
+	// ends (required). Both are activity URIs on the sender's origin.
+	MemberSupersedes = "aa:supersedes"
+	MemberRevokes    = "aa:revokes"
+	// MemberOriginalTransfer is the original-transfer-1 member of an
+	// aa:Share (§7.5.7, #1571): true when the origin's share carries the
+	// original-file grant. Only sent and accepted with that profile.
+	MemberOriginalTransfer = "aa:originalTransfer"
+
+	// ProfileShareLifecycle1 is the share-lifecycle-1 profile token
+	// (§16.6, #1571). aa:Share, aa:Unshare and aa:RevokeShare are sent
+	// and applied only between peers that both negotiated it.
+	ProfileShareLifecycle1 = "share-lifecycle-1"
+	// ProfileOriginalTransfer1 is the original-transfer-1 profile token
+	// (§7.5.7, §16.5). Reserved and not advertised; it gates the
+	// aa:originalTransfer member.
+	ProfileOriginalTransfer1 = "original-transfer-1"
+
 	// CommentObjectType is the object_type of a comment Create.
 	CommentObjectType = "Note"
 
@@ -77,9 +97,16 @@ type MemberContext struct {
 	// negotiated capability intersection with the sending peer. Nil
 	// means none is.
 	Negotiated func(token string) bool
-	// Applied reports whether this receiver applies an activity type.
-	// Nil means none is.
+	// Applied reports whether this receiver applies an activity type
+	// for this sender (a share-lifecycle-1 type only with the profile
+	// negotiated). Nil means none is.
 	Applied func(ActivityType) bool
+	// LocalOrigin is the receiver's own origin (scheme://host[:port]).
+	// When set, an aa:Share / aa:Unshare must name it as target_peer
+	// and any target_user must be a /users/<name> actor on it. Empty
+	// skips that check here; the share handler re-checks it against the
+	// real base URL before applying anything.
+	LocalOrigin string
 }
 
 // ValidateMembers checks env's non-base members against the v1
@@ -129,6 +156,18 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 			return err
 		}
 		allowed[MemberObjectType], allowed[MemberContent], allowed[MemberInReplyTo] = true, true, true
+	case ActivityAAShare, ActivityAAUnshare, ActivityAARevokeShare:
+		share := env.Type == ActivityAAShare
+		if err := validateShareEnvelope(env, mc, share); err != nil {
+			return err
+		}
+		allowed[MemberObjectKind], allowed[MemberTargetPeer], allowed[MemberTargetUser] = true, true, true
+		if share {
+			allowed[MemberScope], allowed[MemberExpiresAt] = true, true
+			allowed[MemberSupersedes], allowed[MemberOriginalTransfer] = true, true
+		} else {
+			allowed[MemberRevokes] = true
+		}
 	default:
 		// An applied type with no activity members defined carries
 		// none: only the base set is allowed. A handler that needs
@@ -213,6 +252,14 @@ func checkHTTPSURI(raw json.RawMessage, name string) error {
 	return nil
 }
 
+// checkOptionalHTTPSURI: m[name], when present, is an absolute https URI.
+func checkOptionalHTTPSURI(m map[string]json.RawMessage, name string) error {
+	if raw, ok := m[name]; ok {
+		return checkHTTPSURI(raw, name)
+	}
+	return nil
+}
+
 // checkHTTPSOrigin: a JSON string holding an https origin, the shape
 // of an instance URL (no userinfo, path, query or fragment).
 func checkHTTPSOrigin(raw json.RawMessage, name string) error {
@@ -265,6 +312,126 @@ func checkShareMembers(m map[string]json.RawMessage, withScope bool) error {
 		}
 	}
 	return nil
+}
+
+// shareObjectSegment is the first path segment of a shared object's
+// URI for each kind (§8.2).
+var shareObjectSegment = map[ShareObjectKind]string{
+	ShareObjectKindPost:       "posts",
+	ShareObjectKindAsset:      "assets",
+	ShareObjectKindCollection: "collections",
+	ShareObjectKindWorkspace:  "workspaces",
+	ShareObjectKindBrandKit:   "brand_kits",
+	ShareObjectKindUser:       "users",
+}
+
+// validateShareEnvelope checks an applied aa:Share (share=true) or
+// aa:Unshare / aa:RevokeShare under share-lifecycle-1 (§7.5.1, §7.5.2,
+// §16.6):
+//
+//   - the §7.5 tuple members (checkShareMembers);
+//   - the object is on the sender's own origin, the actor's origin, with
+//     the kind's path: a peer can grant only what it is the origin of;
+//   - with mc.LocalOrigin, target_peer is this receiver and target_user
+//     a /users/<name> actor on it;
+//   - aa:supersedes (Share, optional) and aa:revokes (Unshare, required)
+//     are activity URIs on the sender's origin, never the envelope's own
+//     id;
+//   - aa:originalTransfer (Share, optional) is a boolean, needs
+//     original-transfer-1 negotiated (ErrProfileNotNegotiated) and an
+//     asset or collection share.
+func validateShareEnvelope(env *Envelope, mc MemberContext, share bool) error {
+	if err := checkShareMembers(env.Extra, share); err != nil {
+		return err
+	}
+	sender := originOf(env.Actor)
+	if sender == "" {
+		return fmt.Errorf("%w: actor is not an https URI", ErrInvalidMember)
+	}
+	kind, _ := memberString(env.Extra[MemberObjectKind], MemberObjectKind)
+	obj, err := url.Parse(env.Object)
+	if err != nil || env.Object == "" || originOf(env.Object) != sender || obj.RawQuery != "" || obj.Fragment != "" {
+		return fmt.Errorf("%w: a share's object must be an object on the sender's own origin", ErrInvalidMember)
+	}
+	segs := strings.Split(strings.Trim(obj.Path, "/"), "/")
+	if len(segs) < 2 || segs[0] != shareObjectSegment[ShareObjectKind(kind)] || segs[len(segs)-1] == "" {
+		return fmt.Errorf("%w: object is not a %s URI", ErrInvalidMember, kind)
+	}
+	if mc.LocalOrigin != "" {
+		peerURL, _ := memberString(env.Extra[MemberTargetPeer], MemberTargetPeer)
+		if originOf(peerURL) != mc.LocalOrigin {
+			return fmt.Errorf("%w: %s is not this instance", ErrInvalidMember, MemberTargetPeer)
+		}
+		if raw, ok := env.Extra[MemberTargetUser]; ok {
+			u, _ := memberString(raw, MemberTargetUser)
+			if _, ok := LocalUsername(u, mc.LocalOrigin); !ok {
+				return fmt.Errorf("%w: %s is not a /users/<name> actor on this instance", ErrInvalidMember, MemberTargetUser)
+			}
+		}
+	}
+	ref := func(name string, required bool) error {
+		raw, ok := env.Extra[name]
+		if !ok {
+			if required {
+				return fmt.Errorf("%w: %s requires %s", ErrInvalidMember, env.Type, name)
+			}
+			return nil
+		}
+		s, err := memberString(raw, name)
+		if err != nil {
+			return err
+		}
+		u, perr := url.Parse(s)
+		if perr != nil || originOf(s) != sender || u.Fragment != "" || s == env.ID {
+			return fmt.Errorf("%w: %s must be another activity URI on the sender's origin", ErrInvalidMember, name)
+		}
+		return nil
+	}
+	if share {
+		if err := ref(MemberSupersedes, false); err != nil {
+			return err
+		}
+		if raw, ok := env.Extra[MemberOriginalTransfer]; ok {
+			if mc.Negotiated == nil || !mc.Negotiated(ProfileOriginalTransfer1) {
+				return fmt.Errorf("%w: %s needs %s", ErrProfileNotNegotiated, MemberOriginalTransfer, ProfileOriginalTransfer1)
+			}
+			var b bool
+			if string(raw) == "null" || json.Unmarshal(raw, &b) != nil {
+				return fmt.Errorf("%w: %s must be a boolean", ErrInvalidMember, MemberOriginalTransfer)
+			}
+			if k := ShareObjectKind(kind); b && k != ShareObjectKindAsset && k != ShareObjectKindCollection {
+				return fmt.Errorf("%w: %s is only for an asset or collection share", ErrInvalidMember, MemberOriginalTransfer)
+			}
+		}
+		return nil
+	}
+	return ref(MemberRevokes, true)
+}
+
+// LocalUsername returns the name of a /users/<name> actor URI on the
+// given origin, and whether uri is one.
+func LocalUsername(uri, origin string) (string, bool) {
+	u, err := url.Parse(uri)
+	if err != nil || origin == "" || originOf(uri) != origin || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return "", false
+	}
+	segs := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if len(segs) != 2 || segs[0] != "users" || segs[1] == "" {
+		return "", false
+	}
+	return segs[1], true
+}
+
+// OriginOf returns the https origin (scheme://host[:port], host in
+// lower case) of an absolute https URI, or "" when it is not one.
+func OriginOf(raw string) string { return originOf(raw) }
+
+func originOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return ""
+	}
+	return "https://" + strings.ToLower(u.Host)
 }
 
 // validateEncryptionPublicKey: exactly {type, publicKeyBase64,
@@ -415,9 +582,17 @@ func Federated(t ActivityType, objectKind string) bool {
 // Federated refuses, a payload missing a required member, or a member
 // whose shape §7.5 refuses (an empty target_peer, a boolean scope) is
 // ErrNotFederated, wrapping ErrInvalidMember for the last.
-func WireMembers(t ActivityType, objectKind string, payload []byte) (map[string]json.RawMessage, error) {
+func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated func(token string) bool) (map[string]json.RawMessage, error) {
 	if !Federated(t, objectKind) {
 		return nil, fmt.Errorf("%w: %s of %q", ErrNotFederated, t, objectKind)
+	}
+	has := func(token string) bool { return negotiated != nil && negotiated(token) }
+	if (t == ActivityAAShare || t == ActivityAAUnshare) && !has(ProfileShareLifecycle1) {
+		// §16.3: a profile-gated activity is never sent to a peer
+		// without the profile, and its members are never stripped to
+		// fit one. The resolver skips such a recipient before a row is
+		// queued; a row queued earlier is closed here.
+		return nil, fmt.Errorf("%w: %w: %s is sent only with %s", ErrNotFederated, ErrProfileNotNegotiated, t, ProfileShareLifecycle1)
 	}
 	local := map[string]json.RawMessage{}
 	if len(bytes.TrimSpace(payload)) > 0 && string(bytes.TrimSpace(payload)) != "null" {
@@ -465,6 +640,29 @@ func WireMembers(t ActivityType, objectKind string, payload []byte) (map[string]
 			if err := copyAs("expires_at", MemberExpiresAt, false); err != nil {
 				return nil, err
 			}
+			if err := copyAs("supersedes_activity_uri", MemberSupersedes, false); err != nil {
+				return nil, err
+			}
+			// The original-file grant travels only with
+			// original-transfer-1 (reserved, not advertised). Without it
+			// the member is absent, which means no original: the
+			// origin refuses every original fetch from such a peer too.
+			var allow bool
+			if raw, ok := local["allow_original"]; ok && json.Unmarshal(raw, &allow) == nil && allow && has(ProfileOriginalTransfer1) {
+				out[MemberOriginalTransfer] = json.RawMessage("true")
+			}
+		} else {
+			// aa:revokes is REQUIRED: an Unshare that cannot name the
+			// grant it ends is refused, never sent without it.
+			if raw, ok := local["previous_activity_uri"]; ok {
+				var s string
+				if json.Unmarshal(raw, &s) == nil && s == "" {
+					delete(local, "previous_activity_uri")
+				}
+			}
+			if err := copyAs("previous_activity_uri", MemberRevokes, true); err != nil {
+				return nil, err
+			}
 		}
 	}
 	// The projection must satisfy §7.5 before anything is signed or
@@ -475,8 +673,14 @@ func WireMembers(t ActivityType, objectKind string, payload []byte) (map[string]
 		err = checkCommentMembers(out)
 	case ActivityAAShare:
 		err = checkShareMembers(out, true)
+		if err == nil {
+			err = checkOptionalHTTPSURI(out, MemberSupersedes)
+		}
 	case ActivityAAUnshare:
 		err = checkShareMembers(out, false)
+		if err == nil {
+			err = checkHTTPSURI(out[MemberRevokes], MemberRevokes)
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrNotFederated, t, err)

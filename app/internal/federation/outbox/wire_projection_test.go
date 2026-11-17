@@ -122,8 +122,8 @@ func newWorld(t *testing.T) *world {
 	w.actor = emit.ActorContext{UserRef: w.userRef, Username: username, BaseURL: "https://local.example"}
 	if err := w.pool.QueryRow(w.ctx,
 		`INSERT INTO federation_peers (instance_url, display_name, instance_public_key,
-		    trust_tier, encryption_policy, enabled, status, handshake_by_user_ref)
-		 VALUES ($1, 'Wire Peer', '', 'connected', 'plaintext', TRUE, 'connected', $2) RETURNING id`,
+		    trust_tier, encryption_policy, enabled, status, handshake_by_user_ref, capabilities)
+		 VALUES ($1, 'Wire Peer', '', 'connected', 'plaintext', TRUE, 'connected', $2, '["share-lifecycle-1"]'::jsonb) RETURNING id`,
 		w.srv.URL, w.userRef,
 	).Scan(&w.peerID); err != nil {
 		t.Fatalf("seed peer: %v", err)
@@ -385,7 +385,7 @@ func TestWireProjection_FederatedTypes(t *testing.T) {
 		{"unshare", emit.Unshare(w.actor, emit.ShareRef{
 			ShareID: uuid.New(), ObjectKind: federation.ShareObjectKindPost, ObjectID: w.postID,
 			PeerURL: w.httpsURL(), Scope: federation.ShareScopeView, Notes: secretNote,
-		}, "https://local.example/activities/"+uuid.NewString()).Activity, []string{"object_kind", "target_peer"}},
+		}, "https://local.example/activities/"+uuid.NewString()).Activity, []string{"aa:revokes", "object_kind", "target_peer"}},
 	}
 	wk := w.worker(false, nil)
 	for _, c := range cases {
@@ -461,6 +461,34 @@ func TestWireProjection_UnfederatedTypes(t *testing.T) {
 		_ = w.pool.QueryRow(w.ctx, `SELECT payload->>'scope', payload->>'notes' FROM activities WHERE id = $1`, id).Scan(&scope, &note)
 		if scope != "true" || note != secretNote {
 			t.Errorf("local record changed: scope %q note %q", scope, note)
+		}
+	})
+
+	// #1571: a share row queued for a peer whose stored intersection no
+	// longer holds share-lifecycle-1 is closed without a POST.
+	t.Run("share_to_a_peer_without_the_profile", func(t *testing.T) {
+		w := newWorld(t)
+		if _, err := w.pool.Exec(w.ctx, `UPDATE federation_peers SET capabilities = '[]'::jsonb WHERE id = $1`, w.peerID); err != nil {
+			t.Fatal(err)
+		}
+		wk := w.worker(false, nil)
+		for _, in := range []activities.Input{
+			emit.Share(w.actor, emit.ShareRef{ShareID: uuid.New(), ObjectKind: federation.ShareObjectKindPost, ObjectID: w.postID,
+				PeerURL: w.httpsURL(), Scope: federation.ShareScopeView}).Activity,
+			emit.Unshare(w.actor, emit.ShareRef{ShareID: uuid.New(), ObjectKind: federation.ShareObjectKindPost, ObjectID: w.postID,
+				PeerURL: w.httpsURL(), Scope: federation.ShareScopeView}, "https://local.example/activities/"+uuid.NewString()).Activity,
+		} {
+			id, uri := w.record(in, nil)
+			rowID := w.queue(id)
+			wk.RunOnce(w.ctx)
+			if env := w.cap.envelopeFor(t, uri); env != nil {
+				t.Errorf("%s delivered to a peer without share-lifecycle-1: %v", in.Type, memberNames(env, true))
+			}
+			var status, lastErr string
+			_ = w.pool.QueryRow(w.ctx, `SELECT status, COALESCE(last_error, '') FROM federation_outbox WHERE id = $1`, rowID).Scan(&status, &lastErr)
+			if status != string(federation.OutboxStatusFailed) || !strings.Contains(lastErr, "profile_not_negotiated") {
+				t.Errorf("%s queued row: %s / %q, want failed / profile_not_negotiated", in.Type, status, lastErr)
+			}
 		}
 	})
 

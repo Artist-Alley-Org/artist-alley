@@ -210,7 +210,9 @@ func (fx *fixture) newDispatcher(registry map[federation.ActivityType]inbox.Hand
 }
 
 // unappliedCatalogueTypes is every §7 type, including the aa:RevokeShare
-// alias, that this release does not apply.
+// alias, that this release does not apply for a peer with no negotiated
+// profile. The share-lifecycle-1 types are among them (#1571): without
+// the profile they are unsupported exactly like a type with no handler.
 func unappliedCatalogueTypes() []federation.ActivityType {
 	var out []federation.ActivityType
 	for t := range federation.KnownActivityTypes {
@@ -220,7 +222,7 @@ func unappliedCatalogueTypes() []federation.ActivityType {
 		if t == federation.ActivityAAProvenance {
 			continue
 		}
-		if !inbox.Applies(t) {
+		if !inbox.Applies(t, nil) {
 			out = append(out, t)
 		}
 	}
@@ -230,8 +232,10 @@ func unappliedCatalogueTypes() []federation.ActivityType {
 
 // --- the applied set (no database) ------------------------------------
 
-func TestAppliedSet_IsExactlyLikeAndCreate_AndRegistryMatches(t *testing.T) {
-	want := []federation.ActivityType{federation.ActivityCreate, federation.ActivityLike}
+func TestAppliedSet_IsExactlyLikeCreateAndProfileGatedShares_AndRegistryMatches(t *testing.T) {
+	want := []federation.ActivityType{federation.ActivityCreate, federation.ActivityLike,
+		federation.ActivityAAShare, federation.ActivityAAUnshare}
+	sort.Slice(want, func(i, j int) bool { return want[i] < want[j] })
 	if got := inbox.AppliedActivityTypes(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("applied set: got %v want %v — update docs/spec/federation/v1.md D3 and §7 with any change", got, want)
 	}
@@ -245,19 +249,30 @@ func TestAppliedSet_IsExactlyLikeAndCreate_AndRegistryMatches(t *testing.T) {
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("BuildRegistry keys %v != applied set %v (a stub or extra entry crept in)", keys, want)
 	}
-	if inbox.Applies(federation.ActivityAARevokeShare) {
-		t.Error("aa:RevokeShare normalizes to aa:Unshare, which is not applied")
+	// #1571: the share types are applied only under share-lifecycle-1.
+	gated := inbox.ProfileGatedActivityTypes()
+	if len(gated) != 2 || gated[federation.ActivityAAShare] != federation.ProfileShareLifecycle1 ||
+		gated[federation.ActivityAAUnshare] != federation.ProfileShareLifecycle1 {
+		t.Errorf("profile-gated set %v, want aa:Share and aa:Unshare under %s", gated, federation.ProfileShareLifecycle1)
+	}
+	lifecycle := []string{federation.ProfileShareLifecycle1}
+	for _, v := range []federation.ActivityType{federation.ActivityAAShare, federation.ActivityAAUnshare, federation.ActivityAARevokeShare} {
+		if inbox.Applies(v, nil) || inbox.Applies(v, []string{"archival-1", "nacl-box"}) {
+			t.Errorf("%s applied without %s", v, federation.ProfileShareLifecycle1)
+		}
+		if !inbox.Applies(v, lifecycle) {
+			t.Errorf("%s not applied with %s", v, federation.ProfileShareLifecycle1)
+		}
 	}
 	for _, v := range []federation.ActivityType{
 		federation.ActivityUndo, federation.ActivityDelete, federation.ActivityUpdate,
-		federation.ActivityAAShare, federation.ActivityAAUnshare, federation.ActivityAAAssetVersion,
-		federation.ActivityFollow, federation.ActivityAccept, federation.ActivityAdd,
+		federation.ActivityAAAssetVersion, federation.ActivityFollow, federation.ActivityAccept, federation.ActivityAdd,
 	} {
-		if inbox.Applies(v) {
+		if inbox.Applies(v, lifecycle) {
 			t.Errorf("%s reported as applied; no real handler exists", v)
 		}
 	}
-	if inbox.Applies("aa:NotInTheCatalogue") || inbox.Applies("") {
+	if inbox.Applies("aa:NotInTheCatalogue", lifecycle) || inbox.Applies("", lifecycle) {
 		t.Error("an unknown or empty type must never be applied")
 	}
 }

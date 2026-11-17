@@ -106,6 +106,18 @@ const CapArchival1 PeerCapability = "archival-1"
 // only for its own handshake.
 const CapOriginalTransfer1 PeerCapability = "original-transfer-1"
 
+// CapShareLifecycle1 is the share-lifecycle-1 profile token
+// (docs/spec/federation/v1.md §16.6; #1571): aa:Share, aa:Unshare and
+// aa:RevokeShare are sent and applied only between peers that both
+// negotiated it, ordered by the signed aa:supersedes / aa:revokes
+// references, never by a clock. Advertised since #1571, when the sender
+// (reference members, per-recipient routing, the profile skip) and the
+// receiver (the inbound grant record and its state machine) both shipped.
+// A pairing made before either side advertised it lacks it until the
+// peers negotiate again (§16.2), and until then no grant flows between
+// them in either direction.
+const CapShareLifecycle1 PeerCapability = "share-lifecycle-1"
+
 // KnownCapabilities is the closed set this reference implementation
 // recognises + dispatches on. Order is the order the handshake
 // envelope emits them; receivers see the same order, the
@@ -146,6 +158,7 @@ var KnownCapabilities = CapabilitySet{
 	CapX25519,
 	CapEd25519EnvelopeSig,
 	CapHTTP2BatchedInbox,
+	CapShareLifecycle1,
 }
 
 // purposeOf maps a known Capability to a short human-readable
@@ -170,6 +183,8 @@ func purposeOf(c PeerCapability) string {
 		return "per-actor Ed25519 envelope signatures, signed and verified (#1526)"
 	case CapHTTP2BatchedInbox:
 		return "/federation/inbox/batch endpoint accepts multi-envelope POSTs"
+	case CapShareLifecycle1:
+		return "aa:Share / aa:Unshare applied as inbound grants, ordered by signed aa:supersedes / aa:revokes (#1571)"
 	default:
 		return ""
 	}

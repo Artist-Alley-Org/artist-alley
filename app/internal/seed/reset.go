@@ -393,6 +393,12 @@ var nonReferenceKindColumns = map[string]string{
 	"storage_objects.content_type":      "MIME type",
 	"storage_sweep_runs.kind":           "sweep mode (orphan_scan/checksum_verify)",
 	"storage_variants.content_type":     "MIME type",
+
+	// #1571: the kind of the PEER's object, named by object_uri on the
+	// peer's origin; there is no local id column, so nothing local to
+	// orphan. The rows cascade with their peer.
+	"federation_inbound_grants.object_kind": "kind of a remote object (object_uri); no local id",
+	"federation_inbound_tombstones.kind":    "tombstone reason (revoked/superseded)",
 }
 
 // sweepStmt is one orphan-delete: the SQL plus the kind value it is

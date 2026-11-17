@@ -77,6 +77,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/cas"
 	"github.com/mscrnt/artist-alley/app/internal/federation/casfetch"
+	"github.com/mscrnt/artist-alley/app/internal/federation/inboundgrants"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
@@ -196,8 +197,9 @@ type apiServer struct {
 	sharesSweeper      *shares.Sweeper
 	inboxHandler       *inbox.Handler
 	actorDocument      *actorDocumentHandler
-	casHandler         *cas.Handler     // #72 origin: serves originals to paired peers
-	casFetch           *casfetch.Client // #72 receiver; inbound grants fail-closed until #1571
+	casHandler         *cas.Handler         // #72 origin: serves originals to paired peers
+	casFetch           *casfetch.Client     // #72 receiver; authorised by inboundGrants (#1571)
+	inboundGrants      *inboundgrants.Store // #1571 receiver grant record
 	inboxDispatcher    *inbox.Dispatcher
 	outboxDispatcher   *outbox.Dispatcher
 	outboxDelivery     *outbox.Worker
@@ -1322,6 +1324,12 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	remoteHandler := remote.NewHandler(pool, logger, cacheReg)
 	s.inboxDispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool, remoteHandler, auditRec, logger))
 	s.inboxDispatcher.SetRegistry(inbox.BuildRegistry(s.inboxDispatcher, logger))
+	// #1571: the inbound grant record. aa:Share / aa:Unshare from a peer
+	// that negotiated share-lifecycle-1 are applied to it; the #72
+	// receiver authorises every fetch against it.
+	s.inboundGrants = inboundgrants.New(pool, sysconfigBaseURLFn(sysCfg), auditRec, logger)
+	s.inboxDispatcher.SetInboundGrants(s.inboundGrants)
+	s.inboxDispatcher.SetLocalBaseURL(sysconfigBaseURLFn(sysCfg))
 	// LISTEN/NOTIFY on federation_inbox_pending — gold-standard
 	// sub-1s latency per 1.22.D-b-6 G1. The dispatcher's 30s
 	// ticker is correctness backstop only.
@@ -1531,8 +1539,9 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		Audit:     auditRec,
 		Logger:    logger,
 	})
-	// #72 receiver: no production caller until ingest (#1574), and
-	// fail-closed inbound grants until #1571.
+	// #72 receiver: no production caller until ingest (#1574). Every
+	// fetch and reuse is authorised against the inbound grant record
+	// (#1571), re-checked inside the import commit.
 	casCfg := casfetch.DefaultConfig()
 	casCfg.TempDir = storageSvc.TempDir
 	casCfg.LocalBaseURL = baseURLFn
@@ -1540,7 +1549,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		Pool:    pool,
 		Storage: storageSvc,
 		Peers:   casfetchPeerLookup{reg: s.peers},
-		Grants:  casfetch.FailClosedInboundGrants{},
+		Grants:  casfetch.DatabaseGrants{Store: s.inboundGrants},
 		Audit:   auditRec,
 		Logger:  logger,
 		Config:  casCfg,

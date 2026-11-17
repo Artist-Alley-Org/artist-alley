@@ -250,8 +250,9 @@ implicitly, no permission.
   record. Both authorities are asked once more after the `Put` and
   before that transaction (and after the verification read when bytes
   already held are reused); the download and the import have separate
-  time budgets. #1571's database-backed inbound grant must be checked
-  inside the same recording transaction. A live import holds a per-hash session lock from before its
+  time budgets. Since #1571 the receiver's database-backed inbound grant
+  is checked inside that same recording transaction too, with the grant
+  row held until the commit. A live import holds a per-hash session lock from before its
   intent until its commit, however slow the `Put`; the reconciler only
   takes that lock when no import of the hash is alive, and only then
   removes bytes no row needs.
@@ -265,12 +266,12 @@ implicitly, no permission.
   the real handshake. The test scripts create the second database; the
   gate fails, never skips, without it.
 
-**What is not live.** The receiver's inbound grant record is #1571;
-until it exists the production client refuses every fetch. Ingest
-(#1574) is what turns received bytes into a visible asset. The profile
-`original-transfer-1` stays unadvertised until both land, so no two
-production instances transfer files yet. The rest of this ADR is
-unchanged.
+**What is not live.** Ingest (#1574) is what turns received bytes into a
+visible asset, and nothing calls the receiving client in production
+until it lands. The receiver's inbound grant record exists since #1571
+(see that amendment). The profile `original-transfer-1` stays
+unadvertised until #1574, so no two production instances transfer files
+yet. The rest of this ADR is unchanged.
 
 ## Amendment 2026-11-17 (#1573): original files need their own grant, and a hash is not a permission
 
@@ -358,7 +359,8 @@ ids to the peer.
   the share by object, peer and user (spec §7.5.2); it does not name
   the grant it revokes, so a late revoke cannot be told from one meant
   for a later re-grant. That identity and the ordering of grants and
-  revokes are #1571, not this amendment.
+  revokes are #1571, not this amendment. (Resolved by the #1571
+  amendment: under `share-lifecycle-1` an `aa:Unshare` names its grant.)
 - **Renegotiating a profile** is a new offer to a connected peer with the
   same key (spec §16.2). The operator action that sends it lands with the
   first advertised profile; archival-1 stays unadvertised until #72,
@@ -370,6 +372,81 @@ this one and reads what it needs from them. The OpenAPI handshake
 schema now lists `supported_capabilities` and refuses other members,
 matching spec §11.1. Operator notes an earlier release already sent stay
 wherever the peer stored them. The rest of this ADR is unchanged.
+
+## Amendment 2026-11-17 (#1571): the receiver keeps its own record of grants, ordered by reference
+
+**What this ADR said.** The *Opt-in sharing model* has the recipient of
+an `aa:Share` record the grant and the recipient of an `aa:Unshare`
+"remove the grant and purge any locally cached copies". The reference
+implementation acknowledged both and applied neither: the receiver kept
+no record of what peers granted it, an `aa:Unshare` named a tuple rather
+than the grant it ended (the #1580 amendment), and the outbox addressed
+a share activity to every peer holding a live share of the same object,
+so a revoke, sent after its share was revoked, reached nobody.
+
+**Decision.**
+
+- **Grants apply only under the profile `share-lifecycle-1`** (spec
+  §16.6). Without it, in either direction, nothing is applied: the
+  sender does not send `aa:Share` / `aa:Unshare` to that peer and
+  records `profile_not_negotiated`; the receiver answers
+  `unsupported_activity`. There is no fallback that orders grants by the
+  sender's `published` time: a clock proves nothing about order.
+- **Order comes from signed references.** Under the profile, an
+  `aa:Share` names the grant it replaces in the same tuple
+  (`aa:supersedes`, absent on a tuple's first grant) and an `aa:Unshare`
+  names the grant it ends (`aa:revokes`, required). Both are activity
+  URIs on the sender's own origin. The tuple is the origin's own unique
+  slot: grantor, object, peer and recipient.
+- **The receiver applies each activity in one transaction**, serialised
+  per peer. A grant named before it arrives is tombstoned and stored
+  ended when it does. A grant whose tuple already holds another live
+  grant that it does not name, or that names a grant of another tuple,
+  ends both: the receiver fails closed until the origin sends a
+  consistent chain. A duplicate is a no-op.
+- **A recipient is bound once**, at apply time, to the local user's
+  immutable ref (usernames are immutable, spec §8.4). An unknown name is
+  stored ended (`recipient_unbound`), so a user created later with that
+  name gets nothing, and the inbox answers both cases the same way.
+- **A peer can grant only what it is the origin of**: the object and the
+  references must be on the sender's own origin, and the share must be
+  addressed to this instance. The scope ladder is enforced; `edit` is
+  refused (the #1524 amendment). `aa:originalTransfer` (the
+  original-file grant) is accepted only with `original-transfer-1`; the
+  origin's own record still decides every transfer it serves (the #1573
+  amendment).
+- **Authorisation reads the database every time.** No positive cache: a
+  grant authorises only while it is live, unexpired by the receiver's
+  own clock, from an enabled and connected peer, for the asking
+  recipient, at the asked scope, and for an original only with the
+  original-file grant. A container grant reaches a file only through a
+  membership the origin announced, which #1574 records; until then it
+  reaches none. Overlapping grants are independent: ending one leaves
+  access through another live one, and identical bytes are never a
+  right.
+- **Ending a grant denies at once.** Revocation, supersession, expiry
+  and peer removal are visible to the very next decision. The #72
+  receiver asks again inside its import transaction with the grant row
+  held, so a revoke either commits first (and nothing is recorded) or
+  waits for that commit. Queued work asks again when it runs.
+- **The sender addresses a share activity by its share row**: that
+  share's peer and recipient only, whether or not the share has been
+  revoked since (the `aa:Unshare` needs it) and whatever the object's
+  visibility tier. Each envelope's members are projected for its own
+  recipient's negotiated profiles.
+
+**What a revoke does not do.** It does not recall anything. Copies
+already delivered, viewed, downloaded, exported or kept by an operator
+stay where they are; the "purges any locally cached copies" wording in
+*Opt-in sharing model* describes a hope, not a guarantee this protocol
+can make (the #1573 amendment said the same).
+
+**What is not live.** Received assets, membership ingest and per-grant
+pins are #1574; the membership table exists empty. `original-transfer-1`
+stays unadvertised until #1574 works end to end. `share-lifecycle-1` is
+advertised: a pairing made before it lacks it until the two instances
+negotiate again (spec §16.2), and until then no grant flows between
+them. The rest of this ADR is unchanged.
 
 ## Context
 
@@ -678,7 +755,8 @@ manage it:
 
 - **`aa:Unshare`** — revoke a previous `aa:Share`. The recipient
   peer removes the grant and purges any locally cached copies of
-  the object.
+  the object. (Amended 2026-11-17, #1571 and #1573: the recipient ends
+  the grant it names; nothing already delivered is recalled.)
 
 The originating instance maintains the canonical truth of who has
 access. The recipient peer's local cache is best-effort. When the

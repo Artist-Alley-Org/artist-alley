@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
@@ -168,7 +169,8 @@ func (o *origin) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// grants is the test InboundGrants (it stands in for #1571).
+// grants is a scripted InboundGrants (the database record, #1571, is
+// inboundgrants.Store, exercised in its own package and in twostack).
 type grants struct {
 	mu    sync.Mutex
 	allow bool
@@ -184,6 +186,11 @@ func (g *grants) Allows(_ context.Context, q casfetch.GrantQuery) error {
 		return casfetch.ErrNoInboundGrant
 	}
 	return nil
+}
+
+// AllowsTx answers like Allows: this fixture has no rows to hold.
+func (g *grants) AllowsTx(ctx context.Context, _ pgx.Tx, q casfetch.GrantQuery) error {
+	return g.Allows(ctx, q)
 }
 
 func (g *grants) set(v bool) { g.mu.Lock(); g.allow = v; g.mu.Unlock() }

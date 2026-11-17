@@ -1,5 +1,5 @@
 {
-  "description": "What this release sends for the same local aa:Share payload (federation.WireMembers), and what a v0.11.1 receiver needs from it.",
+  "description": "What this release sends to a v0.11.1 peer for the same local aa:Share payload: nothing. Since #1571 aa:Share and aa:Unshare are sent only to a peer whose stored intersection holds share-lifecycle-1, which no v0.11.1 peer negotiates; the delivery worker refuses with profile_not_negotiated and the resolver skips that recipient before a row is queued.",
   "activity_type": "aa:Share",
   "object_kind": "post",
   "local_payload": {
@@ -14,13 +14,7 @@
     "notes": "operator-only note",
     "notes_private": true
   },
-  "wire_members": {
-    "object_kind": "post",
-    "target_peer": "https://studio-b.example",
-    "target_user": "https://studio-b.example/users/bob",
-    "scope": "view",
-    "expires_at": "2026-12-31T23:59:59Z"
-  },
+  "sent": false,
   "v0_11_1_receiver": {
     "reads": [],
     "applies": false

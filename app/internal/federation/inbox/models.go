@@ -519,6 +519,45 @@ type FederationDispatchState struct {
 	UpdatedAt                pgtype.Timestamptz
 }
 
+// Grants a paired peer gave this instance (#1571), one row per applied aa:Share under share-lifecycle-1. Live or ended; ordered only by the signed aa:supersedes / aa:revokes references. Tuple (peer, grantor, object, recipient) has at most one live grant. Read on every authorisation (no positive cache), with expiry by this database clock and the peer enabled and connected. Ending a grant stops new access; it recalls nothing already delivered.
+type FederationInboundGrant struct {
+	ID               pgtype.UUID
+	PeerID           pgtype.UUID
+	GrantActivityUri string
+	GrantorActorUri  string
+	ObjectKind       string
+	ObjectUri        string
+	TargetUserUri    *string
+	// The local user the grant is for, bound once at apply time from target_user_uri to the immutable user ref. NULL with target_user_uri NULL: any local user (peer-wide). NULL with target_user_uri set: the name did not resolve, so the grant is ended (recipient_unbound) and never activates.
+	RecipientUserRef      *int64
+	Scope                 string
+	AllowOriginal         bool
+	ExpiresAt             pgtype.Timestamptz
+	SupersedesActivityUri *string
+	State                 string
+	EndReason             *string
+	EndedByActivityUri    *string
+	ReceivedAt            pgtype.Timestamptz
+	EndedAt               pgtype.Timestamptz
+}
+
+// Origin assets a peer's container (collection) holds, as that peer announced them (#1571 schema; written only by authenticated membership ingest, #1574). Empty until then: a container grant authorises a file only through a recorded membership.
+type FederationInboundMembership struct {
+	PeerID       pgtype.UUID
+	ContainerUri string
+	MemberUri    string
+	RecordedAt   pgtype.Timestamptz
+}
+
+// An aa:Share a peer revoked (aa:revokes) or superseded (aa:supersedes) before it arrived here (#1571). The grant is stored ended when it arrives, so a reordered delivery never grants.
+type FederationInboundTombstone struct {
+	PeerID           pgtype.UUID
+	GrantActivityUri string
+	Kind             string
+	ByActivityUri    string
+	ReceivedAt       pgtype.Timestamptz
+}
+
 // One row per inbound federation activity. Pipeline ingest persists status=pending; background worker transitions to processed/rejected/failed per §2.2 of the 1.22.D design proposal. activity_uri UNIQUE is the load-bearing replay guard.
 type FederationInbox struct {
 	ID                    pgtype.UUID

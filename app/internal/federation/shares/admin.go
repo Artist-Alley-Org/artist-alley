@@ -377,25 +377,33 @@ func (h *AdminHandler) insertGrant(
 	// invalidate the per-object cache so the next CanPeerAccess
 	// sees the fresh state.
 
-	// Build the emit envelope BEFORE the tx so we have the
-	// activity URI for the audit correlation.
 	shareID := uuid.New()
-	em := emit.Share(actor, emit.ShareRef{
-		ShareID:       shareID,
-		ObjectKind:    in.ObjectKind,
-		ObjectID:      in.ObjectID,
-		PeerURL:       peer.InstanceURL,
-		TargetUserURL: derefOrEmpty(in.TargetUserURL),
-		Scope:         in.Scope,
-		ExpiresAt:     expiresPtr,
-		Notes:         in.Notes,
-	})
-
 	tx, err := h.registry.Pool.Begin(ctx)
 	if err != nil {
 		return nil, false, err
 	}
 	defer tx.Rollback(ctx)
+
+	// #1571: the previous share of this grant tuple, if any, is the
+	// grant this one supersedes on the receiver (aa:supersedes). Read
+	// inside the grant transaction, after the caller settled the slot:
+	// at most one unrevoked row per tuple exists, and it is not this one.
+	supersedes, err := previousShareActivityURI(ctx, tx, in)
+	if err != nil {
+		return nil, false, fmt.Errorf("shares: grant: previous share: %w", err)
+	}
+	em := emit.Share(actor, emit.ShareRef{
+		ShareID:               shareID,
+		ObjectKind:            in.ObjectKind,
+		ObjectID:              in.ObjectID,
+		PeerURL:               peer.InstanceURL,
+		TargetUserURL:         derefOrEmpty(in.TargetUserURL),
+		Scope:                 in.Scope,
+		ExpiresAt:             expiresPtr,
+		Notes:                 in.Notes,
+		SupersedesActivityURI: supersedes,
+		AllowOriginal:         in.AllowOriginal,
+	})
 
 	// 1. Activity row → activity_id.
 	activityRow, err := h.activities.RecordActivity(ctx, tx, em.Activity)
@@ -464,6 +472,37 @@ func (h *AdminHandler) insertGrant(
 	return openapi.GrantFederationShare201JSONResponse(toShareAPI(saved)), false, nil
 }
 
+// previousShareActivityURI is the aa:Share activity URI of the most
+// recent share of in's grant tuple (grantor, object, peer, recipient,
+// the federation_shares_active_uniq_idx key), or "" when there is none.
+func previousShareActivityURI(ctx context.Context, tx pgx.Tx, in InsertInput) (string, error) {
+	var uri string
+	err := tx.QueryRow(ctx, `SELECT a.activity_uri
+		  FROM federation_shares s
+		  JOIN activities a ON a.id = s.granted_activity_id
+		 WHERE s.grantor_user_ref = $1 AND s.object_kind = $2 AND s.object_id = $3
+		   AND s.peer_id = $4 AND COALESCE(s.target_user_url, '') = $5
+		 ORDER BY s.granted_at DESC, s.id DESC
+		 LIMIT 1`,
+		in.GrantorUserRef, string(in.ObjectKind), in.ObjectID, in.PeerID, derefOrEmpty(in.TargetUserURL)).Scan(&uri)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return uri, err
+}
+
+// grantedActivityURI is the aa:Share activity URI a share row was
+// granted by: the grant an aa:Unshare of that row revokes (aa:revokes).
+func grantedActivityURI(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, share *Share) (string, error) {
+	var uri string
+	if err := q.QueryRow(ctx, `SELECT activity_uri FROM activities WHERE id = $1`, share.GrantedActivityID).Scan(&uri); err != nil {
+		return "", fmt.Errorf("granted activity of share %s: %w", share.ID, err)
+	}
+	return uri, nil
+}
+
 // derefOrEmpty unwraps a string pointer or returns "".
 func derefOrEmpty(s *string) string {
 	if s == nil {
@@ -523,6 +562,10 @@ func (h *AdminHandler) RevokeFederationShare(
 	if share.TargetUserURL != nil {
 		target = *share.TargetUserURL
 	}
+	revokes, err := grantedActivityURI(ctx, h.registry.Pool, share)
+	if err != nil {
+		return nil, fmt.Errorf("shares: revoke: %w", err)
+	}
 	em := emit.Unshare(actor, emit.ShareRef{
 		ShareID:       share.ID,
 		ObjectKind:    share.ObjectKind,
@@ -531,7 +574,7 @@ func (h *AdminHandler) RevokeFederationShare(
 		TargetUserURL: target,
 		Scope:         share.Scope,
 		Notes:         share.Notes,
-	}, "" /* TODO: lookup original aa:Share activity uri */)
+	}, revokes)
 
 	tx, err := h.registry.Pool.Begin(ctx)
 	if err != nil {
