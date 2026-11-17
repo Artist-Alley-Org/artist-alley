@@ -247,12 +247,14 @@ type EntityRef struct {
 	UpdatedAt      time.Time
 	PageCount      *int
 	FileExtension  string
-	// Width / Height are the source-image dimensions. Populated by
-	// the loader when the metadata pipeline has an image_width /
-	// image_height field value; zero otherwise (builder falls back
-	// to defaultCanvasWidth × defaultCanvasHeight). Required by
-	// IIIF Presentation 3.0 §5.7 — Mirador's OpenSeadragon
-	// integration crashes without them.
+	// Width / Height are the recorded pixel dimensions (#196): the
+	// computed pixel_width / pixel_height field values the preview
+	// pipeline writes (asset/pixeldims.Record), i.e. the EXIF-rotated
+	// image the Image API serves, not raw EXIF. Set by Loader.LoadAsset
+	// only as a valid pair; zero otherwise, and the builder falls back
+	// to defaultCanvasWidth × defaultCanvasHeight. IIIF Presentation
+	// 3.0 §5.7 requires a canvas size; Mirador's OpenSeadragon
+	// integration crashes without one.
 	Width     int
 	Height    int
 	Latitude  *float64

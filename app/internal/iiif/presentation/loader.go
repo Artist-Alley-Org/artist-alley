@@ -7,12 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -95,6 +97,15 @@ func (l *Loader) LoadAsset(ctx context.Context, id uuid.UUID, caller visibility.
 	}
 	if fileExt != nil {
 		ref.FileExtension = *fileExt
+	}
+
+	// Real canvas dimensions (#196), read only now that the predicate
+	// above has admitted the row, so they can never reveal a hidden
+	// asset. Fail-soft like GPS: a missing, half-present, malformed or
+	// unreadable pair leaves Width/Height zero and the builder keeps its
+	// placeholder canvas rather than failing the manifest.
+	if w, h, ok, derr := l.loadPixelDims(ctx, id); derr == nil && ok {
+		ref.Width, ref.Height = w, h
 	}
 
 	// GPS from the canonical field-value system (per pre-audit
@@ -335,6 +346,60 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 		out = append(out, ref)
 	}
 	return out, rows.Err()
+}
+
+// maxCanvasDimension caps a recorded pixel dimension before it becomes a
+// canvas size. value_num is a generic DOUBLE PRECISION slot, so a
+// malformed row could hold 1e300, NaN or Infinity; casting that to an
+// INT in SQL errors (and would fail the whole manifest), and passing it
+// through would hand viewers an absurd canvas. One million pixels on a
+// side is far beyond any image the preview pipeline decodes and far
+// below int32 overflow.
+const maxCanvasDimension = 1_000_000
+
+// loadPixelDims reads the asset's recorded pixel_width / pixel_height
+// (#196). These are COMPUTED values, written only by the preview
+// pipeline (asset/pixeldims.Record, set_by='computed'; migration 00020
+// removed every extraction route): the shape of the image the preview
+// ladder is built from, EXIF-rotated, which is the image the Image API
+// serves and the same pair IIIF info.json reports. They are not the raw
+// EXIF or stored-grid dimensions.
+//
+// The values are read as raw floats, not with pixeldims.SelectColumnsSQL's
+// `::INT` cast, so that a malformed value is rejected here (fallback
+// canvas) instead of erroring the query. ok is false unless BOTH are
+// present and pass canvasDims.
+func (l *Loader) loadPixelDims(ctx context.Context, assetID uuid.UUID) (w, h int, ok bool, err error) {
+	const one = `(SELECT afv.value_num FROM asset_field_value afv
+	                WHERE afv.asset_id = $1
+	                  AND afv.field_id = (SELECT id FROM field_definition WHERE code = %s LIMIT 1)
+	                LIMIT 1)`
+	var rawW, rawH *float64
+	err = l.Pool.QueryRow(ctx,
+		`SELECT `+fmt.Sprintf(one, "$2")+`, `+fmt.Sprintf(one, "$3"),
+		assetID, pixeldims.Width, pixeldims.Height,
+	).Scan(&rawW, &rawH)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	w, h, ok = canvasDims(rawW, rawH)
+	return w, h, ok, nil
+}
+
+// canvasDims turns a recorded (width, height) pair into canvas
+// dimensions, or ok=false. A pair or nothing, like pixeldims.Sane: each
+// side must be present, finite, a whole number and within
+// 1..maxCanvasDimension. A half-present or invalid pair is NOT
+// half-applied; the caller keeps the placeholder canvas.
+func canvasDims(w, h *float64) (int, int, bool) {
+	valid := func(v *float64) bool {
+		return v != nil && !math.IsNaN(*v) && !math.IsInf(*v, 0) &&
+			*v == math.Trunc(*v) && *v >= 1 && *v <= maxCanvasDimension
+	}
+	if !valid(w) || !valid(h) {
+		return 0, 0, false
+	}
+	return int(*w), int(*h), true
 }
 
 // loadGPS looks up the asset's gps_latitude + gps_longitude

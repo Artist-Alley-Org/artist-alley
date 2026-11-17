@@ -177,6 +177,25 @@ BEGIN
         )::TEXT
     );
 
+    -- #196: the asset's IIIF manifests (canvas size, navPlace, metadata
+    -- pairs) are built from these rows. Drop both cached variants.
+    PERFORM pg_notify(
+        'cache_invalidate',
+        json_build_object(
+            'domain', 'iiif.presentation',
+            'key',    'asset::' || target_asset::TEXT || '::anon',
+            'op',     'upsert'
+        )::TEXT
+    );
+    PERFORM pg_notify(
+        'cache_invalidate',
+        json_build_object(
+            'domain', 'iiif.presentation',
+            'key',    'asset::' || target_asset::TEXT || '::auth',
+            'op',     'upsert'
+        )::TEXT
+    );
+
     IF (TG_OP = 'DELETE') THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END;
 $$;
