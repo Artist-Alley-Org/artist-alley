@@ -3,7 +3,13 @@
 -- row + audit row commit atomically with this insert.
 -- granted_activity_id is the just-recorded aa:Share activity's
 -- UUID; the FK is RESTRICT so we can never lose the audit chain.
+--
+-- id is optional (#1586): the admin grant path mints the share id BEFORE
+-- the transaction, because the aa:Share envelope and the
+-- federation.share.granted audit both carry it, and it must be the id
+-- the row is stored under. NULL keeps the column default.
 INSERT INTO federation_shares (
+    id,
     grantor_user_ref,
     object_kind,
     object_id,
@@ -14,11 +20,45 @@ INSERT INTO federation_shares (
     notes,
     granted_activity_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+VALUES (
+    COALESCE(sqlc.narg(id)::UUID, gen_random_uuid()),
+    sqlc.arg(grantor_user_ref),
+    sqlc.arg(object_kind),
+    sqlc.arg(object_id),
+    sqlc.arg(peer_id),
+    sqlc.narg(target_user_url),
+    sqlc.arg(scope),
+    sqlc.narg(expires_at),
+    sqlc.arg(notes),
+    sqlc.arg(granted_activity_id)
+)
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
           revoked_activity_id, created_at, updated_at;
+
+-- name: GetUnrevokedShareForTuple :one
+-- #1586: the row that holds one grant tuple's slot in
+-- federation_shares_active_uniq_idx — (grantor, object_kind, object_id,
+-- peer, recipient-or-empty) WHERE revoked_at IS NULL — live
+-- OR expired-but-not-yet-revoked. The index admits at most one, so
+-- this is exactly the row a new grant for the tuple collides with.
+-- `expired` is evaluated against the database clock, the same clock
+-- ListExpiringShares and every expiry predicate use. Pass the empty
+-- string as target_key to mean "no specific recipient" (NULL), as
+-- the index does.
+SELECT id, grantor_user_ref, object_kind, object_id,
+       peer_id, target_user_url, scope, expires_at, notes,
+       granted_activity_id, granted_at, revoked_at,
+       revoked_activity_id, created_at, updated_at,
+       (expires_at IS NOT NULL AND expires_at <= NOW())::BOOLEAN AS expired
+FROM federation_shares
+WHERE grantor_user_ref = sqlc.arg(grantor_user_ref)
+  AND object_kind      = sqlc.arg(object_kind)
+  AND object_id        = sqlc.arg(object_id)
+  AND peer_id          = sqlc.arg(peer_id)
+  AND COALESCE(target_user_url, '') = sqlc.arg(target_key)::TEXT
+  AND revoked_at IS NULL;
 
 -- name: GetShareByID :one
 SELECT id, grantor_user_ref, object_kind, object_id,
@@ -37,6 +77,27 @@ SET revoked_at          = NOW(),
     revoked_activity_id = $2,
     updated_at          = NOW()
 WHERE id = $1 AND revoked_at IS NULL
+RETURNING id, grantor_user_ref, object_kind, object_id,
+          peer_id, target_user_url, scope, expires_at, notes,
+          granted_activity_id, granted_at, revoked_at,
+          revoked_activity_id, created_at, updated_at;
+
+-- name: RevokeExpiredShare :one
+-- #1586: RevokeShare, but only while the row is STILL expired. The
+-- expiry retirement (the sweeper and the regrant path) reads a row as
+-- expired and closes it in a later statement; nothing locks the row in
+-- between. If its expiry was extended in that window the row is live
+-- again, and this UPDATE matches nothing (pgx.ErrNoRows), so the caller
+-- rolls back its aa:Unshare and leaves the live grant untouched. Same
+-- shape and RETURNING as RevokeShare.
+UPDATE federation_shares
+SET revoked_at          = NOW(),
+    revoked_activity_id = $2,
+    updated_at          = NOW()
+WHERE id = $1
+  AND revoked_at IS NULL
+  AND expires_at IS NOT NULL
+  AND expires_at <= NOW()
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,

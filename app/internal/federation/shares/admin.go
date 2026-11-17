@@ -254,6 +254,90 @@ func (h *AdminHandler) GrantFederationShare(
 		BaseURL:  h.instanceURLFn(ctx),
 	}
 
+	// #1586: settle the grant tuple's unique slot first, then grant.
+	//
+	// federation_shares_active_uniq_idx holds (grantor, object, peer,
+	// recipient) for every row with revoked_at IS NULL, EXPIRED ones
+	// included, so an expired share used to block a regrant with 409
+	// until the hourly sweeper revoked it, and the 409 body came back
+	// zero-valued because the lookup behind it skipped expired rows.
+	//
+	//   - slot held by a LIVE share: 409 with exactly that row (same
+	//     grantor, object, peer and recipient: the row the index matched);
+	//   - slot held by an EXPIRED share: retire it the way the sweeper
+	//     does (a local aa:Unshare + revoked_at + federation.share.revoked
+	//     "expired", committed in its own tx, so the Unshare precedes the
+	//     new aa:Share in the activity ledger), then grant. The revoke is
+	//     conditional on the row still being expired; if it was closed or
+	//     its expiry extended meanwhile, re-read the slot instead;
+	//   - slot free: grant.
+	//
+	// A concurrent grant or the sweeper can change the slot between the
+	// read and the INSERT. The INSERT's unique violation sends us round
+	// again, where the slot now resolves to the winner's live row (409)
+	// or to free. Bounded: a slot that keeps changing is an error, never
+	// an empty 409.
+	retirer := expiryRetirer{
+		registry:      h.registry,
+		activities:    h.activities,
+		auditRec:      h.auditRec,
+		lookupPeer:    h.lookupPeer,
+		instanceURLFn: h.instanceURLFn,
+		usernameFn:    h.usernameFn,
+	}
+	const maxSlotAttempts = 3
+	for attempt := 1; ; attempt++ {
+		held, expired, err := h.registry.unrevokedForTuple(ctx, in)
+		switch {
+		case err == nil && !expired:
+			return openapi.GrantFederationShare409JSONResponse(toShareAPI(held)), nil
+		case err == nil && expired:
+			retired, err := retirer.retire(ctx, held,
+				"auto-revoked on expiry before a regrant",
+				map[string]any{"retired_by": "regrant"})
+			if err != nil {
+				return nil, fmt.Errorf("shares: grant: retire expired share %s: %w", held.ID, err)
+			}
+			if !retired {
+				// Someone else closed it, or its expiry was extended
+				// and it is live again: re-read the slot (a live row
+				// answers 409 with that row) instead of inserting.
+				if attempt >= maxSlotAttempts {
+					return nil, fmt.Errorf("shares: grant: the slot for this grant tuple changed on %d consecutive attempts", attempt)
+				}
+				continue
+			}
+		case errors.Is(err, ErrShareNotFound):
+			// Slot free.
+		default:
+			return nil, fmt.Errorf("shares: grant: read grant slot: %w", err)
+		}
+
+		resp, conflict, err := h.insertGrant(ctx, caller, in, peer, expiresPtr, actor)
+		if err != nil {
+			return nil, err
+		}
+		if !conflict {
+			return resp, nil
+		}
+		if attempt >= maxSlotAttempts {
+			return nil, fmt.Errorf("shares: grant: the slot for this grant tuple changed on %d consecutive attempts", attempt)
+		}
+	}
+}
+
+// insertGrant runs the write-ahead grant transaction. conflict=true
+// means the INSERT hit federation_shares_active_uniq_idx (another row
+// took the tuple's slot first); the transaction is rolled back and the
+// caller re-reads the slot.
+func (h *AdminHandler) insertGrant(
+	ctx context.Context,
+	caller *auth.Identity,
+	in InsertInput,
+	peer PeerInfo,
+	expiresPtr *time.Time,
+	actor emit.ActorContext,
+) (openapi.GrantFederationShareResponseObject, bool, error) {
 	// Direct-tx flow (NOT WithEmissionFn) because the share row's
 	// granted_activity_id FK requires the activity row's id to
 	// exist FIRST. Sequence per the design §7.2 write-ahead
@@ -285,19 +369,22 @@ func (h *AdminHandler) GrantFederationShare(
 
 	tx, err := h.registry.Pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer tx.Rollback(ctx)
 
 	// 1. Activity row → activity_id.
 	activityRow, err := h.activities.RecordActivity(ctx, tx, em.Activity)
 	if err != nil {
-		return nil, fmt.Errorf("shares: grant: emit aa:Share: %w", err)
+		return nil, false, fmt.Errorf("shares: grant: emit aa:Share: %w", err)
 	}
 	activityID := activityRow.ID
 
 	// 2. Share row with the real activity_id.
 	shareRow, err := New(tx).InsertShare(ctx, InsertShareParams{
+		// The id the envelope and the audit already carry (#1586);
+		// before, the row got a different, database-generated id.
+		ID:                pgtype.UUID{Bytes: shareID, Valid: true},
 		GrantorUserRef:    in.GrantorUserRef,
 		ObjectKind:        string(in.ObjectKind),
 		ObjectID:          pgtype.UUID{Bytes: in.ObjectID, Valid: true},
@@ -310,16 +397,14 @@ func (h *AdminHandler) GrantFederationShare(
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			// Roll back the tx (defer handles it), then look up
-			// the existing share + return 409.
+			// Lost the slot to a concurrent grant (or a row that
+			// expired after the slot was read): roll back and let the
+			// caller re-read the slot, which answers with the exact
+			// row or retries. Never a 409 without a row (#1586).
 			_ = tx.Rollback(ctx)
-			existing := h.findActiveDuplicate(ctx, in)
-			if existing != nil {
-				return openapi.GrantFederationShare409JSONResponse(toShareAPI(existing)), nil
-			}
-			return openapi.GrantFederationShare409JSONResponse{}, nil
+			return nil, true, nil
 		}
-		return nil, fmt.Errorf("shares: grant: insert: %w", err)
+		return nil, false, fmt.Errorf("shares: grant: insert: %w", err)
 	}
 
 	// 3. Audit event (federation.share.granted) — same tx, so
@@ -343,14 +428,14 @@ func (h *AdminHandler) GrantFederationShare(
 	h.auditRec.WriteInTx(ctx, audit.New(tx), audit.EventFederationShareGranted, nil, &actorRef, auditMeta)
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	saved := rowToShare(shareRow)
 	// Cache invalidation post-commit so the next CanPeerAccess
 	// sees the fresh state immediately (cross-process via
 	// cache.Registry NOTIFY).
 	h.registry.invalidateObject(ctx, saved.ObjectKind, saved.ObjectID)
-	return openapi.GrantFederationShare201JSONResponse(toShareAPI(saved)), nil
+	return openapi.GrantFederationShare201JSONResponse(toShareAPI(saved)), false, nil
 }
 
 // derefOrEmpty unwraps a string pointer or returns "".
@@ -359,22 +444,6 @@ func derefOrEmpty(s *string) string {
 		return ""
 	}
 	return *s
-}
-
-// findActiveDuplicate looks up the active share that caused a
-// UNIQUE violation. Used to surface the existing share to the
-// caller via 409. Best-effort — failing the lookup just means
-// we surface a generic 409 without the row body.
-func (h *AdminHandler) findActiveDuplicate(ctx context.Context, in InsertInput) *Share {
-	target := ""
-	if in.TargetUserURL != nil {
-		target = *in.TargetUserURL
-	}
-	existing, err := h.registry.FindActive(ctx, in.ObjectKind, in.ObjectID, in.PeerID, target)
-	if err != nil {
-		return nil
-	}
-	return existing
 }
 
 // --- DELETE /admin/federation/shares/{id} (revoke) ----------------------

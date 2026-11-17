@@ -3,8 +3,11 @@
 
 // Expiry sweeper job — Phase 1.22.C-d, locked in per reviewer's
 // answer §12.5 #4 (NOT optional). Periodic background goroutine
-// that finds active shares whose expires_at has passed + emits
-// aa:Unshare so recipients purge their cached bytes.
+// that finds active shares whose expires_at has passed, revokes them
+// and records an aa:Unshare, meant to make recipients purge their cached
+// bytes. Delivering that aa:Unshare and applying it on the peer is not
+// wired yet (#1571): the outbox routes only to live shares, so it has no
+// recipient once the share is revoked, and no receiver applies it.
 //
 // # Why the sweeper is load-bearing
 //
@@ -15,10 +18,13 @@
 // aa:Unshare emission, the recipient could indefinitely hold
 // bytes they no longer have access to.
 //
-// The sweeper closes this gap: per tick, walk expired-active
-// rows, revoke each (which fires aa:Unshare via the existing
-// write-ahead-audit flow), so the receiver's inbox handler
-// drops the cached asset.
+// The sweeper is meant to close this gap: per tick, walk expired-active
+// rows and revoke each (recording aa:Unshare via the existing
+// write-ahead-audit flow) so the receiver's inbox handler can drop the
+// cached asset. The local half (revoke + activity + audit) works; the
+// remote half waits on #1571. The revoke is conditional on the row still
+// being expired (RevokeExpiredShare), so a share whose expiry was
+// extended after the listing is left alone.
 //
 // # Idempotency + restart safety
 //
@@ -42,16 +48,11 @@ package shares
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/mscrnt/artist-alley/app/internal/activities"
-	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 )
@@ -215,93 +216,23 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (int, []error) {
 	return revoked, errs
 }
 
-// sweepOne revokes one expired share. Mirrors the admin Revoke
-// path's tx flow (RecordActivity → flip revoked → audit), so the
-// write-ahead invariant holds for sweeper-revoked rows just like
-// admin-revoked ones.
+// sweepOne revokes one expired share. The flow (RecordActivity
+// aa:Unshare -> flip revoked -> audit "expired", one tx, then cache
+// invalidation) lives in expiryRetirer.retire, shared with the grant
+// path so a regrant closes an expired row exactly the way this does
+// (#1586). A row another sweeper, admin revoke or regrant already
+// closed comes back retired=false and is skipped without a duplicate
+// activity.
 func (s *Sweeper) sweepOne(ctx context.Context, share *Share) error {
-	// Peer lookup — needed for the aa:Unshare envelope addressing.
-	// If the peer was defederated between the sweeper's list +
-	// this row, the lookup fails and we skip — there's no
-	// recipient left to notify; the share's revoked_at flip is
-	// what matters.
-	peer, peerErr := s.lookupPeer(ctx, share.PeerID)
-
-	// Build the actor context as the grantor. The sweeper acts
-	// AS the grantor even though no human clicked revoke — the
-	// activity's actor_user_ref is the grantor's, so audit
-	// chains stay clean.
-	actor := emit.ActorContext{
-		UserRef:  share.GrantorUserRef,
-		Username: s.usernameFn(ctx, share.GrantorUserRef),
-		BaseURL:  s.instanceURLFn(ctx),
-	}
-	targetURL := ""
-	if share.TargetUserURL != nil {
-		targetURL = *share.TargetUserURL
-	}
-	em := emit.Unshare(actor, emit.ShareRef{
-		ShareID:       share.ID,
-		ObjectKind:    share.ObjectKind,
-		ObjectID:      share.ObjectID,
-		PeerURL:       peer.InstanceURL, // empty if lookup failed; downstream tolerates
-		TargetUserURL: targetURL,
-		Scope:         share.Scope,
-		Notes:         "auto-revoked by expiry sweeper",
-	}, "" /* original aa:Share activity URI; reserved for future correlation */)
-
-	tx, err := s.registry.Pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	activityRow, err := s.activities.RecordActivity(ctx, tx, em.Activity)
-	if err != nil {
-		return err
-	}
-	res, err := New(tx).RevokeShare(ctx, RevokeShareParams{
-		ID:                pgtype.UUID{Bytes: share.ID, Valid: true},
-		RevokedActivityID: pgtype.UUID{Bytes: activityRow.ID, Valid: true},
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// Race: another sweeper / admin revoke fired between
-			// the list + here. The OTHER path's tx already
-			// committed the audit + activity; we MUST NOT also
-			// commit OUR activity (it'd be a duplicate). Roll
-			// back and skip.
-			_ = tx.Rollback(ctx)
-			return nil
-		}
-		return err
-	}
-	_ = res
-
-	// Audit — same tx as the share flip + activity insert per
-	// the design §7.2 write-ahead invariant. Reason is
-	// "expired" so the admin UI can distinguish from admin-
-	// triggered revocations.
-	actorRef := share.GrantorUserRef
-	meta := map[string]any{
-		"share_id":       share.ID.String(),
-		"object_kind":    string(share.ObjectKind),
-		"object_id":      share.ObjectID.String(),
-		"peer_id":        share.PeerID.String(),
-		"reason":         "expired",
-		"correlation_id": activityRow.ID.String(),
-		"sweeper":        true,
-	}
-	if peerErr != nil {
-		meta["peer_lookup_error"] = peerErr.Error()
-	}
-	s.auditRec.WriteInTx(ctx, audit.New(tx), audit.EventFederationShareRevoked, nil, &actorRef, meta)
-
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	s.registry.invalidateObject(ctx, share.ObjectKind, share.ObjectID)
-	return nil
+	_, err := expiryRetirer{
+		registry:      s.registry,
+		activities:    s.activities,
+		auditRec:      s.auditRec,
+		lookupPeer:    s.lookupPeer,
+		instanceURLFn: s.instanceURLFn,
+		usernameFn:    s.usernameFn,
+	}.retire(ctx, share, "auto-revoked by expiry sweeper", map[string]any{"sweeper": true})
+	return err
 }
 
 // keep federation import live for the catalogue reference in
