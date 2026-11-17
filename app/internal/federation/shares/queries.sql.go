@@ -192,8 +192,90 @@ func (q *Queries) GetShareCountsByPeer(ctx context.Context, peerID pgtype.UUID) 
 	return items, nil
 }
 
+const getUnrevokedShareForTuple = `-- name: GetUnrevokedShareForTuple :one
+SELECT id, grantor_user_ref, object_kind, object_id,
+       peer_id, target_user_url, scope, expires_at, notes,
+       granted_activity_id, granted_at, revoked_at,
+       revoked_activity_id, created_at, updated_at,
+       (expires_at IS NOT NULL AND expires_at <= NOW())::BOOLEAN AS expired
+FROM federation_shares
+WHERE grantor_user_ref = $1
+  AND object_kind      = $2
+  AND object_id        = $3
+  AND peer_id          = $4
+  AND COALESCE(target_user_url, '') = $5::TEXT
+  AND revoked_at IS NULL
+`
+
+type GetUnrevokedShareForTupleParams struct {
+	GrantorUserRef int64
+	ObjectKind     string
+	ObjectID       pgtype.UUID
+	PeerID         pgtype.UUID
+	TargetKey      string
+}
+
+type GetUnrevokedShareForTupleRow struct {
+	ID                pgtype.UUID
+	GrantorUserRef    int64
+	ObjectKind        string
+	ObjectID          pgtype.UUID
+	PeerID            pgtype.UUID
+	TargetUserUrl     *string
+	Scope             string
+	ExpiresAt         pgtype.Timestamptz
+	Notes             string
+	GrantedActivityID pgtype.UUID
+	GrantedAt         pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+	RevokedActivityID pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	Expired           bool
+}
+
+// #1586: the row that holds one grant tuple's slot in
+// federation_shares_active_uniq_idx — (grantor, object_kind, object_id,
+// peer, recipient-or-empty) WHERE revoked_at IS NULL — live
+// OR expired-but-not-yet-revoked. The index admits at most one, so
+// this is exactly the row a new grant for the tuple collides with.
+// `expired` is evaluated against the database clock, the same clock
+// ListExpiringShares and every expiry predicate use. Pass the empty
+// string as target_key to mean "no specific recipient" (NULL), as
+// the index does.
+func (q *Queries) GetUnrevokedShareForTuple(ctx context.Context, arg GetUnrevokedShareForTupleParams) (GetUnrevokedShareForTupleRow, error) {
+	row := q.db.QueryRow(ctx, getUnrevokedShareForTuple,
+		arg.GrantorUserRef,
+		arg.ObjectKind,
+		arg.ObjectID,
+		arg.PeerID,
+		arg.TargetKey,
+	)
+	var i GetUnrevokedShareForTupleRow
+	err := row.Scan(
+		&i.ID,
+		&i.GrantorUserRef,
+		&i.ObjectKind,
+		&i.ObjectID,
+		&i.PeerID,
+		&i.TargetUserUrl,
+		&i.Scope,
+		&i.ExpiresAt,
+		&i.Notes,
+		&i.GrantedActivityID,
+		&i.GrantedAt,
+		&i.RevokedAt,
+		&i.RevokedActivityID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Expired,
+	)
+	return i, err
+}
+
 const insertShare = `-- name: InsertShare :one
 INSERT INTO federation_shares (
+    id,
     grantor_user_ref,
     object_kind,
     object_id,
@@ -204,7 +286,18 @@ INSERT INTO federation_shares (
     notes,
     granted_activity_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+VALUES (
+    COALESCE($1::UUID, gen_random_uuid()),
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10
+)
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
@@ -212,6 +305,7 @@ RETURNING id, grantor_user_ref, object_kind, object_id,
 `
 
 type InsertShareParams struct {
+	ID                pgtype.UUID
 	GrantorUserRef    int64
 	ObjectKind        string
 	ObjectID          pgtype.UUID
@@ -227,8 +321,14 @@ type InsertShareParams struct {
 // row + audit row commit atomically with this insert.
 // granted_activity_id is the just-recorded aa:Share activity's
 // UUID; the FK is RESTRICT so we can never lose the audit chain.
+//
+// id is optional (#1586): the admin grant path mints the share id BEFORE
+// the transaction, because the aa:Share envelope and the
+// federation.share.granted audit both carry it, and it must be the id
+// the row is stored under. NULL keeps the column default.
 func (q *Queries) InsertShare(ctx context.Context, arg InsertShareParams) (FederationShare, error) {
 	row := q.db.QueryRow(ctx, insertShare,
+		arg.ID,
 		arg.GrantorUserRef,
 		arg.ObjectKind,
 		arg.ObjectID,
@@ -583,6 +683,56 @@ func (q *Queries) ListSharesByPeer(ctx context.Context, arg ListSharesByPeerPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const revokeExpiredShare = `-- name: RevokeExpiredShare :one
+UPDATE federation_shares
+SET revoked_at          = NOW(),
+    revoked_activity_id = $2,
+    updated_at          = NOW()
+WHERE id = $1
+  AND revoked_at IS NULL
+  AND expires_at IS NOT NULL
+  AND expires_at <= NOW()
+RETURNING id, grantor_user_ref, object_kind, object_id,
+          peer_id, target_user_url, scope, expires_at, notes,
+          granted_activity_id, granted_at, revoked_at,
+          revoked_activity_id, created_at, updated_at
+`
+
+type RevokeExpiredShareParams struct {
+	ID                pgtype.UUID
+	RevokedActivityID pgtype.UUID
+}
+
+// #1586: RevokeShare, but only while the row is STILL expired. The
+// expiry retirement (the sweeper and the regrant path) reads a row as
+// expired and closes it in a later statement; nothing locks the row in
+// between. If its expiry was extended in that window the row is live
+// again, and this UPDATE matches nothing (pgx.ErrNoRows), so the caller
+// rolls back its aa:Unshare and leaves the live grant untouched. Same
+// shape and RETURNING as RevokeShare.
+func (q *Queries) RevokeExpiredShare(ctx context.Context, arg RevokeExpiredShareParams) (FederationShare, error) {
+	row := q.db.QueryRow(ctx, revokeExpiredShare, arg.ID, arg.RevokedActivityID)
+	var i FederationShare
+	err := row.Scan(
+		&i.ID,
+		&i.GrantorUserRef,
+		&i.ObjectKind,
+		&i.ObjectID,
+		&i.PeerID,
+		&i.TargetUserUrl,
+		&i.Scope,
+		&i.ExpiresAt,
+		&i.Notes,
+		&i.GrantedActivityID,
+		&i.GrantedAt,
+		&i.RevokedAt,
+		&i.RevokedActivityID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const revokeShare = `-- name: RevokeShare :one

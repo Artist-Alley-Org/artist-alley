@@ -42,6 +42,18 @@ where applicable, otherwise note "no-spec-impact."
   next activity, and a revoked or expired share, or a disabled or disconnected peer, stops it,
   without restarting the instance. Before, a revoked peer kept receiving new activity until the
   next restart.
+- **A federation share can be granted again as soon as the old one expires (#1586).** An expired
+  share kept its slot until the hourly expiry sweep revoked it, so granting the same object to the
+  same peer and recipient again answered `409 Conflict` for up to an hour, with an empty share in
+  the response. The grant now closes the expired share first, exactly as the sweep would: it
+  revokes it locally and records an `aa:Unshare` and a `federation.share.revoked` audit entry
+  with reason `expired`. Telling the peer about that revocation is not wired yet (#1571). The grant
+  then creates the new share with its own `aa:Share` and audit entry; the old share stays in the
+  history, and a share whose expiry was extended in the meantime is left alone.
+  A `409` now always returns the live share that conflicts, and never another user's share for the
+  same object. Two grants at once produce one share and a `409` naming it. The `aa:Share` activity
+  and the `federation.share.granted` audit entry now carry the id the share is actually stored
+  under; before, they named an id no share had.
 
 ## [v0.11.1] - 2026-11-16 - Public CI datasets on GitHub-hosted runners
 
