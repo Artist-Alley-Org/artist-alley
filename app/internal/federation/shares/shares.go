@@ -72,6 +72,12 @@ var (
 	// remix: editing the original on its own instance is not a v1
 	// share scope.
 	ErrScopeEditReserved = errors.New(`shares: scope "edit" (editing the original on its own instance) is reserved and not available in protocol v1; "remix" grants reuse of the shared material on the recipient's instance and never modifies the original`)
+
+	// ErrOriginalKindInvalid is returned when allow_original is set on
+	// a share whose object kind reaches no stored bytes (#1573). Only
+	// asset shares and collection shares (whose member assets are each
+	// checked at fetch time) can carry the original-byte grant.
+	ErrOriginalKindInvalid = errors.New("shares: allow_original is only available on asset and collection shares")
 )
 
 // Share is the in-memory representation of one federation_shares
@@ -94,6 +100,11 @@ type Share struct {
 	RevokedActivityID *uuid.UUID
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
+
+	// AllowOriginal is the explicit, default-off grant to receive the
+	// original bytes (#1573). Independent of Scope: no scope implies
+	// it. See CanPeerFetchOriginal for everything else a fetch needs.
+	AllowOriginal bool
 }
 
 // Active reports whether the share is currently in effect:
@@ -125,6 +136,19 @@ type InsertInput struct {
 	ExpiresAt         *pgtype.Timestamptz // nil = no expiry
 	Notes             string
 	GrantedActivityID uuid.UUID
+	// AllowOriginal: the explicit original-byte grant (#1573). Default
+	// false. Only asset and collection shares may set it; the
+	// sensitivity cap is checked by the grant handler, which can
+	// resolve the object's tier.
+	AllowOriginal bool
+}
+
+// OriginalKindAllowed reports whether a share of this object kind can
+// carry the original-byte grant (#1573): only kinds that reach stored
+// bytes. Mirrored by the federation_shares_allow_original_kind_check
+// constraint (migration 00075).
+func OriginalKindAllowed(kind federation.ShareObjectKind) bool {
+	return kind == federation.ShareObjectKindAsset || kind == federation.ShareObjectKindCollection
 }
 
 // Validate checks the typed inputs against the closed
@@ -145,6 +169,9 @@ func (in InsertInput) Validate() error {
 	}
 	if !in.Scope.Valid() {
 		return ErrScopeInvalid
+	}
+	if in.AllowOriginal && !OriginalKindAllowed(in.ObjectKind) {
+		return ErrOriginalKindInvalid
 	}
 	return nil
 }
@@ -208,6 +235,7 @@ func (r *Registry) Insert(ctx context.Context, in InsertInput) (*Share, error) {
 		ExpiresAt:         expires,
 		Notes:             in.Notes,
 		GrantedActivityID: pgtype.UUID{Bytes: in.GrantedActivityID, Valid: true},
+		AllowOriginal:     in.AllowOriginal,
 	})
 	if err != nil {
 		return nil, err
@@ -410,6 +438,7 @@ func rowToShare(r FederationShare) *Share {
 		RevokedAt:         r.RevokedAt,
 		CreatedAt:         r.CreatedAt,
 		UpdatedAt:         r.UpdatedAt,
+		AllowOriginal:     r.AllowOriginal,
 	}
 	if r.RevokedActivityID.Valid {
 		id := uuid.UUID(r.RevokedActivityID.Bytes)

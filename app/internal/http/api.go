@@ -4063,6 +4063,10 @@ func (s *apiServer) RevokeFederationShare(ctx context.Context, req openapi.Revok
 	return s.sharesAdmin.RevokeFederationShare(ctx, req)
 }
 
+func (s *apiServer) GetFederationShareGrantContext(ctx context.Context, req openapi.GetFederationShareGrantContextRequestObject) (openapi.GetFederationShareGrantContextResponseObject, error) {
+	return s.sharesAdmin.GetFederationShareGrantContext(ctx, req)
+}
+
 // --- federation outbox + inbox admin (Phase 1.22.D-c) -------------------
 
 func (s *apiServer) ListFederationOutbox(ctx context.Context, req openapi.ListFederationOutboxRequestObject) (openapi.ListFederationOutboxResponseObject, error) {

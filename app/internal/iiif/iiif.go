@@ -90,6 +90,31 @@ type VariantSize struct {
 	Cover bool
 }
 
+// OriginalVariantKey is the storage key of an asset's stored original
+// (storage.VariantOriginal; equality pinned by a test). IIIF serves
+// derivatives only (#1573, spec v1 §7.5.7): original bytes need an
+// explicit grant and are never reachable through any IIIF size.
+//
+// The variant catalogue comes from operator configuration, and nothing
+// there reserves this key, so a preview variant configured under it
+// would otherwise be advertised and streamed as
+// Download(hash, "original"): the original itself. DerivativeVariants
+// drops it everywhere the catalogue is read.
+const OriginalVariantKey = "original"
+
+// DerivativeVariants returns the catalogue without any entry keyed as
+// the original. A fresh slice; the input is not modified.
+func DerivativeVariants(in []VariantSize) []VariantSize {
+	out := make([]VariantSize, 0, len(in))
+	for _, v := range in {
+		if v.Key == OriginalVariantKey {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
 // BuildInfo composes an Info from the asset's source pixel
 // dimensions + the list of pre-baked variants. Returns
 // ErrUnsupportedAsset when the source has no pixel info on file
@@ -103,6 +128,7 @@ func BuildInfo(id string, srcW, srcH int, variants []VariantSize) (Info, error) 
 	if srcW <= 0 || srcH <= 0 {
 		return Info{}, ErrUnsupportedAsset
 	}
+	variants = DerivativeVariants(variants)
 	sizes := make([]Size, 0, len(variants))
 	for _, v := range variants {
 		if v.Cover || v.MaxDim <= 0 {
@@ -249,6 +275,7 @@ type VariantMatch struct {
 //   - format   is currently "webp" only; "jpg"+"png" become valid
 //     once an on-the-fly transcoder lands.
 func Resolve(r ImageRequest, srcW, srcH int, variants []VariantSize) (VariantMatch, error) {
+	variants = DerivativeVariants(variants)
 	if r.Rotation != "0" {
 		return VariantMatch{}, ErrBadRequest
 	}

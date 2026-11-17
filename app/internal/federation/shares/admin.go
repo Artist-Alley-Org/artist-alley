@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -228,6 +229,8 @@ func (h *AdminHandler) GrantFederationShare(
 	if req.Body.Notes != nil {
 		notes = *req.Body.Notes
 	}
+	// #1573: the original-byte grant is explicit and off unless set.
+	allowOriginal := req.Body.AllowOriginal != nil && *req.Body.AllowOriginal
 
 	// Pre-validate via InsertInput.Validate() so the catalogue
 	// errors surface BEFORE we mint the activity URI.
@@ -240,11 +243,32 @@ func (h *AdminHandler) GrantFederationShare(
 		Scope:          scope,
 		ExpiresAt:      expiresPgtype,
 		Notes:          notes,
+		AllowOriginal:  allowOriginal,
 	}
 	if err := in.Validate(); err != nil {
 		return openapi.GrantFederationShare400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
+	}
+	// #1573: the sensitivity cap, at grant time. A collection's member
+	// assets are each checked when a file is requested
+	// (CanPeerFetchOriginal); an asset is checked here too, so the
+	// operator is told now rather than finding every fetch refused.
+	if allowOriginal && objectKind == federation.ShareObjectKindAsset {
+		row, err := New(h.registry.Pool).GetAssetGrantContext(ctx, pgtype.UUID{Bytes: objectID, Valid: true})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return openapi.GrantFederationShare404JSONResponse{Error: "asset not found"}, nil
+			}
+			return nil, fmt.Errorf("shares: grant: asset tier: %w", err)
+		}
+		if !OriginalTierAllowed(row.Sensitivity) {
+			return openapi.GrantFederationShare400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "sensitivity_refused: original files can only be shared for public and team assets; this asset is " + row.Sensitivity,
+				},
+			}, nil
+		}
 	}
 
 	// Build the actor context for the emit envelope.
@@ -394,6 +418,7 @@ func (h *AdminHandler) insertGrant(
 		ExpiresAt:         pgtype.Timestamptz{Time: timeOrZero(expiresPtr), Valid: expiresPtr != nil},
 		Notes:             in.Notes,
 		GrantedActivityID: pgtype.UUID{Bytes: activityID, Valid: true},
+		AllowOriginal:     in.AllowOriginal,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -417,6 +442,7 @@ func (h *AdminHandler) insertGrant(
 		"object_id":      in.ObjectID.String(),
 		"peer_id":        in.PeerID.String(),
 		"scope":          string(in.Scope),
+		"allow_original": in.AllowOriginal,
 		"correlation_id": activityID.String(),
 	}
 	if in.TargetUserURL != nil {
@@ -546,6 +572,107 @@ func (h *AdminHandler) RevokeFederationShare(
 	return openapi.RevokeFederationShare204Response{}, nil
 }
 
+// --- GET /admin/federation/shares/grant-context (#1573) -----------------
+
+// GetFederationShareGrantContext answers what the grant form shows
+// before a share is made: whether allow_original can be set on the
+// object and why not, and for an asset its title, tier and its local
+// copyright and credit fields. Same permission as granting. The two
+// fields are the owner's free text, passed through as typed: they are
+// not an ArchivePub rights URI or requiredStatement (spec v1 §17.2.5),
+// nothing is derived from them, and they grant or block nothing.
+func (h *AdminHandler) GetFederationShareGrantContext(
+	ctx context.Context,
+	req openapi.GetFederationShareGrantContextRequestObject,
+) (openapi.GetFederationShareGrantContextResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.GetFederationShareGrantContext401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	kind := federation.ShareObjectKind(req.Params.ObjectKind)
+	if !kind.Valid() || kind == federation.ShareObjectKindUser {
+		return openapi.GetFederationShareGrantContext400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: ErrObjectKindInvalid.Error()},
+		}, nil
+	}
+	objectID := uuid.UUID(req.Params.ObjectId)
+	if !caller.Can(capAdmin) {
+		ok, err := h.resolveOwner(ctx, kind, objectID, caller)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return openapi.GetFederationShareGrantContext403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the owner of this object (and not system.admin)"},
+			}, nil
+		}
+	}
+	out := openapi.FederationShareGrantContext{
+		ObjectKind: openapi.FederationShareGrantContextObjectKind(kind),
+		ObjectId:   objectID,
+	}
+	refuse := func(r openapi.FederationShareGrantContextOriginalRefusal) {
+		out.OriginalAllowed = false
+		out.OriginalRefusal = &r
+	}
+	switch kind {
+	case federation.ShareObjectKindAsset:
+		q := New(h.registry.Pool)
+		row, err := q.GetAssetGrantContext(ctx, pgtype.UUID{Bytes: objectID, Valid: true})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return openapi.GetFederationShareGrantContext404JSONResponse{
+					NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+				}, nil
+			}
+			return nil, fmt.Errorf("shares: grant context: asset: %w", err)
+		}
+		title := row.Title
+		out.Title = &title
+		tier := openapi.FederationShareGrantContextSensitivity(row.Sensitivity)
+		out.Sensitivity = &tier
+		if OriginalTierAllowed(row.Sensitivity) {
+			out.OriginalAllowed = true
+		} else {
+			refuse(openapi.FederationShareGrantContextOriginalRefusal("sensitivity_refused"))
+		}
+		fields, err := q.ListAssetRightsFields(ctx, pgtype.UUID{Bytes: objectID, Valid: true})
+		if err != nil {
+			return nil, fmt.Errorf("shares: grant context: rights fields: %w", err)
+		}
+		for _, f := range fields {
+			if f.ValueText == nil || (f.ReadCapability != "" && !caller.Can(f.ReadCapability)) {
+				continue
+			}
+			v := *f.ValueText
+			switch f.Code {
+			case "copyright":
+				out.CopyrightNotice = &v
+			case "credit":
+				out.Credit = &v
+			}
+		}
+	case federation.ShareObjectKindCollection, federation.ShareObjectKindPost:
+		if _, ok, err := ObjectOwnerRef(ctx, h.registry.Pool, kind, objectID); err != nil {
+			return nil, fmt.Errorf("shares: grant context: %s: %w", kind, err)
+		} else if !ok {
+			return openapi.GetFederationShareGrantContext404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: string(kind) + " not found"},
+			}, nil
+		}
+		if kind == federation.ShareObjectKindCollection {
+			out.OriginalAllowed = true
+		} else {
+			refuse(openapi.FederationShareGrantContextOriginalRefusal("kind_without_bytes"))
+		}
+	default:
+		refuse(openapi.FederationShareGrantContextOriginalRefusal("kind_without_bytes"))
+	}
+	return openapi.GetFederationShareGrantContext200JSONResponse(out), nil
+}
+
 // --- adapters -----------------------------------------------------------
 
 func toShareAPI(s *Share) openapi.FederationShare {
@@ -558,6 +685,7 @@ func toShareAPI(s *Share) openapi.FederationShare {
 		Scope:             openapi.FederationShareScope(s.Scope),
 		Notes:             s.Notes,
 		GrantedActivityId: uuid.UUID(s.GrantedActivityID),
+		AllowOriginal:     s.AllowOriginal,
 	}
 	if s.GrantedAt.Valid {
 		out.GrantedAt = s.GrantedAt.Time

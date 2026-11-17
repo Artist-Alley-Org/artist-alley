@@ -218,6 +218,58 @@ by direct registration are unchanged. An earlier release cannot pair
 by URL with a current one in either direction; both sides need this
 fix. The rest of this ADR is unchanged.
 
+## Amendment 2026-11-17 (#1573): original files need their own grant, and a hash is not a permission
+
+**What this ADR said.** The *Content-addressed federation* section has
+the receiver fetch `{origin}/assets/{hash}/bytes`, and *Consequences*
+asks the handler whether the peer holds a grant "to this hash". The
+*Opt-in sharing model* has the recipient of an `aa:Unshare` "purge any
+locally cached copies", and nothing separates what a share lets a peer
+do with an object from which of its files the peer may receive.
+
+**Decision.**
+
+- **A scope is not a file permission.** The scope ladder (`view` <
+  `comment` < `annotate` < `remix`) says what a peer may do with a
+  shared object. It never implies the original file, `remix` included.
+  Spec v1 §7.5.7 names three byte classes: preview, access derivative
+  and original.
+- **The original needs an explicit grant on the origin's row.**
+  `federation_shares.allow_original` (migration 00075) is off unless the
+  grantor sets it, only on asset and collection shares, and refused at
+  grant time for restricted and embargoed assets. Nothing on the wire
+  sets it; the origin's record is the only authority. The admin share
+  page now has a grant form that shows the asset's tier and its local
+  copyright notice and credit fields next to the toggle. Those are the
+  owner's free text, shown as context, not an ArchivePub `rights` URI or
+  `requiredStatement`; nothing is derived from them, and they grant
+  nothing.
+- **The origin decides each fetch from its own records**
+  (`shares.Registry.CanPeerFetchOriginal`): peer state, negotiated
+  profile, actor on the peer's origin, the asset's own hash and stored
+  size, this instance being the asset's origin, the tier, and a live
+  share with the grant whose grantor owns the asset now. Never by hash
+  alone, never by scope alone. Spec §8.5 is rewritten: the fetch names
+  the asset.
+- **Revocation does not recall.** Revoking or expiring a share stops new
+  access, including new original transfers. Files already delivered,
+  viewed or kept stay where they are; the "purges any locally cached
+  copies" wording above describes a hope, not a guarantee this protocol
+  can make.
+- **Derivatives wait for per-variant hashes.** No derivative transfer
+  between instances is defined until each variant has a verified hash
+  and the origin has an explicit list of derivative keys it may serve
+  (#1597). IIIF serves derivatives only; it now drops any variant keyed
+  as the original from its catalogue.
+
+**What is not live.** No file moves between instances yet. The signed
+per-asset fetch is #72; the receiver's record of a grant is #1571;
+ingest is #1574. The profile `original-transfer-1` is reserved (spec
+§16.5) and not advertised until those work end to end, so every fetch
+decision answers that the profile is not negotiated. `aa:Share` carries
+the same members as before; peers on an earlier release see no change.
+The rest of this ADR is unchanged.
+
 ## Amendment 2026-11-17 (#1580): each activity carries exactly its defined members
 
 **What this ADR said.** The *Serialization* decision rejects unknown

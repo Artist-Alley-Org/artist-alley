@@ -95,7 +95,9 @@ func servableVariant(stored []string, configured []VariantSize) bool {
 		have[k] = struct{}{}
 	}
 	for _, v := range configured {
-		if v.MaxDim <= 0 {
+		if v.MaxDim <= 0 || v.Key == OriginalVariantKey {
+			// The original is never an IIIF image (#1573), so a stored
+			// original makes nothing servable here.
 			continue
 		}
 		if _, ok := have[v.Key]; ok {

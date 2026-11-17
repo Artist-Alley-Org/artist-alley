@@ -91,6 +91,18 @@ const (
 // before both paths enforce it would repeat the #1526 false claim.
 const CapArchival1 PeerCapability = "archival-1"
 
+// CapOriginalTransfer1 is the original-transfer-1 profile token
+// (docs/spec/federation/v1.md §7.5.7 and §16; #1573). Holding it in the
+// stored negotiated intersection is a precondition of every
+// original-byte fetch decision (shares.CanPeerFetchOriginal). It is
+// RESERVED, NOT ADVERTISED: the per-asset signed fetch that enforces the
+// decision is #72, the receiving side's grant record is #1571 and ingest
+// is #1574. Until all three work end to end it stays out of
+// KnownCapabilities, so no handshake advertises it, no intersection
+// contains it, and every original-byte decision answers
+// profile_not_negotiated (TestCapOriginalTransfer1_NotAdvertised).
+const CapOriginalTransfer1 PeerCapability = "original-transfer-1"
+
 // KnownCapabilities is the closed set this reference implementation
 // recognises + dispatches on. Order is the order the handshake
 // envelope emits them; receivers see the same order, the

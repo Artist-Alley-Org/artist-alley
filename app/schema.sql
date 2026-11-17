@@ -2362,9 +2362,18 @@ CREATE TABLE public.federation_shares (
     revoked_activity_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    allow_original boolean DEFAULT false NOT NULL,
+    CONSTRAINT federation_shares_allow_original_kind_check CHECK (((NOT allow_original) OR (object_kind = ANY (ARRAY['asset'::text, 'collection'::text])))),
     CONSTRAINT federation_shares_object_kind_check CHECK ((object_kind = ANY (ARRAY['asset'::text, 'post'::text, 'collection'::text, 'workspace'::text, 'brand_kit'::text, 'user'::text]))),
     CONSTRAINT federation_shares_scope_check CHECK ((scope = ANY (ARRAY['view'::text, 'comment'::text, 'annotate'::text, 'remix'::text])))
 );
+
+
+--
+-- Name: COLUMN federation_shares.allow_original; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_shares.allow_original IS 'Explicit grant for the peer to receive the ORIGINAL bytes of the shared asset, or of each member asset of a shared collection (#1573). Independent of scope: no scope, remix included, implies it. Default false; only asset and collection shares may set it. Public and team assets only, checked at grant time and at every fetch decision; restricted, embargoed and unresolved tiers are refused even when this is true. Ends with the share (revoke, expiry). Does not recall bytes already delivered.';
 
 
 --
