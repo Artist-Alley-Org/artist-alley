@@ -85,6 +85,22 @@ if [ "${#AA_DB_NAME}" -gt 63 ]; then
     exit 2
 fi
 
+# The two dedicated databases of the two-instance federation gate
+# (internal/federation/twostack, #72): instance A and instance B each run
+# on their own, separately migrated database, never on $AA_DB_NAME, so
+# nothing the gate creates reaches the rest of the suite and the two
+# production servers share no table. The gate FAILS (never skips) when
+# either is missing, when they are equal, or when either is $AA_DB_NAME.
+export AA_DB_NAME_A="${AA_DB_NAME}_a"
+export AA_DB_NAME_B="${AA_DB_NAME}_b"
+for gate_db in "$AA_DB_NAME_A" "$AA_DB_NAME_B"; do
+    if [ "${#gate_db}" -gt 63 ]; then
+        echo "ERROR: test database name '${gate_db}' exceeds Postgres' 63-byte identifier limit." >&2
+        echo "       Shorten POSTGRES_DB in .env." >&2
+        exit 2
+    fi
+done
+
 # Whatever name we landed on, claim it for the duration of the run. If
 # a second run computes the same name — two invocations in one
 # checkout, two clones at different paths, a hand-set POSTGRES_DB — it
@@ -117,7 +133,9 @@ cleanup_test_db() {
     local rc=$?
     if [ "$OWN_TEST_DB" = "yes" ] && [ "${AA_TEST_KEEP_DB:-0}" != "1" ]; then
         docker compose exec -T postgres psql -U "$AA_DB_USER" -d postgres \
-            -c "DROP DATABASE IF EXISTS ${AA_DB_NAME} WITH (FORCE);" >/dev/null 2>&1 || true
+            -c "DROP DATABASE IF EXISTS ${AA_DB_NAME} WITH (FORCE);" \
+            -c "DROP DATABASE IF EXISTS ${AA_DB_NAME_A} WITH (FORCE);" \
+            -c "DROP DATABASE IF EXISTS ${AA_DB_NAME_B} WITH (FORCE);" >/dev/null 2>&1 || true
     fi
     return $rc
 }
@@ -194,10 +212,14 @@ NET=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end
 # is needed. In CI this just creates the test DB alongside the
 # app-migrated dev DB — CI's postgres is ephemeral, so it's a safe
 # superset that keeps CI green.
-step "Resetting isolated test database ($AA_DB_NAME)"
+step "Resetting isolated test databases ($AA_DB_NAME, $AA_DB_NAME_A, $AA_DB_NAME_B)"
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$AA_DB_USER" -d postgres \
     -c "DROP DATABASE IF EXISTS ${AA_DB_NAME} WITH (FORCE);" \
-    -c "CREATE DATABASE ${AA_DB_NAME};"
+    -c "CREATE DATABASE ${AA_DB_NAME};" \
+    -c "DROP DATABASE IF EXISTS ${AA_DB_NAME_A} WITH (FORCE);" \
+    -c "CREATE DATABASE ${AA_DB_NAME_A};" \
+    -c "DROP DATABASE IF EXISTS ${AA_DB_NAME_B} WITH (FORCE);" \
+    -c "CREATE DATABASE ${AA_DB_NAME_B};"
 
 # Migrate it with the app's own embedded goose migrations (via the
 # aa-migrate helper) so the test schema can never drift from what the
@@ -211,6 +233,18 @@ docker run --rm \
     -e GOFLAGS -e GOMAXPROCS \
     golang:1.26 \
     go run ./cmd/aa-migrate
+
+for gate_db in "$AA_DB_NAME_A" "$AA_DB_NAME_B"; do
+    step "Migrating two-instance gate database ($gate_db)"
+    docker run --rm \
+        --network "$NET" \
+        -v "${ROOT}/app:/src/app" \
+        -w /src/app \
+        -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME="$gate_db" -e AA_DB_USER -e AA_DB_PASSWORD \
+        -e GOFLAGS -e GOMAXPROCS \
+        golang:1.26 \
+        go run ./cmd/aa-migrate
+done
 
 # -p 1 serialises package execution: every test binary writes to the
 # same artist_alley DB, and parallel packages were racing on shared
@@ -306,7 +340,7 @@ if ! docker run --rm \
     -v "${ROOT}/web/src/lib/displayCondition.cases.json:/src/web/src/lib/displayCondition.cases.json:ro" \
     -v "${ROOT}/docs/spec/federation/v1.md:/src/docs/spec/federation/v1.md:ro" \
     -w /src/app \
-    -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
+    -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_NAME_A -e AA_DB_NAME_B -e AA_DB_USER -e AA_DB_PASSWORD \
     -e GOFLAGS -e GOMAXPROCS \
     "${s3_env[@]}" \
     golang:1.26 \

@@ -26,9 +26,9 @@
 //     from the per-object cache, so a revoke committed before the call
 //     is always seen.
 //
-// There is no byte endpoint yet. The per-asset signed fetch that will
-// call this (spec §8.5) is #72; until it ships and enforces this
-// decision, the original-transfer-1 profile stays unadvertised
+// The per-asset signed fetch (spec §8.5, federation/cas, #72) calls this
+// for every GET and HEAD. The original-transfer-1 profile stays
+// unadvertised until the receiving side (#1571, #1574) also works
 // (peer.CapOriginalTransfer1), so no peer can negotiate it and every
 // decision here answers profile_not_negotiated in production.
 //

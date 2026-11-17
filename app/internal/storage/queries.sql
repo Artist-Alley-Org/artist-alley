@@ -227,3 +227,55 @@ SELECT EXISTS (
 INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type, metadata)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (object_hash, variant_key) DO NOTHING;
+
+-- name: LockImportHashSharedSession :exec
+-- #72: the per-hash import lock, SHARED and SESSION-level, held by an
+-- importer on one connection from before its intent is recorded until
+-- its commit has finished (Put included). A crashed importer's session
+-- ends and the lock goes with it, so "lock held" means "import alive".
+SELECT pg_advisory_lock_shared(hashtextextended('storage-import:' || sqlc.arg(object_hash)::TEXT, 0));
+
+-- name: UnlockImportHashSharedSession :one
+SELECT pg_advisory_unlock_shared(hashtextextended('storage-import:' || sqlc.arg(object_hash)::TEXT, 0))::BOOLEAN AS value;
+
+-- name: TryLockImportHashExclusive :one
+-- #72: the reconciler's side, EXCLUSIVE, transaction-level, never
+-- waiting: false while any import of the hash is alive.
+SELECT pg_try_advisory_xact_lock(hashtextextended('storage-import:' || sqlc.arg(object_hash)::TEXT, 0))::BOOLEAN AS value;
+
+-- name: InsertImportIntent :exec
+-- #72: written before the backend Put of verified bytes.
+INSERT INTO storage_import_intents (lease_id, object_hash) VALUES ($1, $2);
+
+-- name: DeleteImportIntent :execrows
+-- #72: removed in the transaction that records object, variant and pin.
+-- Zero rows means the reconciler already treated the import as
+-- abandoned, and the caller must not record the object.
+DELETE FROM storage_import_intents WHERE lease_id = $1;
+
+-- name: ListStaleImportIntentHashes :many
+-- #72: hashes with at least one intent older than the cutoff.
+SELECT DISTINCT object_hash
+FROM storage_import_intents
+WHERE created_at < now() - sqlc.arg(stale_after)::INTERVAL
+ORDER BY object_hash
+LIMIT sqlc.arg(max_rows);
+
+-- name: DeleteImportIntentsForHash :execrows
+-- #72: every intent of a hash. Only called by the reconciler while it
+-- holds the exclusive import lock, when no import of the hash is alive.
+DELETE FROM storage_import_intents WHERE object_hash = sqlc.arg(object_hash);
+
+-- name: ObjectRowExists :one
+SELECT EXISTS (SELECT 1 FROM storage_objects WHERE hash = $1)::BOOLEAN AS value;
+
+-- name: ListStalePinsOfType :many
+-- #72: pins of one subject type older than the cutoff. Used to release
+-- federation_ingest pins that ingest (#1574) never converted into an
+-- asset pin.
+SELECT object_hash, pin_subject_id
+FROM storage_pins
+WHERE pin_subject_type = sqlc.arg(pin_subject_type)
+  AND created_at < now() - sqlc.arg(stale_after)::INTERVAL
+ORDER BY created_at
+LIMIT sqlc.arg(max_rows);

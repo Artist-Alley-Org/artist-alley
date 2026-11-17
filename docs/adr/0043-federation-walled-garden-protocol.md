@@ -218,6 +218,60 @@ by direct registration are unchanged. An earlier release cannot pair
 by URL with a current one in either direction; both sides need this
 fix. The rest of this ADR is unchanged.
 
+## Amendment 2026-11-17 (#72): original files move by a signed, per-asset fetch
+
+**What this ADR said.** *Content-addressed federation* resolves a
+`cas://` URI by checking local storage first and otherwise fetching
+`{origin}/assets/{hash}/bytes`; a local hit needs no transfer and so,
+implicitly, no permission.
+
+**Decision.**
+
+- **The origin endpoint is `GET` / `HEAD
+  /federation/assets/{asset_id}/files/original/{sha256}?size=N`** at the
+  root, beside the inbox, never the local `/assets/...` or
+  `/storage/objects` routes. The request is HTTP-signed by the peer's
+  instance key or one of its actors' keys, and the signature covers the
+  asset, class, hash and size. Every request is decided by the #1573
+  policy from the origin's own records; every asset-level refusal is the
+  same `403 not_available`, so the endpoint reveals no asset's
+  existence. `access` and `preview` are refused until #1597.
+- **Two authorities, on every use.** The receiver checks its own record
+  of grants it holds AND asks the origin with a signed `HEAD`, for the
+  same caller, before it fetches and before it reuses bytes it already
+  holds. A local hit is no longer a free pass: identical bytes grant
+  nothing.
+- **Safe receiving.** No redirects, connect / idle / overall deadlines,
+  fixity checked while streaming (at most `size + 1` bytes read), both
+  authorities checked again after the download, then a crash-safe
+  import: an intent row before the backend `Put`, and one transaction for
+  object, variant, an ingest pin (never an asset pin) and the lease
+  release, which re-checks the lease and the receiver's current peer
+  record. Both authorities are asked once more after the `Put` and
+  before that transaction (and after the verification read when bytes
+  already held are reused); the download and the import have separate
+  time budgets. #1571's database-backed inbound grant must be checked
+  inside the same recording transaction. A live import holds a per-hash session lock from before its
+  intent until its commit, however slow the `Put`; the reconciler only
+  takes that lock when no import of the hash is alive, and only then
+  removes bytes no row needs.
+- **One download per (peer, asset, hash, signer).** A database lease
+  across workers, kept alive from acquisition until the import commits
+  (a failed renewal records nothing), and an in-process claim within
+  one. Callers that waited do not inherit the result: each checks both
+  authorities, re-verifies the bytes and gets its own ingest pin.
+- **A real two-instance gate.** `internal/federation/twostack` runs two
+  production servers on two databases and two storage roots, paired by
+  the real handshake. The test scripts create the second database; the
+  gate fails, never skips, without it.
+
+**What is not live.** The receiver's inbound grant record is #1571;
+until it exists the production client refuses every fetch. Ingest
+(#1574) is what turns received bytes into a visible asset. The profile
+`original-transfer-1` stays unadvertised until both land, so no two
+production instances transfer files yet. The rest of this ADR is
+unchanged.
+
 ## Amendment 2026-11-17 (#1573): original files need their own grant, and a hash is not a permission
 
 **What this ADR said.** The *Content-addressed federation* section has

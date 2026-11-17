@@ -452,6 +452,18 @@ type FeaturedItem struct {
 	BandID pgtype.UUID
 }
 
+// One in-progress original-file download per (peer, origin asset, hash, signer) across all workers (#72). Never keyed by hash alone. Taken in a short transaction, renewed by heartbeat, released on commit or failure, taken over after expires_at.
+type FederationCasFetchLease struct {
+	PeerID     pgtype.UUID
+	AssetID    pgtype.UUID
+	ObjectHash string
+	Signer     string
+	LeaseID    pgtype.UUID
+	Owner      string
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
 type FederationDirectory struct {
 	ID                    pgtype.UUID
 	DirectoryUrl          string
@@ -1010,6 +1022,13 @@ type SiteText struct {
 	Value            string
 	UpdatedAt        pgtype.Timestamptz
 	UpdatedByUserRef *int64
+}
+
+// A verified import about to Put bytes to the backend (#72). Inserted before the Put, deleted in the transaction that records object, variant and pin. A stale intent is reconciled under the per-hash import lock: the bytes are deleted only when no storage_objects row and no live intent for the hash exist.
+type StorageImportIntent struct {
+	LeaseID    pgtype.UUID
+	ObjectHash string
+	CreatedAt  pgtype.Timestamptz
 }
 
 type StorageObject struct {

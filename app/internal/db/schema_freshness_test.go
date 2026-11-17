@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -133,20 +134,60 @@ func TestCheckSchemaFreshness_UnappliedMigrations(t *testing.T) {
 		t.Skip("no migrations applied; can't simulate unapplied case")
 	}
 
-	// Snapshot the row so we can restore it exactly.
-	var isApplied bool
-	if err := pool.QueryRow(ctx,
-		`SELECT is_applied FROM goose_db_version WHERE version_id = $1`, currentMax).Scan(&isApplied); err != nil {
+	// Snapshot EVERY ledger row of the head version (goose may hold more
+	// than one) so it can be restored exactly, id included.
+	//
+	// The ledger's only key is the identity column id: there is no
+	// unique constraint on version_id. An earlier restore used
+	// INSERT ... ON CONFLICT (version_id) DO NOTHING, which Postgres
+	// rejects ("no unique or exclusion constraint matching the ON
+	// CONFLICT specification"); the error was discarded, the head row
+	// stayed deleted, and the next package to run migrations re-applied
+	// the head migration onto tables that already existed (#1602, CI run
+	// 44168536008). The restore below inserts the exact rows, fails the
+	// test on any error, and re-reads the head.
+	type ledgerRow struct {
+		id        int64
+		isApplied bool
+		tstamp    time.Time
+	}
+	rows, err := pool.Query(ctx,
+		`SELECT id, is_applied, tstamp FROM goose_db_version WHERE version_id = $1 ORDER BY id`, currentMax)
+	if err != nil {
 		t.Fatalf("snapshot current: %v", err)
+	}
+	var snapshot []ledgerRow
+	for rows.Next() {
+		var r ledgerRow
+		if err := rows.Scan(&r.id, &r.isApplied, &r.tstamp); err != nil {
+			rows.Close()
+			t.Fatalf("snapshot current: %v", err)
+		}
+		snapshot = append(snapshot, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(snapshot) == 0 {
+		t.Fatalf("snapshot current: %d rows, %v", len(snapshot), err)
 	}
 	if _, err := pool.Exec(ctx,
 		`DELETE FROM goose_db_version WHERE version_id = $1`, currentMax); err != nil {
 		t.Fatalf("simulate unapplied: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(),
-			`INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, $2)
-			 ON CONFLICT (version_id) DO NOTHING`, currentMax, isApplied)
+		c := context.Background()
+		for _, r := range snapshot {
+			if _, err := pool.Exec(c,
+				`INSERT INTO goose_db_version (id, version_id, is_applied, tstamp) VALUES ($1, $2, $3, $4)`,
+				r.id, currentMax, r.isApplied, r.tstamp); err != nil {
+				t.Errorf("restore goose_db_version row id=%d version=%d: %v", r.id, currentMax, err)
+			}
+		}
+		var head int64
+		if err := pool.QueryRow(c, `SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version`).Scan(&head); err != nil {
+			t.Errorf("re-read ledger head after restore: %v", err)
+		} else if head != currentMax {
+			t.Errorf("ledger head after restore = %d, want %d: later migrations would re-run", head, currentMax)
+		}
 	})
 
 	got, err := CheckSchemaFreshness(ctx, pool)

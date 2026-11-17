@@ -28,6 +28,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/email"
 	"github.com/mscrnt/artist-alley/app/internal/email/digest"
+	"github.com/mscrnt/artist-alley/app/internal/federation/casfetch"
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/iiif"
@@ -785,6 +786,15 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.Get("/users/{username}", impl.actorDocument.ServeHTTP)
 	}
 
+	// #72 original-file transfer, ROOT GET and HEAD
+	// /federation/assets/{asset_id}/files/{class}/{sha256}?size=N,
+	// outside /api/v1 like the inbox: HTTP-signed by a paired peer
+	// (instance or actor key) and decided per request by the #1573
+	// policy. Never the local /assets/... or /storage/objects routes.
+	if impl != nil && impl.casHandler != nil {
+		impl.casHandler.Mount(r)
+	}
+
 	// Per-type concurrency caps (#278). Load the seeded
 	// `jobs.type_concurrency.<type>` rows so the Pool's gate actually
 	// enforces them; without this the caps silently no-op. Best-effort
@@ -884,6 +894,37 @@ func BuildStorageBackend(cfg config.Config) (storage.Backend, error) {
 	}
 }
 
+// Handler is the server's root HTTP handler, the router New built.
+// Exported for in-process harnesses that serve a production server
+// from their own listener (the #72 two-database gate).
+func (s *Server) Handler() http.Handler { return s.srv.Handler }
+
+// Close cancels the server's lifecycle context without running it. For
+// in-process harnesses that never call Run.
+func (s *Server) Close() {
+	if s.lifecycleCancel != nil {
+		s.lifecycleCancel()
+	}
+}
+
+// runCASReconciler resolves #72 import intents left by a crash,
+// releases ingest pins ingest never converted, drops expired fetch
+// leases and old temp files: at start, then every ten minutes.
+func runCASReconciler(ctx context.Context, c *casfetch.Client, logger *slog.Logger) {
+	t := time.NewTicker(10 * time.Minute)
+	defer t.Stop()
+	for {
+		if err := c.Reconcile(ctx, storage.DefaultImportStaleAfter, 24*time.Hour); err != nil && ctx.Err() == nil {
+			logger.LogAttrs(ctx, slog.LevelWarn, "federation.cas.reconcile.error", slog.String("err", err.Error()))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
 // Run starts the listener and blocks until ctx is cancelled or the
 // server itself errors. On cancellation it performs a graceful shutdown
 // bounded by 15 seconds.
@@ -916,6 +957,9 @@ func (s *Server) Run(ctx context.Context) error {
 	// Federation shares expiry sweeper (Phase 1.22.C-d). Periodic
 	// goroutine that emits aa:Unshare for expired-active shares
 	// so recipients purge cached bytes. Stop via ctx cancellation.
+	if s.api != nil && s.api.casFetch != nil {
+		go runCASReconciler(ctx, s.api.casFetch, s.logger)
+	}
 	if s.api != nil && s.api.sharesSweeper != nil {
 		go s.api.sharesSweeper.Run(ctx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "shares.sweeper.start")
