@@ -34,6 +34,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -651,28 +654,66 @@ func (r *Registry) listPendingInbound(ctx context.Context) ([]Peer, error) {
 // callers of the package don't see it.
 var nowUTC = func() time.Time { return time.Now().UTC() }
 
-// normalizeInstanceURL trims whitespace + rejects shapes the
-// rest of the federation stack doesn't accept (plain http, no
-// trailing slash, no path component beyond the root).
+// normalizeInstanceURL accepts an instance URL only as an https
+// origin, `https://host` or `https://host:port`, and returns it in
+// that form: surrounding whitespace and trailing slashes are dropped
+// (a convenience for pasted URLs), the host's case is kept.
 //
-// Note: the trailing-slash strip operates on the host portion
-// only — naively trimming "/" from the full string would eat
-// into the "https://" prefix for empty-host inputs (the bug the
-// peer_test "https://" case caught).
+// Everything else is ErrInstanceURLInvalid (#1592): plain http, a
+// path, userinfo, a query or a fragment (each would make
+// URL+HandshakePath address something other than the peer's
+// handshake endpoint), a port outside 1..65535 or not in canonical
+// decimal, an empty host, a malformed IPv6 literal or zone, and host
+// characters other than letters, digits, '-', '_' and '.'.
+//
+// Note: the trailing-slash strip applies to the path only; an empty
+// host stays invalid (the bug the peer_test "https://" case caught).
 func normalizeInstanceURL(in string) (string, error) {
 	s := strings.TrimSpace(in)
-	if !strings.HasPrefix(s, "https://") {
+	if !strings.HasPrefix(s, "https://") || strings.ContainsAny(s, "?#@\\") {
 		return "", ErrInstanceURLInvalid
 	}
-	rest := strings.TrimPrefix(s, "https://")
-	rest = strings.TrimRight(rest, "/")
-	if rest == "" {
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "https" || u.Opaque != "" || u.User != nil ||
+		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" ||
+		strings.Trim(u.Path, "/") != "" {
 		return "", ErrInstanceURLInvalid
 	}
-	if strings.Contains(rest, "/") {
+	host := u.Hostname()
+	if host == "" || strings.HasSuffix(u.Host, ":") {
 		return "", ErrInstanceURLInvalid
 	}
-	return "https://" + rest, nil
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != p {
+			return "", ErrInstanceURLInvalid
+		}
+	}
+	if strings.HasPrefix(u.Host, "[") {
+		if strings.Contains(host, "%") || net.ParseIP(host) == nil {
+			return "", ErrInstanceURLInvalid
+		}
+	} else if !validHostName(host) {
+		return "", ErrInstanceURLInvalid
+	}
+	return "https://" + u.Host, nil
+}
+
+// validHostName: dot-separated labels of letters, digits, '-' and '_'
+// (the last for container names in dev setups), none empty and none
+// starting or ending with '-'. Covers IPv4 literals.
+func validHostName(h string) bool {
+	for _, label := range strings.Split(h, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // validatePEMEd25519 confirms a PEM blob round-trips as an

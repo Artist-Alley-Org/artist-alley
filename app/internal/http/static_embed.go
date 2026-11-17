@@ -21,7 +21,6 @@ package http
 import (
 	"embed"
 	"io/fs"
-	"net/http"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -45,7 +44,5 @@ func mountStaticFrontend(r chi.Router) {
 		// nothing rather than crash the boot.
 		return
 	}
-	r.NotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		serveSPA(sub, w, req)
-	}))
+	mountSPAFallback(r, sub)
 }
