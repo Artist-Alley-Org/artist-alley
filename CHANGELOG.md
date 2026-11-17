@@ -9,6 +9,16 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **IIIF manifests report each image's real size (#196).** Every asset manifest gave its canvas a
+  fixed 1200x900, whatever the image was, while the same asset's `info.json` reported the true
+  size, so viewers such as Mirador squeezed a portrait photo into a landscape frame. The canvas
+  and its image now use the pixel dimensions the preview pipeline records (the same pair
+  `info.json` serves). An asset with no recorded size, or an unusable one, keeps the 1200x900
+  placeholder, and hidden assets still answer `404`. When a size (or any other field value) is
+  recorded or changed, each server's cached copy of that asset's manifest is invalidated once the
+  committed change's notification reaches it, so later uncached reads show the new size rather
+  than a canvas cached before the preview finished or before a re-render.
+
 - **Federation no longer acknowledges activities it does not apply (#1569).** The inbox applies
   only `Like` and comment `Create`, but it answered every other activity type (`Undo`, `Delete`,
   `Update`, `aa:Share`, `aa:Unshare`, `aa:AssetVersion` and the rest) with `202 Accepted` and

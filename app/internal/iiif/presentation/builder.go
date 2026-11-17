@@ -247,16 +247,15 @@ func (b *Builder) stubManifest(entity EntityRef) *Manifest {
 }
 
 // defaultCanvasWidth / defaultCanvasHeight are the placeholder
-// dimensions emitted when the loader hasn't populated real ones.
-// IIIF Presentation 3.0 §5.7 requires Canvas to carry BOTH width
-// and height (or a duration) for viewers to compute layout;
-// Mirador's OpenSeadragon integration crashes with a `null` deref
-// when either is missing. Real dimensions come from the extractor
-// pipeline (asset_field_value rows for image_width/image_height),
-// but the loader doesn't populate EntityRef.Width/Height yet —
-// that's a follow-up (tracked as part of the metadata / asset
-// dimensions read-through). Defaults are chosen to make the aspect
-// ratio close to landscape 4:3 which viewers handle gracefully.
+// dimensions emitted when the loader has no real ones. IIIF
+// Presentation 3.0 §5.7 requires Canvas to carry BOTH width and
+// height (or a duration) for viewers to compute layout; Mirador's
+// OpenSeadragon integration crashes with a `null` deref when either
+// is missing. Real dimensions are the computed pixel_width /
+// pixel_height field values (#196, see Loader.loadPixelDims); the
+// placeholder is used only when the asset has no valid recorded pair
+// (never previewed, preview predates #757, or a malformed value).
+// Landscape 4:3, which viewers handle gracefully.
 const (
 	defaultCanvasWidth  = 1200
 	defaultCanvasHeight = 900
