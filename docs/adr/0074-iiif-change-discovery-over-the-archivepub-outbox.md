@@ -183,6 +183,16 @@ Mirador against restricted holdings.
 - We carry a documented gap for authenticated third-party IIIF access, with
   `substitute` named as the intended mechanism if it is ever closed.
 
+## Amendment 2026-11-17: manifest links in the asset contract (#1513)
+
+The `archival-1` profile (spec §17.2.7) carries an asset's IIIF
+Presentation manifest URL as `iiifManifest`, on the asset's own origin,
+so a receiver can show a shared asset in an IIIF viewer without copying
+any bytes. The link is data: a receiver never fetches a manifest from
+another origin, and a fetch remains a read of the shared object, subject
+to the share. Change Discovery over the outbox, which this ADR decides,
+is still unbuilt.
+
 ## References
 
 - IIIF Change Discovery API 1.0 — `https://iiif.io/api/discovery/1.0/`

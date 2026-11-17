@@ -1,103 +1,40 @@
 # ArchivePub
 
-**Federated digital asset management protocol — v1.0**
+**Federated digital asset management protocol: overview of v1**
 
 | | |
 |---|---|
-| **Title** | ArchivePub — Federated Digital Asset Management Protocol |
-| **Status** | Final (v1.0 — stamped 2026-07-13; soak window closed 2026-06-22 clean) |
-| **Latest version** | This document |
-| **Normative contract** | [`docs/spec/federation/v1.md`](../spec/federation/v1.md). This document is the non-normative overview and design rationale; where they disagree, `v1.md` governs. |
-| **Reference implementation** | [Artist Alley](https://github.com/Artist-Alley-Org/artist-alley) — see [`app/internal/federation/`](../../app/internal/federation/) |
+| **Title** | ArchivePub: Federated Digital Asset Management Protocol |
+| **What this document is** | The non-normative overview and design rationale for protocol v1. |
+| **Normative contract** | [`docs/spec/federation/v1.md`](../spec/federation/v1.md). Where this overview and `v1.md` differ, `v1.md` governs, and its *Implementation status* section is the authority on what the reference implementation does today. |
+| **Latest revision** | v1.1, 2026-11-17 (see the change log) |
+| **Reference implementation** | [Artist Alley](https://github.com/Artist-Alley-Org/artist-alley), [`app/internal/federation/`](../../app/internal/federation/) |
 | **Editor** | The Artist Alley contributors |
-| **Related** | Vocabulary modelled on [ActivityPub](https://www.w3.org/TR/activitypub/) and Activity Streams 2.0; not ActivityPub-interoperable |
 
 ## Abstract
 
-ArchivePub is a federated protocol for sharing digital assets and their
-associated workflow state between independently-operated Digital Asset
-Management (DAM) instances. Built on the ActivityPub data model, it
-extends the activity + actor vocabulary with asset-shaped object types
-(assets, posts, collections, brand workspaces) and asset-shaped
-activity types (sharing with access controls, approval, annotation).
+ArchivePub lets independently operated digital asset management (DAM)
+instances share assets and their workflow with each other: studios
+reviewing each other's work, museums sharing condition reports, brand
+teams handing kits to partner agencies, archives lending collections
+without a central authority.
 
-Where ActivityPub solves federated social messaging, ArchivePub solves
-federated archival + creative collaboration: studios reviewing each
-other's work, museums sharing condition reports, brand teams
-distributing kits to partner agencies, archives loaning collections
-without centralising authority. Federation is walled-garden by default
-(peer-registered, not open-fediverse-discoverable), encrypted-by-policy,
-and access-controlled per object — but the data model is open and the
-protocol is implementable by anyone.
+Federation is a walled garden. Instances pair explicitly, every message
+is signed by its author and by the sending instance, restricted material
+is encrypted or not sent at all, and access is granted per object. In v1
+the protocol is **Artist Alley to Artist Alley**: the specification is
+open and an independent implementation is welcome, but v1 does not claim
+to interoperate with ActivityPub servers. Its vocabulary is modelled on
+ActivityStreams 2.0 so that a future translator stays possible.
 
 ## Status of this document
 
-This is an actively-maintained **draft**. The protocol surface tracks
-the reference implementation's federation arc (Phases 1.22.A–1.22.J in
-the Artist Alley roadmap). The document version `v0.x` will become
-`v1.0` when the federation arc completes its dogfood validation week
-(see [ADR 0049](../adr/0049-encrypted-federation-and-dogfood.md)).
-
-The document is at **v1.0** (final — stamped 2026-07-13 as a
-spec-only change after the 7-day soak window closed 2026-06-22
-clean; Appendix A conformance test vectors locked at rc1). The
-following items shipped during the v0.x window and are now
-stable:
-
-- The namespace prefix is **`aa:`** (finalised at v1.0-rc1; the
-  earlier "may change before v1.0" disclaimer is resolved).
-- The encryption envelope (NaCl-box, per-recipient, via the
-  `encryption` field — see [§ 4](#4-wire-format)) shipped
-  across Phases 1.22.I-e through I-i.
-- The capability-negotiation handshake shipped at Phase
-  1.22.I-d; the `supported_capabilities` field is part of every
-  v0.4+ offer / confirm envelope.
-
-Implementers SHOULD pin to a specific commit of this document
-and the reference implementation. v1.0 final shipped exactly as
-the rc1 plan specified: a no-code, spec-only stamp after the
-soak window closed clean.
-
-When v1.0 is published, this document will move to a dedicated
-home (provisional: `archivepub.org`) and a versioned change log
-will track breaking + non-breaking revisions per the standard
-major.minor.patch convention.
-
-## Current status and errata (2026-10-21)
-
-The normative contract is
-[`docs/spec/federation/v1.md`](../spec/federation/v1.md), including
-its *Implementation status* list of where the reference implementation
-does not yet conform (per-actor envelope signatures, unknown-field
-rejection, receiving handlers beyond `Like` and comment `Create`, the
-inbound share-grant check, CAS transfer). This document is kept as the
-overview and design rationale. These sections are known to disagree
-with the contract and are marked inline:
-
-- **§1.3, §2 (Envelope):** ArchivePub messages are plain JSON, not
-  JSON-LD. `@context` is the exact, opaque string
-  `https://artist-alley.org/protocol/v1`; no JSON-LD context is
-  published for it. ActivityPub implementations are not expected to
-  accept these envelopes, and Artist Alley does not interoperate with
-  ActivityPub servers.
-- **§3.1:** the namespace question is resolved: the prefix is `aa:`
-  (see *Status of this document*), and `@context` carries only the
-  version string.
-- **§4.1:** the example is a pre-v1 draft. The deployed envelope has
-  no `aa:Envelope` wrapper or nested `activity`; it uses `actor`,
-  `published`, and a top-level activity `type` (v1.md §3).
-- **§4.2:** the signature block fields are `type`, `publicKey`, and
-  `value` (v1.md §3, §5). The MUST below stands; the reference
-  implementation does not yet meet it.
-- **§4.3:** encryption shipped as the per-recipient `encryption`
-  block (v1.md §6.6; also this document's v0.5 change-log entry).
-- **§4.4:** the authoritative reject-reason list is v1.md §12.1.
-- **§5.2:** capability negotiation shipped as the
-  `supported_capabilities` array of capability tokens (ADR 0049,
-  Decision 3), not the object shown.
-- **§8 and Appendix A:** the MUSTs stand. The Appendix A scenarios run
-  the reference implementation against itself; they are application
-  scenarios, not evidence of independent interoperability.
+This overview describes protocol v1, whose normative text is
+[`v1.md`](../spec/federation/v1.md). It does not restate field-level
+rules; each section points to the part of `v1.md` that defines them.
+What is specified is not always implemented yet: `v1.md`'s
+*Implementation status* lists the open gaps and the parts that are
+specified but not yet built.
 
 ## Conventions
 
@@ -118,173 +55,126 @@ real-time conversations, and follower graphs.
 
 Digital Asset Management is a different problem. The objects are:
 - **Versioned** (an asset has revisions, metadata, derivatives, parents)
-- **Multi-format** (a single asset is an image + a 3D model + an audio
-  track + reference docs — each with their own viewer + metadata)
-- **Workflow-shaped** (assets move through draft → review → approved
-  → archived states with audit trails)
+- **Multi-format** (a single asset can be an image, a 3D model, an
+  audio track and reference documents, each with its own viewer and
+  metadata)
+- **Workflow-shaped** (assets move through draft, review, approved and
+  archived states with audit trails)
 - **Access-controlled per object** (not all collaborators see all
-  assets; brand kits + restricted content + NDA-bound material need
+  assets; brand kits, restricted content and NDA-bound material need
   per-tier visibility)
-- **Long-lived** (an asset's primary value accrues over decades, not
-  the hours typical of social posts)
+- **Long-lived** (an asset's value accrues over decades, not the hours
+  typical of social posts)
 
 No existing federated protocol fits this shape. Studios, museums,
 galleries, libraries, and archives that want to share work across
 institutional boundaries today have two options: a proprietary SaaS
-DAM that owns the storage (Bynder, Frame.io, AEM Assets) or
-filesystem rsync. Neither preserves the metadata + workflow + access
-controls that make the work meaningful.
-
-ArchivePub fills the gap.
+DAM that owns the storage, or filesystem copies. Neither preserves the
+metadata, workflow and access controls that make the work meaningful.
 
 ### 1.2 Non-goals
 
-ArchivePub explicitly does NOT:
-- **Replace ActivityPub for social messaging.** A Mastodon instance
-  is not an ArchivePub server. An ArchivePub server is not a Mastodon
-  instance. The shared data model lets them coexist on the same wire
-  if an implementation chooses, but neither implies the other.
-- **Define a global public namespace.** Federation is walled-garden:
-  peer-paired with explicit trust, not openly discoverable. Operators
-  who want public-fediverse interop layer that on separately (see
-  Issue [#108](https://github.com/Artist-Alley-Org/artist-alley/issues/108) on
-  the reference implementation roadmap).
-- **Specify storage.** ArchivePub describes wire format + activity
-  semantics, not how the underlying bytes are stored. Implementations
-  MAY use filesystem, S3-compatible object storage, IPFS, or anything
-  else.
-- **Define a viewer.** Per-format rendering (image, 3D, audio, PDF,
-  font, etc.) is an implementation concern.
-- **Mandate authentication mechanism.** Federation envelopes are
-  signed (per [§ 4.2](#42-signature)); how an actor proves their
-  identity at the server level (cookie, OAuth, mTLS) is local
-  implementation detail.
+ArchivePub does not:
+- **Replace ActivityPub for social messaging.** An ArchivePub server is
+  not a Mastodon instance, and v1 does not exchange messages with one.
+  Public-fediverse compatibility is a separate, later concern
+  ([#108](https://github.com/Artist-Alley-Org/artist-alley/issues/108)).
+- **Define a global public namespace.** Peers pair explicitly; nothing
+  is openly discoverable.
+- **Specify storage.** It describes the wire format and activity
+  semantics, not how bytes are stored.
+- **Act as a preservation system.** Virus scanning, format
+  identification, migration and storage stay local to each instance.
+  The archival profile (section 6) defines how their results travel.
+- **Define a viewer.** Rendering each format is an implementation
+  concern.
 
 ### 1.3 Relationship to ActivityPub
 
-> **Erratum (2026-10-21):** this section describes an early JSON-LD
-> design. See [Current status and errata](#current-status-and-errata-2026-10-21).
-
-ArchivePub uses ActivityPub's data model verbatim:
-- Activities are JSON-LD documents with `@context`, `type`, `actor`,
-  `object`.
-- Standard activity verbs (`Create`, `Update`, `Delete`, `Follow`,
-  `Accept`, `Reject`) carry their ActivityPub semantics.
-- Standard object types (`Note`, `Image`, `Person`, `Collection`)
-  remain valid; ArchivePub extends rather than redefines.
-
-ArchivePub adds:
-- A vocabulary extension namespace
-  ([§ 3.1](#31-namespace-and-vocabulary)) for DAM-shaped types
-- New activity verbs (`Share`, `Unshare`, `Approve`, `Annotation`)
-- New object types (`Asset`, `Post`, `Workspace`, `BrandKit`,
-  `Collection` with DAM semantics)
-- A signed envelope wrapper ([§ 4](#4-wire-format)) carrying
-  signature + (planned) encryption metadata
-- A walled-garden peer registry + trust model
-  ([§ 5](#5-federation-lifecycle))
-- A capability-negotiation handshake (planned for v1.0)
-- Object-level access control via the `Share` activity, distinct from
-  ActivityPub's follower-based addressing
-
-An implementation that speaks ArchivePub MUST be able to ignore
-ActivityPub-native activities directed at it (e.g. a `Follow` from a
-Mastodon instance) without erroring. Conversely, an ArchivePub
-envelope is structurally valid JSON-LD and parseable by any AP
-implementation, even if the unknown extension types are ignored.
+ArchivePub borrows ActivityPub's shape, not its wire format. Messages
+are plain JSON, not JSON-LD. `@context` is the exact, opaque string
+`https://artist-alley.org/protocol/v1`, compared as a string; no JSON-LD
+context is published for it (`v1.md` §3.1). Standard ActivityStreams
+verbs keep their meaning, and the `aa:` prefix names the DAM-specific
+types. Unknown fields are rejected rather than ignored (`v1.md` §3.2),
+which is what keeps independent implementations from drifting apart;
+the one sanctioned way to add fields is a negotiated profile
+(`v1.md` §16).
 
 ## 2. Terminology
 
 | Term | Definition |
 |---|---|
 | **Server** | An ArchivePub-implementing application instance. Holds local actors, objects, and a federation peer registry. |
-| **Actor** | A user, team, or workspace identity that can authoritatively emit activities. Reference impl maps Actor → `user` row. |
-| **Peer** | A remote ArchivePub server with which this server has established a pairing. Peers have a trust tier (see [§ 3.4](#34-trust-tiers)). |
-| **Walled-garden federation** | Federation where peer relationships are explicitly established (not openly discoverable). The default + only mode in v0.x. |
-| **Envelope** | The signed JSON-LD wrapper carrying one activity from one server to another. See [§ 4](#4-wire-format). |
-| **Share** | The verb (`aa:Share`) by which an actor grants access to a specific object to a specific peer or actor. See [§ 5.3](#53-sharing-model). |
+| **Actor** | A user identity that authors activities, identified by an actor URI (`v1.md` §8.3). |
+| **Peer** | A remote server this server has paired with. Peers have a trust tier (section 3.4). |
+| **Walled-garden federation** | Federation where peer relationships are explicitly established, not openly discoverable. The only mode in v1. |
+| **Envelope** | One signed JSON activity sent from one server to another (`v1.md` §3). |
+| **Share** | The `aa:Share` activity by which an actor grants a peer access to one object (section 5.3). |
+| **Profile** | An optional, frozen set of extra envelope members two peers agree on at pairing (`v1.md` §16). |
 | **Brand workspace** | A grouping of assets representing a brand's identity (logo, colour palette, type, voice). Federation-shareable as `aa:BrandKit`. |
-| **CAS** | Content-Addressed Storage — assets identified by content hash so two servers holding identical bytes can deduplicate at the storage layer. |
+| **CAS** | Content-addressed storage: bytes are identified by their SHA-256, so two servers holding identical bytes can deduplicate them. |
 
 ## 3. Data model
 
 ### 3.1 Namespace and vocabulary
 
-The reference implementation uses the prefix `aa:` for ArchivePub
-extensions, mapped to a placeholder URI. **The final prefix + URI for
-v1.0 is under review** ([§ Open questions](#open-questions)).
-
-Provisional candidates:
-- `arc:` mapped to `https://archivepub.org/ns#`
-- `apub:` mapped to `https://archivepub.org/ns#`
-
-Implementers SHOULD treat the namespace prefix as opaque + alias-able.
-Activities + objects MUST use the full URI in the `@context` block,
-not the prefix.
+The prefix for ArchivePub's own types is `aa:`. It is final. It is a
+naming convention inside the type strings; it does not refer to a
+JSON-LD namespace, and `@context` carries only the version string.
 
 ### 3.2 Activity types
 
-| Verb | Source | Semantics in ArchivePub |
-|---|---|---|
-| `Create` | AP-native | Used for `aa:Asset`, `aa:Post`, `aa:Collection`, `aa:Workspace`, `aa:BrandKit` creation. Carries the object payload inline. |
-| `Update` | AP-native | Replaces the object's fields with the updated payload. Partial updates are NOT supported; resend the full object. |
-| `Delete` | AP-native | Soft-deletes the object (server MAY retain bytes for CAS dedup). Sharing relationships SHOULD cascade-cancel. |
-| `Follow` | AP-native | Subscribe an actor to another actor's published activities. The `Accept` / `Reject` AP-native verbs are used in the standard handshake. |
-| `aa:Share` | ArchivePub | Grant a remote peer or actor access to a specific object. Carries a scope (`view` / `comment` / `annotate` / `remix`; normative list in v1 §7.5.1). No scope allows editing the original. See [§ 5.3](#53-sharing-model). |
-| `aa:Unshare` | ArchivePub | Revoke a previously-granted share. Causes the recipient's local cache to mark the object as gone + cascade-cancel any downstream shares the recipient may have re-shared (subject to the recipient's policy). |
-| `aa:Approve` | ArchivePub | Record a reviewer's approval of an object, with the reviewer + optional comment. A verdict only: it does not change the object or its workflow state. `aa:RequestChanges` and `aa:MarkReviewed` are the other two verdicts (v1 §7.5.3). |
-| `aa:WorkflowTransition` | ArchivePub | Move an object to another workflow state. This changes the original, so no v1 share allows a peer to send it for an object it does not hold (v1 §7.5.1, erratum E7); workflow changes stay with local users of the instance that holds the object. |
-| `aa:Annotation` | ArchivePub | Add a frame-anchored, time-anchored, or rect-anchored comment to an asset. Carries an anchor descriptor + body + optional drawing payload. |
+Standard ActivityStreams verbs: `Create`, `Update`, `Delete`, `Follow`,
+`Accept`, `Reject`, `Undo`, `Like`, `Announce`, `Block`, plus `Add` and
+`Remove` for collection membership.
 
-Future-reserved (not yet shipped):
-- `aa:Loan` — for physical archive mode (Phase 1.51 in the reference impl)
-- `aa:Provenance` — for chain-of-custody events
-- `aa:Lock` — for explicit exclusive-edit reservation
+ArchivePub's own types (`v1.md` §7.2):
+
+| Type | Purpose |
+|---|---|
+| `aa:Share` | Grant a peer (or one user on it) access to one object, with a scope (section 5.3). |
+| `aa:Unshare` | Revoke a share. |
+| `aa:RevokeShare` | Reserved for a future scope-narrowing revoke; recognised, and treated as `aa:Unshare`. |
+| `aa:Approve`, `aa:RequestChanges`, `aa:MarkReviewed` | Review verdicts. A verdict never changes the object or its workflow state. |
+| `aa:WorkflowTransition` | Move an object to another workflow state. It changes the original, so no v1 share allows a peer to send it. |
+| `aa:Annotation` | A region or time-range note on an asset; under the archival profile, a W3C Web Annotation on an IIIF canvas (section 6). |
+| `aa:AssetVersion` | A new version of an asset. |
+| `aa:Subscribe` | Ask to be included in a collection, workspace or feed; granted by `aa:Share`. |
+| `aa:Mention` | An explicit cross-instance mention. |
+| `aa:Provenance` | **Profile-gated** (archival profile): one PREMIS preservation event about an asset. Added in v1.1. |
+
+That is twelve `aa:` types: eleven in the base catalogue and
+`aa:Provenance`, which exists only between peers that negotiated the
+archival profile. Being in the catalogue means the parser recognises
+the type, not that a receiver applies it: a receiver refuses any type it
+does not apply with `unsupported_activity` (`v1.md` §7.6), and today
+the reference implementation applies only `Like` and comment `Create`.
 
 ### 3.3 Object types
 
 | Type | Semantics |
 |---|---|
-| `aa:Asset` | A versioned digital asset with metadata, file hash, sensitivity tier, owner. Extends `Object`. |
-| `aa:Post` | A multi-asset bundle with title + description + author + workflow state. Extends `Note`. |
-| `aa:Collection` | A named grouping of posts or assets with visibility tier (`private`, `org-only`, `followers`, `explicit-share`, `public`). `public` is local read visibility, not a peer audience: a public object reaches a peer only through a live explicit share, exactly like `explicit-share`, and is never broadcast to every paired peer. Extends `Collection` (AP-native). |
-| `aa:Workspace` | A studio-level grouping above collections — typically maps to a department or project. |
-| `aa:BrandKit` | A specialised workspace carrying brand identity (logo, colour, type, voice). First-class federation citizen. |
-| `aa:Annotation` | A frame/time/rect-anchored note attached to an asset. May also be the *object* of an `aa:Annotation` activity. |
-
-ArchivePub MAY use AP-native types (`Note`, `Image`, `Person`) where
-they carry no DAM-specific semantics; for example, the actor in a
-federation handshake is a standard `Person`.
+| `aa:Asset` | A digital asset record. Under the archival profile it carries a file set (each file by CAS hash, with checksums and a role) and an immutable version (section 6). |
+| `aa:Post` | A multi-asset bundle with title, description, author and workflow state. |
+| `aa:Collection` | A named grouping of posts or assets with a visibility tier (`private`, `org-only`, `followers`, `explicit-share`, `public`). `public` is local read visibility, not a peer audience: a public object reaches a peer only through a live explicit share. |
+| `aa:Workspace` | A studio-level grouping above collections, typically a department or project. |
+| `aa:BrandKit` | A workspace carrying a brand identity (logo, colour, type, voice). |
 
 ### 3.4 Trust tiers
 
-Peer relationships are scoped by trust tier:
-
-| Tier | Definition | Defaults |
-|---|---|---|
-| `connected` | Explicitly paired bilateral peer. Both sides accept activities. | Receives shared content per `aa:Share` grants; can re-share to its own peers only if the originating share permits. |
-| `directory-listed` | A peer listed in a (future) curated federation directory. Implies vetted but not bilateral. | Read-only access to public-tier content; cannot receive `aa:Share` grants. |
-| `auto-sync` | A peer with an automatic mirroring policy (planned, Phase 1.22.J). | Receives a subset of new objects per a configured policy; bypasses per-object `aa:Share`. |
-
-v0.x SHOULD implement `connected` only; the others are reserved.
+| Tier | Definition |
+|---|---|
+| `connected` | An explicitly paired, bilateral peer. The only tier implemented. |
+| `directory-listed` | Reserved: a peer listed in a future curated directory. |
+| `auto-sync` | Reserved: a peer with an automatic sharing policy ([#76](https://github.com/Artist-Alley-Org/artist-alley/issues/76)). |
 
 ### 3.5 Encryption policies
 
-Each peer relationship carries an encryption policy:
-
-| Policy | Behaviour |
-|---|---|
-| `plaintext` | Envelopes are signed but not encrypted. Suitable for trusted within-organisation peers. v0.x default. |
-| `e2e-encrypted` | Envelopes are signed + the content payload is NaCl-box encrypted to the recipient's published X25519 public key. Shipped in v0.5 (sender, 1.22.I-e) + v0.6 (receiver, 1.22.I-f). |
-
-A peer's encryption policy is announced during the pairing handshake.
-Senders MUST honour the recipient's declared policy.
-
-**v0.7 (1.22.I-g)** completes the encryption story end-to-end with the
-sender-refusal policy: from v0.7 forward, `policy: e2e-encrypted`
-becomes **enforceable** at the sender side. Pre-v0.7 senders silently
-degraded `restricted` shares to plaintext when the recipient couldn't
-decrypt; v0.7+ senders **refuse** to dispatch (see §3.6 + §5.3).
+Envelopes are always signed. A per-recipient NaCl-box `encryption`
+block replaces an envelope's type-specific fields when both sides can
+encrypt (`v1.md` §6.6), and is mandatory for restricted and embargoed
+material, as the next section shows.
 
 ### 3.6 Sensitivity tiers (per-asset)
 
@@ -322,388 +212,231 @@ together.
 
 ## 4. Wire format
 
-### 4.1 Envelope structure
+### 4.1 Envelope
 
-> **Erratum (2026-10-21):** historical pre-v1 draft; not the deployed
-> or normative shape. See v1.md §3.
+An envelope is one JSON object (`v1.md` §3): `@context`, `type`, `id`,
+`actor`, `published`, optional `to` and `cc`, an `object` URI when the
+type needs one, the type's own `aa:` fields, an optional `encryption`
+block, and a `signature`. Field order does not matter on the wire; the
+signature is computed over the RFC 8785 canonical form (`v1.md` §4).
 
-Every federation message is a signed JSON-LD envelope:
+Envelopes are delivered with an HTTP `POST`, signed with the sending
+instance's key (`v1.md` §10), to the receiving instance's
+`/federation/inbox`, or to `/federation/inbox/batch` with several
+envelopes at once (`v1.md` §10.4).
 
-```json
-{
-  "@context": ["https://www.w3.org/ns/activitystreams",
-               "https://archivepub.org/ns"],
-  "type": "aa:Envelope",
-  "id": "https://studio-a.example.org/envelopes/<uuid>",
-  "version": "0.1",
-  "from": "https://studio-a.example.org/users/alice",
-  "to": ["https://studio-b.example.org/users/bob"],
-  "created_at": "2026-06-09T12:34:56Z",
-  "activity": { /* the inner Activity, an AP-shaped Create/Update/Share/etc. */ },
-  "signature": {
-    "algorithm": "Ed25519",
-    "key_id": "https://studio-a.example.org/users/alice#main-key",
-    "value": "<base64 of Ed25519 signature over RFC-8785 canonical JSON of the envelope sans .signature>"
-  }
-}
-```
+### 4.2 Signatures
 
-Envelopes are POSTed to the recipient's per-actor inbox:
-- Single delivery: `POST /federation/users/{actor}/inbox`
-- Batched delivery (recommended): `POST /federation/inbox/batch` with
-  an array of envelopes
+Every envelope carries an Ed25519 signature by its actor, under the key
+id `<actor URI>#main-key` (`v1.md` §5). The receiver fetches the
+actor's public key once from the sending peer's actor document at the
+actor URI and keeps it (`v1.md` §8.3). Separately, the HTTP request is
+signed with the sending instance's key, which the two instances
+exchanged when they paired. The instance signature says which peer is
+speaking; the envelope signature says which of its users wrote it, and
+a peer can only speak for its own users.
 
-The Content-Type is `application/activity+json` (per ActivityPub) or
-`application/ld+json; profile="https://www.w3.org/ns/activitystreams"`.
+### 4.3 Encryption
 
-### 4.2 Signature
-
-> **Erratum (2026-10-21):** field names per v1.md §3 and §5; the
-> reference implementation does not yet create or verify per-actor
-> signatures (v1.md, *Implementation status* D1).
->
-> **Update (2026-11-17, #1526):** it now signs every envelope with the
-> actor's key and verifies every received one against the sending
-> actor's key, pinned from that peer's actor document (v1.md §8.3 and
-> *Implementation status*, resolved D1). A peer on an earlier release
-> is refused until it upgrades.
-
-All envelopes MUST be signed.
-
-- Algorithm: **Ed25519** (per [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032))
-- Canonicalisation: **RFC 8785 JCS** (JSON Canonicalization Scheme)
-- Signing scope: the entire envelope with the `signature.value`
-  field omitted
-- Key distribution: actor public keys are published inline in the
-  actor's profile document (per ActivityPub `publicKey` convention)
-
-The receiving server MUST verify the signature against the actor's
-published key BEFORE processing the inner activity. Verification
-failures are rejected with reject reason `envelope_sig_invalid`
-(see [§ 4.4](#44-reject-reasons)).
-
-### 4.3 Encryption (planned, v1.0)
-
-> **Erratum (2026-10-21):** shipped; see v1.md §6.6.
-
-Reserved. Per ADR 0049:
-- Algorithm: **NaCl-box** (Curve25519 + XSalsa20 + Poly1305)
-- Keypair: per-user X25519, generated eagerly on user creation,
-  wrapped at-rest with `AA_MASTER_KEY` per the reference impl's
-  encryption policy
-- Distribution: public keys published inline in the actor profile
-  (same channel as the Ed25519 signing keys)
-- Failure handling: `encryption_required_but_not_supported` reject
-  reason when a peer's policy demands encryption but the sender's
-  capability set doesn't include it
-
-Full specification deferred to Phase 1.22.I; this section will be
-expanded when the reference implementation lands.
+See `v1.md` §6: a per-recipient NaCl-box block (X25519 key agreement,
+XSalsa20-Poly1305), with the envelope signature covering the encrypted
+form.
 
 ### 4.4 Reject reasons
 
-Standardised reject reasons (sent back as `Reject` activities or
-inline HTTP-error payloads):
-
-| Reason | Semantics |
-|---|---|
-| `envelope_sig_missing` | The envelope had no `signature` field. |
-| `envelope_sig_invalid` | The signature failed verification. |
-| `envelope_sig_unknown_algo` | The algorithm is not supported. |
-| `unknown_object` | The inner activity references an object the receiver doesn't recognise. |
-| `unshared_object` | The receiver has no `aa:Share` grant for the referenced object. |
-| `encryption_required_but_not_supported` | Recipient's policy demands encryption; sender can't provide it. |
-| `plaintext_type_mismatch` | A type that MUST be encrypted arrived as plaintext. |
-| `unsupported_activity` | The receiver does not apply this activity type. The activity was not applied and will not be; a duplicate delivery gets the same answer (v1.md §7.6, added 2026-11-16). |
-| `decrypt_failed` | The encrypted envelope's ciphertext did not open against any retained receiver key (1.22.I-f). |
-| `encryption_required` | **Receiver-side variant** (ACTIVE at v1.0-rc1 / 1.22.I-i): plaintext envelope arrived for a target whose intrinsic sensitivity tier mandates encryption — the sender violated the v0.7 §3.6 policy. Distinct from `encryption_required_but_not_supported`, which is the recipient declaring inability to receive plaintext. Defense in depth: I-g's sender-side refusal is the primary enforcement; this gate refuses what a misbehaving sender should never have sent. **Activation**: the v0.8 gate code shipped with the `SensitivityLookup` callback dormant; v1.0-rc1 wires the callback at boot to resolve `asset`-kind objects via the new `assets.sensitivity` column. Other object kinds (post, collection, comment) currently pass through — they gain coverage as those domains grow their own sensitivity columns. |
-| `peer_defederated` | The sending peer was previously defederated. |
-| `actor_unknown` | The `from` actor isn't resolvable. |
-| `clock_skew_too_large` | The envelope's `created_at` is too far from receiver's clock. |
-| `replay_detected` | This envelope's `id` was already processed (idempotency cache hit with mismatched payload). |
-
-This list is non-exhaustive and MAY be extended.
+The receiver answers a refused envelope with a typed reason. The list
+and the meaning of each reason are in `v1.md` §12.1.
 
 ## 5. Federation lifecycle
 
 ### 5.1 Peer pairing
 
-Pairing is bilateral:
-1. Operator A initiates: POST a `aa:PeerRequest` to operator B's
-   well-known endpoint
-2. Operator B reviews + accepts: POST a `aa:PeerAccept` back to A
-3. Both sides record the peer in their `federation_peers` registry
-   with trust tier `connected` + an encryption policy negotiated
-   during the handshake
+Pairing is bilateral. One instance's operator sends an offer to the
+other instance's handshake endpoint (`POST
+/api/v1/federation/peers/handshake`); the other instance records it as
+pending, its operator accepts, and a confirm completes the pairing on
+both sides. Each instance then knows the other's instance URL and
+public key, and the trust tier is `connected`. There is no discovery:
+both operators already know each other's URLs.
 
-There is currently no global discovery; both operators must already
-know each other's instance URLs out-of-band.
+### 5.2 Capability negotiation
 
-A future curated directory (Phase 1.22.H in the reference impl) MAY
-provide discovery for the `directory-listed` tier. v0.x does not
-specify directory behaviour.
-
-### 5.2 Capability negotiation (planned, v1.0)
-
-> **Erratum (2026-10-21):** shipped with a different shape; see
-> [Current status and errata](#current-status-and-errata-2026-10-21).
-
-During the pairing handshake, both sides exchange a capability set:
-
-```json
-{
-  "protocol_versions": ["0.1"],
-  "encryption_algorithms": ["nacl-box"],
-  "signature_algorithms": ["Ed25519"],
-  "supported_object_types": ["aa:Asset", "aa:Post", "aa:Collection",
-                             "aa:Workspace", "aa:BrandKit"],
-  "supported_activity_types": ["Create", "Update", "Delete", "Follow",
-                               "aa:Share", "aa:Unshare", "aa:Approve",
-                               "aa:Annotation"]
-}
-```
-
-The intersection of both sides' capability sets defines what can be
-exchanged. A sender attempting to emit an activity outside the
-intersection MUST refuse and surface a clear operator-side error.
-
-Specification deferred to Phase 1.22.I-d.
+The offer and confirm each carry `supported_capabilities`, a list of
+capability tokens (for example `e2e-encrypted`, `nacl-box`, `x25519`,
+`ed25519-envelope-sig`). Each instance stores the intersection of the
+two lists when the pairing completes; that stored intersection decides
+what may be sent, including any profile (`v1.md` §11, §16). It is
+computed at pairing, so a capability added later reaches an existing
+pairing only when the two instances negotiate again.
 
 ### 5.3 Sharing model
 
-Sharing is the primary access-control primitive.
-
-An `aa:Share` activity grants the recipient access to a specific
-object with a specific permission tier:
-
-```json
-{
-  "type": "aa:Share",
-  "actor": "https://studio-a.example.org/users/alice",
-  "object": "https://studio-a.example.org/assets/<uuid>",
-  "target": "https://studio-b.example.org/users/bob",
-  "aa:permission": "comment",
-  "aa:expires_at": "2026-12-31T00:00:00Z"
-}
-```
-
-The example above predates the normative field names; v1 §7.5.1 defines
-them (`scope`, `target_peer`, `target_user`, `expires_at`).
-
-Scopes (normative list and rules: v1 §7.5.1, erratum E7, #1524):
+Sharing is the primary access-control primitive. An `aa:Share` grants
+one peer, or one user on it, access to one object with a scope and an
+optional expiry; its fields are `scope`, `target_peer`, `target_user`
+and `expires_at` (`v1.md` §7.5.1).
 
 | Scope | Allowed actions |
 |---|---|
-| `view` | Read the object + its metadata; react (`Like`, `Announce`). |
-| `comment` | + Add comments. |
-| `annotate` | + Add annotations. |
-| `remix` | + Reuse the shared material in the recipient's own objects on the recipient's own instance. Never modifies the original. |
+| `view` | Read the object and its metadata; react (`Like`, `Announce`). |
+| `comment` | Also add comments. |
+| `annotate` | Also add annotations. |
+| `remix` | Also reuse the shared material in the recipient's own objects on the recipient's own instance. Never modifies the original. |
 
 No v1 scope allows editing the original on the instance that holds it.
-The value `edit` is reserved for a possible future scope that would, and
-a v1 instance refuses it rather than reading it as `remix`. An earlier
-draft of this overview listed `edit` (modify metadata) and `admin`
-(re-share) tiers; neither is part of v1.
+The value `edit` is reserved for a possible future scope that would,
+and a v1 instance refuses it rather than reading it as `remix`.
 
-The receiving server MUST track active shares in a local
-`federation_shares` table + use them as the access-control gate for
-any inbound activity referencing the object.
+`aa:Unshare` revokes a grant, and defederating a peer cancels every
+share to it. Whether a share also allows a peer to fetch and keep the
+original bytes is a separate decision
+([#1573](https://github.com/Artist-Alley-Org/artist-alley/issues/1573)).
 
-`aa:Unshare` revokes the grant. Defederation (operator-side action)
-cascade-cancels all outstanding shares to that peer.
-
-**Sender refusal policy (v0.7+, 1.22.I-g).** When the shared object's
-sensitivity tier is `restricted` or `embargo`, senders **MUST refuse**
-to dispatch the activity to any recipient peer where either:
-
-- the peer has not negotiated the `nacl-box` capability during the
-  pairing handshake (§5.2), OR
-- the recipient actor's published encryption public key is not
-  retrievable at dispatch time.
-
-Refusal is per-recipient: a single `aa:Share` activity fanning out to
-multiple peers (one e2e-capable, one legacy) emits encrypted to the
-capable peer + refuses for the legacy one. The refusal is **terminal**
-— the sender's outbox row records the refusal in the audit log
-(`federation.emission.refused`) + no envelope reaches the receiver.
-Capability changes on the recipient peer do NOT auto-trigger
-re-dispatch; operator action (re-pair to refresh capabilities OR move
-the share to a lower sensitivity tier) is required.
-
-Senders running v0.7 against legacy peers SHOULD prepare for operator
-inquiries about refused shares; the audit log's
-`metadata->>'reason' = 'encryption_required_but_unavailable'`
-filter is the canonical diagnostic.
+A sender refuses, per recipient, to send restricted or embargoed
+material that it cannot encrypt for that recipient (section 3.6). A
+refusal is final for that delivery and is recorded in the audit log.
 
 ### 5.4 Activity emission
 
-When a local activity occurs that has federation implications
-(an asset is created with `aa:Share` already in effect, a comment is
-added to a shared asset, a workflow state transitions, etc.) the
-emitting server:
+When a local activity has federation implications, the emitting server:
 
-1. Writes the activity to its local activities ledger (see
-   [ADR 0044](../adr/0044-activities-ledger-cqrs-lite.md))
-2. Determines recipients by walking `federation_shares` + `Follow`
-   relationships
-3. Wraps the activity in an envelope + signs it
-4. POSTs to each recipient's inbox (or batches per
-   `POST /federation/inbox/batch`)
-5. Records delivery state + retries with exponential backoff on
-   transient failures
+1. writes the activity to its activities ledger
+   ([ADR 0044](../adr/0044-activities-ledger-cqrs-lite.md));
+2. resolves the recipients from live shares;
+3. builds one envelope per recipient, encrypting when required or
+   possible, and signs it with the actor's key;
+4. POSTs it, signed with the instance key, to the peer's inbox (or
+   batches several per peer);
+5. records delivery state and retries transient failures with backoff.
 
-Recipients SHOULD be able to receive the same envelope multiple times
-(idempotency via the envelope's `id` field, checked against the
-receiver's stored activities; see v1.md §10.3 and §7.6).
+A receiver accepts the same envelope more than once: an `id` it already
+stored is answered from its stored record (`v1.md` §7.6, §10.3).
 
 ### 5.5 Inbox processing
 
-Incoming envelopes follow a multi-stage pipeline:
+In the reference implementation, an incoming envelope goes through:
 
-1. Parse + structural validation
-2. Signature verification (per [§ 4.2](#42-signature))
-3. Duplicate check against stored activity ids (a stored `id` is
-   answered from its stored record)
-4. Encryption decryption (when applicable, planned for v1.0)
-5. Activity-type dispatch
-6. Per-verb access-control check (does `from` have an `aa:Share`
-   grant for the referenced object?)
-7. Domain-side application (create the local mirror row, append the
-   comment, transition the workflow state, etc.)
-8. Activity ledger write
-9. Audit log entry
+1. the instance HTTP signature, peer status and rate limit;
+2. the stored-id answer for a repeated `id`;
+3. strict parsing, `@context` and the signature block;
+4. the actor signature (actor bound to the sending peer, key fetched and
+   kept, signature verified);
+5. the activity-type check (a type this receiver does not apply is
+   refused with `unsupported_activity` and recorded, never applied);
+6. the object check, then storage;
+7. later dispatch: decryption, the encryption-required check, and the
+   per-type handler.
 
-Each stage produces an outcome (`accepted` / `rejected` / `deferred`)
-and a reason code per [§ 4.4](#44-reject-reasons). The reference
-implementation's 13-stage pipeline is documented in
+Each refusal carries a reason from `v1.md` §12.1.
+
+## 6. Archival assets (profile `archival-1`)
+
+The archival profile (`v1.md` §17) carries what a receiving archive
+needs to preserve a shared asset and prove that its files arrived
+intact, using the vocabularies archives already use:
+
+- each asset version lists its files by role (original, preservation
+  copy, access copy), each by its SHA-256 CAS address, with a checksum
+  list (SHA-256 required; MD5 only as an extra for older holdings, as
+  BagIt manifests allow), size, declared media type, an optional PRONOM
+  format identification with the tool that made it, and an optional
+  original file name;
+- versions are immutable and linked to the previous one, as in OCFL;
+- rights are a Creative Commons or RightsStatements.org URI with a
+  required statement, as in IIIF; persistent identifiers, an accession
+  number and a Dublin Core description travel with the asset;
+- deleting an asset sends a tombstone that keeps its identity and
+  checksums, so links do not silently break;
+- preservation events (ingestion, fixity checks, format identification,
+  transfer, deaccession and others) travel as PREMIS events in
+  `aa:Provenance` ([ADR 0101](../adr/0101-preservation-history-as-premis-events.md));
+- annotations become W3C Web Annotations on IIIF canvases, with a
+  region or time-range selector;
+- a receiver re-hashes every file it receives before it is visible and
+  rejects a mismatch with `fixity_mismatch`.
+
+Two peers use the profile only when both advertised it at pairing; a
+sender refuses to send an asset to a peer without it rather than send
+it unverifiable. A file is listed only when its SHA-256 is recorded, so
+no unhashed preview is ever presented as checked. A tombstone does not
+recall bytes a peer already holds, and a manifest or rights link never
+grants permission to fetch bytes. The profile is **specified, not yet
+implemented**; `v1.md` *Implementation status* (S1) lists what remains
+and which issues own it. The same section of `v1.md` maps the profile
+to a BagIt export (§17.7).
+
+## 7. Security considerations
+
+The detailed analysis lives in
 [ADR 0043](../adr/0043-federation-walled-garden-protocol.md) and
-shipped at commit `28dea2e`.
+[ADR 0049](../adr/0049-encrypted-federation-and-dogfood.md). In short:
 
-## 6. Security considerations
+- every envelope is signed twice, by its actor and by the sending
+  instance, and a peer can speak only for its own users;
+- restricted and embargoed material is encrypted per recipient or not
+  sent;
+- a repeated `id` is answered from the stored record, and the HTTP
+  signature's date window bounds replay;
+- the receiver treats every claim inside an envelope (formats, file
+  names, rights, events) as the sender's claim, and verifies fixity
+  itself;
+- links inside envelopes (manifests, actor documents) are fetched only
+  from the sending peer's own origin, never from an arbitrary URL.
 
-This section is a placeholder for v0.x. The current security
-analysis lives in [ADR 0043 § Security](../adr/0043-federation-walled-garden-protocol.md)
-and [ADR 0049](../adr/0049-encrypted-federation-and-dogfood.md).
+## 8. Privacy considerations
 
-Items the v1.0 version of this section MUST cover:
-- Threat model (curious peer, malicious peer, defederated peer,
-  compromised user, MitM)
-- Key rotation procedures (Phase 1.22.I-h in the reference impl)
-- Replay-attack defences (envelope `id` uniqueness + the `Date` window)
-- Clock-skew tolerance bounds + the reject reason for excess
-- Audit-log immutability requirements
-- Defederation cascade semantics (what happens to shares + cached
-  content when a peer is revoked)
+- Peers are not publicly discoverable; each pairing is explicit.
+- What a peer sees is decided per object by shares and by the object's
+  sensitivity tier.
+- An original file name can reveal more than intended; the archival
+  profile carries only a base name, never a path, and only when the
+  sender chooses to.
+- Defederating a peer stops future sharing; it cannot recall what the
+  peer already received.
 
-## 7. Privacy considerations
+## 9. Conformance
 
-Placeholder. v1.0 MUST cover:
-- The deliberate walled-garden posture (peers are not publicly
-  discoverable)
-- What activities + metadata are visible to which peers
-- The sensitivity-tier + encryption-policy intersection model
-- Operator obligations around defederation (does cached content stay
-  or get purged?)
-- User-side data subject rights when their content is federated
+The requirements are `v1.md`'s. Its conformance vectors
+(`app/internal/federation/testdata/conformance/`, `v1.md` §9) test the
+wire primitives and the archival profile's rules; the scenarios in
+Appendix A test the reference implementation against itself. Neither is
+evidence of interoperability with an independent implementation, which
+has not yet been demonstrated.
 
-## 8. Conformance
-
-> **Implementation status (2026-10-21):** the reference
-> implementation does not yet meet the first and fourth requirements
-> below, nor handle every core type (v1.md, *Implementation status*
-> D1, D3, D4).
->
-> **Update (2026-11-17, #1526):** the per-actor signature part is met
-> (resolved D1); D3 and D4 remain open.
-
-A conformant ArchivePub implementation MUST:
-- Implement Ed25519 envelope signing + verification
-- Reject unsigned envelopes
-- Implement the per-actor inbox + (recommended) batch inbox endpoints
-- Honour `aa:Share` access control before applying inbound activities
-- Implement the core activity types (`Create`, `Update`, `Delete`,
-  `aa:Share`, `aa:Unshare`)
-- Implement the core object types (`aa:Asset`, `aa:Post`,
-  `aa:Collection`)
-- Emit standard reject reasons per [§ 4.4](#44-reject-reasons)
-
-A conformant implementation MAY:
-- Implement `aa:Approve`, `aa:Annotation`, `aa:Workspace`,
-  `aa:BrandKit`
-- Implement encryption (will be REQUIRED at v1.0 for peers with
-  `e2e-encrypted` policy)
-- Implement directory-listed or auto-sync trust tiers
-- Implement re-sharing semantics with `admin` permission tier
-
-Conformance test vectors (a la W3C ActivityPub) are planned for v1.0
-and will live alongside this document.
-
-## 9. Open questions
-
-These are tracked across the document with TBD markers. Summarised
-here for reference:
+## 10. Open questions
 
 | Question | Resolution path |
 |---|---|
-| Domain home for the spec | Operator's call; provisional `archivepub.org` |
-| Public-fediverse compatibility (webfinger + nodeinfo) | Out of scope for v1.0; tracked at reference-impl issue [#108](https://github.com/Artist-Alley-Org/artist-alley/issues/108) as a separate concern |
-| Re-sharing semantics with `admin` tier | Phase 1.22.J auto-sync work will surface the real requirements |
+| Domain home for the spec | The operator's call; provisional `archivepub.org`. |
+| Public-fediverse compatibility (webfinger, nodeinfo) | Out of scope for v1; [#108](https://github.com/Artist-Alley-Org/artist-alley/issues/108). |
+| Re-sharing | Not in v1; the reserved `auto-sync` tier work will surface the requirements. |
 
-Resolved at v1.0-rc1 (previously open):
-
-- **Namespace prefix** — `aa:` is final. The earlier "may change
-  before v1.0" disclaimer is removed; the prefix appears
-  throughout the wire format (activity-type catalogue, envelope
-  field naming) and across the conformance vectors.
-- **Encryption envelope final shape** — landed across Phases
-  1.22.I-e through I-i. See [§ 4](#4-wire-format) for the
-  `encryption` block, [ADR 0049](../adr/0049-encrypted-federation-and-dogfood.md)
-  for the design.
-- **Conformance test vector format** — Appendix A's table is
-  the authority; each row maps to a script under
-  `scripts/dogfood/scenarios/`. The 8 active scenarios (01,
-  05, 06, 07, 08, 09, 11, 12) are what implementations claiming
-  ArchivePub conformance MUST pass.
-
-## 10. References
+## 11. References
 
 ### Normative
 
-- [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) — Key words for
-  use in RFCs
-- [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) — Edwards-Curve
-  Digital Signature Algorithm (Ed25519)
-- [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) — JSON
-  Canonicalization Scheme
-- [ActivityPub (W3C)](https://www.w3.org/TR/activitypub/) — federated
-  social networking protocol
-- [Activity Vocabulary (W3C)](https://www.w3.org/TR/activitystreams-vocabulary/)
+- [`v1.md`](../spec/federation/v1.md), the protocol v1 contract, and
+  its approved sources in
+  [`SOURCES.md`](../spec/federation/SOURCES.md)
+- [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119), [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) (Ed25519), [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) (JSON canonicalization)
 
 ### Informative
 
-- [ADR 0042](../adr/0042-distributed-catalogs-typed-per-package.md) —
-  Vocabulary organisation in the reference implementation
-- [ADR 0043](../adr/0043-federation-walled-garden-protocol.md) —
-  Federation walled-garden protocol design rationale
-- [ADR 0044](../adr/0044-activities-ledger-cqrs-lite.md) — Activity
-  ledger as source of truth
-- [ADR 0049](../adr/0049-encrypted-federation-and-dogfood.md) —
-  Encrypted federation + dogfood plan
+- [Activity Vocabulary (W3C)](https://www.w3.org/TR/activitystreams-vocabulary/)
+- [OCFL 1.1](https://ocfl.io/1.1/spec/), [BagIt (RFC 8493)](https://www.rfc-editor.org/rfc/rfc8493), [PREMIS 3](https://www.loc.gov/standards/premis/v3/), [IIIF Presentation 3.0](https://iiif.io/api/presentation/3.0/), [W3C Web Annotation](https://www.w3.org/TR/annotation-model/), [DCMI Metadata Terms](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/)
+- [ADR 0042](../adr/0042-distributed-catalogs-typed-per-package.md), vocabulary organisation in the reference implementation
+- [ADR 0043](../adr/0043-federation-walled-garden-protocol.md), federation design rationale
+- [ADR 0044](../adr/0044-activities-ledger-cqrs-lite.md), the activities ledger
+- [ADR 0049](../adr/0049-encrypted-federation-and-dogfood.md), encrypted federation and the dogfood plan
+- [ADR 0101](../adr/0101-preservation-history-as-premis-events.md), preservation history
 
-## 11. Reference implementation
+## 12. Reference implementation
 
-The Artist Alley repository contains the reference implementation:
-
-- Federation transport + inbox/outbox: [`app/internal/federation/`](../../app/internal/federation/)
-- Activity types + vocabulary: [`app/internal/federation/vocab.go`](../../app/internal/federation/vocab.go)
-- Peer registry + handshake: [`app/internal/federation/peer/`](../../app/internal/federation/peer/)
+- Federation transport, inbox and outbox: [`app/internal/federation/`](../../app/internal/federation/)
+- Vocabulary: [`app/internal/federation/vocab.go`](../../app/internal/federation/vocab.go)
+- Archival profile validators: [`app/internal/federation/archival.go`](../../app/internal/federation/archival.go)
+- Peer registry and handshake: [`app/internal/federation/peer/`](../../app/internal/federation/peer/)
 - Share access control: [`app/internal/federation/shares/`](../../app/internal/federation/shares/)
-- Inbox 13-stage pipeline: [`app/internal/federation/inbox/`](../../app/internal/federation/inbox/)
-- Outbox dispatcher + delivery worker: [`app/internal/federation/outbox/`](../../app/internal/federation/outbox/)
-
-Phase-tagged commits track each protocol surface; the commit log
-labelled `1.22.A` through `1.22.D` is the load-bearing federation
-arc of v0.x.
 
 ## Appendix A — Canonical regression scenarios
 
@@ -740,8 +473,10 @@ end-to-end-tested without operator-side babysitting.
 
 ## Appendix B — Examples
 
-*To be filled in as the federation bug-fix arc surfaces canonical
-example envelopes from the dogfood week.*
+Example envelopes are the conformance fixtures under
+[`app/internal/federation/testdata/conformance/`](../../app/internal/federation/testdata/conformance/):
+`envelope/` for signed activities and `archival-1/` for the archival
+profile's members.
 
 ---
 
@@ -758,3 +493,4 @@ example envelopes from the dogfood week.*
 | v0.7 | 2026-06-12 | 1.22.I-g (sender refusal flip) — **policy change, not a wire-format change**. v0.5's optional `encryption` field is still optional on the wire; v0.7 makes its ABSENCE a refusal cause for senders dispatching `restricted` or `embargo` sensitivity tiers. Decision matrix (codified in the reference implementation's `outbox.ChoosePathFor` pure function): `public` and `team` tiers continue to send plaintext when capability or key is missing (1.22.D backwards-compat with pre-I-f peers); `restricted` and `embargo` tiers REFUSE to dispatch when either the recipient peer hasn't negotiated `nacl-box` OR the recipient's published X25519 key isn't cached locally. Unknown / future sensitivity tiers default to "require encryption" (conservative — failure mode for an unrecognised tier is "refused + visible in operator audit log" rather than "leaked plaintext + invisible"). Refusal is TERMINAL: the sender's outbox row transitions to `status=refused` with `refused_reason=encryption_required_but_unavailable` (catalogued in `outbox.RefuseReason`), the partial-index on `status='queued'` filters refused rows out of redelivery automatically, no backoff fires, and capability changes on the peer DO NOT auto-trigger re-dispatch (operator action: re-pair → caps refresh OR move the share to a lower tier). Refusal is PER-RECIPIENT, not per-envelope: a single activity fanning out to multiple peers (one e2e-capable, one legacy) results in 1 encrypted dispatch + 1 refusal — the refusal does NOT poison the capable recipient's emission. **New audit event**: `federation.emission.refused` (distinct from the existing `federation.emission.skipped` — semantically `skipped`="informational, not relevant" / `refused`="policy DECISION blocked an emission"; operators grep on the two distinctly). Receiver-side defense-in-depth (a new reject reason `encryption_required` for plaintext envelopes arriving for restricted-share targets) is RESERVED at v0.7 + lights up in v0.8 / 1.22.I-h. From the receiver's perspective v0.7 reads as "the wire is unchanged, fewer envelopes arrive" — no parsing changes needed. Reference implementation: schema in migration `00012_outbox_refusal_policy.sql` (denormalised `sensitivity` + `refused_reason` columns on `federation_outbox` + `status='refused'` admitted in the CHECK), policy primitive in `federation/outbox/policy.go` (`RequiresEncryption` + `ChoosePathFor` + `EmissionPath` + `RefuseReason` + `ErrEmissionRefused`), Worker integration in `federation/outbox.Worker.tryEncryptFor` (refactored to consume `ChoosePathFor`; returns `ErrEmissionRefused` on the refused path; callers in `deliverOne` + `deliverOneBatch` catch + skip the POST), audit recorder `audit.Recorder.FederationEmissionRefused`. **Forward notice**: v0.8 (key rotation lifecycle + receiver-side defense-in-depth, 1.22.I-h) is the next revision. Operator inquiries about "why didn't my Update reach bob?" should land in the I-h policy UI bundle. |
 | v0.8 | 2026-06-14 | 1.22.I-h (key rotation lifecycle + receiver-side defense gate) — **not a wire-format change** (the encryption block from v0.5 + the `encryption_required` reject reason reserved at v0.7 are both unchanged at the wire), but a substantive policy + observability addition. Three new local primitives: (a) per-user **rotation** — `POST /account/security/rotate-federation-keys` for self-service + `POST /admin/federation/users/{ref}/rotate-keys` for admin-initiated compromised-key recovery; both call the same atomic-tx primitive (`userkeys.RotateForUser`) that generates a fresh X25519 keypair, demotes the previous current row to retained-with-TTL state, and records `rotated_at` + `rotated_by_user_ref` on both rows (`subject == rotated_by` discriminates self-rotation from operator-initiated recovery in the audit feed). (b) Background **retained-key sweeper** — `userkeys.Sweeper` goroutine ticks every hour (boot-time first sweep covers expirations accumulated during downtime); reaps `federation_user_keys` rows where `is_current = FALSE AND retained_until < NOW()`; emits `federation.user.key_retained_expired` once per non-zero reap (zero-sweeps stay quiet to avoid audit-feed pollution). Default retention window is 30 days, sourced from `system_config.federation.user_keys.retained_until_days`. (c) Receiver-side **encryption_required gate** — counterpart to v0.7's sender-side refusal flip: when an inbound envelope arrives plaintext but its target object's sensitivity tier (resolved via the same `SensitivityLookup` callback contract used by the v0.5 outbox dispatcher) mandates encryption, the receiver rejects with `reject_reason=encryption_required` + fires `federation.inbox.encryption_required_rejected`. **Activation gated**: the `SensitivityLookup` is unwired in the v0.8 reference implementation because per-object sensitivity columns aren't on the local schema yet — `outbox/resolver.go` documents this as a pre-MVP gap. The gate code is fully tested + shipped; flipping it on is one boot-wire edit when those columns land. Peers reading this revision MUST handle the receiver-side reject reason gracefully (as for any reject reason — they were already required to at v0.6) but won't observe it in practice until activation lands. **Three new audit events** at v0.8: `federation.user.key_rotated` (per rotation, both flows), `federation.user.key_retained_expired` (per non-zero sweep), `federation.inbox.encryption_required_rejected` (per receiver-gate firing — dormant in v0.8 production, exercised by unit tests). **New admin observability surface**: `GET /admin/federation/key-health` returns aggregate tile counts (users-without-keypair, remote-actors-missing-enc-key, peers-missing-capabilities, retained-keys-near-expiry, users-total) plus drill-down arrays (users missing keypair, recent rotations) in a single round-trip. **Key-version handling on the wire is unchanged from v0.5/v0.6**: peers don't need to know whether a key version they're seeing is the result of a rotation versus the original mint — the version increment + the I-c cache upsert path handle the propagation transparently. **No bilateral rotation handshake**: a rotated sender's peers pick up the new key on the next inbound activity from the rotated sender via the standard I-c upsert path — we don't push, they pull. **Cross-instance retained-key decrypt** (peer A sends with sender's vN, sender rotated to vN+1, sender still decrypts vN via the retained walk): inherited unchanged from v0.6's `inbox.DecryptForUser` order (`is_current DESC, version DESC`) + the new sweeper's retained_until floor. Reference implementation: migration `00013_user_keys_rotation_metadata.sql` (ALTER `federation_user_keys` ADD `rotated_at` + `rotated_by_user_ref` + system_config retention default), `federation/userkeys.RotateForUser` (atomic-tx primitive), `federation/userkeys.Sweeper` (background goroutine + `SweepOnce` test handle), `federation/inbox.CheckInboundEncryptionPolicy` + `federation/inbox.SetSensitivityLookup` + `federation/inbox.ErrEncryptionRequired` (gate), `federation/userkeys.AdminHandler` (HTTP surface for all three endpoints), three audit events on `audit.Recorder`. Conformance: scenario 12 (`scripts/dogfood/scenarios/12-rotation-lifecycle.sh`) walks Phases A (self-rotation) → B (admin recovery) → C (sweeper reap) → D (admin observability); Phase E (receiver-gate firing) deferred to follow the `SensitivityLookup` activation. **Forward notice**: v1.0 stabilises the wire format + conformance vectors per Track A's dogfood-week findings. No more I-arc revisions planned. |
 | v1.0-rc1 | 2026-06-15 | 1.22.I-i (encryption-arc cap-stone — receiver-side defense gate activated) — **not a wire-format change** (gate code + reject reason were both reserved at v0.8); v1.0-rc1 flips the gate from dormant to active by wiring the `SensitivityLookup` callback at boot in the reference implementation. New migration `00014_asset_sensitivity.sql` adds `assets.sensitivity` (NOT NULL DEFAULT 'public' + CHECK over the four tiers + partial index on restricted/embargo for the admin-side observability path). The boot wire (`inboxSensitivityLookup` in `app/internal/http/api.go`) resolves `asset`-kind objects to their tier via the new column; other kinds (post, collection, comment) currently pass through so plaintext federation traffic for those domains continues unchanged until they grow their own sensitivity columns in a future phase. **Behaviour change in production**: an inbound plaintext envelope targeting a restricted-tier (or embargo-tier) asset transitions to `status=rejected` with `reject_reason=encryption_required` + fires `federation.inbox.encryption_required_rejected`. Sender-side I-g refusal remains the primary enforcement; the receiver gate is the defense-in-depth that catches a misbehaving sender ignoring its own policy. **Conformance**: scenario 05 (`scripts/dogfood/scenarios/05-restricted-asset-roundtrip.sh`) is the negative-path test — provisions a restricted asset, injects a plaintext inbox row targeting it, asserts the gate rejects + audits. Appendix A's conformance test vector table is locked at v1.0-rc1; implementations claiming ArchivePub conformance MUST pass scenarios 01, 05, 06, 07, 08, 09, 11, 12 against a peer running the reference. **Intentional deviation from the I-i brief**: shares do NOT denormalise sensitivity at grant time (no `federation_shares.sensitivity` column, no downgrade-rejection in the grant path). The asset's intrinsic tier IS the source of truth; changing it post-share DOES retroactively affect outstanding shares. Tradeoff: simpler implementation + the user mental model "if I mark the asset restricted, all federated copies become restricted." A follow-up phase can layer copy-at-grant semantics on top if operator feedback demands the alternate behavior. **Forward notice**: v1.0 final ships after a 7-day soak window with the active gate. If a real bug surfaces during soak, v1.0-rc2 ships first; otherwise the conformance vectors lock + the document moves to a versioned-changelog cadence. Encryption arc (1.22.I-a through I-i) is feature-complete + dogfood-validated end-to-end at v1.0-rc1. |
+| v1.1 | 2026-11-17 | Overview rewritten as a short, non-normative companion to `v1.md`: the draft and JSON-LD descriptions, the old envelope example, the wrong inbox path and reject-reason list, the planned-feature wording and the errata block are removed, and each section points to the part of `v1.md` that defines it. The audience is stated as Artist Alley to Artist Alley at v1. `v1.md` gains negotiated profiles (§16) and the archival profile `archival-1` (§17), specified but not implemented, with the profile-gated twelfth custom type `aa:Provenance` and three reject reasons (#1513). No change to what any deployed instance sends. |

@@ -1,0 +1,44 @@
+{
+  "description": "A PREMIS agent names exactly one of actor or software.",
+  "spec": "v1.md \u00a717.4",
+  "stage": "schema",
+  "negotiated": true,
+  "envelope": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "aa:Provenance",
+    "id": "https://studio-a.example/activities/aa-provenance-1",
+    "actor": "https://studio-a.example/users/alice",
+    "published": "2026-11-17T10:00:00Z",
+    "object": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c",
+    "aa:event": {
+      "id": "https://studio-a.example/events/fixity-0042-1",
+      "eventType": "fixity-check",
+      "dateTime": "2026-11-17T10:05:00Z",
+      "detail": "SHA-256 recomputed on arrival",
+      "outcome": "success",
+      "object": {
+        "asset": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c",
+        "version": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c/versions/1",
+        "contentUri": "cas://39e2e33c601cde530aa04507901aef1d322ad8cf13e4598a853730220ebea621"
+      },
+      "agents": [
+        {
+          "role": "implementer",
+          "actor": "https://studio-b.example/users/bob",
+          "software": {
+            "name": "x",
+            "version": "1"
+          }
+        }
+      ]
+    }
+  },
+  "expected": {
+    "outcome": "reject",
+    "reason": "archival_invalid"
+  },
+  "enforcement": {
+    "now": "federation.ValidateArchivalMembers (pure schema and placement check)",
+    "pending": "#1580: inbox and parser enforcement"
+  }
+}

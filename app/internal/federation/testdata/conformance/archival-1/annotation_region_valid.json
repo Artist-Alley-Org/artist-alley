@@ -1,0 +1,40 @@
+{
+  "description": "aa:Annotation with a W3C Web Annotation on an IIIF canvas region (Media Fragments xywh) is accepted. Placing it on the receiver, including the in-canvas bounds check, is #1578.",
+  "spec": "v1.md \u00a717.5",
+  "stage": "schema",
+  "negotiated": true,
+  "envelope": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "aa:Annotation",
+    "id": "https://studio-a.example/activities/aa-annotation-1",
+    "actor": "https://studio-a.example/users/alice",
+    "published": "2026-11-17T10:00:00Z",
+    "object": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c",
+    "aa:annotation": {
+      "type": "Annotation",
+      "motivation": "commenting",
+      "body": {
+        "type": "TextualBody",
+        "value": "The horizon line is tilted here.",
+        "format": "text/plain",
+        "language": "en"
+      },
+      "target": {
+        "source": "https://studio-a.example/iiif/3/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c/canvas/1",
+        "selector": {
+          "type": "FragmentSelector",
+          "conformsTo": "http://www.w3.org/TR/media-frags/",
+          "value": "xywh=120,80,640,360"
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "accept",
+    "reason": ""
+  },
+  "enforcement": {
+    "now": "federation.ValidateArchivalMembers (pure schema and placement check)",
+    "pending": "#1580: inbox and parser enforcement (application: #1578)"
+  }
+}

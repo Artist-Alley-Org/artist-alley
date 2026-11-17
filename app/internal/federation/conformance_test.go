@@ -381,3 +381,154 @@ func TestConformance_NaCl(t *testing.T) {
 		})
 	}
 }
+
+// --- archival-1 profile vectors (#1513, v1.md §16-§17) --------------------
+
+// archivalVector is the on-disk shape of an archival-1 vector. Each
+// vector names the check that runs NOW (enforcement.now) and the
+// issue that wires it into the running inbox / ingest path
+// (enforcement.pending); a vector passing here proves the contract's
+// rule is executable, not that a receiver enforces it at runtime.
+type archivalVector struct {
+	Description string          `json:"description"`
+	Spec        string          `json:"spec"`
+	Stage       string          `json:"stage"`
+	Negotiated  bool            `json:"negotiated"`
+	Envelope    json.RawMessage `json:"envelope"`
+	Expected    struct {
+		Outcome string `json:"outcome"`
+		Reason  string `json:"reason"`
+	} `json:"expected"`
+	Enforcement struct {
+		Now     string `json:"now"`
+		Pending string `json:"pending"`
+	} `json:"enforcement"`
+	Received *struct {
+		File     int    `json:"file"`
+		BytesB64 string `json:"bytes_b64"`
+	} `json:"received,omitempty"`
+}
+
+// archivalPendingOwners are the open issues that own runtime
+// enforcement of archival-1 (#1513 stage): parser / inbox gating and
+// sender refusal (#1580), CAS fetch (#72), ingest (#1574), lifecycle
+// (#1575), metadata and provenance mapping (#1577).
+var archivalPendingOwners = []string{"#1580", "#72", "#1574", "#1575", "#1577"}
+
+func archivalReason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errorsIs(err, federation.ErrProfileNotNegotiated):
+		return string(federation.InboxStatusProfileNotNegotiated)
+	case errorsIs(err, federation.ErrFixityMismatch):
+		return string(federation.InboxStatusFixityMismatch)
+	case errorsIs(err, federation.ErrArchivalInvalid):
+		return string(federation.InboxStatusArchivalInvalid)
+	default:
+		return "unexpected error: " + err.Error()
+	}
+}
+
+func TestConformance_Archival1(t *testing.T) {
+	dir := filepath.Join(conformanceDir, "archival-1")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	counts := map[string]int{}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".json")
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		var v archivalVector
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&v); err != nil {
+			t.Fatalf("%s: fixture shape: %v", name, err)
+		}
+		counts[v.Stage+"/"+v.Expected.Outcome]++
+		t.Run(name, func(t *testing.T) {
+			if v.Description == "" || !strings.Contains(v.Spec, "§1") || v.Enforcement.Now == "" {
+				t.Fatalf("description, spec section and enforcement.now are required")
+			}
+			owned := false
+			for _, o := range archivalPendingOwners {
+				owned = owned || strings.HasPrefix(v.Enforcement.Pending, o+":") || strings.HasPrefix(v.Enforcement.Pending, o+" ")
+			}
+			if !owned {
+				t.Fatalf("enforcement.pending %q must name the owning issue (%v)", v.Enforcement.Pending, archivalPendingOwners)
+			}
+			switch v.Expected.Outcome {
+			case "accept":
+				if v.Expected.Reason != "" {
+					t.Fatalf("an accepted vector has no reason")
+				}
+			case "reject":
+				if _, ok := federation.KnownInboxStatuses[federation.InboxStatus(v.Expected.Reason)]; !ok {
+					t.Fatalf("reason %q is not a §12.1 inbox status", v.Expected.Reason)
+				}
+			default:
+				t.Fatalf("outcome %q", v.Expected.Outcome)
+			}
+			// Every vector is an otherwise valid v1 envelope, so the
+			// only thing under test is the archival-1 part.
+			env, err := federation.Unmarshal(v.Envelope)
+			if err != nil {
+				t.Fatalf("not a valid v1 envelope: %v", err)
+			}
+			var got string
+			switch v.Stage {
+			case "schema", "negotiation":
+				got = archivalReason(federation.ValidateArchivalMembers(env, v.Negotiated))
+			case "fixity":
+				if err := federation.ValidateArchivalMembers(env, true); err != nil {
+					t.Fatalf("fixity vector's asset is not schema-valid: %v", err)
+				}
+				asset, err := federation.ParseArchivalAsset(env.Extra[federation.MemberArchivalAsset])
+				if err != nil || v.Received == nil || v.Received.File >= len(asset.Files) {
+					t.Fatalf("fixity vector needs an asset and received.file: %v", err)
+				}
+				b, err := base64.StdEncoding.DecodeString(v.Received.BytesB64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got = archivalReason(federation.VerifyFileFixity(asset.Files[v.Received.File], bytes.NewReader(b)))
+			case "round-trip":
+				got = archivalReason(federation.ValidateArchivalMembers(env, true))
+				out, err := env.Marshal()
+				if err != nil {
+					t.Fatal(err)
+				}
+				in, err := federation.Canonicalize(v.Envelope)
+				if err != nil {
+					t.Fatal(err)
+				}
+				back, err := federation.Canonicalize(out)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(in, back) {
+					t.Errorf("round trip changed the envelope\n in:  %s\n out: %s", in, back)
+				}
+			default:
+				t.Fatalf("stage %q", v.Stage)
+			}
+			if got != v.Expected.Reason {
+				t.Errorf("got %q want %q (%s)", got, v.Expected.Reason, v.Description)
+			}
+		})
+	}
+	// Deleting vectors must not make this pass: every stage keeps its
+	// accept and reject cases.
+	for _, need := range []string{"schema/accept", "schema/reject", "negotiation/reject", "fixity/accept", "fixity/reject", "round-trip/accept"} {
+		if counts[need] == 0 {
+			t.Errorf("no %s vector", need)
+		}
+	}
+}

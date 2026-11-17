@@ -143,6 +143,17 @@ AA commits to Image API 3.0 and Presentation API 3.0 as the primary surface. Ima
 - **IIIF Image API only; skip Presentation API.** Rejected — Presentation API is what enables the Mirador interop story (collection manifests, multi-canvas viewing, ranges). Image API alone is a tile server without context.
 - **Pre-generate all IIIF tile derivatives on upload.** Rejected — explodes disk usage; content-hash-keyed cache is sufficient and self-purges.
 
+## Amendment 2026-11-17: federated annotations are W3C Web Annotations (#1513)
+
+Under the `archival-1` profile (spec §17.5), a federated annotation is a
+W3C Web Annotation whose target is an IIIF canvas, narrowed by a Media
+Fragments `xywh=` region or `t=` time range, replacing the earlier
+custom anchor descriptor. A shared annotation then lands in the same
+place in any IIIF viewer. The coordinates depend on canvases carrying
+the real pixel size, which #196 delivered (the 1200 x 900 default now
+applies only to an asset whose size was never recorded). Placing
+received annotations is #1578; nothing here is implemented yet.
+
 ## Reference
 
 - IIIF Image API 3.0 specification: https://iiif.io/api/image/3.0/

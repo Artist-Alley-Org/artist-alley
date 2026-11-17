@@ -1,0 +1,41 @@
+{
+  "description": "Delete with aa:tombstone keeps the asset id, last version and file checksums, and round-trips through parse and serialise unchanged (RFC 8785 canonical bytes equal). Applying it on the receiver is #1575.",
+  "spec": "v1.md \u00a717.3",
+  "stage": "round-trip",
+  "negotiated": true,
+  "envelope": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "Delete",
+    "id": "https://studio-a.example/activities/delete-1",
+    "actor": "https://studio-a.example/users/alice",
+    "published": "2026-11-17T10:00:00Z",
+    "object": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c",
+    "aa:tombstone": {
+      "id": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c",
+      "formerType": "aa:Asset",
+      "deleted": "2026-11-17T11:00:00Z",
+      "reason": "Withdrawn at the depositor's request.",
+      "lastVersion": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c/versions/2",
+      "files": [
+        {
+          "role": "original",
+          "contentUri": "cas://39e2e33c601cde530aa04507901aef1d322ad8cf13e4598a853730220ebea621",
+          "checksums": [
+            {
+              "algorithm": "sha256",
+              "value": "39e2e33c601cde530aa04507901aef1d322ad8cf13e4598a853730220ebea621"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "outcome": "accept",
+    "reason": ""
+  },
+  "enforcement": {
+    "now": "federation.Unmarshal + Envelope.Marshal + ValidateArchivalMembers",
+    "pending": "#1575: apply withdrawal on the receiver"
+  }
+}

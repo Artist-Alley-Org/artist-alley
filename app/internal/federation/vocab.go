@@ -66,6 +66,13 @@ const (
 	ActivityAAAssetVersion       ActivityType = "aa:AssetVersion"
 	ActivityAASubscribe          ActivityType = "aa:Subscribe"
 	ActivityAAMention            ActivityType = "aa:Mention"
+	// aa:Provenance (#1513) carries one PREMIS 3 preservation event
+	// in its aa:event member (v1.md §17.4). It is the twelfth custom
+	// type and exists only under the negotiated archival-1 profile
+	// (§16): the parser recognises it, nothing in this implementation
+	// emits it yet, and the inbox refuses it as unsupported_activity
+	// (#1569) until a receiving handler ships.
+	ActivityAAProvenance ActivityType = "aa:Provenance"
 )
 
 // KnownActivityTypes is the closed set the parser accepts. Any
@@ -98,6 +105,7 @@ var KnownActivityTypes = map[ActivityType]struct{}{
 	ActivityAAAssetVersion:       {},
 	ActivityAASubscribe:          {},
 	ActivityAAMention:            {},
+	ActivityAAProvenance:         {},
 }
 
 // Valid reports whether t is in the closed catalogue.
@@ -604,6 +612,9 @@ const (
 	InboxStatusPlaintextTypeMismatch  InboxStatus = "plaintext_type_mismatch"  // decrypted type ≠ envelope type
 	InboxStatusDecryptFailed          InboxStatus = "decrypt_failed"           // 1.22.I-f: walked every retained receiver key + every attempt's nacl/box.Open returned !ok — tamper, corruption, or sender used a recipient key version we've fully aged out
 	InboxStatusUnsupportedActivity    InboxStatus = "unsupported_activity"     // #1569: §7 type this receiver does not apply; recorded, never applied (inbox.Applies)
+	InboxStatusProfileNotNegotiated   InboxStatus = "profile_not_negotiated"   // #1513 §16.3: a profile member (e.g. archival-1) from a peer whose negotiated capabilities lack that profile. Specified; enforced from #1580
+	InboxStatusArchivalInvalid        InboxStatus = "archival_invalid"         // #1513 §17: an archival-1 member does not match the profile. Specified; enforced from #1580
+	InboxStatusFixityMismatch         InboxStatus = "fixity_mismatch"          // #1513 §17.6: received bytes differ from the listed size or checksum. Specified; enforced from #72 / #1574
 	InboxStatusStaleRequest           InboxStatus = "stale_request"            // HTTP-Sig date out of window
 	InboxStatusReplay                 InboxStatus = "replay"                   // activity id already seen
 	InboxStatusError                  InboxStatus = "error"                    // internal error during processing
@@ -640,6 +651,9 @@ var KnownInboxStatuses = map[InboxStatus]struct{}{
 	InboxStatusStaleRequest:           {},
 	InboxStatusReplay:                 {},
 	InboxStatusError:                  {},
+	InboxStatusProfileNotNegotiated:   {},
+	InboxStatusArchivalInvalid:        {},
+	InboxStatusFixityMismatch:         {},
 }
 
 // IsReject reports whether s is one of the rejection statuses (vs

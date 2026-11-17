@@ -248,3 +248,20 @@ per-field diff, and whole-import rejection already puts the choice in front of t
 at all, so there is no envelope to add a property to and no round trip to test. The point of
 finishing the list now is that §2 can be trusted as the authority again: before this, four
 properties were classified in a description and two were classified nowhere.
+
+## Amendment 2026-11-17: a Dublin Core baseline beneath exchanged schemas (#1513)
+
+Exchanged field schemas stay as this ADR decides. Beneath them, every
+peer that negotiated the `archival-1` profile (spec §17) understands one
+fixed baseline: the `description` member of `aa:asset`, a plain-text
+subset of the DCMI Metadata Terms (`title`, `description`, `creator`,
+`subject`, `date`, `language`), plus `rights` (a Creative Commons or
+RightsStatements.org URI) and `requiredStatement`. A receiver whose
+local schema has no matching fields can still show and preserve that
+baseline, so an asset is never received with no description at all.
+
+Rights need no new column on the sending side: a rights URI and a
+required statement are two field definitions in the existing `rights`
+display group, beside today's free-text `copyright` and `credit`. The
+mapping onto peer-visible values, with visibility and sensitivity
+filtering, is #1577. Nothing here is implemented yet.

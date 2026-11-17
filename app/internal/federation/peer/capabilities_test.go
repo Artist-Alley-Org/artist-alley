@@ -240,3 +240,22 @@ func TestCapabilitySet_UnmarshalUnknownCapability_Preserves(t *testing.T) {
 		t.Errorf("re-marshalled output dropped unknown cap: %s", raw)
 	}
 }
+
+// #1513: archival-1 is specified (v1.md §16-§17) but not implemented,
+// so it must not be advertised in the handshake nor land in any
+// negotiated intersection, even when the other side advertises it.
+func TestCapArchival1_NotAdvertised(t *testing.T) {
+	if CapArchival1 != "archival-1" {
+		t.Fatalf("token drifted: %q", CapArchival1)
+	}
+	if KnownCapabilities.Has(CapArchival1) {
+		t.Fatal("archival-1 is in KnownCapabilities before the profile is implemented (#1580 / #72 / #1574)")
+	}
+	theirs := append(CapabilitySet{CapArchival1}, KnownCapabilities...)
+	if Intersect(KnownCapabilities, theirs).Has(CapArchival1) {
+		t.Fatal("archival-1 reached a negotiated intersection")
+	}
+	if purposeOf(CapArchival1) != "" {
+		t.Error("archival-1 has a dispatch purpose; it must stay undispatched until implemented")
+	}
+}

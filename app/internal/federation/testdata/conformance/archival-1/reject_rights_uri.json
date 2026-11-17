@@ -1,0 +1,105 @@
+{
+  "description": "A rights value that is not a Creative Commons or RightsStatements.org URI is rejected.",
+  "spec": "v1.md \u00a717.2.5",
+  "stage": "schema",
+  "negotiated": true,
+  "envelope": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "Create",
+    "id": "https://studio-a.example/activities/create-1",
+    "actor": "https://studio-a.example/users/alice",
+    "published": "2026-11-17T10:00:00Z",
+    "object": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c",
+    "aa:asset": {
+      "id": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c",
+      "version": {
+        "id": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c/versions/1",
+        "number": 1,
+        "predecessor": null,
+        "created": "2026-11-17T09:00:00Z"
+      },
+      "files": [
+        {
+          "role": "original",
+          "contentUri": "cas://39e2e33c601cde530aa04507901aef1d322ad8cf13e4598a853730220ebea621?content-type=image/tiff&size=42",
+          "checksums": [
+            {
+              "algorithm": "sha256",
+              "value": "39e2e33c601cde530aa04507901aef1d322ad8cf13e4598a853730220ebea621"
+            },
+            {
+              "algorithm": "md5",
+              "value": "4408eddbac70f3238ef082c7609de737"
+            }
+          ],
+          "size": 42,
+          "mediaType": "image/tiff",
+          "identification": {
+            "puid": "fmt/353",
+            "tool": {
+              "name": "siegfried",
+              "version": "1.11.1"
+            }
+          },
+          "originalFilename": "IMG_0042 final.tif"
+        },
+        {
+          "role": "access",
+          "contentUri": "cas://202370b2864e08ff09d4eaec661c411b02576a4512c7d0bbcf427f8da78509ea",
+          "checksums": [
+            {
+              "algorithm": "sha256",
+              "value": "202370b2864e08ff09d4eaec661c411b02576a4512c7d0bbcf427f8da78509ea"
+            }
+          ],
+          "size": 18,
+          "mediaType": "image/jpeg"
+        }
+      ],
+      "sensitivity": "team",
+      "mature": false,
+      "aiProvenance": "none",
+      "rights": "https://studio-a.example/our-license",
+      "requiredStatement": {
+        "label": {
+          "en": [
+            "Attribution"
+          ]
+        },
+        "value": {
+          "en": [
+            "Studio A archive"
+          ]
+        }
+      },
+      "identifiers": [
+        {
+          "scheme": "ark",
+          "value": "ark:/12345/x7d6f1c2a"
+        }
+      ],
+      "accessionNumber": "2026.11.0042",
+      "description": {
+        "title": "Harbour at dusk",
+        "description": "Scan of a 1962 print.",
+        "creator": [
+          "A. Example"
+        ],
+        "subject": [
+          "harbours"
+        ],
+        "date": "1962",
+        "language": "en"
+      },
+      "iiifManifest": "https://studio-a.example/iiif/3/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c/manifest.json"
+    }
+  },
+  "expected": {
+    "outcome": "reject",
+    "reason": "archival_invalid"
+  },
+  "enforcement": {
+    "now": "federation.ValidateArchivalMembers (pure schema and placement check)",
+    "pending": "#1580: inbox and parser enforcement"
+  }
+}

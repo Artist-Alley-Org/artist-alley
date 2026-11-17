@@ -102,6 +102,22 @@ where applicable, otherwise note "no-spec-impact."
   and the `federation.share.granted` audit entry now carry the id the share is actually stored
   under; before, they named an id no share had.
 
+### Documentation
+
+- **The federation contract gains an archival profile; the ArchivePub overview is rewritten
+  (#1513).** `docs/spec/federation/v1.md` is now the single normative contract. It adds
+  negotiated profiles (§16), the one way to add envelope members without a protocol version bump,
+  and the archival profile `archival-1` (§17): per-file SHA-256 fixity with checksum lists,
+  immutable versions, PRONOM format identification, rights URIs, persistent identifiers, a Dublin
+  Core description, deaccession tombstones, PREMIS preservation events and IIIF-aligned Web
+  Annotations. The profile is **specified, not implemented**: it is not advertised, nothing sends
+  it, and the inbox does not enforce it yet (#1580, #72, #1574, #1575, #1577, #1578). The ArchivePub
+  overview drops its draft, JSON-LD and wrong-path text and points to `v1.md`. ADRs 0043, 0053,
+  0074 and 0083 are amended, ADR 0101 records preservation history as PREMIS events, and the
+  pure validators and 34 conformance vectors under `testdata/conformance/archival-1/` make the
+  profile's rules executable. One visible change: the parser now recognises `aa:Provenance`, so
+  a receiver answers it with `unsupported_activity` instead of `invalid_type`.
+
 ## [v0.11.1] - 2026-11-16 - Public CI datasets on GitHub-hosted runners
 
 ### Security
