@@ -28,6 +28,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/assettype"
+	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/auth/lockout"
@@ -1328,9 +1329,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.inboxDispatcher.SetRecipientUserRef(recipientUserRefFor(pool))
 	s.inboxDispatcher.SetAudit(auditRec)
 	// Phase 1.22.I-i — activates the I-h receiver-side
-	// encryption policy gate. The lookup resolves "asset"-kind
-	// objects to their sensitivity tier (migration 00001); other
-	// kinds pass through (SensitivityNotFound). When the gate
+	// encryption policy gate. The lookup resolves "asset" and
+	// "post" objects (a post at its strictest attached asset,
+	// #1525); other kinds pass through (SensitivityNotFound, see
+	// inboxSensitivityLookup). When the gate
 	// fires (plaintext envelope + restricted/embargo target),
 	// the dispatcher marks the row rejected with reason
 	// encryption_required + audits via
@@ -1341,36 +1343,9 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// activities ledger rows into per-recipient federation_outbox
 	// rows via LISTEN/NOTIFY (sub-100ms latency) + 30s ticker
 	// backstop. Started in Server.Run alongside the inbox
-	// dispatcher.
-	//
-	// Encryption-supported is hard-false until Phase 1.22.I
-	// ships X25519 keypair-per-user; restricted/embargo
-	// sensitivity activities emission-skip with audit.
-	outboxResolver := outbox.NewResolver(pool, cacheReg,
-		func(context.Context) bool { return false })
-	// Phase 1.22.I-d capability gate. Dormant in production
-	// traffic at I-d (no caller sets Input.RequiresEncryption);
-	// the wiring lands now so I-e can flip the flag without
-	// touching boot.
-	outboxResolver.SetPeerSupportsEncryption(func(ctx context.Context, peerID uuid.UUID) bool {
-		p, err := s.peers.ByID(ctx, peerID)
-		if err != nil {
-			return false
-		}
-		return p.Capabilities.SupportsE2E()
-	})
-	outboxResolver.SetEmissionSkippedForPeer(
-		func(ctx context.Context, peerID uuid.UUID, reason outbox.SkippedReason, verb string) {
-			auditRec.FederationEmissionSkippedForPeer(ctx, peerID.String(), string(reason), verb)
-		})
-	s.outboxDispatcher = outbox.NewDispatcher(
-		outbox.DefaultDispatcherConfig(),
-		pool,
-		outboxResolver,
-		logger,
-	)
-	s.outboxDispatcher.SetSkippedAudit(auditRec.EmissionSkipped)
-	s.outboxDispatcher.SetVisibilityLookup(outboxVisibilityLookup(pool))
+	// dispatcher. Built by newOutboxDispatcher so tests exercise
+	// exactly this wiring (#1525).
+	s.outboxDispatcher = newOutboxDispatcher(pool, cacheReg, s.peers, auditRec, logger)
 
 	// Federation user-keys retained-row sweeper (Phase 1.22.I-h).
 	// Reaps federation_user_keys rows past their retained_until
@@ -1525,28 +1500,21 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		outboxDeliveryPeerLookup(s.peers),
 		logger,
 	)
-	// Phase 1.22.I-e per-recipient encryption hooks. Three nil-
-	// safe setters; missing any input falls back to the existing
-	// 1.22.D plaintext path. Production traffic at I-e doesn't
-	// actually encrypt because CapNaClBox is removed from
-	// KnownCapabilities until I-f ships (rollout coordination
-	// per ADR 0049 §Track B); the wiring lands now so I-f's PR
-	// is a one-line capability re-add + re-pair trigger.
-	s.outboxDelivery.SetPeerSupportsE2E(func(ctx context.Context, peerID uuid.UUID) bool {
-		p, err := s.peers.ByID(ctx, peerID)
-		if err != nil {
-			return false
-		}
-		return p.Capabilities.SupportsE2E()
-	})
-	s.outboxDelivery.SetRecipientEncKey(func(ctx context.Context, actorURI string) ([]byte, int32, error) {
-		k, err := remoteHandler.GetEncryptionKey(ctx, actorURI)
-		if err != nil {
-			return nil, 0, err
-		}
-		return k.Key[:], k.Version, nil
-	})
-	s.outboxDelivery.SetAudit(auditRec)
+	// Phase 1.22.I-e per-recipient encryption hooks. A delivery
+	// is encrypted when the peer negotiated E2E (e2e-encrypted +
+	// nacl-box + x25519, all in KnownCapabilities since I-f) and
+	// the recipient's key is known; otherwise public / team rows
+	// go in plaintext and restricted / embargo / unresolved rows
+	// are refused (outbox.ChoosePathFor, #1525). The tier used is
+	// rechecked against the object just before each send.
+	wireOutboxDeliveryEncryption(s.outboxDelivery, pool, s.peers,
+		func(ctx context.Context, actorURI string) ([]byte, int32, error) {
+			k, err := remoteHandler.GetEncryptionKey(ctx, actorURI)
+			if err != nil {
+				return nil, 0, err
+			}
+			return k.Key[:], k.Version, nil
+		}, auditRec)
 	// Cross-package "who owns this post?" lookup so inbound
 	// Like/Comment can fire the post-author notification
 	// without social importing posts (which already imports
@@ -1920,50 +1888,198 @@ func outboxVisibilityLookup(pool *pgxpool.Pool) outbox.VisibilityLookup {
 	}
 }
 
+// errSensitivityKindUnsupported is objectSensitivity's answer for
+// an object kind with no sensitivity source.
+var errSensitivityKindUnsupported = errors.New("sensitivity: object kind has no sensitivity source")
+
+// objectSensitivity resolves the sensitivity tier of a local
+// object, for both federation directions (#1525).
+//
+//   - asset: assets.sensitivity, the only sensitivity column in
+//     the schema (public | team | restricted | embargo).
+//   - post: posts have no sensitivity column, so a post takes the
+//     strictest tier among the assets it carries: its post_assets
+//     members, its cover and its cover thumbnail (embargo >
+//     restricted > team > public). A post with none is public. An
+//     attached id with no assets row counts as restricted, so a
+//     dangling reference never lowers the tier.
+//
+// Soft-deleted rows are included on purpose: the tier of
+// something already shared does not drop because it was deleted
+// (a Delete activity still carries it).
+//
+// Returns pgx.ErrNoRows when the object does not exist and
+// errSensitivityKindUnsupported for any other kind. The outbox
+// treats both as unresolved (encryption required); the inbox
+// treats both as pass-through.
+func objectSensitivity(ctx context.Context, pool *pgxpool.Pool, kind string, id uuid.UUID) (string, error) {
+	var tier string
+	switch kind {
+	case "asset":
+		err := pool.QueryRow(ctx,
+			`SELECT sensitivity FROM assets WHERE id = $1`, id,
+		).Scan(&tier)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", err
+			}
+			return "", fmt.Errorf("asset sensitivity lookup: %w", err)
+		}
+		return tier, nil
+	case "post":
+		err := pool.QueryRow(ctx, `
+			SELECT CASE MAX(
+			         CASE
+			           WHEN m.asset_id IS NULL THEN 1
+			           WHEN a.id IS NULL THEN 3
+			           WHEN a.sensitivity = 'public' THEN 1
+			           WHEN a.sensitivity = 'team' THEN 2
+			           WHEN a.sensitivity = 'embargo' THEN 4
+			           ELSE 3
+			         END)
+			         WHEN 4 THEN 'embargo'
+			         WHEN 3 THEN 'restricted'
+			         WHEN 2 THEN 'team'
+			         ELSE 'public'
+			       END
+			  FROM posts p
+			  LEFT JOIN LATERAL (
+			         SELECT pa.asset_id FROM post_assets pa WHERE pa.post_id = p.id
+			         UNION SELECT p.cover_asset_id WHERE p.cover_asset_id IS NOT NULL
+			         UNION SELECT p.cover_thumbnail_asset_id WHERE p.cover_thumbnail_asset_id IS NOT NULL
+			       ) m ON TRUE
+			  LEFT JOIN assets a ON a.id = m.asset_id
+			 WHERE p.id = $1
+			 GROUP BY p.id`, id,
+		).Scan(&tier)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", err
+			}
+			return "", fmt.Errorf("post sensitivity lookup: %w", err)
+		}
+		return tier, nil
+	}
+	return "", errSensitivityKindUnsupported
+}
+
+// outboxSensitivityLookup returns the per-object sensitivity
+// closure the outbox dispatcher stamps on every outbox row and
+// hands to the resolver (#1525). It covers posts, the only kind
+// outboxVisibilityLookup lets federate today, and assets; see
+// objectSensitivity. Any other kind, a missing object or a DB
+// error comes back as an error, which the dispatcher records as
+// outbox.SensitivityUnresolved: encryption required, never
+// plaintext.
+func outboxSensitivityLookup(pool *pgxpool.Pool) outbox.SensitivityLookup {
+	return func(ctx context.Context, kind string, id uuid.UUID) (outbox.Sensitivity, error) {
+		tier, err := objectSensitivity(ctx, pool, kind, id)
+		if err != nil {
+			return "", err
+		}
+		return outbox.Sensitivity(tier), nil
+	}
+}
+
+// newOutboxDispatcher builds the production outbox dispatcher:
+// resolver, audit hooks and both per-object lookups. Boot and the
+// wiring regression test (#1525) share it, so a lookup dropped
+// here fails that test.
+//
+// The resolver is told this instance can encrypt when the at-rest
+// master key that unwraps per-user X25519 keys is loaded. Before
+// #1525 it was told "never", which would have skipped every
+// restricted / embargo activity even for a peer that negotiated
+// E2E and whose key we hold. Whether one delivery is encrypted,
+// sent in plaintext or refused is decided per recipient by the
+// delivery worker (wireOutboxDeliveryEncryption).
+func newOutboxDispatcher(pool *pgxpool.Pool, cacheReg *cache.Registry, peers *peer.Registry, auditRec *audit.Recorder, logger *slog.Logger) *outbox.Dispatcher {
+	resolver := outbox.NewResolver(pool, cacheReg,
+		func(context.Context) bool { return atrest.Initialised() })
+	// Phase 1.22.I-d capability gate. Dormant: no caller sets
+	// Input.RequiresEncryption, because the delivery worker makes
+	// the per-recipient decision at send time (it also sees a
+	// capability change between dispatch and delivery).
+	resolver.SetPeerSupportsEncryption(func(ctx context.Context, peerID uuid.UUID) bool {
+		p, err := peers.ByID(ctx, peerID)
+		if err != nil {
+			return false
+		}
+		return p.Capabilities.SupportsE2E()
+	})
+	resolver.SetEmissionSkippedForPeer(
+		func(ctx context.Context, peerID uuid.UUID, reason outbox.SkippedReason, verb string) {
+			auditRec.FederationEmissionSkippedForPeer(ctx, peerID.String(), string(reason), verb)
+		})
+	d := outbox.NewDispatcher(outbox.DefaultDispatcherConfig(), pool, resolver, logger)
+	d.SetSkippedAudit(auditRec.EmissionSkipped)
+	d.SetVisibilityLookup(outboxVisibilityLookup(pool))
+	d.SetSensitivityLookup(outboxSensitivityLookup(pool))
+	return d
+}
+
+// wireOutboxDeliveryEncryption installs the delivery worker's
+// per-recipient encryption hooks: the peer's negotiated E2E
+// capability (from the peer registry), the recipient key lookup,
+// the audit recorder, and the delivery-time sensitivity recheck
+// (outboxSensitivityLookup, the dispatcher's own lookup), so a
+// queued row is sent at the stricter of its stamped tier and the
+// object's tier at send time (#1525). Boot passes the remote-actor
+// key cache as recipientKey; the wiring test passes a fixture.
+func wireOutboxDeliveryEncryption(w *outbox.Worker, pool *pgxpool.Pool, peers *peer.Registry, recipientKey outbox.RecipientEncKeyFunc, auditRec *audit.Recorder) {
+	w.SetPeerSupportsE2E(func(ctx context.Context, peerID uuid.UUID) bool {
+		p, err := peers.ByID(ctx, peerID)
+		if err != nil {
+			return false
+		}
+		return p.Capabilities.SupportsE2E()
+	})
+	w.SetRecipientEncKey(recipientKey)
+	w.SetAudit(auditRec)
+	w.SetSensitivityLookup(outboxSensitivityLookup(pool))
+}
+
 // inboxSensitivityLookup returns the per-object sensitivity
 // closure the inbox dispatcher's stage-3.5 encryption policy
 // gate (1.22.I-h, activated at I-i) consults to decide whether
 // a plaintext envelope targeting a local object should be
 // rejected with reject_reason=encryption_required.
 //
-// Resolves only "asset" today — the federation arc's primary
-// restricted-tier target. Future kinds (post, collection, …)
-// land here as those domains grow sensitivity columns; the
-// gate's SensitivityNotFound fallback keeps the dispatcher
-// permissive for unrecognised kinds (matches the brief's
-// scope-discipline notes).
+// Coverage, by the object kinds the inbox handler can classify
+// (extractObjectRef: posts, assets, collections, workspaces,
+// brand_kits, users), audited for #1525:
 //
-// Lookup errors map to SensitivityNotFound so a missing
-// local object is pass-through (the activity's domain handler
-// will reject downstream with a more specific reason if the
-// object is required). DB errors propagate so the dispatcher
-// can fail-the-row + retry on the next tick.
+//   - asset: its own sensitivity column.
+//   - post: its strictest attached asset (objectSensitivity), the
+//     same tier the outbox stamps when it sends the post. Before
+//     #1525 posts passed through.
+//   - collection, workspace, brand_kit, user: pass through
+//     (SensitivityNotFound). None has a sensitivity column or a
+//     defined derived tier, so the gate does not enforce
+//     encryption for them. This is a known limit, not a claim of
+//     global enforcement.
+//
+// A missing local object maps to SensitivityNotFound, so it is
+// pass-through (the activity's domain handler rejects
+// downstream with a more specific reason if the object is
+// required). DB errors propagate so the dispatcher can
+// fail-the-row + retry on the next tick.
 func inboxSensitivityLookup(pool *pgxpool.Pool) inbox.SensitivityLookup {
 	return func(ctx context.Context, objectKind string, objectID uuid.UUID) (inbox.Sensitivity, error) {
-		switch objectKind {
-		case "asset":
-			var tier string
-			err := pool.QueryRow(ctx,
-				`SELECT sensitivity FROM assets WHERE id = $1 AND deleted_at IS NULL`,
-				objectID,
-			).Scan(&tier)
-			if err != nil {
-				// pgx.ErrNoRows is the common pre-share case;
-				// other errors surface to the dispatcher (which
-				// fails-the-row, not rejects). Conflating the
-				// two would either silently leak or noisily
-				// reject. Distinguish.
-				if errors.Is(err, pgx.ErrNoRows) {
-					return inbox.SensitivityNotFound, nil
-				}
-				return "", fmt.Errorf("asset sensitivity lookup: %w", err)
-			}
+		tier, err := objectSensitivity(ctx, pool, objectKind, objectID)
+		switch {
+		case err == nil:
 			return inbox.Sensitivity(tier), nil
+		case errors.Is(err, pgx.ErrNoRows), errors.Is(err, errSensitivityKindUnsupported):
+			// pgx.ErrNoRows is the common pre-share case;
+			// other errors surface to the dispatcher (which
+			// fails-the-row, not rejects). Conflating the
+			// two would either silently leak or noisily
+			// reject. Distinguish.
+			return inbox.SensitivityNotFound, nil
+		default:
+			return "", err
 		}
-		// Unknown / unsupported kind — gate passes through.
-		// Post + collection + comment land here today; they
-		// gain sensitivity columns in their own phases.
-		return inbox.SensitivityNotFound, nil
 	}
 }
 

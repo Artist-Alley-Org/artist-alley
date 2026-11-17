@@ -75,10 +75,11 @@ func DefaultDispatcherConfig() DispatcherConfig {
 type SkippedAuditFn func(ctx context.Context, activityID, activityType, objectKind, objectID, visibility, sensitivity, reason string)
 
 // SensitivityLookup resolves the sensitivity tier for an
-// activity's target object. Returns ("", nil) when the object
-// has no sensitivity column yet (pre-MVP — see schema gap in
-// resolver.go). Boot wires it to a per-kind dispatch (currently
-// just posts.GetSensitivity-equivalent).
+// activity's target object. Boot wires it to a per-kind lookup
+// (http.outboxSensitivityLookup: an asset's own tier, a post's
+// strictest attached asset). A kind it cannot resolve returns an
+// error or ""; the dispatcher then uses [SensitivityUnresolved],
+// which refuses unencrypted delivery (#1525).
 type SensitivityLookup func(ctx context.Context, objectKind string, objectID uuid.UUID) (Sensitivity, error)
 
 // VisibilityLookup resolves the visibility tier for an
@@ -111,8 +112,9 @@ type Dispatcher struct {
 // NewDispatcher constructs the dispatcher. Resolver, audit hook,
 // + the two lookups are required for production; tests can pass
 // nils for the optional ones (audit becomes a no-op; sensitivity
-// defaults to SensitivityPublic; visibility defaults to
-// VisibilityPrivate so missing-lookup activities don't federate).
+// defaults to SensitivityUnresolved, which requires encryption;
+// visibility defaults to VisibilityPrivate so missing-lookup
+// activities don't federate).
 func NewDispatcher(
 	cfg DispatcherConfig,
 	pool *pgxpool.Pool,
@@ -144,7 +146,9 @@ func (d *Dispatcher) SetSkippedAudit(fn SkippedAuditFn) { d.auditSkipped = fn }
 func (d *Dispatcher) SetVisibilityLookup(fn VisibilityLookup) { d.resolveVisibility = fn }
 
 // SetSensitivityLookup installs the per-object sensitivity
-// resolver. nil-safe (defaults to public).
+// resolver. nil-safe: with no lookup every activity is treated as
+// [SensitivityUnresolved], so nothing federates in plaintext
+// unless a lookup says its tier allows it (#1525).
 func (d *Dispatcher) SetSensitivityLookup(fn SensitivityLookup) { d.resolveSensitivity = fn }
 
 // Run blocks until ctx is cancelled. Safe to call once per
@@ -244,10 +248,14 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 		lastID = row.ID
 		processed++
 
-		// Resolve visibility + sensitivity. Defaults when no
-		// lookup is wired: private (local only) + public (no
-		// sensitivity refusal). Per-domain handlers register
-		// real lookups in 1.22.D-b boot.
+		// Resolve visibility + sensitivity. Both fail closed:
+		// with no lookup, a lookup error or an empty answer,
+		// visibility is private (local only) and sensitivity is
+		// SensitivityUnresolved (encryption required, so the
+		// delivery worker encrypts or refuses, never sends
+		// plaintext). Before #1525 the sensitivity fallback was
+		// public, and production wired no lookup at all, so every
+		// activity went out at the public tier.
 		var (
 			vis Visibility
 			sen Sensitivity
@@ -266,13 +274,19 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 		if d.resolveSensitivity != nil && row.ObjectKind != nil && row.ObjectLocalID != nil {
 			id, err := uuid.Parse(*row.ObjectLocalID)
 			if err == nil {
-				if s, err := d.resolveSensitivity(ctx, *row.ObjectKind, id); err == nil {
+				s, err := d.resolveSensitivity(ctx, *row.ObjectKind, id)
+				if err == nil {
 					sen = s
+				} else if d.logger != nil {
+					d.logger.LogAttrs(ctx, slog.LevelWarn, "outbox.dispatcher.sensitivity.unresolved",
+						slog.String("object_kind", *row.ObjectKind),
+						slog.String("object_id", *row.ObjectLocalID),
+						slog.String("err", err.Error()))
 				}
 			}
 		}
 		if sen == "" {
-			sen = SensitivityPublic
+			sen = SensitivityUnresolved
 		}
 
 		// Build resolver input. AuthorRef can be NULL on the
@@ -341,15 +355,12 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 		// Phase 1.22.I-g: denormalize sensitivity onto every outbox
 		// row at INSERT time so the delivery Worker can consult
 		// outbox.ChoosePathFor without re-touching the activities
-		// table. NULL flows through unchanged when the resolver
-		// dispatcher has no sensitivity lookup wired (test
-		// fixtures) — the Worker treats absence as the same
-		// conservative-public default the resolver uses.
-		var sensitivityPtr *string
-		if sen != "" {
-			s := string(sen)
-			sensitivityPtr = &s
-		}
+		// table. sen is never empty here (the fallback above), so
+		// every row the dispatcher writes carries its tier; the
+		// Worker treats a NULL tier (rows written some other way)
+		// as unresolved too (#1525).
+		s := string(sen)
+		sensitivityPtr := &s
 
 		// Insert one outbox row per recipient.
 		for _, rec := range result.Recipients {

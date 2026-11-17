@@ -147,12 +147,18 @@ type Worker struct {
 	http       *http.Client
 	logger     *slog.Logger
 
-	// 1.22.I-e per-recipient encryption hooks. All nil-safe;
-	// when any of the three is unwired the dispatcher falls
-	// back to the existing 1.22.D plaintext path.
+	// 1.22.I-e per-recipient encryption hooks. All nil-safe.
+	// When the capability or key hook is unwired nothing is
+	// encrypted: public / team rows go in plaintext and rows whose
+	// tier requires encryption are refused (ChoosePathFor).
 	peerSupportsE2E PeerSupportsE2EFunc
 	recipientEncKey RecipientEncKeyFunc
 	audit           *audit.Recorder
+
+	// currentSensitivity re-reads the object's tier just before
+	// each POST (#1525); see effectiveSensitivity. nil-safe: when
+	// unwired only the tier stamped at dispatch is used.
+	currentSensitivity SensitivityLookup
 
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_outbox_pending notification. Buffered=1 so the
@@ -176,6 +182,14 @@ func (w *Worker) SetPeerSupportsE2E(f PeerSupportsE2EFunc) { w.peerSupportsE2E =
 // (the gate would have to soft-fail anyway, so the cleaner
 // thing is to skip the whole path).
 func (w *Worker) SetRecipientEncKey(f RecipientEncKeyFunc) { w.recipientEncKey = f }
+
+// SetSensitivityLookup wires the delivery-time sensitivity
+// recheck (#1525). Boot passes the same lookup the dispatcher
+// stamps rows with. The Worker sends at the stricter of the
+// stamped tier and the object's current tier, so a change made
+// after dispatch can raise the protection of a queued row but
+// never lower it. nil-safe (stamped tier only).
+func (w *Worker) SetSensitivityLookup(f SensitivityLookup) { w.currentSensitivity = f }
 
 // SetAudit wires the audit recorder for federation.emission.encrypted
 // + federation.emission.skipped(reason=recipient_key_unfetchable).
@@ -784,8 +798,15 @@ func nextAttemptAt(n int16) time.Time {
 // Phase 1.22.I-e: the JOIN also surfaces the wrapped private key
 // so [tryEncryptFor] can unwrap + seal env.Extra against the
 // recipient's public key when the peer has negotiated e2e
-// support. Activities without an actor_user_ref (system-generated)
-// dispatch unencrypted regardless.
+// support. An activity without an actor_user_ref (system-
+// generated) has no sender key, so it can never be encrypted:
+// public / team rows go in plaintext and a tier that requires
+// encryption is refused (#1525).
+//
+// #1525: the query also reads the activity's object so
+// [effectiveSensitivity] can recheck the object's current tier
+// before anything is POSTed. Both delivery paths (deliverOne and
+// the batch path) build every envelope here before their POST.
 func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID uuid.UUID, recipientActorURI string, sensitivityFromRow *string) (*federation.Envelope, error) {
 	var (
 		activityURI  string
@@ -802,12 +823,16 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 		encKeyBytes      []byte      // 32 bytes if the actor has a current key, nil otherwise
 		encKeyVersion    pgtype.Int4 // matches encKeyBytes — both Valid=false or both Valid=true
 		encKeyPrivateEnc []byte      // master-key-wrapped private key bytes; nil when no key
+
+		objectKind    *string
+		objectLocalID *string
 	)
 	err := w.pool.QueryRow(ctx, `
 		SELECT a.activity_uri, a.activity_type, a.actor_uri, a.object_uri,
 		       a.to_uris, a.cc_uris, a.payload, a.published_at,
 		       a.signature_value, a.signature_pubkey,
-		       fuk.public_key, fuk.version, fuk.private_key_enc
+		       fuk.public_key, fuk.version, fuk.private_key_enc,
+		       a.object_kind, a.object_local_id
 		  FROM activities a
 		  LEFT JOIN federation_user_keys fuk
 		    ON fuk.user_ref = a.actor_user_ref
@@ -818,6 +843,7 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 		&toURIs, &ccURIs, &payload, &publishedAt,
 		&sigValue, &sigPubKey,
 		&encKeyBytes, &encKeyVersion, &encKeyPrivateEnc,
+		&objectKind, &objectLocalID,
 	)
 	if err != nil {
 		return nil, err
@@ -904,11 +930,80 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	//   EmissionRefused   — env DOES NOT dispatch; we return
 	//                       policy.ErrEmissionRefused so the
 	//                       caller marks the row refused + audits.
+	tier := w.effectiveSensitivity(ctx, sensitivityFromRow, objectKind, objectLocalID)
 	if err := w.tryEncryptFor(ctx, env, outboxID, peerID, recipientActorURI,
-		sensitivityFromRow, encKeyVersion, encKeyPrivateEnc); err != nil {
+		tier, encKeyVersion, encKeyPrivateEnc); err != nil {
 		return nil, err
 	}
 	return env, nil
+}
+
+// sensitivityRank orders tiers by protection. unresolved and any
+// unrecognised value rank with restricted: they require
+// encryption, and only embargo is stricter.
+func sensitivityRank(s Sensitivity) int {
+	switch s {
+	case SensitivityPublic:
+		return 1
+	case SensitivityTeam:
+		return 2
+	case SensitivityEmbargo:
+		return 4
+	default:
+		return 3
+	}
+}
+
+// stricterSensitivity returns whichever of a and b protects more,
+// keeping a on a tie.
+func stricterSensitivity(a, b Sensitivity) Sensitivity {
+	if sensitivityRank(b) > sensitivityRank(a) {
+		return b
+	}
+	return a
+}
+
+// effectiveSensitivity is the tier a delivery is sent at (#1525):
+// the stricter of the tier stamped on the outbox row at dispatch
+// and the object's tier now.
+//
+//   - A NULL or empty stamped tier is unresolved (requires
+//     encryption). Before #1525 it was treated as public.
+//   - With the recheck wired and the activity naming a local
+//     object, the current tier is looked up. A lookup error, an
+//     empty answer or an unparseable object id counts as
+//     unresolved, so a failed recheck can only raise protection.
+//   - The result never drops below the stamped tier: an asset
+//     made public, or removed from the post, after dispatch does
+//     not lower a queued restricted row.
+//
+// This narrows the gap between dispatch and delivery to the
+// moment before the POST. It is not retroactive revocation: a
+// change committed while a POST is in flight, or after it, does
+// not recall what the peer already received.
+func (w *Worker) effectiveSensitivity(ctx context.Context, stamped *string, objectKind, objectLocalID *string) Sensitivity {
+	tier := SensitivityUnresolved
+	if stamped != nil && *stamped != "" {
+		tier = Sensitivity(*stamped)
+	}
+	if w.currentSensitivity == nil || objectKind == nil || *objectKind == "" || objectLocalID == nil {
+		return tier
+	}
+	id, err := uuid.Parse(*objectLocalID)
+	if err != nil {
+		return stricterSensitivity(tier, SensitivityUnresolved)
+	}
+	current, err := w.currentSensitivity(ctx, *objectKind, id)
+	if err != nil || current == "" {
+		if err != nil && w.logger != nil {
+			w.logger.LogAttrs(ctx, slog.LevelWarn, "outbox.delivery.sensitivity.unresolved",
+				slog.String("object_kind", *objectKind),
+				slog.String("object_id", *objectLocalID),
+				slog.String("err", err.Error()))
+		}
+		current = SensitivityUnresolved
+	}
+	return stricterSensitivity(tier, current)
 }
 
 // tryEncryptFor applies the 1.22.I-g emission policy then, if
@@ -921,14 +1016,16 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 //     federation.emission.encrypted audit row fires.
 //
 //   - (nil, EmissionPlaintext) — env is unchanged; the caller
-//     POSTs the legacy 1.22.D plaintext shape. Reachable for
-//     public + team tiers when capability or key isn't
-//     available, and for any tier when the Worker hooks aren't
-//     wired (test fixtures + legacy boot paths).
+//     POSTs the legacy 1.22.D plaintext shape. Reachable only
+//     for public + team tiers: when capability or key isn't
+//     available, when the Worker hooks aren't wired, or when
+//     sealing fails after the encrypted path was chosen.
 //
 //   - ([policy.ErrEmissionRefused], EmissionRefused) — the
-//     share sensitivity tier mandated encryption + the
-//     capability or key wasn't there. The caller marks the row
+//     share sensitivity tier mandated encryption (restricted,
+//     embargo, unresolved or unknown) + the capability or key
+//     wasn't there, or sealing failed (for example the author
+//     has no keypair; #1525). The caller marks the row
 //     refused + audits + does NOT POST. Refusal is terminal:
 //     no retries, no backoff, no auto-recovery on capability
 //     change.
@@ -943,10 +1040,11 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 //   - recipientActorURI         — recipient's actor URI; remote-
 //     actor encryption-key lookup +
 //     EncryptionBlock.RecipientKeyID.
-//   - sensitivityFromRow        — federation_outbox.sensitivity
-//     denormalized at INSERT time
-//     (1.22.I-g, migration 00001);
-//     NULL → conservative-public.
+//   - tier:                     the delivery's effective tier
+//     from [effectiveSensitivity]:
+//     the stricter of the tier
+//     stamped at dispatch and the
+//     object's current tier (#1525).
 //   - senderKeyVersion +
 //     senderPrivateEnc          — buildEnvelope's JOIN against
 //     federation_user_keys; wrapped
@@ -977,19 +1075,10 @@ func (w *Worker) tryEncryptFor(
 	env *federation.Envelope,
 	outboxID, peerID uuid.UUID,
 	recipientActorURI string,
-	sensitivityFromRow *string,
+	tier Sensitivity,
 	senderKeyVersion pgtype.Int4,
 	senderPrivateEnc []byte,
 ) error {
-	// Decode the per-row sensitivity. NULL or unrecognised text
-	// → conservative-public (matches the resolver dispatcher's
-	// default + the documented "pre-I-g rows treated as public"
-	// migration note).
-	tier := Sensitivity(SensitivityPublic)
-	if sensitivityFromRow != nil && *sensitivityFromRow != "" {
-		tier = Sensitivity(*sensitivityFromRow)
-	}
-
 	// Probe the encryption inputs without paying for the unwrap
 	// + seal yet. Both probes are cheap (one in-memory bool
 	// lookup + one cache hit / miss).
@@ -1034,11 +1123,10 @@ func (w *Worker) tryEncryptFor(
 	// Path decision is now a pure function over the probed state.
 	path := ChoosePathFor(tier, peerCan, keyAvailable)
 
-	switch path {
-	case EmissionRefused:
-		// Mark + audit + signal caller. Terminal — no POST, no
-		// retry. The status='refused' transition routes the row
-		// out of the queued-partial-index automatically.
+	// refuse marks + audits + signals the caller. Terminal: no
+	// POST, no retry. The status='refused' transition routes the
+	// row out of the queued-partial-index automatically.
+	refuse := func() error {
 		reasonStr := string(RefuseReasonEncryptionRequiredButUnavailable)
 		reasonPtr := &reasonStr
 		if _, err := w.q.MarkOutboxRefused(ctx, MarkOutboxRefusedParams{
@@ -1056,6 +1144,24 @@ func (w *Worker) tryEncryptFor(
 			)
 		}
 		return ErrEmissionRefused
+	}
+	// sealFailed handles a failure after the encrypted path was
+	// chosen. A tier that does not require encryption keeps the
+	// soft fallback to plaintext (the row still delivers, as
+	// before). A tier that requires encryption is refused: falling
+	// back would send restricted / embargo / unresolved content in
+	// plaintext to a peer we only chose because it could decrypt
+	// (#1525).
+	sealFailed := func() error {
+		if RequiresEncryption(tier) {
+			return refuse()
+		}
+		return nil
+	}
+
+	switch path {
+	case EmissionRefused:
+		return refuse()
 
 	case EmissionPlaintext:
 		// Leave env in 1.22.D plaintext shape. The caller's POST
@@ -1069,14 +1175,14 @@ func (w *Worker) tryEncryptFor(
 
 	// Sanity-check the inputs the seal needs. Encryption path
 	// requires the sender's wrapped private key + a valid
-	// version. Missing either is a misconfiguration at the
-	// resolver/keypair layer — log + soft-fail to plaintext so
-	// the row delivers (worse than silent, but the alternative
-	// is silently dropping deliveries on a config bug).
+	// version. A missing one (for example an author with no
+	// keypair) is logged; sealFailed then soft-fails to plaintext
+	// for public / team and refuses a tier that requires
+	// encryption.
 	if !senderKeyVersion.Valid || senderKeyVersion.Int32 < 1 || len(senderPrivateEnc) == 0 {
 		w.logErr(ctx, "outbox.encrypt.sender_key.missing",
 			fmt.Errorf("path=encrypted but sender key version invalid or wrapped bytes empty"))
-		return nil
+		return sealFailed()
 	}
 
 	// Unwrap the sender's at-rest private key. The userkeys
@@ -1087,7 +1193,7 @@ func (w *Worker) tryEncryptFor(
 	senderPriv, err := userkeys.Unwrap(senderPrivateEnc)
 	if err != nil {
 		w.logErr(ctx, "outbox.encrypt.sender_unwrap", err)
-		return nil
+		return sealFailed()
 	}
 	senderPrivBytes := senderPriv.Bytes()
 	defer func() {
@@ -1104,14 +1210,14 @@ func (w *Worker) tryEncryptFor(
 	plaintext, err := json.Marshal(env.Extra)
 	if err != nil {
 		w.logErr(ctx, "outbox.encrypt.marshal_extra", err)
-		return nil
+		return sealFailed()
 	}
 
 	// Seal.
 	nonce, ciphertext, err := federation.EncryptActivityPayload(plaintext, senderPrivBytes, recPub)
 	if err != nil {
 		w.logErr(ctx, "outbox.encrypt.seal", err)
-		return nil
+		return sealFailed()
 	}
 
 	// Replace env.Extra with the encryption block + mark the row.

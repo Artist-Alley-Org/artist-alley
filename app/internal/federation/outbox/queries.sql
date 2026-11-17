@@ -5,10 +5,10 @@
 --
 -- Phase 1.22.I-g: sensitivity is denormalized from the activities
 -- ledger at INSERT time so the delivery Worker can consult
--- outbox.ChoosePathFor without a per-row JOIN. NULL passes through
--- when the resolver dispatcher has no sensitivity lookup wired
--- (pre-I-g rows or test fixtures); the Worker treats that as
--- conservative-public per the same default the resolver uses.
+-- outbox.ChoosePathFor without a per-row JOIN. The dispatcher
+-- always supplies a tier (unresolved when it cannot learn one);
+-- a NULL (pre-I-g rows or test fixtures) is treated by the Worker
+-- as unresolved, which requires encryption (#1525).
 INSERT INTO federation_outbox (
     activity_id, peer_id, target_user_url, status, next_attempt_at, sensitivity
 )

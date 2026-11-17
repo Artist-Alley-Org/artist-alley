@@ -29,7 +29,9 @@
 package outbox_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -42,13 +44,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
+	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 )
 
 // setSensitivityOnRow flips the test outbox row's sensitivity to
 // the given tier — emulates what the dispatcher's InsertOutboxRow
-// does at boot. Necessary because the newDeliveryFixture seed
-// uses a raw INSERT that doesn't pass sensitivity.
+// does at boot. The newDeliveryFixture seed uses a raw INSERT
+// stamped public; tests that need another tier flip it here.
 func setSensitivityOnRow(t *testing.T, pool *pgxpool.Pool, activityID uuid.UUID, tier outbox.Sensitivity) {
 	t.Helper()
 	s := string(tier)
@@ -410,3 +413,182 @@ func (s *fixedSigner) Sign(req *http.Request, _ []byte) error {
 }
 
 func (s *fixedSigner) KeyID() string { return s.keyURL }
+
+// --- #1525: the full delivery matrix for the required tiers ---
+
+// TestDispatch_RequiredTiers_DeliveryMatrix drives the Worker for
+// restricted and embargo rows with and without the peer's
+// negotiated E2E capability, the recipient key and the sender
+// keypair. Only the case with all three is delivered, and then
+// encrypted; every other case is refused with no POST. The
+// "sender key missing" case is the #1525 hardening: before it the
+// Worker chose the encrypted path, failed to seal and sent the
+// restricted payload in plaintext.
+func TestDispatch_RequiredTiers_DeliveryMatrix(t *testing.T) {
+	type scenario struct {
+		name         string
+		peerE2E      bool
+		recipientKey bool
+		senderKey    bool
+		wantSent     bool
+	}
+	scenarios := []scenario{
+		{"peer without E2E", false, true, true, false},
+		{"peer E2E, recipient key missing", true, false, true, false},
+		{"peer E2E, sender key missing", true, true, false, false},
+		{"peer E2E, both keys", true, true, true, true},
+	}
+	for _, tier := range []outbox.Sensitivity{outbox.SensitivityRestricted, outbox.SensitivityEmbargo, outbox.SensitivityUnresolved} {
+		for _, sc := range scenarios {
+			t.Run(string(tier)+"/"+sc.name, func(t *testing.T) {
+				pool := openTestPool(t)
+				ctx := context.Background()
+				var body []byte
+				worker, peerID, _, grantorRef, activityID, _ := newDeliveryFixture(t, http.StatusAccepted, &body)
+				setSensitivityOnRow(t, pool, activityID, tier)
+				wireRealAudit(t, worker, pool)
+				var senderPub, recipientPub, recipientPriv []byte
+				if sc.senderKey {
+					senderPub = seedSenderKeypair(t, ctx, pool, grantorRef)
+				}
+				pub, priv := freshRecipientKeypair(t)
+				if sc.recipientKey {
+					recipientPub, recipientPriv = pub, priv
+				}
+				wireHooks(t, worker, sc.peerE2E, recipientPub)
+				before := countAuditEvents(t, pool, "federation.emission.refused", "peer_id", peerID.String())
+
+				worker.RunOnce(ctx)
+
+				st := readOutboxRow(t, pool, activityID)
+				if !sc.wantSent {
+					if st.status != "refused" {
+						t.Errorf("status: got %q want refused", st.status)
+					}
+					if len(body) != 0 {
+						t.Errorf("a refused %s row was POSTed: %s", tier, body)
+					}
+					if st.refusedReason == nil || *st.refusedReason != string(outbox.RefuseReasonEncryptionRequiredButUnavailable) {
+						t.Errorf("refused_reason: got %v", st.refusedReason)
+					}
+					if got := countAuditEvents(t, pool, "federation.emission.refused", "peer_id", peerID.String()); got != before+1 {
+						t.Errorf("emission.refused audits: got %d want %d", got, before+1)
+					}
+					return
+				}
+				if st.status != "sent" || !st.wasEncrypted {
+					t.Fatalf("row: status %q was_encrypted %v; want sent + encrypted", st.status, st.wasEncrypted)
+				}
+				env, err := federation.Unmarshal(body)
+				if err != nil {
+					t.Fatalf("Unmarshal: %v body=%s", err, body)
+				}
+				if env.Encryption == nil {
+					t.Fatalf("%s delivered without an encryption block: %s", tier, body)
+				}
+				if _, err := federation.DecryptActivityPayload(env.Encryption.Ciphertext, env.Encryption.Nonce, recipientPriv, senderPub); err != nil {
+					t.Errorf("recipient cannot decrypt: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestDispatch_NullSensitivityRow_RefusedWithoutEncryption: a row
+// with no tier is unresolved, not public (#1525). Without E2E it
+// is refused; before #1525 it was sent in plaintext.
+func TestDispatch_NullSensitivityRow_RefusedWithoutEncryption(t *testing.T) {
+	pool := openTestPool(t)
+	var body []byte
+	worker, _, _, _, activityID, _ := newDeliveryFixture(t, http.StatusAccepted, &body)
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE federation_outbox SET sensitivity = NULL WHERE activity_id = $1`, activityID); err != nil {
+		t.Fatalf("clear sensitivity: %v", err)
+	}
+	wireRealAudit(t, worker, pool)
+
+	worker.RunOnce(context.Background())
+
+	if st := readOutboxRow(t, pool, activityID); st.status != "refused" {
+		t.Errorf("status: got %q want refused", st.status)
+	}
+	if len(body) != 0 {
+		t.Errorf("NULL-tier row was POSTed in plaintext: %s", body)
+	}
+}
+
+// TestDispatch_TeamShare_PeerNoE2E_PlaintextDispatched: team keeps
+// the plaintext path when encryption is not available (#1525 must
+// not tighten public / team).
+func TestDispatch_TeamShare_PeerNoE2E_PlaintextDispatched(t *testing.T) {
+	pool := openTestPool(t)
+	var body []byte
+	worker, _, _, _, activityID, _ := newDeliveryFixture(t, http.StatusAccepted, &body)
+	setSensitivityOnRow(t, pool, activityID, outbox.SensitivityTeam)
+	wireRealAudit(t, worker, pool)
+
+	sent, _, _ := worker.RunOnce(context.Background())
+
+	st := readOutboxRow(t, pool, activityID)
+	if sent != 1 || st.status != "sent" || st.wasEncrypted {
+		t.Errorf("team + no E2E: sent=%d status=%q was_encrypted=%v; want 1, sent, false", sent, st.status, st.wasEncrypted)
+	}
+	if len(body) == 0 || bytes.Contains(body, []byte(`"encryption":`)) {
+		t.Errorf("team + no E2E should POST plaintext; body=%s", body)
+	}
+}
+
+// TestDispatch_DeliveryRecheck_OnlyRaisesProtection drives the
+// Worker's delivery-time recheck (#1525) with a stub lookup. The
+// row is sent at the stricter of its stamped tier and the lookup's
+// answer; an error or empty answer counts as unresolved. No E2E,
+// so a tier that requires encryption is refused with no POST.
+func TestDispatch_DeliveryRecheck_OnlyRaisesProtection(t *testing.T) {
+	cases := []struct {
+		name     string
+		stamped  outbox.Sensitivity
+		current  outbox.Sensitivity
+		err      error
+		wantSent bool
+	}{
+		{"public row, object now restricted", outbox.SensitivityPublic, outbox.SensitivityRestricted, nil, false},
+		{"public row, object now embargo", outbox.SensitivityPublic, outbox.SensitivityEmbargo, nil, false},
+		{"public row, lookup error", outbox.SensitivityPublic, "", errors.New("db down"), false},
+		{"public row, empty answer", outbox.SensitivityPublic, "", nil, false},
+		{"restricted row, object now public", outbox.SensitivityRestricted, outbox.SensitivityPublic, nil, false},
+		{"embargo row, object now team", outbox.SensitivityEmbargo, outbox.SensitivityTeam, nil, false},
+		{"public row, object still public", outbox.SensitivityPublic, outbox.SensitivityPublic, nil, true},
+		{"team row, object now public", outbox.SensitivityTeam, outbox.SensitivityPublic, nil, true},
+		{"public row, object now team", outbox.SensitivityPublic, outbox.SensitivityTeam, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := openTestPool(t)
+			var body []byte
+			worker, _, postID, _, activityID, _ := newDeliveryFixture(t, http.StatusAccepted, &body)
+			setSensitivityOnRow(t, pool, activityID, tc.stamped)
+			wireRealAudit(t, worker, pool)
+			var asked []string
+			worker.SetSensitivityLookup(func(_ context.Context, kind string, id uuid.UUID) (outbox.Sensitivity, error) {
+				asked = append(asked, kind+":"+id.String())
+				return tc.current, tc.err
+			})
+
+			worker.RunOnce(context.Background())
+
+			if len(asked) != 1 || asked[0] != "post:"+postID.String() {
+				t.Errorf("recheck lookups: %v, want exactly the activity's post", asked)
+			}
+			st := readOutboxRow(t, pool, activityID)
+			if tc.wantSent {
+				if st.status != "sent" || len(body) == 0 {
+					t.Errorf("status %q, %d body bytes; want sent", st.status, len(body))
+				}
+				return
+			}
+			if st.status != "refused" || len(body) != 0 {
+				t.Errorf("status %q, body %s; want refused with nothing POSTed", st.status, body)
+			}
+		})
+	}
+}
