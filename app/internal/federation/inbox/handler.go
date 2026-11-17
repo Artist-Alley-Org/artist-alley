@@ -25,17 +25,45 @@
 //   5. Verify HTTP-Signature (httpsig.Verify) — checks Date,
 //      Digest, allowlist algo, signed-header set
 //   6. Per-peer rate-limit token consume (§5.5 addition A)
-//   7. Cheap replay-cache check (short-circuits dups before
-//      envelope parse)
+//   7. Peek the activity id and read its STORED row (#1569). A
+//      stored id is answered from that row, before any parse,
+//      type gate, object check or insert: a stored unsupported
+//      refusal always gets its original 422, even after a
+//      restart or once a handler for the verb has landed; a
+//      stored accepted id gets the idempotent 200. No row: first
+//      delivery. A read failure: 500 (retryable).
 //   8. Parse envelope (federation.Unmarshal) — strict-parse,
 //      catches unknown fields + invalid types
 //   9. Reject encrypted envelopes (§5.5 addition 1 — 1.22.I
 //      will flip this to decrypt-and-continue)
 //  10. Structural-validate envelope `signature` field
 //      (§5.5 addition C — full crypto verify lands in 1.22.I)
+//  10a. Unsupported activity type (#1569): a §7 type this release
+//      does not apply (see Applies) is recorded with
+//      status='rejected', reject_reason='unsupported_activity' and
+//      answered 422. It never reaches the dispatcher and never
+//      becomes processed. Runs after every authentication and
+//      structural gate above, so only an authenticated envelope
+//      is ever stored.
 //  11. INSERT federation_inbox row (UNIQUE on activity_uri →
-//      authoritative dedup if cache missed)
+//      authoritative dedup for a concurrent first delivery)
 //  12. Return 202 Accepted
+//
+// A duplicate (same activity id) is answered from the STORED row
+// (stage 7): 200 if it was accepted, the same 422
+// unsupported_activity if it was recorded as unsupported. There is
+// no receipt without a stored row, and no in-memory shortcut: the
+// stored row is authoritative on a cold start too. A concurrent
+// first delivery is settled by the UNIQUE index at insert, which is
+// answered from the stored row the same way. A failure to store or
+// to read the stored row is a 5xx, which the sender retries.
+//
+// Cost: one indexed read (federation_inbox.activity_uri UNIQUE) per
+// authenticated envelope, after the HTTP Signature, peer and rate
+// limit gates. The former in-memory replay cache could not avoid it
+// without breaking the invariant: a cold cache is exactly the case
+// that must still answer from the stored row, and a remembered
+// outcome would outlive rows deleted with their peer.
 
 package inbox
 
@@ -54,6 +82,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -106,12 +135,11 @@ var ErrUnknownObject = errors.New("inbox: object URL does not resolve to a local
 // Handler is the chi-mountable handler for POST /federation/inbox.
 // All dependencies are injected so tests can wire stubs.
 type Handler struct {
-	pool        *Queries // sqlc binding — see queries.sql.go
-	lookup      PeerLookup
-	limiter     *PeerRateLimiter
-	replayCache *ReplayCache
-	logger      *slog.Logger
-	clock       func() time.Time
+	pool    *Queries // sqlc binding — see queries.sql.go
+	lookup  PeerLookup
+	limiter *PeerRateLimiter
+	logger  *slog.Logger
+	clock   func() time.Time
 	// localBaseURL resolves the receiver instance's canonical
 	// base URL (e.g. https://studio-a.example). The inbox-stage
 	// object-ref check compares envelope.object's host against
@@ -124,11 +152,10 @@ type Handler struct {
 // HandlerDeps bundles the constructor inputs. Required for the
 // non-trivial set + lets tests skip the rejectAudit hook cleanly.
 type HandlerDeps struct {
-	Pool        *Queries
-	Lookup      PeerLookup
-	Limiter     *PeerRateLimiter
-	ReplayCache *ReplayCache
-	Logger      *slog.Logger
+	Pool    *Queries
+	Lookup  PeerLookup
+	Limiter *PeerRateLimiter
+	Logger  *slog.Logger
 	// Clock override for tests. Defaults to time.Now if nil.
 	Clock func() time.Time
 	// LocalBaseURL resolves the receiver instance's canonical
@@ -151,15 +178,10 @@ func NewHandler(deps HandlerDeps) *Handler {
 	if limiter == nil {
 		limiter = NewPeerRateLimiter(100, 100)
 	}
-	cache := deps.ReplayCache
-	if cache == nil {
-		cache = NewReplayCache(16_384, 30*time.Second)
-	}
 	return &Handler{
 		pool:         deps.Pool,
 		lookup:       deps.Lookup,
 		limiter:      limiter,
-		replayCache:  cache,
 		logger:       deps.Logger,
 		clock:        clock,
 		localBaseURL: deps.LocalBaseURL,
@@ -258,20 +280,22 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stage 7: cheap activity-URI peek for replay-cache hit.
-	// We extract just the `id` field with a tiny parse pass —
-	// full envelope unmarshal happens at stage 8.
+	// Stage 7: peek the activity id with a tiny parse pass (full
+	// envelope unmarshal happens at stage 8), then answer a stored
+	// id from its stored row.
 	activityURI, err := peekActivityID(body)
 	if err != nil {
 		writeRejection(w, r, h.logger, reject(federation.InboxStatusInvalidContext, http.StatusBadRequest,
 			"envelope JSON missing or invalid 'id'"))
 		return
 	}
-	if h.replayCache.Seen(activityURI) {
-		// Same envelope already in flight or recently seen.
-		// Return 200 OK no-op per the design (idempotent
-		// receipt) — sender's retry behaves correctly.
-		w.WriteHeader(http.StatusOK)
+	// The stored row is authoritative (#1569), so this runs BEFORE
+	// any parse, type gate, object check or insert: 200 OK no-op
+	// (idempotent receipt) if the id was accepted, the original
+	// rejection if it was refused as unsupported — whatever
+	// handlers exist now. With nothing stored, fall through and
+	// treat this as a first delivery.
+	if h.answerStored(w, r, activityURI) {
 		return
 	}
 
@@ -337,10 +361,29 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stage 10a (#1569): fail honestly on a verb this release does
+	// not apply. Recorded as rejected (envelope kept), never
+	// dispatched, answered 422 so the sender's outbox stops
+	// retrying (a 4xx other than 429 is terminal there).
+	if !Applies(env.Type) {
+		switch outcome, storedType, err := h.recordUnsupported(ctx, peer.ID, sigParams.KeyID, activityURI, env, body); {
+		case err != nil:
+			// Not stored: a 5xx, so the sender retries. Never a
+			// receipt, never a terminal rejection.
+			h.logErr(ctx, "inbox.unsupported.record.error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		case outcome == storedAccepted:
+			w.WriteHeader(http.StatusOK)
+		default:
+			writeRejection(w, r, h.logger, unsupportedRejection(federation.ActivityType(storedType)))
+		}
+		return
+	}
+
 	// Stage 11: INSERT. UNIQUE constraint on activity_uri is
-	// the authoritative dedup; cache miss + duplicate envelope
-	// surfaces here as a constraint violation → return 200 OK
-	// no-op per the idempotent-receipt invariant.
+	// the authoritative dedup; a duplicate that raced past the
+	// stage-7 read (a concurrent first delivery) surfaces here as
+	// a constraint violation, answered from the stored row.
 	//
 	// extractObjectRef is also where we surface the §12.1
 	// unknown_object rejection: the envelope's object URL has
@@ -374,9 +417,14 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			// Replay caught by the DB after cache miss. Idempotent
-			// receipt → 200 OK no-op.
-			w.WriteHeader(http.StatusOK)
+			// Replay caught by the DB. Answer from the stored
+			// row: 200 OK no-op if it was accepted, the same
+			// unsupported rejection if this id was recorded as
+			// unsupported (#1569).
+			if !h.answerStored(w, r, activityURI) {
+				h.logErr(ctx, "inbox.duplicate.lookup.error", errNoStoredRow)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
 			return
 		}
 		h.logErr(ctx, "inbox.insert.error", err)
@@ -421,7 +469,7 @@ func (h *Handler) drainCappedBody(r *http.Request) ([]byte, error) {
 }
 
 // peekActivityID extracts the envelope's `id` field via a small
-// parse pass. Lets the replay-cache short-circuit before the full
+// parse pass, so stage 7 can answer a stored id before the full
 // strict-unmarshal of stage 8.
 func peekActivityID(body []byte) (string, error) {
 	var head struct {
@@ -438,6 +486,133 @@ func peekActivityID(body []byte) (string, error) {
 		return "", fmt.Errorf("id not a URL: %w", err)
 	}
 	return head.ID, nil
+}
+
+// storedRowOutcome is what an already-stored activity id means for a
+// duplicate delivery of it.
+type storedRowOutcome int
+
+const (
+	// storedNone: no row for the id. There is nothing to answer
+	// from; the delivery is handled as a first delivery.
+	storedNone storedRowOutcome = iota
+	// storedAccepted: the id is stored as anything other than an
+	// unsupported rejection. A duplicate gets the idempotent
+	// receipt (200 / batch "replayed"), as before #1569.
+	storedAccepted
+	// storedUnsupported: the id is stored as rejected with
+	// unsupported_activity. A duplicate gets that same rejection.
+	storedUnsupported
+)
+
+// errNoStoredRow: the UNIQUE index reported the id as taken but no
+// row could be read for it. Treated as a transient failure, never as
+// a receipt.
+var errNoStoredRow = errors.New("inbox: activity id is taken but no stored row was found")
+
+// recordUnsupported persists an authenticated envelope whose type this
+// release does not apply, directly as status='rejected' with
+// reject_reason='unsupported_activity' and the envelope kept in
+// envelope_json (#1569). The row is never pending, so the dispatcher
+// never sees it. A duplicate id is answered from the stored row.
+//
+// The object reference is recorded when it parses, for the admin
+// filters; an unparseable or foreign object does not change the
+// outcome, because the honest reason for this envelope is the verb.
+//
+// storedType is the type the answer is about: env.Type for a new row,
+// the stored row's type for a duplicate.
+func (h *Handler) recordUnsupported(ctx context.Context, peerID uuid.UUID, keyID, activityURI string, env *federation.Envelope, raw []byte) (outcome storedRowOutcome, storedType string, err error) {
+	objectKind, objectID, err := h.extractObjectRef(ctx, env)
+	if err != nil {
+		objectKind, objectID = nil, pgtype.UUID{}
+	}
+	msg := UnsupportedActivityMessage(string(env.Type))
+	_, err = h.pool.InsertInboxRejected(ctx, InsertInboxRejectedParams{
+		ActivityUri:  activityURI,
+		PeerID:       pgtype.UUID{Bytes: peerID, Valid: true},
+		ActorUri:     env.Actor,
+		ActivityType: string(env.Type),
+		ObjectKind:   objectKind,
+		ObjectID:     objectID,
+		EnvelopeJson: raw,
+		HttpSigKey:   keyID,
+		RejectReason: ptrTo(string(federation.InboxStatusUnsupportedActivity)),
+		LastError:    msg,
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			outcome, storedType, lerr := h.storedOutcome(ctx, activityURI)
+			if lerr == nil && outcome == storedNone {
+				lerr = errNoStoredRow
+			}
+			return outcome, storedType, lerr
+		}
+		return storedNone, string(env.Type), err
+	}
+	h.auditReject(ctx, peerID, federation.InboxStatusUnsupportedActivity, activityURI, msg)
+	if h.logger != nil {
+		h.logger.LogAttrs(ctx, slog.LevelInfo, "inbox.unsupported_activity",
+			slog.String("activity_uri", activityURI),
+			slog.String("activity_type", string(env.Type)),
+			slog.String("peer_id", peerID.String()),
+		)
+	}
+	return storedUnsupported, string(env.Type), nil
+}
+
+// storedOutcome reads the stored row for an activity id. storedNone
+// means no row: never a receipt (#1569). storedType is the stored
+// row's activity type, for the rejection message.
+func (h *Handler) storedOutcome(ctx context.Context, activityURI string) (outcome storedRowOutcome, storedType string, err error) {
+	row, err := h.pool.GetInboxByActivityURI(ctx, activityURI)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return storedNone, "", nil
+	}
+	if err != nil {
+		return storedNone, "", fmt.Errorf("look up stored activity: %w", err)
+	}
+	if row.Status == "rejected" && row.RejectReason != nil &&
+		*row.RejectReason == string(federation.InboxStatusUnsupportedActivity) {
+		return storedUnsupported, row.ActivityType, nil
+	}
+	return storedAccepted, row.ActivityType, nil
+}
+
+// answerStored answers an activity id on the singleton endpoint from
+// its stored row and reports true: 200 OK if it was accepted, 422
+// unsupported_activity if it was refused as unsupported (#1569), 500
+// (retryable) if the row cannot be read. With no stored row it writes
+// nothing and reports false, so no receipt is ever sent for an
+// activity that is not stored.
+func (h *Handler) answerStored(w http.ResponseWriter, r *http.Request, activityURI string) bool {
+	outcome, storedType, err := h.storedOutcome(r.Context(), activityURI)
+	switch {
+	case err != nil:
+		h.logErr(r.Context(), "inbox.duplicate.lookup.error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	case outcome == storedNone:
+		return false
+	case outcome == storedUnsupported:
+		writeRejection(w, r, h.logger, unsupportedRejection(federation.ActivityType(storedType)))
+	default:
+		w.WriteHeader(http.StatusOK)
+	}
+	return true
+}
+
+// unsupportedRejection is the singleton-endpoint answer for an
+// unsupported activity type: 422 with reason unsupported_activity.
+func unsupportedRejection(t federation.ActivityType) error {
+	return reject(federation.InboxStatusUnsupportedActivity, http.StatusUnprocessableEntity,
+		UnsupportedActivityMessage(string(t)))
+}
+
+// UnsupportedActivityMessage is the operator-facing explanation stored
+// in federation_inbox.last_error and returned to the sender for an
+// activity type this release does not apply.
+func UnsupportedActivityMessage(activityType string) string {
+	return fmt.Sprintf("activity type %q is not applied by this release; recorded as rejected and not retried", activityType)
 }
 
 // extractObjectRef pulls (kind, uuid) from the envelope's Object

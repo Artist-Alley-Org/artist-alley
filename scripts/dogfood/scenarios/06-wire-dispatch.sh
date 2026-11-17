@@ -8,8 +8,9 @@
 #
 # Why: scenarios 01-05 from ADR 0049 cover user-facing flows.
 # Several (02 share→mirror, 03 cascade, 04 restricted-refuse) need
-# product code that's stubbed today (aa:Share inbound is a stub
-# per app/internal/federation/inbox/handler_stub.go). Until those
+# product code that doesn't exist yet (an inbound aa:Share is
+# rejected as unsupported_activity: no handler in
+# app/internal/federation/inbox/registry.go, #1569). Until those
 # real handlers land, this scenario gives us an honest E2E test
 # of the WIRE — envelope construction, HTTP-Sig signing, transport,
 # inbox classification, LikeHandler dispatch, federation_inbox

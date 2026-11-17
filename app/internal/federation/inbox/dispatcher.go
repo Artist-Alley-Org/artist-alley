@@ -29,13 +29,16 @@
 //   - OutcomeFailed      — transient error; row stays pending until
 //                          attempts cap hit then terminal-fail
 //
-// # Per Q1 lock-in
+// # Applied and unsupported verbs (#1569)
 //
-// Real handlers ship for `Like` (federation/inbox/handler_like.go)
-// and `Create` mapped to comments (handler_comment.go). Every
-// other verb gets a no-op stub that records `processed` without
-// a domain write. That keeps the demo runnable end-to-end while
-// scoped per-domain follow-up phases land the rest.
+// Real handlers ship for `Like` and `Create` mapped to comments
+// (handler_social.go); registry.go is the list. A row whose verb
+// has no registered handler is rejected with
+// reject_reason=unsupported_activity: never processed, never
+// retried, envelope_json left in place for diagnosis. The receive
+// path already refuses those verbs (see Applies), so this branch
+// catches rows that were pending before an upgrade, rows an
+// operator re-queued, and a registry wired without a handler.
 
 package inbox
 
@@ -59,8 +62,13 @@ import (
 type DispatchOutcome int
 
 const (
-	// OutcomeProcessed — handler wrote (or no-op'd) successfully;
-	// the inbox row transitions to status='processed'.
+	// OutcomeProcessed — a real domain handler applied the
+	// activity: its domain write committed, or the same effect was
+	// already present (an idempotent re-delivery, e.g. a Like the
+	// likes table already holds). The inbox row transitions to
+	// status='processed'. A handler MUST NOT return this for an
+	// activity it did not apply; that is OutcomeRejected with
+	// unsupported_activity or another §12.1 reason (#1569).
 	OutcomeProcessed DispatchOutcome = iota
 
 	// OutcomeRejected — handler refused with a typed §12.1
@@ -400,8 +408,9 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, rejected, failed i
 // integration tests + any future test that needs the same
 // isolation guarantee.
 //
-// The row is processed as if [RunOnce] had picked it up: stage-4
-// decrypt branch, peer lookup, verb handler invocation, mark-as-
+// The row is processed as if [RunOnce] had picked it up: verb
+// lookup (unsupported → rejected), peer lookup, encryption policy
+// gate, stage-4 decrypt branch, verb handler invocation, mark-as-
 // processed / mark-as-rejected.
 func (d *Dispatcher) DispatchRow(ctx context.Context, row FederationInbox) DispatchOutcome {
 	return d.dispatchOne(ctx, row)
@@ -417,6 +426,36 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) Dispa
 	if err != nil {
 		d.markFailed(ctx, row, "envelope re-parse failed: "+err.Error())
 		return OutcomeFailed
+	}
+
+	// Find handler FIRST (#1569). Apply RevokeShare → Unshare
+	// normalization per §12.5 #3 before lookup. A verb this
+	// release does not apply is rejected as unsupported before
+	// any peer, policy or decrypt work, so its reason is always
+	// unsupported_activity and never a side effect of a later stage.
+	verb := normalizeVerb(federation.ActivityType(row.ActivityType))
+	handler, ok := d.registry[verb]
+	if !ok {
+		// No real handler: this release does not apply the verb.
+		// Reject it as unsupported (#1569) — never processed, and
+		// terminal, so it is not retried. envelope_json stays on
+		// the row for diagnosis. An empty registry rejects every
+		// verb; there is no "accept anything" default.
+		if d.logger != nil {
+			d.logger.LogAttrs(ctx, slog.LevelWarn, "inbox.dispatcher.unsupported_activity",
+				slog.String("activity_type", row.ActivityType),
+				slog.String("inbox_id", uuid.UUID(row.ID.Bytes).String()),
+			)
+		}
+		if _, err := d.pool.MarkInboxRejected(ctx, MarkInboxRejectedParams{
+			ID:           row.ID,
+			RejectReason: ptrTo(string(federation.InboxStatusUnsupportedActivity)),
+			LastError:    UnsupportedActivityMessage(row.ActivityType),
+		}); err != nil {
+			d.markFailed(ctx, row, "mark unsupported: "+err.Error())
+			return OutcomeFailed
+		}
+		return OutcomeRejected
 	}
 
 	// Resolve peer (for handler context).
@@ -465,33 +504,6 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) Dispa
 			return OutcomeRejected
 		}
 		decryptedWithKeyVersion = &decryptedVer
-	}
-
-	// Find handler. Apply RevokeShare → Unshare normalization
-	// per §12.5 #3 before lookup.
-	verb := federation.ActivityType(row.ActivityType)
-	if verb == federation.ActivityAARevokeShare {
-		verb = federation.ActivityAAUnshare
-	}
-	handler, ok := d.registry[verb]
-	if !ok {
-		// No handler registered — treat as processed (the row
-		// landed durably; no domain write needed for verbs we
-		// don't yet implement). Future per-domain phases
-		// register their handlers.
-		if d.logger != nil {
-			d.logger.LogAttrs(ctx, slog.LevelDebug, "inbox.dispatcher.no_handler",
-				slog.String("activity_type", row.ActivityType),
-				slog.String("inbox_id", uuid.UUID(row.ID.Bytes).String()),
-			)
-		}
-		_, _ = d.pool.MarkInboxProcessed(ctx, MarkInboxProcessedParams{
-			ID:                      row.ID,
-			CorrelationActivityID:   pgtype.UUID{}, // no correlation row
-			WasEncrypted:            wasEncrypted,
-			DecryptedWithKeyVersion: decryptedWithKeyVersion,
-		})
-		return OutcomeProcessed
 	}
 
 	// Invoke the handler.

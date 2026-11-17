@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Kenneth Blossom
 
 // REAL per-verb handlers for Like + Create(Note as comment) per
-// the §5.5 Q1 lock-in. Other verbs ship stubs (handler_stub.go).
-// Phase 1.22.D-a-4-dispatch.
+// the §5.5 Q1 lock-in. Every other verb is rejected as
+// unsupported_activity (registry.go, #1569). Phase 1.22.D-a-4-dispatch.
 //
 // # Cross-package contract
 //
