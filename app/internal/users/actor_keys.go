@@ -14,12 +14,19 @@
 // in the clear (they're meant to be public). The actor_uri is
 // the stable cross-instance handle for this user.
 //
-// Lazy generation: existing users (created before migration
-// 00001) and any user not yet involved in federation has NULL key
-// columns. EnsureActorKeyMaterial generates a fresh keypair set,
-// encrypts the private bits, and persists. It is idempotent —
-// callers that don't know whether keys exist yet can call it
-// blindly; only the first call generates.
+// Generation (#1526): BackfillActorKeys mints keys at boot for every
+// user that has none, and the federation outbox calls
+// EnsureActorKeyMaterial before it signs, so a user created by any
+// path after boot has a key before its first envelope leaves. Both
+// are idempotent and race-safe: the install only writes a user with
+// no signing key, and a loser re-reads the winner's key.
+//
+// The actor URI is not taken from the stored actor_uri column. Every
+// envelope carries the actor URI derived from the CURRENT base URL
+// (activities/emit ActorContext.URI), and the actor document is
+// served at that URI; actor_uri is informational only (it records
+// the URI when the key was minted, or stays NULL when the base URL
+// was not configured yet).
 //
 // Key rotation is deferred to Phase 1.22.K per spec §14. Until
 // then, the only way to "rotate" a compromised user key is to
@@ -31,6 +38,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
@@ -90,8 +98,7 @@ func (h *Handler) GetActorKeyMaterial(ctx context.Context, userRef int64) (*Acto
 		}
 		return nil, err
 	}
-	if row.ActorUri == nil ||
-		row.SigningPublicKeyPem == nil ||
+	if row.SigningPublicKeyPem == nil ||
 		row.SigningPrivateKeyEnc == nil ||
 		row.EncryptionPublicKey == nil ||
 		row.EncryptionPrivateKeyEnc == nil {
@@ -101,8 +108,12 @@ func (h *Handler) GetActorKeyMaterial(ctx context.Context, userRef int64) (*Acto
 		// invalidate before write.
 		return nil, ErrNoActorKeyMaterial
 	}
+	actorURI := ""
+	if row.ActorUri != nil {
+		actorURI = *row.ActorUri
+	}
 	out := &ActorKeyMaterial{
-		ActorURI:                *row.ActorUri,
+		ActorURI:                actorURI,
 		SigningPublicKeyPEM:     []byte(*row.SigningPublicKeyPem),
 		SigningPrivateKeyEnc:    row.SigningPrivateKeyEnc,
 		EncryptionPublicKey:     row.EncryptionPublicKey,
@@ -151,9 +162,6 @@ func (h *Handler) EnsureActorKeyMaterial(ctx context.Context, userRef int64, bas
 	if !atrest.Initialised() {
 		return nil, errors.New("users: cannot generate actor keys without atrest master key (AA_MASTER_KEY)")
 	}
-	if baseURL == "" || username == "" {
-		return nil, errors.New("users: baseURL and username are required to compose actor URI")
-	}
 
 	// 1. Generate the Ed25519 signing keypair.
 	signPub, signPriv, err := federation.GenerateActorKeyPair()
@@ -191,19 +199,26 @@ func (h *Handler) EnsureActorKeyMaterial(ctx context.Context, userRef int64, bas
 		encPriv[i] = 0
 	}
 
-	// 3. Compose the actor URI.
-	actorURI := baseURL + "/users/" + username
+	// 3. Informational actor URI (see the file comment): recorded
+	// when the base URL is known, otherwise left as stored.
+	var actorURIPtr *string
+	actorURI := ""
+	if baseURL != "" && username != "" {
+		actorURI = baseURL + "/users/" + username
+		actorURIPtr = &actorURI
+	}
 
-	// 4. Persist.
+	// 4. Persist, only if no signing key exists yet (#1526).
 	signPubPEMStr := string(signPubPEM)
-	if err := New(h.Pool).SetActorKeyMaterial(ctx, SetActorKeyMaterialParams{
+	n, err := New(h.Pool).SetActorKeyMaterial(ctx, SetActorKeyMaterialParams{
 		Ref:                     userRef,
-		ActorUri:                &actorURI,
+		ActorUri:                actorURIPtr,
 		SigningPublicKeyPem:     &signPubPEMStr,
 		SigningPrivateKeyEnc:    signPrivEnc,
 		EncryptionPublicKey:     encPub,
 		EncryptionPrivateKeyEnc: encPrivEnc,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, fmt.Errorf("users: persist actor keys: %w", err)
 	}
 	// Bust any stale cache entry — at v1 keys are written exactly
@@ -211,6 +226,16 @@ func (h *Handler) EnsureActorKeyMaterial(ctx context.Context, userRef int64, bas
 	// invalidating is cheap and defends against future re-issue
 	// paths landing without re-thinking this code.
 	h.invalidateActorKeys(ctx, userRef)
+	if n == 0 {
+		// Either a concurrent install won, or the user does not
+		// exist. Re-read: the winner's key is the only key this
+		// user will ever sign with.
+		won, err := h.GetActorKeyMaterial(ctx, userRef)
+		if err != nil {
+			return nil, fmt.Errorf("users: actor keys after concurrent install: %w", err)
+		}
+		return won, nil
+	}
 	return &ActorKeyMaterial{
 		ActorURI:                actorURI,
 		SigningPublicKeyPEM:     signPubPEM,
@@ -236,4 +261,41 @@ func (m *ActorKeyMaterial) DecryptSigningPrivateKey() ([]byte, error) {
 // caveats as DecryptSigningPrivateKey.
 func (m *ActorKeyMaterial) DecryptEncryptionPrivateKey() ([]byte, error) {
 	return atrest.Decrypt(m.EncryptionPrivateKeyEnc)
+}
+
+// BackfillActorKeys mints signing key material for every user that
+// has none (#1526). Server boot runs it after migrations so that,
+// from the first request on, every existing user can sign envelopes
+// and be served in an actor document. baseURL may be empty (first
+// run before setup); the keys are still minted.
+//
+// Returns (minted, failed). A per-user failure is logged and counted
+// but does not stop the sweep; listing failure is returned. A user
+// left without a key cannot federate: the outbox mints on demand
+// before signing and refuses to send without a key.
+func BackfillActorKeys(ctx context.Context, h *Handler, baseURL string) (minted, failed int, err error) {
+	rows, err := New(h.Pool).ListUsersMissingActorKeys(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("users: list users missing actor keys: %w", err)
+	}
+	for _, r := range rows {
+		username := ""
+		if r.Username != nil {
+			username = *r.Username
+		}
+		if _, err := h.EnsureActorKeyMaterial(ctx, r.Ref, baseURL, username); err != nil {
+			failed++
+			if h.Logger != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelError, "users.actor_keys.backfill.error",
+					slog.Int64("user_ref", r.Ref), slog.String("err", err.Error()))
+			}
+			continue
+		}
+		minted++
+	}
+	if h.Logger != nil && (minted > 0 || failed > 0) {
+		h.Logger.LogAttrs(ctx, slog.LevelInfo, "users.actor_keys.backfill",
+			slog.Int("minted", minted), slog.Int("failed", failed))
+	}
+	return minted, failed, nil
 }

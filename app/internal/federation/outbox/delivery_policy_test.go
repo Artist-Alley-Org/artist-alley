@@ -338,6 +338,7 @@ func TestDispatch_MixedRecipients_PartialRefusal(t *testing.T) {
 		},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
+	wireTestActorSigner(t, worker)
 	wireRealAudit(t, worker, pool)
 	worker.SetPeerSupportsE2E(func(_ context.Context, id uuid.UUID) bool {
 		return id == peerA // only A supports e2e

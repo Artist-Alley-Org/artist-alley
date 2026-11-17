@@ -58,6 +58,13 @@ the soak is clean.
 > [`docs/spec/federation/v1.md`](../spec/federation/v1.md),
 > *Implementation status* D1. This note corrects the implementation
 > record only; the accepted decision is unchanged.
+>
+> **Update (2026-11-17, #1526):** per-actor signatures now ship: the
+> outbox signs each final envelope (after encryption) with the actor's
+> Ed25519 key and the inbox verifies it first, against the actor's key
+> pinned from the sending peer's actor document. Peers on an earlier
+> release are refused until they upgrade. Key rotation is still open
+> (#1581).
 
 The frontmatter `status: accepted` reflects the project's ADR
 convention (no `implemented` value is used anywhere else in

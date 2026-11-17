@@ -65,6 +65,15 @@ excerpt: >-
 > workspaces, brand kits and users have no sensitivity tier and are not
 > checked. The requirements in this ADR are unchanged.
 
+> **Status update (2026-11-17, #1526):** per-actor envelope signatures, listed
+> above as not implemented, now ship. Every envelope is signed with its
+> actor's Ed25519 key and every received envelope is verified against the
+> sending actor's key, which is fetched once from that peer's actor document
+> (served at the actor URI to paired peers only) and pinned. Instance HTTP
+> signatures still authenticate the peer. A peer on an earlier release stays
+> paired but is refused until it upgrades. Key rotation is not implemented
+> (#1581). The requirements in this ADR are unchanged.
+
 ## Amendment 2026-11-17 (#1524): the fourth share scope is `remix`; `edit` is reserved and refused
 
 **What this ADR said.** The *Opt-in sharing model* section below lists

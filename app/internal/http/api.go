@@ -193,6 +193,7 @@ type apiServer struct {
 	sharesAdmin        *shares.AdminHandler
 	sharesSweeper      *shares.Sweeper
 	inboxHandler       *inbox.Handler
+	actorDocument      *actorDocumentHandler
 	inboxDispatcher    *inbox.Dispatcher
 	outboxDispatcher   *outbox.Dispatcher
 	outboxDelivery     *outbox.Worker
@@ -1282,6 +1283,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		LocalBaseURL: sysconfigBaseURLFn(sysCfg),
 		RejectAudit:  inboxRejectAuditFor(auditRec),
 	})
+	// #1526 actor document at ROOT GET /users/{username} (mounted in
+	// server.go before the SPA fallback): paired peers fetch it to
+	// pin an actor's signing key.
+	s.actorDocument = &actorDocumentHandler{
+		pool:    pool,
+		lookup:  inboxPeerLookupFor(s.peers),
+		baseURL: sysconfigBaseURLFn(sysCfg),
+		logger:  logger,
+	}
 
 	// Federation inbox dispatcher (1.22.D-a-4). Worker
 	// goroutine that drains pending federation_inbox rows +
@@ -1500,6 +1510,12 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		outboxDeliveryPeerLookup(s.peers),
 		logger,
 	)
+	// #1526: every envelope is signed with its actor's key, and the
+	// inbox verifies every envelope against the sending actor's
+	// pinned key, fetched from the peer's actor document with this
+	// same instance signer.
+	wireOutboxActorSigning(s.outboxDelivery, s.users, baseURLFn)
+	s.inboxHandler.SetActorKeyResolver(remote.NewSigningKeyResolver(pool, signer, logger))
 	// Phase 1.22.I-e per-recipient encryption hooks. A delivery
 	// is encrypted when the peer negotiated E2E (e2e-encrypted +
 	// nacl-box + x25519, all in KnownCapabilities since I-f) and
@@ -2016,6 +2032,40 @@ func newOutboxDispatcher(pool *pgxpool.Pool, cacheReg *cache.Registry, peers *pe
 	d.SetVisibilityLookup(outboxVisibilityLookup(pool))
 	d.SetSensitivityLookup(outboxSensitivityLookup(pool))
 	return d
+}
+
+// wireOutboxActorSigning installs the delivery worker's per-actor
+// signing key source (#1526). For each envelope it:
+//
+//   - refuses an activity whose actor URI is not the user's CURRENT
+//     actor URI (base URL + "/users/" + username). An activity
+//     recorded before the base URL changed would otherwise be signed
+//     for an identity this instance no longer serves an actor document
+//     for; it is not sent instead (the attempt fails and is retried,
+//     then fails for good);
+//   - mints the user's key on first use (users.EnsureActorKeyMaterial,
+//     race-safe), so a user created by any path can sign before its
+//     first envelope leaves;
+//   - returns the decrypted private key PEM, which the worker zeroes
+//     after signing.
+//
+// Any failure means the envelope is not sent.
+func wireOutboxActorSigning(w *outbox.Worker, uh *users.Handler, baseURL func(context.Context) string) {
+	w.SetActorSigningKey(func(ctx context.Context, actorUserRef int64, actorURI string) ([]byte, error) {
+		base := strings.TrimRight(baseURL(ctx), "/")
+		username := uh.ResolveUsername(ctx, actorUserRef)
+		if base == "" || username == "" {
+			return nil, fmt.Errorf("actor %d: base URL or username unavailable", actorUserRef)
+		}
+		if want := base + "/users/" + username; actorURI != want {
+			return nil, fmt.Errorf("activity actor %q is not user %d's current actor URI %q", actorURI, actorUserRef, want)
+		}
+		km, err := uh.EnsureActorKeyMaterial(ctx, actorUserRef, base, username)
+		if err != nil {
+			return nil, err
+		}
+		return km.DecryptSigningPrivateKey()
+	})
 }
 
 // wireOutboxDeliveryEncryption installs the delivery worker's

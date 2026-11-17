@@ -71,3 +71,31 @@ SELECT encryption_public_key,
 -- index so the count is cheap regardless of total actor volume.
 SELECT count(*) FROM federation_remote_actors
  WHERE encryption_public_key IS NULL;
+
+-- name: GetRemoteActorSigningKey :one
+-- #1526: the pinned signing key of a remote actor, with the peer it
+-- is pinned to. signing_public_key is NULL until first pinned.
+SELECT peer_id, signing_public_key, signing_key_id
+FROM federation_remote_actors
+WHERE actor_uri = $1;
+
+-- name: PinRemoteActorSigningKey :one
+-- #1526: pin a fetched signing key, trust on first use. Inserts the
+-- actor row when absent. On an existing row it only sets the key when
+-- none is pinned yet, so a pinned key is never replaced. The row is
+-- then claimed for the pinning peer: the caller has already bound the
+-- actor URI to that peer's origin, which is what owns the actor
+-- namespace (a row left by an older display upsert does not). No row
+-- comes back when the update was refused; the caller re-reads.
+INSERT INTO federation_remote_actors (
+    actor_uri, peer_id, signing_public_key, signing_key_id, signing_key_pinned_at
+)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (actor_uri) DO UPDATE
+SET peer_id               = EXCLUDED.peer_id,
+    signing_public_key    = EXCLUDED.signing_public_key,
+    signing_key_id        = EXCLUDED.signing_key_id,
+    signing_key_pinned_at = EXCLUDED.signing_key_pinned_at,
+    updated_at            = NOW()
+WHERE federation_remote_actors.signing_public_key IS NULL
+RETURNING peer_id, signing_public_key;

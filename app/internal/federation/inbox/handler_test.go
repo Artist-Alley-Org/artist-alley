@@ -47,6 +47,69 @@ type fixture struct {
 	peerPriv  ed25519.PrivateKey
 	handler   *inbox.Handler
 	rejects   *rejectRecorder
+	// actorPriv signs the fixture's envelopes as its actor
+	// (<peerURL>/users/alice); actorKeys is the stub resolver that
+	// returns the matching public key (#1526).
+	actorPriv ed25519.PrivateKey
+	actorKeys *stubActorKeys
+}
+
+// stubActorKeys is the test ActorKeyResolver: a fixed key per actor
+// URI, a call counter, and an optional forced error.
+type stubActorKeys struct {
+	mu    sync.Mutex
+	keys  map[string]ed25519.PublicKey
+	calls int
+	err   error
+}
+
+func (s *stubActorKeys) SigningKey(_ context.Context, _ inbox.PeerInfo, actorURI string) (ed25519.PublicKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
+	k, ok := s.keys[actorURI]
+	if !ok {
+		return nil, inbox.ErrActorUnknown
+	}
+	return k, nil
+}
+
+func (s *stubActorKeys) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// signEnvelope re-signs an envelope with the fixture actor's key, as
+// a #1526 sender does: parse, Envelope.Sign, marshal.
+func (fx *fixture) signEnvelope(b []byte) []byte {
+	fx.t.Helper()
+	return signEnvelopeWith(fx.t, b, fx.actorPriv)
+}
+
+func signEnvelopeWith(t *testing.T, b []byte, priv ed25519.PrivateKey) []byte {
+	t.Helper()
+	env, err := federation.Unmarshal(b)
+	if err != nil {
+		// The parser refuses it before any signature check (stage 8),
+		// so the test is about that refusal: send it as built.
+		return b
+	}
+	privPEM, err := federation.PrivateKeyToPEM(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.Sign(privPEM, env.Actor+"#main-key"); err != nil {
+		t.Fatalf("sign envelope: %v", err)
+	}
+	out, err := env.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 // rejectRecorder captures the audit hook's calls so tests can
@@ -144,6 +207,12 @@ func newFixture(t *testing.T) *fixture {
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		RejectAudit: rejects.audit,
 	})
+	actorPub, actorPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actorKeys := &stubActorKeys{keys: map[string]ed25519.PublicKey{peerURL + "/users/alice": actorPub}}
+	handler.SetActorKeyResolver(actorKeys)
 
 	return &fixture{
 		t:         t,
@@ -156,6 +225,8 @@ func newFixture(t *testing.T) *fixture {
 		peerPriv:  priv,
 		handler:   handler,
 		rejects:   rejects,
+		actorPriv: actorPriv,
+		actorKeys: actorKeys,
 	}
 }
 
@@ -221,7 +292,7 @@ func (fx *fixture) newPlaintextEnvelope() []byte {
 		},
 	}
 	b, _ := json.Marshal(env)
-	return b
+	return fx.signEnvelope(b)
 }
 
 // --- happy path -------------------------------------------------------
@@ -310,6 +381,7 @@ func TestPostInbox_PeerDisabled_403(t *testing.T) {
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		RejectAudit: fx.rejects.audit,
 	})
+	fx.handler.SetActorKeyResolver(fx.actorKeys)
 	req := fx.newSignedRequest(fx.newPlaintextEnvelope())
 	rr := httptest.NewRecorder()
 	fx.handler.PostInbox(rr, req)
@@ -386,6 +458,7 @@ func TestPostInbox_UnknownObject_WrongHost_404(t *testing.T) {
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		RejectAudit:  fx.rejects.audit,
 	})
+	fx.handler.SetActorKeyResolver(fx.actorKeys)
 	// Build an envelope whose object URL points at fx.peerURL
 	// (sender's host) instead of localBase — outbox-built-wrong.
 	env := map[string]any{
@@ -402,6 +475,7 @@ func TestPostInbox_UnknownObject_WrongHost_404(t *testing.T) {
 		},
 	}
 	body, _ := json.Marshal(env)
+	body = fx.signEnvelope(body)
 	req := fx.newSignedRequest(body)
 	rr := httptest.NewRecorder()
 	fx.handler.PostInbox(rr, req)
@@ -426,6 +500,7 @@ func TestPostInbox_UnknownObject_BadURLShape_404(t *testing.T) {
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		RejectAudit:  fx.rejects.audit,
 	})
+	fx.handler.SetActorKeyResolver(fx.actorKeys)
 	env := map[string]any{
 		"@context":  federation.ContextV1,
 		"type":      "Like",
@@ -440,6 +515,7 @@ func TestPostInbox_UnknownObject_BadURLShape_404(t *testing.T) {
 		},
 	}
 	body, _ := json.Marshal(env)
+	body = fx.signEnvelope(body)
 	req := fx.newSignedRequest(body)
 	rr := httptest.NewRecorder()
 	fx.handler.PostInbox(rr, req)
@@ -554,6 +630,7 @@ func TestPostInbox_RateLimited_429(t *testing.T) {
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		RejectAudit: fx.rejects.audit,
 	})
+	fx.handler.SetActorKeyResolver(fx.actorKeys)
 	// First 2 succeed.
 	for i := 0; i < 2; i++ {
 		rr := httptest.NewRecorder()

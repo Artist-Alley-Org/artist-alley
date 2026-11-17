@@ -2286,7 +2286,11 @@ CREATE TABLE public.federation_remote_actors (
     encryption_public_key bytea,
     encryption_public_key_version integer,
     encryption_public_key_updated_at timestamp with time zone,
-    CONSTRAINT federation_remote_actors_encryption_key_atomic CHECK ((((encryption_public_key IS NULL) AND (encryption_public_key_version IS NULL) AND (encryption_public_key_updated_at IS NULL)) OR ((encryption_public_key IS NOT NULL) AND (octet_length(encryption_public_key) = 32) AND (encryption_public_key_version IS NOT NULL) AND (encryption_public_key_version >= 1) AND (encryption_public_key_updated_at IS NOT NULL))))
+    signing_public_key bytea,
+    signing_key_id text,
+    signing_key_pinned_at timestamp with time zone,
+    CONSTRAINT federation_remote_actors_encryption_key_atomic CHECK ((((encryption_public_key IS NULL) AND (encryption_public_key_version IS NULL) AND (encryption_public_key_updated_at IS NULL)) OR ((encryption_public_key IS NOT NULL) AND (octet_length(encryption_public_key) = 32) AND (encryption_public_key_version IS NOT NULL) AND (encryption_public_key_version >= 1) AND (encryption_public_key_updated_at IS NOT NULL)))),
+    CONSTRAINT federation_remote_actors_signing_key_atomic CHECK ((((signing_public_key IS NULL) AND (signing_key_id IS NULL) AND (signing_key_pinned_at IS NULL)) OR ((signing_public_key IS NOT NULL) AND (octet_length(signing_public_key) = 32) AND (signing_key_id IS NOT NULL) AND (signing_key_pinned_at IS NOT NULL))))
 );
 
 
@@ -2316,6 +2320,26 @@ COMMENT ON COLUMN public.federation_remote_actors.encryption_public_key_version 
 --
 
 COMMENT ON COLUMN public.federation_remote_actors.encryption_public_key_updated_at IS 'When we last observed a key for this actor. Updated on every inbound envelope carrying the block (even when the value did not change) so an operator can see how stale our knowledge is.';
+
+--
+-- Name: COLUMN federation_remote_actors.signing_public_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_remote_actors.signing_public_key IS 'Pinned raw 32-byte Ed25519 public key of the remote actor (#1526), from its actor document. Envelopes from this actor must verify against it. Never replaced automatically.';
+
+
+--
+-- Name: COLUMN federation_remote_actors.signing_key_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_remote_actors.signing_key_id IS 'Key id the actor document published with the pinned key: <actor_uri>#main-key.';
+
+
+--
+-- Name: COLUMN federation_remote_actors.signing_key_pinned_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_remote_actors.signing_key_pinned_at IS 'When the signing key was first fetched and pinned.';
 
 
 --

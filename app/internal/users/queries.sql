@@ -221,15 +221,34 @@ SELECT actor_uri,
 FROM "user"
 WHERE ref = $1;
 
--- name: SetActorKeyMaterial :exec
--- Phase 1.22.A — federation actor keypair install. Called once
--- per user on first federation event involving them (lazy
--- generation). Caller supplies the freshly-generated keys with
--- private keys already wrapped by atrest.Encrypt.
+-- name: SetActorKeyMaterial :execrows
+-- Phase 1.22.A federation actor keypair install, made race-safe for
+-- #1526. Caller supplies freshly generated keys with the private keys
+-- already wrapped by atrest.Encrypt. The install only happens while
+-- the user has no signing key: of two concurrent installs exactly one
+-- updates a row (1 affected) and the other affects 0 and must re-read
+-- the winner, so a peer can never pin a key we then stop signing with.
+-- actor_uri is informational (the actor URI is always derived from
+-- the current base URL); NULL keeps whatever is stored.
 UPDATE "user"
-SET actor_uri                  = $2,
-    signing_public_key_pem     = $3,
-    signing_private_key_enc    = $4,
-    encryption_public_key      = $5,
-    encryption_private_key_enc = $6
-WHERE ref = $1;
+SET actor_uri                  = COALESCE(sqlc.narg('actor_uri'), actor_uri),
+    signing_public_key_pem     = sqlc.arg('signing_public_key_pem'),
+    signing_private_key_enc    = sqlc.arg('signing_private_key_enc'),
+    encryption_public_key      = sqlc.arg('encryption_public_key'),
+    encryption_private_key_enc = sqlc.arg('encryption_private_key_enc')
+WHERE ref = sqlc.arg('ref')
+  AND signing_private_key_enc IS NULL;
+
+-- name: ListUsersMissingActorKeys :many
+-- #1526 boot backfill: every user without a signing key.
+SELECT ref, username
+FROM "user"
+WHERE signing_private_key_enc IS NULL
+ORDER BY ref;
+
+-- name: GetActorSigningKeyByUsername :one
+-- #1526 actor document: the public signing key for a username.
+-- signing_public_key_pem is NULL for a user with no key yet.
+SELECT ref, username, signing_public_key_pem
+FROM "user"
+WHERE username = $1;

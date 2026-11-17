@@ -766,6 +766,17 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.Post("/federation/inbox/batch", impl.inboxHandler.PostInboxBatch)
 	}
 
+	// Actor document (#1526) at the actor URI itself, ROOT
+	// GET /users/{username}, also outside /api/v1. Answers only an
+	// HTTP-signed request from a paired peer; anything else falls
+	// through to the router's not-found handler, which is the SPA
+	// fallback once mountStaticFrontend below has run (resolved per
+	// request, so the order of registration does not matter).
+	if impl != nil && impl.actorDocument != nil {
+		impl.actorDocument.fallback = func() http.Handler { return r.NotFoundHandler() }
+		r.Get("/users/{username}", impl.actorDocument.ServeHTTP)
+	}
+
 	// Per-type concurrency caps (#278). Load the seeded
 	// `jobs.type_concurrency.<type>` rows so the Pool's gate actually
 	// enforces them; without this the caps silently no-op. Best-effort

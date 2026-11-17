@@ -223,6 +223,22 @@ func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID
 		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusUnsupportedAlgorithm)}, nil
 	}
 
+	// Actor signature (#1526): same check and answers as PostInbox
+	// stage 10b. A key that cannot be obtained right now is a
+	// transient failure, which the caller turns into the
+	// whole-batch 503: this envelope is not stored, and envelopes
+	// stored earlier in the batch are answered from their stored
+	// rows when the sender retries (#1569).
+	if err := h.verifyActorSignature(ctx, peer, env); err != nil {
+		var transient actorKeyTransientError
+		if errors.As(err, &transient) {
+			return batchResult{}, fmt.Errorf("actor key for %s: %w", activityURI, err)
+		}
+		rej := err.(rejection)
+		h.auditReject(ctx, peer.ID, rej.status, activityURI, rej.message)
+		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(rej.status)}, nil
+	}
+
 	// Unsupported activity type (#1569): same gate, same stored row
 	// and same answer as PostInbox stage 10a.
 	if !Applies(env.Type) {

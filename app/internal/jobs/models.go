@@ -602,6 +602,12 @@ type FederationRemoteActor struct {
 	EncryptionPublicKeyVersion *int32
 	// When we last observed a key for this actor. Updated on every inbound envelope carrying the block (even when the value did not change) so an operator can see how stale our knowledge is.
 	EncryptionPublicKeyUpdatedAt pgtype.Timestamptz
+	// Pinned raw 32-byte Ed25519 public key of the remote actor (#1526), from its actor document. Envelopes from this actor must verify against it. Never replaced automatically.
+	SigningPublicKey []byte
+	// Key id the actor document published with the pinned key: <actor_uri>#main-key.
+	SigningKeyID *string
+	// When the signing key was first fetched and pinned.
+	SigningKeyPinnedAt pgtype.Timestamptz
 }
 
 type FederationShare struct {

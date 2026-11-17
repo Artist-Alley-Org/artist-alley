@@ -147,6 +147,9 @@ type Handler struct {
 	// spec §12.1: sender's outbox built a foreign URL).
 	localBaseURL func(ctx context.Context) string
 	rejectAudit  func(ctx context.Context, peerID uuid.UUID, reason federation.InboxStatus, activityURI, msg string)
+	// actorKeys resolves actor signing keys for stage 10b (#1526).
+	// Set with SetActorKeyResolver; nil answers every envelope 503.
+	actorKeys ActorKeyResolver
 }
 
 // HandlerDeps bundles the constructor inputs. Required for the
@@ -333,16 +336,13 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stage 10: structural-validate envelope signature per spec
-	// §5.6 + §5.5 addition C. The structural check fires at
-	// the inbox-handler ingress to reject malformed envelopes
-	// before they enter the federation_inbox queue; full
-	// ed25519 crypto-verify against the per-actor public key
-	// happens further down the same handler (see the
-	// httpsig.Verify + federation.VerifyEnvelopeSignature
-	// paths below), which surface sig_invalid distinctly from
-	// the structural envelope_sig_missing reason so operators
-	// can tell "spec-noncompliant peer" from "key compromised /
-	// drifted."
+	// §5.6 + §5.5 addition C, so a malformed block is
+	// envelope_sig_missing / unsupported_algorithm. Stage 10b
+	// below then verifies the signature cryptographically against
+	// the actor's key (#1526), which surfaces sig_malformed /
+	// sig_invalid / unknown_key / unknown_actor distinctly so
+	// operators can tell "spec-noncompliant peer" from "key
+	// compromised / drifted".
 	if env.Signature == nil ||
 		env.Signature.Type == "" ||
 		env.Signature.PublicKey == "" ||
@@ -358,6 +358,24 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 			"signature.type="+string(env.Signature.Type))
 		writeRejection(w, r, h.logger, reject(federation.InboxStatusUnsupportedAlgorithm, http.StatusBadRequest,
 			"signature algorithm not in allowlist"))
+		return
+	}
+
+	// Stage 10b (#1526): the envelope must be signed by its actor,
+	// an actor of THIS peer. Before the unsupported-type record and
+	// the insert, so nothing unverified is ever stored. See
+	// actor_signature.go.
+	if err := h.verifyActorSignature(ctx, peer, env); err != nil {
+		var transient actorKeyTransientError
+		if errors.As(err, &transient) {
+			h.logErr(ctx, "inbox.actor_key.unavailable", err)
+			w.Header().Set("Retry-After", "30")
+			http.Error(w, "actor signing key temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		rej := err.(rejection)
+		h.auditReject(ctx, peer.ID, rej.status, activityURI, rej.message)
+		writeRejection(w, r, h.logger, rej)
 		return
 	}
 

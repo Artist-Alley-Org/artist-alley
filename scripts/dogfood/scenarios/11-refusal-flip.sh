@@ -145,7 +145,11 @@ admin_ref=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley
     "SELECT ref FROM \"user\" WHERE username = 'admin' LIMIT 1" | tr -d ' \r\n')
 [ -n "$admin_ref" ] || fail "studio-a admin user not found"
 
-actor_uri="http://studio-a.local/users/admin"
+# #1526: the actor URI must be studio-a's canonical origin (its
+# site.base_url, which is how studio-b registered it); checked
+# before anything is staged.
+actor_uri="$(studio_a_actor_uri admin)"
+assert_actor_bound_to_peer "$actor_uri"
 
 # --- Part A: refusal path -------------------------------------------------
 

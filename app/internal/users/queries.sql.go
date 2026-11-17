@@ -107,6 +107,27 @@ func (q *Queries) GetActorKeyMaterial(ctx context.Context, ref int64) (GetActorK
 	return i, err
 }
 
+const getActorSigningKeyByUsername = `-- name: GetActorSigningKeyByUsername :one
+SELECT ref, username, signing_public_key_pem
+FROM "user"
+WHERE username = $1
+`
+
+type GetActorSigningKeyByUsernameRow struct {
+	Ref                 int64
+	Username            *string
+	SigningPublicKeyPem *string
+}
+
+// #1526 actor document: the public signing key for a username.
+// signing_public_key_pem is NULL for a user with no key yet.
+func (q *Queries) GetActorSigningKeyByUsername(ctx context.Context, username *string) (GetActorSigningKeyByUsernameRow, error) {
+	row := q.db.QueryRow(ctx, getActorSigningKeyByUsername, username)
+	var i GetActorSigningKeyByUsernameRow
+	err := row.Scan(&i.Ref, &i.Username, &i.SigningPublicKeyPem)
+	return i, err
+}
+
 const getUserPublicByRef = `-- name: GetUserPublicByRef :one
 
 SELECT u.ref                                            AS user_ref,
@@ -391,39 +412,80 @@ func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) 
 	return items, nil
 }
 
-const setActorKeyMaterial = `-- name: SetActorKeyMaterial :exec
+const listUsersMissingActorKeys = `-- name: ListUsersMissingActorKeys :many
+SELECT ref, username
+FROM "user"
+WHERE signing_private_key_enc IS NULL
+ORDER BY ref
+`
+
+type ListUsersMissingActorKeysRow struct {
+	Ref      int64
+	Username *string
+}
+
+// #1526 boot backfill: every user without a signing key.
+func (q *Queries) ListUsersMissingActorKeys(ctx context.Context) ([]ListUsersMissingActorKeysRow, error) {
+	rows, err := q.db.Query(ctx, listUsersMissingActorKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUsersMissingActorKeysRow
+	for rows.Next() {
+		var i ListUsersMissingActorKeysRow
+		if err := rows.Scan(&i.Ref, &i.Username); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setActorKeyMaterial = `-- name: SetActorKeyMaterial :execrows
 UPDATE "user"
-SET actor_uri                  = $2,
-    signing_public_key_pem     = $3,
-    signing_private_key_enc    = $4,
-    encryption_public_key      = $5,
-    encryption_private_key_enc = $6
-WHERE ref = $1
+SET actor_uri                  = COALESCE($1, actor_uri),
+    signing_public_key_pem     = $2,
+    signing_private_key_enc    = $3,
+    encryption_public_key      = $4,
+    encryption_private_key_enc = $5
+WHERE ref = $6
+  AND signing_private_key_enc IS NULL
 `
 
 type SetActorKeyMaterialParams struct {
-	Ref                     int64
 	ActorUri                *string
 	SigningPublicKeyPem     *string
 	SigningPrivateKeyEnc    []byte
 	EncryptionPublicKey     []byte
 	EncryptionPrivateKeyEnc []byte
+	Ref                     int64
 }
 
-// Phase 1.22.A — federation actor keypair install. Called once
-// per user on first federation event involving them (lazy
-// generation). Caller supplies the freshly-generated keys with
-// private keys already wrapped by atrest.Encrypt.
-func (q *Queries) SetActorKeyMaterial(ctx context.Context, arg SetActorKeyMaterialParams) error {
-	_, err := q.db.Exec(ctx, setActorKeyMaterial,
-		arg.Ref,
+// Phase 1.22.A federation actor keypair install, made race-safe for
+// #1526. Caller supplies freshly generated keys with the private keys
+// already wrapped by atrest.Encrypt. The install only happens while
+// the user has no signing key: of two concurrent installs exactly one
+// updates a row (1 affected) and the other affects 0 and must re-read
+// the winner, so a peer can never pin a key we then stop signing with.
+// actor_uri is informational (the actor URI is always derived from
+// the current base URL); NULL keeps whatever is stored.
+func (q *Queries) SetActorKeyMaterial(ctx context.Context, arg SetActorKeyMaterialParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setActorKeyMaterial,
 		arg.ActorUri,
 		arg.SigningPublicKeyPem,
 		arg.SigningPrivateKeyEnc,
 		arg.EncryptionPublicKey,
 		arg.EncryptionPrivateKeyEnc,
+		arg.Ref,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateUserStatus = `-- name: UpdateUserStatus :one
