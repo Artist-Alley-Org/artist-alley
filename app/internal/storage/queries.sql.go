@@ -312,6 +312,35 @@ func (q *Queries) CreateSweepRun(ctx context.Context, arg CreateSweepRunParams) 
 	return i, err
 }
 
+const deleteImportIntent = `-- name: DeleteImportIntent :execrows
+DELETE FROM storage_import_intents WHERE lease_id = $1
+`
+
+// #72: removed in the transaction that records object, variant and pin.
+// Zero rows means the reconciler already treated the import as
+// abandoned, and the caller must not record the object.
+func (q *Queries) DeleteImportIntent(ctx context.Context, leaseID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteImportIntent, leaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteImportIntentsForHash = `-- name: DeleteImportIntentsForHash :execrows
+DELETE FROM storage_import_intents WHERE object_hash = $1
+`
+
+// #72: every intent of a hash. Only called by the reconciler while it
+// holds the exclusive import lock, when no import of the hash is alive.
+func (q *Queries) DeleteImportIntentsForHash(ctx context.Context, objectHash string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteImportIntentsForHash, objectHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const findObject = `-- name: FindObject :one
 SELECT hash, size_bytes, content_type, backend, backend_bucket, gc_eligible_at
 FROM storage_objects
@@ -384,6 +413,21 @@ func (q *Queries) GetVariant(ctx context.Context, arg GetVariantParams) (Storage
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const insertImportIntent = `-- name: InsertImportIntent :exec
+INSERT INTO storage_import_intents (lease_id, object_hash) VALUES ($1, $2)
+`
+
+type InsertImportIntentParams struct {
+	LeaseID    pgtype.UUID
+	ObjectHash string
+}
+
+// #72: written before the backend Put of verified bytes.
+func (q *Queries) InsertImportIntent(ctx context.Context, arg InsertImportIntentParams) error {
+	_, err := q.db.Exec(ctx, insertImportIntent, arg.LeaseID, arg.ObjectHash)
+	return err
 }
 
 const insertObject = `-- name: InsertObject :exec
@@ -484,6 +528,83 @@ func (q *Queries) LatestSweepRun(ctx context.Context, kind string) (StorageSweep
 		&i.TriggeredByUserRef,
 	)
 	return i, err
+}
+
+const listStaleImportIntentHashes = `-- name: ListStaleImportIntentHashes :many
+SELECT DISTINCT object_hash
+FROM storage_import_intents
+WHERE created_at < now() - $1::INTERVAL
+ORDER BY object_hash
+LIMIT $2
+`
+
+type ListStaleImportIntentHashesParams struct {
+	StaleAfter pgtype.Interval
+	MaxRows    int32
+}
+
+// #72: hashes with at least one intent older than the cutoff.
+func (q *Queries) ListStaleImportIntentHashes(ctx context.Context, arg ListStaleImportIntentHashesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listStaleImportIntentHashes, arg.StaleAfter, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var object_hash string
+		if err := rows.Scan(&object_hash); err != nil {
+			return nil, err
+		}
+		items = append(items, object_hash)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStalePinsOfType = `-- name: ListStalePinsOfType :many
+SELECT object_hash, pin_subject_id
+FROM storage_pins
+WHERE pin_subject_type = $1
+  AND created_at < now() - $2::INTERVAL
+ORDER BY created_at
+LIMIT $3
+`
+
+type ListStalePinsOfTypeParams struct {
+	PinSubjectType string
+	StaleAfter     pgtype.Interval
+	MaxRows        int32
+}
+
+type ListStalePinsOfTypeRow struct {
+	ObjectHash   string
+	PinSubjectID string
+}
+
+// #72: pins of one subject type older than the cutoff. Used to release
+// federation_ingest pins that ingest (#1574) never converted into an
+// asset pin.
+func (q *Queries) ListStalePinsOfType(ctx context.Context, arg ListStalePinsOfTypeParams) ([]ListStalePinsOfTypeRow, error) {
+	rows, err := q.db.Query(ctx, listStalePinsOfType, arg.PinSubjectType, arg.StaleAfter, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStalePinsOfTypeRow
+	for rows.Next() {
+		var i ListStalePinsOfTypeRow
+		if err := rows.Scan(&i.ObjectHash, &i.PinSubjectID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSweepFindings = `-- name: ListSweepFindings :many
@@ -625,6 +746,19 @@ func (q *Queries) ListVariantsForVerify(ctx context.Context, arg ListVariantsFor
 	return items, nil
 }
 
+const lockImportHashSharedSession = `-- name: LockImportHashSharedSession :exec
+SELECT pg_advisory_lock_shared(hashtextextended('storage-import:' || $1::TEXT, 0))
+`
+
+// #72: the per-hash import lock, SHARED and SESSION-level, held by an
+// importer on one connection from before its intent is recorded until
+// its commit has finished (Put included). A crashed importer's session
+// ends and the lock goes with it, so "lock held" means "import alive".
+func (q *Queries) LockImportHashSharedSession(ctx context.Context, objectHash string) error {
+	_, err := q.db.Exec(ctx, lockImportHashSharedSession, objectHash)
+	return err
+}
+
 const markGCEligibleIfOrphaned = `-- name: MarkGCEligibleIfOrphaned :exec
 UPDATE storage_objects
 SET gc_eligible_at = NOW() + ($2::INTERVAL)
@@ -645,6 +779,17 @@ type MarkGCEligibleIfOrphanedParams struct {
 func (q *Queries) MarkGCEligibleIfOrphaned(ctx context.Context, arg MarkGCEligibleIfOrphanedParams) error {
 	_, err := q.db.Exec(ctx, markGCEligibleIfOrphaned, arg.Hash, arg.Column2)
 	return err
+}
+
+const objectRowExists = `-- name: ObjectRowExists :one
+SELECT EXISTS (SELECT 1 FROM storage_objects WHERE hash = $1)::BOOLEAN AS value
+`
+
+func (q *Queries) ObjectRowExists(ctx context.Context, hash string) (bool, error) {
+	row := q.db.QueryRow(ctx, objectRowExists, hash)
+	var value bool
+	err := row.Scan(&value)
+	return value, err
 }
 
 const recordSweepFinding = `-- name: RecordSweepFinding :exec
@@ -689,6 +834,30 @@ type RemovePinParams struct {
 func (q *Queries) RemovePin(ctx context.Context, arg RemovePinParams) error {
 	_, err := q.db.Exec(ctx, removePin, arg.ObjectHash, arg.PinSubjectType, arg.PinSubjectID)
 	return err
+}
+
+const tryLockImportHashExclusive = `-- name: TryLockImportHashExclusive :one
+SELECT pg_try_advisory_xact_lock(hashtextextended('storage-import:' || $1::TEXT, 0))::BOOLEAN AS value
+`
+
+// #72: the reconciler's side, EXCLUSIVE, transaction-level, never
+// waiting: false while any import of the hash is alive.
+func (q *Queries) TryLockImportHashExclusive(ctx context.Context, objectHash string) (bool, error) {
+	row := q.db.QueryRow(ctx, tryLockImportHashExclusive, objectHash)
+	var value bool
+	err := row.Scan(&value)
+	return value, err
+}
+
+const unlockImportHashSharedSession = `-- name: UnlockImportHashSharedSession :one
+SELECT pg_advisory_unlock_shared(hashtextextended('storage-import:' || $1::TEXT, 0))::BOOLEAN AS value
+`
+
+func (q *Queries) UnlockImportHashSharedSession(ctx context.Context, objectHash string) (bool, error) {
+	row := q.db.QueryRow(ctx, unlockImportHashSharedSession, objectHash)
+	var value bool
+	err := row.Scan(&value)
+	return value, err
 }
 
 const upsertVariant = `-- name: UpsertVariant :exec

@@ -45,6 +45,9 @@ type Service struct {
 	// a nil check, because Service is constructed bare in a lot of
 	// tests and a background heal is not worth a panic.
 	Logger *slog.Logger
+
+	// importHooks are #72 test seams; zero in production.
+	importHooks importHooks
 }
 
 // NewService constructs a storage Service with sensible defaults.

@@ -75,6 +75,8 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/email"
 	"github.com/mscrnt/artist-alley/app/internal/featured"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/federation/cas"
+	"github.com/mscrnt/artist-alley/app/internal/federation/casfetch"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
@@ -194,6 +196,8 @@ type apiServer struct {
 	sharesSweeper      *shares.Sweeper
 	inboxHandler       *inbox.Handler
 	actorDocument      *actorDocumentHandler
+	casHandler         *cas.Handler     // #72 origin: serves originals to paired peers
+	casFetch           *casfetch.Client // #72 receiver; inbound grants fail-closed until #1571
 	inboxDispatcher    *inbox.Dispatcher
 	outboxDispatcher   *outbox.Dispatcher
 	outboxDelivery     *outbox.Worker
@@ -1515,7 +1519,32 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// pinned key, fetched from the peer's actor document with this
 	// same instance signer.
 	wireOutboxActorSigning(s.outboxDelivery, s.users, baseURLFn)
-	s.inboxHandler.SetActorKeyResolver(remote.NewSigningKeyResolver(pool, signer, logger))
+	actorKeys := remote.NewSigningKeyResolver(pool, signer, logger)
+	s.inboxHandler.SetActorKeyResolver(actorKeys)
+	// #72 origin: serves originals only under the #1573 decision, with
+	// the same peer lookup and actor-key pinning as the inbox.
+	s.casHandler = cas.NewHandler(cas.Deps{
+		Lookup:    inboxPeerLookupFor(s.peers),
+		ActorKeys: actorKeys,
+		Policy:    s.sharesRegistry,
+		Bytes:     storageSvc,
+		Audit:     auditRec,
+		Logger:    logger,
+	})
+	// #72 receiver: no production caller until ingest (#1574), and
+	// fail-closed inbound grants until #1571.
+	casCfg := casfetch.DefaultConfig()
+	casCfg.TempDir = storageSvc.TempDir
+	casCfg.LocalBaseURL = baseURLFn
+	s.casFetch = casfetch.New(casfetch.Deps{
+		Pool:    pool,
+		Storage: storageSvc,
+		Peers:   casfetchPeerLookup{reg: s.peers},
+		Grants:  casfetch.FailClosedInboundGrants{},
+		Audit:   auditRec,
+		Logger:  logger,
+		Config:  casCfg,
+	})
 	// Phase 1.22.I-e per-recipient encryption hooks. A delivery
 	// is encrypted when the peer negotiated E2E (e2e-encrypted +
 	// nacl-box + x25519, all in KnownCapabilities since I-f) and
@@ -1792,6 +1821,24 @@ func suggestionCounterFor(pool *pgxpool.Pool) shares.SuggestionCounter {
 // typically a URL like `https://peer.example/instance#main-key`
 // — we trim the fragment + match against the peer's instance_url
 // via the existing cache-fronted ByInstanceURL.
+// casfetchPeerLookup reads a peer for the #72 client from the
+// registry (uncached reads go through ByID).
+type casfetchPeerLookup struct{ reg *peer.Registry }
+
+func (a casfetchPeerLookup) ByID(ctx context.Context, id uuid.UUID) (casfetch.Peer, error) {
+	p, err := a.reg.ByID(ctx, id)
+	if err != nil {
+		return casfetch.Peer{}, err
+	}
+	return casfetch.Peer{
+		ID:           p.ID,
+		InstanceURL:  p.InstanceURL,
+		Enabled:      p.Enabled,
+		Connected:    p.Status == federation.PeerStatusConnected,
+		Capabilities: capabilityTokens(p.Capabilities),
+	}, nil
+}
+
 func inboxPeerLookupFor(reg *peer.Registry) inbox.PeerLookup {
 	return inboxPeerLookupAdapter{reg: reg}
 }

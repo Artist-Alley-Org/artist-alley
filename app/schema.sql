@@ -2045,6 +2045,32 @@ COMMENT ON COLUMN public.featured_items.band_id IS 'Which surface this placement
 
 
 --
+-- Name: federation_cas_fetch_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_cas_fetch_leases (
+    peer_id uuid NOT NULL,
+    asset_id uuid NOT NULL,
+    object_hash text NOT NULL,
+    signer text NOT NULL,
+    lease_id uuid NOT NULL,
+    owner text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT federation_cas_fetch_leases_pkey PRIMARY KEY (peer_id, asset_id, object_hash, signer),
+    CONSTRAINT federation_cas_fetch_leases_hash_check CHECK ((object_hash ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT federation_cas_fetch_leases_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE
+);
+
+
+--
+-- Name: TABLE federation_cas_fetch_leases; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_cas_fetch_leases IS 'One in-progress original-file download per (peer, origin asset, hash, signer) across all workers (#72). Never keyed by hash alone. Taken in a short transaction, renewed by heartbeat, released on commit or failure, taken over after expires_at.';
+
+
+--
 -- Name: federation_directories; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3135,6 +3161,33 @@ CREATE TABLE public.storage_objects (
     CONSTRAINT storage_objects_hash_check CHECK ((hash ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT storage_objects_size_bytes_check CHECK ((size_bytes >= 0))
 );
+
+
+--
+-- Name: storage_import_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.storage_import_intents (
+    lease_id uuid NOT NULL,
+    object_hash text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT storage_import_intents_pkey PRIMARY KEY (lease_id),
+    CONSTRAINT storage_import_intents_hash_check CHECK ((object_hash ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: TABLE storage_import_intents; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.storage_import_intents IS 'A verified import about to Put bytes to the backend (#72). Inserted before the Put, deleted in the transaction that records object, variant and pin. A stale intent is reconciled under the per-hash import lock: the bytes are deleted only when no storage_objects row and no live intent for the hash exist.';
+
+
+--
+-- Name: storage_import_intents_hash_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_import_intents_hash_idx ON public.storage_import_intents USING btree (object_hash);
 
 
 --

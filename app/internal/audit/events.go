@@ -325,6 +325,17 @@ const (
 	// stage on the plaintext-but-shouldn't-be path.
 	EventFederationInboxEncryptionRequiredRejected = "federation.inbox.encryption_required_rejected"
 
+	// #72 original-file transfer (CAS). On the origin: one row per
+	// served or refused GET / HEAD of
+	// /federation/assets/{asset_id}/files/{class}/{sha256}, with the
+	// precise internal reason (the response itself says only
+	// not_available for every asset-level refusal). On the receiver:
+	// one row per fetch outcome, with a typed reason on failure.
+	EventFederationCASServed      = "federation.cas.served"
+	EventFederationCASRefused     = "federation.cas.refused"
+	EventFederationCASFetched     = "federation.cas.fetched"
+	EventFederationCASFetchFailed = "federation.cas.fetch_failed"
+
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side
 	// script the seed agent owns. Visible in the admin audit
@@ -1471,4 +1482,13 @@ func (r *Recorder) VocabularyMerged(ctx context.Context, actor *int64, m Vocabul
 		"asset_values_rewritten":      m.AssetValuesRewritten,
 		"collection_values_rewritten": m.CollectionValuesRewritten,
 	})
+}
+
+// FederationCAS records one #72 original-file transfer event
+// (EventFederationCASServed / Refused on the origin, Fetched /
+// FetchFailed on the receiver). meta carries peer_id, asset_id, class,
+// hash, size, signer and, where it applies, share_id, reason, deduped.
+// No acting local user: these are instance-to-instance transfers.
+func (r *Recorder) FederationCAS(ctx context.Context, eventType string, meta map[string]any) {
+	r.write(ctx, eventType, nil, nil, reqContext{}, meta)
 }

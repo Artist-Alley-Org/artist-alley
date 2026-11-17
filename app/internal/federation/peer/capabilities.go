@@ -96,11 +96,14 @@ const CapArchival1 PeerCapability = "archival-1"
 // stored negotiated intersection is a precondition of every
 // original-byte fetch decision (shares.CanPeerFetchOriginal). It is
 // RESERVED, NOT ADVERTISED: the per-asset signed fetch that enforces the
-// decision is #72, the receiving side's grant record is #1571 and ingest
-// is #1574. Until all three work end to end it stays out of
+// decision exists (#72, federation/cas), but the receiving side's grant
+// record is #1571 and ingest is #1574, and the production receiver
+// refuses everything until then. Until both land it stays out of
 // KnownCapabilities, so no handshake advertises it, no intersection
 // contains it, and every original-byte decision answers
-// profile_not_negotiated (TestCapOriginalTransfer1_NotAdvertised).
+// profile_not_negotiated (TestCapOriginalTransfer1_NotAdvertised). The
+// two-instance gate (federation/twostack) adds it in-process, labelled,
+// only for its own handshake.
 const CapOriginalTransfer1 PeerCapability = "original-transfer-1"
 
 // KnownCapabilities is the closed set this reference implementation

@@ -9,6 +9,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The origin side of original-file transfer between instances (#72).** A paired instance can
+  request an asset's original file with a signed `GET` or `HEAD` of
+  `/federation/assets/{asset_id}/files/original/{sha256}?size=N`. Each request is decided from this
+  instance's own records: the signature, the peer, the negotiated profile and the original-file
+  permission from #1573. Every refusal about the asset gets the same answer, so the endpoint never
+  reveals whether an asset exists. Access copies and previews are refused until #1597. The receiving
+  side checks both its own record of grants and the origin, before fetching and before reusing bytes
+  it already holds. It refuses redirects, enforces deadlines, verifies the bytes before storing them,
+  and re-checks both grants before committing. A crash mid-import is cleaned up safely. **Not live
+  yet:** receiving refuses every request until the record of grants an instance holds exists (#1571),
+  nothing becomes a visible asset until ingest (#1574), and the `original-transfer-1` profile stays
+  unadvertised until then. The test script now creates a second database, for a two-instance test
+  that runs two real servers on separate databases and storage.
 - **Shares can say whether a peer may receive the original file, and the admin share page can
   grant shares (#1573).** A share's scope (view, comment, annotate, remix) says what a peer may do
   with an object; it never meant the peer could have the original file, and now a separate
