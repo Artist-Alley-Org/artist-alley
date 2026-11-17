@@ -20,6 +20,7 @@ package outbox_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -122,6 +123,11 @@ func TestDispatcher_HappyPath_ActivityInsertFansOutToOutbox(t *testing.T) {
 	)
 	auditCalls := &auditSpy{}
 	d.SetSkippedAudit(auditCalls.record)
+	// The seeded post carries no assets, so its tier is public.
+	// Stated explicitly: with no lookup the dispatcher now treats
+	// the tier as unresolved and this resolver (which cannot
+	// encrypt) would skip the activity (#1525).
+	d.SetSensitivityLookup(fixedSensitivity(outbox.SensitivityPublic))
 	// Visibility lookup: posts have visibility=explicit-share
 	// (we seeded it that way).
 	d.SetVisibilityLookup(func(ctx context.Context, kind string, id uuid.UUID) (outbox.Visibility, error) {
@@ -306,6 +312,107 @@ func TestDispatcher_RestrictedSensitivity_SkipsWithAudit(t *testing.T) {
 	}
 }
 
+// TestDispatcher_UnresolvedSensitivity_FailsClosed pins #1525's
+// dispatcher fallback. When the tier cannot be learned (no lookup
+// wired, a lookup error, an empty answer) the activity is treated
+// as unresolved, which requires encryption: a resolver that cannot
+// encrypt skips it with the encryption audit, exactly as for
+// restricted. Before #1525 all three fell back to public and the
+// activity was enqueued for plaintext delivery.
+func TestDispatcher_UnresolvedSensitivity_FailsClosed(t *testing.T) {
+	cases := []struct {
+		name   string
+		lookup outbox.SensitivityLookup
+	}{
+		{"no lookup wired", nil},
+		{"lookup error", func(context.Context, string, uuid.UUID) (outbox.Sensitivity, error) {
+			return "", errors.New("db down")
+		}},
+		{"empty answer", func(context.Context, string, uuid.UUID) (outbox.Sensitivity, error) {
+			return "", nil
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := openTestPool(t)
+			ctx := context.Background()
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			reg := cache.NewRegistry(pool, logger)
+			t.Cleanup(reg.Stop)
+
+			var grantorRef int64
+			if err := pool.QueryRow(ctx,
+				`INSERT INTO "user" (username, fullname, approved) VALUES ($1, 'Outbox Unresolved', 1) RETURNING ref`,
+				"outbox-unres-"+randHex(4),
+			).Scan(&grantorRef); err != nil {
+				t.Fatalf("seed user: %v", err)
+			}
+			postID := uuid.New()
+			if _, err := pool.Exec(ctx,
+				`INSERT INTO posts (id, author_user_ref, title, visibility) VALUES ($1, $2, 'Unresolved', 'explicit-share')`,
+				postID, grantorRef,
+			); err != nil {
+				t.Fatalf("seed post: %v", err)
+			}
+			t.Cleanup(func() {
+				c := context.Background()
+				_, _ = pool.Exec(c, `DELETE FROM federation_outbox WHERE activity_id IN (SELECT id FROM activities WHERE actor_user_ref = $1)`, grantorRef)
+				_, _ = pool.Exec(c, `DELETE FROM activities WHERE actor_user_ref = $1`, grantorRef)
+				_, _ = pool.Exec(c, `DELETE FROM posts WHERE id = $1`, postID)
+				_, _ = pool.Exec(c, `DELETE FROM "user" WHERE ref = $1`, grantorRef)
+				_, _ = pool.Exec(c, `UPDATE federation_dispatch_state SET last_dispatched_activity_id = NULL WHERE id = 1`)
+			})
+			_, _ = pool.Exec(ctx, `UPDATE federation_dispatch_state SET last_dispatched_activity_id = NULL WHERE id = 1`)
+
+			resolver := outbox.NewResolver(pool, reg, func(context.Context) bool { return false })
+			d := outbox.NewDispatcher(outbox.DispatcherConfig{TickInterval: time.Hour, BatchSize: 100}, pool, resolver, logger)
+			spy := &auditSpy{}
+			d.SetSkippedAudit(spy.record)
+			d.SetVisibilityLookup(func(context.Context, string, uuid.UUID) (outbox.Visibility, error) {
+				return outbox.VisibilityExplicitShare, nil
+			})
+			if tc.lookup != nil {
+				d.SetSensitivityLookup(tc.lookup)
+			}
+
+			var activityID uuid.UUID
+			postIDStr := postID.String()
+			if err := pool.QueryRow(ctx,
+				`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
+				    object_uri, object_kind, object_local_id, payload)
+				 VALUES ($1, 'Create', $2, $3, $4, 'post', $5, '{}'::jsonb)
+				 RETURNING id`,
+				"https://outbox-test.example/activities/"+randHex(8),
+				"https://outbox-test.example/users/alice", grantorRef,
+				"https://outbox-test.example/posts/"+postIDStr, postIDStr,
+			).Scan(&activityID); err != nil {
+				t.Fatalf("seed activity: %v", err)
+			}
+			for i := 0; i < 50; i++ {
+				_, _, _ = d.RunOnce(ctx)
+				if spy.findByActivityID(activityID.String()) != nil {
+					break
+				}
+			}
+			got := spy.findByActivityID(activityID.String())
+			if got == nil {
+				t.Fatal("no skipped audit for our activity: the unresolved tier was not treated as requiring encryption")
+			}
+			if got.reason != string(outbox.SkippedEncryptionRequiredButNotSupported) {
+				t.Errorf("audit reason: got %q want %q", got.reason, outbox.SkippedEncryptionRequiredButNotSupported)
+			}
+			if got.sensitivity != string(outbox.SensitivityUnresolved) {
+				t.Errorf("audit sensitivity: got %q want %q", got.sensitivity, outbox.SensitivityUnresolved)
+			}
+			var n int
+			_ = pool.QueryRow(ctx, `SELECT COUNT(*) FROM federation_outbox WHERE activity_id = $1`, activityID).Scan(&n)
+			if n != 0 {
+				t.Errorf("federation_outbox rows for unresolved activity: %d want 0", n)
+			}
+		})
+	}
+}
+
 // --- audit spy ------------------------------------------------------
 
 type auditSpy struct {
@@ -476,6 +583,8 @@ func TestDispatcher_PublicPostWithoutShare_SkipsAndTheBatchAdvances(t *testing.T
 	d := outbox.NewDispatcher(outbox.DispatcherConfig{TickInterval: time.Hour, BatchSize: 100}, pool, resolver, logger)
 	spy := &auditSpy{}
 	d.SetSkippedAudit(spy.record)
+	// Public tier stated explicitly (#1525: no lookup = unresolved).
+	d.SetSensitivityLookup(fixedSensitivity(outbox.SensitivityPublic))
 	// Same shape as the production lookup (outboxVisibilityLookup in
 	// internal/http/api.go): a post's stored visibility, verbatim.
 	d.SetVisibilityLookup(func(ctx context.Context, kind string, id uuid.UUID) (outbox.Visibility, error) {
@@ -596,6 +705,8 @@ func TestDispatcher_WarmState_GrantThenRevoke_NoRestart(t *testing.T) {
 	}
 
 	d := outbox.NewDispatcher(outbox.DispatcherConfig{TickInterval: time.Hour, BatchSize: 100}, f.pool, f.r, logger)
+	// Public tier stated explicitly (#1525: no lookup = unresolved).
+	d.SetSensitivityLookup(fixedSensitivity(outbox.SensitivityPublic))
 	d.SetVisibilityLookup(func(ctx context.Context, kind string, id uuid.UUID) (outbox.Visibility, error) {
 		if kind != "post" {
 			return "", nil
@@ -678,5 +789,15 @@ func TestDispatcher_WarmState_GrantThenRevoke_NoRestart(t *testing.T) {
 	_ = f.pool.QueryRow(ctx, `SELECT last_dispatched_activity_id FROM federation_dispatch_state WHERE id = 1`).Scan(&cursor)
 	if cursor != l3 {
 		t.Errorf("cursor = %v, want the last activity L3 %v", cursor, l3)
+	}
+}
+
+// fixedSensitivity is a SensitivityLookup that reports one tier
+// for every object. Tests that are not about sensitivity use it to
+// state the tier their fixture means, since an unwired lookup is
+// now treated as unresolved (#1525).
+func fixedSensitivity(tier outbox.Sensitivity) outbox.SensitivityLookup {
+	return func(context.Context, string, uuid.UUID) (outbox.Sensitivity, error) {
+		return tier, nil
 	}
 }

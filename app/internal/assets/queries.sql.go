@@ -1241,11 +1241,13 @@ type SetAssetSensitivityParams struct {
 	Sensitivity string
 }
 
-// Phase 1.22.I-i — admin / owner action. Does NOT retroactively
-// affect outstanding federation_shares (those resolve sensitivity
-// at dispatch time via GetAssetSensitivity, so the change DOES
-// propagate to in-flight emissions — see 00014 migration's
-// design comment for the chosen tradeoff vs. copy-at-grant).
+// Phase 1.22.I-i: admin / owner action. Shares store no copy of
+// the tier (see 00014 migration's design comment for the tradeoff
+// vs. copy-at-grant), so the new tier applies to activities
+// dispatched afterwards and, through the outbox Worker's
+// delivery-time recheck (#1525), to queued deliveries not yet
+// sent: a raised tier is refused or encrypted, a lowered one never
+// loosens a queued row. Nothing already delivered is recalled.
 func (q *Queries) SetAssetSensitivity(ctx context.Context, arg SetAssetSensitivityParams) error {
 	_, err := q.db.Exec(ctx, setAssetSensitivity, arg.ID, arg.Sensitivity)
 	return err

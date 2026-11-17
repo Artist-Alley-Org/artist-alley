@@ -48,6 +48,23 @@ excerpt: >-
 > the inbound check against the share list, and the custom review and
 > workflow activities.
 
+> **Status correction (2026-11-17, #1525):** the note above overstated one
+> item. Until #1525 the production outbox never looked up an object's
+> sensitivity: every outbound activity was treated as public, so a post
+> carrying a restricted or embargoed asset could reach a peer without
+> encryption support as an unencrypted envelope over HTTPS. Boot also told
+> the outbox this instance could never encrypt. Since #1525 a post takes the
+> strictest tier among its attached assets (an asset keeps its own tier).
+> Restricted and embargoed material is sent only encrypted, to a peer that
+> negotiated encryption and whose key is available, and is otherwise refused
+> and recorded. A tier that cannot be determined is handled the same way.
+> The tier is checked again just before each delivery is sent and the
+> stricter of the two is used; a change made after something was delivered
+> does not recall it. Public and team material is unchanged. On the receiving side the
+> plaintext check now covers posts as well as assets; collections,
+> workspaces, brand kits and users have no sensitivity tier and are not
+> checked. The requirements in this ADR are unchanged.
+
 ## Amendment 2026-11-17 (#1524): the fourth share scope is `remix`; `edit` is reserved and refused
 
 **What this ADR said.** The *Opt-in sharing model* section below lists

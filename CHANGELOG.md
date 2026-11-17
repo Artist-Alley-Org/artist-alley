@@ -9,6 +9,24 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Restricted and embargoed material is no longer federated in plaintext (#1525).** The outbox
+  never looked up what it was sending: every outbound activity was treated as `public`, so a post
+  carrying a restricted or embargoed asset could reach a peer without encryption support as an
+  unencrypted envelope over HTTPS. A post now takes the strictest sensitivity among its attached
+  assets (cover and cover thumbnail included), and an asset keeps its own. Restricted and
+  embargoed material is sent only encrypted, to a peer that negotiated encryption and whose key is
+  known; otherwise nothing is sent, the delivery is marked `refused` and
+  `federation.emission.refused` is recorded. A tier that cannot be determined is handled the same
+  way, recorded as `unresolved`, and so is a delivery whose encryption fails partway (for example
+  an author with no keypair), which used to fall back to plaintext. Public and team material keeps
+  its existing behaviour (encrypted when both sides can, plaintext otherwise). The tier is
+  checked again just before each delivery is sent and the stricter of the two is used, so an
+  asset marked restricted or embargoed while a delivery is still queued is protected, and one
+  lowered or detached in that time does not loosen it. Nothing already delivered is recalled.
+  Incoming plaintext
+  activities about a local post with a restricted or embargoed asset are now rejected with
+  `encryption_required`, as they already were for such an asset; collections, workspaces, brand
+  kits and users have no sensitivity tier and are not checked. No wire-format change.
 - **The federation contract names the share scopes the software uses (#1524).** The normative
   ArchivePub v1 specification listed the fourth share scope as `edit`, while the application,
   its database and its API have always used `remix`. Erratum E7 corrects the specification to

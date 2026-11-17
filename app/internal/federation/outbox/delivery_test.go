@@ -99,10 +99,13 @@ func newDeliveryFixture(t *testing.T, inboxStatus int, captureBody *[]byte) (wor
 	).Scan(&activityID); err != nil {
 		t.Fatalf("seed activity: %v", err)
 	}
-	// One queued outbox row pointing at the activity → peer.
+	// One queued outbox row pointing at the activity → peer. Stamped
+	// public, as the dispatcher would for a post with no assets; a
+	// NULL tier now means unresolved and is refused without
+	// encryption (#1525). Policy tests flip it via setSensitivityOnRow.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO federation_outbox (activity_id, peer_id, target_user_url)
-		 VALUES ($1, $2, $3)`,
+		`INSERT INTO federation_outbox (activity_id, peer_id, target_user_url, sensitivity)
+		 VALUES ($1, $2, $3, 'public')`,
 		activityID, peerID,
 		"https://"+srv.URL[7:]+"/users/bob",
 	); err != nil {
@@ -420,8 +423,8 @@ func seedTwoQueuedForPeer(t *testing.T, pool *pgxpool.Pool, srvURL string) uuid.
 			t.Fatalf("seed activity: %v", err)
 		}
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO federation_outbox (activity_id, peer_id, target_user_url)
-			 VALUES ($1, $2, $3)`,
+			`INSERT INTO federation_outbox (activity_id, peer_id, target_user_url, sensitivity)
+			 VALUES ($1, $2, $3, 'public')`,
 			activityID, peerID,
 			"https://"+srvURL[7:]+"/users/bob",
 		); err != nil {

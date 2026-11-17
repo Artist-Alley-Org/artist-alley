@@ -273,6 +273,11 @@ func TestFederation_EndToEnd_ProductionDefaults_SubSecond(t *testing.T) {
 	aOutboxDispatcher.SetVisibilityLookup(func(ctx context.Context, kind string, id uuid.UUID) (outbox.Visibility, error) {
 		return outbox.VisibilityExplicitShare, nil
 	})
+	// Public tier stated explicitly: an unwired lookup is now
+	// treated as unresolved, which requires encryption (#1525).
+	aOutboxDispatcher.SetSensitivityLookup(func(context.Context, string, uuid.UUID) (outbox.Sensitivity, error) {
+		return outbox.SensitivityPublic, nil
+	})
 	go aOutboxDispatcher.Run(ctx)
 
 	// Delivery worker on A — PRODUCTION DEFAULTS. LISTEN/NOTIFY

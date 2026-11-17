@@ -83,11 +83,8 @@ const (
 )
 
 // Sensitivity is the four-tier sensitivity model per ADR 0020.
-// Schema columns aren't applied to posts yet (pre-MVP) — the
-// resolver treats all sensitivity values it sees as
-// SensitivityPublic until the schema lands. When restricted /
-// embargo columns ship, the resolver flips to refusing emission
-// per §3.9.
+// Only assets carry a sensitivity column; boot derives a post's
+// tier from its attached assets (http.outboxSensitivityLookup).
 type Sensitivity string
 
 const (
@@ -95,6 +92,14 @@ const (
 	SensitivityTeam       Sensitivity = "team"
 	SensitivityRestricted Sensitivity = "restricted"
 	SensitivityEmbargo    Sensitivity = "embargo"
+
+	// SensitivityUnresolved is what the dispatcher records when it
+	// could not learn an object's tier: no lookup wired, a lookup
+	// error, or a kind the lookup does not cover (#1525). It is
+	// not one of the four tiers and is never stored on an object.
+	// It requires encryption exactly like restricted, so an
+	// unknown tier is never delivered in plaintext.
+	SensitivityUnresolved Sensitivity = "unresolved"
 )
 
 // Recipient is one resolved outbox-row destination.
@@ -177,10 +182,13 @@ type Input struct {
 }
 
 // EncryptionSupported reports whether the local instance can
-// encrypt outbound envelopes per ADR 0020. v1.0 returns false
-// (X25519 keypair-per-user ships in 1.22.I); v1.0+1 returns
-// true. Wired as a field on the Resolver so 1.22.I flips one
-// boolean instead of touching every call site.
+// encrypt outbound envelopes per ADR 0020. Production boot
+// answers whether the at-rest master key that unwraps per-user
+// X25519 keys is loaded (#1525). It is an instance-level
+// question only: whether a given delivery is encrypted, sent in
+// plaintext or refused is decided per recipient by the delivery
+// Worker (ChoosePathFor over the peer's negotiated capability
+// and the recipient key).
 type EncryptionSupported func(ctx context.Context) bool
 
 // PeerSupportsEncryption (Phase 1.22.I-d) returns whether a peer
@@ -260,10 +268,14 @@ func (r *Resolver) InvalidateFollowsByActor(ctx context.Context, actorRef int64)
 // Resolve returns the recipient set for an activity per §3.2.
 func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	// §3.9 sender-side emission refusal: restricted / embargo
-	// objects require encrypted delivery. Until 1.22.I lights
-	// up X25519 we refuse to enqueue + the dispatcher emits
-	// federation.emission.skipped + advances cursor.
-	if (in.Sensitivity == SensitivityRestricted || in.Sensitivity == SensitivityEmbargo) &&
+	// (and unresolved, #1525) objects require encrypted delivery.
+	// When this instance cannot encrypt at all we refuse to
+	// enqueue + the dispatcher emits federation.emission.skipped
+	// + advances cursor. When it can, the rows are enqueued with
+	// their tier and the delivery Worker encrypts per recipient
+	// or refuses that recipient (never plaintext).
+	if (in.Sensitivity == SensitivityRestricted || in.Sensitivity == SensitivityEmbargo ||
+		in.Sensitivity == SensitivityUnresolved) &&
 		!r.encryptionSupported(ctx) {
 		return Result{Skipped: SkippedEncryptionRequiredButNotSupported}, nil
 	}
