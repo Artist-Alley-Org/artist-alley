@@ -124,6 +124,46 @@ func TestTrustTierValid(t *testing.T) {
 	}
 }
 
+// TestObjectVisibility_Contract pins the five-tier catalogue and what
+// each tier means at the federation boundary (#1233). Which peers a
+// federating tier actually reaches is the outbox resolver's job and
+// is tested there on real Postgres; this pins the catalogue.
+func TestObjectVisibility_Contract(t *testing.T) {
+	want := map[federation.ObjectVisibility]bool{ // tier -> IsFederated
+		federation.ObjectVisibilityPrivate:       false,
+		federation.ObjectVisibilityOrgOnly:       false,
+		federation.ObjectVisibilityFollowers:     true,
+		federation.ObjectVisibilityExplicitShare: true,
+		// public may federate, but only through a live explicit share.
+		federation.ObjectVisibilityPublic: true,
+	}
+	if len(federation.KnownObjectVisibilities) != len(want) {
+		t.Fatalf("KnownObjectVisibilities has %d tiers, want %d", len(federation.KnownObjectVisibilities), len(want))
+	}
+	for v, federates := range want {
+		if !v.Valid() {
+			t.Errorf("%q: Valid() = false; it is a legal tier in the schema CHECK", v)
+		}
+		if _, ok := federation.KnownObjectVisibilities[v]; !ok {
+			t.Errorf("%q missing from KnownObjectVisibilities", v)
+		}
+		if got := v.IsFederated(); got != federates {
+			t.Errorf("%q: IsFederated() = %v, want %v", v, got, federates)
+		}
+	}
+	if federation.ObjectVisibilityPublic != "public" {
+		t.Errorf("public tier string = %q; the schema stores \"public\"", federation.ObjectVisibilityPublic)
+	}
+	for _, v := range []federation.ObjectVisibility{"", "everyone", "PUBLIC", "public ", "fediverse"} {
+		if v.Valid() {
+			t.Errorf("%q: Valid() = true; not a tier", v)
+		}
+		if v.IsFederated() {
+			t.Errorf("%q: IsFederated() = true; an unknown tier must never federate", v)
+		}
+	}
+}
+
 func TestEncryptionPolicyValid(t *testing.T) {
 	for _, k := range []federation.EncryptionPolicy{
 		federation.EncryptionPlaintext, federation.EncryptionE2E,

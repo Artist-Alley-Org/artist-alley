@@ -246,7 +246,7 @@ Future-reserved (not yet shipped):
 |---|---|
 | `aa:Asset` | A versioned digital asset with metadata, file hash, sensitivity tier, owner. Extends `Object`. |
 | `aa:Post` | A multi-asset bundle with title + description + author + workflow state. Extends `Note`. |
-| `aa:Collection` | A named grouping of posts or assets with visibility tier (`private`, `org-only`, `followers`, `explicit-share`). Extends `Collection` (AP-native). |
+| `aa:Collection` | A named grouping of posts or assets with visibility tier (`private`, `org-only`, `followers`, `explicit-share`, `public`). `public` is local read visibility, not a peer audience: a public object reaches a peer only through a live explicit share, exactly like `explicit-share`, and is never broadcast to every paired peer. Extends `Collection` (AP-native). |
 | `aa:Workspace` | A studio-level grouping above collections — typically maps to a department or project. |
 | `aa:BrandKit` | A specialised workspace carrying brand identity (logo, colour, type, voice). First-class federation citizen. |
 | `aa:Annotation` | A frame/time/rect-anchored note attached to an asset. May also be the *object* of an `aa:Annotation` activity. |

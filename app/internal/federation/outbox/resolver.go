@@ -9,25 +9,33 @@
 // recipients the outbox should fan out to. The dispatcher
 // inserts one federation_outbox row per resolved Recipient.
 //
-// Two caches front the SQL JOINs per the §3.6 caching
-// requirement:
+// The explicit-share recipient set (also used by the public tier)
+// is NOT cached: every resolution reads the authoritative rows,
+// federation_shares JOIN federation_peers, through the partial index
+// federation_shares_delivery_idx (object_kind, object_id) WHERE
+// revoked_at IS NULL. The answer is a security decision (which peers
+// may receive an activity), so it must be fail-closed against every
+// way it can change:
 //
-//   shares.by_object  — keyed on (object_kind, object_id);
-//                       hits the explicit-share visibility
-//                       tier's hot path.
-//   follows.by_actor  — keyed on (actor_user_ref); hits the
-//                       followers visibility tier's hot path.
-//                       Without this, every post by a popular
-//                       local user does a federation_shares
-//                       scan per dispatch — N+1 surface.
+//   - a grant must be seen by the very next new activity;
+//   - a revoke, a natural expiry (expires_at passes; nothing writes
+//     a row), and a peer being disabled or leaving `connected` must
+//     stop the very next new activity, in every process.
 //
-// Both caches:
-//   - Use the project's cache.Registry pattern (LRU + cross-
-//     process NOTIFY).
-//   - Invalidate on the relevant write-side event (the share
-//     or follow grant/revoke commit fires the NOTIFY).
-//   - Are bounded (5000 + 5000 entries) so memory pressure
-//     stays predictable in the walled-garden v1 scale.
+// An earlier per-object LRU (`federation_shares.by_object`) had no
+// TTL and its invalidation hook had no production caller, so a share
+// granted after an object's first activity was never seen and a
+// revoked peer kept receiving until the process restarted (#1233,
+// live-reproduced). Expiry and peer state change without any write
+// event a cache could hook, so the fix is to not cache this answer.
+// The cost is one indexed read per dispatched activity whose tier is
+// explicit-share or public.
+//
+// The followers tier still has a `federation_follows.by_actor` cache,
+// but followers() resolves nothing yet (TODO(1.22.D-b-7)) and
+// InvalidateFollowsByActor has no production caller either. Wiring
+// the followers tier MUST give that lookup the same coherence
+// (or drop its cache) before it returns real recipients.
 //
 // Sender-side emission refusal per §3.9 / §5.5 addition 2:
 // when target object's sensitivity tier is restricted or
@@ -52,8 +60,15 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 )
 
-// Visibility is the four-tier visibility model per the v1
-// schema constraint on posts.visibility.
+// Visibility is the five-tier visibility model of the
+// posts.visibility / collections.visibility CHECK constraints
+// (migration 00008 added `public`, #414 / #1176).
+//
+// Every tier the schema allows MUST have a case in Resolve: an
+// unhandled value is a resolver error, and the dispatcher rolls the
+// whole batch back on a resolver error without advancing its cursor,
+// so one unhandled activity stalls every activity queued behind it
+// (#1233).
 type Visibility string
 
 const (
@@ -61,6 +76,10 @@ const (
 	VisibilityOrgOnly       Visibility = "org-only"
 	VisibilityFollowers     Visibility = "followers"
 	VisibilityExplicitShare Visibility = "explicit-share"
+	// VisibilityPublic is LOCAL read visibility: anyone who can
+	// reach this instance may read the object. It is NOT a
+	// federation audience. See the public case in Resolve.
+	VisibilityPublic Visibility = "public"
 )
 
 // Sensitivity is the four-tier sensitivity model per ADR 0020.
@@ -128,8 +147,9 @@ type Input struct {
 	Verb string
 
 	// Target object the activity is about. The
-	// (TargetKind, TargetID) pair drives the
-	// shares.by_object cache lookup for explicit-share rows.
+	// (TargetKind, TargetID) pair keys the live (uncached)
+	// federation_shares lookup for the explicit-share and public
+	// tiers.
 	TargetKind string
 	TargetID   uuid.UUID
 
@@ -183,11 +203,10 @@ type PeerSupportsEncryption func(ctx context.Context, peerID uuid.UUID) bool
 // audit row is missing).
 type EmissionSkippedForPeerHook func(ctx context.Context, peerID uuid.UUID, reason SkippedReason, verb string)
 
-// Resolver fronts the recipient-resolution SQL with the two
-// caches per §3.6.
+// Resolver turns an activity into its recipient set. Share-based
+// tiers read the database on every call (see the file comment).
 type Resolver struct {
 	pool                *pgxpool.Pool
-	sharesByObject      *cache.Cache[[]Recipient]
 	followsByActor      *cache.Cache[[]Recipient]
 	encryptionSupported EncryptionSupported
 
@@ -197,12 +216,11 @@ type Resolver struct {
 }
 
 const (
-	cacheDomainSharesByObject = "federation_shares.by_object"
 	cacheDomainFollowsByActor = "federation_follows.by_actor"
 )
 
-// NewResolver wires the resolver. cap sizes are per the
-// design proposal — 5000 entries each.
+// NewResolver wires the resolver. The follows cap is per the design
+// proposal (5000 entries).
 func NewResolver(pool *pgxpool.Pool, reg *cache.Registry, encSupported EncryptionSupported) *Resolver {
 	if encSupported == nil {
 		// Default: encryption NOT supported (1.22.I gate).
@@ -210,7 +228,6 @@ func NewResolver(pool *pgxpool.Pool, reg *cache.Registry, encSupported Encryptio
 	}
 	return &Resolver{
 		pool:                pool,
-		sharesByObject:      cache.Register[[]Recipient](reg, cacheDomainSharesByObject, 5000),
 		followsByActor:      cache.Register[[]Recipient](reg, cacheDomainFollowsByActor, 5000),
 		encryptionSupported: encSupported,
 	}
@@ -230,20 +247,9 @@ func (r *Resolver) SetEmissionSkippedForPeer(f EmissionSkippedForPeerHook) {
 	r.emissionSkippedForPeer = f
 }
 
-// InvalidateSharesByObject is the cross-package hook the
-// shares package calls on aa:Share / aa:Unshare commits +
-// the share-expiry-sweeper firing. Drops the cached recipient
-// set for the object so the next emission rebuilds from DB.
-func (r *Resolver) InvalidateSharesByObject(ctx context.Context, objectKind string, objectID uuid.UUID) error {
-	if r == nil {
-		return nil
-	}
-	return r.sharesByObject.Invalidate(ctx, sharesKey(objectKind, objectID))
-}
-
-// InvalidateFollowsByActor is the cross-package hook the
-// follows path calls on Accept(Follow) / Undo(Follow)
-// commits.
+// InvalidateFollowsByActor is the hook the follows path is meant to
+// call on Accept(Follow) / Undo(Follow) commits. It has no production
+// caller yet (the followers tier is unwired, TODO(1.22.D-b-7)).
 func (r *Resolver) InvalidateFollowsByActor(ctx context.Context, actorRef int64) error {
 	if r == nil {
 		return nil
@@ -285,7 +291,19 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 		}
 		return Result{Recipients: recipients}, nil
 
-	case VisibilityExplicitShare:
+	case VisibilityExplicitShare, VisibilityPublic:
+		// `public` federates EXACTLY like `explicit-share`: only to
+		// recipients holding a live explicit share of this object
+		// (unrevoked, unexpired, on an enabled + connected peer),
+		// and to nobody else (#1233).
+		//
+		// Public read visibility says who may read the object on
+		// THIS instance. It is not a grant to any peer, and it is
+		// never a reason to broadcast to every paired peer: pairing
+		// is not consent to receive a studio's content. So a public
+		// object with no live share resolves to an empty set, which
+		// skips the activity and lets the dispatcher advance its
+		// cursor, instead of the resolver error it used to be.
 		recipients, err := r.explicitShares(ctx, in.TargetKind, in.TargetID)
 		if err != nil {
 			return Result{}, err
@@ -297,6 +315,9 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 		return Result{Recipients: recipients}, nil
 	}
 
+	// A value outside the schema's CHECK (or a tier added there
+	// without a case above) stays an error: guessing an audience for
+	// an unknown tier could leak content.
 	return Result{}, fmt.Errorf("unsupported visibility: %q", in.Visibility)
 }
 
@@ -353,17 +374,15 @@ func (r *Resolver) followers(ctx context.Context, actorRef int64) ([]Recipient, 
 	return out, nil
 }
 
-// explicitShares reads + caches the per-object share rows for
-// (kind, id). Hit by the explicit-share visibility tier;
-// also feeds the §5.1 containment expansion (assets inside
-// shared collections) when the dispatcher walks parents.
+// explicitShares reads the LIVE per-object share recipients for
+// (kind, id) from the database on every call: unrevoked, unexpired
+// (against NOW() at resolution time) and on an enabled, connected
+// peer. Deliberately uncached (see the file comment): a cached answer
+// would outlive a revoke, an expiry or a peer disable. Hit by the
+// explicit-share and public visibility tiers.
 func (r *Resolver) explicitShares(ctx context.Context, kind string, id uuid.UUID) ([]Recipient, error) {
 	if kind == "" || id == (uuid.UUID{}) {
 		return nil, nil
-	}
-	key := sharesKey(kind, id)
-	if cached, ok := r.sharesByObject.Get(key); ok {
-		return cached, nil
 	}
 
 	rows, err := r.pool.Query(ctx, `
@@ -403,12 +422,7 @@ func (r *Resolver) explicitShares(ctx context.Context, kind string, id uuid.UUID
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	r.sharesByObject.Add(key, out)
 	return out, nil
-}
-
-func sharesKey(kind string, id uuid.UUID) string {
-	return kind + ":" + id.String()
 }
 
 // ErrInvalidInput is returned for malformed Input shapes that
