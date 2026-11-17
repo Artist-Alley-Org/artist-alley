@@ -9,6 +9,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The federation contract names the share scopes the software uses (#1524).** The normative
+  ArchivePub v1 specification listed the fourth share scope as `edit`, while the application,
+  its database and its API have always used `remix`. Erratum E7 corrects the specification to
+  `view`, `comment`, `annotate`, `remix` and defines them: `remix` lets the recipient reuse
+  shared material in its own work on its own instance and never changes the original. Editing
+  the original from another instance is not part of v1; `edit` is reserved for that and is now
+  refused with a clear error instead of being accepted as anything else. The share check also
+  refuses, under every scope, activities that would change the original (an update, delete,
+  workflow move, or collection add or remove); that check is not yet called for incoming
+  activities, so nothing changes at runtime. ADR 0043 records the decision in a dated
+  amendment, and a test now compares the scope list in the specification, the code, the
+  database and the API.
+
 - **IIIF manifests report each image's real size (#196).** Every asset manifest gave its canvas a
   fixed 1200x900, whatever the image was, while the same asset's `info.json` reported the true
   size, so viewers such as Mirador squeezed a portrait photo into a landscape frame. The canvas

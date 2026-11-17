@@ -230,9 +230,10 @@ not the prefix.
 | `Update` | AP-native | Replaces the object's fields with the updated payload. Partial updates are NOT supported; resend the full object. |
 | `Delete` | AP-native | Soft-deletes the object (server MAY retain bytes for CAS dedup). Sharing relationships SHOULD cascade-cancel. |
 | `Follow` | AP-native | Subscribe an actor to another actor's published activities. The `Accept` / `Reject` AP-native verbs are used in the standard handshake. |
-| `aa:Share` | ArchivePub | Grant a remote peer or actor access to a specific object. Carries an access tier (`view` / `comment` / `annotate` / `edit` / `admin`). See [§ 5.3](#53-sharing-model). |
+| `aa:Share` | ArchivePub | Grant a remote peer or actor access to a specific object. Carries a scope (`view` / `comment` / `annotate` / `remix`; normative list in v1 §7.5.1). No scope allows editing the original. See [§ 5.3](#53-sharing-model). |
 | `aa:Unshare` | ArchivePub | Revoke a previously-granted share. Causes the recipient's local cache to mark the object as gone + cascade-cancel any downstream shares the recipient may have re-shared (subject to the recipient's policy). |
-| `aa:Approve` | ArchivePub | Transition an object through its workflow_state machine. Includes the new state + actor + optional comment. Audit-logged on both sides. |
+| `aa:Approve` | ArchivePub | Record a reviewer's approval of an object, with the reviewer + optional comment. A verdict only: it does not change the object or its workflow state. `aa:RequestChanges` and `aa:MarkReviewed` are the other two verdicts (v1 §7.5.3). |
+| `aa:WorkflowTransition` | ArchivePub | Move an object to another workflow state. This changes the original, so no v1 share allows a peer to send it for an object it does not hold (v1 §7.5.1, erratum E7); workflow changes stay with local users of the instance that holds the object. |
 | `aa:Annotation` | ArchivePub | Add a frame-anchored, time-anchored, or rect-anchored comment to an asset. Carries an anchor descriptor + body + optional drawing payload. |
 
 Future-reserved (not yet shipped):
@@ -480,15 +481,23 @@ object with a specific permission tier:
 }
 ```
 
-Permission tiers:
+The example above predates the normative field names; v1 §7.5.1 defines
+them (`scope`, `target_peer`, `target_user`, `expires_at`).
 
-| Tier | Allowed actions |
+Scopes (normative list and rules: v1 §7.5.1, erratum E7, #1524):
+
+| Scope | Allowed actions |
 |---|---|
-| `view` | Read the object + its metadata. |
+| `view` | Read the object + its metadata; react (`Like`, `Announce`). |
 | `comment` | + Add comments. |
 | `annotate` | + Add annotations. |
-| `edit` | + Modify metadata (not bytes). |
-| `admin` | + Re-share to others (subject to optional re-share-allowed flag). |
+| `remix` | + Reuse the shared material in the recipient's own objects on the recipient's own instance. Never modifies the original. |
+
+No v1 scope allows editing the original on the instance that holds it.
+The value `edit` is reserved for a possible future scope that would, and
+a v1 instance refuses it rather than reading it as `remix`. An earlier
+draft of this overview listed `edit` (modify metadata) and `admin`
+(re-share) tiers; neither is part of v1.
 
 The receiving server MUST track active shares in a local
 `federation_shares` table + use them as the access-control gate for

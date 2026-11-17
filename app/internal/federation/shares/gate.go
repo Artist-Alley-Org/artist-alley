@@ -190,6 +190,12 @@ type AccessRequest struct {
 // specific reason if we found a share that ALMOST matched —
 // wrong user / insufficient scope / expired).
 func (r *Registry) CanPeerAccess(ctx context.Context, req AccessRequest) (AccessDecision, error) {
+	// #1524: an activity that would modify the original requires the
+	// reserved `edit`, which no v1 grant holds. Denied under every
+	// share, before any lookup, and never treated as remix.
+	if req.RequiredScope == federation.ShareScopeEditReserved {
+		return AccessDecision{Allowed: false, Reason: RejectReasonInsufficientScope}, nil
+	}
 	if !req.RequiredScope.Valid() {
 		return AccessDecision{}, fmt.Errorf("shares.CanPeerAccess: invalid required scope %q", req.RequiredScope)
 	}
@@ -524,17 +530,30 @@ func ActivityRequiredScope(t federation.ActivityType) (federation.ShareScope, bo
 		return federation.ShareScopeComment, true
 	case federation.ActivityAAAnnotation:
 		return federation.ShareScopeAnnotate, true
-	case federation.ActivityAAWorkflowTransition,
-		federation.ActivityAAApprove,
+	case federation.ActivityAAApprove,
 		federation.ActivityAARequestChanges,
 		federation.ActivityAAMarkReviewed:
+		// A review verdict ABOUT the shared object, recorded by the
+		// origin. Highest grantable scope, per the 1.22.C mapping. It
+		// does not authorise changing the original: moving it through
+		// workflow is aa:WorkflowTransition, below.
 		return federation.ShareScopeRemix, true
-	case federation.ActivityDelete, federation.ActivityUpdate:
-		// Recipient deleting/updating their OWN derivative work
-		// only needs view on the original. Origin-side
-		// Update/Delete of the original object always passes the
-		// gate from the source (since the source IS the grantor).
-		return federation.ShareScopeView, true
+	case federation.ActivityAAWorkflowTransition,
+		federation.ActivityDelete, federation.ActivityUpdate:
+		// #1524 (spec v1 §7.5.1, erratum E7): these MODIFY the
+		// original. This gate only ever evaluates activities about
+		// objects held by THIS instance (a share is this instance's
+		// grant of its own object), so an inbound Update or Delete
+		// reaching it targets the original, and a workflow
+		// transition moves the original's state. A peer's own
+		// derivative work lives on the peer and never reaches this
+		// gate. No v1 scope authorises editing the original, so the
+		// required scope is the reserved `edit`, which no grant can
+		// hold: CanPeerAccess denies these under every share.
+		// (Before #1524 the 1.22.C table mapped WorkflowTransition
+		// to remix as "write authority" and Update/Delete to view;
+		// the gate had, and still has, no production caller.)
+		return federation.ShareScopeEditReserved, true
 	case federation.ActivityUndo:
 		// Undoing a prior activity inherits the prior's scope;
 		// view is the safe minimum (you can always undo your own
@@ -551,21 +570,22 @@ func ActivityRequiredScope(t federation.ActivityType) (federation.ShareScope, bo
 		// relevant.
 		return federation.ShareScopeView, false
 	case federation.ActivityAdd, federation.ActivityRemove:
-		// Collection membership changes — gated against the TARGET
-		// COLLECTION at remix scope.
+		// Collection membership changes on the TARGET COLLECTION,
+		// which is held by this instance: they modify the original
+		// collection, so (#1524, erratum E7) they require the
+		// reserved `edit` and are denied under every v1 share, with
+		// whatever object they carry.
 		//
-		// #893 note: the original rationale was "emitted by the
-		// collection owner", and that is all this still checks —
-		// an inbound Add carrying a FOREIGN object is authorised
-		// by the collection's remix share and by nothing about the
-		// object. The local equivalent has the same shape
-		// (collections.AddCollectionResource authorises against
-		// the collection, never the asset), so this is not a
-		// federation-only gap and closing it belongs with #882
-		// rather than here. The READ side is covered: a member the
-		// grantor doesn't own confers no scope no matter how it
-		// got into the collection.
-		return federation.ShareScopeRemix, true
+		// History: before #1524 this returned remix, so an inbound
+		// Add carrying a FOREIGN object would have been authorised by
+		// the collection's remix share and by nothing about the object
+		// (#893). That gap is closed here by denial. The local
+		// equivalent, collections.AddCollectionResource authorising
+		// against the collection and never the asset, is #882's
+		// concern. The READ side is unchanged: a member the grantor
+		// doesn't own confers no scope no matter how it got into the
+		// collection.
+		return federation.ShareScopeEditReserved, true
 	case federation.ActivityAAShare, federation.ActivityAAUnshare, federation.ActivityAARevokeShare:
 		// Share-flow activities are gated differently (the share
 		// IS the grant). Dispatcher handles separately.

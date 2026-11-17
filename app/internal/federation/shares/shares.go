@@ -67,6 +67,11 @@ var (
 	// ErrScopeInvalid is returned when a supplied scope isn't in
 	// the federation.ShareScope closed catalogue.
 	ErrScopeInvalid = errors.New("shares: scope not in catalogue")
+	// ErrScopeEditReserved is returned for scope "edit" (#1524,
+	// spec v1 §7.5.1 erratum E7). It is refused, never aliased to
+	// remix: editing the original on its own instance is not a v1
+	// share scope.
+	ErrScopeEditReserved = errors.New(`shares: scope "edit" (editing the original on its own instance) is reserved and not available in protocol v1; "remix" grants reuse of the shared material on the recipient's instance and never modifies the original`)
 )
 
 // Share is the in-memory representation of one federation_shares
@@ -134,6 +139,9 @@ type InsertInput struct {
 func (in InsertInput) Validate() error {
 	if !in.ObjectKind.Valid() {
 		return ErrObjectKindInvalid
+	}
+	if in.Scope == federation.ShareScopeEditReserved {
+		return ErrScopeEditReserved
 	}
 	if !in.Scope.Valid() {
 		return ErrScopeInvalid

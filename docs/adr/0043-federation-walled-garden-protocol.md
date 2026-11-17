@@ -48,6 +48,62 @@ excerpt: >-
 > the inbound check against the share list, and the custom review and
 > workflow activities.
 
+## Amendment 2026-11-17 (#1524): the fourth share scope is `remix`; `edit` is reserved and refused
+
+**What this ADR said.** The *Opt-in sharing model* section below lists
+the `aa:Share` scopes as `view` / `comment` / `annotate` / `edit`, and the
+*Database schema additions* sketch constrains `federation_shares.scope`
+to the same four. Neither text defines `edit`.
+
+**What was decided after it, and shipped.** The 1.22.C share design
+review (`docs/proposals/1.22.C-shares-design.md`, the "Scope ladder"
+decision) settled the ladder as `view < comment < annotate < remix`
+before any code shipped, defined `remix` as reusing the shared assets in
+the recipient's own objects on the recipient's own instance with the
+original never modified, and reserved a fifth scope `edit` for
+cross-instance editing of the original "if that ever becomes a real
+ask". The implementation (the `federation.ShareScope` catalogue, the
+`federation_shares.scope` constraint, the admin API) has used `remix`
+from the start. The normative spec (`docs/spec/federation/v1.md`
+§7.5.1) kept `edit` until erratum E7 of the same date as this amendment.
+
+**Decision.** The v1 ladder is `view < comment < annotate < remix`, as
+the spec now states:
+
+- `remix` lets the recipient reuse the shared material in its own
+  objects on its own instance. It never authorises changing the
+  original.
+- Editing the original (its content, metadata, workflow state or, for a
+  collection, membership) is not a v1 share scope. It stays with local
+  users of the instance that holds the original. A share check refuses
+  an activity that would modify the original under every share, `remix`
+  included (`shares.ActivityRequiredScope` maps `Update`, `Delete`,
+  `aa:WorkflowTransition`, `Add` and `Remove` to the reserved `edit`,
+  which no grant can hold). Before this amendment the 1.22.C mapping put
+  `aa:WorkflowTransition`, `Add` and `Remove` at `remix` and `Update` /
+  `Delete` at `view`; that check has no production caller yet (spec
+  implementation status D4), so the change alters no running behaviour.
+- `edit` stays reserved for a possible future scope. Until a later
+  decision defines it, an `edit` scope is refused, never stored and never
+  treated as `remix`.
+
+**Why.** The ADR's word `edit` was undefined; read literally it suggests
+the very capability (changing another instance's original) the share
+review decided against for v1. Renaming `remix` to `edit` would have made
+the deployed value mean something its name contradicts, and treating the
+two as synonyms would let a future real `edit` scope collide with an
+existing meaning. Keeping both words, each with one meaning, is the only
+shape that leaves room for that future scope.
+
+**Compatibility.** The `@context` identifier is unchanged and
+negotiates nothing. This corrects the contract to the values every
+deployed instance already sends; it does not change any instance's
+behaviour on the wire. An independent implementation that followed the
+earlier `edit` wording has never interoperated with the reference on
+this field; spec §7.5.1 says how it should map its values. The rest of
+this ADR, the 2026-10-23 status note, and the corrections PR #1521 made
+to the spec and to ADR 0049 are unchanged.
+
 ## Context
 
 [ADR 0007](/adr/0007-federation-thinking-ahead/) committed Artist Alley
