@@ -203,11 +203,19 @@
     }
   }
 
+  // #1592: a confirm the other instance did not accept leaves the
+  // request pending; say so on that request instead of doing nothing.
+  let acceptError = $state<{ id: string; detail: string } | null>(null);
+
   async function acceptInbound(p: Peer): Promise<void> {
+    acceptError = null;
     const r = await api.POST('/admin/federation/peers/{id}/accept', {
       params: { path: { id: p.id } },
     });
-    if (!r.error) await load();
+    if (r.error) {
+      acceptError = { id: p.id, detail: (r.error as { error?: string } | undefined)?.error ?? '' };
+    }
+    await load();
   }
 
   async function rejectInbound(p: Peer): Promise<void> {
@@ -371,6 +379,14 @@
               >{t('admin.federation.reject')}</button>
             </div>
           </div>
+          {#if acceptError?.id === p.id}
+            <div role="alert" data-testid="accept-error" class="mt-2 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+              <p>{t('admin.federation.accept_error')}</p>
+              {#if acceptError.detail}
+                <p class="mt-1 break-all font-mono text-[11px]">{acceptError.detail}</p>
+              {/if}
+            </div>
+          {/if}
         </li>
       {/each}
     </ul>

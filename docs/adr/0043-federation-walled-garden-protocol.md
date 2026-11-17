@@ -185,6 +185,39 @@ advertise it. When it ships, existing pairings need to negotiate again
 an asset transfer to a peer without the profile rather than sending it
 unverifiable. The rest of this ADR is unchanged.
 
+## Amendment 2026-11-17 (#1592): one handshake endpoint, and only a valid answer is success
+
+**What this ADR said.** The *HTTP endpoints* list named the handshake
+endpoint `POST /federation/peers/handshake` with no base, while the
+OpenAPI contract and the router serve it under `/api/v1`. The reference
+client posted to the root path, which no build serves, and treated any
+answer below 400 as success. A build that serves the web app answers an
+unknown root path with its HTML page and status 200, so pairing by URL
+reported success while the peer recorded nothing. The receiving side
+verified the signature over a re-encoding that dropped
+`supported_capabilities`, so no current envelope verified either.
+
+**Decision.** The handshake endpoint is
+`POST {instance URL}/api/v1/federation/peers/handshake`, with no root
+alias; the endpoint list above is corrected. The receiver verifies the
+signature over the canonical form of the envelope exactly as received,
+and refuses any member handshake/v1 does not define, signed or not.
+Instance URLs are https origins only (no userinfo, path, query or
+fragment), normalised before any lookup. A sender counts only an exact
+`200` `application/json` `HandshakeAccepted` answer, with a status that
+fits the envelope, as success, reads the answer within a small bound
+and does not follow redirects. Accepting sends the confirm before the
+local record goes connected. Repeated offers and confirms, and crossing
+offers, converge without a second record, and a key that differs from
+the one on record is refused. Spec v1 §11.1 and §11.2 state the
+contract.
+
+**Compatibility.** Pairing by URL did not work against any earlier
+release, so no deployed pairing depends on the old path. Pairings made
+by direct registration are unchanged. An earlier release cannot pair
+by URL with a current one in either direction; both sides need this
+fix. The rest of this ADR is unchanged.
+
 ## Context
 
 [ADR 0007](/adr/0007-federation-thinking-ahead/) committed Artist Alley
@@ -722,7 +755,8 @@ CHECK constraints above.
 - `GET /users/{username}/followers` — Followers collection.
 - `GET /users/{username}/following` — Following collection.
 - `POST /users/{username}/inbox` — Inbox delivery endpoint.
-- `POST /federation/peers/handshake` — Peer handshake endpoint.
+- `POST /api/v1/federation/peers/handshake`: peer handshake endpoint
+  (under the API base; see the 2026-11-17 #1592 amendment).
 - `GET /federation/instance` — Instance Actor (for instance-level
   activities like server announcements).
 - `GET /assets/{hash}/bytes` — CAS resolution endpoint (signed

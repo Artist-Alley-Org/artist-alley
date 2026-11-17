@@ -1216,6 +1216,7 @@
       "pending_fingerprint_hint": "Offered key (first 32 chars of base64)",
       "accept": "Accept",
       "reject": "Reject",
+      "accept_error": "Couldn't complete the pairing: the other instance did not accept the confirmation. The request is still pending, so you can accept again.",
       "confirm_reject": "Reject pending request from {name}? Their offer will be discarded.",
       "pair_peer": "Pair by URL",
       "pair_submit": "Send handshake",

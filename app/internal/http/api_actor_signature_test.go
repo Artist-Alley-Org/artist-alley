@@ -31,6 +31,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -651,7 +652,11 @@ func TestActorDocument_Access(t *testing.T) {
 }
 
 // handshakeRelay is a peer.HTTPDoer that hands a handshake envelope to
-// the other instance's production engine, in place of the network.
+// the other instance's production engine, in place of the network,
+// and answers the way the production endpoint does (#1592): only the
+// canonical path, a 200 HandshakeAccepted JSON object on success, a
+// 400 JSON error otherwise. The production router itself is exercised
+// in handshake_router_test.go.
 type handshakeRelay struct {
 	to func() *peer.Engine
 }
@@ -661,13 +666,20 @@ func (h handshakeRelay) Do(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	status, msg := http.StatusOK, ""
-	if !strings.HasSuffix(req.URL.Path, "/federation/peers/handshake") {
-		status, msg = http.StatusNotFound, "unexpected handshake path "+req.URL.Path
-	} else if _, err := h.to().HandleInbound(req.Context(), body); err != nil {
-		status, msg = http.StatusBadRequest, err.Error()
+	status, payload := http.StatusOK, []byte(nil)
+	if req.URL.Path != peer.HandshakePath {
+		status, payload = http.StatusNotFound, []byte(`{"error":"not found"}`)
+	} else if res, err := h.to().HandleInbound(req.Context(), body); err != nil {
+		status, payload = http.StatusBadRequest, []byte(`{"error":`+strconv.Quote(err.Error())+`}`)
+	} else {
+		payload, _ = json.Marshal(map[string]string{"status": res.Status, "peer_id": res.Peer.ID.String()})
 	}
-	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(msg)), Header: http.Header{}, Request: req}, nil
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(bytes.NewReader(payload)),
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Request:    req,
+	}, nil
 }
 
 // pairByHandshake pairs A and B with the production handshake: A's

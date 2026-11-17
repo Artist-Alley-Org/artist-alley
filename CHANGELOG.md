@@ -9,6 +9,25 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Pairing by URL now works, and only a real acceptance counts (#1592).** The handshake was
+  sent to `/federation/peers/handshake` at the root of the peer's URL, a path no build serves,
+  and any answer below 400 counted as success. A build that serves the web app answers that path
+  with its HTML page and status 200, so "Pair by URL" looked successful while the peer recorded
+  nothing; the receiving endpoint also rejected every current envelope's signature. Now both
+  envelopes go to `/api/v1/federation/peers/handshake`, the receiver verifies the bytes it was
+  sent, and a sender accepts only a `200` JSON acceptance with the right status: an HTML page,
+  malformed or oversized JSON, another status code or a redirect is a failure, with the reason in
+  the peer's notes. Accepting a request sends the confirmation first and marks the peer connected
+  only when the other instance accepts it; otherwise the request stays pending, the admin page
+  says why, and Accept can be pressed again. Pairing by URL again re-sends an offer that is still
+  pending, so a peer left pending by an earlier release can be retried (or removed and paired
+  anew). Repeated and crossing handshakes complete without a second record, and a peer whose key
+  differs from the one on record is refused. The signature is checked over the envelope exactly as
+  received, and an envelope carrying a member the handshake does not define is refused. An instance
+  URL must be a plain `https://host[:port]` origin: one with a user name, query or fragment is
+  refused, and a trailing slash no longer creates a second peer. **Compatibility:** pairing by URL needs this fix on
+  both instances; pairings made by direct registration are unchanged.
+
 - **Federated activities are now signed and verified per user (#1526).** Every envelope was
   sent with a placeholder signature and received envelopes were checked only for shape, so an
   activity was authenticated per instance, never per user, and a paired instance could send

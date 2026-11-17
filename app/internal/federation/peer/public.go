@@ -4,8 +4,8 @@
 // Public (unauthenticated) federation endpoints — Phase
 // 1.22.B-b. Two handlers:
 //
-//   GET  /federation/instance              — actor doc (pubkey, URL, name)
-//   POST /federation/peers/handshake       — peer-to-peer handshake
+//   GET  /api/v1/federation/instance          actor doc (pubkey, URL, name)
+//   POST /api/v1/federation/peers/handshake   peer-to-peer handshake
 //
 // Both are reachable WITHOUT login/cookies/tokens — the federation
 // protocol bootstraps trust before any auth context exists.
@@ -18,8 +18,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-
-	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
@@ -134,24 +132,38 @@ func (h *PublicHandler) GetFederationInstance(
 	return openapi.GetFederationInstance200JSONResponse(doc), nil
 }
 
-// PostFederationHandshake — POST /federation/peers/handshake.
-//
-// The body is the JSON-encoded signed envelope. The strict
-// generator passes us the parsed body via req.Body, but for
-// signature verification we need the BYTES (not the re-marshaled
-// shape) — the canonical form must match what the peer signed.
-// We re-marshal the parsed body since openapi-codegen already
-// JSON-decoded; the RFC 8785 canonicalization step normalizes
-// any key-order or whitespace drift the round-trip introduced.
+// ServeHandshake is POST /api/v1/federation/peers/handshake as the
+// production router mounts it (#1592): a raw handler registered over
+// the strict one, because the signature covers the sender's bytes.
+// The strict adapter hands PostFederationHandshake the body decoded
+// into the generated HandshakeEnvelope, and re-encoding that drops
+// every member the schema does not list (supported_capabilities among
+// them), so no current envelope would verify. The answers are the
+// operation's own 200 / 400 / 503 responses.
+func (h *PublicHandler) ServeHandshake(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, handshakeBodyByteLimit+1))
+	if err != nil {
+		_ = openapi.PostFederationHandshake400JSONResponse{Error: "could not read the request body"}.
+			VisitPostFederationHandshakeResponse(w)
+		return
+	}
+	resp, err := h.handshake(r.Context(), body)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	_ = resp.VisitPostFederationHandshakeResponse(w)
+}
+
+// PostFederationHandshake is the strict-server form of the same
+// operation, required by StrictServerInterface. The router serves
+// ServeHandshake instead (see above); this re-encodes the decoded
+// body, which only verifies for an envelope whose every member is in
+// the schema.
 func (h *PublicHandler) PostFederationHandshake(
 	ctx context.Context,
 	req openapi.PostFederationHandshakeRequestObject,
 ) (openapi.PostFederationHandshakeResponseObject, error) {
-	if _, err := h.identity.Get(); err != nil {
-		return openapi.PostFederationHandshake503JSONResponse{
-			Error: "federation instance identity not yet generated",
-		}, nil
-	}
 	if req.Body == nil {
 		return openapi.PostFederationHandshake400JSONResponse{
 			Error: "request body required",
@@ -163,18 +175,36 @@ func (h *PublicHandler) PostFederationHandshake(
 			Error: "could not re-encode envelope: " + err.Error(),
 		}, nil
 	}
+	return h.handshake(ctx, body)
+}
+
+// handshake verifies and applies one signed envelope (its exact
+// bytes) and maps the outcome to the operation's responses.
+func (h *PublicHandler) handshake(ctx context.Context, body []byte) (openapi.PostFederationHandshakeResponseObject, error) {
+	if _, err := h.identity.Get(); err != nil {
+		return openapi.PostFederationHandshake503JSONResponse{
+			Error: "federation instance identity not yet generated",
+		}, nil
+	}
+	if len(body) == 0 {
+		return openapi.PostFederationHandshake400JSONResponse{
+			Error: "request body required",
+		}, nil
+	}
 	result, err := h.engine.HandleInbound(ctx, body)
 	if err != nil {
-		// Every ErrHandshake* maps to 400 — the caller sent
-		// something we couldn't trust. Opaque DB errors bubble
-		// out as 500 via the strict-server harness.
+		// Every ErrHandshake* maps to 400: the caller sent
+		// something we couldn't trust or complete. Opaque DB errors
+		// bubble out as 500.
 		if errors.Is(err, ErrHandshakeProtocol) ||
 			errors.Is(err, ErrHandshakeType) ||
 			errors.Is(err, ErrHandshakeWrongRecipient) ||
 			errors.Is(err, ErrHandshakeStale) ||
 			errors.Is(err, ErrHandshakeBadSig) ||
 			errors.Is(err, ErrHandshakeMalformed) ||
-			errors.Is(err, ErrHandshakePeerNotFound) {
+			errors.Is(err, ErrHandshakePeerNotFound) ||
+			errors.Is(err, ErrHandshakeKeyConflict) ||
+			errors.Is(err, ErrHandshakeConfirmBack) {
 			return openapi.PostFederationHandshake400JSONResponse{Error: err.Error()}, nil
 		}
 		return nil, err
@@ -184,12 +214,3 @@ func (h *PublicHandler) PostFederationHandshake(
 		PeerId: result.Peer.ID,
 	}), nil
 }
-
-// rawHandshakeReader is reserved for a future variant that reads
-// the raw request bytes (bypassing openapi-codegen's JSON
-// decode). Useful if we ever observe canonicalization drift in
-// practice; for v1 the re-marshal path works because our
-// canonicalizer is byte-stable.
-var _ = io.Discard
-var _ = http.MethodPost
-var _ = uuid.Nil

@@ -349,8 +349,9 @@ func (h *AdminHandshakeHandler) InitiateFederationHandshake(
 		// We always created the local row before the POST attempt,
 		// so a POST failure surfaces here AS WELL AS via the
 		// returned peer's notes. The HTTP shape returns 201 with
-		// the row + the failure detail in notes — the admin sees
-		// "pending_outbound, last error: …" and can retry later.
+		// the row and the failure in notes: the admin sees a
+		// pending_outbound row with the reason and can pair by URL
+		// again, which re-sends the offer on that row (#1592).
 		if errors.Is(err, ErrInstanceURLInvalid) {
 			return openapi.InitiateFederationHandshake400JSONResponse{
 				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
@@ -417,14 +418,10 @@ func (h *AdminHandshakeHandler) AcceptFederationPeer(
 		return nil, err
 	}
 	if err := h.engine.AcceptInbound(ctx, *p); err != nil {
-		// AcceptInbound flips local status BEFORE the confirm
-		// POST. A POST failure is non-fatal for the admin response —
-		// the row IS now connected on our side; the engine recorded
-		// the failure to notes for the admin to see.
-		updated, _ := h.registry.ByID(ctx, uuid.UUID(req.Id))
-		if updated != nil {
-			return openapi.AcceptFederationPeer200JSONResponse(peerToAPI(*updated)), nil
-		}
+		// The row goes connected only after the peer accepts the
+		// confirm (#1592), so a failure leaves it pending_inbound,
+		// with the reason in its notes, and the admin can accept
+		// again. Report it; never a 200 with a connected row.
 		return openapi.AcceptFederationPeer400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil

@@ -481,6 +481,14 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 
+		// Peer handshake (#1592), the operation's own path, served by
+		// a raw handler: the envelope signature covers the sender's
+		// bytes, which the strict adapter decodes and re-encodes
+		// without the members its schema does not list. Registered
+		// after HandlerFromMux so chi's last-write-wins routes POST
+		// here. Anonymous, like the strict operation.
+		r.Post("/federation/peers/handshake", impl.peersPublic.ServeHandshake)
+
 		// Phase 1.18.A-2 follow-up B (commit 2) — generic
 		// /admin/{subsystem}/health pattern. First user:
 		// metadata-extraction. Future subsystems (email in

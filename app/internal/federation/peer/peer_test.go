@@ -128,6 +128,12 @@ func TestAdd_RejectsBadURLs(t *testing.T) {
 		"ftp://peer.example",       // not https
 		"https://peer.example/api", // has path
 		"https://",                 // no host
+		// #1592: anything that would make URL+path address
+		// something other than the peer's origin.
+		"https://user@peer.example",  // userinfo
+		"https://peer.example?x=1",   // query
+		"https://peer.example#frag",  // fragment
+		"https://peer.example:99999", // port out of range
 	}
 	for _, u := range cases {
 		_, err := r.Add(ctx, peer.AddInput{

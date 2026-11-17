@@ -348,6 +348,12 @@ func TestFullHandshakePair_OverHTTPRoundTrip(t *testing.T) {
 	// Set up httptest servers wrapping each engine's HandleInbound.
 	mkHandler := func(eng *peer.Engine) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			// #1592: the client must use the one canonical path.
+			if r.URL.Path != peer.HandshakePath {
+				t.Errorf("handshake POST to %q, want %q", r.URL.Path, peer.HandshakePath)
+				http.NotFound(w, r)
+				return
+			}
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 64*1024))
 			result, err := eng.HandleInbound(r.Context(), body)
 			if err != nil {
@@ -497,7 +503,7 @@ func (rt *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	r2.URL.Scheme = rt.base.Scheme
 	r2.URL.Host = rt.base.Host
 	r2.Host = rt.base.Host
-	// Preserve the original path (e.g. /federation/peers/handshake).
+	// Preserve the original path (peer.HandshakePath).
 	return http.DefaultTransport.RoundTrip(r2)
 }
 

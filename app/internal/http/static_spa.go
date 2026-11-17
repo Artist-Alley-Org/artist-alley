@@ -20,7 +20,19 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
+
+// mountSPAFallback makes serveSPA, over root, the router's not-found
+// handler. The embed_web build calls it with the embedded bundle
+// (static_embed.go); it is tag-free so a test can mount the same
+// fallback on a production router built without the tag (#1592).
+func mountSPAFallback(r chi.Router, root fs.FS) {
+	r.NotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		serveSPA(root, w, req)
+	}))
+}
 
 // serveSPA serves a static asset from the embedded FS, falling back
 // to index.html (the SvelteKit SPA shell) for anything that doesn't
