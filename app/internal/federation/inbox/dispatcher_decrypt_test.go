@@ -414,7 +414,7 @@ func TestDispatcher_EncryptedEnvelope_DispatchesAndMarksRow(t *testing.T) {
 	fx := newDecryptFx(t)
 
 	recipientPub := fetchUserCurrentPub(t, fx.pool, fx.recipientRef)
-	payload := map[string]any{"content": "encrypted hello"}
+	payload := map[string]any{} // a Like carries no activity members (§7.5)
 	pt, _ := json.Marshal(payload)
 	nonce, ct := fx.encryptPayload(pt, recipientPub)
 	enc := &federation.EncryptionBlock{
@@ -514,7 +514,7 @@ func TestDispatcher_EncryptedEnvelope_RetainedKeyFallback(t *testing.T) {
 
 	// Sender sealed against v1's pub (the in-flight envelope).
 	v1Pub := fetchUserPubByVersion(t, fx.pool, fx.recipientRef, 1)
-	pt := []byte(`{"content":"in flight during rotation"}`)
+	pt := []byte(`{}`) // a Like carries no activity members (§7.5)
 	nonce, ct := fx.encryptPayload(pt, v1Pub)
 	enc := &federation.EncryptionBlock{
 		Algorithm:           federation.EncryptionAlgNaClBoxV1,
@@ -544,7 +544,7 @@ func TestDispatcher_PlaintextEnvelope_StillWorks_NoEncryptionMetadata(t *testing
 	fx := newDecryptFx(t)
 
 	envelope, _ := fx.buildEnvelope(federation.ActivityLike,
-		map[string]any{"content": "plaintext hello"}, nil)
+		map[string]any{}, nil)
 	id, row := fx.insertInbox(envelope, "", federation.ActivityLike)
 
 	beforeOK := fx.auditCount(audit.EventFederationInboxDecrypted, "peer_id", fx.peerID.String())

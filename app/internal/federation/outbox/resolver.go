@@ -127,6 +127,9 @@ const (
 	SkippedEncryptionRequiredButNotSupported SkippedReason = "encryption_required_but_not_supported"
 	SkippedRecipientSetEmpty                 SkippedReason = "recipient_set_empty"
 	SkippedDefederationInProgress            SkippedReason = "defederation_in_progress"
+	// SkippedActivityNotFederated: the activity type is not one v1
+	// federates (federation.Federated, spec §12.3, #1580).
+	SkippedActivityNotFederated SkippedReason = "activity_not_federated"
 
 	// 1.22.I-d per-recipient capability gate. Emitted by
 	// federation.emission.skipped when a recipient peer hasn't

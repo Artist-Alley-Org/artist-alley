@@ -1,0 +1,13 @@
+{
+  "description": "What this release sends for the same local Like payload (federation.WireMembers), and what a v0.11.1 receiver needs from it.",
+  "activity_type": "Like",
+  "object_kind": "post",
+  "local_payload": {
+    "post_title": "Wire"
+  },
+  "wire_members": {},
+  "v0_11_1_receiver": {
+    "reads": [],
+    "applies": true
+  }
+}

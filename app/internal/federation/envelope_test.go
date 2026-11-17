@@ -133,9 +133,9 @@ func TestUnmarshalRejectsUnknownActivityType(t *testing.T) {
 }
 
 func TestUnmarshalAcceptsExtraTypeSpecificFields(t *testing.T) {
-	// Per-type field allowlists ship in 1.22.E. For 1.22.A any
-	// extra top-level key beyond the envelope's named set is
-	// accepted into Extra so the round-trip works.
+	// Unmarshal is structural: a member outside the §3 base set is
+	// kept in Extra, and ValidateMembers (members.go) refuses it if
+	// the activity does not define it (#1580; members_test.go).
 	with := []byte(`{"@context":"https://artist-alley.org/protocol/v1","type":"aa:Share","id":"x","actor":"y","published":"2026-06-04T10:00:00Z","object_kind":"post"}`)
 	env, err := federation.Unmarshal(with)
 	if err != nil {

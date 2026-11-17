@@ -113,9 +113,15 @@ func Share(actor ActorContext, ref ShareRef) Emission {
 }
 
 // Unshare emits an aa:Unshare activity per AP §6.4 (Tombstone
-// semantics) + the design §4.1. The activity references the
-// originating aa:Share via the previous_activity_uri payload
-// field so the receiver knows which share to drop.
+// semantics) + the design §4.1. originalShareActivityURI is kept in
+// the local payload as previous_activity_uri for the audit record;
+// both production callers (shares/admin.go, shares/regrant.go) pass
+// "" today, and it is not a v1 wire member (spec §7.5.2). On the
+// wire an aa:Unshare names the share by its tuple (object_kind,
+// object, target_peer, target_user), not by the grant it revokes, so
+// a receiver cannot tell a delayed revoke from one meant for a later
+// re-grant of the same tuple. A stable grant identity and revoke
+// ordering are #1571.
 //
 // Per the locked-in answer §12.5 #3: aa:RevokeShare is reserved
 // for forward-compat but v1 emits only aa:Unshare. Receivers

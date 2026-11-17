@@ -594,7 +594,8 @@ const (
 	InboxStatusSigMalformed         InboxStatus = "sig_malformed"         // wrong length / undecodable
 	InboxStatusSigInvalid           InboxStatus = "sig_invalid"           // verify failed
 	InboxStatusUnknownKey           InboxStatus = "unknown_key"           // publicKey URL not a known actor key
-	InboxStatusUnknownField         InboxStatus = "unknown_field"         // strict-parse caught extra field
+	InboxStatusUnknownField         InboxStatus = "unknown_field"         // a member the activity's v1 schema does not define (#1580)
+	InboxStatusInvalidMember        InboxStatus = "invalid_member"        // #1580: a defined member is missing, repeated or has the wrong shape or value
 	InboxStatusInvalidType          InboxStatus = "invalid_type"          // type not in ActivityType catalogue
 	InboxStatusInvalidActor         InboxStatus = "invalid_actor"         // actor URI malformed
 	InboxStatusInvalidObject        InboxStatus = "invalid_object"        // object URI malformed
@@ -613,7 +614,7 @@ const (
 	InboxStatusDecryptFailed          InboxStatus = "decrypt_failed"           // 1.22.I-f: walked every retained receiver key + every attempt's nacl/box.Open returned !ok — tamper, corruption, or sender used a recipient key version we've fully aged out
 	InboxStatusUnsupportedActivity    InboxStatus = "unsupported_activity"     // #1569: §7 type this receiver does not apply; recorded, never applied (inbox.Applies)
 	InboxStatusProfileNotNegotiated   InboxStatus = "profile_not_negotiated"   // #1513 §16.3: a profile member (e.g. archival-1) from a peer whose negotiated capabilities lack that profile. Specified; enforced from #1580
-	InboxStatusArchivalInvalid        InboxStatus = "archival_invalid"         // #1513 §17: an archival-1 member does not match the profile. Specified; enforced from #1580
+	InboxStatusArchivalInvalid        InboxStatus = "archival_invalid"         // #1513 §17: an archival-1 member does not match the profile. Enforced by the inbox since #1580
 	InboxStatusFixityMismatch         InboxStatus = "fixity_mismatch"          // #1513 §17.6: received bytes differ from the listed size or checksum. Specified; enforced from #72 / #1574
 	InboxStatusStaleRequest           InboxStatus = "stale_request"            // HTTP-Sig date out of window
 	InboxStatusReplay                 InboxStatus = "replay"                   // activity id already seen
@@ -633,6 +634,7 @@ var KnownInboxStatuses = map[InboxStatus]struct{}{
 	InboxStatusSigInvalid:             {},
 	InboxStatusUnknownKey:             {},
 	InboxStatusUnknownField:           {},
+	InboxStatusInvalidMember:          {},
 	InboxStatusInvalidType:            {},
 	InboxStatusInvalidActor:           {},
 	InboxStatusInvalidObject:          {},

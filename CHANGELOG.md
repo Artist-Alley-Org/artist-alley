@@ -9,6 +9,22 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **A share's private notes no longer reach the peer, and envelopes carry only their defined
+  members (#1580).** The sender put an activity's whole local record on the wire, so sharing a post
+  with operator notes sent those notes and local ids to the peer, in clear or inside the
+  encryption block. Now each activity is sent with exactly the members the protocol defines for it
+  (spec v1 §7.5): a like carries none, a comment its text and the comment it replies to, a share or
+  unshare the spec's own names. The local record keeps the notes. Activities no receiver applies
+  (posts, collections, profiles, direct messages, undo, delete and others) are no longer sent; the
+  skip is audited as `activity_not_federated`. On receipt, a member the protocol does not define is
+  refused (`unknown_field`), a malformed or repeated one too (new reason `invalid_member`), an
+  archival-1 member from a peer without that profile is `profile_not_negotiated`, and a direct
+  message or post sent as a `Create` is no longer treated as a comment. Encrypted envelopes are
+  checked the same way after decryption, before anything is applied. The two undocumented display
+  hints are no longer read. The handshake schema in the API description now lists
+  `supported_capabilities`. **Compatibility:** an earlier release receives fewer members from this
+  one and still applies likes and comments; envelopes from an earlier release were already refused
+  since #1526. Notes an earlier release sent remain wherever the peer stored them.
 - **Pairing by URL now works, and only a real acceptance counts (#1592).** The handshake was
   sent to `/federation/peers/handshake` at the root of the peer's URL, a path no build serves,
   and any answer below 400 counted as success. A build that serves the web app answers that path

@@ -5,13 +5,14 @@
 //
 // Pure, side-effect-free validators for the three archival-1 envelope
 // members and the receiver's byte-stream fixity check. Nothing in the
-// reference implementation emits these members yet, the profile is not
-// advertised (peer.CapArchival1 is deliberately absent from
-// KnownCapabilities), and the inbox does not call these functions yet:
-// wiring them into the parser and inbox is #1580, the byte fetch that
-// feeds VerifyFileFixity is #72, and applying a received asset or
-// tombstone is #1574 / #1575. They exist now so the contract in §17 is
-// executable and those issues reuse one implementation.
+// reference implementation emits these members (WireMembers projects
+// none of them), and the profile is not advertised (peer.CapArchival1 is
+// deliberately absent from KnownCapabilities). Since #1580 the inbox
+// calls ValidateArchivalMembers through ValidateMembers, before storing
+// and again after decryption, so every peer's archival-1 member or
+// aa:Provenance is refused with profile_not_negotiated. The byte fetch
+// that feeds VerifyFileFixity is #72, and applying a received asset or
+// tombstone is #1574 / #1575; they reuse these validators.
 //
 // Every validator is strict: unknown keys are rejected at every level
 // (§3.2), so a member either matches archival-1 exactly or fails with
@@ -352,8 +353,10 @@ func ParseArchivalEvent(raw json.RawMessage) (*ArchivalEvent, error) {
 // the other peer (ErrProfileNotNegotiated), each member only on its
 // activity types and naming the envelope's object, and the members an
 // activity requires present. Pure: the caller supplies whether the
-// profile is in the stored, negotiated capability intersection. #1580
-// calls it from the inbox and before emission.
+// profile is in the stored, negotiated capability intersection.
+// ValidateMembers (members.go) calls it on every inbound envelope
+// (#1580). Nothing emits archival-1 members yet; the sender that does
+// must check them here before sending.
 func ValidateArchivalMembers(env *Envelope, negotiated bool) error {
 	asset, hasAsset := env.Extra[MemberArchivalAsset]
 	tomb, hasTomb := env.Extra[MemberArchivalTombstone]

@@ -37,6 +37,15 @@ deployed implementation.
   match; decrypt with each recipient key and confirm plaintext
   matches.
 
+- `members/`: Envelope member vectors (v1.md §9.6, #1580). Each
+  fixture is an envelope with the profile tokens the sender
+  `negotiated`, the activity types the receiver `applied`, and the
+  `expected_reason` from §12.1 (empty: accepted). They cover undefined
+  members (`unknown_field`), malformed or repeated ones
+  (`invalid_member`), a `Create` that is not a comment
+  (`unsupported_activity`), unnegotiated profile members and types
+  (`profile_not_negotiated`) and an unsupported `@context`.
+
 - `archival-1/`: Profile archival-1 vectors (v1.md §16-§17, §9.5;
   #1513). Each fixture is an otherwise valid v1 envelope carrying an
   archival-1 member, plus `stage` (`schema`, `negotiation`, `fixity`

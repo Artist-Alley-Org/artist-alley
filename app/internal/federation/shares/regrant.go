@@ -84,7 +84,7 @@ func (d expiryRetirer) retire(ctx context.Context, share *Share, notes string, e
 		ShareID:       share.ID,
 		ObjectKind:    share.ObjectKind,
 		ObjectID:      share.ObjectID,
-		PeerURL:       peer.InstanceURL, // empty if lookup failed; downstream tolerates
+		PeerURL:       peer.InstanceURL, // empty if lookup failed; delivery then refuses the activity (activity_not_federated, #1580)
 		TargetUserURL: targetURL,
 		Scope:         share.Scope,
 		Notes:         notes,

@@ -168,7 +168,7 @@ func CommentHandler(d *Dispatcher) HandlerFn {
 		// Extract the Note payload from the envelope.
 		body, parentURI, err := extractCommentPayload(env)
 		if err != nil {
-			return OutcomeRejected, federation.InboxStatusInvalidType, uuid.UUID{}, err
+			return OutcomeRejected, federation.InboxStatusInvalidMember, uuid.UUID{}, err
 		}
 		// Target object must already be classified by the inbox
 		// (object_kind + object_id non-null).
@@ -223,9 +223,11 @@ func (d *Dispatcher) upsertActorBestEffort(ctx context.Context, env *federation.
 	if d.actorCache == nil || env.Actor == "" {
 		return
 	}
-	displayName, avatarURL := extractActorDisplayHints(env)
+	// No display name or avatar: v1 defines no hint members for them
+	// (#1580); a remote actor's name and icon come from its actor
+	// document (#1526).
 	encKey := extractEncryptionKey(env, d.logger)
-	if err := d.actorCache.Upsert(ctx, env.Actor, peerID, displayName, avatarURL, encKey); err != nil && d.logger != nil {
+	if err := d.actorCache.Upsert(ctx, env.Actor, peerID, "", "", encKey); err != nil && d.logger != nil {
 		d.logger.LogAttrs(ctx, slog.LevelWarn, "inbox.dispatcher.actor_upsert.error",
 			slog.String("err", err.Error()),
 		)
@@ -294,58 +296,25 @@ func extractEncryptionKey(env *federation.Envelope, logger *slog.Logger) *Encryp
 	return &EncryptionKeyInline{PublicKey: keyBytes, Version: block.Version}
 }
 
-// extractCommentPayload pulls the Note `content` + `inReplyTo`
-// fields from the envelope's Extra map. Both ActivityStreams
-// shapes are accepted: `object` carrying a Note as JSON, OR
-// inline `content` + `inReplyTo` at the top level. Our outbox
-// uses the latter shape per the v1.md §7.5 vocabulary.
+// extractCommentPayload reads a comment Create's content and optional
+// inReplyTo (spec v1 §7.5, #1580). ValidateMembers has already
+// checked both, before the envelope was stored and again after any
+// decryption; the error here is defence in depth.
 func extractCommentPayload(env *federation.Envelope) (body, parentURI string, err error) {
-	// First try inline top-level fields.
-	if raw, ok := env.Extra["content"]; ok {
+	if raw, ok := env.Extra[federation.MemberContent]; ok {
 		if err := json.Unmarshal(raw, &body); err != nil {
 			return "", "", err
 		}
 	}
-	if raw, ok := env.Extra["inReplyTo"]; ok {
-		_ = json.Unmarshal(raw, &parentURI) // best-effort
-	}
-	// Fall back: object is a JSON Note.
-	if body == "" {
-		if raw, ok := env.Extra["object"]; ok {
-			var note struct {
-				Type      string `json:"type"`
-				Content   string `json:"content"`
-				InReplyTo string `json:"inReplyTo"`
-			}
-			if err := json.Unmarshal(raw, &note); err == nil {
-				body = note.Content
-				if parentURI == "" {
-					parentURI = note.InReplyTo
-				}
-			}
+	if raw, ok := env.Extra[federation.MemberInReplyTo]; ok {
+		if err := json.Unmarshal(raw, &parentURI); err != nil {
+			return "", "", err
 		}
 	}
 	if strings.TrimSpace(body) == "" {
 		return "", "", errors.New("comment payload missing content")
 	}
 	return body, parentURI, nil
-}
-
-// extractActorDisplayHints peeks at the envelope's Extra for
-// `actorDisplayName` + `actorAvatarUrl` hints. These are NOT
-// part of the v1 spec proper — the outbox dispatcher (1.22.D-b)
-// adds them as convenience for receivers that don't want a
-// follow-up HTTP fetch of the actor doc. Receivers that don't
-// see the hints fall back to "" (UI renders the actor_uri
-// itself).
-func extractActorDisplayHints(env *federation.Envelope) (displayName, avatarURL string) {
-	if raw, ok := env.Extra["actorDisplayName"]; ok {
-		_ = json.Unmarshal(raw, &displayName)
-	}
-	if raw, ok := env.Extra["actorAvatarUrl"]; ok {
-		_ = json.Unmarshal(raw, &avatarURL)
-	}
-	return displayName, avatarURL
 }
 
 // uuidFromURLTail extracts the last path segment + tries to

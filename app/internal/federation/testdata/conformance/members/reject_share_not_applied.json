@@ -1,0 +1,25 @@
+{
+  "description": "aa:Share is specified (7.5.1) but not applied by the reference receiver.",
+  "negotiated": [],
+  "applied": [
+    "Like",
+    "Create"
+  ],
+  "envelope": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "aa:Share",
+    "id": "https://studio-a.example/activities/0b9a7c3e-1f2d-4e5a-8b6c-7d8e9f0a1b2c",
+    "actor": "https://studio-a.example/users/alice",
+    "published": "2026-11-17T10:00:00Z",
+    "object": "https://studio-b.example/posts/6f1c2b8e-2d4a-4c1e-9b7a-0c3d5e7f9a11",
+    "signature": {
+      "type": "Ed25519",
+      "publicKey": "https://studio-a.example/users/alice#main-key",
+      "value": "AAAAAAAAAAAA"
+    },
+    "object_kind": "post",
+    "target_peer": "https://studio-b.example",
+    "scope": "view"
+  },
+  "expected_reason": "unsupported_activity"
+}

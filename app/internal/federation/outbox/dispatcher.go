@@ -49,6 +49,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/federation"
 )
 
 // DispatcherConfig controls the worker's cadence + batch size.
@@ -247,6 +249,26 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 		row := rows[i]
 		lastID = row.ID
 		processed++
+
+		// #1580: an activity v1 does not federate is never enqueued,
+		// whatever its audience; it stays a local record. Audited so
+		// "why didn't this federate?" has an answer.
+		objectKind := ""
+		if row.ObjectKind != nil {
+			objectKind = *row.ObjectKind
+		}
+		if !federation.Federated(federation.ActivityType(row.ActivityType), objectKind) {
+			skipped++
+			if d.auditSkipped != nil {
+				objectID := ""
+				if row.ObjectLocalID != nil {
+					objectID = *row.ObjectLocalID
+				}
+				d.auditSkipped(ctx, uuid.UUID(row.ID.Bytes).String(), row.ActivityType,
+					objectKind, objectID, "", "", string(SkippedActivityNotFederated))
+			}
+			continue
+		}
 
 		// Resolve visibility + sensitivity. Both fail closed:
 		// with no lookup, a lookup error or an empty answer,

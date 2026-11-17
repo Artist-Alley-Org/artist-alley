@@ -1829,7 +1829,18 @@ func (a inboxPeerLookupAdapter) ByKeyID(ctx context.Context, keyID string) (inbo
 		InstancePublicKey: pub,
 		Enabled:           p.Enabled,
 		Connected:         p.Status == federation.PeerStatusConnected,
+		Capabilities:      capabilityTokens(p.Capabilities),
 	}, nil
+}
+
+// capabilityTokens lists a peer's stored, negotiated capability
+// intersection as tokens, for the inbox's profile gate (#1580).
+func capabilityTokens(caps peer.CapabilitySet) []string {
+	out := make([]string, len(caps))
+	for i, c := range caps {
+		out[i] = string(c)
+	}
+	return out
 }
 
 // deferredIdentitySigner resolves the instance identity at Sign
@@ -2178,6 +2189,7 @@ func inboxDispatchPeerLookup(reg *peer.Registry) func(ctx context.Context, peerI
 			InstancePublicKey: pub,
 			Enabled:           p.Enabled,
 			Connected:         p.Status == federation.PeerStatusConnected,
+			Capabilities:      capabilityTokens(p.Capabilities),
 		}, nil
 	}
 }

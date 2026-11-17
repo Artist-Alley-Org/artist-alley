@@ -241,15 +241,21 @@ func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID
 
 	// Unsupported activity type (#1569): same gate, same stored row
 	// and same answer as PostInbox stage 10a.
-	if !Applies(env.Type) {
-		outcome, _, err := h.recordUnsupported(ctx, peer.ID, keyID, activityURI, env, []byte(raw))
-		switch {
-		case err != nil:
-			return batchResult{}, fmt.Errorf("record unsupported %s: %w", activityURI, err)
-		case outcome == storedAccepted:
-			return batchResult{ActivityURI: activityURI, Status: "replayed"}, nil
+	// Stage 10a, as in PostInbox (#1569, #1580).
+	if err := federation.ValidateMembers(env, MemberContext(peer.Capabilities, Applies)); err != nil {
+		if errors.Is(err, federation.ErrUnsupportedActivity) {
+			outcome, _, err := h.recordUnsupported(ctx, peer.ID, keyID, activityURI, env, []byte(raw))
+			switch {
+			case err != nil:
+				return batchResult{}, fmt.Errorf("record unsupported %s: %w", activityURI, err)
+			case outcome == storedAccepted:
+				return batchResult{ActivityURI: activityURI, Status: "replayed"}, nil
+			}
+			return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusUnsupportedActivity)}, nil
 		}
-		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusUnsupportedActivity)}, nil
+		status, _ := MemberReason(err)
+		h.auditReject(ctx, peer.ID, status, activityURI, err.Error())
+		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(status)}, nil
 	}
 
 	// Object-ref extraction (host check via the singleton

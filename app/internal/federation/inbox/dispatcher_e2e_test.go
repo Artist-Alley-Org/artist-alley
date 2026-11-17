@@ -322,11 +322,6 @@ func (fx *pairedFixture) buildLikeEnvelope() (envelopeJSON []byte, activityURI s
 		"published": time.Now().UTC().Format(time.RFC3339),
 		// object MUST point at the receiver's canonical URL.
 		"object": fx.localBaseURL + "/posts/" + fx.postID.String(),
-		// display hints — the outbox dispatcher (1.22.D-b) will
-		// add these; here we ship them inline so the test
-		// exercises the upsert.
-		"actorDisplayName": "Bob from Studio B",
-		"actorAvatarUrl":   fx.senderBaseURL + "/avatars/bob.png",
 		"signature": map[string]string{
 			"type":      "Ed25519",
 			"publicKey": fx.senderActor + "#main-key",
@@ -346,11 +341,9 @@ func (fx *pairedFixture) buildCommentEnvelope(body string) (envelopeJSON []byte,
 		"actor":     fx.senderActor,
 		"published": time.Now().UTC().Format(time.RFC3339),
 		"object":    fx.localBaseURL + "/posts/" + fx.postID.String(),
-		// Note content sits in top-level `content` per the inbox
-		// dispatcher's extractCommentPayload preference order.
-		"content":          body,
-		"actorDisplayName": "Bob from Studio B",
-		"actorAvatarUrl":   fx.senderBaseURL + "/avatars/bob.png",
+		// A comment Create per spec v1 §7.5 (#1580).
+		"object_type": "Note",
+		"content":     body,
 		"signature": map[string]string{
 			"type":      "Ed25519",
 			"publicKey": fx.senderActor + "#main-key",
@@ -430,17 +423,21 @@ func TestE2E_RemoteLike_DispatchesAndPersists(t *testing.T) {
 		t.Errorf("expected 1 remote like row; got %d", likeCount)
 	}
 
-	// 6. remote_actors cache populated with display info.
+	// 6. remote_actors cache populated, with no display name or
+	// avatar: v1 defines no hint members for them (#1580); they come
+	// from the actor document.
 	var displayName, avatarURL string
+	var cached int
 	_ = fx.pool.QueryRow(context.Background(),
-		`SELECT display_name, avatar_url FROM federation_remote_actors WHERE actor_uri = $1`,
+		`SELECT count(*), COALESCE(max(display_name), ''), COALESCE(max(avatar_url), '')
+		   FROM federation_remote_actors WHERE actor_uri = $1`,
 		fx.senderActor,
-	).Scan(&displayName, &avatarURL)
-	if displayName != "Bob from Studio B" {
-		t.Errorf("display_name: got %q want Bob from Studio B", displayName)
+	).Scan(&cached, &displayName, &avatarURL)
+	if cached != 1 {
+		t.Errorf("remote actor cache rows: got %d want 1", cached)
 	}
-	if avatarURL == "" {
-		t.Error("avatar_url should be populated from display hints")
+	if displayName != "" || avatarURL != "" {
+		t.Errorf("display hints were applied: name %q avatar %q", displayName, avatarURL)
 	}
 
 	// 7. Notifier fired with is_remote=true.
