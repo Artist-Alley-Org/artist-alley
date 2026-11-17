@@ -135,25 +135,42 @@ func (h *Handler) PostInboxBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 7. Per-envelope processing. Failures DON'T abort siblings.
+	// 7. Per-envelope processing. A per-envelope REJECTION does not
+	// abort siblings. A STORAGE failure does (#1569): every result
+	// in a 200 body is final for the sender, so an envelope the
+	// receiver could not store must not appear in one. The whole
+	// batch answers 503, which the sender's outbox retries; on the
+	// retry, siblings already stored are answered from their stored
+	// rows (replayed, or the same rejection).
 	results := make([]batchResult, 0, len(batch.Envelopes))
 	for _, raw := range batch.Envelopes {
-		results = append(results, h.processBatchEnvelope(ctx, peer, sigParams.KeyID, raw))
+		res, err := h.processBatchEnvelope(ctx, peer, sigParams.KeyID, raw)
+		if err != nil {
+			h.logErr(ctx, "inbox_batch.storage.error", err)
+			writeBatchError(w, http.StatusServiceUnavailable,
+				"temporarily unable to store an envelope; retry the batch")
+			return
+		}
+		results = append(results, res)
 	}
 
 	writeBatchOK(w, batchResponse{Results: results})
 }
 
 // processBatchEnvelope runs the per-envelope subset of the
-// PostInbox pipeline (stages 7-12 — the host check, encryption
-// gate, structural-sig check, INSERT, replay cache).
+// PostInbox pipeline (stages 7-12 — stored-id answer, host check,
+// encryption gate, structural-sig check, unsupported-type gate,
+// INSERT).
 //
 // Stages 1-6 (HTTP-level: rate limit, sig verify, body parse)
 // already ran ONCE for the whole batch in PostInboxBatch above.
 //
-// Returns a typed batchResult — never errors out; the outer
-// loop continues on any per-envelope failure per spec §10.4.
-func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID string, raw json.RawMessage) batchResult {
+// Returns a typed batchResult for every per-envelope outcome; the
+// outer loop continues past rejections per spec §10.4. A non-nil
+// error means the envelope could not be stored or its stored row
+// could not be read: a transient failure the caller turns into a
+// whole-batch 503 (#1569), never a result.
+func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID string, raw json.RawMessage) (batchResult, error) {
 	// Peek activity_uri for the result envelope (even on
 	// rejection we want to surface the id so the sender can
 	// pair the result with its source).
@@ -163,12 +180,16 @@ func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID
 			ActivityURI: "",
 			Status:      "rejected",
 			Reason:      string(federation.InboxStatusInvalidContext),
-		}
+		}, nil
 	}
 
-	// Replay cache short-circuit.
-	if h.replayCache.Seen(activityURI) {
-		return batchResult{ActivityURI: activityURI, Status: "replayed"}
+	// A stored id is answered from its stored row before any parse,
+	// type gate, object check or insert (#1569), exactly as PostInbox
+	// stage 7: "replayed" if accepted, the original rejection if
+	// refused as unsupported, a whole-batch 503 if the read fails.
+	// Nothing stored: continue as a first delivery.
+	if res, answered, err := h.storedBatchResult(ctx, activityURI); err != nil || answered {
+		return res, err
 	}
 
 	// Strict-parse envelope.
@@ -176,16 +197,16 @@ func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID
 	if err != nil {
 		rej := mapEnvelopeErr(err).(rejection)
 		h.auditReject(ctx, peer.ID, rej.status, activityURI, err.Error())
-		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(rej.status)}
+		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(rej.status)}, nil
 	}
 	if env.Context != federation.ContextV1 {
 		h.auditReject(ctx, peer.ID, federation.InboxStatusInvalidContext, activityURI, env.Context)
-		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusInvalidContext)}
+		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusInvalidContext)}, nil
 	}
 	if env.Encrypted != nil {
 		h.auditReject(ctx, peer.ID, federation.InboxStatusEncryptionNotSupported, activityURI,
 			"encrypted envelope received; X25519 decryption ships in 1.22.I")
-		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusEncryptionNotSupported)}
+		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusEncryptionNotSupported)}, nil
 	}
 	// Structural envelope-sig check (spec §5.6).
 	if env.Signature == nil ||
@@ -194,12 +215,25 @@ func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID
 		env.Signature.Value == "" {
 		h.auditReject(ctx, peer.ID, federation.InboxStatusEnvelopeSigMissing, activityURI,
 			"envelope signature block absent or malformed")
-		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusEnvelopeSigMissing)}
+		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusEnvelopeSigMissing)}, nil
 	}
 	if env.Signature.Type != federation.SignatureAlgEd25519 {
 		h.auditReject(ctx, peer.ID, federation.InboxStatusUnsupportedAlgorithm, activityURI,
 			"signature.type="+string(env.Signature.Type))
-		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusUnsupportedAlgorithm)}
+		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusUnsupportedAlgorithm)}, nil
+	}
+
+	// Unsupported activity type (#1569): same gate, same stored row
+	// and same answer as PostInbox stage 10a.
+	if !Applies(env.Type) {
+		outcome, _, err := h.recordUnsupported(ctx, peer.ID, keyID, activityURI, env, []byte(raw))
+		switch {
+		case err != nil:
+			return batchResult{}, fmt.Errorf("record unsupported %s: %w", activityURI, err)
+		case outcome == storedAccepted:
+			return batchResult{ActivityURI: activityURI, Status: "replayed"}, nil
+		}
+		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusUnsupportedActivity)}, nil
 	}
 
 	// Object-ref extraction (host check via the singleton
@@ -210,11 +244,11 @@ func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID
 		if errors.Is(err, ErrUnknownObject) {
 			h.auditReject(ctx, peer.ID, federation.InboxStatusUnknownObject, activityURI,
 				"object URL does not resolve to a local row")
-			return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusUnknownObject)}
+			return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusUnknownObject)}, nil
 		}
 		// Other extraction errors — surface as error reason but
 		// don't fail the whole batch.
-		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusError)}
+		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusError)}, nil
 	}
 
 	// INSERT (idempotent via UNIQUE on activity_uri).
@@ -230,12 +264,36 @@ func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			return batchResult{ActivityURI: activityURI, Status: "replayed"}
+			// Answer from the stored row (#1569), as PostInbox does.
+			res, answered, lerr := h.storedBatchResult(ctx, activityURI)
+			if lerr == nil && !answered {
+				lerr = errNoStoredRow
+			}
+			return res, lerr
 		}
-		h.logErr(ctx, "inbox_batch.insert.error", err)
-		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusError)}
+		// Not stored: transient for the sender (whole-batch 503),
+		// not a terminal "rejected" (#1569).
+		return batchResult{}, fmt.Errorf("insert %s: %w", activityURI, err)
 	}
-	return batchResult{ActivityURI: activityURI, Status: "accepted"}
+	return batchResult{ActivityURI: activityURI, Status: "accepted"}, nil
+}
+
+// storedBatchResult answers an activity id from its stored row:
+// "replayed" if it was accepted, rejected with unsupported_activity if
+// it was refused as unsupported (#1569). answered=false means no row
+// is stored, so there is nothing to answer from and no receipt may be
+// given. err means the row could not be read (transient).
+func (h *Handler) storedBatchResult(ctx context.Context, activityURI string) (res batchResult, answered bool, err error) {
+	outcome, _, err := h.storedOutcome(ctx, activityURI)
+	switch {
+	case err != nil:
+		return batchResult{}, false, err
+	case outcome == storedNone:
+		return batchResult{}, false, nil
+	case outcome == storedUnsupported:
+		return batchResult{ActivityURI: activityURI, Status: "rejected", Reason: string(federation.InboxStatusUnsupportedActivity)}, true, nil
+	}
+	return batchResult{ActivityURI: activityURI, Status: "replayed"}, true, nil
 }
 
 // mapHTTPSigErrCode returns the HTTP status code for a httpsig

@@ -179,6 +179,7 @@ func TestInboxStatusValid_AllSentinelsRegistered(t *testing.T) {
 		federation.InboxStatusEncryptionNotSupported,
 		federation.InboxStatusPlaintextTypeMismatch,
 		federation.InboxStatusDecryptFailed,
+		federation.InboxStatusUnsupportedActivity,
 		federation.InboxStatusStaleRequest,
 		federation.InboxStatusReplay, federation.InboxStatusError,
 	}

@@ -407,6 +407,7 @@ inline HTTP-error payloads):
 | `unshared_object` | The receiver has no `aa:Share` grant for the referenced object. |
 | `encryption_required_but_not_supported` | Recipient's policy demands encryption; sender can't provide it. |
 | `plaintext_type_mismatch` | A type that MUST be encrypted arrived as plaintext. |
+| `unsupported_activity` | The receiver does not apply this activity type. The activity was not applied and will not be; a duplicate delivery gets the same answer (v1.md §7.6, added 2026-11-16). |
 | `decrypt_failed` | The encrypted envelope's ciphertext did not open against any retained receiver key (1.22.I-f). |
 | `encryption_required` | **Receiver-side variant** (ACTIVE at v1.0-rc1 / 1.22.I-i): plaintext envelope arrived for a target whose intrinsic sensitivity tier mandates encryption — the sender violated the v0.7 §3.6 policy. Distinct from `encryption_required_but_not_supported`, which is the recipient declaring inability to receive plaintext. Defense in depth: I-g's sender-side refusal is the primary enforcement; this gate refuses what a misbehaving sender should never have sent. **Activation**: the v0.8 gate code shipped with the `SensitivityLookup` callback dormant; v1.0-rc1 wires the callback at boot to resolve `asset`-kind objects via the new `assets.sensitivity` column. Other object kinds (post, collection, comment) currently pass through — they gain coverage as those domains grow their own sensitivity columns. |
 | `peer_defederated` | The sending peer was previously defederated. |
@@ -537,7 +538,8 @@ emitting server:
    transient failures
 
 Recipients SHOULD be able to receive the same envelope multiple times
-(idempotency via the envelope's `id` field + a replay cache).
+(idempotency via the envelope's `id` field, checked against the
+receiver's stored activities; see v1.md §10.3 and §7.6).
 
 ### 5.5 Inbox processing
 
@@ -545,7 +547,8 @@ Incoming envelopes follow a multi-stage pipeline:
 
 1. Parse + structural validation
 2. Signature verification (per [§ 4.2](#42-signature))
-3. Replay-cache check
+3. Duplicate check against stored activity ids (a stored `id` is
+   answered from its stored record)
 4. Encryption decryption (when applicable, planned for v1.0)
 5. Activity-type dispatch
 6. Per-verb access-control check (does `from` have an `aa:Share`
@@ -571,7 +574,7 @@ Items the v1.0 version of this section MUST cover:
 - Threat model (curious peer, malicious peer, defederated peer,
   compromised user, MitM)
 - Key rotation procedures (Phase 1.22.I-h in the reference impl)
-- Replay-attack defences (envelope `id` uniqueness + replay cache)
+- Replay-attack defences (envelope `id` uniqueness + the `Date` window)
 - Clock-skew tolerance bounds + the reject reason for excess
 - Audit-log immutability requirements
 - Defederation cascade semantics (what happens to shares + cached

@@ -7,6 +7,23 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Fixed
+
+- **Federation no longer acknowledges activities it does not apply (#1569).** The inbox applies
+  only `Like` and comment `Create`, but it answered every other activity type (`Undo`, `Delete`,
+  `Update`, `aa:Share`, `aa:Unshare`, `aa:AssetVersion` and the rest) with `202 Accepted` and
+  later marked it processed without doing anything, so the sending instance believed it had
+  worked. Those types are now refused with the new reason `unsupported_activity`: `422` on
+  `POST /federation/inbox`, a `rejected` result in a batch, and the same answer for every
+  duplicate delivery. The refused envelope is kept as a rejected inbox row, with the reason
+  shown on the admin Inbox page, and is never retried; the sending instance records the delivery
+  as failed instead of sent. A type added to the protocol later is refused the same way until
+  its handler is written. Rows already waiting in the inbox when you upgrade are rejected the
+  same way. A duplicate delivery is never acknowledged unless the activity is actually stored,
+  and if the receiving instance cannot store an envelope it answers with a retryable error (a
+  whole-batch `503` on the batch endpoint) instead of a final rejection. ArchivePub v1 gains §7.6 (Addition A1), which makes this behaviour the rule for every
+  receiver. No new activity types are applied by this change.
+
 ## [v0.11.1] - 2026-11-16 - Public CI datasets on GitHub-hosted runners
 
 ### Security

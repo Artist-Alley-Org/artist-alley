@@ -195,6 +195,67 @@ func (q *Queries) InsertInbox(ctx context.Context, arg InsertInboxParams) (Feder
 	return i, err
 }
 
+const insertInboxRejected = `-- name: InsertInboxRejected :one
+INSERT INTO federation_inbox (
+    activity_uri,
+    peer_id,
+    actor_uri,
+    activity_type,
+    object_kind,
+    object_id,
+    envelope_json,
+    http_sig_key,
+    status,
+    reject_reason,
+    last_error
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'rejected', $9, $10)
+RETURNING id, status, reject_reason
+`
+
+type InsertInboxRejectedParams struct {
+	ActivityUri  string
+	PeerID       pgtype.UUID
+	ActorUri     string
+	ActivityType string
+	ObjectKind   *string
+	ObjectID     pgtype.UUID
+	EnvelopeJson []byte
+	HttpSigKey   string
+	RejectReason *string
+	LastError    string
+}
+
+type InsertInboxRejectedRow struct {
+	ID           pgtype.UUID
+	Status       string
+	RejectReason *string
+}
+
+// #1569: persist an authenticated envelope whose activity type this
+// receiver does not apply, directly as status='rejected'. It is never
+// pending, so the dispatcher never picks it up and nothing retries it;
+// envelope_json keeps the envelope for diagnosis. UNIQUE on
+// activity_uri still applies: a duplicate surfaces as a constraint
+// violation, and the caller answers from the stored row.
+func (q *Queries) InsertInboxRejected(ctx context.Context, arg InsertInboxRejectedParams) (InsertInboxRejectedRow, error) {
+	row := q.db.QueryRow(ctx, insertInboxRejected,
+		arg.ActivityUri,
+		arg.PeerID,
+		arg.ActorUri,
+		arg.ActivityType,
+		arg.ObjectKind,
+		arg.ObjectID,
+		arg.EnvelopeJson,
+		arg.HttpSigKey,
+		arg.RejectReason,
+		arg.LastError,
+	)
+	var i InsertInboxRejectedRow
+	err := row.Scan(&i.ID, &i.Status, &i.RejectReason)
+	return i, err
+}
+
 const listInboxByPeer = `-- name: ListInboxByPeer :many
 SELECT id, activity_uri, peer_id, actor_uri, activity_type,
        object_kind, object_id, envelope_json, http_sig_key,

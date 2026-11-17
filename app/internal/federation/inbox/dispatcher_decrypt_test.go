@@ -125,7 +125,16 @@ func newDecryptFx(t *testing.T) *decryptFx {
 				Connected:   true,
 			}, nil
 		},
-		nil, // no per-verb handler — no_handler branch processes the row
+		// An explicit stand-in Like handler: these tests exercise the
+		// stage-4 decrypt branch, not the social write. A missing
+		// handler is NOT processed any more — the dispatcher rejects
+		// it as unsupported_activity (#1569) — so the fixture must
+		// register one for the verb it dispatches.
+		map[federation.ActivityType]inbox.HandlerFn{
+			federation.ActivityLike: func(context.Context, *federation.Envelope, uuid.UUID, string, inbox.FederationInbox) (inbox.DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {
+				return inbox.OutcomeProcessed, "", uuid.UUID{}, nil
+			},
+		},
 		logger,
 	)
 	disp.SetRawPool(pool)
@@ -398,7 +407,7 @@ func (fx *decryptFx) auditCount(eventType, metaKey, metaValue string) int {
 
 // EncryptedEnvelope_DispatchesAndMarksRow proves the happy path:
 // a sealed envelope flows through stage-4 decryption, env.Extra
-// is restored, the dispatcher's no-handler path records the row
+// is restored, the fixture's stand-in Like handler records the row
 // as processed with was_encrypted=true +
 // decrypted_with_key_version=1.
 func TestDispatcher_EncryptedEnvelope_DispatchesAndMarksRow(t *testing.T) {
