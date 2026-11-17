@@ -185,6 +185,47 @@ func TestShareScopeValid(t *testing.T) {
 	}
 }
 
+// TestShareScope_LadderContract pins the v1 ladder of spec §7.5.1
+// (erratum E7, #1524) and every coverage pair, positive and negative,
+// plus the reserved `edit`, which must never be valid, never rank, never
+// be covered by any grant and never be treated as remix.
+func TestShareScope_LadderContract(t *testing.T) {
+	want := []federation.ShareScope{"view", "comment", "annotate", "remix"}
+	if len(federation.ShareScopeOrdered) != len(want) {
+		t.Fatalf("ladder %v, want %v", federation.ShareScopeOrdered, want)
+	}
+	for i, s := range want {
+		if federation.ShareScopeOrdered[i] != s {
+			t.Fatalf("ladder %v, want %v", federation.ShareScopeOrdered, want)
+		}
+		if got := s.Rank(); got != i+1 {
+			t.Errorf("%s rank %d, want %d", s, got, i+1)
+		}
+	}
+	for gi, grant := range want {
+		for ri, required := range want {
+			if got := grant.Covers(required); got != (gi >= ri) {
+				t.Errorf("%s covers %s = %v, want %v", grant, required, got, gi >= ri)
+			}
+		}
+	}
+	edit := federation.ShareScopeEditReserved
+	if edit != "edit" || edit.Valid() || edit.Rank() != 0 {
+		t.Fatalf(`reserved edit: value=%q valid=%v rank=%d; want "edit", false, 0`, edit, edit.Valid(), edit.Rank())
+	}
+	if _, ok := federation.KnownShareScopes[edit]; ok {
+		t.Fatal("edit must not be in KnownShareScopes")
+	}
+	for _, grant := range want {
+		if grant.Covers(edit) {
+			t.Errorf("%s covers the reserved edit: editing the original must not be grantable", grant)
+		}
+		if edit.Covers(grant) {
+			t.Errorf("reserved edit covers %s: it must not act as a grant (or as remix)", grant)
+		}
+	}
+}
+
 func TestShareScopeOrderedMatchesKnown(t *testing.T) {
 	// Ordered must enumerate exactly the known set, no
 	// drift in either direction.

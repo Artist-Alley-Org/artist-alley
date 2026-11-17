@@ -57,10 +57,12 @@ func TestActivityRequiredScope_Mapping(t *testing.T) {
 		{federation.ActivityAnnounce, federation.ShareScopeView, true},
 		{federation.ActivityCreate, federation.ShareScopeComment, true},
 		{federation.ActivityAAAnnotation, federation.ShareScopeAnnotate, true},
-		{federation.ActivityAAWorkflowTransition, federation.ShareScopeRemix, true},
+		// #1524: activities that modify the original require the
+		// reserved `edit`, which no v1 grant holds.
+		{federation.ActivityAAWorkflowTransition, federation.ShareScopeEditReserved, true},
 		{federation.ActivityAAApprove, federation.ShareScopeRemix, true},
-		{federation.ActivityDelete, federation.ShareScopeView, true},
-		{federation.ActivityUpdate, federation.ShareScopeView, true},
+		{federation.ActivityDelete, federation.ShareScopeEditReserved, true},
+		{federation.ActivityUpdate, federation.ShareScopeEditReserved, true},
 		{federation.ActivityUndo, federation.ShareScopeView, true},
 		{federation.ActivityFollow, federation.ShareScopeView, false}, // gated outside share
 		{federation.ActivityAccept, federation.ShareScopeView, false},
@@ -68,8 +70,8 @@ func TestActivityRequiredScope_Mapping(t *testing.T) {
 		{federation.ActivityAAShare, federation.ShareScopeView, false}, // share flow
 		{federation.ActivityAAUnshare, federation.ShareScopeView, false},
 		{federation.ActivityAARevokeShare, federation.ShareScopeView, false},
-		{federation.ActivityAdd, federation.ShareScopeRemix, true},
-		{federation.ActivityRemove, federation.ShareScopeRemix, true},
+		{federation.ActivityAdd, federation.ShareScopeEditReserved, true},
+		{federation.ActivityRemove, federation.ShareScopeEditReserved, true},
 	}
 	for _, c := range cases {
 		got, ok := shares.ActivityRequiredScope(c.typ)

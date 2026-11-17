@@ -332,21 +332,29 @@ func (v ObjectVisibility) IsFederated() bool {
 	return false
 }
 
-// ShareScope is the 4-rung ladder of access scopes per the
-// 1.22.C design proposal §1 + §12.5 #1. Mirrors the CHECK
-// constraint on federation_shares.scope.
+// ShareScope is the 4-rung ladder of access scopes. It is the
+// normative v1 catalogue of docs/spec/federation/v1.md §7.5.1 (as
+// corrected by erratum E7, #1524), decided in the 1.22.C design
+// proposal §1 + §12.5 #1, and mirrors the CHECK constraint on
+// federation_shares.scope and the OpenAPI scope enums. A drift test
+// (shares.TestShareScopeContract_SpecGoDBOpenAPIAgree) compares all
+// four.
 //
-// Ordering: view < comment < annotate < remix.
+// Ordering: view < comment < annotate < remix. Each rung covers every
+// rung below it.
 //
 //	view     — read-only; can Like / Announce
 //	comment  — view + can Create(Note) (comments)
 //	annotate — comment + can aa:Annotation (whiteboards, text annotations)
-//	remix    — annotate + can incorporate shared assets into
-//	           own posts/collections/workspaces/brand_kits on
-//	           recipient instance. Original NEVER modified.
+//	remix    — annotate + can incorporate the shared material into the
+//	           recipient's OWN posts/collections/workspaces/brand_kits
+//	           on the recipient instance. Original NEVER modified.
 //
-// Future fifth scope `edit` reserved for cross-instance edit of
-// the original (lands when that becomes a real ask). Not v1.
+// No v1 scope authorises modifying the original (its content,
+// metadata, workflow state or, for a collection, membership) on the
+// instance that holds it; that stays with local users there. The value
+// `edit` is reserved for a possible future cross-instance scope for
+// that, and is NOT a v1 scope: see ShareScopeEditReserved.
 type ShareScope string
 
 const (
@@ -354,6 +362,13 @@ const (
 	ShareScopeComment  ShareScope = "comment"
 	ShareScopeAnnotate ShareScope = "annotate"
 	ShareScopeRemix    ShareScope = "remix"
+
+	// ShareScopeEditReserved names the reserved `edit` value so code
+	// can refuse it explicitly. It is NOT in the catalogue: Valid() is
+	// false and Rank() is 0, so no grant can carry it, it is never
+	// treated as `remix`, and no grant Covers an activity that
+	// requires it (an activity that would modify the original).
+	ShareScopeEditReserved ShareScope = "edit"
 )
 
 // Valid reports whether s is in the closed catalogue.

@@ -279,6 +279,15 @@ docker run --rm \
 # situation it exists to detect. If this line is ever dropped the suite
 # goes RED and says so.
 #
+# The FIFTH is the normative federation spec (#1524).
+# shares.TestShareScopeContract_SpecGoDBOpenAPIAgree reads the aa:Share
+# `scope` line of docs/spec/federation/v1.md §7.5.1 and compares it with
+# the Go catalogue, the database CHECK and the OpenAPI enums. The spec
+# listed `edit` while every other source said `remix` for five months; a
+# test that carried its own copy of the ladder could not have noticed.
+# Only that one file is mounted, and like the fourth it FATALS rather
+# than skipping when the mount is missing.
+#
 # The second such path is the viewer controller (#1166).
 # app/internal/viewkind mirrors its kind resolver — the derivation
 # behind the browse card's type badge, which `GET /posts?kind=` filters
@@ -295,6 +304,7 @@ if ! docker run --rm \
     -v "${ROOT}/web/src/lib/components/viewers/controller.ts:/src/web/src/lib/components/viewers/controller.ts:ro" \
     -v "${ROOT}/web/src/lib/fieldEmptiness.cases.json:/src/web/src/lib/fieldEmptiness.cases.json:ro" \
     -v "${ROOT}/web/src/lib/displayCondition.cases.json:/src/web/src/lib/displayCondition.cases.json:ro" \
+    -v "${ROOT}/docs/spec/federation/v1.md:/src/docs/spec/federation/v1.md:ro" \
     -w /src/app \
     -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
     -e GOFLAGS -e GOMAXPROCS \
