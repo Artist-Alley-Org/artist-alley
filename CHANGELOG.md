@@ -23,6 +23,15 @@ where applicable, otherwise note "no-spec-impact."
   and if the receiving instance cannot store an envelope it answers with a retryable error (a
   whole-batch `503` on the batch endpoint) instead of a final rejection. ArchivePub v1 gains §7.6 (Addition A1), which makes this behaviour the rule for every
   receiver. No new activity types are applied by this change.
+- **Activity on public posts no longer stalls federation, and share changes take effect at once
+  (#1233).** A like or any other activity on a `public` post made the outbox dispatcher fail with
+  `unsupported visibility: "public"` and retry the same batch every 30 seconds, so nothing queued
+  behind it was ever sent. A public post now federates exactly like an `explicit-share` post: only
+  to peers holding a live share of it, never to every paired peer; with no share it is skipped and
+  the queue moves on. The recipient list is also no longer cached, so granting a share reaches the
+  next activity, and a revoked or expired share, or a disabled or disconnected peer, stops it,
+  without restarting the instance. Before, a revoked peer kept receiving new activity until the
+  next restart.
 
 ## [v0.11.1] - 2026-11-16 - Public CI datasets on GitHub-hosted runners
 

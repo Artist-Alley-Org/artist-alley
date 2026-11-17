@@ -263,20 +263,33 @@ func (t TrustTier) Valid() bool {
 	return ok
 }
 
-// ObjectVisibility is the 4-tier closed catalogue for object
-// visibility per the 1.22.C design proposal §1. Mirrors the
-// CHECK constraint added in migration 00001 on posts.visibility
-// + collections.visibility (and any future shareable object).
+// ObjectVisibility is the 5-tier closed catalogue for object
+// visibility. Mirrors the CHECK constraints on posts.visibility +
+// collections.visibility: four tiers from migration 00001 (1.22.C
+// design proposal §1) plus `public`, which migration 00008 added
+// (#414) and the write API accepts (#1176).
 //
-//	private        — author + local admins only (no federation)
-//	org-only       — local users with ACL access (no federation)
-//	followers      — federated via Accept(Follow) per-user gates
-//	explicit-share — federated via per-recipient federation_shares
+// A tier answers two different questions: LOCAL READ (who on this
+// instance may read the object) and PEER AUDIENCE (which paired peers
+// its activities are sent to). Only the second is a federation
+// question.
 //
-// `public` is reserved for a future public-fediverse phase; v1
-// implementations MUST reject it at the write API per the
-// reviewer's locked-in answer (§12.5 #5 of the proposal). The
-// constant ObjectVisibilityPublic is INTENTIONALLY absent.
+//	private        — read: author + local admins.   Audience: none.
+//	org-only       — read: local users with access. Audience: none.
+//	followers      — audience: Accept(Follow) per-user gates.
+//	explicit-share — audience: live per-recipient federation_shares.
+//	public         — read: anyone who can reach this instance
+//	                 (anonymous callers too, in public mode).
+//	                 Audience: EXACTLY as explicit-share, i.e. only
+//	                 peers holding a live share of the object (#1233).
+//
+// Public read visibility is never a peer audience on its own: pairing
+// is not consent to receive content, so a public object with no live
+// share federates to nobody, and nothing broadcasts to every paired
+// peer. Federating to the open fediverse (servers outside the walled
+// garden, ADR 0043) is still out of scope. The outbox resolver
+// (federation/outbox.Resolver.Resolve) is the one place that turns a
+// tier into recipients.
 type ObjectVisibility string
 
 const (
@@ -284,23 +297,39 @@ const (
 	ObjectVisibilityOrgOnly       ObjectVisibility = "org-only"
 	ObjectVisibilityFollowers     ObjectVisibility = "followers"
 	ObjectVisibilityExplicitShare ObjectVisibility = "explicit-share"
+	ObjectVisibilityPublic        ObjectVisibility = "public"
 )
 
-// Valid reports whether v is in the closed catalogue. `public` is
-// NOT considered valid at v1 (reserved value).
+// KnownObjectVisibilities is the closed catalogue. It must equal the
+// posts/collections visibility CHECK sets; the outbox resolver tests
+// compare the three (catalogue, live schema, resolver) on real
+// Postgres.
+var KnownObjectVisibilities = map[ObjectVisibility]struct{}{
+	ObjectVisibilityPrivate:       {},
+	ObjectVisibilityOrgOnly:       {},
+	ObjectVisibilityFollowers:     {},
+	ObjectVisibilityExplicitShare: {},
+	ObjectVisibilityPublic:        {},
+}
+
+// Valid reports whether v is in the closed catalogue.
 func (v ObjectVisibility) Valid() bool {
+	_, ok := KnownObjectVisibilities[v]
+	return ok
+}
+
+// IsFederated reports whether an object of this tier MAY have
+// activities sent to peers at all. private + org-only never do.
+// followers, explicit-share and public may, but only to the audience
+// their gate names (see the type comment): for public that is the
+// object's live explicit shares, never every paired peer. true is
+// therefore "may federate to authorised recipients", not "federates".
+func (v ObjectVisibility) IsFederated() bool {
 	switch v {
-	case ObjectVisibilityPrivate, ObjectVisibilityOrgOnly,
-		ObjectVisibilityFollowers, ObjectVisibilityExplicitShare:
+	case ObjectVisibilityFollowers, ObjectVisibilityExplicitShare, ObjectVisibilityPublic:
 		return true
 	}
 	return false
-}
-
-// IsFederated reports whether the tier flows content across the
-// federation boundary. private + org-only stay local.
-func (v ObjectVisibility) IsFederated() bool {
-	return v == ObjectVisibilityFollowers || v == ObjectVisibilityExplicitShare
 }
 
 // ShareScope is the 4-rung ladder of access scopes per the
