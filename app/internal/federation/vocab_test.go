@@ -28,6 +28,7 @@ func TestActivityTypeValid(t *testing.T) {
 		federation.ActivityAAMarkReviewed, federation.ActivityAAAnnotation,
 		federation.ActivityAAWorkflowTransition, federation.ActivityAAAssetVersion,
 		federation.ActivityAASubscribe, federation.ActivityAAMention,
+		federation.ActivityAAProvenance,
 	}
 	for _, t_ := range known {
 		if !t_.Valid() {
@@ -46,7 +47,7 @@ func TestActivityTypeMembershipParity(t *testing.T) {
 	// Every declared const above MUST be in KnownActivityTypes
 	// (the consts are the authoritative declaration; the map is
 	// the O(1) lookup mirror). If they drift, this test catches.
-	const expectedCount = 23
+	const expectedCount = 24
 	if len(federation.KnownActivityTypes) != expectedCount {
 		t.Errorf("KnownActivityTypes count drifted: got %d want %d (update both this test and the consts)",
 			len(federation.KnownActivityTypes), expectedCount)
@@ -263,6 +264,8 @@ func TestInboxStatusValid_AllSentinelsRegistered(t *testing.T) {
 		federation.InboxStatusUnsupportedActivity,
 		federation.InboxStatusStaleRequest,
 		federation.InboxStatusReplay, federation.InboxStatusError,
+		federation.InboxStatusProfileNotNegotiated, federation.InboxStatusArchivalInvalid,
+		federation.InboxStatusFixityMismatch,
 	}
 	for _, s := range sentinels {
 		if _, ok := federation.KnownInboxStatuses[s]; !ok {

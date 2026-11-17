@@ -49,6 +49,15 @@ or implementation code).
   - Mastodon developer narrative writeups on interop pain points
     (Eugen Rochko / Renaud Chaput posts; SocialCG mailing list
     archives) — text describing failure modes, NOT source
+  - Re-disclosure 2026-11-17 (#1513, model claude-opus-5-5): read
+    the published specifications OCFL 1.1, RFC 8493 (BagIt), PREMIS 3
+    and the LoC Preservation Events Controlled Vocabulary (2017 PDF),
+    IIIF Presentation 3.0,
+    the W3C Web Annotation Data Model and Media Fragments URI 1.0,
+    DCMI Metadata Terms, RightsStatements.org, the Creative Commons
+    licence pages, PRONOM, RFC 6838 and RFC 5646. Specification text
+    only; none is source code of an implementation in the
+    contamination gate.
 - **Has NOT read source of:** `go-fed/activity`, Mastodon, Pleroma,
   Akkoma, Misskey, FoundKey, Calckey, Sharkey, GoToSocial, PeerTube,
   Pixelfed, BookWyrm, Lemmy, Kbin, Mbin, piefed, Hubzilla, Streams,

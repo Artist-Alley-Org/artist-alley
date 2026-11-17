@@ -81,6 +81,16 @@ const (
 	CapHTTP2BatchedInbox PeerCapability = "http2-batched-inbox"
 )
 
+// CapArchival1 is the archival-1 profile token (docs/spec/federation/
+// v1.md §16-§17; #1513). It is SPECIFIED but NOT IMPLEMENTED: no
+// sender emits archival-1 members and the inbox does not validate or
+// gate them yet (#1580), the CAS byte fetch is #72 and asset ingest is
+// #1574. It is therefore deliberately absent from KnownCapabilities,
+// so the handshake never advertises it and the negotiated intersection
+// never contains it (TestCapArchival1_NotAdvertised). Advertising it
+// before both paths enforce it would repeat the #1526 false claim.
+const CapArchival1 PeerCapability = "archival-1"
+
 // KnownCapabilities is the closed set this reference implementation
 // recognises + dispatches on. Order is the order the handshake
 // envelope emits them; receivers see the same order, the

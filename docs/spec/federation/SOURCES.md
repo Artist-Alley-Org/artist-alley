@@ -27,6 +27,19 @@ tracks who has read what.
 | W3C-ActivityPub | [ActivityPub W3C Recommendation](https://www.w3.org/TR/activitypub/) | W3C Document License | The data-model shape (Actor / Activity / Object / Collection) that v1 is shaped around. v1 deliberately diverges from ActivityPub on serialization (no JSON-LD), addressing (CAS URIs), and vocabulary (`aa:*` extensions); v1.md documents each divergence. | 2026-06-05 |
 | W3C-AS2-Core | [Activity Streams 2.0 Core](https://www.w3.org/TR/activitystreams-core/) | W3C Document License | Core JSON shape Activity Streams 2.0 defines for activities + objects. | 2026-06-05 |
 | W3C-AS2-Vocab | [Activity Streams 2.0 Vocabulary](https://www.w3.org/TR/activitystreams-vocabulary/) | W3C Document License | Standard activity types we carry through (Create / Update / Delete / Follow / Accept / Reject / Undo / Like / Announce / Block) and standard object types (Note / Image / Video / Document / Collection / OrderedCollection). | 2026-06-05 |
+| OCFL-1.1 | [Oxford Common File Layout Specification 1.1](https://ocfl.io/1.1/spec/) | CC BY 4.0 (OCFL editors) | §3.3 immutable, continuously numbered versions and §3.4 SHA-256 / SHA-512 content digests plus additional fixity; the version rules of §17.2.1 and the checksum rules of §17.2.3. | 2026-11-17 |
+| RFC-8493 | [RFC 8493: The BagIt File Packaging Format (V1.0)](https://www.rfc-editor.org/rfc/rfc8493) | IETF (Informational RFC) | §2.1.3 payload manifests (`manifest-<algorithm>.txt`, several algorithms per bag) and `bag-info.txt`; §17.2.3 and the §17.7 export mapping. | 2026-11-17 |
+| PREMIS-3 | [PREMIS Data Dictionary for Preservation Metadata, Version 3.0](https://www.loc.gov/standards/premis/v3/) | Library of Congress (US Government work) | The Objects, Events, Rights and Agents data model; the §17.4 event shape and agent roles. | 2026-11-17 |
+| LoC-PreservationEvents | [Preservation Events Controlled Vocabulary (release 22 June 2017)](https://www.loc.gov/standards/premis/v3/preservation-events.pdf) | Library of Congress (US Government work) | The primary list of PREMIS preservation event terms, with definitions. It confirms the eight term labels §17.4 uses: ingestion, fixity check, format identification, virus check, migration, replication, transfer, deaccession. Six of them also carry an `id.loc.gov/vocabulary/preservation/eventType` link in that release; format identification and transfer do not, which is why §17.4 maps its tokens to term labels rather than to identifier URIs. | 2026-11-17 |
+| IIIF-P3 | [IIIF Presentation API 3.0](https://iiif.io/api/presentation/3.0/) | CC BY 4.0 (IIIF Consortium) | The `rights` property (Creative Commons or RightsStatements.org URIs) and `requiredStatement` language maps (§17.2.5); manifests and canvases (§17.2.7, §17.5). | 2026-11-17 |
+| W3C-WebAnno | [Web Annotation Data Model](https://www.w3.org/TR/annotation-model/) | W3C Document License | `Annotation`, `TextualBody`, `SpecificResource` and §4.2.1 FragmentSelector (§17.5). | 2026-11-17 |
+| W3C-MediaFrags | [Media Fragments URI 1.0 (basic)](https://www.w3.org/TR/media-frags/) | W3C Document License | The `xywh=` and `t=` fragment syntax the §17.5 selector uses. | 2026-11-17 |
+| DCMI-Terms | [DCMI Metadata Terms](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/) | CC BY 4.0 (DCMI) | The descriptive terms of §17.2.6 and the rights terms behind §17.2.5. | 2026-11-17 |
+| RightsStatements | [RightsStatements.org vocabulary](https://rightsstatements.org/page/1.0/) | Published by RightsStatements.org | The rights statement URIs §17.2.5 accepts. | 2026-11-17 |
+| CC-Licenses | [Creative Commons licenses](https://creativecommons.org/licenses/) | Published by Creative Commons | The licence URIs §17.2.5 accepts. | 2026-11-17 |
+| PRONOM | [PRONOM technical registry](https://www.nationalarchives.gov.uk/PRONOM/) | Published by The National Archives (UK) | PRONOM persistent unique identifiers (`fmt/N`, `x-fmt/N`) in §17.2.4. | 2026-11-17 |
+| RFC-6838 | [RFC 6838: Media Type Specifications and Registration Procedures](https://datatracker.ietf.org/doc/html/rfc6838) | IETF Trust (public domain) | The `type/subtype` syntax of `mediaType` (§17.2.2). | 2026-11-17 |
+| RFC-5646 | [RFC 5646: Tags for Identifying Languages (BCP 47)](https://datatracker.ietf.org/doc/html/rfc5646) | IETF Trust (public domain) | Language tags in §17.2.5, §17.2.6 and §17.5. | 2026-11-17 |
 
 ## Reference-implementation pages (READ AS SPEC ONLY — NO SOURCE CODE)
 
@@ -83,6 +96,14 @@ For each section of v1.md, the citations resolve as:
 - §8 URI shape → ADR 0043; Mastodon's deployed username-immutability convention is a behavioral observation cited via `Mastodon-dev-1`
 - §10 HTTP-Sig algorithm allowlist → `draft-cavage-12`
 - §13 at-rest encryption → `NIST-800-38D`
+- §16 negotiated profiles → ADR 0043 (amendment 2026-11-17, #1513) and the §11 capability exchange (ADR 0049, Decision 3)
+- §17.2 asset versions, files and checksums → `OCFL-1.1`, `RFC-8493`, `RFC-6838`, `PRONOM`
+- §17.2.5 rights and required statement → `IIIF-P3`, `RightsStatements`, `CC-Licenses`, `DCMI-Terms`, `RFC-5646`
+- §17.2.6 description → `DCMI-Terms`, `RFC-5646`
+- §17.3 tombstone → `W3C-AS2-Vocab` (`Tombstone`)
+- §17.4 preservation events → `PREMIS-3`, `LoC-PreservationEvents`; ADR 0101
+- §17.5 annotations → `W3C-WebAnno`, `W3C-MediaFrags`, `IIIF-P3`
+- §17.7 BagIt mapping → `RFC-8493`
 
 ## How to add a new source
 

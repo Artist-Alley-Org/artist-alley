@@ -1,0 +1,41 @@
+{
+  "description": "aa:tombstone.id must equal the envelope object.",
+  "spec": "v1.md \u00a717.3",
+  "stage": "schema",
+  "negotiated": true,
+  "envelope": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "Delete",
+    "id": "https://studio-a.example/activities/delete-1",
+    "actor": "https://studio-a.example/users/alice",
+    "published": "2026-11-17T10:00:00Z",
+    "object": "https://studio-a.example/assets/00000000-0000-4000-8000-000000000000",
+    "aa:tombstone": {
+      "id": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c",
+      "formerType": "aa:Asset",
+      "deleted": "2026-11-17T11:00:00Z",
+      "reason": "Withdrawn at the depositor's request.",
+      "lastVersion": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c/versions/2",
+      "files": [
+        {
+          "role": "original",
+          "contentUri": "cas://39e2e33c601cde530aa04507901aef1d322ad8cf13e4598a853730220ebea621",
+          "checksums": [
+            {
+              "algorithm": "sha256",
+              "value": "39e2e33c601cde530aa04507901aef1d322ad8cf13e4598a853730220ebea621"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "outcome": "reject",
+    "reason": "archival_invalid"
+  },
+  "enforcement": {
+    "now": "federation.ValidateArchivalMembers (pure schema and placement check)",
+    "pending": "#1580: inbox and parser enforcement"
+  }
+}

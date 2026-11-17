@@ -130,6 +130,61 @@ this field; spec §7.5.1 says how it should map its values. The rest of
 this ADR, the 2026-10-23 status note, and the corrections PR #1521 made
 to the spec and to ADR 0049 are unchanged.
 
+## Amendment 2026-11-17 (#1513): negotiated profiles and the archival-1 asset contract
+
+**What this ADR said.** The *Serialization* decision rejects unknown
+fields and sends every vocabulary addition through a `protocol/v2`
+bump. The ADR names `aa:Asset` with "technical metadata" and CAS-native
+bytes, but never fixes the fields an asset carries.
+
+**Decision.** Keep strict unknown-field rejection, and add one
+extension path: an optional **profile**, named by a frozen token such as
+`archival-1` and exchanged in the existing pairing capability list.
+Between two peers that both advertised a profile, its members are part
+of the contract; everywhere else they are unknown fields. A changed
+profile is a new token, never a quiet addition. Advertising a profile
+claims that both sending and receiving enforce it, so a token is not
+advertised before both do (the #1526 lesson).
+
+`archival-1` (spec §17) is the first profile:
+
+- an asset is a **record** plus a **file set**: each file a role
+  (`original`, `preservation`, `access`), a `cas://` SHA-256 URI, a
+  checksum list with SHA-256 required (MD5 only as legacy extra), size,
+  declared media type, an optional PRONOM identification with its tool,
+  and an optional untrusted original base name. Only files whose
+  SHA-256 the sender holds are listed, so no unhashed preview is ever
+  presented as fixity-checked;
+- versions are immutable and predecessor-linked, as in OCFL; changed
+  bytes always make a new version;
+- `Delete` of an asset carries a tombstone (identity, last version,
+  checksums) and is a deaccession, not a silent 404; it never promises
+  that bytes already transferred are recalled;
+- the receiver re-hashes every received file before it is visible and
+  rejects a mismatch with `fixity_mismatch`;
+- preservation events travel as PREMIS events in the new profile-gated
+  `aa:Provenance` (ADR 0101), and annotations as W3C Web Annotations on
+  IIIF canvases.
+
+**Who the protocol is for.** This also settles the audience question
+the ArchivePub overview left open: v1 is Artist Alley to Artist Alley.
+The specification is open and an independent implementation is
+welcome, but nothing in v1 claims interoperability with ActivityPub
+servers.
+
+**Why a profile and not `protocol/v2`.** Every archival field would
+otherwise force a version bump on everyone who has built against v1.
+A negotiated profile keeps v1 stable for peers that never adopt it and
+keeps the drift protection: nothing is accepted that both sides did not
+agree to.
+
+**Compatibility.** Nothing changes on the wire today: the profile is
+specified, not implemented, and the reference implementation does not
+advertise it. When it ships, existing pairings need to negotiate again
+(today a re-pair) before assets travel under it, and a sender refuses
+an asset transfer to a peer without the profile rather than sending it
+unverifiable. The rest of this ADR is unchanged.
+
 ## Context
 
 [ADR 0007](/adr/0007-federation-thinking-ahead/) committed Artist Alley
