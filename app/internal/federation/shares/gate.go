@@ -315,7 +315,7 @@ func (r *Registry) matchContainingCollectionShares(
 		// on the same collection.
 		kept := candidates[:0]
 		for i := range candidates {
-			authorized, err := r.grantorAuthority(ctx, candidates[i].GrantorUserRef, memberOwnerRef, adminSeen)
+			authorized, err := r.grantorAuthority(ctx, r.Pool, candidates[i].GrantorUserRef, memberOwnerRef, adminSeen)
 			if err != nil {
 				return nil, "", err
 			}

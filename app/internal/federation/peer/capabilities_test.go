@@ -259,3 +259,24 @@ func TestCapArchival1_NotAdvertised(t *testing.T) {
 		t.Error("archival-1 has a dispatch purpose; it must stay undispatched until implemented")
 	}
 }
+
+// TestCapOriginalTransfer1_NotAdvertised pins #1573's rule: the
+// original-transfer-1 profile is reserved but not advertised until #72,
+// #1571 and #1574 support it end to end, so a handshake never offers it
+// and a negotiated intersection never contains it, even when the other
+// side claims it.
+func TestCapOriginalTransfer1_NotAdvertised(t *testing.T) {
+	if CapOriginalTransfer1 != "original-transfer-1" {
+		t.Fatalf("token drifted: %q", CapOriginalTransfer1)
+	}
+	if KnownCapabilities.Has(CapOriginalTransfer1) {
+		t.Fatal("original-transfer-1 is in KnownCapabilities before #72, #1571 and #1574 support it end to end")
+	}
+	theirs := append(CapabilitySet{CapOriginalTransfer1}, KnownCapabilities...)
+	if Intersect(KnownCapabilities, theirs).Has(CapOriginalTransfer1) {
+		t.Fatal("original-transfer-1 reached a negotiated intersection")
+	}
+	if purposeOf(CapOriginalTransfer1) != "" {
+		t.Error("original-transfer-1 has a dispatch purpose; it must stay undispatched until implemented")
+	}
+}

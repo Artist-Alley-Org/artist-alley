@@ -7,8 +7,31 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Added
+
+- **Shares can say whether a peer may receive the original file, and the admin share page can
+  grant shares (#1573).** A share's scope (view, comment, annotate, remix) says what a peer may do
+  with an object; it never meant the peer could have the original file, and now a separate
+  permission, `allow_original`, says that. It is off unless set, only for asset and collection
+  shares, and refused for restricted and embargoed assets. Every existing share reads off. The
+  federation shares page now has a form to grant a share: pick the object, look it up to see its
+  title, tier and its own copyright notice and credit fields (shown as typed, for context), pick a
+  connected peer, what they can do, an optional recipient and expiry, and the original-file toggle,
+  which stays disabled where it is not allowed. The list shows each share's choice. Copyright and
+  credit text describes the work and grants nothing; revoking a
+  share stops new access and does not recall files a peer already has. **Not live yet:** no file
+  moves between instances. The origin's per-fetch decision exists, but the signed fetch that would
+  use it is #72, and the profile `original-transfer-1` is reserved and not advertised until #72,
+  #1571 and #1574 work end to end. The share sent to a peer carries the same members as before.
+  Spec v1 adds §7.5.7 and rewrites §8.5 (a fetch names the asset, never a bare hash); ADR 0043 is
+  amended. The share API adds `allow_original` and `GET /admin/federation/shares/grant-context`.
+
 ### Fixed
 
+- **IIIF never serves an original file (#1573).** IIIF image requests are answered from the
+  configured preview variants. Nothing stopped an operator from naming a variant `original`, the
+  storage key of the original file, and IIIF would then have listed and streamed the original at
+  its largest size. Such a variant is now ignored by IIIF.
 - **A share's private notes no longer reach the peer, and envelopes carry only their defined
   members (#1580).** The sender put an activity's whole local record on the wire, so sharing a post
   with operator notes sent those notes and local ids to the peer, in clear or inside the

@@ -119,7 +119,10 @@ func NewObjectOwnerResolver(db DBTX) ObjectOwnerResolver {
 // gate.go: the per-object LRU holds share ROWS, and folding a
 // membership- or ownership-derived answer into it would make the
 // "{kind}:{uuid}" key ambiguous.
-func (r *Registry) grantorAuthority(ctx context.Context, grantorUserRef, memberOwnerRef int64, adminSeen map[int64]bool) (bool, error) {
+//
+// db is the connection to read through: the pool for the gate, the
+// read-only snapshot transaction for CanPeerFetchOriginal.
+func (r *Registry) grantorAuthority(ctx context.Context, db DBTX, grantorUserRef, memberOwnerRef int64, adminSeen map[int64]bool) (bool, error) {
 	if grantorUserRef == memberOwnerRef {
 		return true, nil
 	}
@@ -131,7 +134,7 @@ func (r *Registry) grantorAuthority(ctx context.Context, grantorUserRef, memberO
 	if seen, ok := adminSeen[grantorUserRef]; ok {
 		return seen, nil
 	}
-	held, err := auth.New(r.Pool).UserHoldsSystemAdmin(ctx, grantorUserRef)
+	held, err := auth.New(db).UserHoldsSystemAdmin(ctx, grantorUserRef)
 	if err != nil {
 		return false, err
 	}

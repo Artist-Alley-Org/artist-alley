@@ -18,7 +18,8 @@ INSERT INTO federation_shares (
     scope,
     expires_at,
     notes,
-    granted_activity_id
+    granted_activity_id,
+    allow_original
 )
 VALUES (
     COALESCE(sqlc.narg(id)::UUID, gen_random_uuid()),
@@ -30,12 +31,13 @@ VALUES (
     sqlc.arg(scope),
     sqlc.narg(expires_at),
     sqlc.arg(notes),
-    sqlc.arg(granted_activity_id)
+    sqlc.arg(granted_activity_id),
+    sqlc.arg(allow_original)
 )
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
-          revoked_activity_id, created_at, updated_at;
+          revoked_activity_id, created_at, updated_at, allow_original;
 
 -- name: GetUnrevokedShareForTuple :one
 -- #1586: the row that holds one grant tuple's slot in
@@ -50,7 +52,7 @@ RETURNING id, grantor_user_ref, object_kind, object_id,
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at,
+       revoked_activity_id, created_at, updated_at, allow_original,
        (expires_at IS NOT NULL AND expires_at <= NOW())::BOOLEAN AS expired
 FROM federation_shares
 WHERE grantor_user_ref = sqlc.arg(grantor_user_ref)
@@ -64,7 +66,7 @@ WHERE grantor_user_ref = sqlc.arg(grantor_user_ref)
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at
+       revoked_activity_id, created_at, updated_at, allow_original
 FROM federation_shares
 WHERE id = $1;
 
@@ -80,7 +82,7 @@ WHERE id = $1 AND revoked_at IS NULL
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
-          revoked_activity_id, created_at, updated_at;
+          revoked_activity_id, created_at, updated_at, allow_original;
 
 -- name: RevokeExpiredShare :one
 -- #1586: RevokeShare, but only while the row is STILL expired. The
@@ -101,7 +103,7 @@ WHERE id = $1
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
-          revoked_activity_id, created_at, updated_at;
+          revoked_activity_id, created_at, updated_at, allow_original;
 
 -- name: ListSharesByObject :many
 -- "Who has access to this object?" — admin per-object view.
@@ -110,7 +112,7 @@ RETURNING id, grantor_user_ref, object_kind, object_id,
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at
+       revoked_activity_id, created_at, updated_at, allow_original
 FROM federation_shares
 WHERE object_kind = $1 AND object_id = $2 AND revoked_at IS NULL
 ORDER BY granted_at DESC, id DESC;
@@ -121,7 +123,7 @@ ORDER BY granted_at DESC, id DESC;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at
+       revoked_activity_id, created_at, updated_at, allow_original
 FROM federation_shares
 WHERE peer_id = $1 AND revoked_at IS NULL
 ORDER BY object_kind, granted_at DESC, id DESC
@@ -139,7 +141,7 @@ WHERE peer_id = $1 AND revoked_at IS NULL;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at
+       revoked_activity_id, created_at, updated_at, allow_original
 FROM federation_shares
 WHERE grantor_user_ref = $1 AND revoked_at IS NULL
 ORDER BY granted_at DESC, id DESC
@@ -155,7 +157,7 @@ LIMIT $2;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at
+       revoked_activity_id, created_at, updated_at, allow_original
 FROM federation_shares
 WHERE object_kind = $1
   AND object_id   = $2
@@ -184,7 +186,7 @@ LIMIT 1;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at
+       revoked_activity_id, created_at, updated_at, allow_original
 FROM federation_shares
 WHERE object_kind = $1 AND object_id = $2 AND revoked_at IS NULL
 ORDER BY id;
@@ -217,7 +219,7 @@ ORDER BY object_kind;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at
+       revoked_activity_id, created_at, updated_at, allow_original
 FROM federation_shares
 WHERE revoked_at IS NULL
   AND expires_at IS NOT NULL
@@ -233,8 +235,52 @@ LIMIT $1;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at
+       revoked_activity_id, created_at, updated_at, allow_original
 FROM federation_shares
 WHERE peer_id = $1 AND revoked_at IS NULL
 ORDER BY id
 LIMIT $2;
+
+-- name: GetPeerForOriginalFetch :one
+-- #1573: the authoritative peer state for an original-byte fetch
+-- decision, read from the row, never from caller-supplied flags.
+-- capabilities is the stored negotiated intersection.
+SELECT id, instance_url, enabled, status, capabilities
+FROM federation_peers
+WHERE id = $1;
+
+-- name: GetAssetForOriginalFetch :one
+-- #1573: the asset facts an original-byte fetch decision binds to:
+-- owner (the grantor-owner rule), the stored original's hash and its
+-- size as stored (storage_objects, not the asset's copy of it), the
+-- sensitivity tier, whether it is deleted, and whether this instance is
+-- its origin (a copy received from a peer carries origin_server_id).
+SELECT a.id, a.owner_user_ref, a.file_hash, so.size_bytes AS stored_size,
+       a.sensitivity,
+       (a.deleted_at IS NOT NULL)::BOOLEAN AS deleted,
+       (a.origin_server_id IS NOT NULL)::BOOLEAN AS from_peer
+FROM assets a
+LEFT JOIN storage_objects so ON so.hash = a.file_hash
+WHERE a.id = $1;
+
+-- name: GetAssetGrantContext :one
+-- #1573: what the grant form shows next to the original-download
+-- toggle: the asset's title and tier. Deleted assets are not offered.
+SELECT id, title, sensitivity
+FROM assets
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: ListAssetRightsFields :many
+-- #1573: the asset's local copyright and credit fields (free text, the
+-- shipped rights fields), shown in the grant form as context only. They
+-- are not an ArchivePub rights URI or requiredStatement and never grant
+-- or block anything. read_capability is returned so the handler can
+-- omit a field the caller may not read.
+SELECT fd.code, afv.value_text, COALESCE(fd.read_capability, '')::TEXT AS read_capability
+FROM asset_field_value afv
+JOIN field_definition fd ON fd.id = afv.field_id
+WHERE afv.asset_id = $1
+  AND fd.code IN ('copyright', 'credit')
+  AND afv.value_text IS NOT NULL
+  AND afv.value_text <> ''
+ORDER BY fd.code;

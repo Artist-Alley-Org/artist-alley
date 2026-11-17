@@ -176,5 +176,6 @@ func (r *Registry) unrevokedForTuple(ctx context.Context, in InsertInput) (*Shar
 		RevokedActivityID: row.RevokedActivityID,
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
+		AllowOriginal:     row.AllowOriginal,
 	}), row.Expired, nil
 }

@@ -1132,6 +1132,11 @@ paths:
         system.admin. Restricted objects require target_user_url
         (NaCl envelope wrap needs a key).
 
+        `allow_original` (default false) is a separate permission to
+        receive original files; see the field. 400 when it is set on a
+        kind without files or on a restricted or embargoed asset; 404
+        when it is set on an asset that does not exist.
+
         Remote instances do not act on shares yet: today only likes and
         comments take effect between paired instances (see the ArchivePub
         overview, "What works today").
@@ -1167,6 +1172,47 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/FederationShare" }
 
+  /admin/federation/shares/grant-context:
+    get:
+      operationId: getFederationShareGrantContext
+      summary: Grant form context for one object
+      description: |
+        What the share grant form needs before a share is made (#1573):
+        whether the original-file permission can be set on the object,
+        and why not; for an asset, its title, tier, and its local
+        copyright and credit fields (free text, context only).
+        Same permission as granting: the object's owner, or
+        `system.admin`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: object_kind
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [asset, post, collection, workspace, brand_kit]
+        - name: object_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Grant context.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationShareGrantContext" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/federation/shares/{id}:
     parameters:
       - name: id
@@ -1179,10 +1225,11 @@ paths:
       description: |
         Marks revoked_at + emits aa:Unshare activity + writes
         federation.share.revoked audit event — atomically.
-        Once remote instances act on shares, the recipient is expected
-        to purge its cached copy and keep its own derivative work
-        (comments, annotations). Remote instances do not act on shares
-        yet.
+        Revoking stops new access through this share, including new
+        original-file transfers when the share allowed them. It does
+        not recall anything already delivered: copies a peer already
+        received, viewed or kept stay where they are. Remote instances
+        do not act on shares yet.
       tags: [admin, federation]
       security:
         - cookieAuth: []
@@ -21502,6 +21549,7 @@ components:
         - granted_at
         - created_at
         - updated_at
+        - allow_original
       properties:
         id: { type: string, format: uuid }
         grantor_user_ref: { type: integer, format: int64 }
@@ -21534,6 +21582,67 @@ components:
           nullable: true
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        allow_original:
+          type: boolean
+          description: |
+            Whether this share permits the peer to receive original
+            files (#1573). False for every share made without it.
+            Separate from `scope`.
+
+    FederationShareGrantContext:
+      type: object
+      description: |
+        What the share grant form shows before a share is made (#1573):
+        the object's tier, whether the original-file permission can be
+        set on it, and the asset's local copyright and credit fields.
+        Those two are free text the owner typed, shown as context only:
+        they are not an ArchivePub `rights` URI or `requiredStatement`
+        (spec v1 §17.2.5), and they never permit or block a transfer.
+      required: [object_kind, object_id, original_allowed]
+      properties:
+        object_kind:
+          type: string
+          enum: [asset, post, collection, workspace, brand_kit]
+        object_id: { type: string, format: uuid }
+        title:
+          type: string
+          nullable: true
+          description: The asset's title, when the object is an asset.
+        sensitivity:
+          type: string
+          nullable: true
+          enum: [public, team, restricted, embargo]
+          description: The asset's tier, when the object is an asset; null otherwise.
+        original_allowed:
+          type: boolean
+          description: |
+            Whether `allow_original` may be set on a share of this
+            object. Collections answer true: each asset in them is
+            checked on its own when a file is requested.
+        original_refusal:
+          type: string
+          nullable: true
+          enum: [kind_without_bytes, sensitivity_refused]
+          description: |
+            Why `original_allowed` is false; null when it is true. `kind_without_bytes`: the
+            object kind has no files of its own (only assets and
+            collections can carry the permission).
+            `sensitivity_refused`: the asset is restricted or embargoed.
+        copyright_notice:
+          type: string
+          nullable: true
+          description: |
+            The asset's local `copyright` field, as typed, if set and
+            readable by the caller. Free text shown for context only:
+            not a rights URI, and it grants or blocks nothing.
+        credit:
+          type: string
+          nullable: true
+          description: |
+            The asset's local `credit` field, as typed, if set and
+            readable by the caller. Free text shown for context only:
+            not a structured required statement, and it grants or
+            blocks nothing.
 
     FederationDefederationPreview:
       type: object
@@ -21922,6 +22031,23 @@ components:
         notes:
           type: string
           maxLength: 2000
+        allow_original:
+          type: boolean
+          default: false
+          description: |
+            Explicit permission for the peer to receive the ORIGINAL
+            file of the shared asset, or of each asset in a shared
+            collection (#1573). Separate from `scope`: no scope implies
+            it, remix included. Off unless set. Only asset and
+            collection shares may set it (400 otherwise), and only for
+            public and team assets: a restricted or embargoed asset is
+            refused with 400 even when this is true, and each asset in
+            a collection is checked on its own when a file is
+            requested. Copyright and credit text describe the work and
+            grant nothing. Revoking or expiring the share stops new
+            transfers; files already delivered are not recalled. No
+            original file is transferred between instances yet: the
+            per-asset fetch that would honour this is not built (#72).
 
     FederationPeer:
       type: object

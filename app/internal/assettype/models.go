@@ -626,6 +626,8 @@ type FederationShare struct {
 	RevokedActivityID pgtype.UUID        `json:"revoked_activity_id"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	// Explicit grant for the peer to receive the ORIGINAL bytes of the shared asset, or of each member asset of a shared collection (#1573). Independent of scope: no scope, remix included, implies it. Default false; only asset and collection shares may set it. Public and team assets only, checked at grant time and at every fetch decision; restricted, embargoed and unresolved tiers are refused even when this is true. Ends with the share (revoke, expiry). Does not recall bytes already delivered.
+	AllowOriginal bool `json:"allow_original"`
 }
 
 // Per-user X25519 keypairs for NaCl-box encrypted federation. Phase 1.22.I-b. Private key column is atrest-wrapped (AES-GCM, host master key per app/internal/atrest). See ADR 0049 §Track B.

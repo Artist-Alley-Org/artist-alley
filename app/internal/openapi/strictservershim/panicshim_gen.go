@@ -405,6 +405,11 @@ func (*PanicShim) GrantFederationShare(context.Context, openapi.GrantFederationS
 	panic("PanicShim: GrantFederationShare called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetFederationShareGrantContext panics by default; test shims override.
+func (*PanicShim) GetFederationShareGrantContext(context.Context, openapi.GetFederationShareGrantContextRequestObject) (openapi.GetFederationShareGrantContextResponseObject, error) {
+	panic("PanicShim: GetFederationShareGrantContext called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // RevokeFederationShare panics by default; test shims override.
 func (*PanicShim) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
 	panic("PanicShim: RevokeFederationShare called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
