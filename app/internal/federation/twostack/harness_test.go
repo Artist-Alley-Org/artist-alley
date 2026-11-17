@@ -34,6 +34,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/storage/fs"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
 
 func env(k, def string) string {
@@ -43,23 +44,47 @@ func env(k, def string) string {
 	return def
 }
 
-// databases returns the two database names, skipping without a test
-// database and FAILING when the second one is not provided.
+// databases returns the two dedicated database names, skipping without
+// a test database and FAILING when either dedicated name is missing,
+// when they are equal, or when either is the general suite database.
+//
+// Both instances run on their OWN disposable databases (AA_DB_NAME_A,
+// AA_DB_NAME_B), never on AA_DB_NAME: the gate creates peers, users,
+// grants, assets and storage rows that the rest of the suite must never
+// see, and the instances share nothing but the process.
 func databases(t *testing.T) (string, string) {
 	t.Helper()
 	if os.Getenv("AA_DB_PASSWORD") == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	a := env("AA_DB_NAME", "artist_alley")
+	// The general suite database, resolved exactly as every other
+	// integration test resolves it (same safe default, same refusal of a
+	// non-disposable name).
+	general := testdb.Name(t)
+	a := os.Getenv("AA_DB_NAME_A")
 	b := os.Getenv("AA_DB_NAME_B")
-	if b == "" {
-		t.Fatal("AA_DB_NAME_B is not set: the two-instance gate needs a second migrated database (see scripts/test.sh)")
-	}
-	if a == b {
-		t.Fatal("AA_DB_NAME and AA_DB_NAME_B name the same database")
+	// Every check runs before any connection or migration: the gate
+	// migrates both databases and writes to them, so a hand-set name
+	// pointing at a real database (the dev database, say) must stop here.
+	switch {
+	case a == "" || b == "":
+		t.Fatal("AA_DB_NAME_A and AA_DB_NAME_B must both be set: the two-instance gate needs two dedicated migrated databases (see scripts/test.sh)")
+	case len(a) > maxIdentifierBytes || len(b) > maxIdentifierBytes:
+		t.Fatalf("AA_DB_NAME_A (%d bytes) or AA_DB_NAME_B (%d bytes) exceeds Postgres' %d-byte identifier limit; a truncated name could collide with another database",
+			len(a), len(b), maxIdentifierBytes)
+	case !testdb.IsDisposable(a) || !testdb.IsDisposable(b):
+		t.Fatalf("refusing to run the two-instance gate on AA_DB_NAME_A=%q, AA_DB_NAME_B=%q: both must be disposable test databases with a %q segment (see scripts/test.sh)",
+			a, b, "_test")
+	case a == b:
+		t.Fatalf("AA_DB_NAME_A and AA_DB_NAME_B name the same database %q", a)
+	case a == general || b == general:
+		t.Fatalf("the two-instance gate must not run on the general test database %q (AA_DB_NAME_A=%q, AA_DB_NAME_B=%q)", general, a, b)
 	}
 	return a, b
 }
+
+// maxIdentifierBytes is Postgres' identifier limit (NAMEDATALEN - 1).
+const maxIdentifierBytes = 63
 
 func openPool(t *testing.T, name string) *pgxpool.Pool {
 	t.Helper()
