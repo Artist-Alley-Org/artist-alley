@@ -260,7 +260,7 @@ func TestDispatcher_RestrictedSensitivity_SkipsWithAudit(t *testing.T) {
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
 		    object_uri, object_kind, object_local_id, payload)
-		 VALUES ($1, 'Create', $2, $3, $4, 'post', $5, '{}'::jsonb)
+		 VALUES ($1, 'Like', $2, $3, $4, 'post', $5, '{}'::jsonb)
 		 RETURNING id`,
 		"https://outbox-test.example/activities/"+randHex(8),
 		"https://outbox-test.example/users/alice", grantorRef,
@@ -380,7 +380,7 @@ func TestDispatcher_UnresolvedSensitivity_FailsClosed(t *testing.T) {
 			if err := pool.QueryRow(ctx,
 				`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
 				    object_uri, object_kind, object_local_id, payload)
-				 VALUES ($1, 'Create', $2, $3, $4, 'post', $5, '{}'::jsonb)
+				 VALUES ($1, 'Like', $2, $3, $4, 'post', $5, '{}'::jsonb)
 				 RETURNING id`,
 				"https://outbox-test.example/activities/"+randHex(8),
 				"https://outbox-test.example/users/alice", grantorRef,

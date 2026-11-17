@@ -77,6 +77,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -114,6 +115,9 @@ type PeerInfo struct {
 	InstancePublicKey ed25519.PublicKey
 	Enabled           bool
 	Connected         bool
+	// Capabilities is the stored, negotiated capability intersection
+	// with the peer (§11, §16): which profiles are in effect.
+	Capabilities []string
 }
 
 // ErrPeerNotFound is what PeerLookup.ByKeyID returns when no
@@ -379,22 +383,32 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stage 10a (#1569): fail honestly on a verb this release does
-	// not apply. Recorded as rejected (envelope kept), never
-	// dispatched, answered 422 so the sender's outbox stops
-	// retrying (a 4xx other than 429 is terminal there).
-	if !Applies(env.Type) {
-		switch outcome, storedType, err := h.recordUnsupported(ctx, peer.ID, sigParams.KeyID, activityURI, env, body); {
-		case err != nil:
-			// Not stored: a 5xx, so the sender retries. Never a
-			// receipt, never a terminal rejection.
-			h.logErr(ctx, "inbox.unsupported.record.error", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-		case outcome == storedAccepted:
-			w.WriteHeader(http.StatusOK)
-		default:
-			writeRejection(w, r, h.logger, unsupportedRejection(federation.ActivityType(storedType)))
+	// Stage 10a (#1569, #1580): the envelope's members against its
+	// activity's v1 schema and the peer's negotiated profiles
+	// (federation.ValidateMembers). An activity this release does not
+	// apply, including a Create that is not a comment, is recorded as
+	// rejected (envelope kept), never dispatched, and answered 422 so
+	// the sender's outbox stops retrying (a 4xx other than 429 is
+	// terminal there). Any other refusal is answered like the stages
+	// above, with nothing stored.
+	if err := federation.ValidateMembers(env, MemberContext(peer.Capabilities, Applies)); err != nil {
+		if errors.Is(err, federation.ErrUnsupportedActivity) {
+			switch outcome, storedType, err := h.recordUnsupported(ctx, peer.ID, sigParams.KeyID, activityURI, env, body); {
+			case err != nil:
+				// Not stored: a 5xx, so the sender retries. Never a
+				// receipt, never a terminal rejection.
+				h.logErr(ctx, "inbox.unsupported.record.error", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			case outcome == storedAccepted:
+				w.WriteHeader(http.StatusOK)
+			default:
+				writeRejection(w, r, h.logger, unsupportedRejection(federation.ActivityType(storedType)))
+			}
+			return
 		}
+		rej := memberRejection(err)
+		h.auditReject(ctx, peer.ID, rej.status, activityURI, err.Error())
+		writeRejection(w, r, h.logger, rej)
 		return
 	}
 
@@ -748,6 +762,8 @@ func mapEnvelopeErr(err error) error {
 		return reject(federation.InboxStatusInvalidContext, http.StatusBadRequest, err.Error())
 	case errors.Is(err, federation.ErrUnknownField):
 		return reject(federation.InboxStatusUnknownField, http.StatusBadRequest, err.Error())
+	case errors.Is(err, federation.ErrInvalidMember):
+		return reject(federation.InboxStatusInvalidMember, http.StatusBadRequest, err.Error())
 	case errors.Is(err, federation.ErrMissingField):
 		return reject(federation.InboxStatusSigMalformed, http.StatusBadRequest, err.Error())
 	case errors.Is(err, federation.ErrInvalidType):
@@ -813,4 +829,38 @@ func isUniqueViolation(err error) bool {
 		return pgErr.Code == "23505"
 	}
 	return false
+}
+
+// MemberContext is the federation.ValidateMembers context for an
+// envelope from a peer with these negotiated capabilities, on a
+// receiver that applies the types applied reports.
+func MemberContext(capabilities []string, applied func(federation.ActivityType) bool) federation.MemberContext {
+	return federation.MemberContext{
+		Negotiated: func(token string) bool { return slices.Contains(capabilities, token) },
+		Applied:    applied,
+	}
+}
+
+// memberRejection maps a ValidateMembers refusal to its §12.1 reason.
+func memberRejection(err error) rejection {
+	status, code := MemberReason(err)
+	return rejection{status: status, httpStatus: code, message: err.Error()}
+}
+
+// MemberReason is the §12.1 reason and HTTP status for a
+// ValidateMembers refusal: a profile the peer did not negotiate, or an
+// activity this receiver does not apply, is 422 (understood, not
+// accepted); a malformed or undefined member is 400.
+func MemberReason(err error) (federation.InboxStatus, int) {
+	switch {
+	case errors.Is(err, federation.ErrProfileNotNegotiated):
+		return federation.InboxStatusProfileNotNegotiated, http.StatusUnprocessableEntity
+	case errors.Is(err, federation.ErrArchivalInvalid):
+		return federation.InboxStatusArchivalInvalid, http.StatusBadRequest
+	case errors.Is(err, federation.ErrUnsupportedActivity):
+		return federation.InboxStatusUnsupportedActivity, http.StatusUnprocessableEntity
+	case errors.Is(err, federation.ErrUnknownField):
+		return federation.InboxStatusUnknownField, http.StatusBadRequest
+	}
+	return federation.InboxStatusInvalidMember, http.StatusBadRequest
 }

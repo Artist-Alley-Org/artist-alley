@@ -136,10 +136,12 @@ func (h *PublicHandler) GetFederationInstance(
 // production router mounts it (#1592): a raw handler registered over
 // the strict one, because the signature covers the sender's bytes.
 // The strict adapter hands PostFederationHandshake the body decoded
-// into the generated HandshakeEnvelope, and re-encoding that drops
-// every member the schema does not list (supported_capabilities among
-// them), so no current envelope would verify. The answers are the
-// operation's own 200 / 400 / 503 responses.
+// into the generated HandshakeEnvelope. Re-encoding that need not
+// reproduce the bytes the sender signed: it can reformat the
+// timestamp (a +00:00 offset as Z), and before #1580 listed
+// supported_capabilities it dropped that member. It would also hide a
+// member the schema does not define instead of refusing it. The
+// answers are the operation's own 200 / 400 / 503 responses.
 func (h *PublicHandler) ServeHandshake(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, handshakeBodyByteLimit+1))
 	if err != nil {
@@ -158,8 +160,8 @@ func (h *PublicHandler) ServeHandshake(w http.ResponseWriter, r *http.Request) {
 // PostFederationHandshake is the strict-server form of the same
 // operation, required by StrictServerInterface. The router serves
 // ServeHandshake instead (see above); this re-encodes the decoded
-// body, which only verifies for an envelope whose every member is in
-// the schema.
+// body, which verifies only when the re-encoding reproduces the
+// signed bytes.
 func (h *PublicHandler) PostFederationHandshake(
 	ctx context.Context,
 	req openapi.PostFederationHandshakeRequestObject,

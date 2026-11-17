@@ -266,6 +266,7 @@ func TestInboxStatusValid_AllSentinelsRegistered(t *testing.T) {
 		federation.InboxStatusReplay, federation.InboxStatusError,
 		federation.InboxStatusProfileNotNegotiated, federation.InboxStatusArchivalInvalid,
 		federation.InboxStatusFixityMismatch,
+		federation.InboxStatusInvalidMember,
 	}
 	for _, s := range sentinels {
 		if _, ok := federation.KnownInboxStatuses[s]; !ok {

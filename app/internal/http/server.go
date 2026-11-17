@@ -483,8 +483,8 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 
 		// Peer handshake (#1592), the operation's own path, served by
 		// a raw handler: the envelope signature covers the sender's
-		// bytes, which the strict adapter decodes and re-encodes
-		// without the members its schema does not list. Registered
+		// bytes, which the strict adapter would decode and re-encode
+		// (not the signed bytes, and blind to undefined members). Registered
 		// after HandlerFromMux so chi's last-write-wins routes POST
 		// here. Anonymous, like the strict operation.
 		r.Post("/federation/peers/handshake", impl.peersPublic.ServeHandshake)

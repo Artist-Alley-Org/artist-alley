@@ -290,8 +290,10 @@ func runOutboxWiringCase(t *testing.T, tc outboxWiringCase) {
 		if err := pool.QueryRow(ctx,
 			`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
 			    object_uri, object_kind, object_local_id, payload)
-			 VALUES ($1, 'Update', $6, $2, $3, 'post', $4,
-			         jsonb_build_object('content', $5::text))
+			 VALUES ($1, 'aa:Share', $6, $2, $3, 'post', $4,
+			         jsonb_build_object('object_kind', 'post', 'scope', 'view',
+			             'peer_url', 'https://peer.example',
+			             'target_user_url', 'https://peer.example/users/' || $5::text))
 			 RETURNING id`,
 			"https://local.example/activities/"+uuid.NewString(), userRef,
 			"https://local.example/posts/"+postID.String(), postID.String(), marker, actorURI,

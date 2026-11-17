@@ -218,6 +218,53 @@ by direct registration are unchanged. An earlier release cannot pair
 by URL with a current one in either direction; both sides need this
 fix. The rest of this ADR is unchanged.
 
+## Amendment 2026-11-17 (#1580): each activity carries exactly its defined members
+
+**What this ADR said.** The *Serialization* decision rejects unknown
+fields. The reference implementation did not: the parser kept every
+member it did not know, the receiver read two undefined display hints,
+the per-activity definitions the spec pointed at never existed, and the
+sender copied an activity's whole local payload into the envelope, so
+an `aa:Share` carried the granting operator's private notes and local
+ids to the peer.
+
+**Decision.**
+
+- **One member contract, both directions.** Spec v1 §7.5 defines the
+  members of every activity the reference implementation sends or
+  applies (`Like`, a comment `Create`, `aa:Share`, `aa:Unshare`), §3.6
+  the inline `aa:encryptionPublicKey`. A receiver refuses an undefined
+  member (`unknown_field`), a malformed one or a repeated member name
+  (the new `invalid_member`), and an unnegotiated profile member
+  (`profile_not_negotiated`); it checks before storing and again after
+  decryption, before applying. A `Create` that is not a comment is
+  `unsupported_activity`.
+- **The sender projects, never copies.** The local activity payload is
+  the audit record. What goes on the wire is its projection onto the
+  activity's defined members, made before encryption and signing.
+- **What no receiver applies is not sent.** Posts, collections,
+  profiles, direct messages, `Undo`, `Delete` and the rest stay local
+  (`activity_not_federated`) until a receiver applies them; each is
+  federated, with its members defined, when one does.
+- **No display hints.** A remote actor's name and icon come from its
+  actor document (#1526).
+- **An unshare names a tuple, not a grant.** `aa:Unshare` identifies
+  the share by object, peer and user (spec §7.5.2); it does not name
+  the grant it revokes, so a late revoke cannot be told from one meant
+  for a later re-grant. That identity and the ordering of grants and
+  revokes are #1571, not this amendment.
+- **Renegotiating a profile** is a new offer to a connected peer with the
+  same key (spec §16.2). The operator action that sends it lands with the
+  first advertised profile; archival-1 stays unadvertised until #72,
+  #1574, #1575 and #1577 enforce it.
+
+**Compatibility.** Envelopes from an earlier release were already
+refused since #1526. An earlier release receives fewer members from
+this one and reads what it needs from them. The OpenAPI handshake
+schema now lists `supported_capabilities` and refuses other members,
+matching spec §11.1. Operator notes an earlier release already sent stay
+wherever the peer stored them. The rest of this ADR is unchanged.
+
 ## Context
 
 [ADR 0007](/adr/0007-federation-thinking-ahead/) committed Artist Alley

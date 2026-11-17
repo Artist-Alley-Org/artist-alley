@@ -9,11 +9,13 @@
 //
 // Strict parsing
 //
-// Unmarshal rejects any top-level field not in the schema below
-// (the "reject-on-unknown-fields" policy in
-// docs/spec/federation/v1.md §3.2). This is the v1 protocol's
-// defence against silent schema drift between implementations.
-// New fields must wait for a `@context` version bump.
+// Unmarshal is structural: it refuses a repeated member name at any
+// depth, validates the §3 base members and keeps every other
+// top-level member in Extra. ValidateMembers (members.go) then decides,
+// per activity type and negotiated profile, whether each of those is
+// allowed (the "reject-on-unknown-fields" policy in
+// docs/spec/federation/v1.md §3.2, #1580). Every inbound path calls it
+// before an envelope is accepted or applied.
 //
 // Spec reference: docs/spec/federation/v1.md §3.
 
@@ -29,8 +31,8 @@ import (
 )
 
 // Envelope is the typed wire-format unit. JSON-tagged for both
-// emit and parse paths; the parser uses DisallowUnknownFields to
-// catch silent extensions per §3.2.
+// emit and parse paths; members outside the §3 base set land in Extra
+// and are judged by ValidateMembers (§3.2).
 //
 // Field-presence rules:
 //
@@ -79,19 +81,14 @@ type Envelope struct {
 
 	Signature *Signature `json:"signature,omitempty"`
 
-	// Extra carries the activity-type-specific fields. The known
-	// named fields above are excluded from Extra both at marshal
-	// time (we wouldn't double-emit them) and at unmarshal time
-	// (they're consumed by the named fields). Extra is also the
-	// channel by which the strict-parse "unknown_field" check
-	// finds violations — Unmarshal scans Extra after extraction
-	// and rejects unknown top-level keys outside the per-type
-	// allowlist.
-	//
-	// Type-specific allowlists live alongside each activity in
-	// activities/*.go (Phase 1.22.E). For 1.22.A the parser
-	// accepts ANY extra field — strict validation per type lands
-	// when the activity handlers do.
+	// Extra carries every top-level member outside the §3 base set
+	// (the activity's own members, the inline aa:encryptionPublicKey,
+	// profile members). The named fields above are excluded both at
+	// marshal and at unmarshal time. Unmarshal keeps whatever arrives;
+	// ValidateMembers decides what is allowed for the activity type
+	// (§3.2, §7.5) and refuses the rest with ErrUnknownField. The
+	// sender fills it from WireMembers, never from a raw local
+	// payload (#1580).
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
@@ -127,7 +124,7 @@ type Signature struct {
 // expose them as sentinel errors.
 var (
 	ErrInvalidContext   = errors.New("federation: @context is not the artist-alley v1 string")
-	ErrUnknownField     = errors.New("federation: envelope contains an unknown top-level field")
+	ErrUnknownField     = errors.New("federation: envelope contains a member its activity does not define")
 	ErrMissingField     = errors.New("federation: envelope missing a required field")
 	ErrInvalidType      = errors.New("federation: type is not in the known activity-type catalogue")
 	ErrInvalidPublished = errors.New("federation: published is not a valid RFC 3339 timestamp")
@@ -199,21 +196,21 @@ func (e *Envelope) Marshal() ([]byte, error) {
 }
 
 // Unmarshal decodes a wire-format envelope, validating the
-// required fields and the @context version string. Strict parsing
-// catches unknown top-level fields per §3.2.
+// required fields and the @context version string, and refuses a
+// repeated member name anywhere in the document (ErrInvalidMember).
+// It is structural: members outside the base set go to Extra, and
+// ValidateMembers judges them (§3.2).
 //
 // Unmarshal does NOT verify the signature — that's a separate
 // step (VerifyOn) so callers can choose how to obtain the
 // verifying key. Unmarshal does not validate that the signature's
 // algorithm is in the allowlist, either; the verifier does.
 func Unmarshal(data []byte) (*Envelope, error) {
-	// Two-pass decode: first into a raw map to enforce
-	// known-field-only at the top level, then into the typed
-	// fields. Spec §3.2's "reject-on-unknown-fields" rule needs
-	// the raw map to see what's there.
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-
+	// A repeated name would let the signed (canonical) bytes and
+	// the decoded fields disagree; refuse it before anything else.
+	if err := CheckDuplicateMembers(data); err != nil {
+		return nil, err
+	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("federation: unmarshal envelope: %w", err)
@@ -336,16 +333,12 @@ func Unmarshal(data []byte) (*Envelope, error) {
 		env.Signature = &sig
 	}
 
-	// Reject any unknown top-level fields (§3.2). Anything left
-	// in raw that isn't in `known` is a violation.
+	// Members outside the base set are kept for ValidateMembers,
+	// which refuses any the activity's schema does not define.
 	for k, v := range raw {
 		if known[k] {
 			continue
 		}
-		// For 1.22.A we don't validate per-activity-type extra
-		// fields; we accept them into Extra so per-type handlers
-		// (1.22.E) can validate. The Marshal side echoes them
-		// back, so round-trip is intact.
 		env.Extra[k] = v
 	}
 

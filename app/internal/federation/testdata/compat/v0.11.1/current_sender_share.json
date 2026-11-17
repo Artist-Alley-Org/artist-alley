@@ -1,0 +1,28 @@
+{
+  "description": "What this release sends for the same local aa:Share payload (federation.WireMembers), and what a v0.11.1 receiver needs from it.",
+  "activity_type": "aa:Share",
+  "object_kind": "post",
+  "local_payload": {
+    "share_id": "3a2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+    "object_kind": "post",
+    "object_id": "6f1c2b8e-2d4a-4c1e-9b7a-0c3d5e7f9a11",
+    "object_uri": "https://studio-a.example/posts/6f1c2b8e-2d4a-4c1e-9b7a-0c3d5e7f9a11",
+    "scope": "view",
+    "peer_url": "https://studio-b.example",
+    "target_user_url": "https://studio-b.example/users/bob",
+    "expires_at": "2026-12-31T23:59:59Z",
+    "notes": "operator-only note",
+    "notes_private": true
+  },
+  "wire_members": {
+    "object_kind": "post",
+    "target_peer": "https://studio-b.example",
+    "target_user": "https://studio-b.example/users/bob",
+    "scope": "view",
+    "expires_at": "2026-12-31T23:59:59Z"
+  },
+  "v0_11_1_receiver": {
+    "reads": [],
+    "applies": false
+  }
+}

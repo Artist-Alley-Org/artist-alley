@@ -1,0 +1,30 @@
+{
+  "description": "A Like as a v0.11.1 sender put it on the wire. A current receiver refuses it: the placeholder signature is sig_malformed (#1526, stage 10b), and its members alone would be unknown_field (#1580).",
+  "source": "v0.11.1 (c3f6ef2e): outbox/delivery.go merges the activity payload into the envelope as is (lines 867-872) and, with no stored signature, sends the placeholder value AAAAAAAAAAAA (lines 854-860); payloads from activities/emit, unchanged since.",
+  "envelope": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "Like",
+    "id": "https://studio-a.example/activities/0b9a7c3e-1f2d-4e5a-8b6c-7d8e9f0a1b2c",
+    "actor": "https://studio-a.example/users/alice",
+    "published": "2026-11-10T10:00:00Z",
+    "object": "https://studio-a.example/posts/6f1c2b8e-2d4a-4c1e-9b7a-0c3d5e7f9a11",
+    "to": [
+      "https://studio-b.example/users/bob"
+    ],
+    "signature": {
+      "type": "Ed25519",
+      "publicKey": "https://studio-a.example/users/alice#main-key",
+      "value": "AAAAAAAAAAAA"
+    },
+    "post_title": "Wire",
+    "aa:encryptionPublicKey": {
+      "type": "aa:X25519PublicKey",
+      "publicKeyBase64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "version": 1
+    }
+  },
+  "current_receiver": {
+    "signature": "sig_malformed",
+    "members": "unknown_field"
+  }
+}

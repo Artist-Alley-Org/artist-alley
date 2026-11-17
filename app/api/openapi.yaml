@@ -22224,9 +22224,12 @@ components:
 
     HandshakeEnvelopeInner:
       type: object
+      additionalProperties: false
       description: |
         Inner payload of a handshake envelope per v1.md §11.
-        Signed using RFC-8785-canonical JSON.
+        Signed using RFC-8785-canonical JSON over the members exactly
+        as sent. These are the only members a handshake/v1 envelope
+        may carry; any other member is refused (§11.1).
       required:
         - protocol
         - type
@@ -22247,9 +22250,18 @@ components:
         to: { type: string }
         nonce: { type: string }
         timestamp: { type: string, format: date-time }
+        supported_capabilities:
+          type: array
+          description: |
+            The sender's capability and profile tokens (§11, §16).
+            Optional; a sender that omits it records no negotiation.
+          items:
+            type: string
+            pattern: "^[a-z0-9][a-z0-9-]*$"
 
     HandshakeEnvelope:
       type: object
+      additionalProperties: false
       required: [envelope, signature]
       properties:
         envelope:

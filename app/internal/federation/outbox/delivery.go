@@ -507,6 +507,11 @@ func (w *Worker) deliverOneBatch(ctx context.Context, rows []FederationOutbox) (
 			// successful decision, not a delivery failure.
 			continue
 		}
+		if errors.Is(err, federation.ErrNotFederated) {
+			w.markNotFederated(ctx, row, err)
+			failed++
+			continue
+		}
 		if err != nil {
 			w.markAttemptFailed(ctx, row, fmt.Errorf("rebuild envelope: %w", err))
 			deferred++
@@ -682,6 +687,10 @@ func (w *Worker) deliverOne(ctx context.Context, row FederationOutbox) deliveryO
 		// deferred — refusal is a policy decision, not a
 		// failure.
 		return deliveryOutcomeRefused
+	}
+	if errors.Is(err, federation.ErrNotFederated) {
+		w.markNotFederated(ctx, row, err)
+		return deliveryOutcomeFailedTerminal
 	}
 	if err != nil {
 		w.markAttemptFailed(ctx, row, fmt.Errorf("rebuild envelope: %w", err))
@@ -891,15 +900,24 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	// columns are not used: a signature stored at record time could
 	// not cover the per-recipient encryption block or inline key.
 
-	// Surface activity-specific fields from the payload JSON
-	// into env.Extra so the receiver sees the verb's payload
-	// (e.g. content for Create(Note)). Per spec §3.1 envelope
-	// extra fields are merged at the top level.
-	if len(payload) > 0 {
-		var extra map[string]json.RawMessage
-		if err := json.Unmarshal(payload, &extra); err == nil {
-			env.Extra = extra
-		}
+	// The activity's own members: the payload projected onto the v1
+	// wire schema (#1580), never the payload as is. The local payload
+	// is the audit record and can hold operator-only data (a share's
+	// notes) and local ids; WireMembers keeps only the members spec
+	// §7.5 defines, before encryption and signing, so neither the
+	// plaintext envelope nor the sealed payload carries the rest. An
+	// activity type v1 does not federate is refused here
+	// (federation.ErrNotFederated), even if a row was queued for it.
+	var kind string
+	if objectKind != nil {
+		kind = *objectKind
+	}
+	wire, err := federation.WireMembers(federation.ActivityType(activityType), kind, payload)
+	if err != nil {
+		return nil, err
+	}
+	if len(wire) > 0 {
+		env.Extra = wire
 	}
 
 	// Phase 1.22.I-c — advertise the actor's current encryption
@@ -1323,4 +1341,15 @@ func ptrStr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// markNotFederated closes a row whose activity v1 does not federate
+// (#1580): terminal, nothing sent, the reason in last_error. Rows
+// queued before the dispatcher stopped enqueueing these types end
+// here.
+func (w *Worker) markNotFederated(ctx context.Context, row FederationOutbox, err error) {
+	_, _ = w.q.MarkOutboxFailedTerminal(ctx, MarkOutboxFailedTerminalParams{
+		ID:        row.ID,
+		LastError: err.Error(),
+	})
 }

@@ -507,6 +507,24 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) Dispa
 	}
 
 	// Invoke the handler.
+	// #1580: the members against the activity's v1 schema, after
+	// decryption so a sealed payload is checked like a plaintext one
+	// (the handler stage 10a saw only its clear members). A refusal
+	// marks the row rejected and applies nothing.
+	applies := func(t federation.ActivityType) bool { _, ok := d.registry[normalizeVerb(t)]; return ok }
+	if err := federation.ValidateMembers(env, MemberContext(peer.Capabilities, applies)); err != nil {
+		status, _ := MemberReason(err)
+		if _, merr := d.pool.MarkInboxRejected(ctx, MarkInboxRejectedParams{
+			ID:           row.ID,
+			RejectReason: ptrTo(string(status)),
+			LastError:    err.Error(),
+		}); merr != nil {
+			d.markFailed(ctx, row, "mark member rejection: "+merr.Error())
+			return OutcomeFailed
+		}
+		return OutcomeRejected
+	}
+
 	outcome, reason, correlationID, err := handler(ctx, env, peerID, peer.InstanceURL, row)
 	switch outcome {
 	case OutcomeProcessed:
@@ -679,6 +697,16 @@ func (d *Dispatcher) tryDecryptInbound(
 	// handlers that don't read Extra keep working.
 	var restored map[string]json.RawMessage
 	if len(result.Plaintext) > 0 && string(result.Plaintext) != "null" {
+		// A repeated member name in the sealed payload is refused
+		// like one in clear (#1580), before the map hides it.
+		if err := federation.CheckDuplicateMembers(result.Plaintext); err != nil {
+			_, _ = d.pool.MarkInboxRejected(ctx, MarkInboxRejectedParams{
+				ID:           row.ID,
+				RejectReason: ptrTo(string(federation.InboxStatusInvalidMember)),
+				LastError:    "sealed payload: " + err.Error(),
+			})
+			return 0, false
+		}
 		if err := json.Unmarshal(result.Plaintext, &restored); err != nil {
 			d.markRejectedDecryptFailed(ctx, row, env, peerID, block,
 				"no_key_worked", block.RecipientKeyVersion,

@@ -214,6 +214,12 @@ func (fx *fixture) newDispatcher(registry map[federation.ActivityType]inbox.Hand
 func unappliedCatalogueTypes() []federation.ActivityType {
 	var out []federation.ActivityType
 	for t := range federation.KnownActivityTypes {
+		// aa:Provenance is profile-gated: without a negotiated
+		// archival-1 it is profile_not_negotiated (§16.3, #1580),
+		// refused before storage (members_test.go).
+		if t == federation.ActivityAAProvenance {
+			continue
+		}
 		if !inbox.Applies(t) {
 			out = append(out, t)
 		}

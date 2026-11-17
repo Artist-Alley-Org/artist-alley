@@ -1,0 +1,25 @@
+{
+  "description": "What this release sends for the same local Create payload (federation.WireMembers), and what a v0.11.1 receiver needs from it.",
+  "activity_type": "Create",
+  "object_kind": "comment",
+  "local_payload": {
+    "object_type": "Note",
+    "inReplyTo": "https://studio-a.example/posts/6f1c2b8e-2d4a-4c1e-9b7a-0c3d5e7f9a11",
+    "content": "Lovely.",
+    "comment_depth": 1,
+    "target_post_id": "6f1c2b8e-2d4a-4c1e-9b7a-0c3d5e7f9a11",
+    "target_post_title": "Wire"
+  },
+  "wire_members": {
+    "object_type": "Note",
+    "content": "Lovely.",
+    "inReplyTo": "https://studio-a.example/posts/6f1c2b8e-2d4a-4c1e-9b7a-0c3d5e7f9a11"
+  },
+  "v0_11_1_receiver": {
+    "reads": [
+      "content",
+      "inReplyTo"
+    ],
+    "applies": true
+  }
+}
