@@ -210,9 +210,32 @@ func (r *Registry) CanPeerAccess(ctx context.Context, req AccessRequest) (Access
 	if !req.PeerConnected {
 		return AccessDecision{Allowed: false, Reason: RejectReasonPeerNotConnected}, nil
 	}
+	return r.decide(ctx, r.Pool, r.activeSharesByObject, appClock, req)
+}
 
+// shareClock is the time a set of loaded share rows is judged against
+// (expiry). It is read AFTER those rows were loaded: for the
+// transactional gate that is after any wait for their row locks, so a
+// share that expired while the decision waited is never judged by a
+// time from before the wait (#1570 review).
+type shareClock func(ctx context.Context) (pgtype.Timestamptz, error)
+
+// appClock is the cached gate's clock: this process's time.
+func appClock(context.Context) (pgtype.Timestamptz, error) { return nowFn(), nil }
+
+// shareLoader returns the unrevoked shares of one object: the cached
+// per-object snapshot for CanPeerAccess, the locked rows of the caller's
+// transaction for CanPeerAccessTx.
+type shareLoader func(ctx context.Context, kind federation.ShareObjectKind, id uuid.UUID) ([]Share, error)
+
+// decide is the one share policy both gates apply: the direct share,
+// then, for an asset, a covering collection share whose grantor could
+// have shared the asset directly (#893). db reads membership, ownership
+// and grantor authority; load reads share rows; clock, read after each
+// load, decides expiry.
+func (r *Registry) decide(ctx context.Context, db DBTX, load shareLoader, clock shareClock, req AccessRequest) (AccessDecision, error) {
 	// Direct lookup — covers the common case.
-	direct, directReason, err := r.matchSharesForObject(ctx, req.ObjectKind, req.ObjectID, req)
+	direct, directReason, err := r.matchSharesForObject(ctx, load, clock, req.ObjectKind, req.ObjectID, req)
 	if err != nil {
 		return AccessDecision{}, err
 	}
@@ -222,7 +245,7 @@ func (r *Registry) CanPeerAccess(ctx context.Context, req AccessRequest) (Access
 
 	// Container fallback for assets: check any covering collection.
 	if req.ObjectKind == federation.ShareObjectKindAsset {
-		containerHit, containerReason, err := r.matchContainingCollectionShares(ctx, req.ObjectID, req)
+		containerHit, containerReason, err := r.matchContainingCollectionShares(ctx, db, load, clock, req.ObjectID, req)
 		if err != nil {
 			return AccessDecision{}, err
 		}
@@ -251,18 +274,24 @@ func (r *Registry) CanPeerAccess(ctx context.Context, req AccessRequest) (Access
 // scope / expired").
 func (r *Registry) matchSharesForObject(
 	ctx context.Context,
+	load shareLoader,
+	clock shareClock,
 	kind federation.ShareObjectKind,
 	objectID uuid.UUID,
 	req AccessRequest,
 ) (*Share, RejectReason, error) {
-	candidates, err := r.activeSharesByObject(ctx, kind, objectID)
+	candidates, err := load(ctx, kind, objectID)
 	if err != nil {
 		return nil, "", err
 	}
 	if len(candidates) == 0 {
 		return nil, RejectReasonNoShareRow, nil
 	}
-	return pickBestMatch(candidates, req)
+	now, err := clock(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	return pickBestMatch(candidates, req, now)
 }
 
 // matchContainingCollectionShares is the container fallback for
@@ -271,10 +300,13 @@ func (r *Registry) matchSharesForObject(
 // could have shared this asset directly (#893).
 func (r *Registry) matchContainingCollectionShares(
 	ctx context.Context,
+	db DBTX,
+	load shareLoader,
+	clock shareClock,
 	assetID uuid.UUID,
 	req AccessRequest,
 ) (*Share, RejectReason, error) {
-	containerIDs, err := New(r.Pool).FindContainingCollections(ctx, pgtype.UUID{Bytes: assetID, Valid: true})
+	containerIDs, err := New(db).FindContainingCollections(ctx, pgtype.UUID{Bytes: assetID, Valid: true})
 	if err != nil {
 		return nil, "", err
 	}
@@ -287,7 +319,7 @@ func (r *Registry) matchContainingCollectionShares(
 	// header). No resolvable owner is a denial, not an error:
 	// nothing can be transitively re-shared on behalf of an owner
 	// we cannot name.
-	memberOwnerRef, ownerKnown, err := ObjectOwnerRef(ctx, r.Pool, federation.ShareObjectKindAsset, assetID)
+	memberOwnerRef, ownerKnown, err := ObjectOwnerRef(ctx, db, federation.ShareObjectKindAsset, assetID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -301,7 +333,7 @@ func (r *Registry) matchContainingCollectionShares(
 	// most-specific failure reason we saw.
 	bestReason := RejectReasonNoShareRow
 	for _, cid := range containerIDs {
-		candidates, err := r.activeSharesByObject(ctx, federation.ShareObjectKindCollection, uuid.UUID(cid.Bytes))
+		candidates, err := load(ctx, federation.ShareObjectKindCollection, uuid.UUID(cid.Bytes))
 		if err != nil {
 			return nil, "", err
 		}
@@ -315,7 +347,7 @@ func (r *Registry) matchContainingCollectionShares(
 		// on the same collection.
 		kept := candidates[:0]
 		for i := range candidates {
-			authorized, err := r.grantorAuthority(ctx, r.Pool, candidates[i].GrantorUserRef, memberOwnerRef, adminSeen)
+			authorized, err := r.grantorAuthority(ctx, db, candidates[i].GrantorUserRef, memberOwnerRef, adminSeen)
 			if err != nil {
 				return nil, "", err
 			}
@@ -329,7 +361,13 @@ func (r *Registry) matchContainingCollectionShares(
 			bestReason = bumpReason(bestReason, RejectReasonGrantorNotOwner)
 			continue
 		}
-		share, reason, err := pickBestMatch(kept, req)
+		// The clock after this container's rows were loaded (and, in
+		// the transactional gate, locked).
+		now, err := clock(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		share, reason, err := pickBestMatch(kept, req, now)
 		if err != nil {
 			return nil, "", err
 		}
@@ -344,6 +382,7 @@ func (r *Registry) matchContainingCollectionShares(
 // pickBestMatch iterates the active candidates for a single
 // object + returns the highest-priority matching share. Match
 // rules per the design §5.1:
+//   - peer_id == req.PeerID
 //   - target_user_url NULL (broadcast) OR == req.UserURL
 //   - scope sufficient (share.Scope.Covers(req.RequiredScope))
 //   - revoked_at IS NULL (already filtered by the SQL caller)
@@ -359,12 +398,19 @@ func (r *Registry) matchContainingCollectionShares(
 // the most-specific failure reason on no-match (so the caller
 // can surface "wrong_user" vs "insufficient_scope" vs "expired"
 // instead of the catch-all "no_share_row").
-func pickBestMatch(candidates []Share, req AccessRequest) (*Share, RejectReason, error) {
+func pickBestMatch(candidates []Share, req AccessRequest, now pgtype.Timestamptz) (*Share, RejectReason, error) {
 	var best *Share
 	bestReason := RejectReasonNoShareRow
-	now := nowFn()
 	for i := range candidates {
 		c := &candidates[i]
+		// A share is a grant to ONE peer. The candidates are every
+		// unrevoked share of the object, to any peer, so a share to
+		// another peer is not a match at all (#1570: until then this
+		// loop never compared peers, and a share to peer X admitted
+		// every connected peer).
+		if c.PeerID != req.PeerID {
+			continue
+		}
 		if !c.Active(now) {
 			// Cache might hold a row that ticked over expiry
 			// between the load + this check; mark it expired so

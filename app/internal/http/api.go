@@ -1313,7 +1313,9 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		nil,
 		logger,
 	)
-	s.inboxDispatcher.SetSocialPoster(inboxSocialPosterAdapter{h: s.social})
+	// #1570: every inbound like and comment is authorised by the share
+	// gate inside its own write transaction.
+	s.inboxDispatcher.SetSocialPoster(inboxSocialPosterAdapter{h: s.social, shares: s.sharesRegistry})
 	// Phase 1.22.I-c: the upsert path now ALSO persists the
 	// inbound aa:encryptionPublicKey block via remote.Handler.
 	// Boot constructs the Handler with the cache registry so
@@ -2206,14 +2208,50 @@ func inboxSensitivityLookup(pool *pgxpool.Pool) inbox.SensitivityLookup {
 // duplicated because social can't import inbox (the dispatcher
 // already imports social via the SocialPoster contract;
 // reversing the edge would cycle).
-type inboxSocialPosterAdapter struct{ h *social.Handler }
+//
+// It also binds each write to its authorisation (#1570): the
+// authorizer runs inside social's write transaction and is
+// shares.Registry.AuthorizeInboundWrite, whose refusals are mapped to
+// the inbox's typed errors (unknown_object, unshared_object). A nil
+// registry refuses every write.
+type inboxSocialPosterAdapter struct {
+	h      *social.Handler
+	shares *shares.Registry
+}
+
+func (a inboxSocialPosterAdapter) authorizer(verb federation.ActivityType, kind string, id, peerID uuid.UUID, actorURI string) social.InboundAuthorizer {
+	return func(ctx context.Context, tx pgx.Tx) error {
+		if a.shares == nil {
+			return errors.New("inbound write: share gate not wired")
+		}
+		return inboundWriteError(a.shares.AuthorizeInboundWrite(ctx, tx, shares.InboundWrite{
+			Verb: verb, PeerID: peerID, ActorURI: actorURI,
+			TargetKind: federation.ShareObjectKind(kind), TargetID: id,
+		}))
+	}
+}
+
+// inboundWriteError maps a share-gate or social refusal to the inbox's
+// typed reject errors; other errors pass through (retryable).
+func inboundWriteError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, shares.ErrInboundUnknownTarget), errors.Is(err, social.ErrRemoteParentNotFound):
+		return fmt.Errorf("%w: %w", inbox.ErrUnknownObject, err)
+	case errors.Is(err, shares.ErrInboundUnshared):
+		return fmt.Errorf("%w: %w", inbox.ErrUnsharedObject, err)
+	}
+	return err
+}
 
 func (a inboxSocialPosterAdapter) InsertRemoteLike(ctx context.Context, targetKind string, targetID uuid.UUID, peerID uuid.UUID, actorURI string) (bool, error) {
-	return a.h.InsertRemoteLike(ctx, targetKind, targetID, peerID, actorURI)
+	return a.h.InsertRemoteLike(ctx, targetKind, targetID, peerID, actorURI,
+		a.authorizer(federation.ActivityLike, targetKind, targetID, peerID, actorURI))
 }
 
 func (a inboxSocialPosterAdapter) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
-	return a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
+	id, existed, err := a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
 		TargetKind:  in.TargetKind,
 		TargetID:    in.TargetID,
 		ParentID:    in.ParentID,
@@ -2221,7 +2259,9 @@ func (a inboxSocialPosterAdapter) InsertRemoteComment(ctx context.Context, in in
 		ActorURI:    in.ActorURI,
 		ActivityURI: in.ActivityURI,
 		Body:        in.Body,
+		Authorize:   a.authorizer(federation.ActivityCreate, in.TargetKind, in.TargetID, in.PeerID, in.ActorURI),
 	})
+	return id, existed, inboundWriteError(err)
 }
 
 // inboxDispatchPeerLookup wraps peer.Registry.ByID with the

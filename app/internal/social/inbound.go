@@ -36,47 +36,66 @@ type PostTargetLookup func(ctx context.Context, postID uuid.UUID) (authorUserRef
 // nil-safe: inbound notifications skip when not wired.
 func (h *Handler) SetPostTargetLookup(fn PostTargetLookup) { h.postTargetLookup = fn }
 
-// InsertRemoteLike persists an inbound Like from a remote actor
-// + fires the post-author notification (same payload shape the
-// local LikePost handler uses).
+// InboundAuthorizer decides, inside the write transaction tx, whether an
+// inbound write may happen (#1570): the target exists and a live share
+// admits the sender. It must hold what it relied on until tx ends, so a
+// concurrent revoke or delete either committed first (and it refuses) or
+// waits for this write. A non-nil error means no write. Boot wires it to
+// shares.Registry.AuthorizeInboundWrite.
+type InboundAuthorizer func(ctx context.Context, tx pgx.Tx) error
+
+// ErrNoAuthorizer: an inbound write was attempted without an authorizer.
+// Fail closed: nothing is written.
+var ErrNoAuthorizer = errors.New("social: inbound write without an authorizer")
+
+// ErrRemoteParentNotFound: an inbound reply names a parent comment that
+// is not a live comment on the same target. The reply is refused, never
+// re-parented to top level.
+var ErrRemoteParentNotFound = errors.New("social: inbound reply parent is not a live comment on the target")
+
+// InsertRemoteLike persists an inbound Like from a remote actor, in one
+// transaction with its authorisation, and after commit fires the
+// post-author notification (same payload shape the local LikePost
+// handler uses).
 //
-// Returns true when a new row was inserted, false on idempotent
-// no-op (retried delivery — same actor+target).
-//
-// Errors:
-//   - "target not found" if the target object doesn't exist
-//     locally — caller maps to §12.1 unknown_object.
-//   - foreign key violation on peer_id if the peer row vanished
-//     mid-flight — caller treats as transient + retries.
+// Returns true when a new row was inserted, false on idempotent no-op
+// (retried delivery: same actor and target). An authorize error is
+// returned as is and nothing is written or notified.
 func (h *Handler) InsertRemoteLike(
 	ctx context.Context,
 	targetKind string,
 	targetID uuid.UUID,
 	peerID uuid.UUID,
 	actorURI string,
+	authorize InboundAuthorizer,
 ) (bool, error) {
-	// Confirm the target exists. We could just attempt the
-	// INSERT + catch the FK error, but the likes table has no
-	// FK to posts/assets — so a missing target would land a
-	// row pointing at a phantom. Explicit existence check
-	// keeps the data honest.
-	if err := h.verifyTargetExists(ctx, targetKind, targetID); err != nil {
+	if authorize == nil {
+		return false, ErrNoAuthorizer
+	}
+	var inserted bool
+	err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := authorize(ctx, tx); err != nil {
+			return err
+		}
+		res, err := New(tx).InsertRemoteLike(ctx, InsertRemoteLikeParams{
+			TargetKind: targetKind,
+			TargetID:   pgtype.UUID{Bytes: targetID, Valid: true},
+			PeerID:     pgtype.UUID{Bytes: peerID, Valid: true},
+			ActorUri:   ptrStr(actorURI),
+		})
+		if err != nil {
+			return fmt.Errorf("insert remote like: %w", err)
+		}
+		inserted = res > 0
+		return nil
+	})
+	if err != nil {
 		return false, err
 	}
 
-	res, err := New(h.Pool).InsertRemoteLike(ctx, InsertRemoteLikeParams{
-		TargetKind: targetKind,
-		TargetID:   pgtype.UUID{Bytes: targetID, Valid: true},
-		PeerID:     pgtype.UUID{Bytes: peerID, Valid: true},
-		ActorUri:   ptrStr(actorURI),
-	})
-	if err != nil {
-		return false, fmt.Errorf("insert remote like: %w", err)
-	}
-	inserted := res > 0
-
 	// Fire post-author notification (only for posts; assets +
-	// other targets get added when their phases land).
+	// other targets get added when their phases land). After the
+	// commit: a refused or rolled-back write notifies nobody.
 	if inserted && targetKind == "post" && h.notifier != nil && h.postTargetLookup != nil {
 		if authorRef, found, err := h.postTargetLookup(ctx, targetID); err == nil && found {
 			// actor is REMOTE — pass nil for the actor int64.
@@ -108,16 +127,23 @@ type RemoteCommentInput struct {
 	ActorURI    string
 	ActivityURI string
 	Body        string
+	// Authorize runs inside the write transaction (#1570); nil refuses.
+	Authorize InboundAuthorizer
 }
 
-// InsertRemoteComment persists an inbound Create(Note) from a
-// remote actor as a comment + fires the post-author notification.
+// InsertRemoteComment persists an inbound Create(Note) from a remote
+// actor as a comment, in one transaction with its authorisation, and
+// after commit fires the post-author notification.
 //
-// Idempotent via activity_uri UNIQUE — a retried delivery
-// returns (existing.id, true, nil) so the dispatcher can mark
-// the inbox row processed without firing notifications a
-// second time.
+// Idempotent via activity_uri UNIQUE — a retried delivery of an
+// activity already saved returns (existing.id, true, nil) without a
+// second notification. A reply's parent must be a live comment on the
+// same target (ErrRemoteParentNotFound otherwise): a missing parent is
+// refused, never re-parented to top level.
 func (h *Handler) InsertRemoteComment(ctx context.Context, in RemoteCommentInput) (commentID uuid.UUID, alreadyExisted bool, err error) {
+	if in.Authorize == nil {
+		return uuid.UUID{}, false, ErrNoAuthorizer
+	}
 	// Idempotency: check the activity_uri UNIQUE constraint
 	// FIRST so a retry doesn't re-fire the notification.
 	existing, err := New(h.Pool).GetCommentByActivityURI(ctx, ptrStr(in.ActivityURI))
@@ -127,49 +153,60 @@ func (h *Handler) InsertRemoteComment(ctx context.Context, in RemoteCommentInput
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return uuid.UUID{}, false, err
 	}
-	if err := h.verifyTargetExists(ctx, in.TargetKind, in.TargetID); err != nil {
+
+	newID := uuid.New()
+	var rowID uuid.UUID
+	err = pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := in.Authorize(ctx, tx); err != nil {
+			return err
+		}
+		// Resolve parent_id / root_id / depth. Top-level comments
+		// have parent_id NULL + root_id = self + depth 0. A parent is
+		// read FOR SHARE: it must be a live comment on this target
+		// until the reply commits.
+		rootID := newID
+		depth := int32(0)
+		parentPG := pgtype.UUID{}
+		if in.ParentID != nil {
+			var parentRoot pgtype.UUID
+			var parentDepth int32
+			err := tx.QueryRow(ctx, `SELECT root_id, depth FROM comments
+				WHERE id = $1 AND target_kind = $2 AND target_id = $3 AND deleted_at IS NULL
+				FOR SHARE`, *in.ParentID, in.TargetKind, in.TargetID).Scan(&parentRoot, &parentDepth)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrRemoteParentNotFound
+			}
+			if err != nil {
+				return err
+			}
+			parentPG = pgtype.UUID{Bytes: *in.ParentID, Valid: true}
+			rootID = uuid.UUID(parentRoot.Bytes)
+			depth = parentDepth + 1
+		}
+		row, err := New(tx).InsertRemoteComment(ctx, InsertRemoteCommentParams{
+			ID:          pgtype.UUID{Bytes: newID, Valid: true},
+			TargetKind:  in.TargetKind,
+			TargetID:    pgtype.UUID{Bytes: in.TargetID, Valid: true},
+			ParentID:    parentPG,
+			RootID:      pgtype.UUID{Bytes: rootID, Valid: true},
+			Depth:       depth,
+			Body:        in.Body,
+			BodyHtml:    "", // local CreateComment passes "" too; renderer reads body, not body_html
+			PeerID:      pgtype.UUID{Bytes: in.PeerID, Valid: true},
+			ActorUri:    ptrStr(in.ActorURI),
+			ActivityUri: ptrStr(in.ActivityURI),
+		})
+		if err != nil {
+			return fmt.Errorf("insert remote comment: %w", err)
+		}
+		rowID = uuid.UUID(row.ID.Bytes)
+		return nil
+	})
+	if err != nil {
 		return uuid.UUID{}, false, err
 	}
 
-	// Resolve parent_id / root_id / depth. Top-level comments
-	// have parent_id NULL + root_id = self + depth 0.
-	newID := uuid.New()
-	rootID := newID
-	depth := int32(0)
-	parentPG := pgtype.UUID{}
-	if in.ParentID != nil {
-		parentPG = pgtype.UUID{Bytes: *in.ParentID, Valid: true}
-		parent, err := New(h.Pool).GetComment(ctx, parentPG)
-		if err != nil {
-			// Parent not found — treat as a top-level comment
-			// rather than failing. Sender's view may have
-			// included a reply target we don't have a row for
-			// (post was deleted, e.g.).
-			parentPG = pgtype.UUID{}
-		} else {
-			rootID = uuid.UUID(parent.RootID.Bytes)
-			depth = parent.Depth + 1
-		}
-	}
-
-	row, err := New(h.Pool).InsertRemoteComment(ctx, InsertRemoteCommentParams{
-		ID:          pgtype.UUID{Bytes: newID, Valid: true},
-		TargetKind:  in.TargetKind,
-		TargetID:    pgtype.UUID{Bytes: in.TargetID, Valid: true},
-		ParentID:    parentPG,
-		RootID:      pgtype.UUID{Bytes: rootID, Valid: true},
-		Depth:       depth,
-		Body:        in.Body,
-		BodyHtml:    "", // local CreateComment passes "" too; renderer reads body, not body_html
-		PeerID:      pgtype.UUID{Bytes: in.PeerID, Valid: true},
-		ActorUri:    ptrStr(in.ActorURI),
-		ActivityUri: ptrStr(in.ActivityURI),
-	})
-	if err != nil {
-		return uuid.UUID{}, false, fmt.Errorf("insert remote comment: %w", err)
-	}
-
-	// Fire post-author notification.
+	// Fire post-author notification, after the commit.
 	if in.TargetKind == "post" && h.notifier != nil && h.postTargetLookup != nil {
 		if authorRef, found, err := h.postTargetLookup(ctx, in.TargetID); err == nil && found {
 			payload := map[string]any{
@@ -183,31 +220,7 @@ func (h *Handler) InsertRemoteComment(ctx context.Context, in RemoteCommentInput
 			_ = h.notifier.Notify(ctx, authorRef, nil, "post.comment", in.TargetKind, in.TargetID.String(), payload)
 		}
 	}
-	return uuid.UUID(row.ID.Bytes), false, nil
-}
-
-// verifyTargetExists is a cheap exists-check for the inbound
-// handlers' "target not found" failure mode. Currently only
-// supports post targets — extends with other kinds as their
-// phases land.
-func (h *Handler) verifyTargetExists(ctx context.Context, targetKind string, targetID uuid.UUID) error {
-	switch targetKind {
-	case "post":
-		var n int
-		err := h.Pool.QueryRow(ctx,
-			`SELECT 1 FROM posts WHERE id = $1 AND deleted_at IS NULL`,
-			targetID,
-		).Scan(&n)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return errors.New("target not found")
-			}
-			return err
-		}
-		return nil
-	}
-	// Other target kinds: assume exists (extends per phase).
-	return nil
+	return rowID, false, nil
 }
 
 func ptrStr(s string) *string {

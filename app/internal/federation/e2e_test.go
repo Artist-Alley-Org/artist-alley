@@ -48,6 +48,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -61,6 +62,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
@@ -68,6 +70,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
+	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
 	"github.com/mscrnt/artist-alley/app/internal/social"
 	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
@@ -177,7 +180,7 @@ func TestFederation_EndToEnd_ProductionDefaults_SubSecond(t *testing.T) {
 		},
 		nil, logger,
 	)
-	bInboxDispatcher.SetSocialPoster(&e2eSocialPoster{h: bSocial})
+	bInboxDispatcher.SetSocialPoster(&e2eSocialPoster{h: bSocial, shares: shares.NewRegistry(pool, logger, bSocialReg)})
 	bInboxDispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool, nil, nil, logger))
 	bInboxDispatcher.SetRegistry(inbox.BuildRegistry(bInboxDispatcher, logger))
 	bInboxDispatcher.SetRawPool(pool) // ← LISTEN federation_inbox_pending
@@ -247,6 +250,15 @@ func TestFederation_EndToEnd_ProductionDefaults_SubSecond(t *testing.T) {
 		grantActivityID,
 	); err != nil {
 		t.Fatalf("seed share: %v", err)
+	}
+	// #1570: B's inbound gate needs B's own live share of its post to
+	// the peer it calls A (peer-wide, view covers the Like).
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO federation_shares (grantor_user_ref, object_kind, object_id, peer_id, scope, granted_activity_id)
+		 VALUES ($1, 'post', $2, $3, 'view', $4)`,
+		bUserRef, bPostID, aPeerID, grantActivityID,
+	); err != nil {
+		t.Fatalf("seed B's inbound share: %v", err)
 	}
 
 	// Skip the historical activities by advancing the cursor
@@ -442,17 +454,36 @@ func (l *e2eByKeyID) ByKeyID(_ context.Context, keyID string) (inbox.PeerInfo, e
 	return inbox.PeerInfo{}, inbox.ErrPeerNotFound
 }
 
-type e2eSocialPoster struct{ h *social.Handler }
+// e2eSocialPoster mirrors the api.go adapter with the real share gate
+// (#1570).
+type e2eSocialPoster struct {
+	h      *social.Handler
+	shares *shares.Registry
+}
+
+func (a *e2eSocialPoster) authorizer(verb federation.ActivityType, kind string, id, peerID uuid.UUID, actor string) social.InboundAuthorizer {
+	return func(ctx context.Context, tx pgx.Tx) error {
+		err := a.shares.AuthorizeInboundWrite(ctx, tx, shares.InboundWrite{
+			Verb: verb, PeerID: peerID, ActorURI: actor, TargetKind: federation.ShareObjectKind(kind), TargetID: id})
+		switch {
+		case errors.Is(err, shares.ErrInboundUnknownTarget):
+			return fmt.Errorf("%w: %w", inbox.ErrUnknownObject, err)
+		case errors.Is(err, shares.ErrInboundUnshared):
+			return fmt.Errorf("%w: %w", inbox.ErrUnsharedObject, err)
+		}
+		return err
+	}
+}
 
 func (a *e2eSocialPoster) InsertRemoteLike(ctx context.Context, kind string, id, peerID uuid.UUID, actorURI string) (bool, error) {
-	return a.h.InsertRemoteLike(ctx, kind, id, peerID, actorURI)
+	return a.h.InsertRemoteLike(ctx, kind, id, peerID, actorURI, a.authorizer(federation.ActivityLike, kind, id, peerID, actorURI))
 }
 
 func (a *e2eSocialPoster) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
 	return a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
 		TargetKind: in.TargetKind, TargetID: in.TargetID, ParentID: in.ParentID,
 		PeerID: in.PeerID, ActorURI: in.ActorURI, ActivityURI: in.ActivityURI,
-		Body: in.Body,
+		Body: in.Body, Authorize: a.authorizer(federation.ActivityCreate, in.TargetKind, in.TargetID, in.PeerID, in.ActorURI),
 	})
 }
 
