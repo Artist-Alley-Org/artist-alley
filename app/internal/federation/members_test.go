@@ -156,8 +156,12 @@ func TestWireMembers(t *testing.T) {
 		wantErr bool
 	}{
 		{federation.ActivityLike, "post", `{"post_title":"t"}`, []string{}, false},
-		{federation.ActivityCreate, "comment", `{"object_type":"Note","inReplyTo":"https://a.example/posts/1","content":"c","comment_depth":1,"target_post_id":"p","target_post_title":"t"}`,
+		{federation.ActivityCreate, "comment", `{"object_type":"Note","inReplyTo":"https://a.example/comments/1","in_reply_to_uri":"https://a.example/comments/1","content":"c","comment_depth":2,"target_post_id":"p","target_post_title":"t"}`,
 			[]string{"content", "inReplyTo", "object_type"}, false},
+		// A top-level comment: the local record's inReplyTo (the post)
+		// stays local (#1604).
+		{federation.ActivityCreate, "comment", `{"object_type":"Note","inReplyTo":"https://a.example/posts/1","content":"c","comment_depth":1,"target_uri":"https://a.example/posts/1"}`,
+			[]string{"content", "object_type"}, false},
 		{federation.ActivityCreate, "comment", `{"object_type":"Note","content":"top-level"}`, []string{"content", "object_type"}, false},
 		{federation.ActivityAAShare, "post", share, []string{"expires_at", "object_kind", "scope", "target_peer", "target_user"}, false},
 		{federation.ActivityAAUnshare, "post", share, []string{"aa:revokes", "object_kind", "target_peer", "target_user"}, false},
@@ -207,8 +211,8 @@ func TestWireMembers(t *testing.T) {
 		{federation.ActivityCreate, `{"object_type":"Note","content":"   "}`},
 		{federation.ActivityCreate, `{"object_type":"Note","content":7}`},
 		{federation.ActivityCreate, `{"object_type":"Note","content":"` + strings.Repeat("é", 10001) + `"}`},
-		{federation.ActivityCreate, `{"object_type":"Note","content":"ok","inReplyTo":"/comments/1"}`},
-		{federation.ActivityCreate, `{"object_type":"Note","content":"ok","inReplyTo":42}`},
+		{federation.ActivityCreate, `{"object_type":"Note","content":"ok","in_reply_to_uri":"/comments/1"}`},
+		{federation.ActivityCreate, `{"object_type":"Note","content":"ok","in_reply_to_uri":42}`},
 		{federation.ActivityAAShare, shareWith("object_kind", "spaceship")},
 		{federation.ActivityAAShare, shareWith("object_kind", 3)},
 		{federation.ActivityAAShare, shareWith("peer_url", "")},

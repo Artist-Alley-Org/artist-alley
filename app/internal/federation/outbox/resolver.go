@@ -178,6 +178,14 @@ type Input struct {
 	// happens to hold a share of the same object (#1571).
 	ShareID uuid.UUID
 
+	// CommentTarget is a comment Create's target_uri, the commented
+	// object on its origin, and RecipientActor its first `to` (the
+	// target's author there). A comment is addressed to exactly the
+	// target's origin peer (#1604); a comment on a local object has no
+	// other instance to go to.
+	CommentTarget  string
+	RecipientActor string
+
 	// AuthorRef + AuthorURI describe the local actor. The
 	// follows.by_actor cache uses AuthorRef for follower-tier
 	// resolution.
@@ -311,6 +319,9 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	if isShareVerb(in.Verb) {
 		return r.shareRecipient(ctx, in)
 	}
+	if in.Verb == string(federation.ActivityCreate) && in.TargetKind == "comment" {
+		return r.commentRecipient(ctx, in)
+	}
 
 	switch in.Visibility {
 	case VisibilityPrivate, VisibilityOrgOnly:
@@ -420,6 +431,49 @@ func (r *Resolver) shareRecipient(ctx context.Context, in Input) (Result, error)
 		return Result{Skipped: SkippedRecipientSetEmpty}, nil
 	}
 	return Result{Recipients: recipients}, nil
+}
+
+// commentRecipient addresses a comment Create to the paired peer that
+// is the origin of its target (#1604, spec v1 §7.5.5): enabled and
+// connected, matched by origin, never by visibility (a comment has no
+// visibility tier of its own). The receiver decides, from its own
+// shares, whether the comment is admitted (#1570). A target on this
+// instance, or on no paired peer, has nobody to send to.
+func (r *Resolver) commentRecipient(ctx context.Context, in Input) (Result, error) {
+	target := federation.OriginOf(in.CommentTarget)
+	if target == "" {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT id, instance_url, encryption_policy FROM federation_peers
+		WHERE enabled = TRUE AND status = 'connected'`)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve comment recipient: %w", err)
+	}
+	defer rows.Close()
+	var out []Recipient
+	for rows.Next() {
+		var id pgtype.UUID
+		var instanceURL, enc string
+		if err := rows.Scan(&id, &instanceURL, &enc); err != nil {
+			return Result{}, err
+		}
+		if federation.OriginOf(instanceURL) != target {
+			continue
+		}
+		rec := Recipient{PeerID: uuid.UUID(id.Bytes), EncryptionTier: enc}
+		if federation.OriginOf(in.RecipientActor) == target {
+			rec.TargetUserURL = in.RecipientActor
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return Result{}, err
+	}
+	out = r.applyCapabilityGate(ctx, in, out)
+	if len(out) == 0 {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	return Result{Recipients: out}, nil
 }
 
 // applyCapabilityGate (Phase 1.22.I-d) filters out recipients

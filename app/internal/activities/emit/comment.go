@@ -22,6 +22,17 @@ type CommentRef struct {
 	ParentAuthorURI string
 	Body            string
 	Depth           int32 // 0 for top-level, 1+ for replies
+
+	// TargetURI is the commented object's canonical URI on its own
+	// origin, the wire `object` of the federated Create (spec v1
+	// §7.5.5, #1604). Empty means the local post (PostID on this
+	// instance), whose comments have no other instance to go to.
+	TargetURI string
+	// ParentURI is the parent comment's identity on the wire, for a
+	// reply: a comment URI on the target's origin, or the Create
+	// activity id of a comment that was itself federated. Empty for a
+	// reply means the local parent comment (ParentID on this instance).
+	ParentURI string
 }
 
 // Excerpt returns the first 120 chars of the comment body,
@@ -53,10 +64,22 @@ func CreateComment(actor ActorContext, comment CommentRef) Emission {
 	postObjectURI := actor.ObjectURI(activities.ObjectKindPost, comment.PostID)
 
 	// inReplyTo is the parent — the post for top-level, the
-	// parent comment for replies.
+	// parent comment for replies. It stays in the LOCAL record as
+	// before; the wire uses target_uri and in_reply_to_uri (#1604).
 	inReplyTo := postObjectURI
 	if comment.ParentID != "" {
 		inReplyTo = actor.ObjectURI(activities.ObjectKindComment, comment.ParentID)
+	}
+	// The wire target and parent (spec v1 §7.5.5): `object` is the
+	// commented object on its origin, `inReplyTo` only the parent
+	// comment of a reply. Explicit, never guessed from a title or host.
+	targetURI := comment.TargetURI
+	if targetURI == "" {
+		targetURI = postObjectURI
+	}
+	parentURI := comment.ParentURI
+	if parentURI == "" && comment.ParentID != "" {
+		parentURI = actor.ObjectURI(activities.ObjectKindComment, comment.ParentID)
 	}
 
 	em := Emission{
@@ -78,6 +101,7 @@ func CreateComment(actor ActorContext, comment CommentRef) Emission {
 				"comment_depth":     comment.Depth + 1, // 1-indexed for human readability
 				"target_post_id":    comment.PostID,
 				"target_post_title": comment.PostTitle,
+				"target_uri":        targetURI,
 			},
 		},
 		Notifications: []NotificationFanout{{
@@ -92,6 +116,10 @@ func CreateComment(actor ActorContext, comment CommentRef) Emission {
 				"comment_depth": comment.Depth + 1,
 			},
 		}},
+	}
+
+	if parentURI != "" {
+		em.Activity.Payload["in_reply_to_uri"] = parentURI
 	}
 
 	// Reply to a comment whose author is NOT the post author?

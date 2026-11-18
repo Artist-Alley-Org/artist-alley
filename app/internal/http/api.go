@@ -2252,14 +2252,15 @@ func (a inboxSocialPosterAdapter) InsertRemoteLike(ctx context.Context, targetKi
 
 func (a inboxSocialPosterAdapter) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
 	id, existed, err := a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
-		TargetKind:  in.TargetKind,
-		TargetID:    in.TargetID,
-		ParentID:    in.ParentID,
-		PeerID:      in.PeerID,
-		ActorURI:    in.ActorURI,
-		ActivityURI: in.ActivityURI,
-		Body:        in.Body,
-		Authorize:   a.authorizer(federation.ActivityCreate, in.TargetKind, in.TargetID, in.PeerID, in.ActorURI),
+		TargetKind:        in.TargetKind,
+		TargetID:          in.TargetID,
+		ParentID:          in.ParentID,
+		ParentActivityURI: in.ParentActivityURI,
+		PeerID:            in.PeerID,
+		ActorURI:          in.ActorURI,
+		ActivityURI:       in.ActivityURI,
+		Body:              in.Body,
+		Authorize:         a.authorizer(federation.ActivityCreate, in.TargetKind, in.TargetID, in.PeerID, in.ActorURI),
 	})
 	return id, existed, inboundWriteError(err)
 }

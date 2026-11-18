@@ -889,6 +889,19 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	if objectURI != nil {
 		env.Object = *objectURI
 	}
+	// #1604: a comment Create's wire object is the commented object on
+	// its origin, not the comment's own local URI.
+	{
+		kind := ""
+		if objectKind != nil {
+			kind = *objectKind
+		}
+		obj, err := federation.WireObject(federation.ActivityType(activityType), kind, env.Object, payload)
+		if err != nil {
+			return nil, err
+		}
+		env.Object = obj
+	}
 	if len(toURIs) > 0 {
 		_ = json.Unmarshal(toURIs, &env.To)
 	}

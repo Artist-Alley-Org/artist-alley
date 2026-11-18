@@ -71,13 +71,17 @@ type SocialPoster interface {
 // comment. The dispatcher extracts these from the envelope payload
 // and the SocialPoster does the domain write.
 type RemoteCommentInput struct {
-	TargetKind  string
-	TargetID    uuid.UUID
-	ParentID    *uuid.UUID // nil = top-level
-	PeerID      uuid.UUID
-	ActorURI    string
-	ActivityURI string
-	Body        string
+	TargetKind string
+	TargetID   uuid.UUID
+	ParentID   *uuid.UUID // nil = top-level (or ParentActivityURI)
+	// ParentActivityURI names the parent by the Create activity id of a
+	// comment that was itself federated (spec v1 §7.5.5, #1604); the
+	// write finds it among this target's comments by activity_uri.
+	ParentActivityURI string
+	PeerID            uuid.UUID
+	ActorURI          string
+	ActivityURI       string
+	Body              string
 }
 
 // EncryptionKeyInline is the parsed aa:encryptionPublicKey block
@@ -188,32 +192,42 @@ func CommentHandler(d *Dispatcher) HandlerFn {
 				errors.New("Comment activity missing target object")
 		}
 
-		// inReplyTo names the parent: a comment on THIS instance
-		// (<origin>/comments/<uuid>), which the write checks is a
-		// live comment on the same target. inReplyTo equal to the
-		// target itself, or absent, is a top-level comment. Anything
-		// else is refused, never dropped to top level: a reply is
-		// never re-parented as a side effect of a missing parent.
+		// inReplyTo names the parent comment (spec v1 §7.5.5, #1604):
+		// a comment of THIS instance (<origin>/comments/<uuid>), or the
+		// Create activity id of a comment that was federated to it.
+		// Either way the write checks it is a live comment on the same
+		// target. Absent, or equal to the target (what senders before
+		// #1604 sent for a top-level comment), is a top-level comment.
+		// Anything else is refused, never dropped to top level: a reply
+		// is never re-parented as a side effect of a missing parent.
 		var parentID *uuid.UUID
+		var parentActivity string
 		if parentURI != "" && parentURI != env.Object {
-			id, status, err := d.localCommentID(ctx, parentURI)
-			if err != nil {
-				if status == "" {
-					return OutcomeFailed, "", uuid.UUID{}, err
+			if federation.OriginOf(parentURI) == d.localOrigin(ctx) && d.localOrigin(ctx) != "" {
+				id, status, err := d.localCommentID(ctx, parentURI)
+				if err != nil {
+					if status == "" {
+						return OutcomeFailed, "", uuid.UUID{}, err
+					}
+					return OutcomeRejected, status, uuid.UUID{}, err
 				}
-				return OutcomeRejected, status, uuid.UUID{}, err
+				parentID = &id
+			} else if d.localOrigin(ctx) == "" {
+				return OutcomeFailed, "", uuid.UUID{}, errors.New("inbox: the local base URL is not wired; cannot resolve inReplyTo")
+			} else {
+				parentActivity = parentURI
 			}
-			parentID = &id
 		}
 
 		input := RemoteCommentInput{
-			TargetKind:  *row.ObjectKind,
-			TargetID:    uuid.UUID(row.ObjectID.Bytes),
-			ParentID:    parentID,
-			PeerID:      peerID,
-			ActorURI:    env.Actor,
-			ActivityURI: env.ID,
-			Body:        body,
+			TargetKind:        *row.ObjectKind,
+			TargetID:          uuid.UUID(row.ObjectID.Bytes),
+			ParentID:          parentID,
+			ParentActivityURI: parentActivity,
+			PeerID:            peerID,
+			ActorURI:          env.Actor,
+			ActivityURI:       env.ID,
+			Body:              body,
 		}
 		_, _, err = d.social.InsertRemoteComment(ctx, input)
 		if outcome, reason, ok := writeRefusal(err); ok {
