@@ -147,10 +147,26 @@ func CreateComment(actor ActorContext, comment CommentRef) Emission {
 // DeleteComment builds the Emission for a Delete activity per AP
 // §6.4. Same Tombstone semantics as DeletePost.
 //
+// createActivityURI and to are set only when the actor deleting the
+// comment is its own local author (#1572): the id of the Create that
+// federated it, and that Create's `to` (the commented object's author, the
+// actor an encrypted Delete is sealed to). The Delete is then federated to
+// exactly where that Create went, naming it by that id. With them empty
+// (a moderator deleting someone else's comment, a comment with no Create
+// on record) the Delete stays a local record, never sent under an actor
+// who did not write the comment.
+//
 // No notification — comment deletes are silent.
-func DeleteComment(actor ActorContext, commentID, postID string) Emission {
+func DeleteComment(actor ActorContext, commentID, postID, createActivityURI string, to []string) Emission {
 	actorRef := actor.UserRef
 	commentObjectURI := actor.ObjectURI(activities.ObjectKindComment, commentID)
+	payload := map[string]any{
+		"object_type":    "Note",
+		"target_post_id": postID,
+	}
+	if createActivityURI != "" {
+		payload["create_activity_uri"] = createActivityURI
+	}
 	return Emission{
 		Activity: activities.Input{
 			Type:         federation.ActivityDelete,
@@ -162,10 +178,8 @@ func DeleteComment(actor ActorContext, commentID, postID string) Emission {
 				Kind:    activities.ObjectKindComment,
 				LocalID: commentID,
 			},
-			Payload: map[string]any{
-				"object_type":    "Note",
-				"target_post_id": postID,
-			},
+			To:      to,
+			Payload: payload,
 		},
 	}
 }

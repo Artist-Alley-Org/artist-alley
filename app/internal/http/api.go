@@ -2277,6 +2277,18 @@ func (a inboxSocialPosterAdapter) UndoRemoteLike(ctx context.Context, in inbox.R
 	})
 }
 
+// DeleteRemoteComment retracts the actor's own comment (#1572). Like
+// UndoRemoteLike it has no authorizer: it needs no live share (spec v1
+// §7.1) and is bound to the peer, actor and the comment's Create id.
+func (a inboxSocialPosterAdapter) DeleteRemoteComment(ctx context.Context, in inbox.RemoteDeleteCommentInput) (bool, error) {
+	return a.h.DeleteRemoteComment(ctx, social.RemoteDeleteCommentInput{
+		PeerID:            in.PeerID,
+		ActorURI:          in.ActorURI,
+		CreateActivityURI: in.CreateActivityURI,
+		DeleteActivityURI: in.DeleteActivityURI,
+	})
+}
+
 func (a inboxSocialPosterAdapter) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
 	id, existed, err := a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
 		TargetKind:        in.TargetKind,

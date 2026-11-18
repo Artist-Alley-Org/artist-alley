@@ -200,12 +200,13 @@ type Input struct {
 	TargetPeerID   uuid.UUID
 	RecipientActor string
 
-	// UndoneActivityURI is an Undo's object, the id of the activity it
-	// undoes, and UndoneType that activity's type (the payload's
-	// target_type). An Undo of a Like goes exactly where that Like went
-	// (#1572).
-	UndoneActivityURI string
-	UndoneType        string
+	// RetractedActivityURI is the id of the activity a retraction
+	// withdraws, and RetractedType that activity's type (#1572): for an
+	// Undo its object and payload target_type (a Like), for a Delete of a
+	// comment the payload's create_activity_uri (a Create). A retraction
+	// goes exactly where that activity went.
+	RetractedActivityURI string
+	RetractedType        string
 
 	// Tx, when set, is what an Undo's recipients are read through: the
 	// dispatcher's batch transaction, so an Undo sees the delivery rows
@@ -283,7 +284,7 @@ type Resolver struct {
 	receivedGrant ReceivedGrantLookup
 }
 
-// Querier is the read surface undoRecipient needs: a pool or a
+// Querier is the read surface retractionRecipient needs: a pool or a
 // transaction.
 type Querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
@@ -377,10 +378,10 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	if in.Verb == string(federation.ActivityLike) {
 		return r.likeRecipient(ctx, in)
 	}
-	// An Undo goes where the activity it undoes went (#1572), never by
-	// a visibility tier.
-	if in.Verb == string(federation.ActivityUndo) {
-		return r.undoRecipient(ctx, in)
+	// A retraction (an Undo of a Like, a Delete of a comment) goes where
+	// the activity it withdraws went (#1572), never by a visibility tier.
+	if in.Verb == string(federation.ActivityUndo) || in.Verb == string(federation.ActivityDelete) {
+		return r.retractionRecipient(ctx, in)
 	}
 
 	switch in.Visibility {
@@ -590,28 +591,36 @@ func (r *Resolver) likeRecipient(ctx context.Context, in Input) (Result, error) 
 	return Result{Recipients: out}, nil
 }
 
-// undoRecipient addresses an Undo of a Like (#1572, spec v1 §7.5.4) to
-// exactly the recipients its Like was queued for: the federation_outbox
-// rows of that Like, which must be this instance's own Like by the same
-// actor. Each recipient keeps the peer, the target user (whose key an
-// encrypted Like was sealed to) and the tier the Like's row was queued
-// at, so an Undo is never sent less protected than its Like. A Like row
-// that was refused or cancelled carried nothing to anyone and is not
-// followed; a peer that is no longer enabled and connected is not sent
-// to. No received grant is needed: the Undo withdraws the actor's own
-// Like.
+// retractionRecipient addresses a retraction (#1572) to exactly the
+// recipients of the activity it withdraws: an Undo of a Like (spec v1
+// §7.5.4) to that Like's, a Delete of a comment (§7.5.5) to that
+// comment's Create's. They are the federation_outbox rows of that
+// activity, which must be this instance's own, of that type, by the same
+// actor (a Create of a comment for a Delete). Each recipient keeps the
+// peer, the target user (whose key an encrypted original was sealed to)
+// and the tier the original's row was queued at, so a retraction is
+// never sent less protected than what it withdraws. A row that was
+// refused or cancelled carried nothing to anyone and is not followed; a
+// peer that is no longer enabled and connected is not sent to. No
+// received grant or share is needed: the retraction withdraws the
+// actor's own contribution.
 //
-// A Like that was never queued for anyone (a Like of a local object, or
-// one refused before queueing) has nobody to send the Undo to: the
-// result is recipient_set_empty, audited, never a broadcast. Outbox rows
-// are kept, not pruned (they go only with their activity or their
-// peer), so the Like's recipients are still on record when its Undo
-// is dispatched.
-func (r *Resolver) undoRecipient(ctx context.Context, in Input) (Result, error) {
-	if in.UndoneType != string(federation.ActivityLike) {
+// An original that was never queued for anyone (a Like or a comment of a
+// local object, or one refused before queueing) has nobody to send the
+// retraction to: the result is recipient_set_empty, audited, never a
+// broadcast. Outbox rows are kept, not pruned (they go only with their
+// activity or their peer), so the original's recipients are still on
+// record when the retraction is dispatched; in.Tx makes the rows of an
+// original queued earlier in the same batch visible.
+func (r *Resolver) retractionRecipient(ctx context.Context, in Input) (Result, error) {
+	switch {
+	case in.Verb == string(federation.ActivityUndo) && in.RetractedType == string(federation.ActivityLike):
+	case in.Verb == string(federation.ActivityDelete) && in.TargetKind == "comment" &&
+		in.RetractedType == string(federation.ActivityCreate):
+	default:
 		return Result{Skipped: SkippedActivityNotFederated}, nil
 	}
-	if in.UndoneActivityURI == "" || in.AuthorURI == "" {
+	if in.RetractedActivityURI == "" || in.AuthorURI == "" {
 		return Result{Skipped: SkippedRecipientSetEmpty}, nil
 	}
 	var q Querier = r.pool
@@ -625,14 +634,15 @@ func (r *Resolver) undoRecipient(ctx context.Context, in Input) (Result, error) 
 		  JOIN federation_outbox o ON o.activity_id = a.id
 		  JOIN federation_peers p ON p.id = o.peer_id
 		 WHERE a.activity_uri = $1
-		   AND a.activity_type = 'Like'
+		   AND a.activity_type = $3
+		   AND (a.activity_type <> 'Create' OR a.object_kind = 'comment')
 		   AND a.source = 'local'
 		   AND a.actor_uri = $2
 		   AND o.status IN ('queued', 'sent', 'failed')
 		 ORDER BY 1, 2
-	`, in.UndoneActivityURI, in.AuthorURI)
+	`, in.RetractedActivityURI, in.AuthorURI, in.RetractedType)
 	if err != nil {
-		return Result{}, fmt.Errorf("resolve undo recipients: %w", err)
+		return Result{}, fmt.Errorf("resolve retraction recipients: %w", err)
 	}
 	defer rows.Close()
 	var out []Recipient
