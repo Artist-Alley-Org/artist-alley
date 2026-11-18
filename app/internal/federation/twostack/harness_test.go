@@ -10,7 +10,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -86,14 +85,31 @@ func databases(t *testing.T) (string, string) {
 // maxIdentifierBytes is Postgres' identifier limit (NAMEDATALEN - 1).
 const maxIdentifierBytes = 63
 
+// openPool opens an instance's pool exactly as a production server does
+// (db.Open), sized by the production pool settings (config.Load:
+// AA_DB_MAX_CONNS, default 20; min conns; max lifetime). A running
+// instance keeps four connections for its LISTEN loops (the cache
+// registry, the inbox dispatcher, the outbox dispatcher and the outbox
+// delivery worker); pgxpool's own default, max(4, NumCPU), left a
+// 4-CPU CI runner no connection for anything else, so every query
+// waited in Acquire forever (PR #1603, run 44202667781).
 func openPool(t *testing.T, name string) *pgxpool.Pool {
 	t.Helper()
-	pool, err := pgxpool.New(context.Background(), fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		env("AA_DB_HOST", "postgres"), env("AA_DB_PORT", "5432"), env("AA_DB_USER", "artist_alley"),
-		os.Getenv("AA_DB_PASSWORD"), name))
+	// Only the pool settings are read; Load's checks of secrets a test
+	// pool does not use (AA_SCRAMBLE_KEY) do not apply, and Load returns
+	// the settings with that error.
+	prod, _ := config.Load()
+	port, _ := strconv.Atoi(env("AA_DB_PORT", "5432"))
+	pool, err := db.Open(context.Background(), config.Config{
+		DBHost: env("AA_DB_HOST", "postgres"), DBPort: port, DBUser: env("AA_DB_USER", "artist_alley"),
+		DBPassword: os.Getenv("AA_DB_PASSWORD"), DBName: name, DBSSLMode: "disable",
+		DBMaxConns: prod.DBMaxConns, DBMinConns: prod.DBMinConns, DBConnMaxLifetime: prod.DBConnMaxLifetime,
+	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := pool.Config().MaxConns; got < 8 {
+		t.Fatalf("instance pool max %d connections: four are held by its LISTEN loops, so it cannot serve requests", got)
 	}
 	t.Cleanup(pool.Close)
 	return pool
