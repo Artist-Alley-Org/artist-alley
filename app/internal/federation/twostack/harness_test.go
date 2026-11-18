@@ -88,11 +88,11 @@ const maxIdentifierBytes = 63
 // openPool opens an instance's pool exactly as a production server does
 // (db.Open), sized by the production pool settings (config.Load:
 // AA_DB_MAX_CONNS, default 20; min conns; max lifetime). A running
-// instance keeps four connections for its LISTEN loops (the cache
-// registry, the inbox dispatcher, the outbox dispatcher and the outbox
-// delivery worker); pgxpool's own default, max(4, NumCPU), left a
-// 4-CPU CI runner no connection for anything else, so every query
-// waited in Acquire forever (PR #1603, run 44202667781).
+// instance holds three pool connections for its federation LISTEN loops
+// (the cache registry's listener is hijacked out of the pool); pgxpool's
+// own default, max(4, NumCPU), left a 4-CPU CI runner almost nothing
+// for every other query (PR #1603, run 44202667781). A pool too small
+// is refused by apphttp.New itself (#1605, apphttp.MinDBMaxConns).
 func openPool(t *testing.T, name string) *pgxpool.Pool {
 	t.Helper()
 	// Only the pool settings are read; Load's checks of secrets a test
@@ -107,9 +107,6 @@ func openPool(t *testing.T, name string) *pgxpool.Pool {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if got := pool.Config().MaxConns; got < 8 {
-		t.Fatalf("instance pool max %d connections: four are held by its LISTEN loops, so it cannot serve requests", got)
 	}
 	t.Cleanup(pool.Close)
 	return pool

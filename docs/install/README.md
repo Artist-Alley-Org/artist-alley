@@ -174,7 +174,7 @@ Everything is environment-variable driven. The full list lives in
 | `AA_DB_USER`                   | `artist_alley`       |       |
 | `AA_DB_PASSWORD`               | (required)           |       |
 | `AA_DB_SSLMODE`                | `disable`            | `require` / `verify-full` for prod |
-| `AA_DB_MAX_CONNS`              | `20`                 | pgx pool max connections |
+| `AA_DB_MAX_CONNS`              | `20`                 | pgx pool max connections; minimum `8`, see [Database connections](#database-connections) |
 | `AA_DB_MIN_CONNS`              | `2`                  | pgx pool min connections |
 | `AA_DB_CONN_MAX_LIFETIME`      | `1h`                 | pgx pool connection lifetime |
 | `AA_STORAGE_BACKEND`           | `fs`                 | or `s3` |
@@ -194,3 +194,20 @@ Everything is environment-variable driven. The full list lives in
 | `AA_ORG_KEY_PATH`              | `/etc/artist-alley/org.key` | organization key file (optional) |
 | `AA_LOG_LEVEL`                 | `info`               | `debug` / `info` / `warn` / `error` |
 | `AA_LOG_FORMAT`                | `json`               | or `text` |
+
+### Database connections
+
+A running server holds some database connections for as long as it
+runs, to be told about changes. Three of them come from the pool: one
+each for the federation inbox, the federation outbox and federation
+delivery. One more, for cache updates, is a separate connection outside
+the pool. So a server opens up to `AA_DB_MAX_CONNS` + 1 connections to
+PostgreSQL, and the pool must keep enough free for requests and
+background jobs.
+
+The server refuses to start when `AA_DB_MAX_CONNS` is below `8` (three
+for the listeners, at least five for everything else). It stops with an
+error that names `AA_DB_MAX_CONNS` and the minimum, instead of starting
+and then hanging. The default, `20`, is enough for most installs. Make
+sure PostgreSQL's `max_connections` allows `AA_DB_MAX_CONNS` + 1 for
+each running server, plus any other clients.

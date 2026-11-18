@@ -75,6 +75,13 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// cancel it after the HTTP listener stops accepting.
 	serverCtx, serverCancel := context.WithCancel(context.Background())
 
+	// #1605: refuse a pool too small to serve beside the long-lived
+	// LISTEN loops, before any listener is acquired or a request served.
+	if err := checkDBCapacity(pool); err != nil {
+		serverCancel()
+		return nil, err
+	}
+
 	backend, err := BuildStorageBackend(cfg)
 	if err != nil {
 		serverCancel()
@@ -188,8 +195,12 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// triggers like the asset_field_value rebuild) can drop our
 	// stale LRU entries. Per-domain Caches register themselves
 	// when their handlers are constructed below.
+	//
+	// Bound to the server's lifecycle (#1605): its listener holds a
+	// hijacked connection outside the pool, closed when serverCtx ends
+	// (Close, or Run's shutdown).
 	cacheReg := cache.NewRegistry(pool, logger)
-	if err := cacheReg.Start(context.Background()); err != nil {
+	if err := cacheReg.Start(serverCtx); err != nil {
 		serverCancel()
 		return nil, fmt.Errorf("cache registry: %w", err)
 	}
@@ -929,6 +940,20 @@ func runCASReconciler(ctx context.Context, c *casfetch.Client, logger *slog.Logg
 // server itself errors. On cancellation it performs a graceful shutdown
 // bounded by 15 seconds.
 func (s *Server) Run(ctx context.Context) error {
+	// Every goroutine Run starts gets runCtx, which ends on EVERY return
+	// from Run, the listen-error path included, never only when the
+	// caller cancels ctx; the server's own lifecycle (the cache listener
+	// and other lifecycle-bound work) ends with it. Before #1605's
+	// review, a ListenAndServe failure returned with the three
+	// federation LISTEN loops and the cache listener still connected.
+	// The caller's ctx is never cancelled here.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	defer func() {
+		if s.lifecycleCancel != nil {
+			s.lifecycleCancel()
+		}
+	}()
 	// Start the in-process worker pool first so jobs are draining
 	// before any HTTP traffic enqueues new work. instanceID is just
 	// the hostname for now; once federation lands it'll come from
@@ -938,7 +963,7 @@ func (s *Server) Run(ctx context.Context) error {
 		if instanceID == "" {
 			instanceID = "local"
 		}
-		s.workers.Start(ctx, instanceID)
+		s.workers.Start(runCtx, instanceID)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "jobs.pool.start",
 			slog.Int("workers", s.workers.Size),
 		)
@@ -950,7 +975,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// is read from the row's poll_interval_seconds column. Stop
 	// via context cancellation alongside the HTTP server.
 	if s.api != nil && s.api.directoryPoller != nil {
-		go s.api.directoryPoller.Run(ctx)
+		go s.api.directoryPoller.Run(runCtx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "directory.poller.start")
 	}
 
@@ -958,10 +983,10 @@ func (s *Server) Run(ctx context.Context) error {
 	// goroutine that emits aa:Unshare for expired-active shares
 	// so recipients purge cached bytes. Stop via ctx cancellation.
 	if s.api != nil && s.api.casFetch != nil {
-		go runCASReconciler(ctx, s.api.casFetch, s.logger)
+		go runCASReconciler(runCtx, s.api.casFetch, s.logger)
 	}
 	if s.api != nil && s.api.sharesSweeper != nil {
-		go s.api.sharesSweeper.Run(ctx)
+		go s.api.sharesSweeper.Run(runCtx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "shares.sweeper.start")
 	}
 
@@ -969,7 +994,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// pending federation_inbox rows + invokes the per-verb
 	// handler. Stop via ctx cancellation.
 	if s.api != nil && s.api.inboxDispatcher != nil {
-		go s.api.inboxDispatcher.Run(ctx)
+		go s.api.inboxDispatcher.Run(runCtx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "inbox.dispatcher.start")
 	}
 
@@ -978,7 +1003,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Sub-100ms latency via the trigger from migration 00001;
 	// 30s ticker is correctness backstop only.
 	if s.api != nil && s.api.outboxDispatcher != nil {
-		go s.api.outboxDispatcher.Run(ctx)
+		go s.api.outboxDispatcher.Run(runCtx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "outbox.dispatcher.start")
 	}
 
@@ -987,7 +1012,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// /federation/inbox. nil when the instance identity hasn't
 	// been generated yet (first-run before /setup completes).
 	if s.api != nil && s.api.outboxDelivery != nil {
-		go s.api.outboxDelivery.Run(ctx)
+		go s.api.outboxDelivery.Run(runCtx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "outbox.delivery.start")
 	}
 
@@ -999,7 +1024,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// fires federation.user.key_retained_expired once per
 	// non-zero reap.
 	if s.api != nil && s.api.userKeysSweeper != nil {
-		go s.api.userKeysSweeper.Run(ctx)
+		go s.api.userKeysSweeper.Run(runCtx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "userkeys.sweeper.start")
 	}
 	// Phase 1.17.C capability-expiry sweeper. Same lifecycle —
@@ -1007,7 +1032,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// boot observability is consistent across both background
 	// reapers.
 	if s.api != nil && s.api.capabilitySweeper != nil {
-		go s.api.capabilitySweeper.Run(ctx)
+		go s.api.capabilitySweeper.Run(runCtx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "auth.capability_sweeper.start")
 	}
 	// Phase 1.53.A — MCP-client per-server health-check supervisor.
@@ -1015,7 +1040,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// supervisor + children exit when ctx cancels.
 	if s.api != nil && s.api.mcpHealth != nil {
 		go func() {
-			if err := s.api.mcpHealth.Run(ctx); err != nil {
+			if err := s.api.mcpHealth.Run(runCtx); err != nil {
 				s.logger.LogAttrs(ctx, slog.LevelWarn, "mcp.healthcheck.exit",
 					slog.String("err", err.Error()))
 			}
