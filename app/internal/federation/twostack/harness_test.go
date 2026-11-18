@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -186,6 +187,26 @@ type cluster struct {
 // newCluster boots A and B, each on its own database and storage root,
 // and pairs them through the real handshake (B offers, A's admin
 // accepts).
+//
+// Every cluster in a package run uses the SAME two databases, and its
+// servers listen on ephemeral ports, which the kernel reuses once a
+// server closes. So a cluster owns its peer rows (A's row for B's URL, B's
+// row for A's URL) for exactly its own lifetime:
+//
+//   - before pairing, any row either database still holds for the URLs
+//     this cluster now listens on is removed. Such a row can only be an
+//     earlier cluster's, on a port the kernel handed out again; left in
+//     place, A answers B's offer from that connected row (the "offerer
+//     lost its record of us" path) instead of recording a pending
+//     request, and the pairing, or what is delivered under it, is
+//     decided by a dead cluster's state.
+//   - when the test ends, after its workers have stopped (runWorkers
+//     registers later, so its cleanup runs first) and while both pools
+//     are still open, the cluster deletes its own two peer rows. Every
+//     row that names a peer cascades with it (federation_outbox,
+//     federation_inbox, shares, grants, remote actors and records), so a
+//     later cluster's workers never see an earlier cluster's queued
+//     deliveries to a stopped server.
 func newCluster(t *testing.T) *cluster {
 	t.Helper()
 	dbA, dbB := databases(t)
@@ -196,8 +217,62 @@ func newCluster(t *testing.T) *cluster {
 	if c.a.url == c.b.url {
 		t.Fatal("instances share a URL")
 	}
+	if n := c.removePeerRows(context.Background()); n > 0 {
+		t.Logf("removed %d stale peer row(s) left for this cluster's reused URLs by an earlier cluster", n)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		c.removePeerRows(ctx)
+	})
 	c.pair()
 	return c
+}
+
+// removePeerRows deletes A's peer rows for B's URL and B's for A's,
+// returning how many it removed. Only those two URLs, which this cluster
+// is listening on, are touched: every other fixture stays. A failure is
+// reported on the test, never ignored, and nothing is retried.
+func (c *cluster) removePeerRows(ctx context.Context) int64 {
+	var n int64
+	for _, side := range []struct{ in, other *instance }{{c.a, c.b}, {c.b, c.a}} {
+		tag, err := side.in.pool.Exec(ctx, `DELETE FROM federation_peers WHERE instance_url = $1`, side.other.url)
+		if err != nil {
+			c.t.Errorf("%s: remove peer rows for %s: %v", side.in.name, side.other.url, err)
+			continue
+		}
+		n += tag.RowsAffected()
+	}
+	return n
+}
+
+// peerRows describes both sides' peer rows for each other, for a
+// failure message.
+func (c *cluster) peerRows() string {
+	var out []string
+	for _, side := range []struct{ in, other *instance }{{c.a, c.b}, {c.b, c.a}} {
+		rows, err := side.in.pool.Query(context.Background(), `SELECT id, status, enabled, coalesce(notes, ''), created_at
+			FROM federation_peers WHERE instance_url = $1 ORDER BY created_at`, side.other.url)
+		if err != nil {
+			out = append(out, side.in.name+": "+err.Error())
+			continue
+		}
+		for rows.Next() {
+			var id uuid.UUID
+			var status, notes string
+			var enabled bool
+			var created time.Time
+			if err := rows.Scan(&id, &status, &enabled, &notes, &created); err == nil {
+				out = append(out, fmt.Sprintf("%s row for %s: id=%s status=%s enabled=%v created=%s notes=%q",
+					side.in.name, side.other.name, id, status, enabled, created.Format(time.RFC3339Nano), notes))
+			}
+		}
+		rows.Close()
+	}
+	if len(out) == 0 {
+		return "no peer rows on either side"
+	}
+	return strings.Join(out, "; ")
 }
 
 func (c *cluster) boot(name, dbName string) *instance {
@@ -316,7 +391,7 @@ func (c *cluster) pair() {
 		}
 	}
 	if id == "" {
-		t.Fatalf("A has no pending request from B (%+v)", pending)
+		t.Fatalf("A has no pending request from B (%+v); %s", pending, c.peerRows())
 	}
 	if st := c.api(c.a, http.MethodPost, "/admin/federation/peers/"+id+"/accept", nil, nil); st >= 300 {
 		t.Fatalf("A accept: %d", st)
@@ -362,4 +437,83 @@ func (c *cluster) capabilities(in, other *instance) []string {
 		`SELECT ARRAY(SELECT jsonb_array_elements_text(capabilities)) FROM federation_peers WHERE instance_url = $1`,
 		other.url).Scan(&caps)
 	return caps
+}
+
+// The cleanup invariant: a cluster's peer rows, and every queued delivery
+// under them, exist while the cluster lives and are gone once its test
+// ends, so a later cluster on the same databases never inherits them.
+func TestTwoStack_ClusterCleanupRemovesItsPeers(t *testing.T) {
+	dbA, dbB := databases(t)
+	pa, pb := openPool(t, dbA), openPool(t, dbB)
+	ctx := context.Background()
+	var aURL, bURL string
+	var peerBonA, activity uuid.UUID
+	t.Run("a live cluster", func(t *testing.T) {
+		c := newCluster(t)
+		aURL, bURL, peerBonA = c.a.url, c.b.url, c.peerID(c.a, c.b)
+		// Usable before cleanup: paired and connected on both sides (pair
+		// checked it), with a delivery queued to B that nothing delivers
+		// (the workers are not running).
+		if err := c.a.pool.QueryRow(ctx, `INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref, payload, source)
+			VALUES ($1, 'Like', $2, $3, '{}'::jsonb, 'local') RETURNING id`,
+			c.a.url+"/activities/"+uuid.NewString(), c.a.url+"/users/x", c.a.admin).Scan(&activity); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.a.pool.Exec(ctx, `INSERT INTO federation_outbox (activity_id, peer_id) VALUES ($1, $2)`, activity, peerBonA); err != nil {
+			t.Fatal(err)
+		}
+		if n := c.countRows(c.a, `SELECT count(*) FROM federation_outbox WHERE peer_id = $1 AND status = 'queued'`, peerBonA); n != 1 {
+			t.Fatalf("%d queued rows to the live peer", n)
+		}
+		if st := c.api(c.a, http.MethodGet, "/admin/federation/peers/"+peerBonA.String(), nil, nil); st != http.StatusOK {
+			t.Fatalf("A's admin API does not see the live peer: %d", st)
+		}
+	})
+	count := func(p *pgxpool.Pool, q string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := p.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count(pa, `SELECT count(*) FROM federation_peers WHERE instance_url = $1 OR id = $2`, bURL, peerBonA); n != 0 {
+		t.Errorf("A still holds %d peer row(s) of the ended cluster", n)
+	}
+	if n := count(pa, `SELECT count(*) FROM federation_outbox WHERE peer_id = $1 OR activity_id = $2`, peerBonA, activity); n != 0 {
+		t.Errorf("A still holds %d delivery row(s) to the ended cluster", n)
+	}
+	if n := count(pb, `SELECT count(*) FROM federation_peers WHERE instance_url = $1`, aURL); n != 0 {
+		t.Errorf("B still holds %d peer row(s) of the ended cluster", n)
+	}
+}
+
+// The timeout diagnostics read real rows: every query in the pairing and
+// grant trails is valid SQL against the current schema, so a failure
+// message never hides its cause behind a query error.
+func TestTwoStack_FailureTrailsAreReadable(t *testing.T) {
+	g := newLikeGate(t)
+	for name, trail := range map[string]string{
+		"peer rows":   g.peerRows(),
+		"share trail": g.shareTrail(g.a.url + "/posts/" + uuid.NewString()),
+	} {
+		for _, part := range strings.Split(trail, "; ") {
+			if strings.Contains(part, "ERROR") || strings.Contains(part, "SQLSTATE") {
+				t.Errorf("%s: %q", name, part)
+			}
+		}
+		if !strings.Contains(trail, "status=connected") {
+			t.Errorf("%s does not describe the live peers: %s", name, trail)
+		}
+	}
+}
+
+// countRows runs a count query on in's database.
+func (c *cluster) countRows(in *instance, q string, args ...any) int {
+	c.t.Helper()
+	var n int
+	if err := in.pool.QueryRow(context.Background(), q, args...).Scan(&n); err != nil {
+		c.t.Fatal(err)
+	}
+	return n
 }
