@@ -273,6 +273,18 @@ func TestServerRun_ListenErrorReleasesEveryListener(t *testing.T) {
 	// (released listener connections may sit idle in the pool with LISTEN
 	// as their last statement; only a HELD connection is a leak).
 	waitCacheListener(t, observer, app, 0)
+	// Run cancels runCtx on return but does not wait for the goroutines
+	// it started, so their pool connections are released moments after
+	// Run returns (hosted CI saw one still held at the first sample).
+	// Allow a short bounded drain; a connection still held past it is a
+	// leak, and the sustained samples below catch one taken again.
+	drain := time.Now().Add(5 * time.Second)
+	for pool.Stat().AcquiredConns() != 0 {
+		if time.Now().After(drain) {
+			t.Fatalf("%d pool connections still held 5s after Run returned", pool.Stat().AcquiredConns())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	for i := 0; i < 15; i++ {
 		if n := pool.Stat().AcquiredConns(); n != 0 {
 			t.Fatalf("%d pool connections held after Run returned (sample %d)", n, i)
