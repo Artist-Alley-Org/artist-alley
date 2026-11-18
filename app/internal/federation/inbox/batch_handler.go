@@ -242,7 +242,7 @@ func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID
 	// Unsupported activity type (#1569): same gate, same stored row
 	// and same answer as PostInbox stage 10a.
 	// Stage 10a, as in PostInbox (#1569, #1580).
-	if err := federation.ValidateMembers(env, MemberContext(peer.Capabilities, Applies)); err != nil {
+	if err := federation.ValidateMembers(env, h.memberContext(ctx, peer)); err != nil {
 		if errors.Is(err, federation.ErrUnsupportedActivity) {
 			outcome, _, err := h.recordUnsupported(ctx, peer.ID, keyID, activityURI, env, []byte(raw))
 			switch {
@@ -261,7 +261,7 @@ func (h *Handler) processBatchEnvelope(ctx context.Context, peer PeerInfo, keyID
 	// Object-ref extraction (host check via the singleton
 	// PostInbox path; surfaces unknown_object for foreign-host
 	// or bad-shape URLs).
-	objectKindPtr, objectIDPtr, err := h.extractObjectRef(ctx, env)
+	objectKindPtr, objectIDPtr, err := h.objectRefFor(ctx, env)
 	if err != nil {
 		if errors.Is(err, ErrUnknownObject) {
 			h.auditReject(ctx, peer.ID, federation.InboxStatusUnknownObject, activityURI,

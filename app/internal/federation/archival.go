@@ -71,10 +71,13 @@ var (
 	// ErrArchivalInvalid: an archival-1 member does not match §17.
 	// Maps to inbox status archival_invalid.
 	ErrArchivalInvalid = errors.New("federation: archival-1 member invalid")
-	// ErrProfileNotNegotiated: an archival-1 member from (or to) a
-	// peer whose negotiated capabilities lack archival-1 (§16.3).
-	// Maps to inbox status profile_not_negotiated.
-	ErrProfileNotNegotiated = errors.New("federation: archival-1 member without a negotiated archival-1 profile")
+	// ErrProfileNotNegotiated: a profile member (archival-1,
+	// original-transfer-1) from (or to) a peer whose negotiated
+	// capabilities lack that profile (§16.3), or, on the sending side,
+	// a profile-gated activity (share-lifecycle-1) for such a peer.
+	// Maps to inbox status profile_not_negotiated; the wrapping error
+	// names the profile.
+	ErrProfileNotNegotiated = errors.New("federation: profile_not_negotiated")
 	// ErrFixityMismatch: received bytes do not match the listed
 	// size or a listed checksum (§17.6). Maps to fixity_mismatch.
 	ErrFixityMismatch = errors.New("federation: received bytes do not match the listed fixity")
@@ -367,7 +370,7 @@ func ValidateArchivalMembers(env *Envelope, negotiated bool) error {
 		// profile-gated.
 		if env.Type == ActivityAAProvenance {
 			if !negotiated {
-				return fmt.Errorf("%w: %s", ErrProfileNotNegotiated, env.Type)
+				return fmt.Errorf("%w: %s is an archival-1 activity", ErrProfileNotNegotiated, env.Type)
 			}
 			return invalid(string(env.Type), "requires %s", MemberArchivalEvent)
 		}

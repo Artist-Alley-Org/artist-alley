@@ -391,7 +391,7 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 	// the sender's outbox stops retrying (a 4xx other than 429 is
 	// terminal there). Any other refusal is answered like the stages
 	// above, with nothing stored.
-	if err := federation.ValidateMembers(env, MemberContext(peer.Capabilities, Applies)); err != nil {
+	if err := federation.ValidateMembers(env, h.memberContext(ctx, peer)); err != nil {
 		if errors.Is(err, federation.ErrUnsupportedActivity) {
 			switch outcome, storedType, err := h.recordUnsupported(ctx, peer.ID, sigParams.KeyID, activityURI, env, body); {
 			case err != nil:
@@ -424,7 +424,11 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 	// fires LATER at dispatch time when the gate checks the
 	// federation_shares table; this fires NOW because we can't
 	// even classify the object.
-	objectKindPtr, objectIDPtr, err := h.extractObjectRef(ctx, env)
+	//
+	// A share activity's object is the SENDER's object, never a local
+	// row (validated in stage 10a to be on the sender's origin), so it
+	// is not classified as a local reference (#1571).
+	objectKindPtr, objectIDPtr, err := h.objectRefFor(ctx, env)
 	if err != nil {
 		if errors.Is(err, ErrUnknownObject) {
 			h.auditReject(ctx, peer.ID, federation.InboxStatusUnknownObject, activityURI,
@@ -555,7 +559,7 @@ var errNoStoredRow = errors.New("inbox: activity id is taken but no stored row w
 // storedType is the type the answer is about: env.Type for a new row,
 // the stored row's type for a duplicate.
 func (h *Handler) recordUnsupported(ctx context.Context, peerID uuid.UUID, keyID, activityURI string, env *federation.Envelope, raw []byte) (outcome storedRowOutcome, storedType string, err error) {
-	objectKind, objectID, err := h.extractObjectRef(ctx, env)
+	objectKind, objectID, err := h.objectRefFor(ctx, env)
 	if err != nil {
 		objectKind, objectID = nil, pgtype.UUID{}
 	}
@@ -833,12 +837,45 @@ func isUniqueViolation(err error) bool {
 
 // MemberContext is the federation.ValidateMembers context for an
 // envelope from a peer with these negotiated capabilities, on a
-// receiver that applies the types applied reports.
-func MemberContext(capabilities []string, applied func(federation.ActivityType) bool) federation.MemberContext {
+// receiver that applies the types applied reports for that peer, whose
+// own origin is localOrigin ("" when unknown).
+func MemberContext(capabilities []string, applied func(federation.ActivityType) bool, localOrigin string) federation.MemberContext {
 	return federation.MemberContext{
-		Negotiated: func(token string) bool { return slices.Contains(capabilities, token) },
-		Applied:    applied,
+		Negotiated:  func(token string) bool { return slices.Contains(capabilities, token) },
+		Applied:     applied,
+		LocalOrigin: localOrigin,
 	}
+}
+
+// memberContext is the stage-10a context for peer: what this release
+// applies for that peer's negotiated profiles, and this instance's
+// origin.
+func (h *Handler) memberContext(ctx context.Context, peer PeerInfo) federation.MemberContext {
+	origin := ""
+	if h.localBaseURL != nil {
+		origin = federation.OriginOf(h.localBaseURL(ctx))
+	}
+	return MemberContext(peer.Capabilities,
+		func(t federation.ActivityType) bool { return Applies(t, peer.Capabilities) }, origin)
+}
+
+// isShareVerb: aa:Share, aa:Unshare and the aa:RevokeShare alias.
+func isShareVerb(t federation.ActivityType) bool {
+	switch normalizeVerb(t) {
+	case federation.ActivityAAShare, federation.ActivityAAUnshare:
+		return true
+	}
+	return false
+}
+
+// objectRefFor is extractObjectRef for an activity about a local
+// object; a share activity names the sender's object and is stored
+// without a local reference.
+func (h *Handler) objectRefFor(ctx context.Context, env *federation.Envelope) (*string, pgtype.UUID, error) {
+	if isShareVerb(env.Type) {
+		return nil, pgtype.UUID{}, nil
+	}
+	return h.extractObjectRef(ctx, env)
 }
 
 // memberRejection maps a ValidateMembers refusal to its §12.1 reason.

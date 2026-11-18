@@ -187,9 +187,11 @@ func runOutboxWiringCase(t *testing.T, tc outboxWiringCase) {
 	).Scan(&userRef); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	caps := `[]`
+	// share-lifecycle-1: an aa:Share is addressed only to a peer that
+	// negotiated it (#1571).
+	caps := `["share-lifecycle-1"]`
 	if tc.peerE2E {
-		caps = `["e2e-encrypted","nacl-box","x25519"]`
+		caps = `["e2e-encrypted","nacl-box","x25519","share-lifecycle-1"]`
 	}
 	var peerID uuid.UUID
 	if err := pool.QueryRow(ctx,
@@ -249,12 +251,13 @@ func runOutboxWiringCase(t *testing.T, tc outboxWiringCase) {
 	).Scan(&grantActivityID); err != nil {
 		t.Fatalf("seed grant activity: %v", err)
 	}
-	if _, err := pool.Exec(ctx,
+	var shareID uuid.UUID
+	if err := pool.QueryRow(ctx,
 		`INSERT INTO federation_shares (grantor_user_ref, object_kind, object_id, peer_id,
 		    target_user_url, scope, granted_activity_id)
-		 VALUES ($1, 'post', $2, $3, $4, 'view', $5)`,
+		 VALUES ($1, 'post', $2, $3, $4, 'view', $5) RETURNING id`,
 		userRef, postID, peerID, srv.URL+"/users/bob", grantActivityID,
-	); err != nil {
+	).Scan(&shareID); err != nil {
 		t.Fatalf("seed share: %v", err)
 	}
 	t.Cleanup(func() {
@@ -292,11 +295,12 @@ func runOutboxWiringCase(t *testing.T, tc outboxWiringCase) {
 			    object_uri, object_kind, object_local_id, payload)
 			 VALUES ($1, 'aa:Share', $6, $2, $3, 'post', $4,
 			         jsonb_build_object('object_kind', 'post', 'scope', 'view',
+			             'share_id', $7::text,
 			             'peer_url', 'https://peer.example',
 			             'target_user_url', 'https://peer.example/users/' || $5::text))
 			 RETURNING id`,
 			"https://local.example/activities/"+uuid.NewString(), userRef,
-			"https://local.example/posts/"+postID.String(), postID.String(), marker, actorURI,
+			"https://local.example/posts/"+postID.String(), postID.String(), marker, actorURI, shareID.String(),
 		).Scan(&activityIDs[i]); err != nil {
 			t.Fatalf("seed activity: %v", err)
 		}

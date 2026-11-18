@@ -52,6 +52,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -908,11 +909,22 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	// plaintext envelope nor the sealed payload carries the rest. An
 	// activity type v1 does not federate is refused here
 	// (federation.ErrNotFederated), even if a row was queued for it.
+	//
+	// The projection is per recipient (#1571): profile members and
+	// profile-gated types depend on what THIS peer negotiated, read from
+	// its stored intersection now, never from what another recipient of
+	// the same activity negotiated.
 	var kind string
 	if objectKind != nil {
 		kind = *objectKind
 	}
-	wire, err := federation.WireMembers(federation.ActivityType(activityType), kind, payload)
+	var peerCaps []string
+	if err := w.pool.QueryRow(ctx, `SELECT ARRAY(SELECT jsonb_array_elements_text(capabilities))
+		FROM federation_peers WHERE id = $1`, peerID).Scan(&peerCaps); err != nil {
+		return nil, fmt.Errorf("read recipient capabilities: %w", err)
+	}
+	wire, err := federation.WireMembers(federation.ActivityType(activityType), kind, payload,
+		func(token string) bool { return slices.Contains(peerCaps, token) })
 	if err != nil {
 		return nil, err
 	}

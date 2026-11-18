@@ -54,10 +54,12 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/federation"
 )
 
 // Visibility is the five-tier visibility model of the
@@ -130,6 +132,15 @@ const (
 	// SkippedActivityNotFederated: the activity type is not one v1
 	// federates (federation.Federated, spec §12.3, #1580).
 	SkippedActivityNotFederated SkippedReason = "activity_not_federated"
+	// SkippedProfileNotNegotiated: the activity is profile-gated (an
+	// aa:Share / aa:Unshare needs share-lifecycle-1, #1571) and the
+	// recipient peer's stored intersection lacks the profile. Nothing is
+	// queued for that peer (spec §12.3, §16.3).
+	SkippedProfileNotNegotiated SkippedReason = "profile_not_negotiated"
+	// SkippedShareNotFound: a share activity whose share row no longer
+	// exists (its peer was removed, which cascades the row), or that
+	// names none. There is nobody to address.
+	SkippedShareNotFound SkippedReason = "share_not_found"
 
 	// 1.22.I-d per-recipient capability gate. Emitted by
 	// federation.emission.skipped when a recipient peer hasn't
@@ -160,6 +171,12 @@ type Input struct {
 	// tiers.
 	TargetKind string
 	TargetID   uuid.UUID
+
+	// ShareID is the federation_shares row an aa:Share / aa:Unshare is
+	// about (its payload's share_id). A share activity is addressed to
+	// exactly that share's peer and recipient, never to every peer that
+	// happens to hold a share of the same object (#1571).
+	ShareID uuid.UUID
 
 	// AuthorRef + AuthorURI describe the local actor. The
 	// follows.by_actor cache uses AuthorRef for follower-tier
@@ -283,10 +300,17 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 		return Result{Skipped: SkippedEncryptionRequiredButNotSupported}, nil
 	}
 
-	// Verb short-circuits: verbs that never federate at all
-	// drop here. Currently empty — every verb in the v1
-	// catalogue federates somewhere. Kept as a hook so future
-	// local-only verbs can opt out without touching callers.
+	// Share lifecycle (#1571): addressed by the share row, never by the
+	// object's visibility tier. The share row IS the audience: an
+	// explicit grant its owner (or system.admin) made to that one peer
+	// and recipient, checked when it was made. Visibility is a local
+	// read tier, and only posts have one (an asset or collection
+	// resolves to private), so gating on it would drop every asset
+	// share; and an aa:Unshare that is not delivered leaves a live grant
+	// at the peer. The sensitivity refusal above still applies to both.
+	if isShareVerb(in.Verb) {
+		return r.shareRecipient(ctx, in)
+	}
 
 	switch in.Visibility {
 	case VisibilityPrivate, VisibilityOrgOnly:
@@ -334,6 +358,68 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	// without a case above) stays an error: guessing an audience for
 	// an unknown tier could leak content.
 	return Result{}, fmt.Errorf("unsupported visibility: %q", in.Visibility)
+}
+
+func isShareVerb(v string) bool {
+	switch federation.ActivityType(v) {
+	case federation.ActivityAAShare, federation.ActivityAAUnshare, federation.ActivityAARevokeShare:
+		return true
+	}
+	return false
+}
+
+// shareRecipient resolves a share activity to its share row's peer and
+// recipient, read live: the peer enabled and connected, and
+// share-lifecycle-1 in its stored intersection, or the recipient is
+// skipped with profile_not_negotiated (audited per peer). The share row
+// is read whether or not it has been revoked since: the aa:Unshare needs
+// it, and an aa:Share followed by its aa:Unshare is applied in order by
+// the receiver from their references.
+func (r *Resolver) shareRecipient(ctx context.Context, in Input) (Result, error) {
+	if in.ShareID == (uuid.UUID{}) {
+		// Not an error: a resolver error rolls the whole batch back and
+		// stalls every activity behind it (#1233). Nobody to address.
+		return Result{Skipped: SkippedShareNotFound}, nil
+	}
+	var (
+		peerID      pgtype.UUID
+		targetURL   string
+		scope       string
+		encryption  string
+		usable      bool
+		hasLifecyle bool
+	)
+	err := r.pool.QueryRow(ctx, `
+		SELECT s.peer_id, COALESCE(s.target_user_url, ''), s.scope, p.encryption_policy,
+		       (p.enabled AND p.status = 'connected'),
+		       p.capabilities ? $2
+		  FROM federation_shares s
+		  JOIN federation_peers p ON p.id = s.peer_id
+		 WHERE s.id = $1
+	`, in.ShareID, federation.ProfileShareLifecycle1).Scan(&peerID, &targetURL, &scope, &encryption, &usable, &hasLifecyle)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Result{Skipped: SkippedShareNotFound}, nil
+	}
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve share recipient: %w", err)
+	}
+	if !usable {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	id := uuid.UUID(peerID.Bytes)
+	if !hasLifecyle {
+		if r.emissionSkippedForPeer != nil {
+			r.emissionSkippedForPeer(ctx, id, SkippedProfileNotNegotiated, in.Verb)
+		}
+		return Result{Skipped: SkippedProfileNotNegotiated}, nil
+	}
+	recipients := r.applyCapabilityGate(ctx, in, []Recipient{{
+		PeerID: id, TargetUserURL: targetURL, Scope: scope, EncryptionTier: encryption,
+	}})
+	if len(recipients) == 0 {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	return Result{Recipients: recipients}, nil
 }
 
 // applyCapabilityGate (Phase 1.22.I-d) filters out recipients

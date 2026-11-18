@@ -129,6 +129,10 @@ func TestCheckDuplicateMembers(t *testing.T) {
 	}
 }
 
+// lifecycleOnly: the recipient negotiated share-lifecycle-1 and nothing
+// else.
+func lifecycleOnly(token string) bool { return token == federation.ProfileShareLifecycle1 }
+
 func wireNames(m map[string]json.RawMessage) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -142,7 +146,8 @@ func wireNames(m map[string]json.RawMessage) []string {
 // members or refused as not federated; nothing passes through as is.
 func TestWireMembers(t *testing.T) {
 	share := `{"share_id":"s","object_kind":"post","object_id":"o","object_uri":"u","scope":"view","peer_url":"https://b.example",` +
-		`"target_user_url":"https://b.example/users/bob","expires_at":"2026-12-31T00:00:00Z","notes":"private","notes_private":true}`
+		`"target_user_url":"https://b.example/users/bob","expires_at":"2026-12-31T00:00:00Z","notes":"private","notes_private":true,` +
+		`"previous_activity_uri":"https://a.example/activities/g1"}`
 	cases := []struct {
 		typ     federation.ActivityType
 		kind    string
@@ -155,7 +160,7 @@ func TestWireMembers(t *testing.T) {
 			[]string{"content", "inReplyTo", "object_type"}, false},
 		{federation.ActivityCreate, "comment", `{"object_type":"Note","content":"top-level"}`, []string{"content", "object_type"}, false},
 		{federation.ActivityAAShare, "post", share, []string{"expires_at", "object_kind", "scope", "target_peer", "target_user"}, false},
-		{federation.ActivityAAUnshare, "post", share, []string{"object_kind", "target_peer", "target_user"}, false},
+		{federation.ActivityAAUnshare, "post", share, []string{"aa:revokes", "object_kind", "target_peer", "target_user"}, false},
 		// Required member missing from the local payload.
 		{federation.ActivityCreate, "comment", `{"object_type":"Note"}`, nil, true},
 		{federation.ActivityAAShare, "post", `{"object_kind":"post","scope":"view"}`, nil, true},
@@ -179,7 +184,8 @@ func TestWireMembers(t *testing.T) {
 	// refused, never sent.
 	base := map[string]any{"share_id": "s", "object_kind": "post", "object_id": "o", "object_uri": "u",
 		"scope": "view", "peer_url": "https://b.example", "target_user_url": "https://b.example/users/bob",
-		"expires_at": "2026-12-31T00:00:00Z", "notes": "private", "notes_private": true}
+		"expires_at": "2026-12-31T00:00:00Z", "notes": "private", "notes_private": true,
+		"previous_activity_uri": "https://a.example/activities/g1"}
 	shareWith := func(k string, v any) string {
 		m := map[string]any{}
 		for kk, vv := range base {
@@ -218,13 +224,13 @@ func TestWireMembers(t *testing.T) {
 	} {
 		if got, err := federation.WireMembers(bad.typ, map[federation.ActivityType]string{
 			federation.ActivityCreate: "comment", federation.ActivityAAShare: "post", federation.ActivityAAUnshare: "post",
-		}[bad.typ], []byte(bad.payload)); !errors.Is(err, federation.ErrNotFederated) || !errors.Is(err, federation.ErrInvalidMember) {
+		}[bad.typ], []byte(bad.payload), lifecycleOnly); !errors.Is(err, federation.ErrNotFederated) || !errors.Is(err, federation.ErrInvalidMember) {
 			t.Errorf("%s %.80s: members %v, err %v; want ErrNotFederated wrapping ErrInvalidMember", bad.typ, bad.payload, wireNames(got), err)
 		}
 	}
 
 	for _, c := range cases {
-		got, err := federation.WireMembers(c.typ, c.kind, []byte(c.payload))
+		got, err := federation.WireMembers(c.typ, c.kind, []byte(c.payload), lifecycleOnly)
 		if c.wantErr {
 			if !errors.Is(err, federation.ErrNotFederated) {
 				t.Errorf("%s/%s: err %v, want ErrNotFederated", c.typ, c.kind, err)
@@ -313,6 +319,7 @@ func TestCompatV0111_CurrentSenderMeetsOldReceiver(t *testing.T) {
 				ObjectKind   string                     `json:"object_kind"`
 				LocalPayload json.RawMessage            `json:"local_payload"`
 				WireMembers  map[string]json.RawMessage `json:"wire_members"`
+				Sent         *bool                      `json:"sent"`
 				Receiver     struct {
 					Reads   []string `json:"reads"`
 					Applies bool     `json:"applies"`
@@ -321,7 +328,15 @@ func TestCompatV0111_CurrentSenderMeetsOldReceiver(t *testing.T) {
 			if err := json.Unmarshal(raw, &g); err != nil {
 				t.Fatal(err)
 			}
-			got, err := federation.WireMembers(federation.ActivityType(g.ActivityType), g.ObjectKind, g.LocalPayload)
+			// A v0.11.1 peer never negotiated any profile.
+			got, err := federation.WireMembers(federation.ActivityType(g.ActivityType), g.ObjectKind, g.LocalPayload, nil)
+			if g.Sent != nil && !*g.Sent {
+				// #1571: a profile-gated activity is not sent at all.
+				if !errors.Is(err, federation.ErrNotFederated) || !errors.Is(err, federation.ErrProfileNotNegotiated) {
+					t.Fatalf("%s to a v0.11.1 peer: members %v, err %v; want refused, profile_not_negotiated", g.ActivityType, wireNames(got), err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

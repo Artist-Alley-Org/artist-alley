@@ -20,3 +20,7 @@ The live two-stack gate is #1582.
   for `Like` and `Create` (a comment); every other verb went to a stub
   that marked the row processed without applying it. This models the
   v0.11.1 source; it does not run the old binary.
+- `current_sender_share.json` carries `"sent": false` instead of wire
+  members (#1571): `aa:Share` and `aa:Unshare` go only to a peer that
+  negotiated `share-lifecycle-1`, and no v0.11.1 peer does, so this
+  release sends that peer nothing for them (`profile_not_negotiated`).

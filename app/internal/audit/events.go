@@ -336,6 +336,13 @@ const (
 	EventFederationCASFetched     = "federation.cas.fetched"
 	EventFederationCASFetchFailed = "federation.cas.fetch_failed"
 
+	// #1571 inbound grants (receiver). Applied: an aa:Share recorded,
+	// live or ended on arrival, with its outcome. Ended: a live grant
+	// ended by aa:Unshare, a supersede or a fail-closed ambiguity. Both
+	// written in the grant transaction; no acting local user.
+	EventFederationInboundGrantApplied = "federation.inbound_grant.applied"
+	EventFederationInboundGrantEnded   = "federation.inbound_grant.ended"
+
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side
 	// script the seed agent owns. Visible in the admin audit

@@ -240,6 +240,9 @@ type staticPeerLookup struct {
 	pubKey    ed25519.PublicKey
 	enabled   bool
 	connected bool
+	// capabilities is the stored negotiated intersection (#1571 tests
+	// set share-lifecycle-1); nil for every older test.
+	capabilities []string
 }
 
 func (l *staticPeerLookup) ByKeyID(_ context.Context, keyID string) (inbox.PeerInfo, error) {
@@ -252,6 +255,7 @@ func (l *staticPeerLookup) ByKeyID(_ context.Context, keyID string) (inbox.PeerI
 		InstancePublicKey: l.pubKey,
 		Enabled:           l.enabled,
 		Connected:         l.connected,
+		Capabilities:      l.capabilities,
 	}, nil
 }
 

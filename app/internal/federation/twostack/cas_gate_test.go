@@ -7,13 +7,16 @@
 // Two test-only stand-ins, both labelled where they are installed:
 //
 //   - TEST-ONLY ADVERTISEMENT. original-transfer-1 is not in
-//     peer.KnownCapabilities in production (it waits for #1571 and
-//     #1574). The gate adds it for the duration of the test, BEFORE the
-//     real handshake, so the profile is negotiated by the production
+//     peer.KnownCapabilities in production (it waits for #1574). The
+//     gate adds it for the duration of the test, BEFORE the real
+//     handshake, so the profile is negotiated by the production
 //     handshake code rather than written into a row.
-//   - TEST-ONLY INBOUND GRANT RECORD. The receiver's inbound model is
-//     #1571; production uses casfetch.FailClosedInboundGrants, which
-//     refuses everything. fixtureInbound stands in for it here.
+//   - TEST-ONLY INBOUND GRANT ANSWER. These tests are about the origin
+//     (#72, #1573), so the receiver's own decision is scripted
+//     (fixtureInbound). The receiver's real record (#1571,
+//     casfetch.DatabaseGrants over inboundgrants.Store, the production
+//     wiring) is exercised end to end in grants_gate_test.go and in
+//     TestTwoStack_CAS_ProductionReceiverNeedsItsOwnRecord below.
 //
 // Everything else is production: http.New on each database, the root
 // CAS route and the #1573 policy on A, the casfetch client with B's
@@ -35,19 +38,21 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/casfetch"
 	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
+	"github.com/mscrnt/artist-alley/app/internal/federation/inboundgrants"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 )
 
-// fixtureInbound is the TEST-ONLY INBOUND GRANT RECORD standing in for
-// #1571. allow=false refuses every query.
+// fixtureInbound is the TEST-ONLY INBOUND GRANT ANSWER for the origin
+// tests. allow=false refuses every query.
 type fixtureInbound struct {
 	mu    sync.Mutex
 	allow bool
@@ -60,6 +65,11 @@ func (f *fixtureInbound) Allows(context.Context, casfetch.GrantQuery) error {
 		return casfetch.ErrNoInboundGrant
 	}
 	return nil
+}
+
+// AllowsTx answers like Allows: the fixture holds no rows.
+func (f *fixtureInbound) AllowsTx(ctx context.Context, _ pgx.Tx, q casfetch.GrantQuery) error {
+	return f.Allows(ctx, q)
 }
 
 func (f *fixtureInbound) set(v bool) { f.mu.Lock(); f.allow = v; f.mu.Unlock() }
@@ -544,17 +554,20 @@ func TestTwoStack_CAS(t *testing.T) {
 	})
 }
 
-// Production stays fail-closed on receiving: the server's own client
-// configuration (no fixture) refuses with no_inbound_grant even between
-// negotiated, granted instances.
-func TestTwoStack_CAS_ProductionReceiverIsFailClosed(t *testing.T) {
+// The production receiver needs its OWN record of the grant: with the
+// production wiring (casfetch.DatabaseGrants over B's inbound grant
+// record) and no aa:Share applied on B (the instances' workers are not
+// running here, so nothing is delivered), a fetch the origin would
+// serve is refused by B with no_inbound_grant, and nothing is held.
+func TestTwoStack_CAS_ProductionReceiverNeedsItsOwnRecord(t *testing.T) {
 	g := newCASGate(t)
 	o := g.newOriginal("public")
 	g.grant(o, g.peerBonA, "")
 	cl := casfetch.New(casfetch.Deps{
 		Pool: g.b.pool, Storage: g.storageOf(g.b), Peers: peerLookupB{g},
-		Grants: casfetch.FailClosedInboundGrants{}, Transport: g.tr,
-		Config: casfetch.Config{TempDir: t.TempDir(), LocalBaseURL: func(context.Context) string { return g.b.url }},
+		Grants:    casfetch.DatabaseGrants{Store: inboundgrants.New(g.b.pool, func(context.Context) string { return g.b.url }, nil, nil)},
+		Transport: g.tr,
+		Config:    casfetch.Config{TempDir: t.TempDir(), LocalBaseURL: func(context.Context) string { return g.b.url }},
 	})
 	_, err := cl.Fetch(context.Background(), g.req(o, g.signerB))
 	wantReason(t, err, casfetch.ReasonNoInboundGrant)

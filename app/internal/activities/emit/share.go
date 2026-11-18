@@ -33,6 +33,15 @@ type ShareRef struct {
 	Scope         federation.ShareScope
 	ExpiresAt     *time.Time
 	Notes         string
+	// SupersedesActivityURI is the aa:Share activity URI of the previous
+	// share of the same grant tuple (grantor, object, peer, recipient),
+	// "" for a tuple's first share. Sent as aa:supersedes under
+	// share-lifecycle-1 so the receiver orders grants by reference,
+	// never by clock (#1571).
+	SupersedesActivityURI string
+	// AllowOriginal is the share's original-file grant (#1573). Sent as
+	// aa:originalTransfer only to a peer with original-transfer-1.
+	AllowOriginal bool
 }
 
 // Share emits an aa:Share activity per ADR 0043 §"Custom activity
@@ -78,6 +87,12 @@ func Share(actor ActorContext, ref ShareRef) Emission {
 	if ref.ExpiresAt != nil {
 		payload["expires_at"] = ref.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
+	if ref.SupersedesActivityURI != "" {
+		payload["supersedes_activity_uri"] = ref.SupersedesActivityURI
+	}
+	if ref.AllowOriginal {
+		payload["allow_original"] = true
+	}
 	if ref.Notes != "" {
 		// Notes are operator-private — DON'T emit them on the
 		// wire. We carry them in the local activity row's payload
@@ -113,15 +128,13 @@ func Share(actor ActorContext, ref ShareRef) Emission {
 }
 
 // Unshare emits an aa:Unshare activity per AP §6.4 (Tombstone
-// semantics) + the design §4.1. originalShareActivityURI is kept in
-// the local payload as previous_activity_uri for the audit record;
-// both production callers (shares/admin.go, shares/regrant.go) pass
-// "" today, and it is not a v1 wire member (spec §7.5.2). On the
-// wire an aa:Unshare names the share by its tuple (object_kind,
-// object, target_peer, target_user), not by the grant it revokes, so
-// a receiver cannot tell a delayed revoke from one meant for a later
-// re-grant of the same tuple. A stable grant identity and revoke
-// ordering are #1571.
+// semantics) + the design §4.1. originalShareActivityURI is the
+// activity URI of the aa:Share being ended, kept in the local payload
+// as previous_activity_uri and sent as aa:revokes under
+// share-lifecycle-1 (spec §16.6, #1571), so the receiver ends exactly
+// that grant whatever order the two arrive in. The delivery worker
+// refuses an aa:Unshare without it, never sending one that cannot name
+// its grant.
 //
 // Per the locked-in answer §12.5 #3: aa:RevokeShare is reserved
 // for forward-compat but v1 emits only aa:Unshare. Receivers

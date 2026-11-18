@@ -168,25 +168,44 @@ func TestAdminGrant_AllowOriginalOnMissingAsset404(t *testing.T) {
 	}
 }
 
-// The aa:Share activity carries no original-transfer member: peers that
-// predate the profile see exactly the share they saw before.
-func TestAdminGrant_AllowOriginalNotOnTheWire(t *testing.T) {
+// The original-file grant travels only to a peer that negotiated
+// original-transfer-1 (#1571), as aa:originalTransfer. The local aa:Share
+// record keeps it (allow_original, the audit payload), and every other
+// peer is sent the share without it: no member named for it, and the
+// origin refuses every original fetch from such a peer anyway.
+func TestAdminGrant_AllowOriginalOnTheWireOnlyWithTheProfile(t *testing.T) {
 	fx := newAdminFixture(t)
 	asset := fx.newOriginalAsset(t, fx.grantorRef, "public", origHash(t))
 	if _, ok := fx.grant(t, federation.ShareObjectKindAsset, asset, boolPtr(true)).(openapi.GrantFederationShare201JSONResponse); !ok {
 		t.Fatal("grant refused")
 	}
-	var payload string
+	var payload []byte
 	if err := fx.pool.QueryRow(context.Background(),
-		`SELECT payload::text FROM activities
+		`SELECT payload FROM activities
 		  WHERE activity_type = 'aa:Share' AND actor_user_ref = $1 AND payload::text LIKE '%' || $2 || '%'`,
 		fx.grantorRef, asset.String()).Scan(&payload); err != nil {
 		t.Fatalf("read aa:Share: %v", err)
 	}
-	for _, member := range []string{"allow_original", "allowOriginal", "originalTransfer"} {
-		if strings.Contains(payload, member) {
-			t.Errorf("aa:Share payload carries %q: %s", member, payload)
+	lifecycle := func(t string) bool { return t == federation.ProfileShareLifecycle1 }
+	both := func(t string) bool { return lifecycle(t) || t == federation.ProfileOriginalTransfer1 }
+	wire, err := federation.WireMembers(federation.ActivityAAShare, "asset", payload, lifecycle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range wire {
+		if strings.Contains(strings.ToLower(name), "original") {
+			t.Errorf("a peer without original-transfer-1 is sent %q", name)
 		}
+	}
+	wire, err = federation.WireMembers(federation.ActivityAAShare, "asset", payload, both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(wire[federation.MemberOriginalTransfer]) != "true" {
+		t.Errorf("with original-transfer-1: %s = %s, want true", federation.MemberOriginalTransfer, wire[federation.MemberOriginalTransfer])
+	}
+	if _, ok := wire["allow_original"]; ok {
+		t.Error("the local member name is on the wire")
 	}
 }
 

@@ -39,6 +39,7 @@ package outbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -330,10 +331,23 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 			targetKind = *row.ObjectKind
 		}
 
+		// A share activity names its share row (#1571); the resolver
+		// addresses it to that share's peer only.
+		var shareID uuid.UUID
+		if len(row.Payload) > 0 {
+			var p struct {
+				ShareID string `json:"share_id"`
+			}
+			if json.Unmarshal(row.Payload, &p) == nil {
+				shareID, _ = uuid.Parse(p.ShareID)
+			}
+		}
+
 		result, err := d.resolver.Resolve(ctx, Input{
 			Verb:        row.ActivityType,
 			TargetKind:  targetKind,
 			TargetID:    targetID,
+			ShareID:     shareID,
 			AuthorRef:   authorRef,
 			AuthorURI:   row.ActorUri,
 			Visibility:  vis,

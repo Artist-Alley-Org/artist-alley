@@ -519,6 +519,45 @@ type FederationDispatchState struct {
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 }
 
+// Grants a paired peer gave this instance (#1571), one row per applied aa:Share under share-lifecycle-1. Live or ended; ordered only by the signed aa:supersedes / aa:revokes references. Tuple (peer, grantor, object, recipient) has at most one live grant. Read on every authorisation (no positive cache), with expiry by this database clock and the peer enabled and connected. Ending a grant stops new access; it recalls nothing already delivered.
+type FederationInboundGrant struct {
+	ID               pgtype.UUID `json:"id"`
+	PeerID           pgtype.UUID `json:"peer_id"`
+	GrantActivityUri string      `json:"grant_activity_uri"`
+	GrantorActorUri  string      `json:"grantor_actor_uri"`
+	ObjectKind       string      `json:"object_kind"`
+	ObjectUri        string      `json:"object_uri"`
+	TargetUserUri    *string     `json:"target_user_uri"`
+	// The local user the grant is for, bound once at apply time from target_user_uri to the immutable user ref. NULL with target_user_uri NULL: any local user (peer-wide). NULL with target_user_uri set: the name did not resolve, so the grant is ended (recipient_unbound) and never activates.
+	RecipientUserRef      *int64             `json:"recipient_user_ref"`
+	Scope                 string             `json:"scope"`
+	AllowOriginal         bool               `json:"allow_original"`
+	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
+	SupersedesActivityUri *string            `json:"supersedes_activity_uri"`
+	State                 string             `json:"state"`
+	EndReason             *string            `json:"end_reason"`
+	EndedByActivityUri    *string            `json:"ended_by_activity_uri"`
+	ReceivedAt            pgtype.Timestamptz `json:"received_at"`
+	EndedAt               pgtype.Timestamptz `json:"ended_at"`
+}
+
+// Origin assets a peer's container (collection) holds, as that peer announced them (#1571 schema; written only by authenticated membership ingest, #1574). Empty until then: a container grant authorises a file only through a recorded membership.
+type FederationInboundMembership struct {
+	PeerID       pgtype.UUID        `json:"peer_id"`
+	ContainerUri string             `json:"container_uri"`
+	MemberUri    string             `json:"member_uri"`
+	RecordedAt   pgtype.Timestamptz `json:"recorded_at"`
+}
+
+// An aa:Share a peer revoked (aa:revokes) or superseded (aa:supersedes) before it arrived here (#1571). The grant is stored ended when it arrives, so a reordered delivery never grants.
+type FederationInboundTombstone struct {
+	PeerID           pgtype.UUID        `json:"peer_id"`
+	GrantActivityUri string             `json:"grant_activity_uri"`
+	Kind             string             `json:"kind"`
+	ByActivityUri    string             `json:"by_activity_uri"`
+	ReceivedAt       pgtype.Timestamptz `json:"received_at"`
+}
+
 // One row per inbound federation activity. Pipeline ingest persists status=pending; background worker transitions to processed/rejected/failed per §2.2 of the 1.22.D design proposal. activity_uri UNIQUE is the load-bearing replay guard.
 type FederationInbox struct {
 	ID                    pgtype.UUID        `json:"id"`
