@@ -19,11 +19,13 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/httpsig"
@@ -79,6 +81,14 @@ func (g *authzGate) actorOnB(name string) remoteActor {
 // A's HTTP answer.
 func (g *authzGate) send(actor remoteActor, typ, object string, members map[string]any) (string, int) {
 	g.t.Helper()
+	id, body := g.envelope(actor, typ, object, members)
+	return id, g.post(body)
+}
+
+// envelope builds and signs one activity from actor, returning its id
+// and its exact bytes.
+func (g *authzGate) envelope(actor remoteActor, typ, object string, members map[string]any) (string, []byte) {
+	g.t.Helper()
 	id := g.b.url + "/activities/" + uuid.NewString()
 	env := &federation.Envelope{Context: federation.ContextV1, Type: federation.ActivityType(typ), ID: id,
 		Actor: actor.uri, Object: object, Published: time.Now().UTC().Truncate(time.Second)}
@@ -96,10 +106,17 @@ func (g *authzGate) send(actor remoteActor, typ, object string, members map[stri
 	if err != nil {
 		g.t.Fatal(err)
 	}
-	return id, g.post(body)
+	return id, body
 }
 
 func (g *authzGate) post(body []byte) int {
+	g.t.Helper()
+	return g.postWith(g.signHeaders(body), body)
+}
+
+// signHeaders signs one delivery of body with B's instance key and
+// returns the request headers (Date, Digest, Signature, ...).
+func (g *authzGate) signHeaders(body []byte) http.Header {
 	g.t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, g.a.url+"/federation/inbox", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/activity+json")
@@ -107,6 +124,14 @@ func (g *authzGate) post(body []byte) int {
 	if err := httpsig.SignAndAttach(req, body, g.b.url+"/federation/instance#main-key", g.bPriv); err != nil {
 		g.t.Fatal(err)
 	}
+	return req.Header
+}
+
+// postWith POSTs body to A's inbox with exactly these headers.
+func (g *authzGate) postWith(h http.Header, body []byte) int {
+	g.t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, g.a.url+"/federation/inbox", bytes.NewReader(body))
+	req.Header = h.Clone()
 	resp, err := (&http.Client{Transport: g.tr, Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		g.t.Fatal(err)
@@ -180,6 +205,102 @@ func (g *authzGate) countOnA(sql string, args ...any) int {
 }
 
 func note(text string) map[string]any { return map[string]any{"object_type": "Note", "content": text} }
+
+// delivery is one signed activity exactly as it went over the wire: the
+// same activity id, envelope bytes and HTTP request headers (Date,
+// Digest, Signature), so resending it is a true replay, not a new
+// activity.
+type delivery struct {
+	id     string
+	body   []byte
+	header http.Header
+}
+
+// deliver signs and POSTs one activity, keeping it for replay.
+func (g *authzGate) deliver(actor remoteActor, typ, object string, members map[string]any) (delivery, int) {
+	g.t.Helper()
+	id, body := g.envelope(actor, typ, object, members)
+	d := delivery{id: id, body: body, header: g.signHeaders(body)}
+	return d, g.postWith(d.header, d.body)
+}
+
+// replay resends the identical delivery.
+func (g *authzGate) replay(d delivery) int {
+	g.t.Helper()
+	return g.postWith(d.header, d.body)
+}
+
+// inboxState is A's stored row for an activity: how many rows carry the
+// id, and the first row's status, reason, attempts and last attempt.
+func (g *authzGate) inboxState(activityURI string) string {
+	g.t.Helper()
+	var s string
+	if err := g.a.pool.QueryRow(context.Background(), `SELECT count(*) OVER () || ' ' || status || '/' || coalesce(reject_reason, '')
+		|| ' attempts=' || dispatch_attempts || ' last=' || coalesce(last_attempt_at::text, '-')
+		FROM federation_inbox WHERE activity_uri = $1`, activityURI).Scan(&s); err != nil {
+		g.t.Fatalf("inbox row %s: %v", activityURI, err)
+	}
+	return s
+}
+
+// commentsAndNotes counts A's comment rows for an activity and the
+// post-author notifications naming those comments.
+func (g *authzGate) commentsAndNotes(activityURI string) (rows, notes int) {
+	g.t.Helper()
+	rows = g.countOnA(`SELECT count(*) FROM comments WHERE activity_uri = $1`, activityURI)
+	notes = g.countOnA(`SELECT count(*) FROM notifications n JOIN comments c ON n.payload->>'comment_id' = c.id::text
+		WHERE n.verb = 'post.comment' AND c.activity_uri = $1`, activityURI)
+	return rows, notes
+}
+
+// settleFence sends an activity that A refuses without writing (its
+// target does not exist) and waits for it to settle: A's dispatcher has
+// run after everything sent before it.
+func (g *authzGate) settleFence(actor remoteActor) {
+	g.t.Helper()
+	id, _ := g.send(actor, "Like", g.a.url+"/posts/"+uuid.NewString(), nil)
+	if got := g.outcome(id); got != "rejected/unknown_object" {
+		g.t.Fatalf("fence: %s", got)
+	}
+}
+
+// waitBlocked waits until a backend on A's database whose query matches
+// like is waiting for a lock held by blocker, and returns its pid.
+func (g *authzGate) waitBlocked(like string, blocker int) int {
+	g.t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		var pid int
+		err := g.a.pool.QueryRow(context.Background(), `SELECT pid FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE $1
+			  AND $2::int = ANY (pg_blocking_pids(pid)) LIMIT 1`, like, blocker).Scan(&pid)
+		if err == nil {
+			return pid
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	g.t.Fatalf("no backend running %q waited on pid %d", like, blocker)
+	return 0
+}
+
+// revokeAsync revokes a share through A's admin API from a goroutine
+// and delivers the HTTP status (or -1 on a transport error).
+func (g *authzGate) revokeAsync(id string) <-chan int {
+	out := make(chan int, 1)
+	req, _ := http.NewRequest(http.MethodDelete, g.a.url+"/api/v1/admin/federation/shares/"+id, nil)
+	req.Header.Set("Authorization", "Bearer "+g.a.token)
+	go func() {
+		resp, err := (&http.Client{Transport: g.tr, Timeout: 60 * time.Second}).Do(req)
+		if err != nil {
+			out <- -1
+			return
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		out <- resp.StatusCode
+	}()
+	return out
+}
 
 func TestTwoStack_InboundAuthorization(t *testing.T) {
 	g := newAuthzGate(t)
@@ -356,5 +477,236 @@ func TestTwoStack_InboundAuthorization(t *testing.T) {
 			t.Fatalf("only %d processed; the first half was applied before the revoke", processed)
 		}
 		t.Logf("%d of %d comments landed (%d before the revoke, %d of the racing half)", processed, n, n/2, processed-n/2)
+	})
+
+	t.Run("exact replay: the stored row answers, one comment, one notification, live and after the revoke", func(t *testing.T) {
+		post, uri := g.newPost()
+		sid := g.share("post", post, "comment", "")
+		c, code := g.deliver(bob, "Create", uri, note("replayed"))
+		if code != http.StatusAccepted {
+			t.Fatalf("first delivery: %d", code)
+		}
+		if got := g.outcome(c.id); got != "processed" {
+			t.Fatalf("first delivery: %s", got)
+		}
+		stored := g.inboxState(c.id)
+		// The identical request (same id, bytes and signature headers)
+		// is answered from the stored row; it is not re-applied.
+		if code := g.replay(c); code != http.StatusOK {
+			t.Fatalf("live replay: %d, want 200 from the stored row", code)
+		}
+		g.settleFence(bob)
+		if got := g.inboxState(c.id); got != stored {
+			t.Fatalf("live replay changed the stored row: %s, was %s", got, stored)
+		}
+		if rows, notes := g.commentsAndNotes(c.id); rows != 1 || notes != 1 {
+			t.Fatalf("live replay: %d comments, %d notifications", rows, notes)
+		}
+		// After the revoke the same delivery still gets the stored answer,
+		// and nothing is applied, undone or re-decided.
+		g.revokeShare(sid)
+		if code := g.replay(c); code != http.StatusOK {
+			t.Fatalf("replay after the revoke: %d", code)
+		}
+		g.settleFence(bob)
+		if got := g.inboxState(c.id); got != stored {
+			t.Fatalf("replay after the revoke changed the stored row: %s, was %s", got, stored)
+		}
+		if rows, notes := g.commentsAndNotes(c.id); rows != 1 || notes != 1 {
+			t.Fatalf("replay after the revoke: %d comments, %d notifications", rows, notes)
+		}
+		// A refused activity replays as itself too, and the replay answer
+		// does not tell the sender whether the target exists.
+		unshared, _ := g.deliver(bob, "Create", uri, note("after the revoke"))
+		missing, _ := g.deliver(bob, "Create", g.a.url+"/posts/"+uuid.NewString(), note("no such post"))
+		if got := g.outcome(unshared.id); got != "rejected/unshared_object" {
+			t.Fatalf("unshared: %s", got)
+		}
+		if got := g.outcome(missing.id); got != "rejected/unknown_object" {
+			t.Fatalf("missing: %s", got)
+		}
+		su, sm := g.inboxState(unshared.id), g.inboxState(missing.id)
+		cu, cm := g.replay(unshared), g.replay(missing)
+		if cu != http.StatusOK || cm != cu {
+			t.Fatalf("replay answers: unshared %d, missing %d", cu, cm)
+		}
+		g.settleFence(bob)
+		if got := g.inboxState(unshared.id); got != su {
+			t.Fatalf("unshared replay: %s, was %s", got, su)
+		}
+		if got := g.inboxState(missing.id); got != sm {
+			t.Fatalf("missing replay: %s, was %s", got, sm)
+		}
+		if n := g.countOnA(`SELECT count(*) FROM comments WHERE target_id = $1`, post); n != 1 {
+			t.Fatalf("%d comments on the post", n)
+		}
+		if n := g.countOnA(`SELECT count(*) FROM notifications WHERE verb = 'post.comment' AND target_id = $1`, post.String()); n != 1 {
+			t.Fatalf("%d comment notifications on the post", n)
+		}
+	})
+
+	t.Run("a write holding the grant row lock lands wholly before a competing revoke", func(t *testing.T) {
+		ctx := context.Background()
+		post, uri := g.newPost()
+		sid := g.share("post", post, "comment", "")
+		// Test fixture on A's disposable database: hold every comment
+		// insert, so A's write transaction stops after its authorisation
+		// has locked the share row FOR SHARE and before it inserts.
+		hold, err := g.a.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		released := false
+		release := func() {
+			if !released {
+				released = true
+				_ = hold.Rollback(ctx)
+			}
+		}
+		t.Cleanup(release)
+		var holdPID int
+		if err := hold.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&holdPID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := hold.Exec(ctx, `LOCK TABLE comments IN SHARE MODE`); err != nil {
+			t.Fatal(err)
+		}
+		held, _ := g.send(bob, "Create", uri, note("held"))
+		writer := g.waitBlocked("%INSERT INTO comments%", holdPID)
+		// The revoke's UPDATE of the share row now waits for the writer,
+		// which holds that row FOR SHARE.
+		revoked := g.revokeAsync(sid)
+		g.waitBlocked("%UPDATE federation_shares%", writer)
+		// A second write arrives while the revoke waits.
+		behind, _ := g.send(bob, "Create", uri, note("behind the revoke"))
+		select {
+		case st := <-revoked:
+			t.Fatalf("the revoke finished (%d) while the write held the share row", st)
+		case <-time.After(300 * time.Millisecond):
+		}
+		if n := g.countOnA(`SELECT count(*) FROM comments WHERE target_id = $1`, post); n != 0 {
+			t.Fatalf("%d comments before the held write committed", n)
+		}
+		release()
+		select {
+		case st := <-revoked:
+			if st != http.StatusNoContent {
+				t.Fatalf("revoke: %d", st)
+			}
+		case <-time.After(60 * time.Second):
+			t.Fatal("the revoke never finished")
+		}
+		if got := g.outcome(held); got != "processed" {
+			t.Fatalf("held write: %s", got)
+		}
+		if rows, notes := g.commentsAndNotes(held); rows != 1 || notes != 1 {
+			t.Fatalf("held write: %d comments, %d notifications", rows, notes)
+		}
+		// The write queued behind the revoke either landed wholly before
+		// it or was refused; with the revoke committed, the next is refused.
+		behindOutcome := g.outcome(behind)
+		after, _ := g.send(bob, "Create", uri, note("after"))
+		if got := g.outcome(after); got != "rejected/unshared_object" {
+			t.Fatalf("after the revoke: %s", got)
+		}
+		want := map[string]int{held: 1, behind: 0, after: 0}
+		switch behindOutcome {
+		case "processed":
+			want[behind] = 1
+		case "rejected/unshared_object":
+		default:
+			t.Fatalf("write behind the revoke: %s", behindOutcome)
+		}
+		for id, n := range want {
+			if rows, notes := g.commentsAndNotes(id); rows != n || notes != n {
+				t.Fatalf("%s: %d comments, %d notifications, want %d", id, rows, notes, n)
+			}
+		}
+		if n := g.countOnA(`SELECT count(*) FROM comments WHERE target_id = $1`, post); n != want[held]+want[behind] {
+			t.Fatalf("%d comments on the post", n)
+		}
+		t.Logf("held write processed before the revoke; the write behind it: %s", behindOutcome)
+	})
+
+	t.Run("a failed grant lookup writes nothing; the same activity applies on retry", func(t *testing.T) {
+		ctx := context.Background()
+		post, uri := g.newPost()
+		g.share("post", post, "comment", "")
+		// Fault fixture on A's disposable database only: the share table
+		// is renamed away, so the authorisation's share lookup fails
+		// with a database error (the target and peer lookups still work).
+		rename := func(from, to string) {
+			t.Helper()
+			if err := pgx.BeginFunc(ctx, g.a.pool, func(tx pgx.Tx) error {
+				if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '10s'`); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx, `ALTER TABLE `+from+` RENAME TO `+to)
+				return err
+			}); err != nil {
+				t.Fatalf("rename %s: %v", from, err)
+			}
+		}
+		rename("federation_shares", "federation_shares_r1570_fault")
+		restored := false
+		restore := func() {
+			if !restored {
+				restored = true
+				rename("federation_shares_r1570_fault", "federation_shares")
+			}
+		}
+		t.Cleanup(restore)
+		c, code := g.deliver(bob, "Create", uri, note("retried"))
+		if code != http.StatusAccepted {
+			t.Fatalf("receipt during the fault: %d", code)
+		}
+		// A's dispatcher tries it, fails, and keeps it pending.
+		deadline := time.Now().Add(30 * time.Second)
+		var status, lastErr string
+		var attempts int
+		for {
+			if err := g.a.pool.QueryRow(ctx, `SELECT status, dispatch_attempts, coalesce(last_error, '')
+				FROM federation_inbox WHERE activity_uri = $1`, c.id).Scan(&status, &attempts, &lastErr); err != nil {
+				t.Fatal(err)
+			}
+			if attempts > 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("A never attempted the activity")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if status != "pending" || !strings.Contains(lastErr, "federation_shares") {
+			t.Fatalf("after the failed lookup: %s, attempts %d, last error %q; want pending on the share lookup", status, attempts, lastErr)
+		}
+		// The same delivery replayed during the fault: the stored row
+		// answers; still nothing written.
+		if code := g.replay(c); code != http.StatusOK {
+			t.Fatalf("replay during the fault: %d", code)
+		}
+		if rows, notes := g.commentsAndNotes(c.id); rows != 0 || notes != 0 {
+			t.Fatalf("during the fault: %d comments, %d notifications", rows, notes)
+		}
+		t.Logf("during the fault: pending after %d attempt(s): %s", attempts, lastErr)
+		restore()
+		// A's own retry (its dispatcher's backstop tick) applies the SAME
+		// activity, once.
+		if got := g.outcome(c.id); got != "processed" {
+			t.Fatalf("after the lookup works again: %s", got)
+		}
+		if rows, notes := g.commentsAndNotes(c.id); rows != 1 || notes != 1 {
+			t.Fatalf("after the retry: %d comments, %d notifications", rows, notes)
+		}
+		if n := g.countOnA(`SELECT dispatch_attempts FROM federation_inbox WHERE activity_uri = $1`, c.id); n <= attempts {
+			t.Fatalf("processed at attempt %d, not after the failed attempt(s) %d", n, attempts)
+		}
+		if code := g.replay(c); code != http.StatusOK {
+			t.Fatalf("replay after the retry: %d", code)
+		}
+		g.settleFence(bob)
+		if rows, notes := g.commentsAndNotes(c.id); rows != 1 || notes != 1 {
+			t.Fatalf("after the retry and a replay: %d comments, %d notifications", rows, notes)
+		}
 	})
 }
