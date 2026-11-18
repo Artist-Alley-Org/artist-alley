@@ -30,11 +30,12 @@ func TestWireObject(t *testing.T) {
 			t.Errorf("%s: object %q, err %v; want refused", bad, got, err)
 		}
 	}
-	// Every other activity keeps its own object.
+	// Every other activity keeps its own object (a Like takes its
+	// target's, #1611: TestWireObject_Like).
 	for _, c := range []struct {
 		typ  federation.ActivityType
 		kind string
-	}{{federation.ActivityLike, "post"}, {federation.ActivityAAShare, "post"}, {federation.ActivityCreate, "post"}} {
+	}{{federation.ActivityAAShare, "post"}, {federation.ActivityCreate, "post"}} {
 		if got, err := federation.WireObject(c.typ, c.kind, "https://a.example/posts/p1", []byte(`{"target_uri":"https://x.example/y"}`)); err != nil || got != "https://a.example/posts/p1" {
 			t.Errorf("%s/%s: %q, %v", c.typ, c.kind, got, err)
 		}

@@ -1369,7 +1369,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// backstop. Started in Server.Run alongside the inbox
 	// dispatcher. Built by newOutboxDispatcher so tests exercise
 	// exactly this wiring (#1525).
-	s.outboxDispatcher = newOutboxDispatcher(pool, cacheReg, s.peers, auditRec, logger)
+	s.outboxDispatcher = newOutboxDispatcher(pool, cacheReg, s.peers, s.inboundGrants, auditRec, logger)
 
 	// Federation user-keys retained-row sweeper (Phase 1.22.I-h).
 	// Reaps federation_user_keys rows past their retained_until
@@ -2078,9 +2078,24 @@ func outboxSensitivityLookup(pool *pgxpool.Pool) outbox.SensitivityLookup {
 // E2E and whose key we hold. Whether one delivery is encrypted,
 // sent in plaintext or refused is decided per recipient by the
 // delivery worker (wireOutboxDeliveryEncryption).
-func newOutboxDispatcher(pool *pgxpool.Pool, cacheReg *cache.Registry, peers *peer.Registry, auditRec *audit.Recorder, logger *slog.Logger) *outbox.Dispatcher {
+func newOutboxDispatcher(pool *pgxpool.Pool, cacheReg *cache.Registry, peers *peer.Registry, grants *inboundgrants.Store, auditRec *audit.Recorder, logger *slog.Logger) *outbox.Dispatcher {
 	resolver := outbox.NewResolver(pool, cacheReg,
 		func(context.Context) bool { return atrest.Initialised() })
+	// #1611: a Like of another instance's object is sent only under a
+	// live grant received from its owner covering the liking user. nil
+	// grants (a caller without the record) refuses every such Like.
+	if grants != nil {
+		resolver.SetReceivedGrants(func(ctx context.Context, peerID uuid.UUID, actorURI, objectURI string) (bool, error) {
+			_, err := grants.Allows(ctx, inboundgrants.Query{PeerID: peerID, ActorURI: actorURI, ObjectURI: objectURI})
+			switch {
+			case err == nil:
+				return true, nil
+			case errors.Is(err, inboundgrants.ErrNoGrant):
+				return false, nil
+			}
+			return false, err
+		})
+	}
 	// Phase 1.22.I-d capability gate. Dormant: no caller sets
 	// Input.RequiresEncryption, because the delivery worker makes
 	// the per-recipient decision at send time (it also sees a

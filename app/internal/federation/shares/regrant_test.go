@@ -405,7 +405,10 @@ func TestRegrant_TwoInstances_GateAndOutboxFollowTheLiveRow(t *testing.T) {
 	recipients := func() []outbox.Recipient {
 		t.Helper()
 		r, err := resolver.Resolve(context.Background(), outbox.Input{
-			Verb: "Like", TargetKind: "post", TargetID: objectID, AuthorRef: fx.grantorRef,
+			// A verb routed by the explicit-share tier: since #1611 a Like
+			// has its own route (the liked object's owner, under a received
+			// grant), so it no longer exercises this one.
+			Verb: "Announce", TargetKind: "post", TargetID: objectID, AuthorRef: fx.grantorRef,
 			Visibility: outbox.VisibilityExplicitShare, Sensitivity: outbox.SensitivityPublic,
 		})
 		if err != nil {

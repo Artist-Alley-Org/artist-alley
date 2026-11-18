@@ -266,13 +266,18 @@ func (tp *twoPeers) worker(recipientPub []byte) *outbox.Worker {
 func (tp *twoPeers) queueLike(actorURI string) (string, uuid.UUID) {
 	tp.t.Helper()
 	uri := tp.srvA.URL + "/activities/" + uuid.NewString()
+	// A Like names its target on B explicitly (#1611), as an absolute
+	// https URI (§7.5.4). The plain-HTTP fixture servers have none, so
+	// the https form of B's address is used; B's inbox matches the
+	// object to itself by host.
+	target := "https://" + strings.TrimPrefix(strings.TrimPrefix(tp.srvB.URL, "https://"), "http://") + "/posts/" + tp.postID.String()
 	var id uuid.UUID
 	if err := tp.pool.QueryRow(tp.ctx,
 		`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
 		    object_uri, object_kind, object_local_id, to_uris, payload)
-		 VALUES ($1, 'Like', $2, $3, $4, 'post', $5, '[]'::jsonb, '{"content":"like-marker"}'::jsonb)
+		 VALUES ($1, 'Like', $2, $3, $4, 'post', $5, '[]'::jsonb, jsonb_build_object('content', 'like-marker', 'target_uri', $4::text))
 		 RETURNING id`,
-		uri, actorURI, tp.aliceRef, tp.srvB.URL+"/posts/"+tp.postID.String(), tp.postID.String(),
+		uri, actorURI, tp.aliceRef, target, tp.postID.String(),
 	).Scan(&id); err != nil {
 		tp.t.Fatalf("seed activity: %v", err)
 	}
