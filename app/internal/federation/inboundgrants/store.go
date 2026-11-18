@@ -64,10 +64,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
@@ -465,6 +467,7 @@ func (s *Store) writeAudit(ctx context.Context, tx pgx.Tx, event string, meta ma
 
 // queryer is a pool or a transaction.
 type queryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
@@ -507,11 +510,19 @@ func (s *Store) allows(ctx context.Context, db queryer, q Query, lock bool) (uui
 		}
 		userRef = &ref
 	}
-	sql := `SELECT g.id FROM federation_inbound_grants g
+	// Two steps, so expiry is judged by a clock read AFTER any wait for
+	// the grant rows (#1571 review): the candidates that match every rule
+	// except expiry (locked FOR SHARE in AllowsTx; that statement is where
+	// a concurrent end makes it wait), then the database's current time,
+	// clock_timestamp(), read once that statement has returned. Neither
+	// now() (the transaction's START time) nor clock_timestamp() inside
+	// the locking statement would do: both can be evaluated before the
+	// wait. Candidates are bounded and ordered longest-lived first, so a
+	// live grant, if any covers the use, is among them.
+	sql := `SELECT g.id, g.expires_at FROM federation_inbound_grants g
 		JOIN federation_peers p ON p.id = g.peer_id
 		WHERE g.peer_id = $1 AND g.state = 'live'
 		  AND p.enabled AND p.status = 'connected'
-		  AND (g.expires_at IS NULL OR g.expires_at > now())
 		  AND (g.recipient_user_ref IS NULL AND g.target_user_uri IS NULL
 		       OR g.recipient_user_ref = $2)
 		  AND (g.object_uri = $3
@@ -521,18 +532,49 @@ func (s *Store) allows(ctx context.Context, db queryer, q Query, lock bool) (uui
 		  AND (NOT $4::boolean OR g.allow_original)
 		  AND array_position(ARRAY['view','comment','annotate','remix'], g.scope)
 		      >= array_position(ARRAY['view','comment','annotate','remix'], $5::text)
-		ORDER BY g.id
-		LIMIT 1`
+		ORDER BY g.expires_at DESC NULLS FIRST, g.id
+		LIMIT ` + strconv.Itoa(maxCandidates)
 	if lock {
 		sql += ` FOR SHARE OF g`
 	}
-	var id uuid.UUID
-	err := db.QueryRow(ctx, sql, q.PeerID, userRef, q.ObjectURI, q.Class == ClassOriginal, string(minScope)).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.UUID{}, ErrNoGrant
-	}
+	rows, err := db.Query(ctx, sql, q.PeerID, userRef, q.ObjectURI, q.Class == ClassOriginal, string(minScope))
 	if err != nil {
 		return uuid.UUID{}, fmt.Errorf("inboundgrants: allows: %w", err)
 	}
-	return id, nil
+	type candidate struct {
+		id      uuid.UUID
+		expires pgtype.Timestamptz
+	}
+	var cands []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.expires); err != nil {
+			rows.Close()
+			return uuid.UUID{}, fmt.Errorf("inboundgrants: allows: %w", err)
+		}
+		cands = append(cands, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return uuid.UUID{}, fmt.Errorf("inboundgrants: allows: %w", err)
+	}
+	if len(cands) == 0 {
+		return uuid.UUID{}, ErrNoGrant
+	}
+	var now time.Time
+	if err := db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return uuid.UUID{}, fmt.Errorf("inboundgrants: allows: clock: %w", err)
+	}
+	for _, c := range cands {
+		if !c.expires.Valid || c.expires.Time.After(now) {
+			return c.id, nil
+		}
+	}
+	return uuid.UUID{}, fmt.Errorf("%w: every covering grant has expired", ErrNoGrant)
 }
+
+// maxCandidates bounds the grants one decision reads (and, in AllowsTx,
+// locks). At most one live grant exists per tuple (peer, grantor,
+// object, recipient), so this many covers every realistic overlap; they
+// are read longest-lived first.
+const maxCandidates = 16

@@ -511,3 +511,110 @@ func TestAllows_RefusesIncompleteOrUnknownQueries(t *testing.T) {
 		t.Fatalf("no peer: %v", err)
 	}
 }
+
+// AllowsTx judges expiry by the database clock AFTER it has waited for
+// and locked the grant row (#1571 review): a transaction that started
+// before the grant expired, then waited on that row's lock until after
+// it expired, is refused once the lock is released. A transaction-start
+// now() would admit it. The same wait with a grant that has not expired
+// still admits.
+func TestAllowsTx_ExpiryJudgedAfterTheGrantLock(t *testing.T) {
+	for _, expires := range []string{"soon", "later"} {
+		t.Run(expires, func(t *testing.T) {
+			f := newFx(t)
+			ctx := context.Background()
+			ttl := 2 * time.Second
+			if expires == "later" {
+				ttl = time.Hour
+			}
+			exp := time.Now().Add(ttl)
+			g := f.apply(f.share("g1", func(s *inboundgrants.Share) { s.ExpiresAt = &exp; s.AllowOriginal = true }))
+			if g.Outcome != inboundgrants.OutcomeLive {
+				t.Fatalf("grant: %+v", g)
+			}
+			var expiresAt time.Time
+			if err := f.pool.QueryRow(ctx, `UPDATE federation_inbound_grants SET expires_at = clock_timestamp() + $2::interval
+				WHERE id = $1 RETURNING expires_at`, g.GrantID, ttl.String()).Scan(&expiresAt); err != nil {
+				t.Fatal(err)
+			}
+
+			holder, err := f.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer holder.Rollback(ctx)
+			var one int
+			if err := holder.QueryRow(ctx, `SELECT 1 FROM federation_inbound_grants WHERE id = $1 FOR UPDATE`, g.GrantID).Scan(&one); err != nil {
+				t.Fatal(err)
+			}
+
+			writer, err := f.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer writer.Rollback(ctx)
+			var pid int
+			var started time.Time
+			if err := writer.QueryRow(ctx, `SELECT pg_backend_pid(), now()`).Scan(&pid, &started); err != nil {
+				t.Fatal(err)
+			}
+			if expires == "soon" && !started.Before(expiresAt) {
+				t.Fatalf("the transaction started at %s, not before the expiry %s", started, expiresAt)
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := f.store.AllowsTx(ctx, writer, inboundgrants.Query{PeerID: f.peerID, ObjectURI: f.asset("x"), Class: inboundgrants.ClassOriginal})
+				done <- err
+			}()
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				var waiting bool
+				if err := f.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock')`, pid).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("AllowsTx did not wait on the grant lock: %v", err)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("AllowsTx never waited on the grant lock")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			if expires == "soon" {
+				for {
+					var past bool
+					if err := f.pool.QueryRow(ctx, `SELECT clock_timestamp() > $1::timestamptz + interval '200 milliseconds'`, expiresAt).Scan(&past); err != nil {
+						t.Fatal(err)
+					}
+					if past {
+						break
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+			}
+			if err := holder.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			var got error
+			select {
+			case got = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("AllowsTx never finished")
+			}
+			if expires == "later" {
+				if got != nil {
+					t.Fatalf("a live grant refused after the wait: %v", got)
+				}
+				return
+			}
+			if !errors.Is(got, inboundgrants.ErrNoGrant) {
+				t.Fatalf("expired while waiting: %v, want refused", got)
+			}
+		})
+	}
+}
