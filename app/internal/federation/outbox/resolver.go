@@ -141,6 +141,12 @@ const (
 	// exists (its peer was removed, which cascades the row), or that
 	// names none. There is nobody to address.
 	SkippedShareNotFound SkippedReason = "share_not_found"
+	// SkippedNoReceivedGrant: a Like of another instance's object whose
+	// named owning peer is not an enabled, connected peer of that
+	// object's origin, or under whose grants (federation_inbound_grants)
+	// no live, unexpired grant covers the liking user at view scope or
+	// above (#1611). Nothing is queued.
+	SkippedNoReceivedGrant SkippedReason = "no_received_grant"
 
 	// 1.22.I-d per-recipient capability gate. Emitted by
 	// federation.emission.skipped when a recipient peer hasn't
@@ -178,12 +184,15 @@ type Input struct {
 	// happens to hold a share of the same object (#1571).
 	ShareID uuid.UUID
 
-	// CommentTarget is a comment Create's target_uri, the commented
-	// object on its origin, and RecipientActor its first `to` (the
-	// target's author there). A comment is addressed to exactly the
-	// target's origin peer (#1604); a comment on a local object has no
-	// other instance to go to.
-	CommentTarget  string
+	// TargetURI is a comment Create's or a Like's target_uri, the
+	// object on the instance that holds it, and RecipientActor the
+	// activity's first `to` (the target's author there). A comment is
+	// addressed to exactly the target's origin peer (#1604); a Like to
+	// exactly TargetPeerID, the owning peer its emitter named, under a
+	// live received grant (#1611). Either on a local object has no other
+	// instance to go to.
+	TargetURI      string
+	TargetPeerID   uuid.UUID
 	RecipientActor string
 
 	// AuthorRef + AuthorURI describe the local actor. The
@@ -249,7 +258,23 @@ type Resolver struct {
 	// 1.22.I-d per-recipient capability gate. Both nil-safe.
 	peerSupportsEncryption PeerSupportsEncryption
 	emissionSkippedForPeer EmissionSkippedForPeerHook
+
+	// receivedGrant answers whether a live grant this instance received
+	// from peerID covers actorURI's use of objectURI at view scope
+	// (#1611). nil refuses every Like of another instance's object.
+	receivedGrant ReceivedGrantLookup
 }
+
+// ReceivedGrantLookup reports whether this instance holds, from peerID,
+// a live grant covering actorURI (a local user) on objectURI at view
+// scope or above. A refusal is (false, nil); an error is a lookup
+// failure, which never authorises. Boot wires it to
+// inboundgrants.Store.Allows.
+type ReceivedGrantLookup func(ctx context.Context, peerID uuid.UUID, actorURI, objectURI string) (bool, error)
+
+// SetReceivedGrants installs the received-grant check for Likes of
+// another instance's objects (#1611).
+func (r *Resolver) SetReceivedGrants(f ReceivedGrantLookup) { r.receivedGrant = f }
 
 const (
 	cacheDomainFollowsByActor = "federation_follows.by_actor"
@@ -321,6 +346,12 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	}
 	if in.Verb == string(federation.ActivityCreate) && in.TargetKind == "comment" {
 		return r.commentRecipient(ctx, in)
+	}
+	// A Like goes to the owner of the liked object only (#1611), never
+	// by the visibility of a local object: a Like of a local object has
+	// no other instance to go to.
+	if in.Verb == string(federation.ActivityLike) {
+		return r.likeRecipient(ctx, in)
 	}
 
 	switch in.Visibility {
@@ -440,7 +471,7 @@ func (r *Resolver) shareRecipient(ctx context.Context, in Input) (Result, error)
 // shares, whether the comment is admitted (#1570). A target on this
 // instance, or on no paired peer, has nobody to send to.
 func (r *Resolver) commentRecipient(ctx context.Context, in Input) (Result, error) {
-	target := federation.OriginOf(in.CommentTarget)
+	target := federation.OriginOf(in.TargetURI)
 	if target == "" {
 		return Result{Skipped: SkippedRecipientSetEmpty}, nil
 	}
@@ -470,6 +501,60 @@ func (r *Resolver) commentRecipient(ctx context.Context, in Input) (Result, erro
 		return Result{}, err
 	}
 	out = r.applyCapabilityGate(ctx, in, out)
+	if len(out) == 0 {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	return Result{Recipients: out}, nil
+}
+
+// likeRecipient addresses a Like of another instance's object (#1611,
+// spec v1 §7.5.6) to exactly the peer its emitter named as the owner,
+// and only when all of these hold, checked before anything is queued:
+//
+//   - the Like names a target (target_uri) and an owning peer
+//     (target_peer_id); a Like of a local object has neither and stays
+//     local;
+//   - that peer is enabled and connected, and its instance is the
+//     target's origin (a peer is never inferred from the target's
+//     host, and a named peer of another origin is refused);
+//   - a live, unexpired grant received from that peer covers the liking
+//     user on that object at view scope or above (federation_inbound_
+//     grants, #1571): a user-specific grant covers only its user, and an
+//     ended, superseded, expired or disabled-peer grant covers nobody.
+//
+// The owner re-authorises the Like against its own shares on receipt
+// (#1570); this check keeps a Like from being sent where no grant says
+// the object was shared, so nothing about a private object leaves.
+func (r *Resolver) likeRecipient(ctx context.Context, in Input) (Result, error) {
+	origin := federation.OriginOf(in.TargetURI)
+	if origin == "" || in.TargetPeerID == (uuid.UUID{}) {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	var instanceURL, enc string
+	var usable bool
+	err := r.pool.QueryRow(ctx, `SELECT instance_url, encryption_policy, (enabled AND status = 'connected')
+		FROM federation_peers WHERE id = $1`, in.TargetPeerID).Scan(&instanceURL, &enc, &usable)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Result{Skipped: SkippedNoReceivedGrant}, nil
+	}
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve like recipient: %w", err)
+	}
+	if !usable || federation.OriginOf(instanceURL) != origin || r.receivedGrant == nil {
+		return Result{Skipped: SkippedNoReceivedGrant}, nil
+	}
+	ok, err := r.receivedGrant(ctx, in.TargetPeerID, in.AuthorURI, in.TargetURI)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve like recipient: received grant: %w", err)
+	}
+	if !ok {
+		return Result{Skipped: SkippedNoReceivedGrant}, nil
+	}
+	rec := Recipient{PeerID: in.TargetPeerID, EncryptionTier: enc}
+	if federation.OriginOf(in.RecipientActor) == origin {
+		rec.TargetUserURL = in.RecipientActor
+	}
+	out := r.applyCapabilityGate(ctx, in, []Recipient{rec})
 	if len(out) == 0 {
 		return Result{Skipped: SkippedRecipientSetEmpty}, nil
 	}

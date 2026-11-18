@@ -153,10 +153,19 @@ func newResolverFixture(t *testing.T, encSupported bool) (*outbox.Resolver, *pgx
 
 // --- visibility × sensitivity matrix --------------------------------
 
+// visibilityRoutedVerb is the verb these tests resolve: one with no
+// dedicated route, so Resolve takes the visibility / explicit-share
+// tiers they are about. Before #1611 they used Like; a Like now has its
+// own route (likeRecipient: the owner of the liked object, under a
+// received grant, TestTwoStack_LikeWire) and never reaches these tiers.
+// No activity v1 federates reaches them today; they remain the
+// contract for one that will.
+const visibilityRoutedVerb = "Announce"
+
 func TestResolver_Private_ReturnsRecipientSetEmpty(t *testing.T) {
 	r, _, _, postID, ref := newResolverFixture(t, false)
 	got, err := r.Resolve(context.Background(), outbox.Input{
-		Verb: "Like", TargetKind: "post", TargetID: postID,
+		Verb: visibilityRoutedVerb, TargetKind: "post", TargetID: postID,
 		AuthorRef: ref, AuthorURI: "https://local.example/users/alice",
 		Visibility: outbox.VisibilityPrivate, Sensitivity: outbox.SensitivityPublic,
 	})
@@ -174,7 +183,7 @@ func TestResolver_Private_ReturnsRecipientSetEmpty(t *testing.T) {
 func TestResolver_OrgOnly_ReturnsRecipientSetEmpty(t *testing.T) {
 	r, _, _, postID, ref := newResolverFixture(t, false)
 	got, err := r.Resolve(context.Background(), outbox.Input{
-		Verb: "Like", TargetKind: "post", TargetID: postID,
+		Verb: visibilityRoutedVerb, TargetKind: "post", TargetID: postID,
 		AuthorRef: ref, Visibility: outbox.VisibilityOrgOnly,
 		Sensitivity: outbox.SensitivityPublic,
 	})
@@ -189,7 +198,7 @@ func TestResolver_OrgOnly_ReturnsRecipientSetEmpty(t *testing.T) {
 func TestResolver_ExplicitShare_ReturnsRecipientWithSeededShare(t *testing.T) {
 	r, _, peerID, postID, ref := newResolverFixture(t, false)
 	got, err := r.Resolve(context.Background(), outbox.Input{
-		Verb: "Like", TargetKind: "post", TargetID: postID,
+		Verb: visibilityRoutedVerb, TargetKind: "post", TargetID: postID,
 		AuthorRef: ref, Visibility: outbox.VisibilityExplicitShare,
 		Sensitivity: outbox.SensitivityPublic,
 	})
@@ -236,7 +245,7 @@ func TestResolver_Followers_NotYetWired_ReturnsRecipientSetEmpty(t *testing.T) {
 func TestResolver_RestrictedSensitivity_NoEncryption_RefusesEmission(t *testing.T) {
 	r, _, _, postID, ref := newResolverFixture(t, false /* encryption NOT supported */)
 	got, err := r.Resolve(context.Background(), outbox.Input{
-		Verb: "Like", TargetKind: "post", TargetID: postID,
+		Verb: visibilityRoutedVerb, TargetKind: "post", TargetID: postID,
 		AuthorRef: ref, Visibility: outbox.VisibilityExplicitShare,
 		Sensitivity: outbox.SensitivityRestricted,
 	})
@@ -271,7 +280,7 @@ func TestResolver_RestrictedSensitivity_WithEncryption_AllowsEmission(t *testing
 	// + the refusal path drops out → recipients return normally.
 	r, _, peerID, postID, ref := newResolverFixture(t, true /* encryption SUPPORTED */)
 	got, err := r.Resolve(context.Background(), outbox.Input{
-		Verb: "Like", TargetKind: "post", TargetID: postID,
+		Verb: visibilityRoutedVerb, TargetKind: "post", TargetID: postID,
 		AuthorRef: ref, Visibility: outbox.VisibilityExplicitShare,
 		Sensitivity: outbox.SensitivityRestricted,
 	})
@@ -404,7 +413,7 @@ func TestResolver_EveryLegalVisibilityTier_HasADeliberateOutcome(t *testing.T) {
 			r, pool, peerID, postID, ref := newResolverFixture(t, false)
 			unshared := seedUnsharedPeer(t, pool, ref)
 			got, err := r.Resolve(context.Background(), outbox.Input{
-				Verb: "Like", TargetKind: "post", TargetID: postID,
+				Verb: visibilityRoutedVerb, TargetKind: "post", TargetID: postID,
 				AuthorRef: ref, Visibility: outbox.Visibility(tier),
 				Sensitivity: outbox.SensitivityPublic,
 			})
@@ -431,7 +440,7 @@ func TestResolver_UnknownVisibility_StaysAnError(t *testing.T) {
 	r, _, _, postID, ref := newResolverFixture(t, false)
 	for _, v := range []string{"everyone", "PUBLIC", "public ", ""} {
 		got, err := r.Resolve(context.Background(), outbox.Input{
-			Verb: "Like", TargetKind: "post", TargetID: postID,
+			Verb: visibilityRoutedVerb, TargetKind: "post", TargetID: postID,
 			AuthorRef: ref, Visibility: outbox.Visibility(v),
 			Sensitivity: outbox.SensitivityPublic,
 		})
@@ -457,7 +466,7 @@ func TestResolver_Public_NoLiveShare_RecipientSetEmpty_NotAnError(t *testing.T) 
 		_, _ = pool.Exec(context.Background(), `DELETE FROM posts WHERE id = $1`, postID)
 	})
 	got, err := r.Resolve(context.Background(), outbox.Input{
-		Verb: "Like", TargetKind: "post", TargetID: postID,
+		Verb: visibilityRoutedVerb, TargetKind: "post", TargetID: postID,
 		AuthorRef: ref, Visibility: outbox.Visibility("public"),
 		Sensitivity: outbox.SensitivityPublic,
 	})
@@ -487,7 +496,7 @@ func TestResolver_Public_FollowsTheLiveShareBoundary(t *testing.T) {
 			resolve := func(tier string) outbox.Result {
 				t.Helper()
 				got, err := r.Resolve(context.Background(), outbox.Input{
-					Verb: "Like", TargetKind: "post", TargetID: postID,
+					Verb: visibilityRoutedVerb, TargetKind: "post", TargetID: postID,
 					AuthorRef: ref, Visibility: outbox.Visibility(tier),
 					Sensitivity: outbox.SensitivityPublic,
 				})
@@ -565,7 +574,7 @@ func newShareFixture(t *testing.T) *shareFixture {
 		_, _ = pool.Exec(c, `DELETE FROM posts WHERE id = $1`, f.post)
 	})
 	f.actorIn = outbox.Input{
-		Verb: "Like", TargetKind: "post", TargetID: f.post, AuthorRef: ref,
+		Verb: visibilityRoutedVerb, TargetKind: "post", TargetID: f.post, AuthorRef: ref,
 		Visibility: outbox.Visibility("public"), Sensitivity: outbox.SensitivityPublic,
 	}
 	return f

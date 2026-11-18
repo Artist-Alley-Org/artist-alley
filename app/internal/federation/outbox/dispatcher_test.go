@@ -29,7 +29,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/federation/inboundgrants"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 )
 
@@ -62,12 +65,13 @@ func TestDispatcher_HappyPath_ActivityInsertFansOutToOutbox(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 	var peerID uuid.UUID
+	peerURL := "https://outbox-" + randHex(4) + ".example"
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO federation_peers (instance_url, display_name, instance_public_key,
 		    trust_tier, encryption_policy, enabled, status, handshake_by_user_ref)
 		 VALUES ($1, 'Outbox Peer', '', 'connected', 'plaintext', TRUE, 'connected', $2)
 		 RETURNING id`,
-		"https://outbox-"+randHex(4)+".example", grantorRef,
+		peerURL, grantorRef,
 	).Scan(&peerID); err != nil {
 		t.Fatalf("seed peer: %v", err)
 	}
@@ -116,7 +120,10 @@ func TestDispatcher_HappyPath_ActivityInsertFansOutToOutbox(t *testing.T) {
 	// processes our seed rows (the dev DB may have prior state).
 	_, _ = pool.Exec(ctx, `UPDATE federation_dispatch_state SET last_dispatched_activity_id = NULL WHERE id = 1`)
 
-	resolver := outbox.NewResolver(pool, reg, func(context.Context) bool { return false })
+	// A Like of the peer's post (#1611) has no local tier, so it is
+	// unresolved: this resolver can encrypt, or it would be skipped.
+	resolver := outbox.NewResolver(pool, reg, func(context.Context) bool { return true })
+	withReceivedGrants(resolver, pool)
 	d := outbox.NewDispatcher(
 		outbox.DispatcherConfig{TickInterval: time.Hour, BatchSize: 100}, // tick never fires; we drive RunOnce
 		pool, resolver, logger,
@@ -141,23 +148,12 @@ func TestDispatcher_HappyPath_ActivityInsertFansOutToOutbox(t *testing.T) {
 		return outbox.Visibility(v), nil
 	})
 
-	// Insert a Like activity targeting the post. The trigger
-	// fires NOTIFY but we drive RunOnce directly for
-	// determinism.
-	var likeActivityID uuid.UUID
-	postIDStr := postID.String()
-	if err := pool.QueryRow(ctx,
-		`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
-		    object_uri, object_kind, object_local_id, payload)
-		 VALUES ($1, 'Like', $2, $3, $4, 'post', $5, '{}'::jsonb)
-		 RETURNING id`,
-		"https://outbox-test.example/activities/"+randHex(8),
-		"https://outbox-test.example/users/alice",
-		grantorRef,
-		"https://outbox-test.example/posts/"+postIDStr, postIDStr,
-	).Scan(&likeActivityID); err != nil {
-		t.Fatalf("seed like activity: %v", err)
-	}
+	// Insert a Like of a post the peer holds, under a live grant the
+	// peer gave this instance (#1611). The trigger fires NOTIFY but we
+	// drive RunOnce directly for determinism.
+	target := peerURL + "/posts/" + uuid.NewString()
+	seedReceivedGrant(t, pool, peerID, target)
+	likeActivityID := seedRemoteLike(t, pool, grantorRef, localActorURI(t, pool, grantorRef), target, peerID)
 
 	// Dev DB may have many pre-existing activities behind the
 	// cursor; drive RunOnce until our activity has been
@@ -457,19 +453,21 @@ var _ = io.Discard // import live
 // #1233 regression. A Like on a `public` post used to make Resolve
 // return `unsupported visibility: "public"`; RunOnce rolled the WHOLE
 // batch back on that error and never advanced the cursor, so the
-// activities behind it (here a valid explicit-share Like) never reached
-// the outbox and the dispatcher logged the same error every tick.
+// activities behind it never reached the outbox and the dispatcher
+// logged the same error every tick.
 //
 // One RunOnce over exactly three activities, in order:
 //
-//	A1  Like on a public post nobody shares         -> skipped, 0 rows
-//	A2  Like on an explicit-share post shared to S  -> 1 row, to S
-//	A3  Like on a public post shared to S           -> 1 row, to S
+//	A1  Like on a local public post nobody shares    -> skipped, 0 rows
+//	A2  Like on S's post, under S's grant (#1611)     -> 1 row, to S
+//	A3  Like on a local public post shared to S      -> skipped, 0 rows
 //
-// U is a second enabled + connected peer with no share of anything:
-// public must never broadcast to it. The cursor is parked on a marker
-// activity first, so this batch holds exactly these three rows whatever
-// the database already contains.
+// Since #1611 a Like goes only to the owner of the liked object: A3 used
+// to be sent to S, which refuses a Like of an object it does not hold
+// (unknown_object). U is a second enabled + connected peer with no
+// share of anything: public must never broadcast to it. The cursor is
+// parked on a marker activity first, so this batch holds exactly these
+// three rows whatever the database already contains.
 func TestDispatcher_PublicPostWithoutShare_SkipsAndTheBatchAdvances(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
@@ -575,11 +573,31 @@ func TestDispatcher_PublicPostWithoutShare_SkipsAndTheBatchAdvances(t *testing.T
 		}
 		return id
 	}
+	var sharedURL string
+	if err := pool.QueryRow(ctx, `SELECT instance_url FROM federation_peers WHERE id = $1`, sharedPeer).Scan(&sharedURL); err != nil {
+		t.Fatal(err)
+	}
+	remote := sharedURL + "/posts/" + uuid.NewString()
+	seedReceivedGrant(t, pool, sharedPeer, remote)
 	a1 := like(1, publicUnshared)
-	a2 := like(2, explicitShared)
+	var a2 uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
+		    object_uri, object_kind, payload, created_at)
+		 VALUES ($1, 'Like', $2, $3, $4, 'post', jsonb_build_object('target_uri', $4::text, 'target_peer_id', $5::text),
+		         (SELECT created_at FROM activities WHERE id = $6) + make_interval(secs => 2))
+		 RETURNING id`,
+		"https://outbox-test.example/activities/"+randHex(8), localActorURI(t, pool, ref), ref,
+		remote, sharedPeer.String(), markerID,
+	).Scan(&a2); err != nil {
+		t.Fatalf("seed remote like: %v", err)
+	}
 	a3 := like(3, publicShared)
 
-	resolver := outbox.NewResolver(pool, reg, func(context.Context) bool { return false })
+	// A Like of S's post has no local tier (unresolved): this resolver
+	// can encrypt, so the received grant alone decides.
+	resolver := outbox.NewResolver(pool, reg, func(context.Context) bool { return true })
+	withReceivedGrants(resolver, pool)
 	d := outbox.NewDispatcher(outbox.DispatcherConfig{TickInterval: time.Hour, BatchSize: 100}, pool, resolver, logger)
 	spy := &auditSpy{}
 	d.SetSkippedAudit(spy.record)
@@ -601,8 +619,8 @@ func TestDispatcher_PublicPostWithoutShare_SkipsAndTheBatchAdvances(t *testing.T
 	})
 
 	processed, skipped, enqueued := d.RunOnce(ctx)
-	if processed != 3 || skipped != 1 || enqueued != 2 {
-		t.Fatalf("RunOnce = processed %d, skipped %d, enqueued %d; want 3, 1, 2 "+
+	if processed != 3 || skipped != 2 || enqueued != 1 {
+		t.Fatalf("RunOnce = processed %d, skipped %d, enqueued %d; want 3, 2, 1 "+
 			"(0,0,0 is the #1233 whole-batch rollback)", processed, skipped, enqueued)
 	}
 
@@ -632,13 +650,13 @@ func TestDispatcher_PublicPostWithoutShare_SkipsAndTheBatchAdvances(t *testing.T
 		}
 		return out
 	}
-	if got := rowsFor(a1); len(got) != 0 {
-		t.Errorf("A1 (public, no share): outbox rows to %v, want none", got)
-	}
-	for name, a := range map[string]uuid.UUID{"A2 (explicit-share)": a2, "A3 (public, shared)": a3} {
-		if got := rowsFor(a); len(got) != 1 || got[0] != sharedPeer {
-			t.Errorf("%s: outbox rows to %v, want exactly [%v]", name, got, sharedPeer)
+	for name, a := range map[string]uuid.UUID{"A1 (public, no share)": a1, "A3 (local public, shared)": a3} {
+		if got := rowsFor(a); len(got) != 0 {
+			t.Errorf("%s: outbox rows to %v, want none (a Like of a local post stays local)", name, got)
 		}
+	}
+	if got := rowsFor(a2); len(got) != 1 || got[0] != sharedPeer {
+		t.Errorf("A2 (S's post, S's grant): outbox rows to %v, want exactly [%v]", got, sharedPeer)
 	}
 	var toUnshared int
 	_ = pool.QueryRow(ctx, `SELECT count(*) FROM federation_outbox WHERE peer_id = $1`, unsharedPeer).Scan(&toUnshared)
@@ -646,17 +664,17 @@ func TestDispatcher_PublicPostWithoutShare_SkipsAndTheBatchAdvances(t *testing.T
 		t.Errorf("unshared peer got %d outbox rows; public must not broadcast", toUnshared)
 	}
 
-	got := spy.findByActivityID(a1.String())
-	if got == nil {
-		t.Fatal("A1: no emission-skipped audit")
-	}
-	if got.reason != string(outbox.SkippedRecipientSetEmpty) || got.visibility != "public" {
-		t.Errorf("A1 audit: reason=%q visibility=%q, want recipient_set_empty / public", got.reason, got.visibility)
-	}
-	for _, a := range []uuid.UUID{a2, a3} {
-		if spy.findByActivityID(a.String()) != nil {
-			t.Errorf("activity %v was delivered AND audited as skipped", a)
+	for name, a := range map[string]uuid.UUID{"A1": a1, "A3": a3} {
+		got := spy.findByActivityID(a.String())
+		if got == nil {
+			t.Fatalf("%s: no emission-skipped audit", name)
 		}
+		if got.reason != string(outbox.SkippedRecipientSetEmpty) || got.visibility != "public" {
+			t.Errorf("%s audit: reason=%q visibility=%q, want recipient_set_empty / public", name, got.reason, got.visibility)
+		}
+	}
+	if spy.findByActivityID(a2.String()) != nil {
+		t.Errorf("activity %v was delivered AND audited as skipped", a2)
 	}
 
 	// Nothing is left behind the cursor: the next scan is empty
@@ -670,16 +688,18 @@ func TestDispatcher_PublicPostWithoutShare_SkipsAndTheBatchAdvances(t *testing.T
 // failure as a real-Postgres test: ONE long-lived dispatcher (one
 // resolver) sees, in order,
 //
-//	L1  Like on a public post nobody shares  -> skipped
-//	    grant the post to S (shares.Registry.Insert, the grant API's service)
+//	L1  Like on S's post, no grant from S    -> skipped
+//	    S grants the post (a live federation_inbound_grants row)
 //	L2  Like on it                           -> exactly one row, to S
-//	    revoke (shares.Registry.Revoke, the revoke API's service)
+//	    S's grant ends (revoked)
 //	L3  Like on it                           -> skipped, no new row
 //
-// with no restart and no invalidation call in between. Live, L2 was
-// skipped and L3 was delivered to the revoked peer, because L1 had
-// warmed a recipient cache nothing invalidated. U (connected, never
-// shared to) must get nothing throughout.
+// with no restart and no invalidation call in between. Live (rev344), L2
+// was skipped and L3 was delivered to the revoked peer, because L1 had
+// warmed a recipient cache nothing invalidated. Since #1611 a Like is
+// authorised by the grant its owner gave this instance, read from the
+// database on every resolve. U (connected, never shared to) must get
+// nothing throughout.
 func TestDispatcher_WarmState_GrantThenRevoke_NoRestart(t *testing.T) {
 	f := newShareFixture(t)
 	ctx := context.Background()
@@ -704,8 +724,19 @@ func TestDispatcher_WarmState_GrantThenRevoke_NoRestart(t *testing.T) {
 		t.Fatalf("park cursor: %v", err)
 	}
 
-	d := outbox.NewDispatcher(outbox.DispatcherConfig{TickInterval: time.Hour, BatchSize: 100}, f.pool, f.r, logger)
-	// Public tier stated explicitly (#1525: no lookup = unresolved).
+	// A Like of S's post has no local tier (unresolved): this resolver
+	// can encrypt, so the received grant alone decides.
+	reg := cache.NewRegistry(f.pool, logger)
+	t.Cleanup(reg.Stop)
+	r := outbox.NewResolver(f.pool, reg, func(context.Context) bool { return true })
+	withReceivedGrants(r, f.pool)
+	var peerURL string
+	if err := f.pool.QueryRow(ctx, `SELECT instance_url FROM federation_peers WHERE id = $1`, f.peer).Scan(&peerURL); err != nil {
+		t.Fatal(err)
+	}
+	target := peerURL + "/posts/" + uuid.NewString()
+	actor := localActorURI(t, f.pool, f.ref)
+	d := outbox.NewDispatcher(outbox.DispatcherConfig{TickInterval: time.Hour, BatchSize: 100}, f.pool, r, logger)
 	d.SetSensitivityLookup(fixedSensitivity(outbox.SensitivityPublic))
 	d.SetVisibilityLookup(func(ctx context.Context, kind string, id uuid.UUID) (outbox.Visibility, error) {
 		if kind != "post" {
@@ -718,20 +749,7 @@ func TestDispatcher_WarmState_GrantThenRevoke_NoRestart(t *testing.T) {
 		return outbox.Visibility(v), nil
 	})
 
-	like := func() uuid.UUID {
-		var id uuid.UUID
-		if err := f.pool.QueryRow(ctx,
-			`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
-			    object_uri, object_kind, object_local_id, payload)
-			 VALUES ($1, 'Like', 'https://outbox-test.example/users/alice', $2, $3, 'post', $4, '{}'::jsonb)
-			 RETURNING id`,
-			"https://outbox-test.example/activities/"+randHex(8), f.ref,
-			"https://outbox-test.example/posts/"+f.post.String(), f.post.String(),
-		).Scan(&id); err != nil {
-			t.Fatalf("seed like: %v", err)
-		}
-		return id
-	}
+	like := func() uuid.UUID { return seedRemoteLike(t, f.pool, f.ref, actor, target, f.peer) }
 	rowsTo := func(activity uuid.UUID) []uuid.UUID {
 		rows, err := f.pool.Query(ctx, `SELECT peer_id FROM federation_outbox WHERE activity_id = $1`, activity)
 		if err != nil {
@@ -763,15 +781,16 @@ func TestDispatcher_WarmState_GrantThenRevoke_NoRestart(t *testing.T) {
 		t.Fatalf("L1 (no share yet): outbox rows to %v, want none", got)
 	}
 
-	s := f.grant(t, nil)
+	grant := seedReceivedGrant(t, f.pool, f.peer, target)
 	l2 := like()
 	drain("L2")
 	if got := rowsTo(l2); len(got) != 1 || got[0] != f.peer {
 		t.Fatalf("L2 (after grant, same dispatcher): outbox rows to %v, want exactly [%v]", got, f.peer)
 	}
 
-	if _, err := f.svc.Revoke(ctx, s.ID, f.activity(t, "aa:Unshare")); err != nil {
-		t.Fatalf("revoke: %v", err)
+	if _, err := f.pool.Exec(ctx, `UPDATE federation_inbound_grants SET state = 'ended', end_reason = 'revoked', ended_at = now()
+		WHERE id = $1`, grant); err != nil {
+		t.Fatalf("end grant: %v", err)
 	}
 	l3 := like()
 	drain("L3")
@@ -790,6 +809,67 @@ func TestDispatcher_WarmState_GrantThenRevoke_NoRestart(t *testing.T) {
 	if cursor != l3 {
 		t.Errorf("cursor = %v, want the last activity L3 %v", cursor, l3)
 	}
+}
+
+// dispatcherTestBase is the base URL these tests' local actors live on.
+const dispatcherTestBase = "https://outbox-test.example"
+
+// withReceivedGrants wires r with the production received-grant check
+// (#1611): inboundgrants.Store.Allows over pool, this instance at
+// dispatcherTestBase (the adapter boot installs in internal/http).
+func withReceivedGrants(r *outbox.Resolver, pool *pgxpool.Pool) {
+	store := inboundgrants.New(pool, func(context.Context) string { return dispatcherTestBase }, nil, nil)
+	r.SetReceivedGrants(func(ctx context.Context, peerID uuid.UUID, actorURI, objectURI string) (bool, error) {
+		_, err := store.Allows(ctx, inboundgrants.Query{PeerID: peerID, ActorURI: actorURI, ObjectURI: objectURI})
+		if errors.Is(err, inboundgrants.ErrNoGrant) {
+			return false, nil
+		}
+		return err == nil, err
+	})
+}
+
+// localActorURI is a local user's actor URI on dispatcherTestBase.
+func localActorURI(t *testing.T, pool *pgxpool.Pool, ref int64) string {
+	t.Helper()
+	var name string
+	if err := pool.QueryRow(context.Background(), `SELECT username FROM "user" WHERE ref = $1`, ref).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	return dispatcherTestBase + "/users/" + name
+}
+
+// seedReceivedGrant records a live, peer-wide view grant from peer for
+// objectURI, as an applied aa:Share would (#1571), and returns its id.
+func seedReceivedGrant(t *testing.T, pool *pgxpool.Pool, peer uuid.UUID, objectURI string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO federation_inbound_grants (peer_id, grant_activity_uri, grantor_actor_uri, object_kind, object_uri, scope, state)
+		 VALUES ($1, $2, $3, 'post', $4, 'view', 'live') RETURNING id`,
+		peer, objectURI+"#grant-"+randHex(6), objectURI+"#owner", objectURI,
+	).Scan(&id); err != nil {
+		t.Fatalf("seed received grant: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM federation_inbound_grants WHERE id = $1`, id)
+	})
+	return id
+}
+
+// seedRemoteLike records ref's Like of target, held by peer, as
+// emit.Like records one with an explicit target (#1611).
+func seedRemoteLike(t *testing.T, pool *pgxpool.Pool, ref int64, actorURI, target string, peer uuid.UUID) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref, object_uri, object_kind, payload)
+		 VALUES ($1, 'Like', $2, $3, $4, 'post', jsonb_build_object('target_uri', $4::text, 'target_peer_id', $5::text))
+		 RETURNING id`,
+		dispatcherTestBase+"/activities/"+randHex(8), actorURI, ref, target, peer.String(),
+	).Scan(&id); err != nil {
+		t.Fatalf("seed remote like: %v", err)
+	}
+	return id
 }
 
 // fixedSensitivity is a SensitivityLookup that reports one tier

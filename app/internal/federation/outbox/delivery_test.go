@@ -92,7 +92,7 @@ func newDeliveryFixture(t *testing.T, inboxStatus int, captureBody *[]byte) (wor
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
 		    object_uri, object_kind, object_local_id, to_uris, payload)
-		 VALUES ($1, 'Like', $2, $3, $4, 'post', $5, '[]'::jsonb, '{}'::jsonb)
+		 VALUES ($1, 'Like', $2, $3, $4, 'post', $5, '[]'::jsonb, jsonb_build_object('target_uri', $4::text))
 		 RETURNING id`,
 		"https://local.example/activities/"+randHex(8),
 		"https://local.example/users/alice", grantorRef,
@@ -437,7 +437,7 @@ func seedTwoQueuedForPeer(t *testing.T, pool *pgxpool.Pool, srvURL string) uuid.
 		if err := pool.QueryRow(ctx,
 			`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
 			    object_uri, object_kind, object_local_id, to_uris, payload)
-			 VALUES ($1, 'Like', $2, $3, $4, 'post', $5, '[]'::jsonb, '{}'::jsonb)
+			 VALUES ($1, 'Like', $2, $3, $4, 'post', $5, '[]'::jsonb, jsonb_build_object('target_uri', $4::text))
 			 RETURNING id`,
 			"https://local.example/activities/"+randHex(8),
 			"https://local.example/users/alice", grantorRef,

@@ -574,15 +574,16 @@ func Federated(t ActivityType, objectKind string) bool {
 	return false
 }
 
-// WireObject is the envelope `object` for an activity (#1604): for a
-// comment Create, the commented object on its origin (the local
-// payload's target_uri, required, an absolute https URI); for every
-// other activity, the activity's own object URI. A comment's own URI
-// stays in the sender's local record: on the wire the Create's
-// signed `id` identifies the comment, which is what a reply's
-// inReplyTo and a future Delete or Undo of it (#1572) refer to.
+// WireObject is the envelope `object` for an activity: for a comment
+// Create (#1604) and a Like (#1611), the object on the instance that
+// holds it (the local payload's target_uri, required, an absolute https
+// URI); for every other activity, the activity's own object URI. A
+// comment's own URI stays in the sender's local record: on the wire the
+// Create's signed `id` identifies the comment, which is what a reply's
+// inReplyTo and a future Delete or Undo of it (#1572) refer to. A Like
+// without target_uri is of a local object and is never sent.
 func WireObject(t ActivityType, objectKind, objectURI string, payload []byte) (string, error) {
-	if t != ActivityCreate || objectKind != "comment" {
+	if !(t == ActivityCreate && objectKind == "comment") && t != ActivityLike {
 		return objectURI, nil
 	}
 	var local struct {
@@ -590,10 +591,13 @@ func WireObject(t ActivityType, objectKind, objectURI string, payload []byte) (s
 	}
 	if len(bytes.TrimSpace(payload)) > 0 {
 		if err := json.Unmarshal(payload, &local); err != nil {
-			return "", fmt.Errorf("%w: comment payload: %v", ErrNotFederated, err)
+			return "", fmt.Errorf("%w: %s payload: %v", ErrNotFederated, t, err)
 		}
 	}
 	if !absoluteHTTPS(local.TargetURI) {
+		if t == ActivityLike {
+			return "", fmt.Errorf("%w: a Like is sent only for an object on another instance (target_uri)", ErrNotFederated)
+		}
 		return "", fmt.Errorf("%w: a comment Create needs its target's URI (target_uri)", ErrNotFederated)
 	}
 	return local.TargetURI, nil

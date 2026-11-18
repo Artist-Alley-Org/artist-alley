@@ -309,7 +309,7 @@ func runOutboxWiringCase(t *testing.T, tc outboxWiringCase) {
 	// Production wiring under test.
 	auditRec := audit.NewRecorder(pool, logger)
 	peers := peer.NewRegistry(pool, logger, reg)
-	d := newOutboxDispatcher(pool, reg, peers, auditRec, logger)
+	d := newOutboxDispatcher(pool, reg, peers, nil, auditRec, logger)
 	d.RunOnce(ctx)
 
 	for _, aid := range activityIDs {

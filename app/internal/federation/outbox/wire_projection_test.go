@@ -371,13 +371,14 @@ func TestShareDelivery_PrivateMembersNeverLeave(t *testing.T) {
 // local-only payload members (titles, depths, local ids) stay home.
 func TestWireProjection_FederatedTypes(t *testing.T) {
 	w := newWorld(t)
-	post := emit.PostRef{ID: w.postID.String(), Title: "Wire", AuthorUserRef: w.userRef, AuthorURI: w.actor.URI()}
 	cases := []struct {
 		name string
 		in   activities.Input
 		want []string
 	}{
-		{"like", emit.Like(w.actor, post).Activity, nil},
+		// A Like is sent only for an object held by the peer (#1611).
+		{"like", emit.Like(w.actor, emit.PostRef{ID: uuid.NewString(), Title: "Wire", AuthorURI: w.httpsURL() + "/users/owner",
+			TargetURI: w.httpsURL() + "/posts/" + uuid.NewString(), OwnerPeerID: w.peerID.String()}).Activity, nil},
 		{"comment", emit.CreateComment(w.actor, emit.CommentRef{
 			ID: uuid.NewString(), PostID: w.postID.String(), PostTitle: "Wire", PostAuthorRef: w.userRef,
 			PostAuthorURI: w.actor.URI(), Body: "Lovely.", Depth: 0,
@@ -489,6 +490,24 @@ func TestWireProjection_UnfederatedTypes(t *testing.T) {
 			if status != string(federation.OutboxStatusFailed) || !strings.Contains(lastErr, "profile_not_negotiated") {
 				t.Errorf("%s queued row: %s / %q, want failed / profile_not_negotiated", in.Type, status, lastErr)
 			}
+		}
+	})
+
+	// #1611: a Like of a local post is never sent, even when a delivery
+	// row exists for it; the row is closed as not federated.
+	t.Run("delivery_closes_local_like", func(t *testing.T) {
+		w := newWorld(t)
+		post := emit.PostRef{ID: w.postID.String(), Title: "Wire", AuthorUserRef: w.userRef, AuthorURI: w.actor.URI()}
+		id, uri := w.record(emit.Like(w.actor, post).Activity, nil)
+		rowID := w.queue(id)
+		w.worker(false, nil).RunOnce(w.ctx)
+		if env := w.cap.envelopeFor(t, uri); env != nil {
+			t.Fatal("a Like of a local post was delivered")
+		}
+		var status, lastErr string
+		_ = w.pool.QueryRow(w.ctx, `SELECT status, COALESCE(last_error, '') FROM federation_outbox WHERE id = $1`, rowID).Scan(&status, &lastErr)
+		if status != string(federation.OutboxStatusFailed) || !strings.Contains(lastErr, "target_uri") {
+			t.Errorf("queued local Like: %s / %q, want failed, not federated", status, lastErr)
 		}
 	})
 

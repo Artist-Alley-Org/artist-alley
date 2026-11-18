@@ -333,20 +333,24 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 
 		// A share activity names its share row (#1571); the resolver
 		// addresses it to that share's peer only.
-		var shareID uuid.UUID
-		var commentTarget string
+		// A comment Create or a Like of another instance's object names
+		// its target (and a Like its owning peer), #1604 / #1611.
+		var shareID, targetPeerID uuid.UUID
+		var targetURI string
 		if len(row.Payload) > 0 {
 			var p struct {
-				ShareID   string `json:"share_id"`
-				TargetURI string `json:"target_uri"`
+				ShareID      string `json:"share_id"`
+				TargetURI    string `json:"target_uri"`
+				TargetPeerID string `json:"target_peer_id"`
 			}
 			if json.Unmarshal(row.Payload, &p) == nil {
 				shareID, _ = uuid.Parse(p.ShareID)
-				commentTarget = p.TargetURI
+				targetURI = p.TargetURI
+				targetPeerID, _ = uuid.Parse(p.TargetPeerID)
 			}
 		}
-		// A comment Create is addressed to the target's origin, and to
-		// the actor it is for there (its `to`), #1604.
+		// A comment Create or a Like is addressed to the target's
+		// instance, and to the actor it is for there (its `to`).
 		var recipientActor string
 		if len(row.ToUris) > 0 {
 			var to []string
@@ -360,7 +364,8 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 			TargetKind:     targetKind,
 			TargetID:       targetID,
 			ShareID:        shareID,
-			CommentTarget:  commentTarget,
+			TargetURI:      targetURI,
+			TargetPeerID:   targetPeerID,
 			RecipientActor: recipientActor,
 			AuthorRef:      authorRef,
 			AuthorURI:      row.ActorUri,
