@@ -176,6 +176,12 @@ func TestWireMembers(t *testing.T) {
 		{federation.ActivityUpdate, "user", `{"display_name":"d"}`, nil, true},
 		{federation.ActivityDelete, "comment", `{"target_post_id":"p"}`, nil, true},
 		{federation.ActivityUndo, "activity", `{"target_post_id":"p"}`, nil, true},
+		// #1572: an Undo of a Like federates with object_type only; an
+		// Undo of anything else stays local.
+		{federation.ActivityUndo, "activity", `{"target_post_id":"p","target_type":"Like"}`, []string{"object_type"}, false},
+		{federation.ActivityUndo, "activity", `{"target_user_ref":1,"target_type":"Follow"}`, nil, true},
+		{federation.ActivityUndo, "activity", `{"target_user_ref":1,"target_type":"Block"}`, nil, true},
+		{federation.ActivityUndo, "post", `{"target_type":"Like"}`, nil, true},
 		{federation.ActivityAdd, "collection", `{"target_name":"n"}`, nil, true},
 		{federation.ActivityRemove, "collection", `{"target_name":"n"}`, nil, true},
 		{federation.ActivityFollow, "user", ``, nil, true},

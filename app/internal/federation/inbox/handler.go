@@ -869,10 +869,12 @@ func isShareVerb(t federation.ActivityType) bool {
 }
 
 // objectRefFor is extractObjectRef for an activity about a local
-// object; a share activity names the sender's object and is stored
-// without a local reference.
+// object. A share activity names the sender's object, and an Undo the
+// sender's own earlier activity (#1572); ValidateMembers has checked
+// that each is on the sender's origin, and both are stored without a
+// local reference.
 func (h *Handler) objectRefFor(ctx context.Context, env *federation.Envelope) (*string, pgtype.UUID, error) {
-	if isShareVerb(env.Type) {
+	if isShareVerb(env.Type) || env.Type == federation.ActivityUndo {
 		return nil, pgtype.UUID{}, nil
 	}
 	return h.extractObjectRef(ctx, env)

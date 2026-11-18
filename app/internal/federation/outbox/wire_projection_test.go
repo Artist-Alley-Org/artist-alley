@@ -371,6 +371,7 @@ func TestShareDelivery_PrivateMembersNeverLeave(t *testing.T) {
 // local-only payload members (titles, depths, local ids) stay home.
 func TestWireProjection_FederatedTypes(t *testing.T) {
 	w := newWorld(t)
+	post := emit.PostRef{ID: w.postID.String(), Title: "Wire", AuthorURI: w.httpsURL() + "/users/owner"}
 	cases := []struct {
 		name string
 		in   activities.Input
@@ -379,6 +380,9 @@ func TestWireProjection_FederatedTypes(t *testing.T) {
 		// A Like is sent only for an object held by the peer (#1611).
 		{"like", emit.Like(w.actor, emit.PostRef{ID: uuid.NewString(), Title: "Wire", AuthorURI: w.httpsURL() + "/users/owner",
 			TargetURI: w.httpsURL() + "/posts/" + uuid.NewString(), OwnerPeerID: w.peerID.String()}).Activity, nil},
+		// An Undo of a Like carries object_type only (#1572).
+		{"undo_like", emit.UndoLike(w.actor, "https://local.example/activities/"+uuid.NewString(), post).Activity,
+			[]string{"object_type"}},
 		{"comment", emit.CreateComment(w.actor, emit.CommentRef{
 			ID: uuid.NewString(), PostID: w.postID.String(), PostTitle: "Wire", PostAuthorRef: w.userRef,
 			PostAuthorURI: w.actor.URI(), Body: "Lovely.", Depth: 0,
@@ -419,7 +423,8 @@ func TestWireProjection_UnfederatedTypes(t *testing.T) {
 	cases := map[string]activities.Input{
 		"create_post":    emit.CreatePost(w.actor, post, emit.PostVisibilityPublic).Activity,
 		"update_profile": emit.UpdateProfile(w.actor, emit.ProfileSnapshot{DisplayName: "A", Bio: "b"}).Activity,
-		"undo_like":      emit.UndoLike(w.actor, "https://local.example/activities/x", w.postID.String()).Activity,
+		// An Undo of anything but a Like stays local (#1572).
+		"undo_follow":    emit.UndoFollow(w.actor, "https://local.example/activities/x", w.userRef).Activity,
 		"delete_comment": emit.DeleteComment(w.actor, uuid.NewString(), w.postID.String()).Activity,
 	}
 	wk := w.worker(false, nil)

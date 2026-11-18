@@ -258,7 +258,7 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 		if row.ObjectKind != nil {
 			objectKind = *row.ObjectKind
 		}
-		if !federation.Federated(federation.ActivityType(row.ActivityType), objectKind) {
+		if !federation.Federated(federation.ActivityType(row.ActivityType), objectKind, row.Payload) {
 			skipped++
 			if d.auditSkipped != nil {
 				objectID := ""
@@ -349,6 +349,15 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 				targetPeerID, _ = uuid.Parse(p.TargetPeerID)
 			}
 		}
+		// An Undo names the activity it undoes (its object) and that
+		// activity's type (#1572).
+		var undoneURI, undoneType string
+		if federation.ActivityType(row.ActivityType) == federation.ActivityUndo {
+			if row.ObjectUri != nil {
+				undoneURI = *row.ObjectUri
+			}
+			undoneType = federation.UndoneType(row.Payload)
+		}
 		// A comment Create or a Like is addressed to the target's
 		// instance, and to the actor it is for there (its `to`).
 		var recipientActor string
@@ -360,17 +369,20 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 		}
 
 		result, err := d.resolver.Resolve(ctx, Input{
-			Verb:           row.ActivityType,
-			TargetKind:     targetKind,
-			TargetID:       targetID,
-			ShareID:        shareID,
-			TargetURI:      targetURI,
-			TargetPeerID:   targetPeerID,
-			RecipientActor: recipientActor,
-			AuthorRef:      authorRef,
-			AuthorURI:      row.ActorUri,
-			Visibility:     vis,
-			Sensitivity:    sen,
+			Verb:              row.ActivityType,
+			TargetKind:        targetKind,
+			TargetID:          targetID,
+			ShareID:           shareID,
+			TargetURI:         targetURI,
+			TargetPeerID:      targetPeerID,
+			RecipientActor:    recipientActor,
+			UndoneActivityURI: undoneURI,
+			UndoneType:        undoneType,
+			Tx:                tx,
+			AuthorRef:         authorRef,
+			AuthorURI:         row.ActorUri,
+			Visibility:        vis,
+			Sensitivity:       sen,
 		})
 		if err != nil {
 			d.logErr(ctx, "outbox.dispatcher.resolve.error", err)
@@ -424,11 +436,18 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 				u := rec.TargetUserURL
 				targetURLPtr = &u
 			}
+			rowSensitivity := sensitivityPtr
+			if rec.Sensitivity != "" {
+				// A tier the recipient must be sent at no less strictly
+				// than (an Undo keeps its Like's tier, #1572).
+				st := string(stricterSensitivity(sen, rec.Sensitivity))
+				rowSensitivity = &st
+			}
 			_, err := qtx.InsertOutboxRow(ctx, InsertOutboxRowParams{
 				ActivityID:    row.ID,
 				PeerID:        pgtype.UUID{Bytes: rec.PeerID, Valid: true},
 				TargetUserUrl: targetURLPtr,
-				Sensitivity:   sensitivityPtr,
+				Sensitivity:   rowSensitivity,
 			})
 			// pgx.ErrNoRows on conflict (RETURNING + DO NOTHING)
 			// is the idempotent-no-op signal; not an error.

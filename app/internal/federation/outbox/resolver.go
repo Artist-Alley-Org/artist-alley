@@ -110,6 +110,11 @@ type Recipient struct {
 	TargetUserURL  string // empty = broadcast (rare)
 	Scope          string // view / comment / annotate / remix per ADR 0020
 	EncryptionTier string // none / nacl-box (current tier per peer)
+	// Sensitivity, when set, is a tier this recipient's row must be sent
+	// at no less strictly than: an Undo inherits the tier its Like was
+	// queued at for that recipient (#1572). The dispatcher stamps the
+	// stricter of it and the activity's own tier.
+	Sensitivity Sensitivity
 }
 
 // Result is the resolver's typed return.
@@ -195,6 +200,19 @@ type Input struct {
 	TargetPeerID   uuid.UUID
 	RecipientActor string
 
+	// UndoneActivityURI is an Undo's object, the id of the activity it
+	// undoes, and UndoneType that activity's type (the payload's
+	// target_type). An Undo of a Like goes exactly where that Like went
+	// (#1572).
+	UndoneActivityURI string
+	UndoneType        string
+
+	// Tx, when set, is what an Undo's recipients are read through: the
+	// dispatcher's batch transaction, so an Undo sees the delivery rows
+	// its Like was queued in earlier in the same, not yet committed,
+	// batch (#1572). Nil reads through the pool.
+	Tx Querier
+
 	// AuthorRef + AuthorURI describe the local actor. The
 	// follows.by_actor cache uses AuthorRef for follower-tier
 	// resolution.
@@ -263,6 +281,12 @@ type Resolver struct {
 	// from peerID covers actorURI's use of objectURI at view scope
 	// (#1611). nil refuses every Like of another instance's object.
 	receivedGrant ReceivedGrantLookup
+}
+
+// Querier is the read surface undoRecipient needs: a pool or a
+// transaction.
+type Querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 // ReceivedGrantLookup reports whether this instance holds, from peerID,
@@ -352,6 +376,11 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	// no other instance to go to.
 	if in.Verb == string(federation.ActivityLike) {
 		return r.likeRecipient(ctx, in)
+	}
+	// An Undo goes where the activity it undoes went (#1572), never by
+	// a visibility tier.
+	if in.Verb == string(federation.ActivityUndo) {
+		return r.undoRecipient(ctx, in)
 	}
 
 	switch in.Visibility {
@@ -555,6 +584,79 @@ func (r *Resolver) likeRecipient(ctx context.Context, in Input) (Result, error) 
 		rec.TargetUserURL = in.RecipientActor
 	}
 	out := r.applyCapabilityGate(ctx, in, []Recipient{rec})
+	if len(out) == 0 {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	return Result{Recipients: out}, nil
+}
+
+// undoRecipient addresses an Undo of a Like (#1572, spec v1 §7.5.4) to
+// exactly the recipients its Like was queued for: the federation_outbox
+// rows of that Like, which must be this instance's own Like by the same
+// actor. Each recipient keeps the peer, the target user (whose key an
+// encrypted Like was sealed to) and the tier the Like's row was queued
+// at, so an Undo is never sent less protected than its Like. A Like row
+// that was refused or cancelled carried nothing to anyone and is not
+// followed; a peer that is no longer enabled and connected is not sent
+// to. No received grant is needed: the Undo withdraws the actor's own
+// Like.
+//
+// A Like that was never queued for anyone (a Like of a local object, or
+// one refused before queueing) has nobody to send the Undo to: the
+// result is recipient_set_empty, audited, never a broadcast. Outbox rows
+// are kept, not pruned (they go only with their activity or their
+// peer), so the Like's recipients are still on record when its Undo
+// is dispatched.
+func (r *Resolver) undoRecipient(ctx context.Context, in Input) (Result, error) {
+	if in.UndoneType != string(federation.ActivityLike) {
+		return Result{Skipped: SkippedActivityNotFederated}, nil
+	}
+	if in.UndoneActivityURI == "" || in.AuthorURI == "" {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	var q Querier = r.pool
+	if in.Tx != nil {
+		q = in.Tx
+	}
+	rows, err := q.Query(ctx, `
+		SELECT DISTINCT o.peer_id, COALESCE(o.target_user_url, ''), COALESCE(o.sensitivity, ''),
+		       p.encryption_policy, (p.enabled AND p.status = 'connected')
+		  FROM activities a
+		  JOIN federation_outbox o ON o.activity_id = a.id
+		  JOIN federation_peers p ON p.id = o.peer_id
+		 WHERE a.activity_uri = $1
+		   AND a.activity_type = 'Like'
+		   AND a.source = 'local'
+		   AND a.actor_uri = $2
+		   AND o.status IN ('queued', 'sent', 'failed')
+		 ORDER BY 1, 2
+	`, in.UndoneActivityURI, in.AuthorURI)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve undo recipients: %w", err)
+	}
+	defer rows.Close()
+	var out []Recipient
+	for rows.Next() {
+		var id pgtype.UUID
+		var targetURL, sensitivity, enc string
+		var usable bool
+		if err := rows.Scan(&id, &targetURL, &sensitivity, &enc, &usable); err != nil {
+			return Result{}, err
+		}
+		if !usable {
+			continue
+		}
+		rec := Recipient{PeerID: uuid.UUID(id.Bytes), TargetUserURL: targetURL, EncryptionTier: enc,
+			Sensitivity: SensitivityUnresolved}
+		if sensitivity != "" {
+			rec.Sensitivity = Sensitivity(sensitivity)
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return Result{}, err
+	}
+	out = r.applyCapabilityGate(ctx, in, out)
 	if len(out) == 0 {
 		return Result{Skipped: SkippedRecipientSetEmpty}, nil
 	}

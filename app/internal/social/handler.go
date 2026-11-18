@@ -388,7 +388,7 @@ func (h *Handler) UnlikePost(
 			notFound = true
 			return activities.EmissionInput{}, errLikeAbsent
 		}
-		em := emit.UndoLike(h.actorContext(ctx, caller), originalURI, postIDStr)
+		em := emit.UndoLike(h.actorContext(ctx, caller), originalURI, emit.PostRef{ID: postIDStr})
 		return activities.EmissionInput{
 			Activity: em.Activity,
 		}, nil

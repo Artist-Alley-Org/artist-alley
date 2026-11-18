@@ -100,9 +100,18 @@ func Like(actor ActorContext, post PostRef) Emission {
 // Like activity per AP §6.10. The Undo's object is the LIKE
 // activity's URI (not the liked post).
 //
+// It is addressed like the Like it undoes (#1572): to=[post author]
+// when post.AuthorURI is set, the actor an encrypted Undo is sealed to
+// on the post's instance. post is the same reference the Like was built
+// from; only its ID and AuthorURI are used.
+//
 // No notification — undoing a Like is silent.
-func UndoLike(actor ActorContext, likeActivityURI, postID string) Emission {
+func UndoLike(actor ActorContext, likeActivityURI string, post PostRef) Emission {
 	actorRef := actor.UserRef
+	var to []string
+	if post.AuthorURI != "" {
+		to = []string{post.AuthorURI}
+	}
 	return Emission{
 		Activity: activities.Input{
 			Type:         federation.ActivityUndo,
@@ -114,11 +123,12 @@ func UndoLike(actor ActorContext, likeActivityURI, postID string) Emission {
 				Kind:    activities.ObjectKindActivity,
 				LocalID: likeActivityURI,
 			},
+			To: to,
 			Payload: map[string]any{
 				// Carry the original post ID so consumers don't
 				// have to dereference the Undo's object to know
 				// what was un-liked.
-				"target_post_id": postID,
+				"target_post_id": post.ID,
 				"target_type":    "Like",
 			},
 		},

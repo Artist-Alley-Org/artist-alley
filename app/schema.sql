@@ -2463,6 +2463,44 @@ COMMENT ON COLUMN public.federation_remote_actors.signing_key_pinned_at IS 'When
 
 
 --
+-- Name: federation_remote_likes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_remote_likes (
+    peer_id uuid NOT NULL,
+    actor_uri text NOT NULL,
+    activity_uri text NOT NULL,
+    target_kind text,
+    target_id uuid,
+    binding text NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    undone_at timestamp with time zone,
+    undo_activity_uri text,
+    CONSTRAINT federation_remote_likes_binding_check CHECK ((binding = ANY (ARRAY['received'::text, 'backfilled'::text, 'legacy_unbound'::text, 'tombstone'::text]))),
+    CONSTRAINT federation_remote_likes_legacy_live_check CHECK (((binding <> 'legacy_unbound'::text) OR (undone_at IS NULL))),
+    CONSTRAINT federation_remote_likes_target_check CHECK (((target_kind IS NULL) = (target_id IS NULL))),
+    CONSTRAINT federation_remote_likes_target_kind_check CHECK (((target_kind IS NULL) OR (target_kind = ANY (ARRAY['post'::text, 'asset'::text, 'comment'::text])))),
+    CONSTRAINT federation_remote_likes_tombstone_check CHECK (((binding = 'tombstone'::text) = (target_kind IS NULL))),
+    CONSTRAINT federation_remote_likes_tombstone_undone_check CHECK (((binding <> 'tombstone'::text) OR (undone_at IS NOT NULL))),
+    CONSTRAINT federation_remote_likes_undo_check CHECK (((undone_at IS NULL) = (undo_activity_uri IS NULL)))
+);
+
+
+--
+-- Name: TABLE federation_remote_likes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_remote_likes IS 'Inbound Like activities bound to (peer, signed actor, Like activity id) (#1572). The aggregate likes row for (target, peer, actor) exists while at least one record is live. An Undo of an unseen id stores a tombstone (binding tombstone, no target, undone); a later matching Like is recorded undone and creates no like and no notification. Retractions need no live share.';
+
+
+--
+-- Name: COLUMN federation_remote_likes.binding; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_remote_likes.binding IS 'received: recorded on arrival. backfilled: from a processed federation_inbox Like row (migration 00078). legacy_unbound: a like received before 00078 with no inbox evidence, bound to the synthetic urn:aa:legacy-like:<likes.id>, which no Undo can name. tombstone: an Undo whose Like has not arrived.';
+
+
+--
 -- Name: federation_shares; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4096,6 +4134,14 @@ ALTER TABLE ONLY public.federation_remote_actors
 
 
 --
+-- Name: federation_remote_likes federation_remote_likes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_remote_likes
+    ADD CONSTRAINT federation_remote_likes_pkey PRIMARY KEY (peer_id, actor_uri, activity_uri);
+
+
+--
 -- Name: federation_shares federation_shares_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5313,6 +5359,13 @@ CREATE INDEX federation_remote_actors_by_peer_idx ON public.federation_remote_ac
 --
 
 CREATE INDEX federation_remote_actors_missing_encryption_key_idx ON public.federation_remote_actors USING btree (peer_id) WHERE (encryption_public_key IS NULL);
+
+
+--
+-- Name: federation_remote_likes_live_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_remote_likes_live_idx ON public.federation_remote_likes USING btree (target_kind, target_id, peer_id, actor_uri) WHERE ((undone_at IS NULL) AND (target_id IS NOT NULL));
 
 
 --
@@ -6958,6 +7011,14 @@ ALTER TABLE ONLY public.federation_peer_suggestions
 
 ALTER TABLE ONLY public.federation_remote_actors
     ADD CONSTRAINT federation_remote_actors_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: federation_remote_likes federation_remote_likes_peer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_remote_likes
+    ADD CONSTRAINT federation_remote_likes_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
 
 
 --
