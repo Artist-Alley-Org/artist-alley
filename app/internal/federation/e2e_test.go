@@ -475,8 +475,13 @@ func (a *e2eSocialPoster) authorizer(verb federation.ActivityType, kind string, 
 	}
 }
 
-func (a *e2eSocialPoster) InsertRemoteLike(ctx context.Context, kind string, id, peerID uuid.UUID, actorURI string) (bool, error) {
-	return a.h.InsertRemoteLike(ctx, kind, id, peerID, actorURI, a.authorizer(federation.ActivityLike, kind, id, peerID, actorURI))
+func (a *e2eSocialPoster) InsertRemoteLike(ctx context.Context, kind string, id, peerID uuid.UUID, actorURI, activityURI string) (bool, error) {
+	return a.h.InsertRemoteLike(ctx, kind, id, peerID, actorURI, activityURI, a.authorizer(federation.ActivityLike, kind, id, peerID, actorURI))
+}
+
+func (a *e2eSocialPoster) UndoRemoteLike(ctx context.Context, in inbox.RemoteUndoLikeInput) (bool, error) {
+	return a.h.UndoRemoteLike(ctx, social.RemoteUndoLikeInput{PeerID: in.PeerID, ActorURI: in.ActorURI,
+		LikeActivityURI: in.LikeActivityURI, UndoActivityURI: in.UndoActivityURI})
 }
 
 func (a *e2eSocialPoster) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {

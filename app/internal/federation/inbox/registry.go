@@ -52,8 +52,16 @@ import (
 //
 // Create is applied only as a comment: CommentHandler rejects any other
 // Create with invalid_type at dispatch time.
+//
+// Undo is applied only as an Undo of a Like (#1572): the verb is keyed
+// here, and federation.ValidateMembers answers any other Undo (of a
+// Follow, a Block, a Create, ...) unsupported_activity at receipt and
+// again after decryption, before a handler runs. An Undo without
+// object_type is invalid_member. Nothing about an Undo of another type
+// is ever processed.
 var appliedHandlers = map[federation.ActivityType]func(*Dispatcher) HandlerFn{
 	federation.ActivityLike:      LikeHandler,
+	federation.ActivityUndo:      UndoHandler,
 	federation.ActivityCreate:    CommentHandler,
 	federation.ActivityAAShare:   ShareHandler,
 	federation.ActivityAAUnshare: UnshareHandler,

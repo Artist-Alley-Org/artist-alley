@@ -219,6 +219,9 @@ type resetFixture struct {
 	stateID       uuid.UUID
 	roleID        uuid.UUID
 	assetTypeRef  int64
+	// peerID is a paired peer the reset keeps (federation state is out
+	// of scope for a content reset); remote-like fixtures name it.
+	peerID uuid.UUID
 }
 
 // plantOrphans writes one row into every SWEEPABLE polymorphic table,
@@ -240,6 +243,14 @@ func plantOrphans(t *testing.T, pool *pgxpool.Pool, f resetFixture) {
 			_, err := pool.Exec(ctx,
 				`INSERT INTO likes (target_kind, target_id, user_ref) VALUES ('post', $1, $2)`,
 				f.postID, f.userRef)
+			return err
+		},
+		"federation_remote_likes": func() error {
+			// #1572: a remote actor's Like of the post the reset wipes.
+			_, err := pool.Exec(ctx,
+				`INSERT INTO federation_remote_likes (peer_id, actor_uri, activity_uri, target_kind, target_id, binding)
+				 VALUES ($1, 'https://reset-peer.example/users/remote', 'https://reset-peer.example/activities/'||gen_random_uuid(),
+				         'post', $2, 'received')`, f.peerID, f.postID)
 			return err
 		},
 		"featured_items": func() error {
@@ -380,6 +391,20 @@ func TestReset_LeavesNoPolymorphicOrphans(t *testing.T) {
 		t.Fatalf("collection: %v", err)
 	}
 
+	// A paired peer for the remote-like fixtures (#1572). Federation
+	// state survives the reset, so the test removes it itself.
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO federation_peers (instance_url, display_name, instance_public_key, handshake_by_user_ref)
+		 VALUES ($1, 'Reset peer', 'k', $2) RETURNING id`,
+		"https://reset-peer-"+resetSuffix()+".example", f.adminRef).Scan(&f.peerID); err != nil {
+		t.Fatalf("peer: %v", err)
+	}
+	t.Cleanup(func() {
+		ctxT, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = pool.Exec(ctxT, `DELETE FROM federation_peers WHERE id = $1`, f.peerID)
+	})
+
 	// user_follows is not polymorphic, but carries no FK to "user"
 	// either, so it is the same "CASCADE cannot reach me" class.
 	if _, err := pool.Exec(ctx,
@@ -389,6 +414,17 @@ func TestReset_LeavesNoPolymorphicOrphans(t *testing.T) {
 	}
 
 	plantOrphans(t, pool, f)
+
+	// A tombstone (#1572): an Undo whose Like never arrived. It names no
+	// local target (NULL kind and id), so the reset must keep it, scoped
+	// to its peer, while the target-bound record above is swept.
+	tombstoneURI := "https://reset-peer.example/activities/tombstone-" + resetSuffix()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO federation_remote_likes (peer_id, actor_uri, activity_uri, binding, undone_at, undo_activity_uri)
+		 VALUES ($1, 'https://reset-peer.example/users/remote', $2, 'tombstone', now(), $2 || '/undo')`,
+		f.peerID, tombstoneURI); err != nil {
+		t.Fatalf("tombstone: %v", err)
+	}
 
 	// A scheduled action against the SURVIVING admin. #569 assumed
 	// scheduled_actions had to be exempted wholesale to protect rows
@@ -445,6 +481,19 @@ func TestReset_LeavesNoPolymorphicOrphans(t *testing.T) {
 	if kept != 1 {
 		t.Errorf("scheduled_action against the surviving admin was deleted; the reset must "+
 			"sweep unresolvable rows, not truncate the table (found %d)", kept)
+	}
+
+	// The remote-like record of the wiped post is gone; the tombstone is
+	// still there, on its own peer, untouched.
+	var bound, tombstones int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FILTER (WHERE target_id IS NOT NULL), count(*) FILTER (WHERE target_id IS NULL AND activity_uri = $2)
+		   FROM federation_remote_likes WHERE peer_id = $1`, f.peerID, tombstoneURI).Scan(&bound, &tombstones); err != nil {
+		t.Fatalf("remote likes: %v", err)
+	}
+	if bound != 0 || tombstones != 1 {
+		t.Errorf("after Reset the peer holds %d target-bound remote-like record(s) and %d tombstone(s); want 0 and 1",
+			bound, tombstones)
 	}
 
 	// user_follows is the same no-FK class without being polymorphic:

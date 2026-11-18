@@ -326,8 +326,13 @@ func e2eWriteError(err error) error {
 	return err
 }
 
-func (a *socialPosterE2EAdapter) InsertRemoteLike(ctx context.Context, kind string, id, peerID uuid.UUID, actorURI string) (bool, error) {
-	return a.h.InsertRemoteLike(ctx, kind, id, peerID, actorURI, a.authorizer(federation.ActivityLike, kind, id, peerID, actorURI))
+func (a *socialPosterE2EAdapter) InsertRemoteLike(ctx context.Context, kind string, id, peerID uuid.UUID, actorURI, activityURI string) (bool, error) {
+	return a.h.InsertRemoteLike(ctx, kind, id, peerID, actorURI, activityURI, a.authorizer(federation.ActivityLike, kind, id, peerID, actorURI))
+}
+
+func (a *socialPosterE2EAdapter) UndoRemoteLike(ctx context.Context, in inbox.RemoteUndoLikeInput) (bool, error) {
+	return a.h.UndoRemoteLike(ctx, social.RemoteUndoLikeInput{PeerID: in.PeerID, ActorURI: in.ActorURI,
+		LikeActivityURI: in.LikeActivityURI, UndoActivityURI: in.UndoActivityURI})
 }
 
 func (a *socialPosterE2EAdapter) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {

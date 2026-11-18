@@ -661,6 +661,20 @@ type FederationRemoteActor struct {
 	SigningKeyPinnedAt pgtype.Timestamptz `json:"signing_key_pinned_at"`
 }
 
+// Inbound Like activities bound to (peer, signed actor, Like activity id) (#1572). The aggregate likes row for (target, peer, actor) exists while at least one record is live. An Undo of an unseen id stores a tombstone (binding tombstone, no target, undone); a later matching Like is recorded undone and creates no like and no notification. Retractions need no live share.
+type FederationRemoteLike struct {
+	PeerID      pgtype.UUID `json:"peer_id"`
+	ActorUri    string      `json:"actor_uri"`
+	ActivityUri string      `json:"activity_uri"`
+	TargetKind  *string     `json:"target_kind"`
+	TargetID    pgtype.UUID `json:"target_id"`
+	// received: recorded on arrival. backfilled: from a processed federation_inbox Like row (migration 00078). legacy_unbound: a like received before 00078 with no inbox evidence, bound to the synthetic urn:aa:legacy-like:<likes.id>, which no Undo can name. tombstone: an Undo whose Like has not arrived.
+	Binding         string             `json:"binding"`
+	ReceivedAt      pgtype.Timestamptz `json:"received_at"`
+	UndoneAt        pgtype.Timestamptz `json:"undone_at"`
+	UndoActivityUri *string            `json:"undo_activity_uri"`
+}
+
 type FederationShare struct {
 	ID                pgtype.UUID        `json:"id"`
 	GrantorUserRef    int64              `json:"grantor_user_ref"`

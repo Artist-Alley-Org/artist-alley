@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// REAL per-verb handlers for Like + Create(Note as comment) per
-// the §5.5 Q1 lock-in. Every other verb is rejected as
-// unsupported_activity (registry.go, #1569). Phase 1.22.D-a-4-dispatch.
+// REAL per-verb handlers for Like, Undo of a Like (#1572) and
+// Create(Note as comment) per the §5.5 Q1 lock-in. Every other verb is
+// rejected as unsupported_activity (registry.go, #1569). Phase
+// 1.22.D-a-4-dispatch.
 //
 // # Authority before any write (#1570)
 //
@@ -57,7 +58,16 @@ type SocialPoster interface {
 	// idempotent no-op. Also fires the local notification
 	// for the post author (when the target is a post) — the
 	// existing emitter handles the remote-actor display path.
-	InsertRemoteLike(ctx context.Context, targetKind string, targetID uuid.UUID, peerID uuid.UUID, actorURI string) (inserted bool, err error)
+	//
+	// activityURI is the Like's signed id: the Like is bound to it
+	// (#1572), so a later Undo naming it retracts exactly this Like.
+	InsertRemoteLike(ctx context.Context, targetKind string, targetID uuid.UUID, peerID uuid.UUID, actorURI, activityURI string) (inserted bool, err error)
+
+	// UndoRemoteLike applies an inbound Undo of a Like (#1572): it
+	// retracts the Like with the same peer, actor and id, or stores a
+	// tombstone when there is none. It needs no share. Any error is
+	// retryable; it never refuses.
+	UndoRemoteLike(ctx context.Context, in RemoteUndoLikeInput) (removed bool, err error)
 
 	// InsertRemoteComment persists an inbound Create(Note) from
 	// a remote actor on a local target. Idempotent via
@@ -65,6 +75,16 @@ type SocialPoster interface {
 	// existing row's ID without firing the notification a
 	// second time.
 	InsertRemoteComment(ctx context.Context, in RemoteCommentInput) (commentID uuid.UUID, alreadyExisted bool, err error)
+}
+
+// RemoteUndoLikeInput is the typed argument of UndoRemoteLike: the
+// Undo's authenticated peer and actor, the Like id it names (its
+// object, on the actor's origin) and its own id.
+type RemoteUndoLikeInput struct {
+	PeerID          uuid.UUID
+	ActorURI        string
+	LikeActivityURI string
+	UndoActivityURI string
 }
 
 // RemoteCommentInput is the typed argument shape for an inbound
@@ -156,12 +176,47 @@ func LikeHandler(d *Dispatcher) HandlerFn {
 				errors.New("Like activity missing object reference")
 		}
 		targetID := uuid.UUID(row.ObjectID.Bytes)
-		_, err := d.social.InsertRemoteLike(ctx, *row.ObjectKind, targetID, peerID, env.Actor)
+		_, err := d.social.InsertRemoteLike(ctx, *row.ObjectKind, targetID, peerID, env.Actor, env.ID)
 		if outcome, reason, ok := writeRefusal(err); ok {
 			return outcome, reason, uuid.UUID{}, err
 		}
 		// Authorised and written: now refresh the remote-actor
 		// display cache (best-effort).
+		d.upsertActorBestEffort(ctx, env, peerID)
+		return OutcomeProcessed, "", uuid.UUID{}, nil
+	}
+}
+
+// UndoHandler is the inbound handler for an Undo of a Like (#1572, spec
+// v1 §7.5.4). ValidateMembers admitted it as exactly that: object_type
+// "Like" and an object that is an activity URI on the actor's own
+// origin, checked at receipt and again here after decryption; every
+// other Undo is unsupported_activity and never reaches this handler.
+//
+// The object is the Like's id on the SENDER, never a local object, so
+// the row carries no object reference. The retraction is bound to the
+// row's authenticated peer and the envelope's verified actor: it
+// matches only that actor's own Like with that id, needs no live share
+// (it withdraws the actor's earlier contribution, §7.1), and is
+// processed the same way whether or not the Like exists, was already
+// undone or belongs to someone else. A database error is retryable.
+func UndoHandler(d *Dispatcher) HandlerFn {
+	return func(ctx context.Context, env *federation.Envelope, peerID uuid.UUID, peerURL string, row FederationInbox) (DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {
+		if d.social == nil {
+			return OutcomeFailed, "", uuid.UUID{}, errors.New("UndoHandler: SocialPoster not wired")
+		}
+		if env.Object == "" || env.Actor == "" || env.ID == "" {
+			return OutcomeRejected, federation.InboxStatusInvalidMember, uuid.UUID{},
+				errors.New("Undo activity missing object, actor or id")
+		}
+		if _, err := d.social.UndoRemoteLike(ctx, RemoteUndoLikeInput{
+			PeerID:          peerID,
+			ActorURI:        env.Actor,
+			LikeActivityURI: env.Object,
+			UndoActivityURI: env.ID,
+		}); err != nil {
+			return OutcomeFailed, "", uuid.UUID{}, err
+		}
 		d.upsertActorBestEffort(ctx, env, peerID)
 		return OutcomeProcessed, "", uuid.UUID{}, nil
 	}

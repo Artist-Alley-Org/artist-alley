@@ -266,13 +266,17 @@ type failingPoster struct {
 	real inbox.SocialPoster
 }
 
-func (p *failingPoster) InsertRemoteLike(ctx context.Context, kind string, id, peerID uuid.UUID, actor string) (bool, error) {
+func (p *failingPoster) InsertRemoteLike(ctx context.Context, kind string, id, peerID uuid.UUID, actor, activityURI string) (bool, error) {
 	if p.fail {
-		return p.h.InsertRemoteLike(ctx, kind, id, peerID, actor, func(context.Context, pgx.Tx) error {
+		return p.h.InsertRemoteLike(ctx, kind, id, peerID, actor, activityURI, func(context.Context, pgx.Tx) error {
 			return errors.New("simulated: could not read federation_shares")
 		})
 	}
-	return p.real.InsertRemoteLike(ctx, kind, id, peerID, actor)
+	return p.real.InsertRemoteLike(ctx, kind, id, peerID, actor, activityURI)
+}
+
+func (p *failingPoster) UndoRemoteLike(ctx context.Context, in inbox.RemoteUndoLikeInput) (bool, error) {
+	return p.real.UndoRemoteLike(ctx, in)
 }
 
 func (p *failingPoster) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
@@ -313,7 +317,7 @@ func TestInboundAuthz_LookupErrorWritesNothingAndRetries(t *testing.T) {
 // A social write without an authorizer never writes.
 func TestInboundAuthz_SocialRefusesWithoutAnAuthorizer(t *testing.T) {
 	fx := newPairedFixture(t)
-	if _, err := fx.socialH.InsertRemoteLike(context.Background(), "post", fx.postID, fx.senderPeerID, fx.senderActor, nil); !errors.Is(err, social.ErrNoAuthorizer) {
+	if _, err := fx.socialH.InsertRemoteLike(context.Background(), "post", fx.postID, fx.senderPeerID, fx.senderActor, fx.senderBaseURL+"/activities/like-nil-authz", nil); !errors.Is(err, social.ErrNoAuthorizer) {
 		t.Fatalf("nil authorizer: %v", err)
 	}
 	if _, _, err := fx.socialH.InsertRemoteComment(context.Background(), social.RemoteCommentInput{

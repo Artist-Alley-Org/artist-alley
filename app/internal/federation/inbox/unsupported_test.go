@@ -232,9 +232,9 @@ func unappliedCatalogueTypes() []federation.ActivityType {
 
 // --- the applied set (no database) ------------------------------------
 
-func TestAppliedSet_IsExactlyLikeCreateAndProfileGatedShares_AndRegistryMatches(t *testing.T) {
+func TestAppliedSet_IsExactlyLikeUndoCreateAndProfileGatedShares_AndRegistryMatches(t *testing.T) {
 	want := []federation.ActivityType{federation.ActivityCreate, federation.ActivityLike,
-		federation.ActivityAAShare, federation.ActivityAAUnshare}
+		federation.ActivityUndo, federation.ActivityAAShare, federation.ActivityAAUnshare}
 	sort.Slice(want, func(i, j int) bool { return want[i] < want[j] })
 	if got := inbox.AppliedActivityTypes(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("applied set: got %v want %v — update docs/spec/federation/v1.md D3 and §7 with any change", got, want)
@@ -265,7 +265,7 @@ func TestAppliedSet_IsExactlyLikeCreateAndProfileGatedShares_AndRegistryMatches(
 		}
 	}
 	for _, v := range []federation.ActivityType{
-		federation.ActivityUndo, federation.ActivityDelete, federation.ActivityUpdate,
+		federation.ActivityAnnounce, federation.ActivityDelete, federation.ActivityUpdate,
 		federation.ActivityAAAssetVersion, federation.ActivityFollow, federation.ActivityAccept, federation.ActivityAdd,
 	} {
 		if inbox.Applies(v, lifecycle) {
@@ -303,7 +303,7 @@ func TestPostInbox_EveryUnappliedType_422_RecordedRejected_NeverProcessed(t *tes
 
 func TestPostInbox_UnsupportedDuplicate_SameRejection_OneRow(t *testing.T) {
 	fx := newFixture(t)
-	envelope := fx.envelopeOf(federation.ActivityUndo, "")
+	envelope := fx.envelopeOf(federation.ActivityAnnounce, "")
 	id := activityIDOf(t, envelope)
 	for i := 0; i < 3; i++ { // first delivery + two retries
 		rr := fx.postSingle(envelope)
@@ -323,10 +323,10 @@ func TestPostInbox_SameIDAsUnsupported_NeverGetsSuccessReceipt(t *testing.T) {
 	// A sender bug that reuses an unsupported activity's id for an
 	// applied type is answered from the stored row, not with a 200.
 	fx := newFixture(t)
-	undo := fx.envelopeOf(federation.ActivityUndo, "")
-	id := activityIDOf(t, undo)
-	if rr := fx.postSingle(undo); rr.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("undo: got %d want 422", rr.Code)
+	announce := fx.envelopeOf(federation.ActivityAnnounce, "")
+	id := activityIDOf(t, announce)
+	if rr := fx.postSingle(announce); rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("announce: got %d want 422", rr.Code)
 	}
 	like := fx.envelopeOf(federation.ActivityLike, id)
 	// Twice: both are answered from the stored row.
@@ -339,11 +339,11 @@ func TestPostInbox_SameIDAsUnsupported_NeverGetsSuccessReceipt(t *testing.T) {
 		// The message names the stored activity's type, not this one's.
 		var body struct{ Error string }
 		_ = json.Unmarshal(rr.Body.Bytes(), &body)
-		if !strings.Contains(body.Error, `"Undo"`) || strings.Contains(body.Error, `"Like"`) {
-			t.Errorf("delivery %d message %q should name the stored Undo", i, body.Error)
+		if !strings.Contains(body.Error, `"Announce"`) || strings.Contains(body.Error, `"Like"`) {
+			t.Errorf("delivery %d message %q should name the stored Announce", i, body.Error)
 		}
 	}
-	fx.assertStoredUnsupported(id, undo)
+	fx.assertStoredUnsupported(id, announce)
 }
 
 func TestPostInbox_NewlyIntroducedType_UnsupportedByDefault(t *testing.T) {
@@ -403,7 +403,7 @@ func TestPostInbox_UnsupportedType_AuthenticationGatesStillFirst(t *testing.T) {
 	}
 
 	// Unknown peer keyId.
-	envelope2 := fx.envelopeOf(federation.ActivityUndo, "")
+	envelope2 := fx.envelopeOf(federation.ActivityAnnounce, "")
 	req2, _ := http.NewRequest(http.MethodPost, "https://local.example/federation/inbox", bytes.NewReader(envelope2))
 	req2.Header.Set("Host", "local.example")
 	if err := httpsig.SignAndAttach(req2, envelope2, "https://stranger.example/instance#main-key", fx.peerPriv); err != nil {
@@ -443,32 +443,32 @@ func TestPostInboxBatch_MatchesSingleton_IncludingDuplicates(t *testing.T) {
 
 	fx := newFixture(t)
 	like := fx.envelopeOf(federation.ActivityLike, "")
-	undo := fx.envelopeOf(federation.ActivityUndo, "")
+	announce := fx.envelopeOf(federation.ActivityAnnounce, "")
 	share := fx.envelopeOf(federation.ActivityAAShare, "")
 	newVerb := fx.envelopeOf(future, "")
 
-	res := fx.postBatch(like, undo, share, newVerb)
+	res := fx.postBatch(like, announce, share, newVerb)
 	want := []batchResultT{
 		{activityIDOf(t, like), "accepted", ""},
-		{activityIDOf(t, undo), "rejected", string(federation.InboxStatusUnsupportedActivity)},
+		{activityIDOf(t, announce), "rejected", string(federation.InboxStatusUnsupportedActivity)},
 		{activityIDOf(t, share), "rejected", string(federation.InboxStatusUnsupportedActivity)},
 		{activityIDOf(t, newVerb), "rejected", string(federation.InboxStatusUnsupportedActivity)},
 	}
 	if !reflect.DeepEqual(res, want) {
 		t.Fatalf("first batch:\n got %+v\nwant %+v", res, want)
 	}
-	fx.assertStoredUnsupported(activityIDOf(t, undo), undo)
+	fx.assertStoredUnsupported(activityIDOf(t, announce), announce)
 	fx.assertStoredUnsupported(activityIDOf(t, share), share)
 	fx.assertStoredUnsupported(activityIDOf(t, newVerb), newVerb)
 
 	// Duplicate delivery of the same batch: the applied one is
 	// replayed, every unsupported one gets the same rejection.
-	res2 := fx.postBatch(like, undo, share, newVerb)
+	res2 := fx.postBatch(like, announce, share, newVerb)
 	want[0].Status = "replayed"
 	if !reflect.DeepEqual(res2, want) {
 		t.Fatalf("duplicate batch:\n got %+v\nwant %+v", res2, want)
 	}
-	for _, e := range [][]byte{undo, share, newVerb} {
+	for _, e := range [][]byte{announce, share, newVerb} {
 		if n := fx.countRows(activityIDOf(t, e)); n != 1 {
 			t.Errorf("rows for %s: got %d want 1", activityIDOf(t, e), n)
 		}
@@ -476,7 +476,7 @@ func TestPostInboxBatch_MatchesSingleton_IncludingDuplicates(t *testing.T) {
 
 	// Cross-endpoint duplicate: the singleton answers the batch's
 	// stored row the same way.
-	if rr := fx.postSingle(undo); rr.Code != http.StatusUnprocessableEntity {
+	if rr := fx.postSingle(announce); rr.Code != http.StatusUnprocessableEntity {
 		t.Errorf("singleton duplicate of a batch-recorded unsupported activity: got %d want 422", rr.Code)
 	}
 }
@@ -489,7 +489,7 @@ func TestDispatcher_PendingUnsupportedRow_RejectedNotProcessed(t *testing.T) {
 	// terminal, not processed.
 	fx := newFixture(t)
 	for _, typ := range []federation.ActivityType{
-		federation.ActivityUndo, federation.ActivityDelete, federation.ActivityAARevokeShare,
+		federation.ActivityAnnounce, federation.ActivityDelete, federation.ActivityAARevokeShare,
 	} {
 		envelope := fx.envelopeOf(typ, "")
 		id := activityIDOf(t, envelope)
@@ -556,26 +556,26 @@ func TestDispatcher_EmptyRegistry_RejectsEvenAppliedVerbs(t *testing.T) {
 func TestLandedHandler_FormerlyUnsupportedType_AcceptedAndDispatched(t *testing.T) {
 	fx := newFixture(t)
 
-	// Before: Undo is unsupported.
-	before := fx.envelopeOf(federation.ActivityUndo, "")
+	// Before: Announce is unsupported.
+	before := fx.envelopeOf(federation.ActivityAnnounce, "")
 	if rr := fx.postSingle(before); rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("before landing: got %d want 422", rr.Code)
 	}
 
-	// Land a real Undo handler the only way production can: one
+	// Land a real Announce handler the only way production can: one
 	// entry in the applied set.
 	calls := 0
-	inbox.RegisterAppliedForTest(t, federation.ActivityUndo, func(*inbox.Dispatcher) inbox.HandlerFn {
+	inbox.RegisterAppliedForTest(t, federation.ActivityAnnounce, func(*inbox.Dispatcher) inbox.HandlerFn {
 		return func(_ context.Context, env *federation.Envelope, _ uuid.UUID, _ string, _ inbox.FederationInbox) (inbox.DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {
 			calls++
-			if env.Type != federation.ActivityUndo {
+			if env.Type != federation.ActivityAnnounce {
 				t.Errorf("handler got %s", env.Type)
 			}
 			return inbox.OutcomeProcessed, "", uuid.UUID{}, nil
 		}
 	})
 
-	after := fx.envelopeOf(federation.ActivityUndo, "")
+	after := fx.envelopeOf(federation.ActivityAnnounce, "")
 	id := activityIDOf(t, after)
 	if rr := fx.postSingle(after); rr.Code != http.StatusAccepted {
 		t.Fatalf("after landing: got %d want 202; body=%s", rr.Code, rr.Body.String())
@@ -584,7 +584,7 @@ func TestLandedHandler_FormerlyUnsupportedType_AcceptedAndDispatched(t *testing.
 	if !ok || row.Status != "pending" {
 		t.Fatalf("after landing: row ok=%v status=%q want pending", ok, row.Status)
 	}
-	d := fx.newDispatcher(nil) // production BuildRegistry, now including Undo
+	d := fx.newDispatcher(nil) // production BuildRegistry, now including Announce
 	if got := d.DispatchRow(context.Background(), row); got != inbox.OutcomeProcessed {
 		t.Fatalf("dispatch: %v want OutcomeProcessed", got)
 	}
@@ -616,14 +616,14 @@ func TestPostInbox_SeenIDWithNoStoredRow_IsAFirstDelivery(t *testing.T) {
 	if n := fx.countRows(x); n != 0 {
 		t.Fatalf("invalid-type envelope stored: %d rows", n)
 	}
-	undo := fx.envelopeOf(federation.ActivityUndo, x)
-	rr := fx.postSingle(undo)
+	announce := fx.envelopeOf(federation.ActivityAnnounce, x)
+	rr := fx.postSingle(announce)
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("unsupported envelope on a seen id with no row: got %d want 422 (no receipt without a stored row); body=%s",
 			rr.Code, rr.Body.String())
 	}
 	assertReasonInBody(t, rr.Body.Bytes(), federation.InboxStatusUnsupportedActivity)
-	fx.assertStoredUnsupported(x, undo)
+	fx.assertStoredUnsupported(x, announce)
 
 	// Same for an applied type: id Y refused first, then a valid Like.
 	y := fx.peerURL + "/activities/" + uuid.NewString()
@@ -646,8 +646,8 @@ func TestPostInboxBatch_SeenIDWithNoStoredRow_IsAFirstDelivery(t *testing.T) {
 			t.Fatalf("first batch result %d: %+v want rejected/invalid_type", i, r)
 		}
 	}
-	undo := fx.envelopeOf(federation.ActivityUndo, x)
-	res = fx.postBatch(undo, fx.envelopeOf(federation.ActivityLike, y))
+	announce := fx.envelopeOf(federation.ActivityAnnounce, x)
+	res = fx.postBatch(announce, fx.envelopeOf(federation.ActivityLike, y))
 	want := []batchResultT{
 		{x, "rejected", string(federation.InboxStatusUnsupportedActivity)},
 		{y, "accepted", ""},
@@ -655,7 +655,7 @@ func TestPostInboxBatch_SeenIDWithNoStoredRow_IsAFirstDelivery(t *testing.T) {
 	if !reflect.DeepEqual(res, want) {
 		t.Fatalf("second batch (seen ids, no rows):\n got %+v\nwant %+v", res, want)
 	}
-	fx.assertStoredUnsupported(x, undo)
+	fx.assertStoredUnsupported(x, announce)
 	if row, ok := fx.storedRow(y); !ok || row.Status != "pending" {
 		t.Fatalf("like row: ok=%v status=%q want pending", ok, row.Status)
 	}
@@ -738,12 +738,12 @@ func (fx *fixture) flakyHandler() (*inbox.Handler, *flakyDB) {
 func TestPostInbox_UnsupportedStoreFailure_5xx_ThenRetryRecorded(t *testing.T) {
 	fx := newFixture(t)
 	h, db := fx.flakyHandler()
-	undo := fx.envelopeOf(federation.ActivityUndo, "")
-	id := activityIDOf(t, undo)
+	announce := fx.envelopeOf(federation.ActivityAnnounce, "")
+	id := activityIDOf(t, announce)
 
 	db.failRejectedInsert.Store(true)
 	rr := httptest.NewRecorder()
-	h.PostInbox(rr, fx.newSignedRequest(undo))
+	h.PostInbox(rr, fx.newSignedRequest(announce))
 	if rr.Code < 500 {
 		t.Fatalf("store failure: got %d want 5xx (retryable, neither a receipt nor a final rejection); body=%s", rr.Code, rr.Body.String())
 	}
@@ -755,11 +755,11 @@ func TestPostInbox_UnsupportedStoreFailure_5xx_ThenRetryRecorded(t *testing.T) {
 	// processed, not acknowledged.
 	db.failRejectedInsert.Store(false)
 	rr = httptest.NewRecorder()
-	h.PostInbox(rr, fx.newSignedRequest(undo))
+	h.PostInbox(rr, fx.newSignedRequest(announce))
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("retry: got %d want 422; body=%s", rr.Code, rr.Body.String())
 	}
-	fx.assertStoredUnsupported(id, undo)
+	fx.assertStoredUnsupported(id, announce)
 }
 
 func (fx *fixture) postBatchTo(h *inbox.Handler, envelopes ...[]byte) *httptest.ResponseRecorder {
@@ -772,12 +772,12 @@ func TestPostInboxBatch_StoreFailure_503_SiblingsReplayedOnRetry(t *testing.T) {
 	fx := newFixture(t)
 	h, db := fx.flakyHandler()
 	likeA := fx.envelopeOf(federation.ActivityLike, "")
-	undoB := fx.envelopeOf(federation.ActivityUndo, "")
+	announceB := fx.envelopeOf(federation.ActivityAnnounce, "")
 	likeC := fx.envelopeOf(federation.ActivityLike, "")
-	a, b, c := activityIDOf(t, likeA), activityIDOf(t, undoB), activityIDOf(t, likeC)
+	a, b, c := activityIDOf(t, likeA), activityIDOf(t, announceB), activityIDOf(t, likeC)
 
 	db.failRejectedInsert.Store(true)
-	rr := fx.postBatchTo(h, likeA, undoB, likeC)
+	rr := fx.postBatchTo(h, likeA, announceB, likeC)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("batch with a store failure: got %d want 503; body=%s", rr.Code, rr.Body.String())
 	}
@@ -796,7 +796,7 @@ func TestPostInboxBatch_StoreFailure_503_SiblingsReplayedOnRetry(t *testing.T) {
 
 	// The sender retries the whole batch.
 	db.failRejectedInsert.Store(false)
-	rr = fx.postBatchTo(h, likeA, undoB, likeC)
+	rr = fx.postBatchTo(h, likeA, announceB, likeC)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("retry: got %d want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -814,7 +814,7 @@ func TestPostInboxBatch_StoreFailure_503_SiblingsReplayedOnRetry(t *testing.T) {
 	if !reflect.DeepEqual(resp.Results, want) {
 		t.Fatalf("retry results:\n got %+v\nwant %+v", resp.Results, want)
 	}
-	fx.assertStoredUnsupported(b, undoB)
+	fx.assertStoredUnsupported(b, announceB)
 	for _, id := range []string{a, b, c} {
 		if n := fx.countRows(id); n != 1 {
 			t.Errorf("rows for %s: got %d want 1", id, n)
@@ -824,7 +824,7 @@ func TestPostInboxBatch_StoreFailure_503_SiblingsReplayedOnRetry(t *testing.T) {
 	// A duplicate whose stored row cannot be read is also a 503, not
 	// a guess.
 	db.failStoredLookup.Store(true)
-	if rr := fx.postBatchTo(h, undoB); rr.Code != http.StatusServiceUnavailable {
+	if rr := fx.postBatchTo(h, announceB); rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("stored-row lookup failure: got %d want 503; body=%s", rr.Code, rr.Body.String())
 	}
 	db.failStoredLookup.Store(false)
@@ -855,11 +855,11 @@ func (fx *fixture) postTo(h *inbox.Handler, envelope []byte) *httptest.ResponseR
 	return rr
 }
 
-// landCountingUndo lands a real handler for Undo for the rest of t and
+// landCountingAnnounce lands a real handler for Announce for the rest of t and
 // returns its call counter.
-func landCountingUndo(t *testing.T) *atomic.Int32 {
+func landCountingAnnounce(t *testing.T) *atomic.Int32 {
 	var calls atomic.Int32
-	inbox.RegisterAppliedForTest(t, federation.ActivityUndo, func(*inbox.Dispatcher) inbox.HandlerFn {
+	inbox.RegisterAppliedForTest(t, federation.ActivityAnnounce, func(*inbox.Dispatcher) inbox.HandlerFn {
 		return func(context.Context, *federation.Envelope, uuid.UUID, string, inbox.FederationInbox) (inbox.DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {
 			calls.Add(1)
 			return inbox.OutcomeProcessed, "", uuid.UUID{}, nil
@@ -892,36 +892,36 @@ func TestPostInbox_StoredUnsupported_FreshReceiverAfterHandlerLands_SameAnswer(t
 
 	// Recorded as unsupported. Its object is an activity on the peer,
 	// which the host check would call unknown_object for an applied type.
-	undo := fx.envelopeOf(federation.ActivityUndo, "")
-	id := activityIDOf(t, undo)
-	if rr := fx.postTo(first, undo); rr.Code != http.StatusUnprocessableEntity {
+	announce := fx.envelopeOf(federation.ActivityAnnounce, "")
+	id := activityIDOf(t, announce)
+	if rr := fx.postTo(first, announce); rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("first delivery: got %d want 422; body=%s", rr.Code, rr.Body.String())
 	}
 	before, _ := fx.storedRow(id)
 
-	// Undo's handler lands; the receiver restarts (fresh handler).
-	calls := landCountingUndo(t)
+	// Announce's handler lands; the receiver restarts (fresh handler).
+	calls := landCountingAnnounce(t)
 	fresh := fx.receiver("https://local.example")
 
-	// Control: a NEW Undo of the same shape now takes the applied
+	// Control: a NEW Announce of the same shape now takes the applied
 	// path and is refused by the object-ref check. This is the answer
 	// the old id would get if the current handler set decided it.
-	if rr := fx.postTo(fresh, fx.envelopeOf(federation.ActivityUndo, "")); rr.Code != http.StatusNotFound {
-		t.Fatalf("control: new Undo after landing got %d want 404 unknown_object; body=%s", rr.Code, rr.Body.String())
+	if rr := fx.postTo(fresh, fx.envelopeOf(federation.ActivityAnnounce, "")); rr.Code != http.StatusNotFound {
+		t.Fatalf("control: new Announce after landing got %d want 404 unknown_object; body=%s", rr.Code, rr.Body.String())
 	}
 
 	// The SAME id: the stored refusal decides.
 	for i := 0; i < 2; i++ {
-		rr := fx.postTo(fresh, undo)
+		rr := fx.postTo(fresh, announce)
 		if rr.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("redelivery %d on a fresh receiver: got %d want the original 422; body=%s", i, rr.Code, rr.Body.String())
 		}
 		assertReasonInBody(t, rr.Body.Bytes(), federation.InboxStatusUnsupportedActivity)
 	}
 	fx.assertRowUnchanged(id, before)
-	fx.assertStoredUnsupported(id, undo)
+	fx.assertStoredUnsupported(id, announce)
 	if n := calls.Load(); n != 0 {
-		t.Errorf("landed Undo handler calls: got %d want 0", n)
+		t.Errorf("landed Announce handler calls: got %d want 0", n)
 	}
 
 	// A stored ACCEPTED id keeps its idempotent receipt on a fresh
@@ -936,7 +936,7 @@ func TestPostInbox_StoredUnsupported_FreshReceiverAfterHandlerLands_SameAnswer(t
 	h, db := fx.flakyHandler()
 	db.failStoredLookup.Store(true)
 	rr := httptest.NewRecorder()
-	h.PostInbox(rr, fx.newSignedRequest(undo))
+	h.PostInbox(rr, fx.newSignedRequest(announce))
 	if rr.Code < 500 {
 		t.Errorf("stored-row read failure: got %d want 5xx", rr.Code)
 	}
@@ -947,7 +947,7 @@ func TestPostInboxBatch_StoredUnsupported_FreshReceiverAfterHandlerLands_SameAns
 	fx := newFixture(t)
 	first := fx.receiver("https://local.example")
 
-	undo := fx.envelopeOf(federation.ActivityUndo, "")
+	announce := fx.envelopeOf(federation.ActivityAnnounce, "")
 	// The Like targets a local post, so the host check accepts it and
 	// it is stored.
 	var likeMap map[string]any
@@ -955,8 +955,8 @@ func TestPostInboxBatch_StoredUnsupported_FreshReceiverAfterHandlerLands_SameAns
 	likeMap["object"] = "https://local.example/posts/" + uuid.NewString()
 	like, _ := json.Marshal(likeMap)
 	like = fx.signEnvelope(like) // re-sign after the edit (#1526)
-	id, likeID := activityIDOf(t, undo), activityIDOf(t, like)
-	rr := fx.postBatchTo(first, undo, like)
+	id, likeID := activityIDOf(t, announce), activityIDOf(t, like)
+	rr := fx.postBatchTo(first, announce, like)
 	var firstResp struct {
 		Results []batchResultT `json:"results"`
 	}
@@ -969,21 +969,21 @@ func TestPostInboxBatch_StoredUnsupported_FreshReceiverAfterHandlerLands_SameAns
 	}
 	before, _ := fx.storedRow(id)
 
-	calls := landCountingUndo(t)
+	calls := landCountingAnnounce(t)
 	fresh := fx.receiver("https://local.example")
 
 	// Control, as in the singleton test.
-	ctl := fx.envelopeOf(federation.ActivityUndo, "")
+	ctl := fx.envelopeOf(federation.ActivityAnnounce, "")
 	rr = fx.postBatchTo(fresh, ctl)
 	var ctlResp struct {
 		Results []batchResultT `json:"results"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &ctlResp)
 	if len(ctlResp.Results) != 1 || ctlResp.Results[0].Reason != string(federation.InboxStatusUnknownObject) {
-		t.Fatalf("control: new Undo after landing got %s want rejected/unknown_object", rr.Body.String())
+		t.Fatalf("control: new Announce after landing got %s want rejected/unknown_object", rr.Body.String())
 	}
 
-	rr = fx.postBatchTo(fresh, undo, like)
+	rr = fx.postBatchTo(fresh, announce, like)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("redelivery batch: %d %s", rr.Code, rr.Body.String())
 	}
@@ -1002,13 +1002,13 @@ func TestPostInboxBatch_StoredUnsupported_FreshReceiverAfterHandlerLands_SameAns
 	}
 	fx.assertRowUnchanged(id, before)
 	if n := calls.Load(); n != 0 {
-		t.Errorf("landed Undo handler calls: got %d want 0", n)
+		t.Errorf("landed Announce handler calls: got %d want 0", n)
 	}
 
 	// A stored-row read failure is a whole-batch 503.
 	h, db := fx.flakyHandler()
 	db.failStoredLookup.Store(true)
-	if rr := fx.postBatchTo(h, undo); rr.Code != http.StatusServiceUnavailable {
+	if rr := fx.postBatchTo(h, announce); rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("stored-row read failure: got %d want 503", rr.Code)
 	}
 	fx.assertRowUnchanged(id, before)

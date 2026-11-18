@@ -2260,9 +2260,21 @@ func inboundWriteError(err error) error {
 	return err
 }
 
-func (a inboxSocialPosterAdapter) InsertRemoteLike(ctx context.Context, targetKind string, targetID uuid.UUID, peerID uuid.UUID, actorURI string) (bool, error) {
-	return a.h.InsertRemoteLike(ctx, targetKind, targetID, peerID, actorURI,
+func (a inboxSocialPosterAdapter) InsertRemoteLike(ctx context.Context, targetKind string, targetID uuid.UUID, peerID uuid.UUID, actorURI, activityURI string) (bool, error) {
+	return a.h.InsertRemoteLike(ctx, targetKind, targetID, peerID, actorURI, activityURI,
 		a.authorizer(federation.ActivityLike, targetKind, targetID, peerID, actorURI))
+}
+
+// UndoRemoteLike retracts the actor's own Like (#1572). It has no
+// authorizer: a retraction withdraws an earlier contribution and needs no
+// live share (spec v1 §7.1); it is bound to the peer, actor and Like id.
+func (a inboxSocialPosterAdapter) UndoRemoteLike(ctx context.Context, in inbox.RemoteUndoLikeInput) (bool, error) {
+	return a.h.UndoRemoteLike(ctx, social.RemoteUndoLikeInput{
+		PeerID:          in.PeerID,
+		ActorURI:        in.ActorURI,
+		LikeActivityURI: in.LikeActivityURI,
+		UndoActivityURI: in.UndoActivityURI,
+	})
 }
 
 func (a inboxSocialPosterAdapter) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {

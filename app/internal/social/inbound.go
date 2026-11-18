@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// Inbound-federation domain writes — InsertRemoteLike +
-// InsertRemoteComment. Phase 1.22.D-a-4-dispatch.
+// Inbound-federation domain writes: InsertRemoteLike, UndoRemoteLike
+// (#1572) and InsertRemoteComment. Phase 1.22.D-a-4-dispatch.
 //
 // These methods implement the inbox.SocialPoster contract +
 // fire the same notification path the local Like / Comment
@@ -53,29 +53,92 @@ var ErrNoAuthorizer = errors.New("social: inbound write without an authorizer")
 // re-parented to top level.
 var ErrRemoteParentNotFound = errors.New("social: inbound reply parent is not a live comment on the target")
 
+// ErrNoLikeActivity: an inbound Like without its activity id. Every
+// Like is bound to its id (#1572), so one without it is never written.
+var ErrNoLikeActivity = errors.New("social: inbound Like without its activity id")
+
+// lockRemoteActor serialises, until tx ends, every inbound Like and Undo
+// of one remote actor of one peer (#1572). Both take it FIRST, before any
+// row lock (the Like's authorisation locks the target, the peer and the
+// shares FOR SHARE; the likes counter trigger updates the target), so the
+// two can never wait on each other in opposite orders. Serialising per
+// (peer, actor) covers every (target, peer, actor) that actor touches. A
+// hash collision between two actors only serialises them too.
+func lockRemoteActor(ctx context.Context, tx pgx.Tx, peerID uuid.UUID, actorURI string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text || ' ' || $2, 1572))`,
+		peerID, actorURI); err != nil {
+		return fmt.Errorf("lock remote actor: %w", err)
+	}
+	return nil
+}
+
 // InsertRemoteLike persists an inbound Like from a remote actor, in one
 // transaction with its authorisation, and after commit fires the
 // post-author notification (same payload shape the local LikePost
 // handler uses).
 //
-// Returns true when a new row was inserted, false on idempotent no-op
-// (retried delivery: same actor and target). An authorize error is
-// returned as is and nothing is written or notified.
+// The Like is bound to its activity id (#1572): one federation_remote_
+// likes record per (peer, actor, activityURI). The aggregate likes row
+// for (target, peer, actor) exists while at least one of that actor's
+// records for the target is live, so a second, distinct Like of the
+// same target by the same actor counts once. A Like whose Undo arrived
+// first (a tombstone with the same peer, actor and id) is recorded
+// undone: no like row, no notification.
+//
+// Returns true when the aggregate like row was created, false otherwise
+// (already liked, retracted on arrival, or a repeat of a recorded id).
+// An authorize error is returned as is and nothing is written or
+// notified.
 func (h *Handler) InsertRemoteLike(
 	ctx context.Context,
 	targetKind string,
 	targetID uuid.UUID,
 	peerID uuid.UUID,
 	actorURI string,
+	activityURI string,
 	authorize InboundAuthorizer,
 ) (bool, error) {
 	if authorize == nil {
 		return false, ErrNoAuthorizer
 	}
+	if activityURI == "" {
+		return false, ErrNoLikeActivity
+	}
 	var inserted bool
 	err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := lockRemoteActor(ctx, tx, peerID, actorURI); err != nil {
+			return err
+		}
 		if err := authorize(ctx, tx); err != nil {
 			return err
+		}
+		var binding string
+		err := tx.QueryRow(ctx, `SELECT binding FROM federation_remote_likes
+			WHERE peer_id = $1 AND actor_uri = $2 AND activity_uri = $3 FOR UPDATE`,
+			peerID, actorURI, activityURI).Scan(&binding)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			if _, err := tx.Exec(ctx, `INSERT INTO federation_remote_likes
+				(peer_id, actor_uri, activity_uri, target_kind, target_id, binding)
+				VALUES ($1, $2, $3, $4, $5, 'received')
+				ON CONFLICT (peer_id, actor_uri, activity_uri) DO NOTHING`,
+				peerID, actorURI, activityURI, targetKind, targetID); err != nil {
+				return fmt.Errorf("record remote like: %w", err)
+			}
+		case err != nil:
+			return fmt.Errorf("read remote like record: %w", err)
+		case binding == "tombstone":
+			// Undone before it arrived: record the target, stay undone.
+			if _, err := tx.Exec(ctx, `UPDATE federation_remote_likes
+				SET binding = 'received', target_kind = $4, target_id = $5
+				WHERE peer_id = $1 AND actor_uri = $2 AND activity_uri = $3`,
+				peerID, actorURI, activityURI, targetKind, targetID); err != nil {
+				return fmt.Errorf("record retracted remote like: %w", err)
+			}
+			return nil
+		default:
+			// This id is already recorded: nothing changes.
+			return nil
 		}
 		res, err := New(tx).InsertRemoteLike(ctx, InsertRemoteLikeParams{
 			TargetKind: targetKind,
@@ -112,6 +175,103 @@ func (h *Handler) InsertRemoteLike(
 		}
 	}
 	return inserted, nil
+}
+
+// RemoteUndoLikeInput is the typed argument for UndoRemoteLike: the
+// authenticated peer and actor of the Undo, the Like activity id it
+// names (its object) and its own id.
+type RemoteUndoLikeInput struct {
+	PeerID          uuid.UUID
+	ActorURI        string
+	LikeActivityURI string
+	UndoActivityURI string
+}
+
+// UndoRemoteLike applies an inbound Undo of a Like (#1572): the actor
+// retracting its own earlier Like. It needs no share and no target, so it
+// applies after a revoke, an expiry or the target's deletion.
+//
+// The Undo matches only the record with the same peer, actor and Like id.
+// In one transaction, serialised with every Like and Undo of that actor:
+//
+//   - a live record is marked undone; when it was the actor's last live
+//     record for its target, the aggregate like row is deleted (the
+//     counter trigger decrements the count). Notifications already sent
+//     are kept, as for a local unlike.
+//   - an undone record (a repeated or second Undo) changes nothing.
+//   - no record (the Like has not arrived, was never sent, or belongs to
+//     another actor or peer) stores a tombstone for this peer, actor and
+//     id, so a later matching Like is recorded undone.
+//
+// Every case is processed the same way, so the outcome never tells the
+// sender whether another actor's Like exists. Returns whether the
+// aggregate like row was removed. Any error is a database failure: it
+// writes nothing and is retryable.
+func (h *Handler) UndoRemoteLike(ctx context.Context, in RemoteUndoLikeInput) (bool, error) {
+	if in.LikeActivityURI == "" || in.UndoActivityURI == "" || in.ActorURI == "" {
+		return false, ErrNoLikeActivity
+	}
+	var removed bool
+	err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := lockRemoteActor(ctx, tx, in.PeerID, in.ActorURI); err != nil {
+			return err
+		}
+		// The binding: the record with this Undo's own peer, actor and
+		// named Like id. Everything below acts on that record only.
+		var (
+			recActor   string
+			binding    string
+			targetKind *string
+			targetID   pgtype.UUID
+			undone     bool
+		)
+		err := tx.QueryRow(ctx, `SELECT actor_uri, binding, target_kind, target_id, undone_at IS NOT NULL
+			FROM federation_remote_likes
+			WHERE peer_id = $1 AND actor_uri = $2 AND activity_uri = $3 FOR UPDATE`,
+			in.PeerID, in.ActorURI, in.LikeActivityURI).Scan(&recActor, &binding, &targetKind, &targetID, &undone)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			if _, err := tx.Exec(ctx, `INSERT INTO federation_remote_likes
+				(peer_id, actor_uri, activity_uri, binding, undone_at, undo_activity_uri)
+				VALUES ($1, $2, $3, 'tombstone', now(), $4)`,
+				in.PeerID, in.ActorURI, in.LikeActivityURI, in.UndoActivityURI); err != nil {
+				return fmt.Errorf("record undo tombstone: %w", err)
+			}
+			return nil
+		case err != nil:
+			return fmt.Errorf("read remote like record: %w", err)
+		case undone || binding == "legacy_unbound" || targetKind == nil:
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `UPDATE federation_remote_likes
+			SET undone_at = now(), undo_activity_uri = $4
+			WHERE peer_id = $1 AND actor_uri = $2 AND activity_uri = $3`,
+			in.PeerID, recActor, in.LikeActivityURI, in.UndoActivityURI); err != nil {
+			return fmt.Errorf("undo remote like: %w", err)
+		}
+		var stillLive bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM federation_remote_likes
+			WHERE target_kind = $1 AND target_id = $2 AND peer_id = $3 AND actor_uri = $4
+			  AND undone_at IS NULL)`,
+			*targetKind, targetID, in.PeerID, recActor).Scan(&stillLive); err != nil {
+			return fmt.Errorf("read live remote likes: %w", err)
+		}
+		if stillLive {
+			return nil
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM likes
+			WHERE target_kind = $1 AND target_id = $2 AND peer_id = $3 AND actor_uri = $4`,
+			*targetKind, targetID, in.PeerID, recActor)
+		if err != nil {
+			return fmt.Errorf("remove remote like: %w", err)
+		}
+		removed = tag.RowsAffected() > 0
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return removed, nil
 }
 
 // RemoteCommentInput is the typed argument for InsertRemoteComment.
