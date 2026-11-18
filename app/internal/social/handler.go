@@ -763,11 +763,23 @@ func (h *Handler) DeleteComment(
 	commentIDStr := uuid.UUID(pgID.Bytes).String()
 	postIDStr := uuid.UUID(row.TargetID.Bytes).String()
 
+	// Federate the Delete only when its actor wrote the comment (#1572):
+	// bound to the Create that federated it and addressed like it. A
+	// moderator's Delete of someone else's comment, or of a remote
+	// comment, stays a local record.
+	var createURI string
+	var createTo []string
+	if isOwn {
+		if createURI, createTo, err = h.localCommentCreate(ctx, caller.UserRef, commentIDStr); err != nil {
+			return nil, err
+		}
+	}
+
 	// Gold-standard path: wrap SoftDeleteComment + Delete(Note)
 	// activity in one tx per AP §6.4 (Tombstone semantics).
 	// 1.22.B-cleanup made activities required.
 	var notFound bool
-	em := emit.DeleteComment(h.actorContext(ctx, caller), commentIDStr, postIDStr)
+	em := emit.DeleteComment(h.actorContext(ctx, caller), commentIDStr, postIDStr, createURI, createTo)
 	err = h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
 		rows, err := New(tx).SoftDeleteComment(ctx, pgID)
 		if err != nil {
@@ -789,6 +801,29 @@ func (h *Handler) DeleteComment(
 	}
 	h.invalidatePostCache(ctx, postIDStr)
 	return openapi.DeleteComment204Response{}, nil
+}
+
+// localCommentCreate returns the id and `to` of the newest Create this
+// instance recorded for a comment by its author, or "" and nil when there
+// is none (a comment from before the activity ledger).
+func (h *Handler) localCommentCreate(ctx context.Context, authorRef int64, commentID string) (string, []string, error) {
+	var uri string
+	var to []byte
+	err := h.Pool.QueryRow(ctx, `SELECT activity_uri, to_uris FROM activities
+		WHERE source = 'local' AND activity_type = 'Create' AND object_kind = 'comment'
+		  AND object_local_id = $1 AND actor_user_ref = $2
+		ORDER BY published_at DESC, id DESC LIMIT 1`, commentID, authorRef).Scan(&uri, &to)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, nil
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("social: look up comment create: %w", err)
+	}
+	var recipients []string
+	if len(to) > 0 {
+		_ = json.Unmarshal(to, &recipients)
+	}
+	return uri, recipients, nil
 }
 
 // errCommentAbsent is the sentinel signalling "rows==0 from

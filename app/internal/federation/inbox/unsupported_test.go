@@ -232,9 +232,9 @@ func unappliedCatalogueTypes() []federation.ActivityType {
 
 // --- the applied set (no database) ------------------------------------
 
-func TestAppliedSet_IsExactlyLikeUndoCreateAndProfileGatedShares_AndRegistryMatches(t *testing.T) {
+func TestAppliedSet_IsExactlyLikeUndoDeleteCreateAndProfileGatedShares_AndRegistryMatches(t *testing.T) {
 	want := []federation.ActivityType{federation.ActivityCreate, federation.ActivityLike,
-		federation.ActivityUndo, federation.ActivityAAShare, federation.ActivityAAUnshare}
+		federation.ActivityUndo, federation.ActivityDelete, federation.ActivityAAShare, federation.ActivityAAUnshare}
 	sort.Slice(want, func(i, j int) bool { return want[i] < want[j] })
 	if got := inbox.AppliedActivityTypes(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("applied set: got %v want %v — update docs/spec/federation/v1.md D3 and §7 with any change", got, want)
@@ -265,7 +265,7 @@ func TestAppliedSet_IsExactlyLikeUndoCreateAndProfileGatedShares_AndRegistryMatc
 		}
 	}
 	for _, v := range []federation.ActivityType{
-		federation.ActivityAnnounce, federation.ActivityDelete, federation.ActivityUpdate,
+		federation.ActivityAnnounce, federation.ActivityRemove, federation.ActivityUpdate,
 		federation.ActivityAAAssetVersion, federation.ActivityFollow, federation.ActivityAccept, federation.ActivityAdd,
 	} {
 		if inbox.Applies(v, lifecycle) {
@@ -282,8 +282,12 @@ func TestAppliedSet_IsExactlyLikeUndoCreateAndProfileGatedShares_AndRegistryMatc
 func TestPostInbox_EveryUnappliedType_422_RecordedRejected_NeverProcessed(t *testing.T) {
 	fx := newFixture(t)
 	types := unappliedCatalogueTypes()
-	if len(types) < 20 {
-		t.Fatalf("expected the ~21 unapplied §7 types, got %d: %v", len(types), types)
+	// 24 catalogue types, minus aa:Provenance (profile-gated, refused
+	// before storage) and the 4 applied for a peer without a profile
+	// (Like, Undo, Delete, Create; the share types count as unapplied
+	// here): 19 since #1572.
+	if len(types) < 19 {
+		t.Fatalf("expected the ~19 unapplied §7 types, got %d: %v", len(types), types)
 	}
 	for _, typ := range types {
 		envelope := fx.envelopeOf(typ, "")
@@ -489,7 +493,7 @@ func TestDispatcher_PendingUnsupportedRow_RejectedNotProcessed(t *testing.T) {
 	// terminal, not processed.
 	fx := newFixture(t)
 	for _, typ := range []federation.ActivityType{
-		federation.ActivityAnnounce, federation.ActivityDelete, federation.ActivityAARevokeShare,
+		federation.ActivityAnnounce, federation.ActivityBlock, federation.ActivityAARevokeShare,
 	} {
 		envelope := fx.envelopeOf(typ, "")
 		id := activityIDOf(t, envelope)

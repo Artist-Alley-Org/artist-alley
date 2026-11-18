@@ -661,6 +661,15 @@ type FederationRemoteActor struct {
 	SigningKeyPinnedAt pgtype.Timestamptz
 }
 
+// A federated Delete of a comment whose Create this instance has not received (#1572), keyed by (peer, signed actor, Create activity id). A Create with exactly that identity is processed with no comment and no notification. Another actor or peer never matches. Goes only with its peer.
+type FederationRemoteCommentTombstone struct {
+	PeerID            pgtype.UUID
+	ActorUri          string
+	CreateActivityUri string
+	DeleteActivityUri string
+	ReceivedAt        pgtype.Timestamptz
+}
+
 // Inbound Like activities bound to (peer, signed actor, Like activity id) (#1572). The aggregate likes row for (target, peer, actor) exists while at least one record is live. An Undo of an unseen id stores a tombstone (binding tombstone, no target, undone); a later matching Like is recorded undone and creates no like and no notification. Retractions need no live share.
 type FederationRemoteLike struct {
 	PeerID      pgtype.UUID

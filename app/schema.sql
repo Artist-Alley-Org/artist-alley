@@ -2463,6 +2463,26 @@ COMMENT ON COLUMN public.federation_remote_actors.signing_key_pinned_at IS 'When
 
 
 --
+-- Name: federation_remote_comment_tombstones; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_remote_comment_tombstones (
+    peer_id uuid NOT NULL,
+    actor_uri text NOT NULL,
+    create_activity_uri text NOT NULL,
+    delete_activity_uri text NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE federation_remote_comment_tombstones; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_remote_comment_tombstones IS 'A federated Delete of a comment whose Create this instance has not received (#1572), keyed by (peer, signed actor, Create activity id). A Create with exactly that identity is processed with no comment and no notification. Another actor or peer never matches. Goes only with its peer.';
+
+
+--
 -- Name: federation_remote_likes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4131,6 +4151,14 @@ ALTER TABLE ONLY public.federation_peers
 
 ALTER TABLE ONLY public.federation_remote_actors
     ADD CONSTRAINT federation_remote_actors_pkey PRIMARY KEY (actor_uri);
+
+
+--
+-- Name: federation_remote_comment_tombstones federation_remote_comment_tombstones_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_remote_comment_tombstones
+    ADD CONSTRAINT federation_remote_comment_tombstones_pkey PRIMARY KEY (peer_id, actor_uri, create_activity_uri);
 
 
 --
@@ -7011,6 +7039,14 @@ ALTER TABLE ONLY public.federation_peer_suggestions
 
 ALTER TABLE ONLY public.federation_remote_actors
     ADD CONSTRAINT federation_remote_actors_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: federation_remote_comment_tombstones federation_remote_comment_tombstones_peer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_remote_comment_tombstones
+    ADD CONSTRAINT federation_remote_comment_tombstones_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
 
 
 --

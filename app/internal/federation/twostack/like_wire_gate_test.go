@@ -142,7 +142,63 @@ func (g *likeGate) waitGrantOnB(objectURI, target, state string) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	g.t.Fatalf("B never held the grant for %s (%q) %s", objectURI, target, state)
+	g.t.Fatalf("B never held the grant for %s (%q) %s; %s", objectURI, target, state, g.shareTrail(objectURI))
+}
+
+// shareTrail is where A's share activities for objectURI went: A's
+// delivery rows to B, B's inbox rows from A, and B's grants, with their
+// statuses and errors, for a failure message.
+func (g *likeGate) shareTrail(objectURI string) string {
+	ctx := context.Background()
+	var out []string
+	collect := func(label string, in *instance, q string, args ...any) {
+		rows, err := in.pool.Query(ctx, q, args...)
+		if err != nil {
+			out = append(out, label+": "+err.Error())
+			return
+		}
+		defer rows.Close()
+		n := 0
+		for rows.Next() {
+			var line string
+			if err := rows.Scan(&line); err == nil {
+				out = append(out, label+": "+line)
+				n++
+			}
+		}
+		if n == 0 {
+			out = append(out, label+": none")
+		}
+	}
+	collect("A outbox", g.a, `SELECT a.activity_type || ' ' || o.status || ' attempts=' || o.attempts ||
+			' next=' || o.next_attempt_at || ' err=' || coalesce(o.last_error, '') || ' refused=' || coalesce(o.refused_reason, '')
+		  FROM federation_outbox o JOIN activities a ON a.id = o.activity_id
+		 WHERE o.peer_id = $1 AND a.activity_type IN ('aa:Share', 'aa:Unshare') ORDER BY o.created_at`, g.peerBonA)
+	collect("B inbox", g.b, `SELECT activity_type || ' ' || status || ' reason=' || coalesce(reject_reason, '') ||
+			' attempts=' || dispatch_attempts || ' err=' || last_error
+		  FROM federation_inbox WHERE peer_id = $1 AND activity_type IN ('aa:Share', 'aa:Unshare') ORDER BY received_at`, g.peerAonB)
+	collect("B grants", g.b, `SELECT state || ' ' || coalesce(end_reason, '') || ' target=' || coalesce(target_user_uri, '')
+		  FROM federation_inbound_grants WHERE peer_id = $1 AND object_uri = $2 ORDER BY received_at`, g.peerAonB, objectURI)
+	// Whether A's outbox dispatcher reached the share activities at all,
+	// and whether it skipped them (and why).
+	collect("A dispatcher", g.a, `SELECT 'undispatched local activities=' || count(*)
+		  FROM activities a, federation_dispatch_state s
+		 WHERE a.source = 'local' AND (s.last_dispatched_activity_id IS NULL OR (a.created_at, a.id) >
+		       ((SELECT created_at FROM activities WHERE id = s.last_dispatched_activity_id), s.last_dispatched_activity_id))`)
+	collect("A skipped", g.a, `SELECT a.activity_type || ' ' || coalesce(e.metadata->>'reason', '')
+		  FROM audit_events e JOIN activities a ON a.id::text = e.metadata->>'activity_id'
+		 WHERE e.event_type = 'federation.emission.skipped' AND a.activity_type IN ('aa:Share', 'aa:Unshare')
+		   AND a.created_at > now() - interval '5 minutes' ORDER BY e.occurred_at`)
+	return strings.Join(out, "; ") + "; " + g.peerRows()
+}
+
+// in makes t the test this gate's helpers report to: a subtest's own t,
+// so a helper's Fatal ends that subtest rather than calling FailNow on
+// its parent from the subtest's goroutine. It returns the restore.
+func (g *likeGate) in(t *testing.T) func() {
+	prev := g.t
+	g.t = t
+	return func() { g.t = prev }
 }
 
 // like records actor's Like of target, owned by ownerPeer, through the
@@ -241,6 +297,7 @@ func TestTwoStack_LikeWire(t *testing.T) {
 	owner := g.peerAonB.String()
 
 	t.Run("allowed: the owner applies it once, also on a redelivery and a second Like", func(t *testing.T) {
+		defer g.in(t)()
 		post, uri := g.postOnA()
 		g.shareOnA(post, uri, "view", "", nil)
 		like := g.like(g.bob, post, uri, owner)
@@ -295,6 +352,7 @@ func TestTwoStack_LikeWire(t *testing.T) {
 	})
 
 	t.Run("wrong peer, foreign origin or no grant for the object: never queued", func(t *testing.T) {
+		defer g.in(t)()
 		post, uri := g.postOnA()
 		g.shareOnA(post, uri, "view", "", nil)
 		other, otherURI := g.postOnA() // A's post, not shared with B
@@ -316,6 +374,7 @@ func TestTwoStack_LikeWire(t *testing.T) {
 	})
 
 	t.Run("a grant bound to one user covers only that user; downgrade and revoke stop the next Like", func(t *testing.T) {
+		defer g.in(t)()
 		post, uri := g.postOnA()
 		wide := g.shareOnA(post, uri, "comment", "", nil)
 		if got := g.onA(g.like(g.bob, post, uri, owner)); got != "processed" {
@@ -336,6 +395,7 @@ func TestTwoStack_LikeWire(t *testing.T) {
 	})
 
 	t.Run("revoked and expired grants stop the next Like", func(t *testing.T) {
+		defer g.in(t)()
 		post, uri := g.postOnA()
 		sid := g.shareOnA(post, uri, "view", "", nil)
 		g.revokeOnA(sid, uri, "")
@@ -354,6 +414,7 @@ func TestTwoStack_LikeWire(t *testing.T) {
 	})
 
 	t.Run("a Like of a local post stays local, shared or not", func(t *testing.T) {
+		defer g.in(t)()
 		// B's own post, shared with A by B's admin: liking it through B's
 		// production API sends nothing (public visibility or a share of a
 		// local object is never a reason to send a Like anywhere).
@@ -383,6 +444,7 @@ func TestTwoStack_LikeWire(t *testing.T) {
 	})
 
 	t.Run("refused on arrival: same receipt whether private or missing, nothing written", func(t *testing.T) {
+		defer g.in(t)()
 		// Test fixture on A's disposable database: A's share ended without
 		// its aa:Unshare having reached B yet, and a target deleted on A
 		// while B's grant is live. B sends both; A refuses both.
@@ -417,6 +479,7 @@ func TestTwoStack_LikeWire(t *testing.T) {
 	})
 
 	t.Run("a disabled owner peer is not sent to", func(t *testing.T) {
+		defer g.in(t)()
 		post, uri := g.postOnA()
 		g.shareOnA(post, uri, "view", "", nil)
 		if st := g.api(g.b, http.MethodPatch, "/admin/federation/peers/"+owner, map[string]any{"enabled": false}, nil); st != 200 {

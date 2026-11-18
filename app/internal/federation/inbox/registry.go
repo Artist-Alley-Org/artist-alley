@@ -59,9 +59,14 @@ import (
 // again after decryption, before a handler runs. An Undo without
 // object_type is invalid_member. Nothing about an Undo of another type
 // is ever processed.
+//
+// Delete is applied only as a Delete of a comment (#1572), the same way:
+// object_type "Note" is required, and a Delete of a post, an asset, a
+// collection or anything else is unsupported_activity.
 var appliedHandlers = map[federation.ActivityType]func(*Dispatcher) HandlerFn{
 	federation.ActivityLike:      LikeHandler,
 	federation.ActivityUndo:      UndoHandler,
+	federation.ActivityDelete:    DeleteHandler,
 	federation.ActivityCreate:    CommentHandler,
 	federation.ActivityAAShare:   ShareHandler,
 	federation.ActivityAAUnshare: UnshareHandler,

@@ -69,6 +69,12 @@ type SocialPoster interface {
 	// retryable; it never refuses.
 	UndoRemoteLike(ctx context.Context, in RemoteUndoLikeInput) (removed bool, err error)
 
+	// DeleteRemoteComment applies an inbound Delete of a comment
+	// (#1572): it soft-deletes the comment with the same peer, actor and
+	// Create id, or stores a tombstone when there is none. It needs no
+	// share. Any error is retryable; it never refuses.
+	DeleteRemoteComment(ctx context.Context, in RemoteDeleteCommentInput) (deleted bool, err error)
+
 	// InsertRemoteComment persists an inbound Create(Note) from
 	// a remote actor on a local target. Idempotent via
 	// activity_uri UNIQUE — a retried delivery returns the
@@ -85,6 +91,16 @@ type RemoteUndoLikeInput struct {
 	ActorURI        string
 	LikeActivityURI string
 	UndoActivityURI string
+}
+
+// RemoteDeleteCommentInput is the typed argument of DeleteRemoteComment:
+// the Delete's authenticated peer and actor, the comment's Create id it
+// names (its object, on the actor's origin) and its own id.
+type RemoteDeleteCommentInput struct {
+	PeerID            uuid.UUID
+	ActorURI          string
+	CreateActivityURI string
+	DeleteActivityURI string
 }
 
 // RemoteCommentInput is the typed argument shape for an inbound
@@ -214,6 +230,41 @@ func UndoHandler(d *Dispatcher) HandlerFn {
 			ActorURI:        env.Actor,
 			LikeActivityURI: env.Object,
 			UndoActivityURI: env.ID,
+		}); err != nil {
+			return OutcomeFailed, "", uuid.UUID{}, err
+		}
+		d.upsertActorBestEffort(ctx, env, peerID)
+		return OutcomeProcessed, "", uuid.UUID{}, nil
+	}
+}
+
+// DeleteHandler is the inbound handler for a Delete of a comment (#1572,
+// spec v1 §7.5.5). ValidateMembers admitted it as exactly that:
+// object_type "Note" and an object that is the comment's Create id on
+// the actor's own origin, checked at receipt and again after decryption;
+// every other Delete is unsupported_activity and never reaches this
+// handler.
+//
+// Like an Undo, it names the sender's own activity, carries no local
+// object reference, and is bound to the row's authenticated peer and
+// the envelope's verified actor: it deletes only that actor's comment
+// delivered by that Create, needs no live share (§7.1), and is processed
+// the same way whether or not the comment exists, was already deleted or
+// belongs to someone else. A database error is retryable.
+func DeleteHandler(d *Dispatcher) HandlerFn {
+	return func(ctx context.Context, env *federation.Envelope, peerID uuid.UUID, peerURL string, row FederationInbox) (DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {
+		if d.social == nil {
+			return OutcomeFailed, "", uuid.UUID{}, errors.New("DeleteHandler: SocialPoster not wired")
+		}
+		if env.Object == "" || env.Actor == "" || env.ID == "" {
+			return OutcomeRejected, federation.InboxStatusInvalidMember, uuid.UUID{},
+				errors.New("Delete activity missing object, actor or id")
+		}
+		if _, err := d.social.DeleteRemoteComment(ctx, RemoteDeleteCommentInput{
+			PeerID:            peerID,
+			ActorURI:          env.Actor,
+			CreateActivityURI: env.Object,
+			DeleteActivityURI: env.ID,
 		}); err != nil {
 			return OutcomeFailed, "", uuid.UUID{}, err
 		}

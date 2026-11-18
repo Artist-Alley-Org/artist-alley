@@ -175,6 +175,13 @@ func TestWireMembers(t *testing.T) {
 		{federation.ActivityUpdate, "post", `{"title":"t"}`, nil, true},
 		{federation.ActivityUpdate, "user", `{"display_name":"d"}`, nil, true},
 		{federation.ActivityDelete, "comment", `{"target_post_id":"p"}`, nil, true},
+		// #1572: an author's Delete of a comment (it names the Create)
+		// federates with object_type only; a moderator's (no Create), a
+		// non-https Create id or a Delete of anything else stays local.
+		{federation.ActivityDelete, "comment", `{"target_post_id":"p","object_type":"Note","create_activity_uri":"https://a.example/activities/c1"}`,
+			[]string{"object_type"}, false},
+		{federation.ActivityDelete, "comment", `{"create_activity_uri":"/activities/c1"}`, nil, true},
+		{federation.ActivityDelete, "post", `{"create_activity_uri":"https://a.example/activities/c1"}`, nil, true},
 		{federation.ActivityUndo, "activity", `{"target_post_id":"p"}`, nil, true},
 		// #1572: an Undo of a Like federates with object_type only; an
 		// Undo of anything else stays local.

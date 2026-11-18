@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// Inbound-federation domain writes: InsertRemoteLike, UndoRemoteLike
-// (#1572) and InsertRemoteComment. Phase 1.22.D-a-4-dispatch.
+// Inbound-federation domain writes: InsertRemoteLike, UndoRemoteLike,
+// InsertRemoteComment and DeleteRemoteComment (#1572). Phase
+// 1.22.D-a-4-dispatch.
 //
 // These methods implement the inbox.SocialPoster contract +
 // fire the same notification path the local Like / Comment
@@ -274,6 +275,93 @@ func (h *Handler) UndoRemoteLike(ctx context.Context, in RemoteUndoLikeInput) (b
 	return removed, nil
 }
 
+// RemoteDeleteCommentInput is the typed argument for DeleteRemoteComment:
+// the Delete's authenticated peer and actor, the comment's Create id it
+// names (its object) and its own id.
+type RemoteDeleteCommentInput struct {
+	PeerID            uuid.UUID
+	ActorURI          string
+	CreateActivityURI string
+	DeleteActivityURI string
+}
+
+// DeleteRemoteComment applies an inbound Delete of a comment (#1572): the
+// actor retracting its own earlier comment. It needs no share, so it
+// applies after a revoke, an expiry or the target's deletion.
+//
+// The Delete matches only the comment with the same peer, actor and
+// Create id (comments.peer_id, actor_uri, activity_uri), never the Create
+// id alone. In one transaction, serialised with every inbound Create,
+// Like, Undo and Delete of that actor (lockRemoteActor, taken first):
+//
+//   - a live comment is soft-deleted exactly as a local delete does
+//     (SoftDeleteComment: body cleared, deleted_at set, the target's
+//     comment_count decremented by its trigger). Notifications already
+//     sent are kept, and replies stay, as for a local delete; a new reply
+//     to it is refused (its parent is no longer live).
+//   - a comment already deleted (by the sender or by a local moderator)
+//     changes nothing.
+//   - no such comment (the Create has not arrived, was never sent, or
+//     belongs to another actor or peer) stores a tombstone for this peer,
+//     actor and Create id, so a matching Create that arrives later
+//     creates nothing.
+//
+// Every case is processed the same way, so the outcome never tells the
+// sender whether another actor's comment exists. Returns whether a live
+// comment was soft-deleted. Any error is a database failure: it writes
+// nothing and is retryable.
+func (h *Handler) DeleteRemoteComment(ctx context.Context, in RemoteDeleteCommentInput) (bool, error) {
+	if in.CreateActivityURI == "" || in.DeleteActivityURI == "" || in.ActorURI == "" {
+		return false, ErrNoCommentActivity
+	}
+	var (
+		deleted    bool
+		targetKind string
+		targetID   pgtype.UUID
+	)
+	err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := lockRemoteActor(ctx, tx, in.PeerID, in.ActorURI); err != nil {
+			return err
+		}
+		var id pgtype.UUID
+		var already bool
+		err := tx.QueryRow(ctx, `SELECT id, target_kind, target_id, deleted_at IS NOT NULL FROM comments
+			WHERE activity_uri = $1 AND peer_id = $2 AND actor_uri = $3 FOR UPDATE`,
+			in.CreateActivityURI, in.PeerID, in.ActorURI).Scan(&id, &targetKind, &targetID, &already)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			if _, err := tx.Exec(ctx, `INSERT INTO federation_remote_comment_tombstones
+				(peer_id, actor_uri, create_activity_uri, delete_activity_uri)
+				VALUES ($1, $2, $3, $4)
+				ON CONFLICT (peer_id, actor_uri, create_activity_uri) DO NOTHING`,
+				in.PeerID, in.ActorURI, in.CreateActivityURI, in.DeleteActivityURI); err != nil {
+				return fmt.Errorf("record comment tombstone: %w", err)
+			}
+			return nil
+		case err != nil:
+			return fmt.Errorf("read remote comment: %w", err)
+		case already:
+			return nil
+		}
+		rows, err := New(tx).SoftDeleteComment(ctx, id)
+		if err != nil {
+			return fmt.Errorf("soft delete remote comment: %w", err)
+		}
+		deleted = rows > 0
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	if deleted && targetKind == "post" {
+		h.invalidatePostCache(ctx, uuid.UUID(targetID.Bytes).String())
+	}
+	return deleted, nil
+}
+
+// ErrNoCommentActivity: an inbound comment Delete without its ids.
+var ErrNoCommentActivity = errors.New("social: inbound comment Delete without its activity ids")
+
 // RemoteCommentInput is the typed argument for InsertRemoteComment.
 // Mirrors inbox.RemoteCommentInput field-for-field — duplicated
 // here because social can't import inbox (the inbox dispatcher
@@ -298,6 +386,12 @@ type RemoteCommentInput struct {
 // actor as a comment, in one transaction with its authorisation, and
 // after commit fires the post-author notification.
 //
+// The write takes lockRemoteActor first (#1572), like every inbound Like,
+// Undo and Delete of the same actor. A Delete that arrived first left a
+// tombstone with this peer, actor and Create id: the Create is then
+// processed with no comment row and no notification, reported as
+// alreadyExisted with a zero id.
+//
 // Idempotent via activity_uri UNIQUE — a retried delivery of an
 // activity already saved returns (existing.id, true, nil) without a
 // second notification. A reply's parent must be a live comment on the
@@ -319,9 +413,23 @@ func (h *Handler) InsertRemoteComment(ctx context.Context, in RemoteCommentInput
 
 	newID := uuid.New()
 	var rowID uuid.UUID
+	var retracted bool
 	err = pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := lockRemoteActor(ctx, tx, in.PeerID, in.ActorURI); err != nil {
+			return err
+		}
 		if err := in.Authorize(ctx, tx); err != nil {
 			return err
+		}
+		// Deleted before it arrived (#1572): exactly this peer, actor and
+		// Create id. A tombstone from anyone else does not match.
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM federation_remote_comment_tombstones
+			WHERE peer_id = $1 AND actor_uri = $2 AND create_activity_uri = $3)`,
+			in.PeerID, in.ActorURI, in.ActivityURI).Scan(&retracted); err != nil {
+			return fmt.Errorf("read remote comment tombstone: %w", err)
+		}
+		if retracted {
+			return nil
 		}
 		// Resolve parent_id / root_id / depth. Top-level comments
 		// have parent_id NULL + root_id = self + depth 0. A parent is
@@ -374,6 +482,9 @@ func (h *Handler) InsertRemoteComment(ctx context.Context, in RemoteCommentInput
 	})
 	if err != nil {
 		return uuid.UUID{}, false, err
+	}
+	if retracted {
+		return uuid.UUID{}, true, nil
 	}
 
 	// Fire post-author notification, after the commit.

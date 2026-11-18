@@ -279,6 +279,10 @@ func (p *failingPoster) UndoRemoteLike(ctx context.Context, in inbox.RemoteUndoL
 	return p.real.UndoRemoteLike(ctx, in)
 }
 
+func (p *failingPoster) DeleteRemoteComment(ctx context.Context, in inbox.RemoteDeleteCommentInput) (bool, error) {
+	return p.real.DeleteRemoteComment(ctx, in)
+}
+
 func (p *failingPoster) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
 	return p.real.InsertRemoteComment(ctx, in)
 }

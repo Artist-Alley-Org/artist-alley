@@ -122,8 +122,8 @@ type MemberContext struct {
 //  2. archival-1 members and gated types need the negotiated profile
 //     (ErrProfileNotNegotiated) and must match it (ErrArchivalInvalid).
 //  3. A type the receiver does not apply is ErrUnsupportedActivity;
-//     so is a Create that is not a comment, and an Undo that is not of
-//     a Like.
+//     so is a Create that is not a comment, an Undo that is not of a
+//     Like, and a Delete that is not of a comment.
 //  4. Every member must be defined for the type (ErrUnknownField) and
 //     well formed (ErrInvalidMember).
 func ValidateMembers(env *Envelope, mc MemberContext) error {
@@ -140,11 +140,12 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 		if !applied(env.Type) {
 			return fmt.Errorf("%w: %s", ErrUnsupportedActivity, env.Type)
 		}
-		// An Undo's object is in clear: it must name an activity of the
-		// actor's own origin before the envelope is stored (#1572). Its
-		// sealed object_type is checked after decryption.
-		if env.Type == ActivityUndo {
-			return checkUndoObject(env)
+		// A retraction's object is in clear: an Undo or a Delete must
+		// name an activity of the actor's own origin before the envelope
+		// is stored (#1572). Its sealed object_type is checked after
+		// decryption.
+		if env.Type == ActivityUndo || env.Type == ActivityDelete {
+			return checkRetractionObject(env)
 		}
 		return nil
 	}
@@ -168,7 +169,12 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 		}
 		allowed[MemberObjectType], allowed[MemberContent], allowed[MemberInReplyTo] = true, true, true
 	case ActivityUndo:
-		if err := validateUndo(env); err != nil {
+		if err := validateRetraction(env, UndoObjectTypeLike); err != nil {
+			return err
+		}
+		allowed[MemberObjectType] = true
+	case ActivityDelete:
+		if err := validateRetraction(env, CommentObjectType); err != nil {
 			return err
 		}
 		allowed[MemberObjectType] = true
@@ -228,35 +234,38 @@ func validateCommentCreate(env *Envelope) error {
 	return checkCommentMembers(env.Extra)
 }
 
-// validateUndo: the only Undo v1 applies is of a Like (#1572, §7.5.4):
-// object_type "Like" (required; missing is ErrInvalidMember, any other
-// value, a Follow, a Block, a Create, ..., is ErrUnsupportedActivity),
-// and an object that is the Like's activity id (checkUndoObject).
-func validateUndo(env *Envelope) error {
+// validateRetraction: the retractions v1 applies (#1572) are an Undo of
+// a Like (§7.5.4, object_type "Like") and a Delete of a comment (§7.5.5,
+// object_type "Note"). object_type is required (missing is
+// ErrInvalidMember); any other value, an Undo of a Follow, a Delete of a
+// post, ..., is ErrUnsupportedActivity; and the object must be the id of
+// the activity being retracted (checkRetractionObject).
+func validateRetraction(env *Envelope, objectType string) error {
 	raw, ok := env.Extra[MemberObjectType]
 	if !ok {
-		return fmt.Errorf("%w: Undo requires %s", ErrInvalidMember, MemberObjectType)
+		return fmt.Errorf("%w: %s requires %s", ErrInvalidMember, env.Type, MemberObjectType)
 	}
 	ot, err := memberString(raw, MemberObjectType)
 	if err != nil {
 		return err
 	}
-	if ot != UndoObjectTypeLike {
-		return fmt.Errorf("%w: Undo of %s", ErrUnsupportedActivity, quoteMember(ot))
+	if ot != objectType {
+		return fmt.Errorf("%w: %s of %s", ErrUnsupportedActivity, env.Type, quoteMember(ot))
 	}
-	return checkUndoObject(env)
+	return checkRetractionObject(env)
 }
 
-// checkUndoObject: an Undo's object is the id of the actor's own earlier
-// activity, so an absolute https URI on the actor's origin, without a
-// query or fragment, other than the Undo's own id. A retraction can only
-// ever name what its own origin sent.
-func checkUndoObject(env *Envelope) error {
+// checkRetractionObject: a retraction's object is the id of the actor's
+// own earlier activity (the Like an Undo undoes, the comment Create a
+// Delete deletes), so an absolute https URI on the actor's origin,
+// without a query or fragment, other than the retraction's own id. A
+// retraction can only ever name what its own origin sent.
+func checkRetractionObject(env *Envelope) error {
 	sender := originOf(env.Actor)
 	u, err := url.Parse(env.Object)
 	if sender == "" || err != nil || env.Object == "" || originOf(env.Object) != sender ||
 		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || env.Object == env.ID {
-		return fmt.Errorf("%w: an Undo's object must be another activity URI on the actor's origin", ErrInvalidMember)
+		return fmt.Errorf("%w: the %s object must be another activity URI on the actor's origin", ErrInvalidMember, env.Type)
 	}
 	return nil
 }
@@ -611,11 +620,13 @@ func walkJSONValue(dec *json.Decoder) error {
 
 // Federated reports whether the sender federates an activity of this
 // type about an object of this kind, with this local payload, in v1:
-// Like, a comment Create, aa:Share / aa:Unshare, and an Undo of a Like
+// Like, a comment Create, aa:Share / aa:Unshare, an Undo of a Like
 // (#1572: its object is an activity and its payload's target_type is
-// "Like"; an Undo of a Follow or a Block stays local). Everything else
-// stays local until a receiver applies it (spec v1 §7.6, §12.3
-// activity_not_federated).
+// "Like"; an Undo of a Follow or a Block stays local), and a Delete of a
+// comment by its own author (#1572: the payload names the comment's
+// Create, create_activity_uri; a moderator's Delete, or a Delete of
+// anything else, stays local). Everything else stays local until a
+// receiver applies it (spec v1 §7.6, §12.3 activity_not_federated).
 func Federated(t ActivityType, objectKind string, payload []byte) bool {
 	switch t {
 	case ActivityLike, ActivityAAShare, ActivityAAUnshare:
@@ -624,8 +635,24 @@ func Federated(t ActivityType, objectKind string, payload []byte) bool {
 		return objectKind == "comment"
 	case ActivityUndo:
 		return objectKind == "activity" && UndoneType(payload) == UndoObjectTypeLike
+	case ActivityDelete:
+		return objectKind == "comment" && absoluteHTTPS(DeletedCreateURI(payload))
 	}
 	return false
+}
+
+// DeletedCreateURI is the id of the comment Create a Delete's local
+// payload says it deletes (create_activity_uri), or "" when the payload
+// does not name one. The emitter sets it only for the comment's own
+// author (#1572).
+func DeletedCreateURI(payload []byte) string {
+	var p struct {
+		CreateActivityURI string `json:"create_activity_uri"`
+	}
+	if len(bytes.TrimSpace(payload)) == 0 || json.Unmarshal(payload, &p) != nil {
+		return ""
+	}
+	return p.CreateActivityURI
 }
 
 // UndoneType is the type of the activity an Undo's local payload says it
@@ -657,6 +684,15 @@ func WireObject(t ActivityType, objectKind, objectURI string, payload []byte) (s
 		}
 		return objectURI, nil
 	}
+	if t == ActivityDelete && objectKind == "comment" {
+		// A Delete of a comment names the comment by the id of the Create
+		// that delivered it (#1572, §7.5.5), never by its local URI.
+		create := DeletedCreateURI(payload)
+		if !absoluteHTTPS(create) {
+			return "", fmt.Errorf("%w: a comment Delete names the comment's Create by its https id (create_activity_uri)", ErrNotFederated)
+		}
+		return create, nil
+	}
 	if !(t == ActivityCreate && objectKind == "comment") && t != ActivityLike {
 		return objectURI, nil
 	}
@@ -679,8 +715,8 @@ func WireObject(t ActivityType, objectKind, objectURI string, payload []byte) (s
 
 // WireMembers projects a local activity payload onto the members the
 // activity's v1 schema defines (§7.5): none for Like; object_type
-// "Like" for an Undo of a Like; object_type, content and inReplyTo for
-// a comment; the §7.5.1 / §7.5.2 names for
+// "Like" for an Undo of a Like; object_type "Note" for a Delete of a
+// comment; object_type, content and inReplyTo for a comment; the §7.5.1 / §7.5.2 names for
 // aa:Share / aa:Unshare. Every other payload member (operator notes,
 // local ids, titles kept for notifications) stays local. A type
 // Federated refuses, a payload missing a required member, or a member
@@ -723,6 +759,10 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		// Federated admitted only an Undo of a Like; the undone Like is
 		// the envelope object (#1572).
 		out[MemberObjectType] = json.RawMessage(strconv.Quote(UndoObjectTypeLike))
+	case ActivityDelete:
+		// Federated admitted only an author's Delete of a comment; the
+		// comment's Create is the envelope object (#1572).
+		out[MemberObjectType] = json.RawMessage(strconv.Quote(CommentObjectType))
 	case ActivityCreate:
 		out[MemberObjectType] = json.RawMessage(strconv.Quote(CommentObjectType))
 		if err := copyAs(MemberContent, MemberContent, true); err != nil {

@@ -380,6 +380,9 @@ func TestWireProjection_FederatedTypes(t *testing.T) {
 		// A Like is sent only for an object held by the peer (#1611).
 		{"like", emit.Like(w.actor, emit.PostRef{ID: uuid.NewString(), Title: "Wire", AuthorURI: w.httpsURL() + "/users/owner",
 			TargetURI: w.httpsURL() + "/posts/" + uuid.NewString(), OwnerPeerID: w.peerID.String()}).Activity, nil},
+		// An author's Delete of a comment carries object_type only (#1572).
+		{"delete_comment", emit.DeleteComment(w.actor, uuid.NewString(), w.postID.String(),
+			"https://local.example/activities/"+uuid.NewString(), []string{post.AuthorURI}).Activity, []string{"object_type"}},
 		// An Undo of a Like carries object_type only (#1572).
 		{"undo_like", emit.UndoLike(w.actor, "https://local.example/activities/"+uuid.NewString(), post).Activity,
 			[]string{"object_type"}},
@@ -424,8 +427,9 @@ func TestWireProjection_UnfederatedTypes(t *testing.T) {
 		"create_post":    emit.CreatePost(w.actor, post, emit.PostVisibilityPublic).Activity,
 		"update_profile": emit.UpdateProfile(w.actor, emit.ProfileSnapshot{DisplayName: "A", Bio: "b"}).Activity,
 		// An Undo of anything but a Like stays local (#1572).
-		"undo_follow":    emit.UndoFollow(w.actor, "https://local.example/activities/x", w.userRef).Activity,
-		"delete_comment": emit.DeleteComment(w.actor, uuid.NewString(), w.postID.String()).Activity,
+		"undo_follow": emit.UndoFollow(w.actor, "https://local.example/activities/x", w.userRef).Activity,
+		// A Delete that names no Create (a moderator's, #1572) stays local.
+		"delete_comment": emit.DeleteComment(w.actor, uuid.NewString(), w.postID.String(), "", nil).Activity,
 	}
 	wk := w.worker(false, nil)
 	for name, in := range cases {
