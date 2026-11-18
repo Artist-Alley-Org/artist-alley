@@ -15,6 +15,12 @@
   // exists server-side via comments.delete.any but isn't surfaced
   // here yet — the response just succeeds when the API allows it.
   //
+  // Editing (#1572): only the comment's own author is offered Edit
+  // (the server allows nobody else, a moderator included). The edit
+  // replaces the text in place with the server's answer, which carries
+  // edited_at, so the "(edited)" marker shows; nothing is changed
+  // locally before the server has accepted it.
+  //
   // Comments off (#1119 sprint 21d): `commentsEnabled` is the POST's
   // setting as the host holds it. When false, the thread is read-only:
   // every existing comment renders exactly as before, and neither the
@@ -244,6 +250,44 @@
     }
   }
 
+  // Comment id -> draft text while it is being edited.
+  let editDrafts = $state(new Map<string, string>());
+  let savingEdit = $state(false);
+
+  function startEdit(c: Comment) {
+    editDrafts.set(c.id, c.body);
+    editDrafts = new Map(editDrafts);
+  }
+
+  function cancelEdit(id: string) {
+    editDrafts.delete(id);
+    editDrafts = new Map(editDrafts);
+  }
+
+  async function saveEdit(id: string) {
+    const body = editDrafts.get(id)?.trim();
+    if (!body) return;
+    savingEdit = true;
+    try {
+      const { data, error: apiErr } = await api.PATCH('/comments/{id}', {
+        params: { path: { id } },
+        body: { body },
+      });
+      if (apiErr || !data) {
+        throw new Error(
+          (apiErr as { error?: string } | undefined)?.error ?? t('comments.err_edit'),
+        );
+      }
+      const saved = data as unknown as Comment;
+      items = items.map((c) => (c.id === id ? { ...c, ...saved } : c));
+      cancelEdit(id);
+    } catch (e) {
+      error = e instanceof Error ? e.message : t('comments.err_edit');
+    } finally {
+      savingEdit = false;
+    }
+  }
+
   async function deleteComment(id: string) {
     try {
       const { error: apiErr } = await api.DELETE('/comments/{id}', {
@@ -286,6 +330,48 @@
     return u?.display_name ?? t('comments.user_ref_fallback', { ref });
   }
 </script>
+
+{#snippet commentBody(c: Comment)}
+  {#if editDrafts.has(c.id)}
+    <form
+      onsubmit={(e) => { e.preventDefault(); void saveEdit(c.id); }}
+      class="mt-1 space-y-2"
+      data-testid="comment-edit-form"
+    >
+      <textarea
+        bind:value={() => editDrafts.get(c.id) ?? '', (v) => {
+          editDrafts.set(c.id, v);
+          editDrafts = new Map(editDrafts);
+        }}
+        rows="2"
+        maxlength="10000"
+        disabled={savingEdit}
+        data-testid="comment-edit-input"
+        class="w-full resize-y rounded-md border border-border-strong bg-surface px-3 py-2 text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:opacity-50"
+      ></textarea>
+      <div class="flex justify-end gap-2">
+        <button
+          type="button"
+          onclick={() => cancelEdit(c.id)}
+          disabled={savingEdit}
+          class="rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted hover:border-fg-muted/60 hover:text-fg disabled:opacity-50"
+        >
+          {t('common.cancel')}
+        </button>
+        <button
+          type="submit"
+          disabled={savingEdit || !(editDrafts.get(c.id)?.trim())}
+          data-testid="comment-edit-save"
+          class="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {savingEdit ? t('common.saving') : t('common.save')}
+        </button>
+      </div>
+    </form>
+  {:else}
+    <p class="mt-0.5 whitespace-pre-wrap text-fg" data-testid="comment-body">{c.body}</p>
+  {/if}
+{/snippet}
 
 <div class="space-y-3 text-sm" data-testid="comments-thread" data-comments-enabled={canCompose ? 'yes' : 'no'}>
   {#if canCompose}
@@ -373,7 +459,7 @@
                 <span class="text-fg-muted" title={t('comments.edited_at_title', { when: new Date(root.edited_at).toLocaleString() })}>{t('comments.edited_marker')}</span>
               {/if}
             </div>
-            <p class="mt-0.5 whitespace-pre-wrap text-fg">{root.body}</p>
+            {@render commentBody(root)}
             <div class="mt-1 flex items-center gap-3 text-xs text-fg-muted">
               {#if canCompose}
                 <button
@@ -383,6 +469,16 @@
                   onclick={() => openReply(group.root.id, root.id)}
                 >
                   {t('comments.reply')}
+                </button>
+              {/if}
+              {#if auth.user?.ref === root.author_user_ref && !editDrafts.has(root.id)}
+                <button
+                  type="button"
+                  class="hover:text-fg"
+                  data-testid="comment-edit"
+                  onclick={() => startEdit(root)}
+                >
+                  {t('common.edit')}
                 </button>
               {/if}
               {#if auth.user?.ref === root.author_user_ref}
@@ -421,7 +517,7 @@
                   <span class="text-fg-muted">{t('comments.edited_marker')}</span>
                 {/if}
               </div>
-              <p class="mt-0.5 whitespace-pre-wrap text-fg">{reply.body}</p>
+              {@render commentBody(reply)}
               <div class="mt-1 flex items-center gap-3 text-xs text-fg-muted">
                 {#if canCompose}
                   <button
@@ -431,6 +527,16 @@
                     onclick={() => openReply(group.root.id, reply.id)}
                   >
                     {t('comments.reply')}
+                  </button>
+                {/if}
+                {#if auth.user?.ref === reply.author_user_ref && !editDrafts.has(reply.id)}
+                  <button
+                    type="button"
+                    class="hover:text-fg"
+                    data-testid="comment-edit"
+                    onclick={() => startEdit(reply)}
+                  >
+                    {t('common.edit')}
                   </button>
                 {/if}
                 {#if auth.user?.ref === reply.author_user_ref}

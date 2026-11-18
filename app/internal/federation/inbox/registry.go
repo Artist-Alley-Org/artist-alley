@@ -60,13 +60,15 @@ import (
 // object_type is invalid_member. Nothing about an Undo of another type
 // is ever processed.
 //
-// Delete is applied only as a Delete of a comment (#1572), the same way:
-// object_type "Note" is required, and a Delete of a post, an asset, a
-// collection or anything else is unsupported_activity.
+// Delete and Update are applied only as a Delete or an edit of a comment
+// (#1572), the same way: object_type "Note" is required, and a Delete or
+// an Update of a post, an asset, a profile or anything else is
+// unsupported_activity.
 var appliedHandlers = map[federation.ActivityType]func(*Dispatcher) HandlerFn{
 	federation.ActivityLike:      LikeHandler,
 	federation.ActivityUndo:      UndoHandler,
 	federation.ActivityDelete:    DeleteHandler,
+	federation.ActivityUpdate:    UpdateHandler,
 	federation.ActivityCreate:    CommentHandler,
 	federation.ActivityAAShare:   ShareHandler,
 	federation.ActivityAAUnshare: UnshareHandler,

@@ -3464,6 +3464,7 @@
     "err_load": "Failed to load comments",
     "err_post": "Failed to post",
     "err_delete": "Failed to delete",
+    "err_edit": "Failed to save your edit",
     "compose_placeholder": "Add a comment…",
     "submit_label": "Comment",
     "empty": "No comments yet. Be the first.",

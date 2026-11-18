@@ -181,6 +181,11 @@ func TestWireMembers(t *testing.T) {
 		{federation.ActivityDelete, "comment", `{"target_post_id":"p","object_type":"Note","create_activity_uri":"https://a.example/activities/c1"}`,
 			[]string{"object_type"}, false},
 		{federation.ActivityDelete, "comment", `{"create_activity_uri":"/activities/c1"}`, nil, true},
+		// #1572: an author's edit of a comment federates object_type and
+		// content; one naming no Create (local only) stays local.
+		{federation.ActivityUpdate, "comment", `{"object_type":"Note","content":"new text","target_post_id":"p","create_activity_uri":"https://a.example/activities/c1"}`,
+			[]string{"content", "object_type"}, false},
+		{federation.ActivityUpdate, "comment", `{"object_type":"Note","content":"new text"}`, nil, true},
 		{federation.ActivityDelete, "post", `{"create_activity_uri":"https://a.example/activities/c1"}`, nil, true},
 		{federation.ActivityUndo, "activity", `{"target_post_id":"p"}`, nil, true},
 		// #1572: an Undo of a Like federates with object_type only; an

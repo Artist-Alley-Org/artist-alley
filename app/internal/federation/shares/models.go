@@ -661,6 +661,25 @@ type FederationRemoteActor struct {
 	SigningKeyPinnedAt pgtype.Timestamptz
 }
 
+// The federated Update (#1572) a remote comment currently shows: its signed published time and id, the order key. An Update applies only when its (published, id) is greater. No row until the first edit, and never for a local comment.
+type FederationRemoteCommentEdit struct {
+	CommentID         pgtype.UUID
+	UpdateActivityUri string
+	Published         pgtype.Timestamptz
+	AppliedAt         pgtype.Timestamptz
+}
+
+// The newest federated Update of a comment whose Create has not arrived (#1572), keyed by (peer, signed actor, Create id). The Create is stored with this content. A Delete of the comment discards it. Goes only with its peer.
+type FederationRemoteCommentPendingEdit struct {
+	PeerID            pgtype.UUID
+	ActorUri          string
+	CreateActivityUri string
+	UpdateActivityUri string
+	Content           string
+	Published         pgtype.Timestamptz
+	ReceivedAt        pgtype.Timestamptz
+}
+
 // A federated Delete of a comment whose Create this instance has not received (#1572), keyed by (peer, signed actor, Create activity id). A Create with exactly that identity is processed with no comment and no notification. Another actor or peer never matches. Goes only with its peer.
 type FederationRemoteCommentTombstone struct {
 	PeerID            pgtype.UUID

@@ -41,6 +41,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -75,6 +76,15 @@ type SocialPoster interface {
 	// share. Any error is retryable; it never refuses.
 	DeleteRemoteComment(ctx context.Context, in RemoteDeleteCommentInput) (deleted bool, err error)
 
+	// UpdateRemoteComment applies an inbound edit of a comment (#1572):
+	// the comment with the same peer, actor and Create id takes the new
+	// content when this edit is newer than the one it shows, a deleted
+	// comment is never edited, and an edit whose Create has not arrived
+	// is kept for it. The edit needs a live share at comment scope, so it
+	// may answer ErrUnknownObject or ErrUnsharedObject; any other error is
+	// retryable.
+	UpdateRemoteComment(ctx context.Context, in RemoteUpdateCommentInput) (applied bool, err error)
+
 	// InsertRemoteComment persists an inbound Create(Note) from
 	// a remote actor on a local target. Idempotent via
 	// activity_uri UNIQUE — a retried delivery returns the
@@ -101,6 +111,19 @@ type RemoteDeleteCommentInput struct {
 	ActorURI          string
 	CreateActivityURI string
 	DeleteActivityURI string
+}
+
+// RemoteUpdateCommentInput is the typed argument of UpdateRemoteComment:
+// the Update's authenticated peer and actor, the comment's Create id it
+// names (its object), its own id, the new content and its signed
+// published time (the order key, spec v1 §7.5.5).
+type RemoteUpdateCommentInput struct {
+	PeerID            uuid.UUID
+	ActorURI          string
+	CreateActivityURI string
+	UpdateActivityURI string
+	Content           string
+	Published         time.Time
 }
 
 // RemoteCommentInput is the typed argument shape for an inbound
@@ -267,6 +290,50 @@ func DeleteHandler(d *Dispatcher) HandlerFn {
 			DeleteActivityURI: env.ID,
 		}); err != nil {
 			return OutcomeFailed, "", uuid.UUID{}, err
+		}
+		d.upsertActorBestEffort(ctx, env, peerID)
+		return OutcomeProcessed, "", uuid.UUID{}, nil
+	}
+}
+
+// UpdateHandler is the inbound handler for an edit of a comment (#1572,
+// spec v1 §7.5.5). ValidateMembers admitted it as exactly that:
+// object_type "Note", the comment's Create id on the actor's own origin
+// and a valid content, checked at receipt and again after decryption;
+// every other Update is unsupported_activity and never reaches this
+// handler.
+//
+// Bound like a Delete to the row's authenticated peer and the envelope's
+// verified actor, it edits only that actor's comment delivered by that
+// Create. Unlike a retraction it adds content, so it needs a live share
+// at comment scope (unknown_object / unshared_object otherwise), checked
+// in the write transaction. Edits are ordered by the signed published
+// time: an older or repeated one is processed and changes nothing. A
+// database error is retryable.
+func UpdateHandler(d *Dispatcher) HandlerFn {
+	return func(ctx context.Context, env *federation.Envelope, peerID uuid.UUID, peerURL string, row FederationInbox) (DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {
+		if d.social == nil {
+			return OutcomeFailed, "", uuid.UUID{}, errors.New("UpdateHandler: SocialPoster not wired")
+		}
+		if env.Object == "" || env.Actor == "" || env.ID == "" || env.Published.IsZero() {
+			return OutcomeRejected, federation.InboxStatusInvalidMember, uuid.UUID{},
+				errors.New("Update activity missing object, actor, id or published")
+		}
+		var content string
+		if raw, ok := env.Extra[federation.MemberContent]; !ok || json.Unmarshal(raw, &content) != nil || strings.TrimSpace(content) == "" {
+			return OutcomeRejected, federation.InboxStatusInvalidMember, uuid.UUID{},
+				errors.New("Update activity missing content")
+		}
+		_, err := d.social.UpdateRemoteComment(ctx, RemoteUpdateCommentInput{
+			PeerID:            peerID,
+			ActorURI:          env.Actor,
+			CreateActivityURI: env.Object,
+			UpdateActivityURI: env.ID,
+			Content:           content,
+			Published:         env.Published,
+		})
+		if outcome, reason, ok := writeRefusal(err); ok {
+			return outcome, reason, uuid.UUID{}, err
 		}
 		d.upsertActorBestEffort(ctx, env, peerID)
 		return OutcomeProcessed, "", uuid.UUID{}, nil

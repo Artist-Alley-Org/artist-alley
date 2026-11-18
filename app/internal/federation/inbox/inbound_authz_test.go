@@ -283,6 +283,10 @@ func (p *failingPoster) DeleteRemoteComment(ctx context.Context, in inbox.Remote
 	return p.real.DeleteRemoteComment(ctx, in)
 }
 
+func (p *failingPoster) UpdateRemoteComment(ctx context.Context, in inbox.RemoteUpdateCommentInput) (bool, error) {
+	return p.real.UpdateRemoteComment(ctx, in)
+}
+
 func (p *failingPoster) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
 	return p.real.InsertRemoteComment(ctx, in)
 }

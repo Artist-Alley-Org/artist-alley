@@ -137,6 +137,54 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 	return i, err
 }
 
+const editComment = `-- name: EditComment :one
+UPDATE comments
+   SET body       = $2,
+       body_html  = '',
+       edited_at  = NOW(),
+       updated_at = NOW()
+ WHERE id = $1
+   AND deleted_at IS NULL
+RETURNING id, target_kind, target_id, parent_id, root_id, depth, author_user_ref, body, body_html, annotation_type, annotation_data, like_count, edited_at, deleted_at, origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
+`
+
+type EditCommentParams struct {
+	ID   pgtype.UUID
+	Body string
+}
+
+// The author's edit of a live comment (#1572): new body, edited_at set.
+// A deleted comment is never edited (no row is returned). body_html is
+// cleared like a new comment's (the renderer reads body). No counter
+// trigger fires: it watches deleted_at only.
+func (q *Queries) EditComment(ctx context.Context, arg EditCommentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, editComment, arg.ID, arg.Body)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.TargetKind,
+		&i.TargetID,
+		&i.ParentID,
+		&i.RootID,
+		&i.Depth,
+		&i.AuthorUserRef,
+		&i.Body,
+		&i.BodyHtml,
+		&i.AnnotationType,
+		&i.AnnotationData,
+		&i.LikeCount,
+		&i.EditedAt,
+		&i.DeletedAt,
+		&i.OriginServerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PeerID,
+		&i.ActorUri,
+		&i.ActivityUri,
+	)
+	return i, err
+}
+
 const followUser = `-- name: FollowUser :exec
 
 INSERT INTO user_follows (follower_user_ref, followee_user_ref)

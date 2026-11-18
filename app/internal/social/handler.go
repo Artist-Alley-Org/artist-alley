@@ -42,6 +42,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -801,6 +802,128 @@ func (h *Handler) DeleteComment(
 	}
 	h.invalidatePostCache(ctx, postIDStr)
 	return openapi.DeleteComment204Response{}, nil
+}
+
+// UpdateComment is the author's edit of their own comment (#1572). Only
+// the comment's own local author may edit it, with what let them write it
+// (posts.comment, or system.admin, as for CreatePostComment). Nobody else
+// can, a moderator or system.admin included: a moderator removes a comment, it never puts words in its
+// author's mouth, and a remote comment is edited only on its author's
+// instance. The body is validated like a new comment's. Counts and
+// notifications do not change.
+//
+// The edit is recorded as an Update activity in the same transaction. It
+// is federated (bound to the comment's Create and addressed like it)
+// when that Create is on record; its published time is the edit's, kept
+// strictly after the comment's previous Update so receivers apply edits
+// in order (spec v1 §7.5.5).
+func (h *Handler) UpdateComment(
+	ctx context.Context,
+	req openapi.UpdateCommentRequestObject,
+) (openapi.UpdateCommentResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.UpdateComment401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.UpdateComment400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	body := strings.TrimSpace(req.Body.Body)
+	if body == "" {
+		return openapi.UpdateComment400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "body is required"},
+		}, nil
+	}
+	if utf8.RuneCountInString(body) > maxCommentRunes {
+		return openapi.UpdateComment400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "body is too long"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	row, err := New(h.Pool).GetComment(ctx, pgID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && row.DeletedAt.Valid) {
+		return openapi.UpdateComment404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "comment not found"},
+		}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("social: get comment: %w", err)
+	}
+	// As for DeleteComment, the gate is ownership: only the author edits,
+	// and a comment of theirs on another instance's post names a post this
+	// instance does not hold, so no post readability is asked.
+	isOwn := row.AuthorUserRef != nil && *row.AuthorUserRef == caller.UserRef
+	if !isOwn || !(caller.Can(CapPostsComment) || caller.Can(CapSystemAdmin)) {
+		return openapi.UpdateComment403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "only the comment's author can edit it"},
+		}, nil
+	}
+
+	commentIDStr := uuid.UUID(pgID.Bytes).String()
+	postIDStr := uuid.UUID(row.TargetID.Bytes).String()
+	createURI, createTo, err := h.localCommentCreate(ctx, caller.UserRef, commentIDStr)
+	if err != nil {
+		return nil, err
+	}
+	var saved Comment
+	var gone bool
+	err = h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		r, err := New(tx).EditComment(ctx, EditCommentParams{ID: pgID, Body: body})
+		if errors.Is(err, pgx.ErrNoRows) {
+			gone = true
+			return activities.EmissionInput{}, errCommentAbsent
+		}
+		if err != nil {
+			return activities.EmissionInput{}, fmt.Errorf("social: edit comment: %w", err)
+		}
+		saved = r
+		published, err := nextEditPublished(ctx, tx, caller.UserRef, commentIDStr)
+		if err != nil {
+			return activities.EmissionInput{}, err
+		}
+		em := emit.UpdateComment(h.actorContext(ctx, caller), commentIDStr, postIDStr, createURI, createTo, body, published)
+		return activities.EmissionInput{Activity: em.Activity}, nil
+	})
+	if gone {
+		return openapi.UpdateComment404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "comment not found"},
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if row.TargetKind == "post" {
+		h.invalidatePostCache(ctx, postIDStr)
+	}
+	return openapi.UpdateComment200JSONResponse(commentRowToAPI(saved)), nil
+}
+
+// maxCommentRunes bounds a comment body, the same bound as
+// openapi.yaml CommentCreate.body and federation.CommentContentMaxRunes.
+const maxCommentRunes = 10000
+
+// nextEditPublished is the published time of a new Update of a comment:
+// now, or one microsecond after the comment's newest Update when that is
+// not earlier (a clock step back, or two edits in one microsecond). Edits
+// of one comment are thereby strictly ordered by published, which is
+// what a receiver orders them by (spec v1 §7.5.5). The comment row is
+// locked by the caller's UPDATE, so two edits of it never race here.
+func nextEditPublished(ctx context.Context, tx pgx.Tx, authorRef int64, commentID string) (time.Time, error) {
+	var last pgtype.Timestamptz
+	if err := tx.QueryRow(ctx, `SELECT max(published_at) FROM activities
+		WHERE source = 'local' AND activity_type = 'Update' AND object_kind = 'comment'
+		  AND object_local_id = $1 AND actor_user_ref = $2`, commentID, authorRef).Scan(&last); err != nil {
+		return time.Time{}, fmt.Errorf("social: last comment edit: %w", err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if last.Valid && !now.After(last.Time) {
+		now = last.Time.UTC().Add(time.Microsecond)
+	}
+	return now, nil
 }
 
 // localCommentCreate returns the id and `to` of the newest Create this

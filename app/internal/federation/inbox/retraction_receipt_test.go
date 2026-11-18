@@ -23,10 +23,10 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 )
 
-// retractionEnvelope is a signed Undo or Delete (typ) from the fixture's
-// actor. objectType "" omits the member; object "" names an activity on
-// the sender.
-func (fx *fixture) retractionEnvelope(typ federation.ActivityType, objectType, object string) []byte {
+// retractionEnvelope is a signed Undo, Delete or Update (typ) from the
+// fixture's actor. objectType "" omits the member; object "" names an
+// activity on the sender; extra adds members (an Update's content).
+func (fx *fixture) retractionEnvelope(typ federation.ActivityType, objectType, object string, extra ...map[string]any) []byte {
 	if object == "" {
 		object = fx.peerURL + "/activities/" + uuid.NewString()
 	}
@@ -45,6 +45,11 @@ func (fx *fixture) retractionEnvelope(typ federation.ActivityType, objectType, o
 	}
 	if objectType != "" {
 		env["object_type"] = objectType
+	}
+	for _, m := range extra {
+		for k, v := range m {
+			env[k] = v
+		}
 	}
 	b, err := json.Marshal(env)
 	if err != nil {
@@ -115,7 +120,7 @@ func TestPostInbox_UndoOfLikeOnly(t *testing.T) {
 }
 
 // countingUndoPoster counts every social write a dispatched Undo reaches.
-type countingUndoPoster struct{ likes, undos, deletes atomic.Int32 }
+type countingUndoPoster struct{ likes, undos, deletes, updates atomic.Int32 }
 
 func (p *countingUndoPoster) InsertRemoteLike(context.Context, string, uuid.UUID, uuid.UUID, string, string) (bool, error) {
 	p.likes.Add(1)
@@ -127,6 +132,10 @@ func (p *countingUndoPoster) UndoRemoteLike(context.Context, inbox.RemoteUndoLik
 }
 func (p *countingUndoPoster) DeleteRemoteComment(context.Context, inbox.RemoteDeleteCommentInput) (bool, error) {
 	p.deletes.Add(1)
+	return true, nil
+}
+func (p *countingUndoPoster) UpdateRemoteComment(context.Context, inbox.RemoteUpdateCommentInput) (bool, error) {
+	p.updates.Add(1)
 	return true, nil
 }
 func (p *countingUndoPoster) InsertRemoteComment(context.Context, inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
@@ -276,5 +285,50 @@ func TestDispatcher_DeleteOfCommentOnly(t *testing.T) {
 	}
 	if poster.deletes.Load() != 1 {
 		t.Fatalf("Delete of a comment reached the social write %d times", poster.deletes.Load())
+	}
+}
+
+func TestPostInbox_UpdateOfCommentOnly(t *testing.T) {
+	fx := newFixture(t)
+	upd := func(ot, object string, extra map[string]any) []byte {
+		return fx.retractionEnvelope(federation.ActivityUpdate, ot, object, extra)
+	}
+	content := map[string]any{"content": "edited text"}
+
+	ok := upd("Note", "", content)
+	if rr := fx.postSingle(ok); rr.Code != http.StatusAccepted {
+		t.Fatalf("Update of a comment: %d %s", rr.Code, rr.Body.String())
+	}
+	row, found := fx.storedRow(activityIDOf(t, ok))
+	if !found || row.Status != "pending" || row.ObjectKind != nil || row.ObjectID.Valid {
+		t.Fatalf("stored %+v (found %v); want pending with no local object reference", row, found)
+	}
+	if rr := fx.postSingle(ok); rr.Code != http.StatusOK {
+		t.Errorf("duplicate Update: %d, want the 200 idempotent receipt", rr.Code)
+	}
+	for _, ot := range []string{"aa:Post", "aa:Asset", "Person", "Collection"} {
+		env := upd(ot, "", content)
+		rr := fx.postSingle(env)
+		if rr.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("Update of %s: %d %s", ot, rr.Code, rr.Body.String())
+		}
+		assertReasonInBody(t, rr.Body.Bytes(), federation.InboxStatusUnsupportedActivity)
+		fx.assertStoredUnsupported(activityIDOf(t, env), env)
+	}
+	for name, env := range map[string][]byte{
+		"no object_type":            upd("", "", content),
+		"no content":                upd("Note", "", nil),
+		"blank content":             upd("Note", "", map[string]any{"content": "   "}),
+		"inReplyTo is not a member": upd("Note", "", map[string]any{"content": "x", "inReplyTo": fx.peerURL + "/activities/p"}),
+		"object on another origin":  upd("Note", "https://elsewhere.example/activities/"+uuid.NewString(), content),
+	} {
+		rr := fx.postSingle(env)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s, want 400", name, rr.Code, rr.Body.String())
+			continue
+		}
+		if n := fx.countRows(activityIDOf(t, env)); n != 0 {
+			t.Errorf("%s: %d rows stored", name, n)
+		}
 	}
 }
