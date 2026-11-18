@@ -37,6 +37,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -47,6 +49,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -55,6 +58,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/httpsig"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
+	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
 	"github.com/mscrnt/artist-alley/app/internal/social"
 	"github.com/mscrnt/artist-alley/app/internal/testdb"
 )
@@ -85,6 +89,9 @@ type pairedFixture struct {
 	senderActor   string // https://senderBaseURL/users/bob
 	// actorPriv signs envelopes as senderActor (#1526).
 	actorPriv ed25519.PrivateKey
+	// poster is the SocialPoster wired into the dispatcher (the real
+	// share gate, #1570).
+	poster inbox.SocialPoster
 }
 
 // spyNotifier records every Notify call so the test can assert
@@ -177,8 +184,27 @@ func newPairedFixture(t *testing.T) *pairedFixture {
 		t.Fatalf("seed peer: %v", err)
 	}
 
+	// #1570: inbound writes need a live share of the target to the
+	// sending peer. Alice shares her post with Studio B at `comment`,
+	// which covers a Like (view) and a comment.
+	var grantActivityID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref, payload)
+		 VALUES ($1, 'aa:Share', $2, $3, '{}'::jsonb) RETURNING id`,
+		localBaseURL+"/activities/"+uuid.NewString(), localBaseURL+"/users/"+aliceUsername, aliceRef,
+	).Scan(&grantActivityID); err != nil {
+		t.Fatalf("seed share activity: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO federation_shares (grantor_user_ref, object_kind, object_id, peer_id, scope, granted_activity_id)
+		 VALUES ($1, 'post', $2, $3, 'comment', $4)`, aliceRef, postID, senderPeerID, grantActivityID); err != nil {
+		t.Fatalf("seed share: %v", err)
+	}
+
 	t.Cleanup(func() {
 		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM federation_shares WHERE peer_id = $1`, senderPeerID)
+		_, _ = pool.Exec(c, `DELETE FROM activities WHERE id = $1`, grantActivityID)
 		_, _ = pool.Exec(c, `DELETE FROM federation_remote_actors WHERE peer_id = $1`, senderPeerID)
 		_, _ = pool.Exec(c, `DELETE FROM federation_inbox WHERE peer_id = $1`, senderPeerID)
 		_, _ = pool.Exec(c, `DELETE FROM likes WHERE peer_id = $1`, senderPeerID)
@@ -245,7 +271,9 @@ func newPairedFixture(t *testing.T) *pairedFixture {
 		nil,
 		logger,
 	)
-	dispatcher.SetSocialPoster(&socialPosterE2EAdapter{h: socialH})
+	poster := &socialPosterE2EAdapter{h: socialH, shares: shares.NewRegistry(pool, logger, cacheReg)}
+	dispatcher.SetSocialPoster(poster)
+	dispatcher.SetLocalBaseURL(func(context.Context) string { return localBaseURL })
 	dispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool, nil, nil, logger))
 	dispatcher.SetRegistry(inbox.BuildRegistry(dispatcher, logger))
 
@@ -266,20 +294,44 @@ func newPairedFixture(t *testing.T) *pairedFixture {
 		senderPriv:    senderPriv,
 		senderActor:   senderActor,
 		actorPriv:     actorPriv,
+		poster:        poster,
 	}
 }
 
 // socialPosterE2EAdapter bridges inbox.SocialPoster to
-// social.Handler. Same pattern as the api.go adapter, defined
-// in the test so the test package doesn't import http.
-type socialPosterE2EAdapter struct{ h *social.Handler }
+// social.Handler with the real share gate (#1570). Mirrors the api.go
+// adapter (inboxSocialPosterAdapter), defined in the test so the test
+// package doesn't import http.
+type socialPosterE2EAdapter struct {
+	h      *social.Handler
+	shares *shares.Registry
+}
+
+func (a *socialPosterE2EAdapter) authorizer(verb federation.ActivityType, kind string, id, peerID uuid.UUID, actor string) social.InboundAuthorizer {
+	return func(ctx context.Context, tx pgx.Tx) error {
+		return e2eWriteError(a.shares.AuthorizeInboundWrite(ctx, tx, shares.InboundWrite{
+			Verb: verb, PeerID: peerID, ActorURI: actor, TargetKind: federation.ShareObjectKind(kind), TargetID: id}))
+	}
+}
+
+func e2eWriteError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, shares.ErrInboundUnknownTarget), errors.Is(err, social.ErrRemoteParentNotFound):
+		return fmt.Errorf("%w: %w", inbox.ErrUnknownObject, err)
+	case errors.Is(err, shares.ErrInboundUnshared):
+		return fmt.Errorf("%w: %w", inbox.ErrUnsharedObject, err)
+	}
+	return err
+}
 
 func (a *socialPosterE2EAdapter) InsertRemoteLike(ctx context.Context, kind string, id, peerID uuid.UUID, actorURI string) (bool, error) {
-	return a.h.InsertRemoteLike(ctx, kind, id, peerID, actorURI)
+	return a.h.InsertRemoteLike(ctx, kind, id, peerID, actorURI, a.authorizer(federation.ActivityLike, kind, id, peerID, actorURI))
 }
 
 func (a *socialPosterE2EAdapter) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
-	return a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
+	id, existed, err := a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
 		TargetKind:  in.TargetKind,
 		TargetID:    in.TargetID,
 		ParentID:    in.ParentID,
@@ -287,7 +339,9 @@ func (a *socialPosterE2EAdapter) InsertRemoteComment(ctx context.Context, in inb
 		ActorURI:    in.ActorURI,
 		ActivityURI: in.ActivityURI,
 		Body:        in.Body,
+		Authorize:   a.authorizer(federation.ActivityCreate, in.TargetKind, in.TargetID, in.PeerID, in.ActorURI),
 	})
+	return id, existed, e2eWriteError(err)
 }
 
 type pairedPeerLookup struct {

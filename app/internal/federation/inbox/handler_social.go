@@ -5,6 +5,22 @@
 // the §5.5 Q1 lock-in. Every other verb is rejected as
 // unsupported_activity (registry.go, #1569). Phase 1.22.D-a-4-dispatch.
 //
+// # Authority before any write (#1570)
+//
+// The SocialPoster authorises each write inside the transaction that
+// makes it (boot wires shares.Registry.AuthorizeInboundWrite): the verb
+// and target kind are supported, the target exists and is not deleted,
+// and a live share of this instance admits this peer's actor at the
+// verb's scope (Like: view; comment: comment). It answers with the
+// typed ErrUnknownObject or ErrUnsharedObject, which become the row's
+// unknown_object / unshared_object reject reasons; any other error is a
+// retryable failure and never a write. The sender's answer was given at
+// receipt (202, or the stored row's 200 for a duplicate) and does not
+// depend on any of this, so no outcome tells an unauthorised peer
+// whether a private target exists. The actor cache is refreshed only
+// after an authorised write, and notifications fire only after its
+// commit.
+//
 // # Cross-package contract
 //
 // SocialPoster is the small interface the social package
@@ -20,7 +36,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -111,10 +129,11 @@ func (d *Dispatcher) SetRemoteActorUpserter(u RemoteActorUpserter) {
 	d.actorCache = u
 }
 
-// LikeHandler is the inbound-Like handler per §5.5 Q1. Looks up
-// the target object (via the inbox row's pre-extracted
-// object_kind/object_id), upserts the remote-actor display row,
-// then inserts a Like row scoped to the sending peer + actor.
+// LikeHandler is the inbound-Like handler per §5.5 Q1. Takes the
+// target object from the inbox row's pre-extracted
+// object_kind/object_id, has the SocialPoster authorise and insert
+// the Like row scoped to the sending peer + actor in one transaction,
+// then refreshes the remote-actor display row.
 //
 // Idempotency: the social-side INSERT uses ON CONFLICT DO
 // NOTHING via the partial UNIQUE likes_remote_uniq_idx — a
@@ -132,22 +151,14 @@ func LikeHandler(d *Dispatcher) HandlerFn {
 			return OutcomeRejected, federation.InboxStatusUnknownObject, uuid.UUID{},
 				errors.New("Like activity missing object reference")
 		}
-		// Update the remote-actor display cache (best-effort —
-		// a failure here doesn't block the Like itself).
-		d.upsertActorBestEffort(ctx, env, peerID)
-
 		targetID := uuid.UUID(row.ObjectID.Bytes)
 		_, err := d.social.InsertRemoteLike(ctx, *row.ObjectKind, targetID, peerID, env.Actor)
-		if err != nil {
-			// Common failure: the target row doesn't exist
-			// locally (the post was deleted between the
-			// sender's share and now). Map to unknown_object
-			// per the §12.1 catalogue distinction.
-			if isMissingTargetError(err) {
-				return OutcomeRejected, federation.InboxStatusUnknownObject, uuid.UUID{}, err
-			}
-			return OutcomeFailed, "", uuid.UUID{}, err
+		if outcome, reason, ok := writeRefusal(err); ok {
+			return outcome, reason, uuid.UUID{}, err
 		}
+		// Authorised and written: now refresh the remote-actor
+		// display cache (best-effort).
+		d.upsertActorBestEffort(ctx, env, peerID)
 		return OutcomeProcessed, "", uuid.UUID{}, nil
 	}
 }
@@ -177,18 +188,23 @@ func CommentHandler(d *Dispatcher) HandlerFn {
 				errors.New("Comment activity missing target object")
 		}
 
+		// inReplyTo names the parent: a comment on THIS instance
+		// (<origin>/comments/<uuid>), which the write checks is a
+		// live comment on the same target. inReplyTo equal to the
+		// target itself, or absent, is a top-level comment. Anything
+		// else is refused, never dropped to top level: a reply is
+		// never re-parented as a side effect of a missing parent.
 		var parentID *uuid.UUID
-		if parentURI != "" {
-			// Parent URL might be local (a reply to a comment
-			// we already have). If we can extract a UUID from
-			// the tail of the URL, pass it through; otherwise
-			// drop it (top-level comment on the target).
-			if id := uuidFromURLTail(parentURI); id != (uuid.UUID{}) {
-				parentID = &id
+		if parentURI != "" && parentURI != env.Object {
+			id, status, err := d.localCommentID(ctx, parentURI)
+			if err != nil {
+				if status == "" {
+					return OutcomeFailed, "", uuid.UUID{}, err
+				}
+				return OutcomeRejected, status, uuid.UUID{}, err
 			}
+			parentID = &id
 		}
-
-		d.upsertActorBestEffort(ctx, env, peerID)
 
 		input := RemoteCommentInput{
 			TargetKind:  *row.ObjectKind,
@@ -200,12 +216,10 @@ func CommentHandler(d *Dispatcher) HandlerFn {
 			Body:        body,
 		}
 		_, _, err = d.social.InsertRemoteComment(ctx, input)
-		if err != nil {
-			if isMissingTargetError(err) {
-				return OutcomeRejected, federation.InboxStatusUnknownObject, uuid.UUID{}, err
-			}
-			return OutcomeFailed, "", uuid.UUID{}, err
+		if outcome, reason, ok := writeRefusal(err); ok {
+			return outcome, reason, uuid.UUID{}, err
 		}
+		d.upsertActorBestEffort(ctx, env, peerID)
 		return OutcomeProcessed, "", uuid.UUID{}, nil
 	}
 }
@@ -317,31 +331,42 @@ func extractCommentPayload(env *federation.Envelope) (body, parentURI string, er
 	return body, parentURI, nil
 }
 
-// uuidFromURLTail extracts the last path segment + tries to
-// parse it as a UUID. Used for inReplyTo URLs that point at
-// our local /comments/<uuid>.
-func uuidFromURLTail(u string) uuid.UUID {
-	idx := strings.LastIndex(u, "/")
-	if idx < 0 {
-		return uuid.UUID{}
+// localCommentID resolves an inReplyTo URI to a comment id on this
+// instance: <local origin>/comments/<uuid>. Another origin or shape is
+// invalid_member; an unknown local origin is a retryable failure (fail
+// closed, never guessed).
+func (d *Dispatcher) localCommentID(ctx context.Context, uri string) (uuid.UUID, federation.InboxStatus, error) {
+	local := d.localOrigin(ctx)
+	if local == "" {
+		return uuid.UUID{}, "", errors.New("inbox: the local base URL is not wired; cannot resolve inReplyTo")
 	}
-	id, err := uuid.Parse(u[idx+1:])
+	u, err := url.Parse(uri)
+	if err != nil || federation.OriginOf(uri) != local || u.RawQuery != "" || u.Fragment != "" {
+		return uuid.UUID{}, federation.InboxStatusInvalidMember, fmt.Errorf("%w: inReplyTo is not a comment on this instance", federation.ErrInvalidMember)
+	}
+	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(segs) != 2 || segs[0] != "comments" {
+		return uuid.UUID{}, federation.InboxStatusInvalidMember, fmt.Errorf("%w: inReplyTo is not a comment on this instance", federation.ErrInvalidMember)
+	}
+	id, err := uuid.Parse(segs[1])
 	if err != nil {
-		return uuid.UUID{}
+		return uuid.UUID{}, federation.InboxStatusInvalidMember, fmt.Errorf("%w: inReplyTo is not a comment id", federation.ErrInvalidMember)
 	}
-	return id
+	return id, "", nil
 }
 
-// isMissingTargetError detects the specific "the target row
-// doesn't exist locally" failure. Currently a string match on
-// the error message; switch to typed errors once social returns
-// them.
-func isMissingTargetError(err error) bool {
-	if err == nil {
-		return false
+// writeRefusal maps a SocialPoster error to the dispatch outcome: nil is
+// not a refusal (ok=false); ErrUnknownObject and ErrUnsharedObject are
+// terminal rejections; anything else (a database error, an unwired
+// authorizer) is a retryable failure. None of them wrote anything.
+func writeRefusal(err error) (DispatchOutcome, federation.InboxStatus, bool) {
+	switch {
+	case err == nil:
+		return 0, "", false
+	case errors.Is(err, ErrUnknownObject):
+		return OutcomeRejected, federation.InboxStatusUnknownObject, true
+	case errors.Is(err, ErrUnsharedObject):
+		return OutcomeRejected, federation.InboxStatusUnsharedObject, true
 	}
-	s := err.Error()
-	return strings.Contains(s, "target not found") ||
-		strings.Contains(s, "violates foreign key") ||
-		strings.Contains(s, "no rows in result set")
+	return OutcomeFailed, "", true
 }

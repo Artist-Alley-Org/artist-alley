@@ -448,6 +448,40 @@ advertised: a pairing made before it lacks it until the two instances
 negotiate again (spec §16.2), and until then no grant flows between
 them. The rest of this ADR is unchanged.
 
+## Amendment 2026-11-17 (#1570): an inbound like or comment needs a live share of its target
+
+**What this ADR said.** The *Opt-in sharing model* makes a share the
+precondition for a peer's access, and the status note above lists the
+inbound check against the share list as not implemented. The reference
+implementation applied an inbound `Like` or comment `Create` without
+checking for a share, checked that the target existed only for posts,
+and its share-match helper never compared a share's peer with the
+requesting peer.
+
+**Decision.**
+
+- **One decision, inside the write.** Every applied inbound write is
+  authorised in the transaction that makes it: a like (posts and assets,
+  `view`) or a comment (posts, assets and collections, `comment`); the
+  target exists and is not deleted; a live share to that peer admits the
+  actor (named, or no actor named), unrevoked and unexpired by the
+  receiver's clock, from an enabled and connected peer. A collection
+  share reaches a member asset only when its grantor owns the asset or
+  holds `system.admin`. The rows relied on are held until the write
+  commits, so a revoke either commits first or waits; nothing is cached.
+- **Nothing before authority.** A refusal, a missing target or a failed
+  lookup writes no like, comment, notification or actor cache entry; a
+  failed lookup is retried. A reply whose parent is missing or belongs
+  to another target is refused, not re-parented.
+- **No existence oracle.** Refusals are recorded as `unshared_object` /
+  `unknown_object` on the receiver; the sender's answer, given at
+  receipt, is the same either way.
+
+**Compatibility.** Activities from a peer without a share of the target
+are now recorded as rejected. Likes and comments already written are
+kept. Spec v1 *Implementation status* D4 is resolved. The rest of this
+ADR is unchanged.
+
 ## Context
 
 [ADR 0007](/adr/0007-federation-thinking-ahead/) committed Artist Alley

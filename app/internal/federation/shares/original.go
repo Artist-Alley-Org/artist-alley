@@ -296,7 +296,7 @@ func (r *Registry) matchOriginalShare(ctx context.Context, db DBTX, req Original
 		// Pick among the flagged shares only, so a higher-ranked share
 		// without the flag never masks a lower-ranked one that has it.
 		if len(granted) > 0 {
-			hit, reason, err := pickBestMatch(granted, access)
+			hit, reason, err := pickBestMatch(granted, access, nowFn())
 			if err != nil {
 				return nil, err
 			}
@@ -305,7 +305,7 @@ func (r *Registry) matchOriginalShare(ctx context.Context, db DBTX, req Original
 			}
 			best = bumpReason(best, reason)
 		}
-		hit, reason, err := pickBestMatch(forPeer, access)
+		hit, reason, err := pickBestMatch(forPeer, access, nowFn())
 		if err != nil {
 			return nil, err
 		}
