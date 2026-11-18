@@ -21,7 +21,9 @@ package twostack_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -237,6 +239,42 @@ func TestTwoStack_InboundGrants(t *testing.T) {
 		_, err := g.recordClient(grants).Fetch(ctx, g.req(o, g.signerB))
 		wantReason(t, err, casfetch.ReasonNoInboundGrant)
 		g.nothingOnB(o)
+	})
+
+	// #1605: with every listener connected and the workers running, both
+	// instances still serve ordinary API requests concurrently, promptly.
+	t.Run("ordinary API requests run alongside the workers", func(t *testing.T) {
+		const perInstance = 16
+		errs := make(chan error, 2*perInstance)
+		var wg sync.WaitGroup
+		start := time.Now()
+		for _, in := range []*instance{g.a, g.b} {
+			for i := 0; i < perInstance; i++ {
+				wg.Add(1)
+				go func(in *instance) {
+					defer wg.Done()
+					req, _ := http.NewRequest(http.MethodGet, in.url+"/api/v1/admin/federation/peers", nil)
+					req.Header.Set("Authorization", "Bearer "+in.token)
+					resp, err := (&http.Client{Transport: g.tr, Timeout: 10 * time.Second}).Do(req)
+					if err != nil {
+						errs <- err
+						return
+					}
+					resp.Body.Close()
+					if resp.StatusCode != http.StatusOK {
+						errs <- fmt.Errorf("%s: status %d", in.name, resp.StatusCode)
+					}
+				}(in)
+			}
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Error(err)
+		}
+		if took := time.Since(start); took > 15*time.Second {
+			t.Fatalf("%d concurrent requests took %s", 2*perInstance, took)
+		}
 	})
 
 	t.Run("overlap: a user grant survives the end of the peer-wide one", func(t *testing.T) {

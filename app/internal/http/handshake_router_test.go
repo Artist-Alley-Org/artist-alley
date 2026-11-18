@@ -110,8 +110,10 @@ type hsHarness struct {
 
 func newHSHarness(t *testing.T) *hsHarness {
 	t.Helper()
-	pool := openPoolForSensitivity(t)
-	t.Cleanup(pool.Close)
+	// A server's pool, sized as production sizes it (#1605: New refuses
+	// a pool too small to serve beside its LISTEN loops, which the
+	// driver's default can be on a four-CPU runner).
+	pool, _ := openServerPool(t)
 	initAtrestForOutboxWiring(t)
 	h := &hsHarness{t: t, ctx: context.Background(), pool: pool,
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
