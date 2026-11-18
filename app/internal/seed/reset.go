@@ -159,6 +159,26 @@ var polymorphicRefs = []polymorphicRef{
 		Reason: "seeded content; surviving likes orphan AND undercount like_count on re-seed",
 	},
 	{
+		// #1572: the per-activity record of an inbound remote Like
+		// (migration 00078). peer_id has an FK (it cascades with its
+		// peer, and peers survive this reset), but the target has none,
+		// so the TRUNCATE of posts/assets/comments never reaches it. The
+		// record follows its aggregate `likes` row, which this reset
+		// wipes with the target: a surviving record would claim a live
+		// like with no like row behind it, and bind a reused target id.
+		// A tombstone (an Undo whose Like never arrived) has NULL
+		// target_kind, matches no Targets key, and is never swept: it
+		// is scoped to its peer and stays until that peer goes.
+		Table: "federation_remote_likes", KindColumn: "target_kind", IDColumn: "target_id",
+		Targets: map[string]polyTarget{
+			"post":    {"posts", "id"},
+			"asset":   {"assets", "id"},
+			"comment": {"comments", "id"},
+		},
+		Sweep:  true,
+		Reason: "per-activity record of a remote like; follows its likes row, which is wiped with the target. NULL-target tombstones are peer-scoped and kept",
+	},
+	{
 		// Seeded by applyFeatured, and NOT covered before this change:
 		// featured_items' only FK is team_id, so placements survived
 		// every reset. Reproduced as a live orphan when a reset swaps
