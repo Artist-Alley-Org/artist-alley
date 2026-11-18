@@ -574,6 +574,31 @@ func Federated(t ActivityType, objectKind string) bool {
 	return false
 }
 
+// WireObject is the envelope `object` for an activity (#1604): for a
+// comment Create, the commented object on its origin (the local
+// payload's target_uri, required, an absolute https URI); for every
+// other activity, the activity's own object URI. A comment's own URI
+// stays in the sender's local record: on the wire the Create's
+// signed `id` identifies the comment, which is what a reply's
+// inReplyTo and a future Delete or Undo of it (#1572) refer to.
+func WireObject(t ActivityType, objectKind, objectURI string, payload []byte) (string, error) {
+	if t != ActivityCreate || objectKind != "comment" {
+		return objectURI, nil
+	}
+	var local struct {
+		TargetURI string `json:"target_uri"`
+	}
+	if len(bytes.TrimSpace(payload)) > 0 {
+		if err := json.Unmarshal(payload, &local); err != nil {
+			return "", fmt.Errorf("%w: comment payload: %v", ErrNotFederated, err)
+		}
+	}
+	if !absoluteHTTPS(local.TargetURI) {
+		return "", fmt.Errorf("%w: a comment Create needs its target's URI (target_uri)", ErrNotFederated)
+	}
+	return local.TargetURI, nil
+}
+
 // WireMembers projects a local activity payload onto the members the
 // activity's v1 schema defines (§7.5): none for Like; object_type,
 // content and inReplyTo for a comment; the §7.5.1 / §7.5.2 names for
@@ -620,7 +645,10 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		if err := copyAs(MemberContent, MemberContent, true); err != nil {
 			return nil, err
 		}
-		if err := copyAs(MemberInReplyTo, MemberInReplyTo, false); err != nil {
+		// #1604: inReplyTo is the parent COMMENT of a reply only (the
+		// local record's own inReplyTo names the post for a top-level
+		// comment and stays local).
+		if err := copyAs("in_reply_to_uri", MemberInReplyTo, false); err != nil {
 			return nil, err
 		}
 	case ActivityAAShare, ActivityAAUnshare:

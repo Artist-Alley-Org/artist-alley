@@ -481,7 +481,7 @@ func (a *e2eSocialPoster) InsertRemoteLike(ctx context.Context, kind string, id,
 
 func (a *e2eSocialPoster) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
 	return a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
-		TargetKind: in.TargetKind, TargetID: in.TargetID, ParentID: in.ParentID,
+		TargetKind: in.TargetKind, TargetID: in.TargetID, ParentID: in.ParentID, ParentActivityURI: in.ParentActivityURI,
 		PeerID: in.PeerID, ActorURI: in.ActorURI, ActivityURI: in.ActivityURI,
 		Body: in.Body, Authorize: a.authorizer(federation.ActivityCreate, in.TargetKind, in.TargetID, in.PeerID, in.ActorURI),
 	})

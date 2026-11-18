@@ -381,7 +381,7 @@ func TestWireProjection_FederatedTypes(t *testing.T) {
 		{"comment", emit.CreateComment(w.actor, emit.CommentRef{
 			ID: uuid.NewString(), PostID: w.postID.String(), PostTitle: "Wire", PostAuthorRef: w.userRef,
 			PostAuthorURI: w.actor.URI(), Body: "Lovely.", Depth: 0,
-		}).Activity, []string{"content", "inReplyTo", "object_type"}},
+		}).Activity, []string{"content", "object_type"}}, // top-level: no inReplyTo on the wire (#1604)
 		{"unshare", emit.Unshare(w.actor, emit.ShareRef{
 			ShareID: uuid.New(), ObjectKind: federation.ShareObjectKindPost, ObjectID: w.postID,
 			PeerURL: w.httpsURL(), Scope: federation.ShareScopeView, Notes: secretNote,

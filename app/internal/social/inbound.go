@@ -120,13 +120,16 @@ func (h *Handler) InsertRemoteLike(
 // already calls back through social.SocialPoster; reversing the
 // edge would create a cycle).
 type RemoteCommentInput struct {
-	TargetKind  string
-	TargetID    uuid.UUID
-	ParentID    *uuid.UUID
-	PeerID      uuid.UUID
-	ActorURI    string
-	ActivityURI string
-	Body        string
+	TargetKind string
+	TargetID   uuid.UUID
+	ParentID   *uuid.UUID
+	// ParentActivityURI names the parent by the Create activity id of a
+	// federated comment (#1604), looked up among this target's comments.
+	ParentActivityURI string
+	PeerID            uuid.UUID
+	ActorURI          string
+	ActivityURI       string
+	Body              string
 	// Authorize runs inside the write transaction (#1570); nil refuses.
 	Authorize InboundAuthorizer
 }
@@ -167,19 +170,26 @@ func (h *Handler) InsertRemoteComment(ctx context.Context, in RemoteCommentInput
 		rootID := newID
 		depth := int32(0)
 		parentPG := pgtype.UUID{}
-		if in.ParentID != nil {
-			var parentRoot pgtype.UUID
+		if in.ParentID != nil || in.ParentActivityURI != "" {
+			var parentID, parentRoot pgtype.UUID
 			var parentDepth int32
-			err := tx.QueryRow(ctx, `SELECT root_id, depth FROM comments
-				WHERE id = $1 AND target_kind = $2 AND target_id = $3 AND deleted_at IS NULL
-				FOR SHARE`, *in.ParentID, in.TargetKind, in.TargetID).Scan(&parentRoot, &parentDepth)
+			var err error
+			if in.ParentID != nil {
+				err = tx.QueryRow(ctx, `SELECT id, root_id, depth FROM comments
+					WHERE id = $1 AND target_kind = $2 AND target_id = $3 AND deleted_at IS NULL
+					FOR SHARE`, *in.ParentID, in.TargetKind, in.TargetID).Scan(&parentID, &parentRoot, &parentDepth)
+			} else {
+				err = tx.QueryRow(ctx, `SELECT id, root_id, depth FROM comments
+					WHERE activity_uri = $1 AND target_kind = $2 AND target_id = $3 AND deleted_at IS NULL
+					FOR SHARE`, in.ParentActivityURI, in.TargetKind, in.TargetID).Scan(&parentID, &parentRoot, &parentDepth)
+			}
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrRemoteParentNotFound
 			}
 			if err != nil {
 				return err
 			}
-			parentPG = pgtype.UUID{Bytes: *in.ParentID, Valid: true}
+			parentPG = parentID
 			rootID = uuid.UUID(parentRoot.Bytes)
 			depth = parentDepth + 1
 		}

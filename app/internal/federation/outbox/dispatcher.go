@@ -334,24 +334,38 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 		// A share activity names its share row (#1571); the resolver
 		// addresses it to that share's peer only.
 		var shareID uuid.UUID
+		var commentTarget string
 		if len(row.Payload) > 0 {
 			var p struct {
-				ShareID string `json:"share_id"`
+				ShareID   string `json:"share_id"`
+				TargetURI string `json:"target_uri"`
 			}
 			if json.Unmarshal(row.Payload, &p) == nil {
 				shareID, _ = uuid.Parse(p.ShareID)
+				commentTarget = p.TargetURI
+			}
+		}
+		// A comment Create is addressed to the target's origin, and to
+		// the actor it is for there (its `to`), #1604.
+		var recipientActor string
+		if len(row.ToUris) > 0 {
+			var to []string
+			if json.Unmarshal(row.ToUris, &to) == nil && len(to) > 0 {
+				recipientActor = to[0]
 			}
 		}
 
 		result, err := d.resolver.Resolve(ctx, Input{
-			Verb:        row.ActivityType,
-			TargetKind:  targetKind,
-			TargetID:    targetID,
-			ShareID:     shareID,
-			AuthorRef:   authorRef,
-			AuthorURI:   row.ActorUri,
-			Visibility:  vis,
-			Sensitivity: sen,
+			Verb:           row.ActivityType,
+			TargetKind:     targetKind,
+			TargetID:       targetID,
+			ShareID:        shareID,
+			CommentTarget:  commentTarget,
+			RecipientActor: recipientActor,
+			AuthorRef:      authorRef,
+			AuthorURI:      row.ActorUri,
+			Visibility:     vis,
+			Sensitivity:    sen,
 		})
 		if err != nil {
 			d.logErr(ctx, "outbox.dispatcher.resolve.error", err)

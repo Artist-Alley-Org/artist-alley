@@ -221,9 +221,11 @@ func TestInboundAuthz_ReplyParentMustBeALiveCommentOnTheTarget(t *testing.T) {
 		inReplyTo string
 		reason    federation.InboxStatus
 	}{
-		"missing parent":           {fx.localBaseURL + "/comments/" + uuid.NewString(), federation.InboxStatusUnknownObject},
-		"parent on another post":   {fx.localBaseURL + "/comments/" + onOther.String(), federation.InboxStatusUnknownObject},
-		"parent on another origin": {fx.senderBaseURL + "/comments/" + uuid.NewString(), federation.InboxStatusInvalidMember},
+		"missing parent":         {fx.localBaseURL + "/comments/" + uuid.NewString(), federation.InboxStatusUnknownObject},
+		"parent on another post": {fx.localBaseURL + "/comments/" + onOther.String(), federation.InboxStatusUnknownObject},
+		// Not this instance's comment URI: taken as the Create id of a
+		// federated comment (#1604), and no such comment is on the target.
+		"parent on another origin": {fx.senderBaseURL + "/comments/" + uuid.NewString(), federation.InboxStatusUnknownObject},
 		"parent not a comment":     {fx.localBaseURL + "/posts/" + uuid.NewString(), federation.InboxStatusInvalidMember},
 	} {
 		t.Run(name, func(t *testing.T) {
