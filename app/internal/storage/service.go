@@ -53,6 +53,12 @@ type Service struct {
 	// its test seams (#1597, fixity.go).
 	variantSem   variantSem
 	variantHooks variantHooks
+	// eventHooks are #1598 test seams; zero in production.
+	eventHooks eventHooks
+
+	// AgentVersion is the software version recorded on local
+	// preservation events (#1598, events.go). Empty omits it.
+	AgentVersion string
 }
 
 // NewService constructs a storage Service with sensible defaults.

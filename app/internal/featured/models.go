@@ -167,6 +167,29 @@ type AssetFieldValueHistory struct {
 	SetBy            string
 }
 
+// An asset's preservation history (#1598, ADR 0101, spec v1 §17.4): append-only PREMIS-style events, one per asset per observation. Only local fixity-check events today. object_hash/variant_key are the only file reference: no storage path or free text. sweep_run_id is an immutable snapshot that outlives the run row; sweep_run_ref is the live FK.
+type AssetPreservationEvent struct {
+	ID                 pgtype.UUID
+	AssetID            pgtype.UUID
+	Source             string
+	EventType          string
+	OccurredAt         pgtype.Timestamptz
+	Outcome            string
+	OutcomeReason      string
+	Algorithm          *string
+	ObjectHash         string
+	VariantKey         string
+	ObservedGeneration int64
+	ObservedSha256     *string
+	ObservedSizeBytes  *int64
+	RecordedSha256     *string
+	FixityStatus       string
+	SweepRunID         pgtype.UUID
+	SweepRunRef        pgtype.UUID
+	AgentName          string
+	AgentVersion       *string
+}
+
 // Subtitle / caption tracks attached to video or audio assets. NOT first-class assets — excluded from asset counts. FK + CASCADE binds tracks to their parent. Phase 1.18.B-3.
 type AssetSubtitleTrack struct {
 	AssetID      pgtype.UUID

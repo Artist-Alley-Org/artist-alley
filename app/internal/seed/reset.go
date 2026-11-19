@@ -414,6 +414,11 @@ var nonReferenceKindColumns = map[string]string{
 	"storage_sweep_runs.kind":           "sweep mode (orphan_scan/checksum_verify)",
 	"storage_variants.content_type":     "MIME type",
 
+	// #1598: a spec §17.4 PREMIS event token (fixity-check/…), not a
+	// reference; the row's asset is a real FK with ON DELETE CASCADE, so
+	// a reset reaches it.
+	"asset_preservation_events.event_type": "PREMIS event type token; asset is a cascading FK",
+
 	// #1571: the kind of the PEER's object, named by object_uri on the
 	// peer's origin; there is no local id column, so nothing local to
 	// orphan. The rows cascade with their peer.

@@ -288,8 +288,11 @@ SET status = $2, error = $3, cursor = NULL, finished_at = NOW()
 WHERE id = $1;
 
 -- name: RecordSweepFinding :exec
+-- One finding per (run, object, variant, finding) (#1598, migration
+-- 00083): a batch retried after an interruption records nothing twice.
 INSERT INTO storage_sweep_findings (id, run_id, finding, object_hash, variant_key, detail)
-VALUES ($1, $2, $3, $4, $5, $6);
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (run_id, object_hash, variant_key, finding) DO NOTHING;
 
 -- name: LatestSweepRun :one
 SELECT id, kind, status, cursor, objects_scanned, findings_count,
@@ -430,3 +433,51 @@ WHERE id IN (
     LIMIT sqlc.arg(max_rows)
     FOR UPDATE SKIP LOCKED
 );
+
+-- name: ListAssetsReferencingObject :many
+-- #1598: every asset whose preservation history an observation of this
+-- stored object belongs to: its primary file, an alternate, or a
+-- companion. DISTINCT, so an asset that references the bytes twice gets
+-- one event, and two assets sharing deduplicated bytes get one each. A
+-- storage pin alone is not proof that an asset owns the bytes.
+SELECT id FROM assets WHERE file_hash = sqlc.arg(object_hash)::TEXT
+UNION
+SELECT asset_id FROM asset_alternates WHERE object_hash = sqlc.arg(object_hash)::TEXT
+UNION
+SELECT asset_id FROM asset_companions WHERE object_hash = sqlc.arg(object_hash)::TEXT
+ORDER BY 1;
+
+-- name: InsertFixityEvent :execrows
+-- #1598: one local fixity-check event for one asset. Idempotent on
+-- (run, asset, object, variant, generation, reason): a retried batch
+-- inserts nothing; a new run, a new generation or a different result is
+-- a new event. The run is written as both its immutable snapshot
+-- (sweep_run_id) and its live reference (sweep_run_ref).
+--
+-- The asset is read FOR KEY SHARE in the same statement: an asset
+-- deleted since the reference lookup (committed, or committing while
+-- this waits on its row) yields no row and no event, instead of a
+-- foreign-key error that would fail the whole sweep. A surviving asset
+-- is held until the transaction ends, so its event is always valid.
+INSERT INTO asset_preservation_events (
+    asset_id, source, event_type, occurred_at, outcome, outcome_reason, algorithm,
+    object_hash, variant_key, observed_generation, observed_sha256, observed_size_bytes,
+    recorded_sha256, fixity_status, sweep_run_id, sweep_run_ref, agent_name, agent_version
+)
+SELECT a.id, 'local', 'fixity-check', sqlc.arg(occurred_at)::timestamptz, sqlc.arg(outcome)::text, sqlc.arg(outcome_reason)::text, sqlc.narg(algorithm)::text,
+       sqlc.arg(object_hash)::text, sqlc.arg(variant_key)::text, sqlc.arg(observed_generation)::bigint, sqlc.narg(observed_sha256)::text, sqlc.narg(observed_size_bytes)::bigint,
+       sqlc.narg(recorded_sha256)::text, sqlc.arg(fixity_status)::text, sqlc.arg(sweep_run_id)::uuid, sqlc.arg(sweep_run_id)::uuid, sqlc.arg(agent_name)::text, sqlc.narg(agent_version)::text
+FROM assets a
+WHERE a.id = sqlc.arg(asset_id)::uuid
+FOR KEY SHARE OF a
+ON CONFLICT (sweep_run_id, asset_id, object_hash, variant_key, observed_generation, outcome_reason) WHERE sweep_run_id IS NOT NULL
+DO NOTHING;
+
+-- name: ListAssetPreservationEvents :many
+-- #1598: an asset's preservation history, newest first.
+SELECT id, asset_id, source, event_type, occurred_at, outcome, outcome_reason, algorithm,
+       object_hash, variant_key, observed_generation, observed_sha256, observed_size_bytes,
+       recorded_sha256, fixity_status, sweep_run_id, sweep_run_ref, agent_name, agent_version
+FROM asset_preservation_events
+WHERE asset_id = sqlc.arg(asset_id)
+ORDER BY occurred_at DESC, id;
