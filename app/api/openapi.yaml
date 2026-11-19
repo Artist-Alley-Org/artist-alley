@@ -12473,6 +12473,72 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/storage/assets/{id}/preservation-events:
+    get:
+      operationId: listAssetPreservationEvents
+      summary: An asset's preservation history
+      description: |
+        Read-only, paginated preservation history of one asset (#1598,
+        ADR 0101, spec v1 §17.4): the append-only events this instance
+        recorded about it, newest first. Today every event is a local
+        `fixity-check` written by the checksum sweep: one for each
+        stored (object, variant) it checked, on every asset that
+        references the object, so bytes shared by two assets appear in
+        both histories.
+
+        Ordered by `occurred_at`, then `id`, both newest first, so
+        events with the same timestamp keep one fixed order and a page
+        never shifts when new events are written. Pass a response's
+        `next_cursor` back as `cursor` for the next page; it is null on
+        the last page. A cursor belongs to one asset: a malformed
+        cursor, or one issued for another asset, is refused with 400
+        instead of silently starting again from the newest page.
+        `total` counts the whole history.
+
+        An event names the file only by its content address
+        (`object_hash`) and `variant_key`. It never carries a storage
+        path, a backend error message or a peer's data. The fields are
+        chosen so a later metadata export can carry them (spec §17.7
+        maps preservation events into a BagIt bag's `data/metadata/`);
+        this endpoint is not that export.
+
+        Gated on `system.storage.read` (or `system.admin`). There is no
+        public or federated route to this history. 404 when no asset
+        row has the id; a soft-deleted asset keeps its history.
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The asset id.
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: The `next_cursor` of the previous page of this asset's history.
+          schema: { type: string, maxLength: 512 }
+      responses:
+        "200":
+          description: A page of the asset's preservation history, newest first, plus the total.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreservationEventPage" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/jobs:
     get:
       operationId: listJobs
@@ -23775,6 +23841,94 @@ components:
           type: array
           items: { $ref: "#/components/schemas/StorageSweepFinding" }
         total: { type: integer, format: int64 }
+    PreservationEventPage:
+      type: object
+      description: One page of an asset's preservation history (#1598), newest first.
+      required: [asset_id, items, total, next_cursor]
+      properties:
+        asset_id: { type: string, format: uuid }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PreservationEvent" }
+        total:
+          type: integer
+          format: int64
+          description: Events in the whole history, independent of the cursor.
+        next_cursor:
+          type: string
+          nullable: true
+          description: Pass as `cursor` for the next page. Null on the last page.
+    PreservationEvent:
+      type: object
+      description: |
+        One preservation event (ADR 0101, spec v1 §17.4): what this
+        instance observed, never more. A success means the variant had a
+        recorded digest, the bytes read hashed to it, and the row was
+        verified. A warning means the bytes were read but there was no
+        recorded digest to check them against (a legacy row, original or
+        derived). Failures are a wrong checksum or size, missing bytes,
+        or bytes the backend could not deliver (`read_error`).
+      required: [id, source, event_type, occurred_at, outcome, outcome_reason, object_hash, variant_key, is_original, observed_generation, fixity_status, sweep_run_present, agent]
+      properties:
+        id: { type: string, format: uuid }
+        source:
+          type: string
+          enum: [local]
+          description: Who recorded it. `local` is this instance; it is the only source recorded today.
+        event_type:
+          type: string
+          enum: [fixity-check]
+          description: The spec §17.4 event token. Only fixity checks are recorded today.
+        occurred_at: { type: string, format: date-time }
+        outcome:
+          type: string
+          enum: [success, warning, failure]
+        outcome_reason:
+          type: string
+          enum: [digest_match, no_recorded_digest, checksum_mismatch, size_mismatch, missing_object, read_error]
+          description: Why the outcome is what it is. A closed vocabulary, never free text.
+        object_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: The checked file's content address (SHA-256 of the original). Never a storage path.
+        variant_key:
+          type: string
+          description: Which version of the file was checked, for example `original` or `preview`.
+        is_original:
+          type: boolean
+          description: True when `variant_key` is the uploaded original; false for a derivative.
+        observed_generation:
+          type: integer
+          format: int64
+          description: The variant row's generation when it was checked (#1597). A regeneration is a new generation.
+        algorithm:
+          type: string
+          enum: [sha256]
+          nullable: true
+          description: The digest algorithm of `observed_sha256`. Null when no bytes were read.
+        observed_sha256: { type: string, nullable: true, description: SHA-256 of the bytes read. Null when they were missing or unreadable. }
+        observed_size_bytes: { type: integer, format: int64, nullable: true, description: Size of the bytes read. Null when none were read. }
+        recorded_sha256: { type: string, nullable: true, description: "The digest the variant row recorded, if it had one." }
+        fixity_status:
+          type: string
+          enum: [verified, unverifiable, mismatch, missing]
+          description: The variant row's fixity status after the check.
+        sweep_run_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The checksum sweep run that made the observation. Kept after the run record is deleted.
+        sweep_run_present:
+          type: boolean
+          description: Whether the sweep run record still exists.
+        agent: { $ref: "#/components/schemas/PreservationEventAgent" }
+    PreservationEventAgent:
+      type: object
+      description: The software that recorded the event (spec §17.4 `agents[].software`).
+      required: [name]
+      properties:
+        name: { type: string, example: "artist-alley" }
+        version: { type: string, nullable: true, description: "The software version, when the operator records it." }
     StorageUsage:
       type: object
       required: [object_count, variant_count, total_bytes, original_bytes, derivative_bytes, by_content_type, by_backend]

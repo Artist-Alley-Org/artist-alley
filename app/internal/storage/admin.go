@@ -5,9 +5,12 @@ package storage
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -290,4 +293,163 @@ func (h *AdminHandler) ListSweepFindings(ctx context.Context, runID uuid.UUID, f
 		return nil, 0, fmt.Errorf("storage.ListSweepFindings: count: %w", err)
 	}
 	return out, total, nil
+}
+
+// --- preservation history (#1598) --------------------------------------------
+
+// PreservationEvent is one entry of an asset's preservation history
+// (ADR 0101, spec v1 §17.4) as the operator surface reads it. It says
+// what was observed and nothing more: the file is named only by its
+// content address and variant, and no storage path, backend error text
+// or peer data is carried.
+type PreservationEvent struct {
+	ID            uuid.UUID
+	Source        string // "local" (the only source recorded today)
+	EventType     string // a §17.4 token; "fixity-check" today
+	OccurredAt    time.Time
+	Outcome       string // success | warning | failure
+	OutcomeReason string // closed vocabulary (migration 00083)
+	ObjectHash    string
+	VariantKey    string
+	// Generation is the variant row's generation when it was observed
+	// (#1597).
+	Generation     int64
+	Algorithm      *string // "sha256" when bytes were read
+	ObservedSHA256 *string
+	ObservedSize   *int64
+	RecordedSHA256 *string
+	FixityStatus   string // the row's status after the check
+	// SweepRunID is the run that made the observation: a snapshot kept
+	// after the run row is gone. SweepRunPresent says whether the run
+	// row still exists.
+	SweepRunID      *uuid.UUID
+	SweepRunPresent bool
+	AgentName       string
+	AgentVersion    *string
+}
+
+// PreservationHistory is one page of an asset's history, newest first.
+// NextCursor is "" on the last page; Total counts the whole history.
+type PreservationHistory struct {
+	Items      []PreservationEvent
+	Total      int64
+	NextCursor string
+}
+
+// ErrHistoryAssetNotFound: no asset row has that id.
+var ErrHistoryAssetNotFound = errors.New("storage: asset not found")
+
+// ErrHistoryCursor: the cursor is malformed or was issued for another
+// asset. Refused rather than treated as "start again", so a reader
+// building an export can never receive the same events twice.
+var ErrHistoryCursor = errors.New("storage: invalid preservation history cursor")
+
+const historyCursorVersion = "h1"
+
+// historyCursor is the last row of a page: base64url of
+// "h1:<asset>:<occurred_at unix microseconds>:<event id>". The asset is
+// part of it so a cursor cannot be replayed against another history.
+// PostgreSQL keeps microseconds, so the timestamp round-trips exactly.
+func historyCursor(asset uuid.UUID, at time.Time, id uuid.UUID) string {
+	raw := strings.Join([]string{historyCursorVersion, asset.String(), strconv.FormatInt(at.UnixMicro(), 10), id.String()}, ":")
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func parseHistoryCursor(asset uuid.UUID, s string) (time.Time, uuid.UUID, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, uuid.Nil, ErrHistoryCursor
+	}
+	parts := strings.Split(string(raw), ":")
+	if len(parts) != 4 || parts[0] != historyCursorVersion {
+		return time.Time{}, uuid.Nil, ErrHistoryCursor
+	}
+	a, err := uuid.Parse(parts[1])
+	if err != nil || a != asset {
+		return time.Time{}, uuid.Nil, ErrHistoryCursor
+	}
+	micros, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return time.Time{}, uuid.Nil, ErrHistoryCursor
+	}
+	id, err := uuid.Parse(parts[3])
+	if err != nil {
+		return time.Time{}, uuid.Nil, ErrHistoryCursor
+	}
+	return time.UnixMicro(micros).UTC(), id, nil
+}
+
+// ListPreservationEvents returns one page of an asset's preservation
+// history, newest first, ordered by (occurred_at, id) so equal
+// timestamps page deterministically. limit is clamped to 1..200
+// (default 50). An asset that exists with no events is an empty page,
+// not an error; one that does not exist is ErrHistoryAssetNotFound.
+func (h *AdminHandler) ListPreservationEvents(ctx context.Context, assetID uuid.UUID, cursor string, limit int32) (PreservationHistory, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	params := ListAssetPreservationEventsParams{
+		AssetID:   pgtype.UUID{Bytes: assetID, Valid: true},
+		PageLimit: limit + 1, // one extra row says whether a next page exists
+	}
+	if cursor != "" {
+		at, id, err := parseHistoryCursor(assetID, cursor)
+		if err != nil {
+			return PreservationHistory{}, err
+		}
+		params.BeforeAt = pgtype.Timestamptz{Time: at, Valid: true}
+		params.BeforeID = pgtype.UUID{Bytes: id, Valid: true}
+	}
+	exists, err := h.q.AssetRowExists(ctx, params.AssetID)
+	if err != nil {
+		return PreservationHistory{}, fmt.Errorf("storage.ListPreservationEvents: asset: %w", err)
+	}
+	if !exists {
+		return PreservationHistory{}, ErrHistoryAssetNotFound
+	}
+	rows, err := h.q.ListAssetPreservationEvents(ctx, params)
+	if err != nil {
+		return PreservationHistory{}, fmt.Errorf("storage.ListPreservationEvents: %w", err)
+	}
+	total, err := h.q.CountAssetPreservationEvents(ctx, params.AssetID)
+	if err != nil {
+		return PreservationHistory{}, fmt.Errorf("storage.ListPreservationEvents: count: %w", err)
+	}
+	out := PreservationHistory{Total: total, Items: make([]PreservationEvent, 0, min(len(rows), int(limit)))}
+	for i, r := range rows {
+		if i == int(limit) {
+			last := out.Items[len(out.Items)-1]
+			out.NextCursor = historyCursor(assetID, last.OccurredAt, last.ID)
+			break
+		}
+		out.Items = append(out.Items, preservationEventFromRow(r))
+	}
+	return out, nil
+}
+
+func preservationEventFromRow(r AssetPreservationEvent) PreservationEvent {
+	e := PreservationEvent{
+		ID:              uuid.UUID(r.ID.Bytes),
+		Source:          r.Source,
+		EventType:       r.EventType,
+		OccurredAt:      r.OccurredAt.Time.UTC(),
+		Outcome:         r.Outcome,
+		OutcomeReason:   r.OutcomeReason,
+		ObjectHash:      r.ObjectHash,
+		VariantKey:      r.VariantKey,
+		Generation:      r.ObservedGeneration,
+		Algorithm:       r.Algorithm,
+		ObservedSHA256:  r.ObservedSha256,
+		ObservedSize:    r.ObservedSizeBytes,
+		RecordedSHA256:  r.RecordedSha256,
+		FixityStatus:    r.FixityStatus,
+		SweepRunPresent: r.SweepRunRef.Valid,
+		AgentName:       r.AgentName,
+		AgentVersion:    r.AgentVersion,
+	}
+	if r.SweepRunID.Valid {
+		run := uuid.UUID(r.SweepRunID.Bytes)
+		e.SweepRunID = &run
+	}
+	return e
 }

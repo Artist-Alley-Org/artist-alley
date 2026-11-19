@@ -1517,6 +1517,10 @@
             "title": "Checksum verification",
             "blurb": "Re-hash stored bytes and report drift."
           },
+          "history": {
+            "title": "Preservation history",
+            "blurb": "One asset's fixity checks, newest first."
+          },
           "reimport": {
             "title": "Bulk re-import",
             "blurb": "Re-scan and re-process from source."

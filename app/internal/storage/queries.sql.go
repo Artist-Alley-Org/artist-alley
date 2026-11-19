@@ -231,6 +231,19 @@ func (q *Queries) AdvanceSweepRun(ctx context.Context, arg AdvanceSweepRunParams
 	return err
 }
 
+const assetRowExists = `-- name: AssetRowExists :one
+SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1::uuid)
+`
+
+// #1598: whether an asset row exists at all. A soft-deleted asset still
+// has a row, and its preservation history stays readable to operators.
+func (q *Queries) AssetRowExists(ctx context.Context, assetID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, assetRowExists, assetID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const beginVariantWrite = `-- name: BeginVariantWrite :one
 UPDATE storage_variants SET
     content_sha256     = NULL,
@@ -286,6 +299,18 @@ func (q *Queries) CountActivePins(ctx context.Context, objectHash string) (int64
 	var value int64
 	err := row.Scan(&value)
 	return value, err
+}
+
+const countAssetPreservationEvents = `-- name: CountAssetPreservationEvents :one
+SELECT count(*) FROM asset_preservation_events WHERE asset_id = $1::uuid
+`
+
+// #1598: how many events an asset's history holds (cursor-independent).
+func (q *Queries) CountAssetPreservationEvents(ctx context.Context, assetID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countAssetPreservationEvents, assetID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countSweepFindings = `-- name: CountSweepFindings :one
@@ -720,13 +745,33 @@ SELECT id, asset_id, source, event_type, occurred_at, outcome, outcome_reason, a
        object_hash, variant_key, observed_generation, observed_sha256, observed_size_bytes,
        recorded_sha256, fixity_status, sweep_run_id, sweep_run_ref, agent_name, agent_version
 FROM asset_preservation_events
-WHERE asset_id = $1
-ORDER BY occurred_at DESC, id
+WHERE asset_id = $1::uuid
+  AND ($2::timestamptz IS NULL
+       OR (occurred_at, id) < ($2::timestamptz, $3::uuid))
+ORDER BY occurred_at DESC, id DESC
+LIMIT $4::int
 `
 
-// #1598: an asset's preservation history, newest first.
-func (q *Queries) ListAssetPreservationEvents(ctx context.Context, assetID pgtype.UUID) ([]AssetPreservationEvent, error) {
-	rows, err := q.db.Query(ctx, listAssetPreservationEvents, assetID)
+type ListAssetPreservationEventsParams struct {
+	AssetID   pgtype.UUID
+	BeforeAt  pgtype.Timestamptz
+	BeforeID  pgtype.UUID
+	PageLimit int32
+}
+
+// #1598: one page of an asset's preservation history, newest first.
+// Keyset on (occurred_at, id), both descending: rows with equal
+// timestamps still have one fixed order, and a page never shifts or
+// repeats when newer events are written while an operator pages back.
+// before_at/before_id are the last row of the previous page; NULL
+// fetches the newest page.
+func (q *Queries) ListAssetPreservationEvents(ctx context.Context, arg ListAssetPreservationEventsParams) ([]AssetPreservationEvent, error) {
+	rows, err := q.db.Query(ctx, listAssetPreservationEvents,
+		arg.AssetID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
