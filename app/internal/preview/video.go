@@ -549,7 +549,7 @@ func writeTimelinePoster(ctx context.Context, in timelinePosterInput) (bool, err
 		slog.Float64("mean_luma", pick.luma),
 		slog.Int("tries", pick.tries))
 
-	if err := putVariantFile(ctx, in.Pool, in.Storage, in.Hash, "poster", pick.path, "image/jpeg"); err != nil {
+	if err := putVariantFile(ctx, in.Storage, in.Hash, "poster", pick.path, "image/jpeg"); err != nil {
 		return false, err
 	}
 
@@ -1150,31 +1150,24 @@ func (h *VideoHandler) ffprobeBin() string {
 }
 
 func (h *VideoHandler) uploadFile(ctx context.Context, hash, key, path, contentType string) error {
-	return putVariantFile(ctx, h.Pool, h.Storage, hash, key, path, contentType)
+	return putVariantFile(ctx, h.Storage, hash, key, path, contentType)
 }
 
 // putVariantFile streams a generated file onto the storage backend under
 // a variant key and records the row that makes it servable. The
 // handler-free form so preview.gif can hand the same closure to the
 // shared poster + sprite writers.
-func putVariantFile(ctx context.Context, pool *pgxpool.Pool, st *storage.Service, hash, key, path, contentType string) error {
+func putVariantFile(ctx context.Context, st *storage.Service, hash, key, path, contentType string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", key, err)
 	}
 	defer f.Close()
-	if _, err := st.Backend.Put(ctx, hash, key, f); err != nil {
+	// #1597: the file streams to the backend through the digest; a failed
+	// row record after the bytes landed is tolerated, as before (the row
+	// then says unverifiable).
+	if _, err := st.PutVariant(ctx, hash, key, f, contentType); err != nil && !errors.Is(err, storage.ErrVariantNotRecorded) {
 		return fmt.Errorf("backend put %s: %w", key, err)
-	}
-	info, err := f.Stat()
-	if err == nil {
-		_ = storage.New(pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  key,
-			SizeBytes:   info.Size(),
-			ContentType: contentType,
-			Metadata:    []byte("{}"),
-		})
 	}
 	return nil
 }

@@ -1159,13 +1159,19 @@ type StorageSweepRun struct {
 }
 
 type StorageVariant struct {
-	ObjectHash  string             `json:"object_hash"`
-	VariantKey  string             `json:"variant_key"`
-	SizeBytes   int64              `json:"size_bytes"`
-	ContentType string             `json:"content_type"`
-	Metadata    []byte             `json:"metadata"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ObjectHash       string             `json:"object_hash"`
+	VariantKey       string             `json:"variant_key"`
+	SizeBytes        int64              `json:"size_bytes"`
+	ContentType      string             `json:"content_type"`
+	Metadata         []byte             `json:"metadata"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ContentSha256    *string            `json:"content_sha256"`
+	ContentSizeBytes *int64             `json:"content_size_bytes"`
+	DigestSource     *string            `json:"digest_source"`
+	Generation       int64              `json:"generation"`
+	FixityStatus     string             `json:"fixity_status"`
+	FixityCheckedAt  pgtype.Timestamptz `json:"fixity_checked_at"`
 }
 
 type SystemConfig struct {

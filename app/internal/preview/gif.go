@@ -225,7 +225,7 @@ func (h *GifHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 			slog.Int("frames", frames))
 	default:
 		if err := writeSpriteSheet(jobCtx, h.ffmpegBin(), work, probe, func(ctx context.Context, key, path, ct string) error {
-			return putVariantFile(ctx, h.Pool, h.Storage, p.FileHash, key, path, ct)
+			return putVariantFile(ctx, h.Storage, p.FileHash, key, path, ct)
 		}); err != nil {
 			return nil, fmt.Errorf("preview.gif: sprites: %w", err)
 		}

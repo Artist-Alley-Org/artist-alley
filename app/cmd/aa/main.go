@@ -111,6 +111,15 @@ func main() {
 		}
 		return
 	}
+	// `aa backfill-variant-digests [-apply]` rechecks stored variants that
+	// have no trustworthy digest (#1597). Dry run by default.
+	if len(os.Args) > 1 && os.Args[1] == "backfill-variant-digests" {
+		if err := runBackfillVariantDigests(os.Args[2:]); err != nil {
+			slog.Error("backfill-variant-digests failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
 	// `aa sweep-fixtures ...` removes rows left behind by dogfood and
 	// integration runs in a long-lived dev database (#1245). Dry run by
 	// default; -apply is required to delete.

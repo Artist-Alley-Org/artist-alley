@@ -1159,13 +1159,19 @@ type StorageSweepRun struct {
 }
 
 type StorageVariant struct {
-	ObjectHash  string
-	VariantKey  string
-	SizeBytes   int64
-	ContentType string
-	Metadata    []byte
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	ObjectHash       string
+	VariantKey       string
+	SizeBytes        int64
+	ContentType      string
+	Metadata         []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	ContentSha256    *string
+	ContentSizeBytes *int64
+	DigestSource     *string
+	Generation       int64
+	FixityStatus     string
+	FixityCheckedAt  pgtype.Timestamptz
 }
 
 type SystemConfig struct {

@@ -246,14 +246,18 @@ func commitImportOn(ctx context.Context, db txBeginner, backend string, req Impo
 		}); err != nil {
 			return err
 		}
-		if err := tq.UpsertVariant(ctx, UpsertVariantParams{
-			ObjectHash:  req.Hash,
-			VariantKey:  VariantOriginal,
-			SizeBytes:   req.Size,
-			ContentType: req.ContentType,
-			Metadata:    []byte("{}"),
-		}); err != nil {
-			return err
+		// #1597: with an intent, this import Put the staged bytes, which
+		// verifyStaged re-hashed against req.Hash, so the original's
+		// digest is recorded. Without one (the dedup path) nothing was
+		// written and the stored bytes' row is only touched.
+		var verr error
+		if withIntent {
+			verr = tq.RecordOriginalVariant(ctx, RecordOriginalVariantParams{ObjectHash: req.Hash, SizeBytes: req.Size, ContentType: req.ContentType})
+		} else {
+			verr = tq.TouchOriginalVariant(ctx, TouchOriginalVariantParams{ObjectHash: req.Hash, SizeBytes: req.Size, ContentType: req.ContentType})
+		}
+		if verr != nil {
+			return verr
 		}
 		if err := tq.AddPin(ctx, AddPinParams{
 			ObjectHash:     req.Hash,

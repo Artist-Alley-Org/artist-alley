@@ -22,22 +22,150 @@ UPDATE storage_objects
 SET gc_eligible_at = NULL
 WHERE hash = $1;
 
--- name: UpsertVariant :exec
--- One INSERT-or-update for the variant metadata. Variant bytes already
--- live in the backend by the time this runs.
---
--- updated_at moves on EVERY write, including a re-render of bytes that
--- were already there (#760). created_at deliberately does not: the pair
--- is what lets an operator tell "rendered once, long ago" from
--- "re-rendered just now", which a force-rebuild is otherwise unable to
--- demonstrate — the bytes change on disk and the database says nothing.
-INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type, metadata)
-VALUES ($1, $2, $3, $4, $5)
+-- name: LockVariantWrite :exec
+-- #1597: the per-(hash, variant) WRITE lock, exclusive and session-level,
+-- held on one connection from before a write's begin step until its
+-- record step (backend Put included). Writers of one variant are
+-- serialized, so a row can only ever record the digest of the bytes
+-- that were Put last. A crashed writer's session ends and the lock with
+-- it. Readers that need the row and the bytes to agree (the integrity
+-- sweep) take it SHARED.
+SELECT pg_advisory_lock(hashtextextended('storage-variant:' || sqlc.arg(object_hash)::TEXT || '/' || sqlc.arg(variant_key)::TEXT, 0));
+
+-- name: UnlockVariantWrite :one
+SELECT pg_advisory_unlock(hashtextextended('storage-variant:' || sqlc.arg(object_hash)::TEXT || '/' || sqlc.arg(variant_key)::TEXT, 0))::BOOLEAN AS value;
+
+-- name: LockVariantRead :exec
+SELECT pg_advisory_lock_shared(hashtextextended('storage-variant:' || sqlc.arg(object_hash)::TEXT || '/' || sqlc.arg(variant_key)::TEXT, 0));
+
+-- name: UnlockVariantRead :one
+SELECT pg_advisory_unlock_shared(hashtextextended('storage-variant:' || sqlc.arg(object_hash)::TEXT || '/' || sqlc.arg(variant_key)::TEXT, 0))::BOOLEAN AS value;
+
+-- name: BeginVariantWrite :one
+-- #1597, under LockVariantWrite, COMMITTED before the backend Put: the
+-- existing row (if any) stops claiming any digest and moves to a new
+-- generation. If the writer dies before its record step, the row says
+-- unverifiable, never the digest of bytes that may already be replaced.
+-- No row: pgx.ErrNoRows, and the record step inserts generation 1.
+-- updated_at is left to the record step: it means "re-rendered" (#760).
+UPDATE storage_variants SET
+    content_sha256     = NULL,
+    content_size_bytes = NULL,
+    digest_source      = NULL,
+    fixity_status      = 'unverifiable',
+    fixity_checked_at  = NULL,
+    generation         = generation + 1
+WHERE object_hash = sqlc.arg(object_hash) AND variant_key = sqlc.arg(variant_key)
+RETURNING generation;
+
+-- name: RecordVariantWrite :execrows
+-- #1597, under LockVariantWrite, after the backend Put: the digest and
+-- size the server computed from the bytes it streamed, for the generation
+-- its begin step returned (0 when there was no row). The update is a
+-- compare-and-set on that generation; 0 rows means the row moved, and
+-- the caller reports it rather than recording over a newer write.
+-- Only storage.Service calls this (guard test).
+INSERT INTO storage_variants (
+    object_hash, variant_key, size_bytes, content_type, metadata,
+    content_sha256, content_size_bytes, digest_source, fixity_status, generation, fixity_checked_at
+) VALUES (
+    sqlc.arg(object_hash), sqlc.arg(variant_key), sqlc.arg(size_bytes), sqlc.arg(content_type), sqlc.arg(metadata),
+    sqlc.arg(content_sha256), sqlc.arg(size_bytes), 'write', 'verified', 1, now()
+)
 ON CONFLICT (object_hash, variant_key) DO UPDATE SET
-    size_bytes   = EXCLUDED.size_bytes,
+    size_bytes         = EXCLUDED.size_bytes,
+    content_type       = EXCLUDED.content_type,
+    metadata           = EXCLUDED.metadata,
+    content_sha256     = EXCLUDED.content_sha256,
+    content_size_bytes = EXCLUDED.content_size_bytes,
+    digest_source      = 'write',
+    fixity_status      = 'verified',
+    fixity_checked_at  = now(),
+    updated_at         = now()
+WHERE storage_variants.generation = sqlc.arg(generation);
+
+-- name: RecordOriginalVariant :exec
+-- #1597: the ORIGINAL's row after its bytes were written. An original is
+-- addressed by its own SHA-256, so its digest is object_hash, which the
+-- caller computed from the very bytes it Put (UploadOriginal hashes the
+-- stream; ImportVerified re-hashes the staged file). Two writers of one
+-- hash can only write identical bytes, so no write lock is needed.
+INSERT INTO storage_variants (
+    object_hash, variant_key, size_bytes, content_type, metadata,
+    content_sha256, content_size_bytes, digest_source, fixity_status, generation, fixity_checked_at
+) VALUES (
+    sqlc.arg(object_hash), 'original', sqlc.arg(size_bytes), sqlc.arg(content_type), '{}',
+    sqlc.arg(object_hash), sqlc.arg(size_bytes), 'write', 'verified', 1, now()
+)
+ON CONFLICT (object_hash, variant_key) DO UPDATE SET
+    size_bytes         = EXCLUDED.size_bytes,
+    content_type       = EXCLUDED.content_type,
+    content_sha256     = EXCLUDED.content_sha256,
+    content_size_bytes = EXCLUDED.content_size_bytes,
+    digest_source      = 'write',
+    fixity_status      = 'verified',
+    fixity_checked_at  = now(),
+    generation         = storage_variants.generation + 1,
+    updated_at         = now();
+
+-- name: TouchOriginalVariant :exec
+-- #1597: a re-upload that wrote NO bytes (the hash was already stored).
+-- It may carry a richer content type, so that is kept, but it proves
+-- nothing about the stored bytes: an existing row keeps its digest and
+-- status, and a missing row is created unverifiable (column defaults).
+INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type, metadata)
+VALUES (sqlc.arg(object_hash), 'original', sqlc.arg(size_bytes), sqlc.arg(content_type), '{}')
+ON CONFLICT (object_hash, variant_key) DO UPDATE SET
     content_type = EXCLUDED.content_type,
-    metadata     = EXCLUDED.metadata,
     updated_at   = now();
+
+-- name: GetVariantFixity :one
+-- #1597: what a variant's row says about its bytes.
+SELECT object_hash, variant_key, size_bytes, content_type,
+       content_sha256, content_size_bytes, digest_source, fixity_status,
+       generation, fixity_checked_at
+FROM storage_variants
+WHERE object_hash = sqlc.arg(object_hash) AND variant_key = sqlc.arg(variant_key);
+
+-- name: MarkVariantFixity :execrows
+-- #1597: a sweep's verdict on generation `generation` of a variant. A
+-- compare-and-set, so a verdict about older bytes never lands on a row a
+-- newer write has since replaced.
+UPDATE storage_variants SET
+    fixity_status     = sqlc.arg(fixity_status),
+    fixity_checked_at = now()
+WHERE object_hash = sqlc.arg(object_hash) AND variant_key = sqlc.arg(variant_key)
+  AND generation = sqlc.arg(generation);
+
+-- name: RecordVariantRecheck :execrows
+-- #1597: an explicit recheck of an UNVERIFIABLE row (legacy, healed, or
+-- interrupted) records the digest of the bytes it read back from the
+-- backend, marked digest_source 'recheck' so it is never mistaken for a
+-- write-time digest. Only an unverifiable row of the same generation is
+-- touched; a recorded digest is never overwritten by a recheck.
+UPDATE storage_variants SET
+    content_sha256     = sqlc.arg(content_sha256),
+    content_size_bytes = sqlc.arg(content_size_bytes),
+    digest_source      = 'recheck',
+    fixity_status      = 'verified',
+    fixity_checked_at  = now()
+WHERE object_hash = sqlc.arg(object_hash) AND variant_key = sqlc.arg(variant_key)
+  AND generation = sqlc.arg(generation) AND fixity_status = 'unverifiable'
+  AND size_bytes = sqlc.arg(content_size_bytes);
+
+-- name: ListVariantsWithoutDigest :many
+-- #1597: paged walk of rows with no trustworthy digest, for the explicit
+-- backfill: unverifiable rows, and rows marked missing that never had a
+-- digest (so a backfill revisits them once their bytes are back). A row
+-- with a recorded digest, whatever its status, is left to the sweep.
+-- Ordered by the primary key so it can resume after a cursor.
+SELECT object_hash, variant_key
+FROM storage_variants
+WHERE content_sha256 IS NULL
+  AND fixity_status = ANY (ARRAY['unverifiable', 'missing'])
+  AND (object_hash, variant_key) > (sqlc.arg(after_hash)::TEXT, sqlc.arg(after_variant)::TEXT)
+ORDER BY object_hash, variant_key
+LIMIT sqlc.arg(max_rows);
 
 -- name: GetVariant :one
 SELECT object_hash, variant_key, size_bytes, content_type, metadata, created_at, updated_at
