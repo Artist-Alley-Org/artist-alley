@@ -23908,7 +23908,7 @@ components:
           description: The digest algorithm of `observed_sha256`. Null when no bytes were read.
         observed_sha256: { type: string, nullable: true, description: SHA-256 of the bytes read. Null when they were missing or unreadable. }
         observed_size_bytes: { type: integer, format: int64, nullable: true, description: Size of the bytes read. Null when none were read. }
-        recorded_sha256: { type: string, nullable: true, description: The digest the variant row recorded, if it had one. }
+        recorded_sha256: { type: string, nullable: true, description: "The digest the variant row recorded, if it had one." }
         fixity_status:
           type: string
           enum: [verified, unverifiable, mismatch, missing]
@@ -23928,7 +23928,7 @@ components:
       required: [name]
       properties:
         name: { type: string, example: "artist-alley" }
-        version: { type: string, nullable: true, description: The software version, when the operator records it. }
+        version: { type: string, nullable: true, description: "The software version, when the operator records it." }
     StorageUsage:
       type: object
       required: [object_count, variant_count, total_bytes, original_bytes, derivative_bytes, by_content_type, by_backend]
