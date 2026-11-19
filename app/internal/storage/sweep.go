@@ -120,7 +120,11 @@ func (h *SweepHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	done := next.Cursor == "" && next.CursorVariant == ""
 	cursor := next.Cursor
 	if next.CursorVariant != "" {
-		cursor = next.Cursor + "\x00" + next.CursorVariant
+		// Informational only (resume uses the job payload). Not "\x00":
+		// PostgreSQL text cannot hold a NUL, so that separator failed
+		// every checksum checkpoint (found by #1598's completed-run
+		// test). A content hash is 64 hex, so "/" stays unambiguous.
+		cursor = next.Cursor + "/" + next.CursorVariant
 	}
 	if uerr := h.q.AdvanceSweepRun(ctx, AdvanceSweepRunParams{
 		ID:             pgtype.UUID{Bytes: p.RunID, Valid: true},
@@ -195,17 +199,32 @@ func (h *SweepHandler) verifyChecksums(ctx context.Context, p sweepPayload) (swe
 	for _, row := range rows {
 		// #1597: each variant against its OWN recorded digest and size,
 		// under its shared lock (Service.VerifyVariant).
-		f, detail, err := h.svc.VerifyVariant(ctx, row.ObjectHash, row.VariantKey)
+		obs, err := h.svc.VerifyVariant(ctx, row.ObjectHash, row.VariantKey)
 		if err != nil {
+			// #1598: the backend could not deliver these bytes. Every
+			// referencing asset gets a failure/read_error event (no error
+			// text, no path) before the batch fails as it always has: the
+			// run is marked failed with the error, for the operator. A
+			// lock, database or context error is not a read failure and
+			// records nothing.
+			if obs.ReadFailed {
+				if _, rerr := h.svc.RecordSweepObservation(ctx, p.RunID, obs); rerr != nil {
+					return sweepPayload{}, 0, 0, errors.Join(err, rerr)
+				}
+			}
 			return sweepPayload{}, 0, 0, err
 		}
-		if f == "" {
-			continue
-		}
-		if err := h.record(ctx, p.RunID, f, row.ObjectHash, row.VariantKey, detail); err != nil {
+		// #1598: the finding (if any) and one fixity-check event per
+		// referencing asset, durable BEFORE this batch returns, so before
+		// Handle advances the cursor. Both are idempotent, so a batch
+		// retried after an interruption records nothing twice, and the
+		// count below stays one per item with a finding.
+		if _, err := h.svc.RecordSweepObservation(ctx, p.RunID, obs); err != nil {
 			return sweepPayload{}, 0, 0, err
 		}
-		found++
+		if obs.Finding != "" {
+			found++
+		}
 	}
 	if len(rows) == 0 {
 		return sweepPayload{RunID: p.RunID}, 0, 0, nil

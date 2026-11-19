@@ -121,7 +121,7 @@ func TestPutVariant_RecordsTheDigestOfTheBytesWritten_AndRegenerationBindsANewGe
 	if fx.SHA256 != sum(a) || fx.Size != int64(len(a)) || fx.Status != storage.FixityVerified || fx.Source != storage.DigestFromWrite || fx.Generation != 1 {
 		t.Fatalf("row = %+v", fx)
 	}
-	if f, d, err := r.svc.VerifyVariant(ctx, hash, "preview"); err != nil || f != "" {
+	if f, d, err := r.verifyVariant(ctx, hash, "preview"); err != nil || f != "" {
 		t.Fatalf("sweep on a fresh write: %q %q %v", f, d, err)
 	}
 
@@ -287,7 +287,7 @@ func TestVerifyVariant_CatchesSameSizeCorruptionAndMissingBytes(t *testing.T) {
 	if _, err := r.svc.Backend.Put(ctx, hash, "hires", bytes.NewReader(evil)); err != nil {
 		t.Fatal(err)
 	}
-	f, detail, err := r.svc.VerifyVariant(ctx, hash, "hires")
+	f, detail, err := r.verifyVariant(ctx, hash, "hires")
 	if err != nil || f != storage.FindingChecksumMismatch {
 		t.Fatalf("same-size corruption: finding %q (%s) %v", f, detail, err)
 	}
@@ -298,7 +298,7 @@ func TestVerifyVariant_CatchesSameSizeCorruptionAndMissingBytes(t *testing.T) {
 	if _, err := r.svc.Backend.Put(ctx, hash, "hires", bytes.NewReader(good)); err != nil {
 		t.Fatal(err)
 	}
-	if f, _, err := r.svc.VerifyVariant(ctx, hash, "hires"); err != nil || f != "" {
+	if f, _, err := r.verifyVariant(ctx, hash, "hires"); err != nil || f != "" {
 		t.Fatalf("restored bytes: %q %v", f, err)
 	}
 	if fx := r.fixity(t, hash, "hires"); fx.Status != storage.FixityVerified {
@@ -308,7 +308,7 @@ func TestVerifyVariant_CatchesSameSizeCorruptionAndMissingBytes(t *testing.T) {
 	if err := r.svc.Backend.Delete(ctx, hash, "hires"); err != nil {
 		t.Fatal(err)
 	}
-	f, _, err = r.svc.VerifyVariant(ctx, hash, "hires")
+	f, _, err = r.verifyVariant(ctx, hash, "hires")
 	if err != nil || f != storage.FindingMissingObject {
 		t.Fatalf("missing bytes: %q %v", f, err)
 	}
@@ -340,13 +340,13 @@ func TestLegacyRowStaysUnverifiableUntilAnExplicitRecheck(t *testing.T) {
 		t.Fatalf("legacy row: %+v", fx)
 	}
 	// The routine sweep checks size and never promotes.
-	if f, _, err := r.svc.VerifyVariant(ctx, hash, "preview"); err != nil || f != "" {
+	if f, _, err := r.verifyVariant(ctx, hash, "preview"); err != nil || f != "" {
 		t.Fatalf("sweep on a consistent legacy row: %q %v", f, err)
 	}
 	if fx := r.fixity(t, hash, "preview"); fx.Status != storage.FixityUnverifiable {
 		t.Fatalf("sweep promoted a legacy row: %+v", fx)
 	}
-	if f, _, err := r.svc.VerifyVariant(ctx, hash, "col"); err != nil || f != storage.FindingSizeMismatch {
+	if f, _, err := r.verifyVariant(ctx, hash, "col"); err != nil || f != storage.FindingSizeMismatch {
 		t.Fatalf("sweep on a wrong-size legacy row: %q %v", f, err)
 	}
 
@@ -477,7 +477,7 @@ func TestPutVariant_LargeStreamedVariant(t *testing.T) {
 	if w.Size != size || w.SHA256 != hex.EncodeToString(want.Sum(nil)) {
 		t.Fatalf("large write: %+v", w)
 	}
-	if f, _, err := r.svc.VerifyVariant(ctx, hash, "hls/1080p.mp4"); err != nil || f != "" {
+	if f, _, err := r.verifyVariant(ctx, hash, "hls/1080p.mp4"); err != nil || f != "" {
 		t.Fatalf("sweep of the large variant: %q %v", f, err)
 	}
 }
@@ -504,7 +504,7 @@ func TestLegacyZeroLengthRow_IsSizeCheckedAndOnlyEmptyBytesPromote(t *testing.T)
 	hash := r.object(t)
 	// Recorded 0, but the backend holds bytes: a size mismatch, not healthy.
 	r.legacyRow(t, hash, "col", []byte("not empty at all"), 0)
-	if f, _, err := r.svc.VerifyVariant(ctx, hash, "col"); err != nil || f != storage.FindingSizeMismatch {
+	if f, _, err := r.verifyVariant(ctx, hash, "col"); err != nil || f != storage.FindingSizeMismatch {
 		t.Fatalf("sweep of a 0-byte row holding bytes: %q %v, want size_mismatch", f, err)
 	}
 	if out, err := r.svc.RecheckVariant(ctx, hash, "col"); err != nil || out != storage.RecheckSizeMismatch {
@@ -515,7 +515,7 @@ func TestLegacyZeroLengthRow_IsSizeCheckedAndOnlyEmptyBytesPromote(t *testing.T)
 	}
 	// A truly empty variant rechecks to the digest of no bytes.
 	r.legacyRow(t, hash, "poster", []byte{}, 0)
-	if f, _, err := r.svc.VerifyVariant(ctx, hash, "poster"); err != nil || f != "" {
+	if f, _, err := r.verifyVariant(ctx, hash, "poster"); err != nil || f != "" {
 		t.Fatalf("sweep of an empty variant: %q %v", f, err)
 	}
 	if out, err := r.svc.RecheckVariant(ctx, hash, "poster"); err != nil || out != storage.RecheckVerified {
@@ -606,7 +606,7 @@ func TestBackfill_RevisitsALegacyRowWhoseBytesWereMissing(t *testing.T) {
 	if err := r.svc.Backend.Delete(ctx, hash, "screen"); err != nil {
 		t.Fatal(err)
 	}
-	if f, _, err := r.svc.VerifyVariant(ctx, hash, "screen"); err != nil || f != storage.FindingMissingObject {
+	if f, _, err := r.verifyVariant(ctx, hash, "screen"); err != nil || f != storage.FindingMissingObject {
 		t.Fatalf("sweep: %q %v", f, err)
 	}
 	if r.withoutDigest(t, hash)["screen"] {
@@ -769,7 +769,7 @@ func TestRecheck_LegacyOriginalWithTheRightHashButAWrongRecordedSize(t *testing.
 		return n
 	}
 
-	if f, _, err := r.svc.VerifyVariant(ctx, res.Hash, storage.VariantOriginal); err != nil || f != storage.FindingSizeMismatch {
+	if f, _, err := r.verifyVariant(ctx, res.Hash, storage.VariantOriginal); err != nil || f != storage.FindingSizeMismatch {
 		t.Fatalf("sweep: %q %v, want size_mismatch", f, err)
 	}
 	if out, err := r.svc.RecheckVariant(ctx, res.Hash, storage.VariantOriginal); err != nil || out != storage.RecheckSizeMismatch {
@@ -796,4 +796,11 @@ func TestRecheck_LegacyOriginalWithTheRightHashButAWrongRecordedSize(t *testing.
 	if got := recordedSize(); got != int64(len(payload)) {
 		t.Fatalf("size_bytes = %d after the correction", got)
 	}
+}
+
+// verifyVariant is VerifyVariant reduced to the sweep's finding and
+// detail, for the #1597 tests that predate observations (#1598).
+func (r *fixityRig) verifyVariant(ctx context.Context, hash, key string) (string, string, error) {
+	o, err := r.svc.VerifyVariant(ctx, hash, key)
+	return o.Finding, o.Detail, err
 }

@@ -42,6 +42,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -302,57 +303,136 @@ func (s *Service) streamDigest(ctx context.Context, hash, variant string) (diges
 	return hex.EncodeToString(sum.Sum(nil)), n, true, nil
 }
 
+// VariantObservation is what one integrity check of one stored variant
+// saw (#1597, #1598). The sweep turns it into a finding (when Finding is
+// set) and one preservation event per asset referencing the object.
+// Gone means the row vanished before it could be checked: nothing was
+// observed. Found is false when the row's bytes were not on the backend.
+// ReadFailed means the backend could not deliver them (VerifyVariant
+// then also returns the error); a lock, database or cancelled-context
+// error is never a read failure, because nothing about the file was
+// learned.
+type VariantObservation struct {
+	ObjectHash     string
+	VariantKey     string
+	Gone           bool
+	ReadFailed     bool
+	Found          bool
+	Generation     int64
+	ObservedSHA256 string // of the bytes read; "" when !Found or ReadFailed
+	ObservedSize   int64
+	RecordedSHA256 string // the row's own digest; "" when it has none
+	StatusAfter    string // the row's fixity status after the check
+	Finding        string // sweep finding kind; "" when healthy
+	Detail         string // operator-facing finding detail (not for peers)
+	ObservedAt     time.Time
+}
+
+// Fixity-check outcome reasons: asset_preservation_events.outcome_reason
+// (migration 00083). A closed vocabulary, never free text.
+const (
+	ReasonDigestMatch      = "digest_match"
+	ReasonNoRecordedDigest = "no_recorded_digest"
+	ReasonChecksumMismatch = "checksum_mismatch"
+	ReasonSizeMismatch     = "size_mismatch"
+	ReasonMissingObject    = "missing_object"
+	ReasonReadError        = "read_error"
+)
+
+// Outcome maps an observation to its PREMIS outcome and reason, the same
+// rules migration 00083's outcome CHECK enforces. SUCCESS needs all three
+// of: a recorded digest, the bytes read hashing to it, and the row left
+// verified. A clean read of a row with no recorded digest (a legacy row,
+// original or derived: an original's address can expose corruption but
+// is not a recorded digest) is a WARNING and the row stays unverifiable.
+// An observation that fits no rule returns ("", ""), and
+// RecordSweepObservation refuses it rather than guess.
+func (o VariantObservation) Outcome() (outcome, reason string) {
+	switch {
+	case o.ReadFailed:
+		return "failure", ReasonReadError
+	case !o.Found:
+		return "failure", ReasonMissingObject
+	case o.Finding == FindingChecksumMismatch:
+		return "failure", ReasonChecksumMismatch
+	case o.Finding == FindingSizeMismatch:
+		return "failure", ReasonSizeMismatch
+	case o.Finding != "":
+		return "", ""
+	case o.RecordedSHA256 == "" && o.StatusAfter == FixityUnverifiable:
+		return "warning", ReasonNoRecordedDigest
+	case o.RecordedSHA256 != "" && o.ObservedSHA256 == o.RecordedSHA256 && o.StatusAfter == FixityVerified:
+		return "success", ReasonDigestMatch
+	}
+	return "", ""
+}
+
 // VerifyVariant streams one variant's stored bytes and compares them with
-// its OWN recorded digest and size, under its shared lock (#1597). It
-// returns the sweep finding kind ("" when healthy) and moves the row's
-// status (compare-and-set on the generation it read): missing bytes to
-// missing, a recorded digest or size that no longer matches to mismatch,
-// and a mismatch or missing row whose bytes match again back to
-// verified. An unverifiable row is never promoted here: only its size is
-// checked, and it stays unverifiable.
-func (s *Service) VerifyVariant(ctx context.Context, hash, variant string) (finding, detail string, err error) {
-	err = s.withVariantLock(ctx, hash, variant, false, func(q *Queries) error {
+// its OWN recorded digest and size, under its shared lock (#1597), and
+// returns what it observed. It moves the row's status (compare-and-set
+// on the generation it read): missing bytes to missing, a recorded digest
+// or size that no longer matches to mismatch, and a mismatch or missing
+// row whose bytes match again back to verified. An unverifiable row is
+// never promoted here: only its size is checked, and it stays
+// unverifiable. Recording the observation (finding, preservation events)
+// is the caller's, AFTER this returns and the lock is released, so no
+// second pool connection is taken under the lock (#1616).
+func (s *Service) VerifyVariant(ctx context.Context, hash, variant string) (VariantObservation, error) {
+	obs := VariantObservation{ObjectHash: hash, VariantKey: variant}
+	err := s.withVariantLock(ctx, hash, variant, false, func(q *Queries) error {
 		row, err := q.GetVariantFixity(ctx, GetVariantFixityParams{ObjectHash: hash, VariantKey: variant})
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil // removed since the sweep listed it
+			obs.Gone = true // removed since the sweep listed it
+			return nil
 		}
 		if err != nil {
 			return err
 		}
 		fx := fixityFromRow(row)
+		obs.Generation, obs.RecordedSHA256, obs.StatusAfter = fx.Generation, fx.SHA256, fx.Status
 		mark := func(status string) error {
 			if fx.Status == status {
 				return nil
 			}
-			_, err := q.MarkVariantFixity(ctx, MarkVariantFixityParams{
+			n, err := q.MarkVariantFixity(ctx, MarkVariantFixityParams{
 				FixityStatus: status, ObjectHash: hash, VariantKey: variant, Generation: fx.Generation,
 			})
+			if err == nil && n == 1 {
+				obs.StatusAfter = status // the event reports the row as it is
+			}
 			return err
 		}
 		got, n, found, err := s.streamDigest(ctx, hash, variant)
 		if err != nil {
+			// streamDigest only talks to the backend: unless the context
+			// ended, the backend failed to deliver the bytes (#1598).
+			if ctx.Err() == nil {
+				obs.ReadFailed, obs.ObservedAt = true, timeNow()
+			}
 			return err
 		}
+		obs.ObservedAt = timeNow()
 		if !found {
-			finding, detail = FindingMissingObject, "row references bytes that are not on "+s.Backend.Name()
+			obs.Finding, obs.Detail = FindingMissingObject, "row references bytes that are not on "+s.Backend.Name()
 			return mark(FixityMissing)
 		}
+		obs.Found, obs.ObservedSHA256, obs.ObservedSize = true, got, n
 		hasDigest := fx.SHA256 != ""
 		switch {
 		case variant == VariantOriginal && got != hash:
-			finding, detail = FindingChecksumMismatch, fmt.Sprintf("stored bytes hash to %s, expected %s", got[:16], hash[:16])
+			obs.Finding, obs.Detail = FindingChecksumMismatch, fmt.Sprintf("stored bytes hash to %s, expected %s", got[:16], hash[:16])
 		case hasDigest && got != fx.SHA256:
-			finding, detail = FindingChecksumMismatch, fmt.Sprintf("stored bytes hash to %s, generation %d recorded %s", got[:16], fx.Generation, fx.SHA256[:16])
+			obs.Finding, obs.Detail = FindingChecksumMismatch, fmt.Sprintf("stored bytes hash to %s, generation %d recorded %s", got[:16], fx.Generation, fx.SHA256[:16])
 		case hasDigest && n != fx.Size:
-			finding, detail = FindingSizeMismatch, fmt.Sprintf("on disk %d bytes, generation %d recorded %d", n, fx.Generation, fx.Size)
+			obs.Finding, obs.Detail = FindingSizeMismatch, fmt.Sprintf("on disk %d bytes, generation %d recorded %d", n, fx.Generation, fx.Size)
 		// A recorded size of 0 is checked too: 0 is a size, not "unknown".
 		case !hasDigest && n != row.SizeBytes:
-			finding, detail = FindingSizeMismatch, fmt.Sprintf("on disk %d bytes, storage_variants says %d", n, row.SizeBytes)
+			obs.Finding, obs.Detail = FindingSizeMismatch, fmt.Sprintf("on disk %d bytes, storage_variants says %d", n, row.SizeBytes)
 		}
 		switch {
-		case finding != "" && hasDigest:
+		case obs.Finding != "" && hasDigest:
 			return mark(FixityMismatch)
-		case finding != "":
+		case obs.Finding != "":
 			return nil // no digest to contradict: stays unverifiable, reported
 		case hasDigest:
 			return mark(FixityVerified)
@@ -362,7 +442,7 @@ func (s *Service) VerifyVariant(ctx context.Context, hash, variant string) (find
 		}
 		return nil
 	})
-	return finding, detail, err
+	return obs, err
 }
 
 // Recheck outcomes.
@@ -500,3 +580,6 @@ func short(hash string) string {
 	}
 	return hash
 }
+
+// timeNow is the observation clock, UTC.
+func timeNow() time.Time { return time.Now().UTC() }

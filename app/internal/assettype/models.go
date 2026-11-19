@@ -167,6 +167,29 @@ type AssetFieldValueHistory struct {
 	SetBy            string             `json:"set_by"`
 }
 
+// An asset's preservation history (#1598, ADR 0101, spec v1 §17.4): append-only PREMIS-style events, one per asset per observation. Only local fixity-check events today. object_hash/variant_key are the only file reference: no storage path or free text. sweep_run_id is an immutable snapshot that outlives the run row; sweep_run_ref is the live FK.
+type AssetPreservationEvent struct {
+	ID                 pgtype.UUID        `json:"id"`
+	AssetID            pgtype.UUID        `json:"asset_id"`
+	Source             string             `json:"source"`
+	EventType          string             `json:"event_type"`
+	OccurredAt         pgtype.Timestamptz `json:"occurred_at"`
+	Outcome            string             `json:"outcome"`
+	OutcomeReason      string             `json:"outcome_reason"`
+	Algorithm          *string            `json:"algorithm"`
+	ObjectHash         string             `json:"object_hash"`
+	VariantKey         string             `json:"variant_key"`
+	ObservedGeneration int64              `json:"observed_generation"`
+	ObservedSha256     *string            `json:"observed_sha256"`
+	ObservedSizeBytes  *int64             `json:"observed_size_bytes"`
+	RecordedSha256     *string            `json:"recorded_sha256"`
+	FixityStatus       string             `json:"fixity_status"`
+	SweepRunID         pgtype.UUID        `json:"sweep_run_id"`
+	SweepRunRef        pgtype.UUID        `json:"sweep_run_ref"`
+	AgentName          string             `json:"agent_name"`
+	AgentVersion       *string            `json:"agent_version"`
+}
+
 // Subtitle / caption tracks attached to video or audio assets. NOT first-class assets — excluded from asset counts. FK + CASCADE binds tracks to their parent. Phase 1.18.B-3.
 type AssetSubtitleTrack struct {
 	AssetID      pgtype.UUID `json:"asset_id"`

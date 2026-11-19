@@ -88,6 +88,8 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		return nil, fmt.Errorf("storage backend: %w", err)
 	}
 	storageSvc := storage.NewService(backend, pool)
+	// #1598: the software version recorded on local preservation events.
+	storageSvc.AgentVersion = version
 	// The worker process is where the split-brain reconcile fires
 	// (#827) and where its "healed a row nobody recorded" line is the
 	// only signal a restored-backup install ever gets.

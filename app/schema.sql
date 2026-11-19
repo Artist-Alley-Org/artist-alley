@@ -303,6 +303,46 @@ COMMENT ON FUNCTION public.asset_mirror_write(p_asset uuid, p_column text, p_val
 
 
 --
+-- Name: asset_preservation_events_append_only(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_preservation_events_append_only() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        -- A run snapshot is taken from a run that exists (the FK checks
+        -- sweep_run_ref), never asserted on its own.
+        IF NEW.sweep_run_id IS DISTINCT FROM NEW.sweep_run_ref THEN
+            RAISE EXCEPTION 'asset_preservation_events: sweep_run_id must name an existing run (#1598)'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        -- The one allowed change: the run row is gone and its ON DELETE
+        -- SET NULL clears the live reference. Everything else, the
+        -- snapshot included, stays as recorded.
+        IF OLD.sweep_run_ref IS NOT NULL AND NEW.sweep_run_ref IS NULL
+           AND (to_jsonb(NEW) - 'sweep_run_ref') = (to_jsonb(OLD) - 'sweep_run_ref')
+           AND NOT EXISTS (SELECT 1 FROM public.storage_sweep_runs WHERE id = OLD.sweep_run_ref) THEN
+            RETURN NEW;
+        END IF;
+        RAISE EXCEPTION 'asset_preservation_events is append-only (#1598)'
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    -- A DELETE is allowed only as its asset goes (the cascade runs after
+    -- the asset row is gone).
+    IF EXISTS (SELECT 1 FROM public.assets WHERE id = OLD.asset_id) THEN
+        RAISE EXCEPTION 'asset_preservation_events is append-only (#1598)'
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: asset_type_acl_sweep_on_role_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1475,6 +1515,107 @@ CREATE TABLE public.asset_field_value_history (
     changed_by_user_ref bigint,
     set_by text DEFAULT 'manual'::text NOT NULL
 );
+
+
+--
+-- Name: asset_preservation_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.asset_preservation_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    asset_id uuid NOT NULL,
+    source text DEFAULT 'local'::text NOT NULL,
+    event_type text DEFAULT 'fixity-check'::text NOT NULL,
+    occurred_at timestamp with time zone DEFAULT now() NOT NULL,
+    outcome text NOT NULL,
+    outcome_reason text NOT NULL,
+    algorithm text,
+    object_hash text NOT NULL,
+    variant_key text NOT NULL,
+    observed_generation bigint NOT NULL,
+    observed_sha256 text,
+    observed_size_bytes bigint,
+    recorded_sha256 text,
+    fixity_status text NOT NULL,
+    sweep_run_id uuid,
+    sweep_run_ref uuid,
+    agent_name text NOT NULL,
+    agent_version text,
+    CONSTRAINT asset_preservation_events_pkey PRIMARY KEY (id),
+    CONSTRAINT asset_preservation_events_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE,
+    CONSTRAINT asset_preservation_events_sweep_run_ref_fkey FOREIGN KEY (sweep_run_ref) REFERENCES public.storage_sweep_runs(id) ON DELETE SET NULL,
+    -- Only this instance's own fixity checks, for now (see the header).
+    CONSTRAINT asset_preservation_events_source_check CHECK (source = 'local'::text),
+    CONSTRAINT asset_preservation_events_event_type_check CHECK (event_type = 'fixity-check'::text),
+    -- Each reason is bound to its outcome and to the evidence it claims.
+    CONSTRAINT asset_preservation_events_outcome_check
+        CHECK (CASE outcome_reason
+                   WHEN 'digest_match' THEN outcome = 'success'::text AND recorded_sha256 IS NOT NULL
+                        AND observed_sha256 IS NOT NULL AND observed_sha256 = recorded_sha256
+                        AND fixity_status = 'verified'::text
+                   WHEN 'no_recorded_digest' THEN outcome = 'warning'::text AND recorded_sha256 IS NULL
+                        AND observed_sha256 IS NOT NULL AND fixity_status = 'unverifiable'::text
+                   WHEN 'checksum_mismatch' THEN outcome = 'failure'::text AND observed_sha256 IS NOT NULL
+                        AND ((variant_key = 'original'::text AND observed_sha256 <> object_hash)
+                             OR (recorded_sha256 IS NOT NULL AND observed_sha256 <> recorded_sha256))
+                   WHEN 'size_mismatch' THEN outcome = 'failure'::text AND observed_sha256 IS NOT NULL
+                   WHEN 'missing_object' THEN outcome = 'failure'::text AND observed_sha256 IS NULL AND fixity_status = 'missing'::text
+                   WHEN 'read_error' THEN outcome = 'failure'::text AND observed_sha256 IS NULL
+                   ELSE false
+               END),
+    CONSTRAINT asset_preservation_events_algorithm_check
+        CHECK (algorithm IS NULL OR algorithm = 'sha256'::text),
+    -- A digest is reported with its algorithm and size, or not at all.
+    CONSTRAINT asset_preservation_events_observed_check
+        CHECK (((observed_sha256 IS NULL) = (algorithm IS NULL)) AND ((observed_sha256 IS NULL) = (observed_size_bytes IS NULL))),
+    CONSTRAINT asset_preservation_events_hash_check
+        CHECK (object_hash ~ '^[0-9a-f]{64}$'::text
+               AND (observed_sha256 IS NULL OR observed_sha256 ~ '^[0-9a-f]{64}$'::text)
+               AND (recorded_sha256 IS NULL OR recorded_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT asset_preservation_events_variant_key_check
+        CHECK (length(variant_key) >= 1 AND length(variant_key) <= 256),
+    CONSTRAINT asset_preservation_events_sizes_check
+        CHECK (observed_generation >= 0 AND (observed_size_bytes IS NULL OR observed_size_bytes >= 0)),
+    CONSTRAINT asset_preservation_events_fixity_status_check
+        CHECK (fixity_status = ANY (ARRAY['verified'::text, 'unverifiable'::text, 'mismatch'::text, 'missing'::text])),
+    -- The live reference, while it exists, is the snapshot.
+    CONSTRAINT asset_preservation_events_sweep_run_check
+        CHECK (sweep_run_ref IS NULL OR sweep_run_ref = sweep_run_id),
+    CONSTRAINT asset_preservation_events_agent_check
+        CHECK (length(agent_name) >= 1 AND length(agent_name) <= 128 AND (agent_version IS NULL OR length(agent_version) <= 64))
+);
+
+
+--
+-- Name: TABLE asset_preservation_events; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.asset_preservation_events IS 'An asset''s preservation history (#1598, ADR 0101, spec v1 §17.4): append-only PREMIS-style events, one per asset per observation. Only local fixity-check events today. object_hash/variant_key are the only file reference: no storage path or free text. sweep_run_id is an immutable snapshot that outlives the run row; sweep_run_ref is the live FK.';
+
+
+--
+-- Name: asset_preservation_events_sweep_item_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX asset_preservation_events_sweep_item_key
+    ON public.asset_preservation_events USING btree (sweep_run_id, asset_id, object_hash, variant_key, observed_generation, outcome_reason)
+    WHERE (sweep_run_id IS NOT NULL);
+
+
+--
+-- Name: asset_preservation_events_asset_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX asset_preservation_events_asset_idx
+    ON public.asset_preservation_events USING btree (asset_id, occurred_at DESC);
+
+
+--
+-- Name: asset_preservation_events_sweep_run_ref_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX asset_preservation_events_sweep_run_ref_idx
+    ON public.asset_preservation_events USING btree (sweep_run_ref) WHERE (sweep_run_ref IS NOT NULL);
 
 
 --
@@ -6323,6 +6464,13 @@ CREATE INDEX storage_sweep_findings_run_idx ON public.storage_sweep_findings USI
 
 
 --
+-- Name: storage_sweep_findings_item_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX storage_sweep_findings_item_key ON public.storage_sweep_findings USING btree (run_id, object_hash, variant_key, finding);
+
+
+--
 -- Name: storage_sweep_findings_subject_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6607,6 +6755,13 @@ CREATE TRIGGER asset_field_value_refuse_mirrored BEFORE INSERT OR UPDATE ON publ
 --
 
 CREATE TRIGGER asset_field_value_search_text AFTER INSERT OR DELETE OR UPDATE ON public.asset_field_value FOR EACH ROW EXECUTE FUNCTION public.asset_field_value_trigger();
+
+
+--
+-- Name: asset_preservation_events asset_preservation_events_append_only_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER asset_preservation_events_append_only_trg BEFORE INSERT OR DELETE OR UPDATE ON public.asset_preservation_events FOR EACH ROW EXECUTE FUNCTION public.asset_preservation_events_append_only();
 
 
 --

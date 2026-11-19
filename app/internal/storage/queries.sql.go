@@ -500,6 +500,75 @@ func (q *Queries) GetVariantFixity(ctx context.Context, arg GetVariantFixityPara
 	return i, err
 }
 
+const insertFixityEvent = `-- name: InsertFixityEvent :execrows
+INSERT INTO asset_preservation_events (
+    asset_id, source, event_type, occurred_at, outcome, outcome_reason, algorithm,
+    object_hash, variant_key, observed_generation, observed_sha256, observed_size_bytes,
+    recorded_sha256, fixity_status, sweep_run_id, sweep_run_ref, agent_name, agent_version
+)
+SELECT a.id, 'local', 'fixity-check', $1::timestamptz, $2::text, $3::text, $4::text,
+       $5::text, $6::text, $7::bigint, $8::text, $9::bigint,
+       $10::text, $11::text, $12::uuid, $12::uuid, $13::text, $14::text
+FROM assets a
+WHERE a.id = $15::uuid
+FOR KEY SHARE OF a
+ON CONFLICT (sweep_run_id, asset_id, object_hash, variant_key, observed_generation, outcome_reason) WHERE sweep_run_id IS NOT NULL
+DO NOTHING
+`
+
+type InsertFixityEventParams struct {
+	OccurredAt         pgtype.Timestamptz
+	Outcome            string
+	OutcomeReason      string
+	Algorithm          *string
+	ObjectHash         string
+	VariantKey         string
+	ObservedGeneration int64
+	ObservedSha256     *string
+	ObservedSizeBytes  *int64
+	RecordedSha256     *string
+	FixityStatus       string
+	SweepRunID         pgtype.UUID
+	AgentName          string
+	AgentVersion       *string
+	AssetID            pgtype.UUID
+}
+
+// #1598: one local fixity-check event for one asset. Idempotent on
+// (run, asset, object, variant, generation, reason): a retried batch
+// inserts nothing; a new run, a new generation or a different result is
+// a new event. The run is written as both its immutable snapshot
+// (sweep_run_id) and its live reference (sweep_run_ref).
+//
+// The asset is read FOR KEY SHARE in the same statement: an asset
+// deleted since the reference lookup (committed, or committing while
+// this waits on its row) yields no row and no event, instead of a
+// foreign-key error that would fail the whole sweep. A surviving asset
+// is held until the transaction ends, so its event is always valid.
+func (q *Queries) InsertFixityEvent(ctx context.Context, arg InsertFixityEventParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertFixityEvent,
+		arg.OccurredAt,
+		arg.Outcome,
+		arg.OutcomeReason,
+		arg.Algorithm,
+		arg.ObjectHash,
+		arg.VariantKey,
+		arg.ObservedGeneration,
+		arg.ObservedSha256,
+		arg.ObservedSizeBytes,
+		arg.RecordedSha256,
+		arg.FixityStatus,
+		arg.SweepRunID,
+		arg.AgentName,
+		arg.AgentVersion,
+		arg.AssetID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertImportIntent = `-- name: InsertImportIntent :exec
 INSERT INTO storage_import_intents (lease_id, object_hash) VALUES ($1, $2)
 `
@@ -644,6 +713,90 @@ func (q *Queries) LatestSweepRun(ctx context.Context, kind string) (StorageSweep
 		&i.TriggeredByUserRef,
 	)
 	return i, err
+}
+
+const listAssetPreservationEvents = `-- name: ListAssetPreservationEvents :many
+SELECT id, asset_id, source, event_type, occurred_at, outcome, outcome_reason, algorithm,
+       object_hash, variant_key, observed_generation, observed_sha256, observed_size_bytes,
+       recorded_sha256, fixity_status, sweep_run_id, sweep_run_ref, agent_name, agent_version
+FROM asset_preservation_events
+WHERE asset_id = $1
+ORDER BY occurred_at DESC, id
+`
+
+// #1598: an asset's preservation history, newest first.
+func (q *Queries) ListAssetPreservationEvents(ctx context.Context, assetID pgtype.UUID) ([]AssetPreservationEvent, error) {
+	rows, err := q.db.Query(ctx, listAssetPreservationEvents, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AssetPreservationEvent
+	for rows.Next() {
+		var i AssetPreservationEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.AssetID,
+			&i.Source,
+			&i.EventType,
+			&i.OccurredAt,
+			&i.Outcome,
+			&i.OutcomeReason,
+			&i.Algorithm,
+			&i.ObjectHash,
+			&i.VariantKey,
+			&i.ObservedGeneration,
+			&i.ObservedSha256,
+			&i.ObservedSizeBytes,
+			&i.RecordedSha256,
+			&i.FixityStatus,
+			&i.SweepRunID,
+			&i.SweepRunRef,
+			&i.AgentName,
+			&i.AgentVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAssetsReferencingObject = `-- name: ListAssetsReferencingObject :many
+SELECT id FROM assets WHERE file_hash = $1::TEXT
+UNION
+SELECT asset_id FROM asset_alternates WHERE object_hash = $1::TEXT
+UNION
+SELECT asset_id FROM asset_companions WHERE object_hash = $1::TEXT
+ORDER BY 1
+`
+
+// #1598: every asset whose preservation history an observation of this
+// stored object belongs to: its primary file, an alternate, or a
+// companion. DISTINCT, so an asset that references the bytes twice gets
+// one event, and two assets sharing deduplicated bytes get one each. A
+// storage pin alone is not proof that an asset owns the bytes.
+func (q *Queries) ListAssetsReferencingObject(ctx context.Context, objectHash string) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listAssetsReferencingObject, objectHash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listStaleImportIntentHashes = `-- name: ListStaleImportIntentHashes :many
@@ -1059,6 +1212,7 @@ func (q *Queries) RecordOriginalVariant(ctx context.Context, arg RecordOriginalV
 const recordSweepFinding = `-- name: RecordSweepFinding :exec
 INSERT INTO storage_sweep_findings (id, run_id, finding, object_hash, variant_key, detail)
 VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (run_id, object_hash, variant_key, finding) DO NOTHING
 `
 
 type RecordSweepFindingParams struct {
@@ -1070,6 +1224,8 @@ type RecordSweepFindingParams struct {
 	Detail     string
 }
 
+// One finding per (run, object, variant, finding) (#1598, migration
+// 00083): a batch retried after an interruption records nothing twice.
 func (q *Queries) RecordSweepFinding(ctx context.Context, arg RecordSweepFindingParams) error {
 	_, err := q.db.Exec(ctx, recordSweepFinding,
 		arg.ID,
