@@ -17,7 +17,9 @@ ON CONFLICT (hash) DO UPDATE SET
     gc_eligible_at = NULL;  -- a fresh upload cancels any pending GC
 
 -- name: ClearGCEligible :exec
--- Called when a new pin reactivates a previously GC-eligible object.
+-- Called when a new pin reactivates a previously GC-eligible object. A
+-- pin's first statement (addPinTx): the UPDATE also takes the object
+-- row's lock before the pin row is inserted.
 UPDATE storage_objects
 SET gc_eligible_at = NULL
 WHERE hash = $1;
@@ -176,6 +178,14 @@ WHERE object_hash = $1 AND variant_key = $2;
 INSERT INTO storage_pins (object_hash, pin_subject_type, pin_subject_id)
 VALUES ($1, $2, $3)
 ON CONFLICT (object_hash, pin_subject_type, pin_subject_id) DO NOTHING;
+
+-- name: LockObjectForPinChange :exec
+-- #1596: a pin removal locks the object row BEFORE it changes a pin row,
+-- the order every pin writer uses (AddPin, casfetch, migration 00084).
+-- A concurrent pinner already holding the lock has committed by the time
+-- this returns, so the GC mark that follows, a separate statement with a
+-- fresh snapshot, sees that pin.
+SELECT 1 FROM storage_objects WHERE hash = $1 FOR UPDATE;
 
 -- name: RemovePin :exec
 DELETE FROM storage_pins

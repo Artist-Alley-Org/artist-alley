@@ -31,3 +31,15 @@ func (h *SweepHandler) VerifyChecksumBatch(ctx context.Context, runID uuid.UUID,
 // transaction, after it has listed the assets referencing the object and
 // before it inserts their events. Tests only (#1598).
 func (s *Service) SetEventAfterRefsHook(f func(objectHash string)) { s.eventHooks.afterRefs = f }
+
+// SetPinAfterAddHook runs f inside AddPin's transaction after the pin
+// row is written; a non-nil error rolls the transaction back. Tests only
+// (#1596).
+func (s *Service) SetPinAfterAddHook(f func(hash string) error) { s.pinHooks.afterAdd = f }
+
+// SetPinBeforeRemoveCommitHook runs f inside RemovePin's transaction
+// after the GC mark, before the commit; a non-nil error rolls it back.
+// Tests only (#1596).
+func (s *Service) SetPinBeforeRemoveCommitHook(f func(hash string) error) {
+	s.pinHooks.beforeRemoveCommit = f
+}

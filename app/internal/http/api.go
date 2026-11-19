@@ -926,6 +926,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		// initial tick at boot (idempotent via next-tick timestamp key).
 		{
 			sdSvc := softdelete.NewService(pool, auditRec)
+			sdSvc.GCGrace = storageSvc.GCGracePeriod // #1596: a purge schedules bytes as RemovePin does
 			// #935 — the hard-delete cache fan-out. This is the one
 			// asset write that reaches other domains through the
 			// SCHEMA: ON DELETE CASCADE on asset_subtitle_tracks and

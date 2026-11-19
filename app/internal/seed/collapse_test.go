@@ -331,14 +331,11 @@ func TestVerify_CollapsedGroupFailsEveryLoserAndNamesTheSurvivor(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = f.pool.Exec(c, `UPDATE assets SET file_hash = NULL WHERE file_hash = $1`, up.Hash)
+		_, _ = f.pool.Exec(c, `DELETE FROM assets WHERE file_hash = $1`, up.Hash) // releases its version pins (#1596)
 		_, _ = f.pool.Exec(c, `DELETE FROM storage_pins WHERE object_hash = $1`, up.Hash)
 		_, _ = f.pool.Exec(c, `DELETE FROM storage_objects WHERE hash = $1`, up.Hash)
 	})
-	if _, err := f.pool.Exec(ctx,
-		`UPDATE assets SET file_hash = $1 WHERE id = $2`, up.Hash, parseUUID(survivor.ID)); err != nil {
-		t.Fatal(err)
-	}
+	attachBytes(t, f.pool, survivor.ID, up.Hash)
 
 	losers := make([]manifestAsset, 0, 3)
 	for i := 0; i < 3; i++ {

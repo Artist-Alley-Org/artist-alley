@@ -14,6 +14,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -55,6 +56,8 @@ type Service struct {
 	variantHooks variantHooks
 	// eventHooks are #1598 test seams; zero in production.
 	eventHooks eventHooks
+	// pinHooks are #1596 test seams; zero in production.
+	pinHooks pinHooks
 
 	// AgentVersion is the software version recorded on local
 	// preservation events (#1598, events.go). Empty omits it.
@@ -66,7 +69,7 @@ func NewService(backend Backend, pool *pgxpool.Pool) *Service {
 	return &Service{
 		Backend:       backend,
 		Pool:          pool,
-		GCGracePeriod: 24 * time.Hour,
+		GCGracePeriod: DefaultGCGracePeriod,
 	}
 }
 
@@ -143,8 +146,8 @@ func (s *Service) UploadOriginal(ctx context.Context, r io.Reader, contentType s
 	case err == nil:
 		// Hit. Skip the backend Put — bytes are already there.
 		deduped = true
-		// Reactivate GC if the row had been scheduled for cleanup.
-		_ = q.ClearGCEligible(ctx, hash)
+		// A pending GC mark is cleared by the pin below, in the pin's
+		// own transaction (AddPin, #1596).
 		// Sanity: size should match. If it doesn't, the existing
 		// row is broken; we trust the hash anyway because matching
 		// sha256 is far less likely than a metadata mistake.
@@ -174,12 +177,11 @@ func (s *Service) UploadOriginal(ctx context.Context, r io.Reader, contentType s
 	if err != nil {
 		return nil, fmt.Errorf("storage: variant row: %w", err)
 	}
-	if err := q.AddPin(ctx, AddPinParams{
-		ObjectHash:     hash,
-		PinSubjectType: pin.SubjectType,
-		PinSubjectID:   pin.SubjectID,
-	}); err != nil {
-		return nil, fmt.Errorf("storage: add pin: %w", err)
+	// The pin clears any pending GC mark and commits with it, the object
+	// row locked first (AddPin, #1596), for a new and a deduplicated
+	// object alike.
+	if err := s.AddPin(ctx, pin, hash); err != nil {
+		return nil, err
 	}
 
 	return &UploadResult{
@@ -249,12 +251,76 @@ func (s *Service) DownloadRange(ctx context.Context, hash, variant string, offse
 // is a no-op.
 //
 // Also clears any pending gc_eligible_at on the object: a fresh pin
-// means the object is alive again.
+// means the object is alive again. The clear and the pin commit
+// together, the object row locked first (addPinTx, #1596).
 func (s *Service) AddPin(ctx context.Context, pin PinRef, hash string) error {
 	if pin.SubjectType == "" || pin.SubjectID == "" {
 		return errors.New("storage: pin SubjectType and SubjectID are required")
 	}
-	q := New(s.Pool)
+	return s.inPinTx(ctx, "add pin", func(tx pgx.Tx) error {
+		if err := addPinTx(ctx, New(tx), pin, hash); err != nil {
+			return err
+		}
+		if s.pinHooks.afterAdd != nil {
+			return s.pinHooks.afterAdd(hash)
+		}
+		return nil
+	})
+}
+
+// RemovePin removes one pin from an object. If that was the last pin,
+// the object is marked GC-eligible (gc_eligible_at = NOW()+grace).
+// The sweeper job (not yet implemented) actually deletes the bytes
+// after the grace window expires. Removing a pin that does not exist
+// changes nothing but still marks an object left with no pin.
+//
+// #1596: one transaction, the object row locked BEFORE the pin row
+// changes, and the "last pin?" check run afterwards as its own
+// statement. Under READ COMMITTED each statement has a fresh snapshot,
+// so a concurrent pin that held the lock has committed and is seen. A
+// single UPDATE ... WHERE NOT EXISTS (pins) that waits on that lock
+// re-checks the row with its OLD snapshot and would schedule an object
+// that has just been pinned.
+func (s *Service) RemovePin(ctx context.Context, pin PinRef, hash string) error {
+	if pin.SubjectType == "" || pin.SubjectID == "" {
+		return errors.New("storage: pin SubjectType and SubjectID are required")
+	}
+	return s.inPinTx(ctx, "remove pin", func(tx pgx.Tx) error {
+		q := New(tx)
+		if err := q.LockObjectForPinChange(ctx, hash); err != nil {
+			return fmt.Errorf("storage: lock object: %w", err)
+		}
+		if err := q.RemovePin(ctx, RemovePinParams{
+			ObjectHash:     hash,
+			PinSubjectType: pin.SubjectType,
+			PinSubjectID:   pin.SubjectID,
+		}); err != nil {
+			return fmt.Errorf("storage: remove pin: %w", err)
+		}
+		// Was that the last pin?
+		if err := q.MarkGCEligibleIfOrphaned(ctx, MarkGCEligibleIfOrphanedParams{
+			Hash:    hash,
+			Column2: pgIntervalFromDuration(s.GCGracePeriod),
+		}); err != nil {
+			return fmt.Errorf("storage: mark gc: %w", err)
+		}
+		if s.pinHooks.beforeRemoveCommit != nil {
+			return s.pinHooks.beforeRemoveCommit(hash)
+		}
+		return nil
+	})
+}
+
+// addPinTx pins hash for pin inside the caller's transaction (#1596).
+// Its first statement clears any pending GC, which also locks the object
+// row, and only then is the pin row inserted: the order casfetch and
+// migration 00084's asset_version_pin use, so a concurrent removal's GC
+// mark either waits for this pin or is cleared by it. A missing object
+// fails on the pin's foreign key, as before.
+func addPinTx(ctx context.Context, q *Queries, pin PinRef, hash string) error {
+	if err := q.ClearGCEligible(ctx, hash); err != nil {
+		return fmt.Errorf("storage: clear gc: %w", err)
+	}
 	if err := q.AddPin(ctx, AddPinParams{
 		ObjectHash:     hash,
 		PinSubjectType: pin.SubjectType,
@@ -262,37 +328,39 @@ func (s *Service) AddPin(ctx context.Context, pin PinRef, hash string) error {
 	}); err != nil {
 		return fmt.Errorf("storage: add pin: %w", err)
 	}
-	if err := q.ClearGCEligible(ctx, hash); err != nil {
-		return fmt.Errorf("storage: clear gc: %w", err)
+	return nil
+}
+
+// inPinTx runs fn in one transaction on one pool connection (#1616:
+// nothing inside takes a second one). A refused commit, such as
+// migration 00084 refusing to unpin a live asset version, is reported
+// as "storage: <what>: commit: ...".
+func (s *Service) inPinTx(ctx context.Context, what string, fn func(pgx.Tx) error) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("storage: %s: begin: %w", what, err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("storage: %s: commit: %w", what, err)
 	}
 	return nil
 }
 
-// RemovePin removes one pin from an object. If that was the last pin,
-// the object is marked GC-eligible (gc_eligible_at = NOW()+grace).
-// The sweeper job (not yet implemented) actually deletes the bytes
-// after the grace window expires.
-func (s *Service) RemovePin(ctx context.Context, pin PinRef, hash string) error {
-	if pin.SubjectType == "" || pin.SubjectID == "" {
-		return errors.New("storage: pin SubjectType and SubjectID are required")
-	}
-	q := New(s.Pool)
-	if err := q.RemovePin(ctx, RemovePinParams{
-		ObjectHash:     hash,
-		PinSubjectType: pin.SubjectType,
-		PinSubjectID:   pin.SubjectID,
-	}); err != nil {
-		return fmt.Errorf("storage: remove pin: %w", err)
-	}
-	// Was that the last pin?
-	if err := q.MarkGCEligibleIfOrphaned(ctx, MarkGCEligibleIfOrphanedParams{
-		Hash:    hash,
-		Column2: pgIntervalFromDuration(s.GCGracePeriod),
-	}); err != nil {
-		return fmt.Errorf("storage: mark gc: %w", err)
-	}
-	return nil
+// pinHooks are #1596 test seams; zero in production.
+type pinHooks struct {
+	afterAdd           func(hash string) error // inside AddPin's transaction, after the pin
+	beforeRemoveCommit func(hash string) error // inside RemovePin's transaction, after the GC mark
 }
+
+// DefaultGCGracePeriod is how long an object left without any pin waits
+// before it is GC-eligible, unless the service is configured otherwise.
+// Migration 00084's version-pin release uses the same value as its
+// default (aa.storage_gc_grace unset), so a purge and RemovePin agree.
+const DefaultGCGracePeriod = 24 * time.Hour
 
 // UploadReceiptTTL is how long an upload receipt (#1595) stays usable by
 // POST /assets. Both browser callers create the asset straight after

@@ -105,6 +105,8 @@ type Asset struct {
 	OriginalBasename *string `json:"original_basename"`
 	// Where original_basename came from (#1595): upload_request (the upload request itself, via its receipt), client_reported (backfilled from editable metadata.original_filename), unknown. Write-once.
 	OriginalBasenameSource string `json:"original_basename_source"`
+	// The version whose original is this asset's file (#1596). Set only by the version machinery; a local asset has one exactly when it has bytes.
+	CurrentVersionID pgtype.UUID `json:"current_version_id"`
 }
 
 type AssetAlternate struct {
@@ -233,6 +235,37 @@ type AssetTypeAcl struct {
 	GrantedAt        pgtype.Timestamptz `json:"granted_at"`
 	GrantedByUserRef *int64             `json:"granted_by_user_ref"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+}
+
+// Immutable, numbered, predecessor-linked versions of a LOCAL asset (#1596). A version is a draft until asset_version_seal() fixes its file set; nothing is announced to peers yet. origin backfill_current is a snapshot of the bytes present when migration 00084 ran, not an ingest record.
+type AssetVersion struct {
+	ID                     pgtype.UUID        `json:"id"`
+	AssetID                pgtype.UUID        `json:"asset_id"`
+	Number                 int64              `json:"number"`
+	PredecessorID          pgtype.UUID        `json:"predecessor_id"`
+	Origin                 string             `json:"origin"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	CreatedByUserRef       *int64             `json:"created_by_user_ref"`
+	OriginalHash           string             `json:"original_hash"`
+	OriginalSizeBytes      int64              `json:"original_size_bytes"`
+	OriginalMediaType      string             `json:"original_media_type"`
+	OriginalExtension      *string            `json:"original_extension"`
+	OriginalBasename       *string            `json:"original_basename"`
+	OriginalBasenameSource string             `json:"original_basename_source"`
+	SealedXid              pgtype.Uint64      `json:"sealed_xid"`
+	SealedAt               pgtype.Timestamptz `json:"sealed_at"`
+	AnnouncedAt            pgtype.Timestamptz `json:"announced_at"`
+}
+
+// The sealed file set of an asset version (#1596): written only by asset_version_seal() in the transaction that claimed the version, and never changed afterwards.
+type AssetVersionFile struct {
+	VersionID         pgtype.UUID `json:"version_id"`
+	Role              string      `json:"role"`
+	ObjectHash        string      `json:"object_hash"`
+	SizeBytes         int64       `json:"size_bytes"`
+	MediaType         string      `json:"media_type"`
+	DerivedFromHash   *string     `json:"derived_from_hash"`
+	DerivedVariantKey *string     `json:"derived_variant_key"`
 }
 
 type AssetVisualEmbedding struct {
