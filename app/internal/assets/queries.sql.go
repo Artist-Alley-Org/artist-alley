@@ -145,63 +145,103 @@ func (q *Queries) AssetExistsForAI(ctx context.Context, id pgtype.UUID) (bool, e
 	return exists, err
 }
 
+const consumeUploadReceipt = `-- name: ConsumeUploadReceipt :one
+DELETE FROM upload_receipts
+WHERE id = $1
+  AND user_ref = $2
+  AND file_hash = $3
+  AND expires_at > now()
+RETURNING original_basename, original_basename_source
+`
+
+type ConsumeUploadReceiptParams struct {
+	ID       pgtype.UUID
+	UserRef  int64
+	FileHash string
+}
+
+type ConsumeUploadReceiptRow struct {
+	OriginalBasename       *string
+	OriginalBasenameSource string
+}
+
+// #1595: use up an upload receipt inside the asset-create transaction.
+// It must have been issued to this user, for exactly this hash, and not
+// have expired; a miss for any reason is one answer, so the caller
+// cannot tell another user's receipt from a missing one. DELETE makes
+// it single-use, and a create that rolls back puts it back.
+func (q *Queries) ConsumeUploadReceipt(ctx context.Context, arg ConsumeUploadReceiptParams) (ConsumeUploadReceiptRow, error) {
+	row := q.db.QueryRow(ctx, consumeUploadReceipt, arg.ID, arg.UserRef, arg.FileHash)
+	var i ConsumeUploadReceiptRow
+	err := row.Scan(&i.OriginalBasename, &i.OriginalBasenameSource)
+	return i, err
+}
+
 const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
     state_id, processing_status, thumbhash, team_id, mature,
-    ai_provenance
+    ai_provenance, original_basename, original_basename_source
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, $16
+    $11, $12, $13, $14, $15, $16, $17, $18
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id, mature, ai_provenance
+          created_at, updated_at, team_id, mature, ai_provenance,
+          original_basename, original_basename_source
 `
 
 type CreateAssetParams struct {
-	Title            string
-	Description      string
-	AssetType        int64
-	OwnerUserRef     *int64
-	Status           string
-	FileHash         *string
-	FileExtension    *string
-	FileSizeBytes    *int64
-	Metadata         []byte
-	OriginServerID   pgtype.UUID
-	StateID          pgtype.UUID
-	ProcessingStatus string
-	Thumbhash        []byte
-	TeamID           pgtype.UUID
-	Mature           bool
-	AiProvenance     *string
+	Title                  string
+	Description            string
+	AssetType              int64
+	OwnerUserRef           *int64
+	Status                 string
+	FileHash               *string
+	FileExtension          *string
+	FileSizeBytes          *int64
+	Metadata               []byte
+	OriginServerID         pgtype.UUID
+	StateID                pgtype.UUID
+	ProcessingStatus       string
+	Thumbhash              []byte
+	TeamID                 pgtype.UUID
+	Mature                 bool
+	AiProvenance           *string
+	OriginalBasename       *string
+	OriginalBasenameSource string
 }
 
 type CreateAssetRow struct {
-	ID               pgtype.UUID
-	Title            string
-	Description      string
-	AssetType        int64
-	OwnerUserRef     *int64
-	Status           string
-	FileHash         *string
-	FileExtension    *string
-	FileSizeBytes    *int64
-	Metadata         []byte
-	OriginServerID   pgtype.UUID
-	StateID          pgtype.UUID
-	ProcessingStatus string
-	Thumbhash        []byte
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	TeamID           pgtype.UUID
-	Mature           bool
-	AiProvenance     *string
+	ID                     pgtype.UUID
+	Title                  string
+	Description            string
+	AssetType              int64
+	OwnerUserRef           *int64
+	Status                 string
+	FileHash               *string
+	FileExtension          *string
+	FileSizeBytes          *int64
+	Metadata               []byte
+	OriginServerID         pgtype.UUID
+	StateID                pgtype.UUID
+	ProcessingStatus       string
+	Thumbhash              []byte
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	TeamID                 pgtype.UUID
+	Mature                 bool
+	AiProvenance           *string
+	OriginalBasename       *string
+	OriginalBasenameSource string
 }
 
+// #1595: original_basename / original_basename_source are write-once
+// ingest provenance, set here and never by an UPDATE (trigger, migration
+// 00081). Every caller states the source; the CHECK refuses an empty one.
 func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (CreateAssetRow, error) {
 	row := q.db.QueryRow(ctx, createAsset,
 		arg.Title,
@@ -220,6 +260,8 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		arg.TeamID,
 		arg.Mature,
 		arg.AiProvenance,
+		arg.OriginalBasename,
+		arg.OriginalBasenameSource,
 	)
 	var i CreateAssetRow
 	err := row.Scan(
@@ -242,6 +284,8 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		&i.TeamID,
 		&i.Mature,
 		&i.AiProvenance,
+		&i.OriginalBasename,
+		&i.OriginalBasenameSource,
 	)
 	return i, err
 }
@@ -287,31 +331,34 @@ const getAsset = `-- name: GetAsset :one
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, team_id, mature, ai_provenance
+       created_at, updated_at, team_id, mature, ai_provenance,
+       original_basename, original_basename_source
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetAssetRow struct {
-	ID               pgtype.UUID
-	Title            string
-	Description      string
-	AssetType        int64
-	OwnerUserRef     *int64
-	Status           string
-	FileHash         *string
-	FileExtension    *string
-	FileSizeBytes    *int64
-	Metadata         []byte
-	OriginServerID   pgtype.UUID
-	StateID          pgtype.UUID
-	ProcessingStatus string
-	Thumbhash        []byte
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	TeamID           pgtype.UUID
-	Mature           bool
-	AiProvenance     *string
+	ID                     pgtype.UUID
+	Title                  string
+	Description            string
+	AssetType              int64
+	OwnerUserRef           *int64
+	Status                 string
+	FileHash               *string
+	FileExtension          *string
+	FileSizeBytes          *int64
+	Metadata               []byte
+	OriginServerID         pgtype.UUID
+	StateID                pgtype.UUID
+	ProcessingStatus       string
+	Thumbhash              []byte
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	TeamID                 pgtype.UUID
+	Mature                 bool
+	AiProvenance           *string
+	OriginalBasename       *string
+	OriginalBasenameSource string
 }
 
 // Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -343,6 +390,8 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.TeamID,
 		&i.Mature,
 		&i.AiProvenance,
+		&i.OriginalBasename,
+		&i.OriginalBasenameSource,
 	)
 	return i, err
 }
@@ -410,7 +459,7 @@ const getAssetByOwnerHash = `-- name: GetAssetByOwnerHash :one
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at
+       created_at, updated_at, original_basename, original_basename_source
 FROM assets
 WHERE owner_user_ref = $1 AND file_hash = $2 AND deleted_at IS NULL
 `
@@ -421,22 +470,24 @@ type GetAssetByOwnerHashParams struct {
 }
 
 type GetAssetByOwnerHashRow struct {
-	ID               pgtype.UUID
-	Title            string
-	Description      string
-	AssetType        int64
-	OwnerUserRef     *int64
-	Status           string
-	FileHash         *string
-	FileExtension    *string
-	FileSizeBytes    *int64
-	Metadata         []byte
-	OriginServerID   pgtype.UUID
-	StateID          pgtype.UUID
-	ProcessingStatus string
-	Thumbhash        []byte
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
+	ID                     pgtype.UUID
+	Title                  string
+	Description            string
+	AssetType              int64
+	OwnerUserRef           *int64
+	Status                 string
+	FileHash               *string
+	FileExtension          *string
+	FileSizeBytes          *int64
+	Metadata               []byte
+	OriginServerID         pgtype.UUID
+	StateID                pgtype.UUID
+	ProcessingStatus       string
+	Thumbhash              []byte
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	OriginalBasename       *string
+	OriginalBasenameSource string
 }
 
 // Phase 1.18.A-2 follow-up A — per-user dedup lookup. Returns the
@@ -466,6 +517,8 @@ func (q *Queries) GetAssetByOwnerHash(ctx context.Context, arg GetAssetByOwnerHa
 		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OriginalBasename,
+		&i.OriginalBasenameSource,
 	)
 	return i, err
 }
@@ -1347,7 +1400,8 @@ WHERE id = $8 AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id, mature, ai_provenance
+          created_at, updated_at, team_id, mature, ai_provenance,
+          original_basename, original_basename_source
 `
 
 type UpdateAssetParams struct {
@@ -1362,25 +1416,27 @@ type UpdateAssetParams struct {
 }
 
 type UpdateAssetRow struct {
-	ID               pgtype.UUID
-	Title            string
-	Description      string
-	AssetType        int64
-	OwnerUserRef     *int64
-	Status           string
-	FileHash         *string
-	FileExtension    *string
-	FileSizeBytes    *int64
-	Metadata         []byte
-	OriginServerID   pgtype.UUID
-	StateID          pgtype.UUID
-	ProcessingStatus string
-	Thumbhash        []byte
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	TeamID           pgtype.UUID
-	Mature           bool
-	AiProvenance     *string
+	ID                     pgtype.UUID
+	Title                  string
+	Description            string
+	AssetType              int64
+	OwnerUserRef           *int64
+	Status                 string
+	FileHash               *string
+	FileExtension          *string
+	FileSizeBytes          *int64
+	Metadata               []byte
+	OriginServerID         pgtype.UUID
+	StateID                pgtype.UUID
+	ProcessingStatus       string
+	Thumbhash              []byte
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	TeamID                 pgtype.UUID
+	Mature                 bool
+	AiProvenance           *string
+	OriginalBasename       *string
+	OriginalBasenameSource string
 }
 
 // Partial update via COALESCE: any field passed as NULL keeps its
@@ -1417,6 +1473,8 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		&i.TeamID,
 		&i.Mature,
 		&i.AiProvenance,
+		&i.OriginalBasename,
+		&i.OriginalBasenameSource,
 	)
 	return i, err
 }

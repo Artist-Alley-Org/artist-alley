@@ -53,6 +53,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/posts"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
+	"github.com/mscrnt/artist-alley/app/internal/provenance"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
@@ -459,6 +460,23 @@ func (h *Handler) CreateAsset(
 		}, nil
 	}
 
+	// #1595 — the upload's receipt, which carries the base name its upload
+	// request sent as write-once provenance. Only its shape is checked
+	// here; it is consumed inside the transaction, where user, hash and
+	// expiry are checked together. Without one the asset's base name is
+	// unknown: metadata.original_filename is an editable claim and is
+	// never taken as provenance.
+	var receiptID pgtype.UUID
+	if in.UploadReceipt != nil {
+		rid, perr := uuid.Parse(*in.UploadReceipt)
+		if perr != nil || fileHashPtr == nil {
+			return openapi.CreateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: errUploadReceiptInvalid.Error()},
+			}, nil
+		}
+		receiptID = pgtype.UUID{Bytes: rid, Valid: true}
+	}
+
 	var thumbhashBytes []byte
 	if fileHashPtr != nil && isImageExt(in.FileExtension) {
 		hCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -510,6 +528,28 @@ func (h *Handler) CreateAsset(
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := New(tx)
 
+	// #1595 — use the receipt up in this transaction, so a create that
+	// fails or loses the dedup race (and rolls back) leaves it usable,
+	// and one that commits leaves it gone. A miss for any reason (another
+	// user's, another hash, expired, already used) is the same 400.
+	originalBasename, originalSource := (*string)(nil), string(provenance.SourceUnknown)
+	if receiptID.Valid {
+		rc, rerr := q.ConsumeUploadReceipt(ctx, ConsumeUploadReceiptParams{
+			ID:       receiptID,
+			UserRef:  id.UserRef,
+			FileHash: *fileHashPtr,
+		})
+		if errors.Is(rerr, pgx.ErrNoRows) {
+			return openapi.CreateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: errUploadReceiptInvalid.Error()},
+			}, nil
+		}
+		if rerr != nil {
+			return nil, fmt.Errorf("assets: consume upload receipt: %w", rerr)
+		}
+		originalBasename, originalSource = rc.OriginalBasename, rc.OriginalBasenameSource
+	}
+
 	row, err := q.CreateAsset(ctx, CreateAssetParams{
 		Title:            title,
 		Description:      strDefault(in.Description, ""),
@@ -527,6 +567,9 @@ func (h *Handler) CreateAsset(
 		TeamID:           teamID,
 		Mature:           mature,
 		AiProvenance:     aiProvenancePtr,
+		// #1595: write-once from here on (trigger, migration 00081).
+		OriginalBasename:       originalBasename,
+		OriginalBasenameSource: originalSource,
 	})
 	if err != nil {
 		// The team gate above already refused every team this caller
@@ -927,6 +970,13 @@ func (h *Handler) dedupResponse(ctx context.Context, behavior sysconfig.DedupBeh
 			Thumbhash:          full.Thumbhash,
 			Title:              full.Title,
 			UpdatedAt:          full.UpdatedAt,
+			// #1595: the EXISTING asset's provenance, unchanged by this
+			// duplicate upload (its receipt is left unused).
+			OriginalBasename: full.OriginalBasename,
+		}
+		if full.OriginalBasenameSource != nil {
+			s := openapi.AssetWithDedupOriginalBasenameSource(*full.OriginalBasenameSource)
+			out.OriginalBasenameSource = &s
 		}
 		out.DuplicateWarning.ExistingAssetId = existingID
 		out.DuplicateWarning.Message = "this file was already uploaded — returning the existing asset"
@@ -949,6 +999,9 @@ func assetFromGetByOwnerHashRow(r GetAssetByOwnerHashRow) openapi.Asset {
 		FileSizeBytes:    r.FileSizeBytes,
 		OwnerUserRef:     r.OwnerUserRef,
 	}
+	// #1595: the existing asset's provenance, which a duplicate upload
+	// never rewrites.
+	out.OriginalBasename, out.OriginalBasenameSource = originalBasenameToAPI(r.OriginalBasename, r.OriginalBasenameSource)
 	if r.Description != "" {
 		s := r.Description
 		out.Description = &s
@@ -2634,6 +2687,9 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 		// changes who receives the row.
 		AiProvenance: aiProvenanceToAPI(row.AiProvenance),
 	}
+	// #1595 — write-once ingest provenance, beside (never instead of) the
+	// editable metadata.original_filename claim.
+	a.OriginalBasename, a.OriginalBasenameSource = originalBasenameToAPI(row.OriginalBasename, row.OriginalBasenameSource)
 	if len(details) > 0 {
 		td := make([]openapi.AssetTagDetail, 0, len(details))
 		for _, d := range details {
@@ -2735,6 +2791,9 @@ func rowToAssetRow(r CreateAssetRow) GetAssetRow {
 		// they failed to disclose.
 		Mature:       r.Mature,
 		AiProvenance: r.AiProvenance,
+		// #1595: the create response states the provenance it just wrote.
+		OriginalBasename:       r.OriginalBasename,
+		OriginalBasenameSource: r.OriginalBasenameSource,
 	}
 }
 
@@ -2783,6 +2842,9 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 		// the worst available answer: the artist retries, or worse,
 		// believes they failed to disclose.
 		AiProvenance: r.AiProvenance,
+		// #1595: an edit answers with the provenance it could not change.
+		OriginalBasename:       r.OriginalBasename,
+		OriginalBasenameSource: r.OriginalBasenameSource,
 	}
 }
 

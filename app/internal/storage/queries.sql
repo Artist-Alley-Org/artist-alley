@@ -279,3 +279,26 @@ WHERE pin_subject_type = sqlc.arg(pin_subject_type)
   AND created_at < now() - sqlc.arg(stale_after)::INTERVAL
 ORDER BY created_at
 LIMIT sqlc.arg(max_rows);
+
+-- name: InsertUploadReceipt :one
+-- #1595: one receipt per successful upload, bound to the uploading user,
+-- the exact hash and the base name the request carried (NULL with source
+-- 'unknown' when it carried none). POST /assets consumes it.
+INSERT INTO upload_receipts (user_ref, file_hash, original_basename, original_basename_source, expires_at)
+VALUES (sqlc.arg(user_ref), sqlc.arg(file_hash), sqlc.narg(original_basename), sqlc.arg(original_basename_source),
+        now() + sqlc.arg(ttl)::INTERVAL)
+RETURNING id;
+
+-- name: SweepExpiredUploadReceipts :execrows
+-- #1595: delete at most max_rows expired receipts. Run on every upload,
+-- so expired rows are removed faster than uploads can add them and the
+-- table stays bounded without a background job. SKIP LOCKED keeps two
+-- concurrent uploads from waiting on each other's sweep.
+DELETE FROM upload_receipts
+WHERE id IN (
+    SELECT r.id FROM upload_receipts r
+    WHERE r.expires_at <= now()
+    ORDER BY r.expires_at
+    LIMIT sqlc.arg(max_rows)
+    FOR UPDATE SKIP LOCKED
+);

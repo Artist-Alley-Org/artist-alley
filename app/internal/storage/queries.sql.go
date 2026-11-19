@@ -463,6 +463,37 @@ func (q *Queries) InsertObject(ctx context.Context, arg InsertObjectParams) erro
 	return err
 }
 
+const insertUploadReceipt = `-- name: InsertUploadReceipt :one
+INSERT INTO upload_receipts (user_ref, file_hash, original_basename, original_basename_source, expires_at)
+VALUES ($1, $2, $3, $4,
+        now() + $5::INTERVAL)
+RETURNING id
+`
+
+type InsertUploadReceiptParams struct {
+	UserRef                int64
+	FileHash               string
+	OriginalBasename       *string
+	OriginalBasenameSource string
+	Ttl                    pgtype.Interval
+}
+
+// #1595: one receipt per successful upload, bound to the uploading user,
+// the exact hash and the base name the request carried (NULL with source
+// 'unknown' when it carried none). POST /assets consumes it.
+func (q *Queries) InsertUploadReceipt(ctx context.Context, arg InsertUploadReceiptParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, insertUploadReceipt,
+		arg.UserRef,
+		arg.FileHash,
+		arg.OriginalBasename,
+		arg.OriginalBasenameSource,
+		arg.Ttl,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertVariantIfMissing = `-- name: InsertVariantIfMissing :execrows
 INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type, metadata)
 VALUES ($1, $2, $3, $4, $5)
@@ -834,6 +865,29 @@ type RemovePinParams struct {
 func (q *Queries) RemovePin(ctx context.Context, arg RemovePinParams) error {
 	_, err := q.db.Exec(ctx, removePin, arg.ObjectHash, arg.PinSubjectType, arg.PinSubjectID)
 	return err
+}
+
+const sweepExpiredUploadReceipts = `-- name: SweepExpiredUploadReceipts :execrows
+DELETE FROM upload_receipts
+WHERE id IN (
+    SELECT r.id FROM upload_receipts r
+    WHERE r.expires_at <= now()
+    ORDER BY r.expires_at
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
+)
+`
+
+// #1595: delete at most max_rows expired receipts. Run on every upload,
+// so expired rows are removed faster than uploads can add them and the
+// table stays bounded without a background job. SKIP LOCKED keeps two
+// concurrent uploads from waiting on each other's sweep.
+func (q *Queries) SweepExpiredUploadReceipts(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepExpiredUploadReceipts, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const tryLockImportHashExclusive = `-- name: TryLockImportHashExclusive :one

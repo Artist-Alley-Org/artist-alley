@@ -1,17 +1,21 @@
 -- name: CreateAsset :one
+-- #1595: original_basename / original_basename_source are write-once
+-- ingest provenance, set here and never by an UPDATE (trigger, migration
+-- 00081). Every caller states the source; the CHECK refuses an empty one.
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
     state_id, processing_status, thumbhash, team_id, mature,
-    ai_provenance
+    ai_provenance, original_basename, original_basename_source
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, $16
+    $11, $12, $13, $14, $15, $16, $17, $18
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id, mature, ai_provenance;
+          created_at, updated_at, team_id, mature, ai_provenance,
+          original_basename, original_basename_source;
 
 -- name: GetAsset :one
 -- Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -23,7 +27,8 @@ RETURNING id, title, description, asset_type, owner_user_ref, status,
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, team_id, mature, ai_provenance
+       created_at, updated_at, team_id, mature, ai_provenance,
+       original_basename, original_basename_source
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -38,7 +43,7 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at
+       created_at, updated_at, original_basename, original_basename_source
 FROM assets
 WHERE owner_user_ref = $1 AND file_hash = $2 AND deleted_at IS NULL;
 
@@ -71,7 +76,8 @@ WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id, mature, ai_provenance;
+          created_at, updated_at, team_id, mature, ai_provenance,
+          original_basename, original_basename_source;
 
 -- name: MergeAssetMetadata :exec
 -- Shallow-merge an incoming JSONB blob into the existing metadata
@@ -499,3 +505,16 @@ SELECT a.id AS asset_id, p.id AS peer_id, p.display_name, p.instance_url
   JOIN federation_peers p ON p.id = a.origin_server_id
  WHERE a.id = ANY(sqlc.arg('asset_ids')::UUID[])
    AND a.deleted_at IS NULL;
+
+-- name: ConsumeUploadReceipt :one
+-- #1595: use up an upload receipt inside the asset-create transaction.
+-- It must have been issued to this user, for exactly this hash, and not
+-- have expired; a miss for any reason is one answer, so the caller
+-- cannot tell another user's receipt from a missing one. DELETE makes
+-- it single-use, and a create that rolls back puts it back.
+DELETE FROM upload_receipts
+WHERE id = sqlc.arg(id)
+  AND user_ref = sqlc.arg(user_ref)
+  AND file_hash = sqlc.arg(file_hash)
+  AND expires_at > now()
+RETURNING original_basename, original_basename_source;

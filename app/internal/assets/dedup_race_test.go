@@ -262,6 +262,9 @@ func TestUpload_RaceLoser_ReleasesItsConnectionBeforeRefetch(t *testing.T) {
 		FileExtension:    &ext,
 		Metadata:         []byte("{}"),
 		ProcessingStatus: "pending",
+		// #1595: every CreateAsset caller states the source (the CHECK
+		// refuses an empty one); a raw insert has no upload receipt.
+		OriginalBasenameSource: "unknown",
 	})
 	if err != nil {
 		t.Fatalf("winner insert: %v", err)
