@@ -43,3 +43,20 @@ func (s *Service) SetPinAfterAddHook(f func(hash string) error) { s.pinHooks.aft
 func (s *Service) SetPinBeforeRemoveCommitHook(f func(hash string) error) {
 	s.pinHooks.beforeRemoveCommit = f
 }
+
+// SetPromoteAfterReadHook runs f inside PromoteVariant while it holds the
+// variant's shared lock, after the bytes were read and checked. Tests only
+// (#1596).
+func (s *Service) SetPromoteAfterReadHook(f func(parentHash, key string)) {
+	s.promoteHooks.afterRead = f
+}
+
+// SetPromoteBeforeCommitHook is the BeforeCommit PromoteVariant passes to
+// its import; an error records nothing. Tests only (#1596).
+func (s *Service) SetPromoteBeforeCommitHook(f func(ctx context.Context) error) {
+	s.promoteHooks.beforeCommit = f
+}
+
+// SetUploadAfterCheckHook runs f inside UploadOriginal under the import
+// lock, after its existence check. Tests only (#1596).
+func (s *Service) SetUploadAfterCheckHook(f func(hash string)) { s.uploadHooks.afterCheck = f }

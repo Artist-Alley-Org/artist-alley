@@ -110,6 +110,21 @@ ON CONFLICT (object_hash, variant_key) DO UPDATE SET
     generation         = storage_variants.generation + 1,
     updated_at         = now();
 
+-- name: RecordOriginalVariantIfAbsent :exec
+-- #1596: RecordOriginalVariant for an import that must never rewrite an
+-- existing original's row (a promoted access copy, ImportRequest.
+-- KeepExistingOriginal). If the hash already has an original row (an
+-- upload of the same bytes recorded it first), it keeps its content type,
+-- digest, status and generation.
+INSERT INTO storage_variants (
+    object_hash, variant_key, size_bytes, content_type, metadata,
+    content_sha256, content_size_bytes, digest_source, fixity_status, generation, fixity_checked_at
+) VALUES (
+    sqlc.arg(object_hash), 'original', sqlc.arg(size_bytes), sqlc.arg(content_type), '{}',
+    sqlc.arg(object_hash), sqlc.arg(size_bytes), 'write', 'verified', 1, now()
+)
+ON CONFLICT (object_hash, variant_key) DO NOTHING;
+
 -- name: TouchOriginalVariant :exec
 -- #1597: a re-upload that wrote NO bytes (the hash was already stored).
 -- It may carry a richer content type, so that is kept, but it proves
@@ -378,6 +393,18 @@ SELECT pg_advisory_lock_shared(hashtextextended('storage-import:' || sqlc.arg(ob
 
 -- name: UnlockImportHashSharedSession :one
 SELECT pg_advisory_unlock_shared(hashtextextended('storage-import:' || sqlc.arg(object_hash)::TEXT, 0))::BOOLEAN AS value;
+
+-- name: LockImportHashExclusiveSession :exec
+-- #1596: the same per-hash import lock, EXCLUSIVE and SESSION-level, for
+-- an import that must never write over an original another importer has
+-- recorded (ImportRequest.KeepExistingOriginal). Held like the shared
+-- one, so the reconciler still reads it as "import alive"; while it is
+-- held no other import of the hash can be between its existence check
+-- and its commit.
+SELECT pg_advisory_lock(hashtextextended('storage-import:' || sqlc.arg(object_hash)::TEXT, 0));
+
+-- name: UnlockImportHashExclusiveSession :one
+SELECT pg_advisory_unlock(hashtextextended('storage-import:' || sqlc.arg(object_hash)::TEXT, 0))::BOOLEAN AS value;
 
 -- name: TryLockImportHashExclusive :one
 -- #72: the reconciler's side, EXCLUSIVE, transaction-level, never

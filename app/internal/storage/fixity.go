@@ -68,13 +68,15 @@ const (
 // can keep doing so with errors.Is.
 var ErrVariantNotRecorded = errors.New("storage: variant bytes written but its digest was not recorded")
 
-// variantWriteSlots bounds how many PutVariant calls hold a database
-// connection (and the variant's write lock) for the length of a backend
-// Put. At the smallest supported pool (AA_DB_MAX_CONNS=8, of which three
-// are held by LISTEN workers, #1605) that leaves three of the five query
-// connections for requests and jobs however many variants are uploading.
-// A writer waits for a slot BEFORE it asks the pool for a connection, so
-// the bound adds no hold-and-wait.
+// variantWriteSlots bounds how many writers hold a database connection
+// for the length of a backend Put: PutVariant (with the variant's write
+// lock) and, since #1596, UploadOriginal (with the per-hash import lock).
+// They share the bound, so at the smallest supported pool
+// (AA_DB_MAX_CONNS=8, of which three are held by LISTEN workers, #1605)
+// three of the five query connections stay free for requests and jobs
+// however many variants or uploads are writing. A writer waits for a slot
+// BEFORE it asks the pool for a connection, so the bound adds no
+// hold-and-wait.
 const variantWriteSlots = 2
 
 // VariantWrite is what PutVariant recorded.
