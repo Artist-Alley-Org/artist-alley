@@ -31,9 +31,11 @@ excerpt: >-
 ## Status (2026-11-19)
 
 Accepted. The first slice of #1596 implements the version model and
-its retention rules. Nothing is announced to peers yet. Sealing access
-copies, the versions read endpoint and the access-only transfer profile
-are later slices.
+its retention rules. The second slice's first part adds access-copy
+promotion and the selection policy (below), but nothing seals or uses
+them yet. Nothing is announced to peers. Sealing access copies, the
+reconcile job, replacement, the versions read endpoint and the
+access-only transfer profile are later work.
 
 ## Context
 
@@ -138,6 +140,56 @@ It records what was present when the migration ran. It does not claim
 that this is what was ingested, and it adds no preservation events. A
 local asset that points at a missing storage object stops the migration
 with a count; the migration never invents or skips one.
+
+### Access copies are promoted, then chosen by one policy
+
+A derived variant lives under its parent's hash and is overwritten by
+each regeneration, so a sealed file set cannot point at it.
+
+**Promotion** (`storage.Service.PromoteVariant`) copies a variant into
+its own content-addressed object, addressed by the variant's SHA-256:
+
+- **Only verified bytes:** only a variant whose #1597 row says verified,
+  and whose stored bytes, read under the variant's shared lock, still
+  hash to the recorded digest and size. Anything else fails closed and
+  changes nothing.
+- **Never overwrites:** an object that already has the digest is only
+  pinned, never written again or relabelled. A new one goes through the
+  verified import path, which takes the per-hash import lock exclusively
+  and checks again under it. Every other writer of an original, peer
+  imports and ordinary uploads, takes the same lock shared around its
+  check, Put and record. So an original another writer recorded
+  meanwhile is only pinned, and an upload arriving during a promotion
+  waits, then deduplicates. Because an upload now holds a database
+  connection across its backend Put, it first takes one of the bounded
+  put slots it shares with variant writes, keeping the smallest pool's
+  connection budget.
+- **Checked by reading:** before it is returned, the result is confirmed
+  by its recorded size and verified original row, and by reading and
+  hashing the stored bytes. A row that still says verified over changed
+  bytes is refused.
+- **The transient pin:** the copy is held by its own pin,
+  `version_promote`, from the moment it is recorded. The caller releases
+  it only after a sealed version pins the copy, so a published copy is
+  never unpinned. A failure releases the pin. A copy nothing sealed
+  becomes GC-eligible once released, and `ReleaseStalePins` clears pins
+  left by a crash.
+
+**Selection** (`assets.SelectAccessVariants`) follows §7.5.7:
+
+- **Candidates:** only the configured still ladder's `contain` rungs
+  whose key is a plain token (lowercase letters, digits, `-`, `_`), so
+  every dotted or path-like key is excluded: HLS, turntable frames,
+  views, sprites, subtitles. The bare names other writers use for
+  non-ladder bytes (`original`, `poster`, `cover`, `embedded-preview`,
+  `iso`) are reserved even when an operator configures them as a rung.
+  Cropped `cover` rungs are excluded by their fit.
+- **Preview:** the smallest available rung.
+- **Access derivative:** the largest rung, only for images, the one
+  kind whose viewer shows a derived still in place of the original.
+  Other kinds get a preview only.
+- **Determinism:** the choice depends only on the ladder and the keys
+  present.
 
 ## Consequences
 

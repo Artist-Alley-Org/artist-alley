@@ -58,6 +58,10 @@ type Service struct {
 	eventHooks eventHooks
 	// pinHooks are #1596 test seams; zero in production.
 	pinHooks pinHooks
+	// promoteHooks are #1596 test seams (promote.go); zero in production.
+	promoteHooks promoteHooks
+	// uploadHooks are #1596 test seams; zero in production.
+	uploadHooks uploadHooks
 
 	// AgentVersion is the software version recorded on local
 	// preservation events (#1598, events.go). Empty omits it.
@@ -137,24 +141,59 @@ func (s *Service) UploadOriginal(ctx context.Context, r io.Reader, contentType s
 	}
 
 	hash := hex.EncodeToString(hasher.Sum(nil))
-	q := New(s.Pool)
 	deduped := false
+
+	// #1596: the existence check, the Put, the rows and the pin run under
+	// the per-hash import lock, SHARED (as every importer takes it), held
+	// on ONE dedicated connection that does all of this upload's database
+	// work. Uploads and ordinary imports of a hash still run side by side;
+	// a promotion (ImportRequest.KeepExistingOriginal) takes the lock
+	// EXCLUSIVELY, so it can never be between its re-check and its Put
+	// while an upload is between its check and its record, nor the other
+	// way round. Whichever runs second finds the row and writes no bytes.
+	//
+	// The connection is held across the backend Put, so the upload first
+	// takes one of the bounded put slots (acquireVariantSlot), BEFORE it
+	// asks the pool for a connection (no hold-and-wait, #1616); nothing
+	// inside takes a second connection.
+	releaseSlot, err := s.acquireVariantSlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseSlot()
+	conn, err := s.Pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("storage: upload: acquire connection: %w", err)
+	}
+	defer conn.Release()
+	q := New(conn)
+	if err := q.LockImportHashSharedSession(ctx, hash); err != nil {
+		return nil, fmt.Errorf("storage: upload: take import lock: %w", err)
+	}
+	defer func() {
+		if _, err := q.UnlockImportHashSharedSession(context.WithoutCancel(ctx), hash); err != nil {
+			_ = conn.Conn().Close(context.WithoutCancel(ctx))
+		}
+	}()
 
 	// Dedup check: does an object with this hash already exist?
 	existing, err := q.FindObject(ctx, hash)
+	if s.uploadHooks.afterCheck != nil {
+		s.uploadHooks.afterCheck(hash)
+	}
 	switch {
 	case err == nil:
 		// Hit. Skip the backend Put — bytes are already there.
 		deduped = true
 		// A pending GC mark is cleared by the pin below, in the pin's
-		// own transaction (AddPin, #1596).
+		// own transaction (addPinTx, #1596).
 		// Sanity: size should match. If it doesn't, the existing
 		// row is broken; we trust the hash anyway because matching
 		// sha256 is far less likely than a metadata mistake.
 		_ = existing
 	case isNoRows(err):
 		// Miss. Open the temp file and stream to the backend.
-		if err := s.commitObject(ctx, hash, size, contentType, tmpName); err != nil {
+		if err := s.commitObject(ctx, q, hash, size, contentType, tmpName); err != nil {
 			return nil, err
 		}
 	default:
@@ -178,9 +217,11 @@ func (s *Service) UploadOriginal(ctx context.Context, r io.Reader, contentType s
 		return nil, fmt.Errorf("storage: variant row: %w", err)
 	}
 	// The pin clears any pending GC mark and commits with it, the object
-	// row locked first (AddPin, #1596), for a new and a deduplicated
-	// object alike.
-	if err := s.AddPin(ctx, pin, hash); err != nil {
+	// row locked first (addPinTx, #1596), for a new and a deduplicated
+	// object alike: on the same connection, still under the lock.
+	if err := inPinTx(ctx, conn, "add pin", func(tx pgx.Tx) error {
+		return addPinTx(ctx, New(tx), pin, hash)
+	}); err != nil {
 		return nil, err
 	}
 
@@ -193,7 +234,9 @@ func (s *Service) UploadOriginal(ctx context.Context, r io.Reader, contentType s
 	}, nil
 }
 
-func (s *Service) commitObject(ctx context.Context, hash string, size int64, contentType, tmpPath string) error {
+// commitObject Puts the staged bytes and records the object row, on the
+// caller's connection (UploadOriginal's, under the import lock).
+func (s *Service) commitObject(ctx context.Context, q *Queries, hash string, size int64, contentType, tmpPath string) error {
 	f, err := os.Open(tmpPath)
 	if err != nil {
 		return fmt.Errorf("storage: reopen temp: %w", err)
@@ -210,7 +253,6 @@ func (s *Service) commitObject(ctx context.Context, hash string, size int64, con
 		return fmt.Errorf("storage: backend put: streamed bytes hash to %s, staged %s", short(got), short(hash))
 	}
 
-	q := New(s.Pool)
 	if err := q.InsertObject(ctx, InsertObjectParams{
 		Hash:           hash,
 		SizeBytes:      size,
@@ -257,7 +299,7 @@ func (s *Service) AddPin(ctx context.Context, pin PinRef, hash string) error {
 	if pin.SubjectType == "" || pin.SubjectID == "" {
 		return errors.New("storage: pin SubjectType and SubjectID are required")
 	}
-	return s.inPinTx(ctx, "add pin", func(tx pgx.Tx) error {
+	return inPinTx(ctx, s.Pool, "add pin", func(tx pgx.Tx) error {
 		if err := addPinTx(ctx, New(tx), pin, hash); err != nil {
 			return err
 		}
@@ -285,7 +327,7 @@ func (s *Service) RemovePin(ctx context.Context, pin PinRef, hash string) error 
 	if pin.SubjectType == "" || pin.SubjectID == "" {
 		return errors.New("storage: pin SubjectType and SubjectID are required")
 	}
-	return s.inPinTx(ctx, "remove pin", func(tx pgx.Tx) error {
+	return inPinTx(ctx, s.Pool, "remove pin", func(tx pgx.Tx) error {
 		q := New(tx)
 		if err := q.LockObjectForPinChange(ctx, hash); err != nil {
 			return fmt.Errorf("storage: lock object: %w", err)
@@ -331,12 +373,13 @@ func addPinTx(ctx context.Context, q *Queries, pin PinRef, hash string) error {
 	return nil
 }
 
-// inPinTx runs fn in one transaction on one pool connection (#1616:
-// nothing inside takes a second one). A refused commit, such as
+// inPinTx runs fn in one transaction on db: the pool (one connection),
+// or a connection the caller already holds (UploadOriginal's). Nothing
+// inside takes a second connection (#1616). A refused commit, such as
 // migration 00084 refusing to unpin a live asset version, is reported
 // as "storage: <what>: commit: ...".
-func (s *Service) inPinTx(ctx context.Context, what string, fn func(pgx.Tx) error) error {
-	tx, err := s.Pool.Begin(ctx)
+func inPinTx(ctx context.Context, db txBeginner, what string, fn func(pgx.Tx) error) error {
+	tx, err := db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("storage: %s: begin: %w", what, err)
 	}
@@ -348,6 +391,11 @@ func (s *Service) inPinTx(ctx context.Context, what string, fn func(pgx.Tx) erro
 		return fmt.Errorf("storage: %s: commit: %w", what, err)
 	}
 	return nil
+}
+
+// uploadHooks are #1596 test seams; zero in production.
+type uploadHooks struct {
+	afterCheck func(hash string) // under the import lock, after the existence check
 }
 
 // pinHooks are #1596 test seams; zero in production.

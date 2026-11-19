@@ -1108,6 +1108,21 @@ func (q *Queries) ListVariantsWithoutDigest(ctx context.Context, arg ListVariant
 	return items, nil
 }
 
+const lockImportHashExclusiveSession = `-- name: LockImportHashExclusiveSession :exec
+SELECT pg_advisory_lock(hashtextextended('storage-import:' || $1::TEXT, 0))
+`
+
+// #1596: the same per-hash import lock, EXCLUSIVE and SESSION-level, for
+// an import that must never write over an original another importer has
+// recorded (ImportRequest.KeepExistingOriginal). Held like the shared
+// one, so the reconciler still reads it as "import alive"; while it is
+// held no other import of the hash can be between its existence check
+// and its commit.
+func (q *Queries) LockImportHashExclusiveSession(ctx context.Context, objectHash string) error {
+	_, err := q.db.Exec(ctx, lockImportHashExclusiveSession, objectHash)
+	return err
+}
+
 const lockImportHashSharedSession = `-- name: LockImportHashSharedSession :exec
 SELECT pg_advisory_lock_shared(hashtextextended('storage-import:' || $1::TEXT, 0))
 `
@@ -1267,6 +1282,33 @@ type RecordOriginalVariantParams struct {
 // hash can only write identical bytes, so no write lock is needed.
 func (q *Queries) RecordOriginalVariant(ctx context.Context, arg RecordOriginalVariantParams) error {
 	_, err := q.db.Exec(ctx, recordOriginalVariant, arg.ObjectHash, arg.SizeBytes, arg.ContentType)
+	return err
+}
+
+const recordOriginalVariantIfAbsent = `-- name: RecordOriginalVariantIfAbsent :exec
+INSERT INTO storage_variants (
+    object_hash, variant_key, size_bytes, content_type, metadata,
+    content_sha256, content_size_bytes, digest_source, fixity_status, generation, fixity_checked_at
+) VALUES (
+    $1, 'original', $2, $3, '{}',
+    $1, $2, 'write', 'verified', 1, now()
+)
+ON CONFLICT (object_hash, variant_key) DO NOTHING
+`
+
+type RecordOriginalVariantIfAbsentParams struct {
+	ObjectHash  string
+	SizeBytes   int64
+	ContentType string
+}
+
+// #1596: RecordOriginalVariant for an import that must never rewrite an
+// existing original's row (a promoted access copy, ImportRequest.
+// KeepExistingOriginal). If the hash already has an original row (an
+// upload of the same bytes recorded it first), it keeps its content type,
+// digest, status and generation.
+func (q *Queries) RecordOriginalVariantIfAbsent(ctx context.Context, arg RecordOriginalVariantIfAbsentParams) error {
+	_, err := q.db.Exec(ctx, recordOriginalVariantIfAbsent, arg.ObjectHash, arg.SizeBytes, arg.ContentType)
 	return err
 }
 
@@ -1463,6 +1505,17 @@ SELECT pg_try_advisory_xact_lock(hashtextextended('storage-import:' || $1::TEXT,
 // waiting: false while any import of the hash is alive.
 func (q *Queries) TryLockImportHashExclusive(ctx context.Context, objectHash string) (bool, error) {
 	row := q.db.QueryRow(ctx, tryLockImportHashExclusive, objectHash)
+	var value bool
+	err := row.Scan(&value)
+	return value, err
+}
+
+const unlockImportHashExclusiveSession = `-- name: UnlockImportHashExclusiveSession :one
+SELECT pg_advisory_unlock(hashtextextended('storage-import:' || $1::TEXT, 0))::BOOLEAN AS value
+`
+
+func (q *Queries) UnlockImportHashExclusiveSession(ctx context.Context, objectHash string) (bool, error) {
+	row := q.db.QueryRow(ctx, unlockImportHashExclusiveSession, objectHash)
 	var value bool
 	err := row.Scan(&value)
 	return value, err

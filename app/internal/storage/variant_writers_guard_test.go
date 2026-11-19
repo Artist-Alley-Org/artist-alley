@@ -8,8 +8,9 @@
 //
 //   - a call, outside package storage, to a query that writes a
 //     storage_variants row (BeginVariantWrite, RecordVariantWrite,
-//     RecordOriginalVariant, TouchOriginalVariant, InsertVariantIfMissing,
-//     RecordVariantRecheck, MarkVariantFixity);
+//     RecordOriginalVariant, RecordOriginalVariantIfAbsent,
+//     TouchOriginalVariant, InsertVariantIfMissing, RecordVariantRecheck,
+//     MarkVariantFixity);
 //   - raw SQL that inserts into or updates storage_variants anywhere but
 //     storage/queries.sql and the migrations;
 //   - a direct `.Backend.Put(` outside package storage (use
@@ -36,7 +37,7 @@ func TestVariantWritersGoThroughStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rowWriters := regexp.MustCompile(`\.(BeginVariantWrite|RecordVariantWrite|RecordOriginalVariant|TouchOriginalVariant|InsertVariantIfMissing|RecordVariantRecheck|MarkVariantFixity)\(`)
+	rowWriters := regexp.MustCompile(`\.(BeginVariantWrite|RecordVariantWrite|RecordOriginalVariant|RecordOriginalVariantIfAbsent|TouchOriginalVariant|InsertVariantIfMissing|RecordVariantRecheck|MarkVariantFixity)\(`)
 	rawSQL := regexp.MustCompile(`(?i)(INSERT\s+INTO|UPDATE)\s+(public\.)?storage_variants\b`)
 	backendPut := regexp.MustCompile(`\.Backend\.Put\(`)
 	storagePkg := filepath.Join(root, "internal", "storage") + string(filepath.Separator)

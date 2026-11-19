@@ -68,6 +68,11 @@ import (
 // ErrImportMismatch: the staged file is not the expected bytes.
 var ErrImportMismatch = errors.New("storage: staged file does not match the expected hash and size")
 
+// ErrImportExistingNotRewritten: ImportRequest.KeepExistingOriginal was
+// set and the hash is already recorded without matching stored bytes.
+// Nothing was written or recorded (#1596).
+var ErrImportExistingNotRewritten = errors.New("storage: import: an existing original is never rewritten")
+
 // ErrImportAbandoned: the import's intent was reconciled away before it
 // committed. Nothing was recorded; the caller may retry from the start.
 var ErrImportAbandoned = errors.New("storage: import intent was reconciled before commit")
@@ -100,6 +105,15 @@ type ImportRequest struct {
 	// the network (the fetch re-authorises the caller here). An error
 	// records nothing; the intent stays for the reconciler.
 	BeforeCommit func(ctx context.Context) error
+	// KeepExistingOriginal (#1596, a promoted access copy) never rewrites
+	// an original that is already held: an existing original row keeps
+	// its content type, digest and status (a missing one is not created
+	// on the dedup path), and an existing object whose stored bytes are
+	// missing or the wrong size is refused instead of written again. The
+	// import lock is taken EXCLUSIVELY and the hash checked again under
+	// it, so an original another importer recorded meanwhile is only
+	// pinned, never written over.
+	KeepExistingOriginal bool
 }
 
 // ImportResult is what ImportVerified recorded.
@@ -146,31 +160,67 @@ func (s *Service) ImportVerified(ctx context.Context, req ImportRequest) (*Impor
 			}
 			return &ImportResult{Hash: req.Hash, Size: req.Size, Deduped: true, Pin: req.Pin}, nil
 		}
+		if req.KeepExistingOriginal {
+			return nil, fmt.Errorf("%w: %s is recorded but its stored bytes are missing or the wrong size", ErrImportExistingNotRewritten, short(req.Hash))
+		}
 		// A row whose bytes are missing or the wrong size: write the
 		// verified bytes again under an intent, like a miss.
 	}
 
-	// Live-import lock (session, shared) on a dedicated connection, held
-	// until the commit has finished.
+	// Live-import lock (session) on a dedicated connection, held until
+	// the commit has finished: shared, or exclusive for an import that
+	// must never write over an existing original (KeepExistingOriginal).
 	conn, err := s.Pool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("storage: import: acquire connection: %w", err)
 	}
 	defer conn.Release()
 	cq := New(conn)
-	if err := cq.LockImportHashSharedSession(ctx, req.Hash); err != nil {
+	if req.KeepExistingOriginal {
+		err = cq.LockImportHashExclusiveSession(ctx, req.Hash)
+	} else {
+		err = cq.LockImportHashSharedSession(ctx, req.Hash)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("storage: import: take import lock: %w", err)
 	}
 	defer func() {
 		// Unlock on a fresh context: a cancelled caller must still give
 		// the lock back. If even that fails, release the connection
 		// broken (its session ends and the lock with it).
-		if _, err := cq.UnlockImportHashSharedSession(context.WithoutCancel(ctx), req.Hash); err != nil {
+		var uerr error
+		if req.KeepExistingOriginal {
+			_, uerr = cq.UnlockImportHashExclusiveSession(context.WithoutCancel(ctx), req.Hash)
+		} else {
+			_, uerr = cq.UnlockImportHashSharedSession(context.WithoutCancel(ctx), req.Hash)
+		}
+		if uerr != nil {
 			_ = conn.Conn().Close(context.WithoutCancel(ctx))
 		}
 	}()
 	if s.importHooks.afterLock != nil {
 		s.importHooks.afterLock()
+	}
+	if req.KeepExistingOriginal {
+		// #1596: another importer may have recorded the hash after the
+		// check above. Under the exclusive lock no other import of it can
+		// be mid-way, so this answer holds until the commit: if it is
+		// recorded now, nothing is written; the pin is only added.
+		recorded, err := cq.ObjectRowExists(ctx, req.Hash)
+		if err != nil {
+			return nil, fmt.Errorf("storage: import: lookup under lock: %w", err)
+		}
+		if recorded {
+			if req.BeforeCommit != nil {
+				if err := req.BeforeCommit(ctx); err != nil {
+					return nil, fmt.Errorf("storage: import: before commit: %w", err)
+				}
+			}
+			if err := commitImportOn(ctx, conn, s.Backend.Name(), req, false); err != nil {
+				return nil, err
+			}
+			return &ImportResult{Hash: req.Hash, Size: req.Size, Deduped: true, Pin: req.Pin}, nil
+		}
 	}
 	if err := cq.InsertImportIntent(ctx, InsertImportIntentParams{
 		LeaseID:    pgtype.UUID{Bytes: req.IntentID, Valid: true},
@@ -250,10 +300,16 @@ func commitImportOn(ctx context.Context, db txBeginner, backend string, req Impo
 		// verifyStaged re-hashed against req.Hash, so the original's
 		// digest is recorded. Without one (the dedup path) nothing was
 		// written and the stored bytes' row is only touched.
+		// KeepExistingOriginal (#1596): an original row that is already
+		// there is left exactly as it is.
 		var verr error
-		if withIntent {
+		switch {
+		case withIntent && req.KeepExistingOriginal:
+			verr = tq.RecordOriginalVariantIfAbsent(ctx, RecordOriginalVariantIfAbsentParams{ObjectHash: req.Hash, SizeBytes: req.Size, ContentType: req.ContentType})
+		case withIntent:
 			verr = tq.RecordOriginalVariant(ctx, RecordOriginalVariantParams{ObjectHash: req.Hash, SizeBytes: req.Size, ContentType: req.ContentType})
-		} else {
+		case req.KeepExistingOriginal:
+		default:
 			verr = tq.TouchOriginalVariant(ctx, TouchOriginalVariantParams{ObjectHash: req.Hash, SizeBytes: req.Size, ContentType: req.ContentType})
 		}
 		if verr != nil {
