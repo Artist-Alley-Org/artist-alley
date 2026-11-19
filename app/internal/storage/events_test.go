@@ -157,7 +157,9 @@ func (r *eventRig) sweep(t *testing.T, run uuid.UUID) int64 {
 // events lists an asset's events, newest first, from run (uuid.Nil: all).
 func (r *eventRig) events(t *testing.T, asset, run uuid.UUID) []storage.AssetPreservationEvent {
 	t.Helper()
-	all, err := r.q.ListAssetPreservationEvents(context.Background(), pgtype.UUID{Bytes: asset, Valid: true})
+	all, err := r.q.ListAssetPreservationEvents(context.Background(), storage.ListAssetPreservationEventsParams{
+		AssetID: pgtype.UUID{Bytes: asset, Valid: true}, PageLimit: 10000,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

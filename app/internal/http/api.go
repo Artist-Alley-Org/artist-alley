@@ -4840,6 +4840,85 @@ func (s *apiServer) ListStorageVariantFamilies(ctx context.Context, _ openapi.Li
 	return openapi.ListStorageVariantFamilies200JSONResponse{Items: items}, nil
 }
 
+// ListAssetPreservationEvents is the operator's read of one asset's
+// preservation history (#1598). Same gate as every storage read: the
+// storage read cap or the system.admin wildcard, never public, never
+// federated. Every field is typed and drawn from the event row; no
+// storage path or backend error text exists to leak.
+func (s *apiServer) ListAssetPreservationEvents(ctx context.Context, req openapi.ListAssetPreservationEventsRequestObject) (openapi.ListAssetPreservationEventsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListAssetPreservationEvents401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if s.storageReadDenied(ctx) {
+		return openapi.ListAssetPreservationEvents403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: storage.CapStorageRead + " required"},
+		}, nil
+	}
+	var limit int32
+	if req.Params.Limit != nil {
+		limit = int32(*req.Params.Limit)
+	}
+	cursor := ""
+	if req.Params.Cursor != nil {
+		cursor = *req.Params.Cursor
+	}
+	page, err := s.storageAdmin.ListPreservationEvents(ctx, req.Id, cursor, limit)
+	switch {
+	case errors.Is(err, storage.ErrHistoryAssetNotFound):
+		return openapi.ListAssetPreservationEvents404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	case errors.Is(err, storage.ErrHistoryCursor):
+		return openapi.ListAssetPreservationEvents400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid cursor for this asset's history"},
+		}, nil
+	case err != nil:
+		return nil, err
+	}
+	items := make([]openapi.PreservationEvent, 0, len(page.Items))
+	for _, e := range page.Items {
+		items = append(items, preservationEventToAPI(e))
+	}
+	out := openapi.ListAssetPreservationEvents200JSONResponse{AssetId: req.Id, Items: items, Total: page.Total}
+	if page.NextCursor != "" {
+		next := page.NextCursor
+		out.NextCursor = &next
+	}
+	return out, nil
+}
+
+func preservationEventToAPI(e storage.PreservationEvent) openapi.PreservationEvent {
+	out := openapi.PreservationEvent{
+		Id:                 e.ID,
+		Source:             openapi.PreservationEventSource(e.Source),
+		EventType:          openapi.PreservationEventEventType(e.EventType),
+		OccurredAt:         e.OccurredAt,
+		Outcome:            openapi.PreservationEventOutcome(e.Outcome),
+		OutcomeReason:      openapi.PreservationEventOutcomeReason(e.OutcomeReason),
+		ObjectHash:         e.ObjectHash,
+		VariantKey:         e.VariantKey,
+		IsOriginal:         e.VariantKey == storage.VariantOriginal,
+		ObservedGeneration: e.Generation,
+		ObservedSha256:     e.ObservedSHA256,
+		ObservedSizeBytes:  e.ObservedSize,
+		RecordedSha256:     e.RecordedSHA256,
+		FixityStatus:       openapi.PreservationEventFixityStatus(e.FixityStatus),
+		SweepRunPresent:    e.SweepRunPresent,
+		Agent:              openapi.PreservationEventAgent{Name: e.AgentName, Version: e.AgentVersion},
+	}
+	if e.Algorithm != nil {
+		a := openapi.PreservationEventAlgorithm(*e.Algorithm)
+		out.Algorithm = &a
+	}
+	if e.SweepRunID != nil {
+		id := *e.SweepRunID
+		out.SweepRunId = &id
+	}
+	return out
+}
+
 func (s *apiServer) jobsReadDenied(ctx context.Context) bool {
 	caller := auth.IdentityFromContext(ctx)
 	return caller == nil || (!caller.Can(jobs.CapJobsRead) && !caller.Can("system.admin"))

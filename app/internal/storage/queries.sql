@@ -474,10 +474,27 @@ ON CONFLICT (sweep_run_id, asset_id, object_hash, variant_key, observed_generati
 DO NOTHING;
 
 -- name: ListAssetPreservationEvents :many
--- #1598: an asset's preservation history, newest first.
+-- #1598: one page of an asset's preservation history, newest first.
+-- Keyset on (occurred_at, id), both descending: rows with equal
+-- timestamps still have one fixed order, and a page never shifts or
+-- repeats when newer events are written while an operator pages back.
+-- before_at/before_id are the last row of the previous page; NULL
+-- fetches the newest page.
 SELECT id, asset_id, source, event_type, occurred_at, outcome, outcome_reason, algorithm,
        object_hash, variant_key, observed_generation, observed_sha256, observed_size_bytes,
        recorded_sha256, fixity_status, sweep_run_id, sweep_run_ref, agent_name, agent_version
 FROM asset_preservation_events
-WHERE asset_id = sqlc.arg(asset_id)
-ORDER BY occurred_at DESC, id;
+WHERE asset_id = sqlc.arg(asset_id)::uuid
+  AND (sqlc.narg(before_at)::timestamptz IS NULL
+       OR (occurred_at, id) < (sqlc.narg(before_at)::timestamptz, sqlc.narg(before_id)::uuid))
+ORDER BY occurred_at DESC, id DESC
+LIMIT sqlc.arg(page_limit)::int;
+
+-- name: CountAssetPreservationEvents :one
+-- #1598: how many events an asset's history holds (cursor-independent).
+SELECT count(*) FROM asset_preservation_events WHERE asset_id = sqlc.arg(asset_id)::uuid;
+
+-- name: AssetRowExists :one
+-- #1598: whether an asset row exists at all. A soft-deleted asset still
+-- has a row, and its preservation history stays readable to operators.
+SELECT EXISTS (SELECT 1 FROM assets WHERE id = sqlc.arg(asset_id)::uuid);

@@ -555,6 +555,11 @@ func (*PanicShim) SeedCreateUser(context.Context, openapi.SeedCreateUserRequestO
 	panic("PanicShim: SeedCreateUser called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListAssetPreservationEvents panics by default; test shims override.
+func (*PanicShim) ListAssetPreservationEvents(context.Context, openapi.ListAssetPreservationEventsRequestObject) (openapi.ListAssetPreservationEventsResponseObject, error) {
+	panic("PanicShim: ListAssetPreservationEvents called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListStorageSweeps panics by default; test shims override.
 func (*PanicShim) ListStorageSweeps(context.Context, openapi.ListStorageSweepsRequestObject) (openapi.ListStorageSweepsResponseObject, error) {
 	panic("PanicShim: ListStorageSweeps called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

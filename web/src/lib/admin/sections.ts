@@ -141,6 +141,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'orphans',     status: 'live',   href: '/admin/storage/orphans',   cap: 'system.storage.read' },
       { key: 'duplicates',  status: 'future' },
       { key: 'checksums',   status: 'live',   href: '/admin/storage/checksums', cap: 'system.storage.read' },
+      { key: 'history',     status: 'live',   href: '/admin/storage/history',   cap: 'system.storage.read' },
       { key: 'reimport',    status: 'future' },
       { key: 'trash',       status: 'live',   href: '/admin/storage/trash' },
     ],
