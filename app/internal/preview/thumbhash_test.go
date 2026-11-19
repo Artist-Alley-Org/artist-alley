@@ -448,15 +448,8 @@ func seedRenderedRungs(t *testing.T, rig *previewTestRig, hash string) {
 		t.Fatalf("read fixture: %v", err)
 	}
 	for _, key := range []string{"col", "preview"} {
-		if _, err := rig.storage.Backend.Put(ctx, hash, key, bytes.NewReader(body)); err != nil {
+		if _, err := rig.storage.PutVariant(ctx, hash, key, bytes.NewReader(body), "image/png"); err != nil {
 			t.Fatalf("put %s: %v", key, err)
-		}
-		if err := storage.New(rig.pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash: hash, VariantKey: key,
-			SizeBytes: int64(len(body)), ContentType: "image/png",
-			Metadata: []byte("{}"),
-		}); err != nil {
-			t.Fatalf("upsert %s: %v", key, err)
 		}
 	}
 }

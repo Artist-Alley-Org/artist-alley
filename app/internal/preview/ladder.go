@@ -202,20 +202,17 @@ func fanVariants(ctx context.Context, in ladderInput) error {
 				slog.String("err", err.Error()))
 			continue
 		}
-		if _, err := in.Storage.Backend.Put(ctx, in.Hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			// Loud-fail. A silently skipped Put leaves the asset with a
-			// missing thumbnail while the job reports success — the
-			// col-404 class. The job system retries up to max_attempts,
-			// so a transient backend blip self-heals.
-			return fmt.Errorf("preview.%s: backend put variant %s: %w", in.Kind, v.Key, err)
-		}
-		if err := storage.New(in.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  in.Hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: ctype,
-			Metadata:    []byte("{}"),
-		}); err != nil {
+		// #1597: bytes and their digest in one call. A failed byte write
+		// is loud: a silently skipped Put leaves the asset with a missing
+		// thumbnail while the job reports success (the col-404 class),
+		// and the job system retries up to max_attempts, so a transient
+		// backend blip self-heals. A failed row record after the bytes
+		// landed stays a warning, as before; the row then says
+		// unverifiable, never a stale digest.
+		if _, err := in.Storage.PutVariant(ctx, in.Hash, v.Key, bytes.NewReader(buf.Bytes()), ctype); err != nil {
+			if !errors.Is(err, storage.ErrVariantNotRecorded) {
+				return fmt.Errorf("preview.%s: backend put variant %s: %w", in.Kind, v.Key, err)
+			}
 			logAttrs(in.Logger, ctx, slog.LevelWarn, "preview."+in.Kind+".upsert_variant_failed",
 				slog.String("variant", v.Key),
 				slog.String("err", err.Error()))

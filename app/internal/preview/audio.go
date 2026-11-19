@@ -618,16 +618,11 @@ func (h *AudioHandler) extractCover(ctx context.Context, src, hash string) error
 		return fmt.Errorf("cover bytes not an image: %s", ctype)
 	}
 
-	if _, err := h.Storage.Backend.Put(ctx, hash, "cover", bytes.NewReader(data)); err != nil {
+	// #1597: bytes and digest in one call; a failed row record after the
+	// bytes landed is tolerated, as before.
+	if _, err := h.Storage.PutVariant(ctx, hash, "cover", bytes.NewReader(data), ctype); err != nil && !errors.Is(err, storage.ErrVariantNotRecorded) {
 		return fmt.Errorf("backend put cover: %w", err)
 	}
-	_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-		ObjectHash:  hash,
-		VariantKey:  "cover",
-		SizeBytes:   int64(len(data)),
-		ContentType: ctype,
-		Metadata:    []byte("{}"),
-	})
 	return nil
 }
 

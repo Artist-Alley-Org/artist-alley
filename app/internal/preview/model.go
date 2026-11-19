@@ -616,18 +616,10 @@ func (h *ModelHandler) uploadFile(ctx context.Context, hash, key, path, contentT
 		return fmt.Errorf("open %s: %w", key, err)
 	}
 	defer f.Close()
-	if _, err := h.Storage.Backend.Put(ctx, hash, key, f); err != nil {
+	// #1597: streamed through the digest; a failed row record after the
+	// bytes landed is tolerated, as before (the row says unverifiable).
+	if _, err := h.Storage.PutVariant(ctx, hash, key, f, contentType); err != nil && !errors.Is(err, storage.ErrVariantNotRecorded) {
 		return fmt.Errorf("backend put %s: %w", key, err)
-	}
-	info, err := f.Stat()
-	if err == nil {
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  key,
-			SizeBytes:   info.Size(),
-			ContentType: contentType,
-			Metadata:    []byte("{}"),
-		})
 	}
 	return nil
 }
@@ -861,16 +853,9 @@ func (h *ModelHandler) writeSprites(ctx context.Context, hash, framesDir string)
 	if err := jpeg.Encode(&buf, sheet, &jpeg.Options{Quality: 75}); err != nil {
 		return fmt.Errorf("encode sprite: %w", err)
 	}
-	if _, err := h.Storage.Backend.Put(ctx, hash, "sprites.jpg", bytes.NewReader(buf.Bytes())); err != nil {
+	if _, err := h.Storage.PutVariant(ctx, hash, "sprites.jpg", bytes.NewReader(buf.Bytes()), "image/jpeg"); err != nil && !errors.Is(err, storage.ErrVariantNotRecorded) {
 		return fmt.Errorf("put sprite: %w", err)
 	}
-	_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-		ObjectHash:  hash,
-		VariantKey:  "sprites.jpg",
-		SizeBytes:   int64(buf.Len()),
-		ContentType: "image/jpeg",
-		Metadata:    []byte("{}"),
-	})
 
 	// WebVTT — give the turntable a synthetic timeline so the hover
 	// scrub picks the right cell. Each cell owns 1/loaded of a 4s loop.
@@ -885,16 +870,9 @@ func (h *ModelHandler) writeSprites(ctx context.Context, hash, framesDir string)
 		fmt.Fprintf(&vtt, "%s --> %s\nsprites.jpg#xywh=%d,%d,%d,%d\n\n",
 			vttTime(start), vttTime(end), x, y, modelSpriteCell, modelSpriteCell)
 	}
-	if _, err := h.Storage.Backend.Put(ctx, hash, "sprites.vtt", bytes.NewReader(vtt.Bytes())); err != nil {
+	if _, err := h.Storage.PutVariant(ctx, hash, "sprites.vtt", bytes.NewReader(vtt.Bytes()), "text/vtt"); err != nil && !errors.Is(err, storage.ErrVariantNotRecorded) {
 		return fmt.Errorf("put vtt: %w", err)
 	}
-	_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-		ObjectHash:  hash,
-		VariantKey:  "sprites.vtt",
-		SizeBytes:   int64(vtt.Len()),
-		ContentType: "text/vtt",
-		Metadata:    []byte("{}"),
-	})
 	return nil
 }
 

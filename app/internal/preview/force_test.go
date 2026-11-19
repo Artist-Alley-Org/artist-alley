@@ -19,7 +19,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
-	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
 // ---------------------------------------------------------------------------
@@ -68,15 +67,10 @@ func sentinelBytes(t *testing.T) []byte {
 func plantStaleVariant(t *testing.T, rig *previewTestRig, hash, key string, body []byte) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := rig.storage.Backend.Put(ctx, hash, key, bytes.NewReader(body)); err != nil {
+	// #1597: through the one variant writer, so the planted row carries
+	// the digest of the planted bytes.
+	if _, err := rig.storage.PutVariant(ctx, hash, key, bytes.NewReader(body), "image/png"); err != nil {
 		t.Fatalf("plant %s: %v", key, err)
-	}
-	if err := storage.New(rig.pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-		ObjectHash: hash, VariantKey: key,
-		SizeBytes: int64(len(body)), ContentType: "image/png",
-		Metadata: []byte("{}"),
-	}); err != nil {
-		t.Fatalf("upsert %s: %v", key, err)
 	}
 }
 

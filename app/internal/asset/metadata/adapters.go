@@ -96,17 +96,9 @@ func (w *StoragePreviewVariantWriter) WriteEmbeddedPreview(ctx context.Context, 
 		return fmt.Errorf("metadata: embedded-preview stat: %w", err)
 	}
 
-	if _, err := w.storage.Backend.Put(ctx, fileHash, EmbeddedPreviewVariantKey, bytes.NewReader(jpeg)); err != nil {
+	// #1597: one call writes the bytes and records their digest.
+	if _, err := w.storage.PutVariant(ctx, fileHash, EmbeddedPreviewVariantKey, bytes.NewReader(jpeg), EmbeddedPreviewContentType); err != nil {
 		return fmt.Errorf("metadata: embedded-preview put: %w", err)
-	}
-	if err := storage.New(w.pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-		ObjectHash:  fileHash,
-		VariantKey:  EmbeddedPreviewVariantKey,
-		SizeBytes:   int64(len(jpeg)),
-		ContentType: EmbeddedPreviewContentType,
-		Metadata:    []byte("{}"),
-	}); err != nil {
-		return fmt.Errorf("metadata: embedded-preview upsert: %w", err)
 	}
 	return nil
 }

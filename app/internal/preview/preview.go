@@ -306,17 +306,9 @@ func (h *RasterHandler) writeVariant(ctx context.Context, hash string, src image
 	if err != nil {
 		return fmt.Errorf("encode: %w", err)
 	}
-	if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-		return fmt.Errorf("backend put: %w", err)
-	}
-	if err := storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-		ObjectHash:  hash,
-		VariantKey:  v.Key,
-		SizeBytes:   int64(buf.Len()),
-		ContentType: contentType,
-		Metadata:    []byte("{}"),
-	}); err != nil {
-		return fmt.Errorf("upsert variant row: %w", err)
+	// #1597: bytes and their digest in one call (storage.Service.PutVariant).
+	if _, err := h.Storage.PutVariant(ctx, hash, v.Key, bytes.NewReader(buf.Bytes()), contentType); err != nil {
+		return fmt.Errorf("put variant: %w", err)
 	}
 	return nil
 }

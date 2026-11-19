@@ -56,43 +56,43 @@ func (s *Service) ReconcileVariant(ctx context.Context, hash, variant string, in
 	if s == nil || s.Pool == nil || hash == "" || variant == "" {
 		return false, nil
 	}
-	q := New(s.Pool)
-	exists, err := q.VariantExists(ctx, VariantExistsParams{ObjectHash: hash, VariantKey: variant})
-	if err != nil {
-		return false, err
-	}
-	if exists {
-		return false, nil
-	}
-	if info == nil {
-		info, err = s.Backend.Stat(ctx, hash, variant)
-		if err != nil {
-			return false, err
+	// #1597: this writes a row, so it holds the variant's write lock like
+	// PutVariant, and does all of its database work on that connection.
+	// A healed row gets no digest: it was not written through PutVariant
+	// and its bytes were not read, so it is created unverifiable (the
+	// column default) until a recheck or a regeneration.
+	healed := false
+	err := s.withVariantLock(ctx, hash, variant, true, func(q *Queries) error {
+		exists, err := q.VariantExists(ctx, VariantExistsParams{ObjectHash: hash, VariantKey: variant})
+		if err != nil || exists {
+			return err
 		}
-	}
-	// A row for a variant whose object we have never heard of would
-	// violate storage_variants_object_hash_fkey. That is its own (worse)
-	// split brain — bytes on the volume with no storage_objects row at
-	// all — and healing it is the orphan sweep's remit, not this one's.
-	// Report the miss rather than fail a preview job that was only
-	// trying to skip.
-	if _, err := q.FindObject(ctx, hash); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+		if info == nil {
+			info, err = s.Backend.Stat(ctx, hash, variant)
+			if err != nil {
+				return err
+			}
 		}
-		return false, err
-	}
-	n, err := q.InsertVariantIfMissing(ctx, InsertVariantIfMissingParams{
-		ObjectHash:  hash,
-		VariantKey:  variant,
-		SizeBytes:   info.Size,
-		ContentType: s.variantContentType(ctx, hash, variant),
-		Metadata:    []byte("{}"),
+		if _, err := q.FindObject(ctx, hash); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		n, err := q.InsertVariantIfMissing(ctx, InsertVariantIfMissingParams{
+			ObjectHash:  hash,
+			VariantKey:  variant,
+			SizeBytes:   info.Size,
+			ContentType: s.variantContentType(ctx, hash, variant),
+			Metadata:    []byte("{}"),
+		})
+		healed = n > 0
+		return err
 	})
 	if err != nil {
 		return false, err
 	}
-	return n > 0, nil
+	return healed, nil
 }
 
 // ReconcileVariantBestEffort is ReconcileVariant for callers that are in

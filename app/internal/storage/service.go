@@ -48,6 +48,11 @@ type Service struct {
 
 	// importHooks are #72 test seams; zero in production.
 	importHooks importHooks
+
+	// variantSem bounds PutVariant's held connections; variantHooks are
+	// its test seams (#1597, fixity.go).
+	variantSem   variantSem
+	variantHooks variantHooks
 }
 
 // NewService constructs a storage Service with sensible defaults.
@@ -147,18 +152,21 @@ func (s *Service) UploadOriginal(ctx context.Context, r io.Reader, contentType s
 		return nil, fmt.Errorf("storage: lookup: %w", err)
 	}
 
-	// Pin and variant rows. The variant row is upserted on every
-	// upload because we may now have a richer Content-Type than
-	// before (or a different content_type for a re-upload). The pin
-	// row is idempotent.
-	if err := q.UpsertVariant(ctx, UpsertVariantParams{
-		ObjectHash:  hash,
-		VariantKey:  VariantOriginal,
-		SizeBytes:   size,
-		ContentType: contentType,
-		Metadata:    []byte("{}"),
-	}); err != nil {
-		return nil, fmt.Errorf("storage: variant upsert: %w", err)
+	// Pin and variant rows. The variant row is written on every upload
+	// because we may now have a richer Content-Type than before. Its
+	// digest (#1597) is recorded only when THIS upload wrote the bytes:
+	// an original's digest is its hash, computed above from the stream
+	// and checked again against what commitObject handed the backend. A
+	// deduplicated upload wrote nothing, so it changes the content type
+	// and leaves the stored bytes' digest and status as they were. The
+	// pin row is idempotent.
+	if deduped {
+		err = q.TouchOriginalVariant(ctx, TouchOriginalVariantParams{ObjectHash: hash, SizeBytes: size, ContentType: contentType})
+	} else {
+		err = q.RecordOriginalVariant(ctx, RecordOriginalVariantParams{ObjectHash: hash, SizeBytes: size, ContentType: contentType})
+	}
+	if err != nil {
+		return nil, fmt.Errorf("storage: variant row: %w", err)
 	}
 	if err := q.AddPin(ctx, AddPinParams{
 		ObjectHash:     hash,
@@ -184,8 +192,14 @@ func (s *Service) commitObject(ctx context.Context, hash string, size int64, con
 	}
 	defer f.Close()
 
-	if _, err := s.Backend.Put(ctx, hash, VariantOriginal, f); err != nil {
+	// Hash what the backend actually reads (#1597): it must be the staged
+	// bytes the address was computed from.
+	sum := sha256.New()
+	if _, err := s.Backend.Put(ctx, hash, VariantOriginal, io.TeeReader(f, sum)); err != nil {
 		return fmt.Errorf("storage: backend put: %w", err)
+	}
+	if got := hex.EncodeToString(sum.Sum(nil)); got != hash {
+		return fmt.Errorf("storage: backend put: streamed bytes hash to %s, staged %s", short(got), short(hash))
 	}
 
 	q := New(s.Pool)

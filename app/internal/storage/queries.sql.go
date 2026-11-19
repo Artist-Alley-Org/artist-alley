@@ -231,6 +231,36 @@ func (q *Queries) AdvanceSweepRun(ctx context.Context, arg AdvanceSweepRunParams
 	return err
 }
 
+const beginVariantWrite = `-- name: BeginVariantWrite :one
+UPDATE storage_variants SET
+    content_sha256     = NULL,
+    content_size_bytes = NULL,
+    digest_source      = NULL,
+    fixity_status      = 'unverifiable',
+    fixity_checked_at  = NULL,
+    generation         = generation + 1
+WHERE object_hash = $1 AND variant_key = $2
+RETURNING generation
+`
+
+type BeginVariantWriteParams struct {
+	ObjectHash string
+	VariantKey string
+}
+
+// #1597, under LockVariantWrite, COMMITTED before the backend Put: the
+// existing row (if any) stops claiming any digest and moves to a new
+// generation. If the writer dies before its record step, the row says
+// unverifiable, never the digest of bytes that may already be replaced.
+// No row: pgx.ErrNoRows, and the record step inserts generation 1.
+// updated_at is left to the record step: it means "re-rendered" (#760).
+func (q *Queries) BeginVariantWrite(ctx context.Context, arg BeginVariantWriteParams) (int64, error) {
+	row := q.db.QueryRow(ctx, beginVariantWrite, arg.ObjectHash, arg.VariantKey)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
+}
+
 const clearGCEligible = `-- name: ClearGCEligible :exec
 
 UPDATE storage_objects
@@ -400,9 +430,19 @@ type GetVariantParams struct {
 	VariantKey string
 }
 
-func (q *Queries) GetVariant(ctx context.Context, arg GetVariantParams) (StorageVariant, error) {
+type GetVariantRow struct {
+	ObjectHash  string
+	VariantKey  string
+	SizeBytes   int64
+	ContentType string
+	Metadata    []byte
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetVariant(ctx context.Context, arg GetVariantParams) (GetVariantRow, error) {
 	row := q.db.QueryRow(ctx, getVariant, arg.ObjectHash, arg.VariantKey)
-	var i StorageVariant
+	var i GetVariantRow
 	err := row.Scan(
 		&i.ObjectHash,
 		&i.VariantKey,
@@ -411,6 +451,51 @@ func (q *Queries) GetVariant(ctx context.Context, arg GetVariantParams) (Storage
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getVariantFixity = `-- name: GetVariantFixity :one
+SELECT object_hash, variant_key, size_bytes, content_type,
+       content_sha256, content_size_bytes, digest_source, fixity_status,
+       generation, fixity_checked_at
+FROM storage_variants
+WHERE object_hash = $1 AND variant_key = $2
+`
+
+type GetVariantFixityParams struct {
+	ObjectHash string
+	VariantKey string
+}
+
+type GetVariantFixityRow struct {
+	ObjectHash       string
+	VariantKey       string
+	SizeBytes        int64
+	ContentType      string
+	ContentSha256    *string
+	ContentSizeBytes *int64
+	DigestSource     *string
+	FixityStatus     string
+	Generation       int64
+	FixityCheckedAt  pgtype.Timestamptz
+}
+
+// #1597: what a variant's row says about its bytes.
+func (q *Queries) GetVariantFixity(ctx context.Context, arg GetVariantFixityParams) (GetVariantFixityRow, error) {
+	row := q.db.QueryRow(ctx, getVariantFixity, arg.ObjectHash, arg.VariantKey)
+	var i GetVariantFixityRow
+	err := row.Scan(
+		&i.ObjectHash,
+		&i.VariantKey,
+		&i.SizeBytes,
+		&i.ContentType,
+		&i.ContentSha256,
+		&i.ContentSizeBytes,
+		&i.DigestSource,
+		&i.FixityStatus,
+		&i.Generation,
+		&i.FixityCheckedAt,
 	)
 	return i, err
 }
@@ -777,6 +862,52 @@ func (q *Queries) ListVariantsForVerify(ctx context.Context, arg ListVariantsFor
 	return items, nil
 }
 
+const listVariantsWithoutDigest = `-- name: ListVariantsWithoutDigest :many
+SELECT object_hash, variant_key
+FROM storage_variants
+WHERE content_sha256 IS NULL
+  AND fixity_status = ANY (ARRAY['unverifiable', 'missing'])
+  AND (object_hash, variant_key) > ($1::TEXT, $2::TEXT)
+ORDER BY object_hash, variant_key
+LIMIT $3
+`
+
+type ListVariantsWithoutDigestParams struct {
+	AfterHash    string
+	AfterVariant string
+	MaxRows      int32
+}
+
+type ListVariantsWithoutDigestRow struct {
+	ObjectHash string
+	VariantKey string
+}
+
+// #1597: paged walk of rows with no trustworthy digest, for the explicit
+// backfill: unverifiable rows, and rows marked missing that never had a
+// digest (so a backfill revisits them once their bytes are back). A row
+// with a recorded digest, whatever its status, is left to the sweep.
+// Ordered by the primary key so it can resume after a cursor.
+func (q *Queries) ListVariantsWithoutDigest(ctx context.Context, arg ListVariantsWithoutDigestParams) ([]ListVariantsWithoutDigestRow, error) {
+	rows, err := q.db.Query(ctx, listVariantsWithoutDigest, arg.AfterHash, arg.AfterVariant, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVariantsWithoutDigestRow
+	for rows.Next() {
+		var i ListVariantsWithoutDigestRow
+		if err := rows.Scan(&i.ObjectHash, &i.VariantKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockImportHashSharedSession = `-- name: LockImportHashSharedSession :exec
 SELECT pg_advisory_lock_shared(hashtextextended('storage-import:' || $1::TEXT, 0))
 `
@@ -787,6 +918,41 @@ SELECT pg_advisory_lock_shared(hashtextextended('storage-import:' || $1::TEXT, 0
 // ends and the lock goes with it, so "lock held" means "import alive".
 func (q *Queries) LockImportHashSharedSession(ctx context.Context, objectHash string) error {
 	_, err := q.db.Exec(ctx, lockImportHashSharedSession, objectHash)
+	return err
+}
+
+const lockVariantRead = `-- name: LockVariantRead :exec
+SELECT pg_advisory_lock_shared(hashtextextended('storage-variant:' || $1::TEXT || '/' || $2::TEXT, 0))
+`
+
+type LockVariantReadParams struct {
+	ObjectHash string
+	VariantKey string
+}
+
+func (q *Queries) LockVariantRead(ctx context.Context, arg LockVariantReadParams) error {
+	_, err := q.db.Exec(ctx, lockVariantRead, arg.ObjectHash, arg.VariantKey)
+	return err
+}
+
+const lockVariantWrite = `-- name: LockVariantWrite :exec
+SELECT pg_advisory_lock(hashtextextended('storage-variant:' || $1::TEXT || '/' || $2::TEXT, 0))
+`
+
+type LockVariantWriteParams struct {
+	ObjectHash string
+	VariantKey string
+}
+
+// #1597: the per-(hash, variant) WRITE lock, exclusive and session-level,
+// held on one connection from before a write's begin step until its
+// record step (backend Put included). Writers of one variant are
+// serialized, so a row can only ever record the digest of the bytes
+// that were Put last. A crashed writer's session ends and the lock with
+// it. Readers that need the row and the bytes to agree (the integrity
+// sweep) take it SHARED.
+func (q *Queries) LockVariantWrite(ctx context.Context, arg LockVariantWriteParams) error {
+	_, err := q.db.Exec(ctx, lockVariantWrite, arg.ObjectHash, arg.VariantKey)
 	return err
 }
 
@@ -812,6 +978,37 @@ func (q *Queries) MarkGCEligibleIfOrphaned(ctx context.Context, arg MarkGCEligib
 	return err
 }
 
+const markVariantFixity = `-- name: MarkVariantFixity :execrows
+UPDATE storage_variants SET
+    fixity_status     = $1,
+    fixity_checked_at = now()
+WHERE object_hash = $2 AND variant_key = $3
+  AND generation = $4
+`
+
+type MarkVariantFixityParams struct {
+	FixityStatus string
+	ObjectHash   string
+	VariantKey   string
+	Generation   int64
+}
+
+// #1597: a sweep's verdict on generation `generation` of a variant. A
+// compare-and-set, so a verdict about older bytes never lands on a row a
+// newer write has since replaced.
+func (q *Queries) MarkVariantFixity(ctx context.Context, arg MarkVariantFixityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markVariantFixity,
+		arg.FixityStatus,
+		arg.ObjectHash,
+		arg.VariantKey,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectRowExists = `-- name: ObjectRowExists :one
 SELECT EXISTS (SELECT 1 FROM storage_objects WHERE hash = $1)::BOOLEAN AS value
 `
@@ -821,6 +1018,42 @@ func (q *Queries) ObjectRowExists(ctx context.Context, hash string) (bool, error
 	var value bool
 	err := row.Scan(&value)
 	return value, err
+}
+
+const recordOriginalVariant = `-- name: RecordOriginalVariant :exec
+INSERT INTO storage_variants (
+    object_hash, variant_key, size_bytes, content_type, metadata,
+    content_sha256, content_size_bytes, digest_source, fixity_status, generation, fixity_checked_at
+) VALUES (
+    $1, 'original', $2, $3, '{}',
+    $1, $2, 'write', 'verified', 1, now()
+)
+ON CONFLICT (object_hash, variant_key) DO UPDATE SET
+    size_bytes         = EXCLUDED.size_bytes,
+    content_type       = EXCLUDED.content_type,
+    content_sha256     = EXCLUDED.content_sha256,
+    content_size_bytes = EXCLUDED.content_size_bytes,
+    digest_source      = 'write',
+    fixity_status      = 'verified',
+    fixity_checked_at  = now(),
+    generation         = storage_variants.generation + 1,
+    updated_at         = now()
+`
+
+type RecordOriginalVariantParams struct {
+	ObjectHash  string
+	SizeBytes   int64
+	ContentType string
+}
+
+// #1597: the ORIGINAL's row after its bytes were written. An original is
+// addressed by its own SHA-256, so its digest is object_hash, which the
+// caller computed from the very bytes it Put (UploadOriginal hashes the
+// stream; ImportVerified re-hashes the staged file). Two writers of one
+// hash can only write identical bytes, so no write lock is needed.
+func (q *Queries) RecordOriginalVariant(ctx context.Context, arg RecordOriginalVariantParams) error {
+	_, err := q.db.Exec(ctx, recordOriginalVariant, arg.ObjectHash, arg.SizeBytes, arg.ContentType)
+	return err
 }
 
 const recordSweepFinding = `-- name: RecordSweepFinding :exec
@@ -847,6 +1080,98 @@ func (q *Queries) RecordSweepFinding(ctx context.Context, arg RecordSweepFinding
 		arg.Detail,
 	)
 	return err
+}
+
+const recordVariantRecheck = `-- name: RecordVariantRecheck :execrows
+UPDATE storage_variants SET
+    content_sha256     = $1,
+    content_size_bytes = $2,
+    digest_source      = 'recheck',
+    fixity_status      = 'verified',
+    fixity_checked_at  = now()
+WHERE object_hash = $3 AND variant_key = $4
+  AND generation = $5 AND fixity_status = 'unverifiable'
+  AND size_bytes = $2
+`
+
+type RecordVariantRecheckParams struct {
+	ContentSha256    *string
+	ContentSizeBytes *int64
+	ObjectHash       string
+	VariantKey       string
+	Generation       int64
+}
+
+// #1597: an explicit recheck of an UNVERIFIABLE row (legacy, healed, or
+// interrupted) records the digest of the bytes it read back from the
+// backend, marked digest_source 'recheck' so it is never mistaken for a
+// write-time digest. Only an unverifiable row of the same generation is
+// touched; a recorded digest is never overwritten by a recheck.
+func (q *Queries) RecordVariantRecheck(ctx context.Context, arg RecordVariantRecheckParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordVariantRecheck,
+		arg.ContentSha256,
+		arg.ContentSizeBytes,
+		arg.ObjectHash,
+		arg.VariantKey,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordVariantWrite = `-- name: RecordVariantWrite :execrows
+INSERT INTO storage_variants (
+    object_hash, variant_key, size_bytes, content_type, metadata,
+    content_sha256, content_size_bytes, digest_source, fixity_status, generation, fixity_checked_at
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $3, 'write', 'verified', 1, now()
+)
+ON CONFLICT (object_hash, variant_key) DO UPDATE SET
+    size_bytes         = EXCLUDED.size_bytes,
+    content_type       = EXCLUDED.content_type,
+    metadata           = EXCLUDED.metadata,
+    content_sha256     = EXCLUDED.content_sha256,
+    content_size_bytes = EXCLUDED.content_size_bytes,
+    digest_source      = 'write',
+    fixity_status      = 'verified',
+    fixity_checked_at  = now(),
+    updated_at         = now()
+WHERE storage_variants.generation = $7
+`
+
+type RecordVariantWriteParams struct {
+	ObjectHash    string
+	VariantKey    string
+	SizeBytes     int64
+	ContentType   string
+	Metadata      []byte
+	ContentSha256 *string
+	Generation    int64
+}
+
+// #1597, under LockVariantWrite, after the backend Put: the digest and
+// size the server computed from the bytes it streamed, for the generation
+// its begin step returned (0 when there was no row). The update is a
+// compare-and-set on that generation; 0 rows means the row moved, and
+// the caller reports it rather than recording over a newer write.
+// Only storage.Service calls this (guard test).
+func (q *Queries) RecordVariantWrite(ctx context.Context, arg RecordVariantWriteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordVariantWrite,
+		arg.ObjectHash,
+		arg.VariantKey,
+		arg.SizeBytes,
+		arg.ContentType,
+		arg.Metadata,
+		arg.ContentSha256,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const removePin = `-- name: RemovePin :exec
@@ -890,6 +1215,29 @@ func (q *Queries) SweepExpiredUploadReceipts(ctx context.Context, maxRows int32)
 	return result.RowsAffected(), nil
 }
 
+const touchOriginalVariant = `-- name: TouchOriginalVariant :exec
+INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type, metadata)
+VALUES ($1, 'original', $2, $3, '{}')
+ON CONFLICT (object_hash, variant_key) DO UPDATE SET
+    content_type = EXCLUDED.content_type,
+    updated_at   = now()
+`
+
+type TouchOriginalVariantParams struct {
+	ObjectHash  string
+	SizeBytes   int64
+	ContentType string
+}
+
+// #1597: a re-upload that wrote NO bytes (the hash was already stored).
+// It may carry a richer content type, so that is kept, but it proves
+// nothing about the stored bytes: an existing row keeps its digest and
+// status, and a missing row is created unverifiable (column defaults).
+func (q *Queries) TouchOriginalVariant(ctx context.Context, arg TouchOriginalVariantParams) error {
+	_, err := q.db.Exec(ctx, touchOriginalVariant, arg.ObjectHash, arg.SizeBytes, arg.ContentType)
+	return err
+}
+
 const tryLockImportHashExclusive = `-- name: TryLockImportHashExclusive :one
 SELECT pg_try_advisory_xact_lock(hashtextextended('storage-import:' || $1::TEXT, 0))::BOOLEAN AS value
 `
@@ -914,41 +1262,36 @@ func (q *Queries) UnlockImportHashSharedSession(ctx context.Context, objectHash 
 	return value, err
 }
 
-const upsertVariant = `-- name: UpsertVariant :exec
-INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type, metadata)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (object_hash, variant_key) DO UPDATE SET
-    size_bytes   = EXCLUDED.size_bytes,
-    content_type = EXCLUDED.content_type,
-    metadata     = EXCLUDED.metadata,
-    updated_at   = now()
+const unlockVariantRead = `-- name: UnlockVariantRead :one
+SELECT pg_advisory_unlock_shared(hashtextextended('storage-variant:' || $1::TEXT || '/' || $2::TEXT, 0))::BOOLEAN AS value
 `
 
-type UpsertVariantParams struct {
-	ObjectHash  string
-	VariantKey  string
-	SizeBytes   int64
-	ContentType string
-	Metadata    []byte
+type UnlockVariantReadParams struct {
+	ObjectHash string
+	VariantKey string
 }
 
-// One INSERT-or-update for the variant metadata. Variant bytes already
-// live in the backend by the time this runs.
-//
-// updated_at moves on EVERY write, including a re-render of bytes that
-// were already there (#760). created_at deliberately does not: the pair
-// is what lets an operator tell "rendered once, long ago" from
-// "re-rendered just now", which a force-rebuild is otherwise unable to
-// demonstrate — the bytes change on disk and the database says nothing.
-func (q *Queries) UpsertVariant(ctx context.Context, arg UpsertVariantParams) error {
-	_, err := q.db.Exec(ctx, upsertVariant,
-		arg.ObjectHash,
-		arg.VariantKey,
-		arg.SizeBytes,
-		arg.ContentType,
-		arg.Metadata,
-	)
-	return err
+func (q *Queries) UnlockVariantRead(ctx context.Context, arg UnlockVariantReadParams) (bool, error) {
+	row := q.db.QueryRow(ctx, unlockVariantRead, arg.ObjectHash, arg.VariantKey)
+	var value bool
+	err := row.Scan(&value)
+	return value, err
+}
+
+const unlockVariantWrite = `-- name: UnlockVariantWrite :one
+SELECT pg_advisory_unlock(hashtextextended('storage-variant:' || $1::TEXT || '/' || $2::TEXT, 0))::BOOLEAN AS value
+`
+
+type UnlockVariantWriteParams struct {
+	ObjectHash string
+	VariantKey string
+}
+
+func (q *Queries) UnlockVariantWrite(ctx context.Context, arg UnlockVariantWriteParams) (bool, error) {
+	row := q.db.QueryRow(ctx, unlockVariantWrite, arg.ObjectHash, arg.VariantKey)
+	var value bool
+	err := row.Scan(&value)
+	return value, err
 }
 
 const variantExists = `-- name: VariantExists :one

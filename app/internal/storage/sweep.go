@@ -5,12 +5,9 @@ package storage
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -60,6 +57,7 @@ type SweepHandler struct {
 	kind    jobs.JobType
 	pool    *pgxpool.Pool
 	q       *Queries
+	svc     *Service
 	backend Backend
 	jobsSvc *jobs.Service
 	logger  *slog.Logger
@@ -69,7 +67,7 @@ type SweepHandler struct {
 // that no storage_variants row references. This is the direction that
 // needs Backend.List, and it is where reclaimable waste hides.
 func NewOrphanScanHandler(pool *pgxpool.Pool, svc *Service, jobsSvc *jobs.Service, logger *slog.Logger) *SweepHandler {
-	return &SweepHandler{kind: JobOrphanScan, pool: pool, q: New(pool), backend: svc.Backend, jobsSvc: jobsSvc, logger: logger}
+	return &SweepHandler{kind: JobOrphanScan, pool: pool, q: New(pool), svc: svc, backend: svc.Backend, jobsSvc: jobsSvc, logger: logger}
 }
 
 // NewChecksumVerifyHandler scans DB->disk: for every storage_variants
@@ -78,7 +76,7 @@ func NewOrphanScanHandler(pool *pgxpool.Pool, svc *Service, jobsSvc *jobs.Servic
 // — the hash IS the expected checksum, so no separate checksum column
 // is needed.
 func NewChecksumVerifyHandler(pool *pgxpool.Pool, svc *Service, jobsSvc *jobs.Service, logger *slog.Logger) *SweepHandler {
-	return &SweepHandler{kind: JobChecksumVerify, pool: pool, q: New(pool), backend: svc.Backend, jobsSvc: jobsSvc, logger: logger}
+	return &SweepHandler{kind: JobChecksumVerify, pool: pool, q: New(pool), svc: svc, backend: svc.Backend, jobsSvc: jobsSvc, logger: logger}
 }
 
 // Type implements jobs.Handler.
@@ -195,7 +193,9 @@ func (h *SweepHandler) verifyChecksums(ctx context.Context, p sweepPayload) (swe
 	}
 	var found int64
 	for _, row := range rows {
-		f, detail, err := h.verifyOne(ctx, row.ObjectHash, row.VariantKey, row.SizeBytes)
+		// #1597: each variant against its OWN recorded digest and size,
+		// under its shared lock (Service.VerifyVariant).
+		f, detail, err := h.svc.VerifyVariant(ctx, row.ObjectHash, row.VariantKey)
 		if err != nil {
 			return sweepPayload{}, 0, 0, err
 		}
@@ -212,39 +212,6 @@ func (h *SweepHandler) verifyChecksums(ctx context.Context, p sweepPayload) (swe
 	}
 	last := rows[len(rows)-1]
 	return sweepPayload{RunID: p.RunID, Cursor: last.ObjectHash, CursorVariant: last.VariantKey}, int64(len(rows)), found, nil
-}
-
-// verifyOne returns the finding kind for a single variant, or "" when
-// it is healthy.
-func (h *SweepHandler) verifyOne(ctx context.Context, hash, variant string, wantSize int64) (finding, detail string, err error) {
-	rc, info, err := h.backend.Get(ctx, hash, variant)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return FindingMissingObject, "row references bytes that are not on " + h.backend.Name(), nil
-		}
-		return "", "", fmt.Errorf("get %s/%s: %w", hash[:8], variant, err)
-	}
-	defer rc.Close()
-
-	sum := sha256.New()
-	n, cerr := io.Copy(sum, rc)
-	if cerr != nil {
-		return "", "", fmt.Errorf("read %s/%s: %w", hash[:8], variant, cerr)
-	}
-	got := hex.EncodeToString(sum.Sum(nil))
-
-	// Only the ORIGINAL variant is addressed by its own content hash.
-	// Derivatives live under the parent object's hash, so re-hashing
-	// them proves nothing about object_hash — for those we can only
-	// check that the recorded length still matches.
-	if variant == VariantOriginal && got != hash {
-		return FindingChecksumMismatch, fmt.Sprintf("stored bytes hash to %s, expected %s", got[:16], hash[:16]), nil
-	}
-	if wantSize > 0 && n != wantSize {
-		return FindingSizeMismatch, fmt.Sprintf("on disk %d bytes, storage_variants says %d", n, wantSize), nil
-	}
-	_ = info
-	return "", "", nil
 }
 
 func (h *SweepHandler) record(ctx context.Context, runID uuid.UUID, finding, hash, variant, detail string) error {

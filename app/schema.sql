@@ -3482,6 +3482,26 @@ CREATE TABLE public.storage_variants (
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    content_sha256 text,
+    content_size_bytes bigint,
+    digest_source text,
+    generation bigint DEFAULT 0 NOT NULL,
+    fixity_status text DEFAULT 'unverifiable'::text NOT NULL,
+    fixity_checked_at timestamp with time zone,
+    CONSTRAINT storage_variants_content_sha256_check CHECK (((content_sha256 IS NULL) OR (content_sha256 ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT storage_variants_content_size_bytes_check CHECK (((content_size_bytes IS NULL) OR (content_size_bytes >= 0))),
+    CONSTRAINT storage_variants_digest_complete_check CHECK ((((content_sha256 IS NULL) = (content_size_bytes IS NULL)) AND ((content_sha256 IS NULL) = (digest_source IS NULL)))),
+    CONSTRAINT storage_variants_digest_size_check CHECK (((content_sha256 IS NULL) OR (content_size_bytes = size_bytes))),
+    CONSTRAINT storage_variants_digest_source_check CHECK (((digest_source IS NULL) OR (digest_source = ANY (ARRAY['write'::text, 'recheck'::text])))),
+    CONSTRAINT storage_variants_fixity_digest_check CHECK (
+CASE fixity_status
+    WHEN 'verified'::text THEN (content_sha256 IS NOT NULL)
+    WHEN 'mismatch'::text THEN (content_sha256 IS NOT NULL)
+    WHEN 'unverifiable'::text THEN (content_sha256 IS NULL)
+    ELSE true
+END),
+    CONSTRAINT storage_variants_fixity_status_check CHECK ((fixity_status = ANY (ARRAY['verified'::text, 'unverifiable'::text, 'mismatch'::text, 'missing'::text]))),
+    CONSTRAINT storage_variants_generation_check CHECK ((generation >= 0)),
     CONSTRAINT storage_variants_size_bytes_check CHECK ((size_bytes >= 0))
 );
 
