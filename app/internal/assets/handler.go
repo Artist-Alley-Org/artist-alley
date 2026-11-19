@@ -563,6 +563,23 @@ func (h *Handler) CreateAsset(
 		// path would have. Classified via SQLSTATE 23505 (same
 		// pattern as userkeys.backfill #155).
 		if isPgUniqueViolation(err) && fileHashPtr != nil {
+			// End the failed transaction BEFORE taking another
+			// connection: the re-fetch and dedupResponse each acquire
+			// from h.Pool, and a loser that still holds its own
+			// connection while it waits for a second one deadlocks a
+			// small pool. With the default MaxConns (4 on a 4-CPU
+			// host) four losers of one race held every connection
+			// while the winner waited for one for its AddPin (CI run
+			// 44425649344). The transaction is aborted by the 23505
+			// and has nothing to keep. pgxpool releases the
+			// connection even when the rollback itself fails (it
+			// closes it first), so a failure here is logged, not
+			// returned, and the deferred Rollback is a no-op.
+			if rbErr := tx.Rollback(ctx); rbErr != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.race_loser.rollback_error",
+					slog.String("err", rbErr.Error()),
+				)
+			}
 			existing, fetchErr := New(h.Pool).GetAssetByOwnerHash(ctx, GetAssetByOwnerHashParams{
 				OwnerUserRef: &id.UserRef,
 				FileHash:     fileHashPtr,
