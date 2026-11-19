@@ -75,6 +75,15 @@ var reservedVariantKeys = map[string]bool{
 	"iso":                   true,
 }
 
+// IsAccessCandidateKey reports whether a variant key has the shape the
+// policy can ever choose: a plain ladder token that no other writer
+// reserves. The version-reconcile trigger for variant writes uses it to
+// ignore keys that can never change a version (HLS segments, frames,
+// sprites, covers).
+func IsAccessCandidateKey(key string) bool {
+	return ladderKey.MatchString(key) && !reservedVariantKeys[key]
+}
+
 // accessDisplayKinds are the kinds whose viewer shows a derived still in
 // place of the original, so their largest rung is an access derivative.
 var accessDisplayKinds = map[viewkind.Kind]bool{
@@ -113,7 +122,7 @@ func SelectAccessVariants(kind viewkind.Kind, ladder sysconfig.PreviewConfig, av
 	seen := map[string]bool{}
 	for _, v := range ladder.Variants {
 		if v.Fit != sysconfig.PreviewFitContain || v.MaxDim <= 0 || !have[v.Key] || seen[v.Key] ||
-			!ladderKey.MatchString(v.Key) || reservedVariantKeys[v.Key] {
+			!IsAccessCandidateKey(v.Key) {
 			continue
 		}
 		seen[v.Key] = true

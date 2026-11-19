@@ -20,7 +20,7 @@
 //     refused; the chain has no gaps or forks and never goes backwards;
 //   - a version's defining columns never change; its file set is written
 //     only by asset_version_seal() in the transaction that claimed it,
-//     holds only the original until verified access copies exist, and
+//     accepts an access copy only with provenance and a hold (00085), and
 //     never changes after; two concurrent seals cannot both win.
 
 package assets_test
@@ -673,11 +673,12 @@ func TestAssetVersions_SealIsControlledAndFinal(t *testing.T) {
 		t.Fatalf("commit of an unfinished claim: %v", err)
 	}
 
-	// No access copy can be sealed before verified promotion exists: not
-	// through the seal procedure (even an existing, correctly sized
-	// object), and not by claiming the version by hand and writing the row.
+	// An object that was never this original's variant (migration 00085:
+	// no provenance) is never sealed as its access copy: not through the
+	// seal procedure (even an existing, verified, correctly sized object),
+	// and not by claiming the version by hand and writing the row.
 	if _, err := f.pool.Exec(f.ctx, `SELECT asset_version_seal($1, $2::jsonb)`, v1.ID, accessEntry); err == nil ||
-		!strings.Contains(err.Error(), "access copies cannot be sealed until verified promotion exists") {
+		!strings.Contains(err.Error(), "has no recorded provenance") {
 		t.Fatalf("a seal with an access entry: %v, want the refusal", err)
 	}
 	tx, err = f.pool.Begin(f.ctx)
@@ -690,7 +691,7 @@ func TestAssetVersions_SealIsControlledAndFinal(t *testing.T) {
 	}
 	_, err = tx.Exec(f.ctx, `INSERT INTO asset_version_files (version_id, role, object_hash, size_bytes, media_type, derived_from_hash, derived_variant_key)
 		VALUES ($1, 'access', $2, $3, 'image/webp', $4, 'hires')`, v1.ID, access, accessSize, h)
-	if err == nil || !strings.Contains(err.Error(), "only the original is accepted until verified access copies exist") {
+	if err == nil || !strings.Contains(err.Error(), "has no recorded provenance") {
 		t.Fatalf("an access row under a hand-made claim: %v, want the refusal", err)
 	}
 	_ = tx.Rollback(f.ctx)

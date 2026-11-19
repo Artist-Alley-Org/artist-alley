@@ -171,3 +171,67 @@ func verify(t *testing.T, sqlDB *sql.DB, stage string, versioned []uuidHash, unv
 		}
 	}
 }
+
+// #1596 (slice 2): migration 00085 reopens access sealing (with the
+// provenance history it checks against), adds the reconcile request
+// function, the terminal and variant-record triggers, and caps the job type;
+// Down puts 00084's original-only seal back, and Up again re-applies it.
+func TestMigration00085_AssetVersionReconcile_UpDownUp(t *testing.T) {
+	cfg := freshDatabase(t)
+	sqlDB := openCfg(t, cfg)
+	ctx := t.Context()
+	p := afvhProvider(t, sqlDB)
+	def := func(fn string) string {
+		t.Helper()
+		var s string
+		if err := sqlDB.QueryRowContext(ctx, `SELECT coalesce(string_agg(pg_get_functiondef(oid), ''), '') FROM pg_proc WHERE proname = $1`, fn).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	count := func(q string) int {
+		t.Helper()
+		var n int
+		if err := sqlDB.QueryRowContext(ctx, q).Scan(&n); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		return n
+	}
+	up := func(stage string) {
+		t.Helper()
+		if !strings.Contains(def("asset_version_files_write_check"), "asset_version_copy_check") ||
+			!strings.Contains(def("asset_version_seal"), "the original''s stored bytes are not verified") ||
+			!strings.Contains(def("assets_version_one"), "asset_version_reconcile_enqueue") ||
+			def("asset_version_reconcile_enqueue") == "" ||
+			!strings.Contains(def("asset_version_copy_check"), "storage_variant_digest_history") ||
+			def("asset_access_candidate_key") == "" || def("storage_variants_recorded") == "" ||
+			count(`SELECT count(*) FROM information_schema.tables WHERE table_name = 'storage_variant_digest_history'`) != 1 ||
+			count(`SELECT count(*) FROM pg_trigger WHERE tgname IN ('storage_variants_recorded_trg', 'storage_variant_digest_history_guard_trg')`) != 2 ||
+			count(`SELECT count(*) FROM pg_trigger WHERE tgname = 'assets_version_terminal_trg'`) != 1 ||
+			count(`SELECT count(*) FROM system_config WHERE key = 'jobs.type_concurrency.asset.version_reconcile' AND value::text LIKE '%2%'`) != 1 {
+			t.Fatalf("%s: 00085 is not fully applied", stage)
+		}
+	}
+	if _, err := p.UpTo(ctx, 85); err != nil {
+		t.Fatalf("up to 85: %v", err)
+	}
+	up("after Up")
+	if _, err := p.DownTo(ctx, 84); err != nil {
+		t.Fatalf("down to 84: %v", err)
+	}
+	if !strings.Contains(def("asset_version_seal"), "access copies cannot be sealed until verified promotion exists") ||
+		strings.Contains(def("asset_version_files_write_check"), "asset_version_copy_check") ||
+		strings.Contains(def("assets_version_one"), "asset_version_reconcile_enqueue") ||
+		def("asset_version_copy_check") != "" || def("asset_version_reconcile_enqueue") != "" || def("assets_version_terminal") != "" ||
+		def("asset_access_candidate_key") != "" || def("storage_variants_recorded") != "" || def("storage_variant_digest_history_guard") != "" ||
+		count(`SELECT count(*) FROM information_schema.tables WHERE table_name = 'storage_variant_digest_history'`) != 0 ||
+		count(`SELECT count(*) FROM pg_trigger WHERE tgname = 'storage_variants_recorded_trg'`) != 0 ||
+		count(`SELECT count(*) FROM pg_trigger WHERE tgname = 'assets_version_terminal_trg'`) != 0 ||
+		count(`SELECT count(*) FROM system_config WHERE key = 'jobs.type_concurrency.asset.version_reconcile'`) != 0 {
+		t.Fatal("after Down: 00084's original-only seal is not restored, or 00085 objects remain")
+	}
+	if _, err := p.UpTo(ctx, 85); err != nil {
+		t.Fatalf("up again: %v", err)
+	}
+	up("after Up again")
+}
