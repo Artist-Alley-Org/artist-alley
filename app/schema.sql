@@ -596,6 +596,24 @@ $$;
 
 
 --
+-- Name: assets_original_basename_write_once(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assets_original_basename_write_once() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.original_basename IS DISTINCT FROM OLD.original_basename
+       OR NEW.original_basename_source IS DISTINCT FROM OLD.original_basename_source THEN
+        RAISE EXCEPTION 'assets.original_basename and original_basename_source are write-once (#1595)'
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: collections_search_text_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1594,7 +1612,12 @@ CREATE TABLE public.assets (
     deleted_by_user_ref bigint,
     mature boolean DEFAULT false NOT NULL,
     ai_provenance text,
+    original_basename text,
+    original_basename_source text DEFAULT 'unknown'::text NOT NULL,
     CONSTRAINT assets_ai_provenance_check CHECK (((ai_provenance IS NULL) OR (ai_provenance = ANY (ARRAY['none'::text, 'assisted'::text, 'generated'::text])))),
+    CONSTRAINT assets_original_basename_known_check CHECK (((original_basename IS NULL) = (original_basename_source = 'unknown'::text))),
+    CONSTRAINT assets_original_basename_safe_check CHECK (((original_basename IS NULL) OR ((octet_length(original_basename) >= 1) AND (octet_length(original_basename) <= 255) AND (original_basename <> ALL (ARRAY['.'::text, '..'::text])) AND (strpos(original_basename, '/'::text) = 0) AND (strpos(original_basename, '\'::text) = 0) AND (original_basename !~ '[\x01-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]'::text)))),
+    CONSTRAINT assets_original_basename_source_check CHECK ((original_basename_source = ANY (ARRAY['upload_request'::text, 'client_reported'::text, 'unknown'::text]))),
     CONSTRAINT assets_processing_status_check CHECK ((processing_status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT assets_sensitivity_check CHECK ((sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text]))),
     CONSTRAINT assets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])))
@@ -1620,6 +1643,20 @@ COMMENT ON COLUMN public.assets.page_count IS 'For paginated assets (PDF today; 
 --
 
 COMMENT ON COLUMN public.assets.ai_provenance IS 'The MAKER''S DECLARATION about generative-AI involvement in this work (#1167, ADR 0094). Three declared values — `none` (the maker declares no generative AI was involved), `assisted` (AI used in part: upscaling, inpainting, an AI-generated texture on hand-made geometry), `generated` (substantially AI-generated) — plus NULL, which means UNDECLARED: nobody was asked. ⚠️ NULL IS NOT `none`. The column is nullable and unbackfilled precisely so the rows predating the feature do not assert a disclaimer their makers never made; a reader that renders NULL as "no AI" is lying on the artist''s behalf. ⚠️ A DECLARATION IS NOT A PERMISSION (ADR 0094 §4): this is orthogonal to `sensitivity` and to `mature`; it is a FILTER a viewer may apply to their own feed and never a GATE that withholds the work from others, and nothing derived from the asset — search text, facets, suggest, thumbhash, embeddings, counts, covers — is withheld on account of it. That property is what keeps this column cheap and it holds only while nothing gates on it. Extraction may one day CORROBORATE `generated`/`assisted` from `Iptc4xmpExt:DigitalSourceType` on an UNDECLARED work, and may NEVER establish `none`: the IPTC vocabulary has no term meaning "no AI", so absence of an AI term is not evidence of absence (ADR 0094 §3). Does not federate yet — the v1 envelope rejects unknown top-level fields; the wire mapping is pre-decided in ADR 0094 §6.';
+
+
+--
+-- Name: COLUMN assets.original_basename; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.assets.original_basename IS 'The base name the upload request carried (#1595): untrusted, never a path, never an attestation of a name on a user''s disk. Write-once. NULL exactly when original_basename_source is unknown.';
+
+
+--
+-- Name: COLUMN assets.original_basename_source; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.assets.original_basename_source IS 'Where original_basename came from (#1595): upload_request (the upload request itself, via its receipt), client_reported (backfilled from editable metadata.original_filename), unknown. Write-once.';
 
 
 --
@@ -3539,6 +3576,48 @@ CREATE TABLE public.teams (
 --
 
 COMMENT ON COLUMN public.teams.hero_asset_id IS 'The team''s chosen hero picture (#982): a pointer at an ordinary asset, NULL means fall back to the derived initials tile. Admissible only if the asset is sensitivity=''public'' AND its team_id is this team — validated at SELECTION by the write endpoint and RE-CHECKED AT RENDER, because an asset that qualifies today can be set to ''restricted'' tomorrow and must then drop out of the rail rather than linger. This narrows ADR 0088: a team hero is NOT gated per viewer, because a navigation strip that shows some teams'' pictures and not others depending on who is looking is noise rather than security. ON DELETE SET NULL so a hard-deleted asset reverts the team to its initials rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083''s exclusion criterion, applied by analogy).';
+
+
+--
+-- Name: upload_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upload_receipts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_ref bigint NOT NULL,
+    file_hash text NOT NULL,
+    original_basename text,
+    original_basename_source text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT upload_receipts_pkey PRIMARY KEY (id),
+    CONSTRAINT upload_receipts_file_hash_fkey FOREIGN KEY (file_hash) REFERENCES public.storage_objects(hash) ON DELETE CASCADE,
+    CONSTRAINT upload_receipts_basename_safe_check CHECK (((original_basename IS NULL) OR ((octet_length(original_basename) >= 1) AND (octet_length(original_basename) <= 255) AND (original_basename <> ALL (ARRAY['.'::text, '..'::text])) AND (strpos(original_basename, '/'::text) = 0) AND (strpos(original_basename, '\'::text) = 0) AND (original_basename !~ '[\x01-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]'::text)))),
+    CONSTRAINT upload_receipts_expiry_check CHECK ((expires_at > created_at)),
+    CONSTRAINT upload_receipts_known_check CHECK (((original_basename IS NULL) = (original_basename_source = 'unknown'::text))),
+    CONSTRAINT upload_receipts_source_check CHECK ((original_basename_source = ANY (ARRAY['upload_request'::text, 'unknown'::text])))
+);
+
+
+--
+-- Name: TABLE upload_receipts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.upload_receipts IS 'One per successful POST /storage/objects (#1595): the uploading user, the exact hash and the base name that request carried. Consumed once by POST /assets inside its transaction (user and hash must match); expired rows are swept in bounded batches by later uploads. Never on storage_objects or storage_pins, which are shared by every upload of the same bytes.';
+
+
+--
+-- Name: upload_receipts_expires_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upload_receipts_expires_at_idx ON public.upload_receipts USING btree (expires_at);
+
+
+--
+-- Name: upload_receipts_file_hash_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upload_receipts_file_hash_idx ON public.upload_receipts USING btree (file_hash);
 
 
 --
@@ -6536,6 +6615,13 @@ CREATE TRIGGER assets_ai_provenance_sync_trg AFTER UPDATE ON public.assets FOR E
 --
 
 CREATE TRIGGER assets_mature_sync_trg AFTER UPDATE ON public.assets FOR EACH ROW EXECUTE FUNCTION public.assets_mature_sync();
+
+
+--
+-- Name: assets assets_original_basename_write_once_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER assets_original_basename_write_once_trg BEFORE UPDATE ON public.assets FOR EACH ROW EXECUTE FUNCTION public.assets_original_basename_write_once();
 
 
 --

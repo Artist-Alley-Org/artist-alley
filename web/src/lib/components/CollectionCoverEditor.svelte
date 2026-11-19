@@ -428,7 +428,7 @@
     pick.uploading = true;
     pick.uploadError = null;
     try {
-      const { hash } = await putStorageObject(file, {
+      const { hash, upload_receipt } = await putStorageObject(file, {
         networkMessage: t('upload.err_network'),
         abortMessage: t('upload.err_aborted'),
       });
@@ -438,6 +438,9 @@
           asset_type: DEFAULT_ASSET_TYPE,
           status: collectionVisibility === 'public' ? 'active' : 'draft',
           file_hash: hash,
+          // #1595 — carries the cover file's name to the asset as its
+          // write-once original base name, same as the upload queue.
+          ...(upload_receipt ? { upload_receipt } : {}),
           file_extension: file.name.includes('.') ? file.name.split('.').pop() : undefined,
           mature: false,
         },

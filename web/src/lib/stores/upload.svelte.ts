@@ -26,7 +26,7 @@ import { api } from '$api/client';
 import { t } from '$stores/lang.svelte';
 import type { components } from '$api/schema';
 import type { FieldDefault } from '$lib/fieldDefaults';
-import { putStorageObject } from '$lib/util/storageUpload';
+import { putStorageObject, type StorageUploadResult } from '$lib/util/storageUpload';
 // #1243 — the declaration's type moved to the module that owns its
 // DISPLAY rule, so the write side and the read side cannot disagree
 // about what the four states are.
@@ -1180,6 +1180,10 @@ class UploadState {
         asset_type: DEFAULT_ASSET_TYPE,
         status: 'draft',
         file_hash: row.hash,
+        // #1595 — this upload's receipt: it gives the asset the name the
+        // upload request carried as write-once provenance. The
+        // metadata.original_filename below stays an editable claim.
+        ...(result.upload_receipt ? { upload_receipt: result.upload_receipt } : {}),
         file_extension: extensionOf(row.file.name),
         tags: row.tags,
         // #1116 — the self-label. Always sent, including as `false`:
@@ -1594,7 +1598,7 @@ class UploadState {
    * second caller — see that module for why the bytes are shared and
    * the AssetCreate body deliberately is not.
    */
-  private uploadBytes(row: UploadRow): Promise<{ hash: string; deduped?: boolean }> {
+  private uploadBytes(row: UploadRow): Promise<StorageUploadResult> {
     return putStorageObject(row.file, {
       onProgress: (f) => {
         row.progress = f;

@@ -101,6 +101,10 @@ type Asset struct {
 	Mature           bool    `json:"mature"`
 	// The MAKER'S DECLARATION about generative-AI involvement in this work (#1167, ADR 0094). Three declared values — `none` (the maker declares no generative AI was involved), `assisted` (AI used in part: upscaling, inpainting, an AI-generated texture on hand-made geometry), `generated` (substantially AI-generated) — plus NULL, which means UNDECLARED: nobody was asked. ⚠️ NULL IS NOT `none`. The column is nullable and unbackfilled precisely so the rows predating the feature do not assert a disclaimer their makers never made; a reader that renders NULL as "no AI" is lying on the artist's behalf. ⚠️ A DECLARATION IS NOT A PERMISSION (ADR 0094 §4): this is orthogonal to `sensitivity` and to `mature`; it is a FILTER a viewer may apply to their own feed and never a GATE that withholds the work from others, and nothing derived from the asset — search text, facets, suggest, thumbhash, embeddings, counts, covers — is withheld on account of it. That property is what keeps this column cheap and it holds only while nothing gates on it. Extraction may one day CORROBORATE `generated`/`assisted` from `Iptc4xmpExt:DigitalSourceType` on an UNDECLARED work, and may NEVER establish `none`: the IPTC vocabulary has no term meaning "no AI", so absence of an AI term is not evidence of absence (ADR 0094 §3). Does not federate yet — the v1 envelope rejects unknown top-level fields; the wire mapping is pre-decided in ADR 0094 §6.
 	AiProvenance *string `json:"ai_provenance"`
+	// The base name the upload request carried (#1595): untrusted, never a path, never an attestation of a name on a user's disk. Write-once. NULL exactly when original_basename_source is unknown.
+	OriginalBasename *string `json:"original_basename"`
+	// Where original_basename came from (#1595): upload_request (the upload request itself, via its receipt), client_reported (backfilled from editable metadata.original_filename), unknown. Write-once.
+	OriginalBasenameSource string `json:"original_basename_source"`
 }
 
 type AssetAlternate struct {
@@ -1211,6 +1215,17 @@ type TeamMembership struct {
 type TeamParent struct {
 	ChildID  pgtype.UUID `json:"child_id"`
 	ParentID pgtype.UUID `json:"parent_id"`
+}
+
+// One per successful POST /storage/objects (#1595): the uploading user, the exact hash and the base name that request carried. Consumed once by POST /assets inside its transaction (user and hash must match); expired rows are swept in bounded batches by later uploads. Never on storage_objects or storage_pins, which are shared by every upload of the same bytes.
+type UploadReceipt struct {
+	ID                     pgtype.UUID        `json:"id"`
+	UserRef                int64              `json:"user_ref"`
+	FileHash               string             `json:"file_hash"`
+	OriginalBasename       *string            `json:"original_basename"`
+	OriginalBasenameSource string             `json:"original_basename_source"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt              pgtype.Timestamptz `json:"expires_at"`
 }
 
 type User struct {

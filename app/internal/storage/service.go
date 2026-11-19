@@ -274,6 +274,54 @@ func (s *Service) RemovePin(ctx context.Context, pin PinRef, hash string) error 
 	return nil
 }
 
+// UploadReceiptTTL is how long an upload receipt (#1595) stays usable by
+// POST /assets. Both browser callers create the asset straight after
+// the bytes land; a day covers a slow queue and a paused tab.
+const UploadReceiptTTL = 24 * time.Hour
+
+// uploadReceiptSweepBatch bounds the expired receipts one upload deletes.
+// Each upload adds one receipt and removes up to this many expired ones,
+// so expired rows cannot pile up faster than they are swept.
+const uploadReceiptSweepBatch = 100
+
+// IssueUploadReceipt records one upload's receipt (#1595): an opaque id
+// bound to the uploading user, the exact hash and the base name the
+// request carried (nil means the request carried none, source unknown).
+// basename must already be a safe base name (provenance.FromUploadHeader).
+//
+// The receipt is per UPLOAD, not per object: storage_objects and
+// storage_pins are shared by every upload of the same bytes, so two
+// uploads of one file under two names get two receipts with their own
+// names, and neither touches the other.
+//
+// Expired receipts are swept here, best effort: a failed sweep is logged
+// and the upload still gets its receipt.
+func (s *Service) IssueUploadReceipt(ctx context.Context, userRef int64, hash string, basename *string) (pgtype.UUID, error) {
+	q := New(s.Pool)
+	if n, err := q.SweepExpiredUploadReceipts(ctx, uploadReceiptSweepBatch); err != nil {
+		if s.Logger != nil {
+			s.Logger.LogAttrs(ctx, slog.LevelWarn, "storage.upload_receipt.sweep_failed", slog.String("err", err.Error()))
+		}
+	} else if n > 0 && s.Logger != nil {
+		s.Logger.LogAttrs(ctx, slog.LevelDebug, "storage.upload_receipt.swept", slog.Int64("rows", n))
+	}
+	source := "unknown"
+	if basename != nil {
+		source = "upload_request"
+	}
+	id, err := q.InsertUploadReceipt(ctx, InsertUploadReceiptParams{
+		UserRef:                userRef,
+		FileHash:               hash,
+		OriginalBasename:       basename,
+		OriginalBasenameSource: source,
+		Ttl:                    pgIntervalFromDuration(UploadReceiptTTL),
+	})
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("storage: issue upload receipt: %w", err)
+	}
+	return id, nil
+}
+
 // isNoRows reports whether err is pgx's "no rows in result set". The
 // import path differs by pgx version; we use a string match so we
 // don't pin any particular import here.

@@ -11,8 +11,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/provenance"
 )
 
 // PinSubjectTypeUser is the canonical pin subject for "this upload
@@ -56,6 +59,21 @@ func (h *Handler) UploadStorageObject(
 		}, nil
 	}
 
+	// #1595: the file name this request carried, reduced to a safe base
+	// name BEFORE any byte is read, so a malformed claim stores nothing.
+	// Absent means unknown. The supplied value is never logged or echoed:
+	// it may be a path.
+	var basename *string
+	if req.Params.XOriginalFilename != nil {
+		name, err := provenance.FromUploadHeader(*req.Params.XOriginalFilename)
+		if err != nil {
+			return openapi.UploadStorageObject400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "X-Original-Filename is not a safe file name"},
+			}, nil
+		}
+		basename = &name
+	}
+
 	contentType := "application/octet-stream"
 	if req.Params.XContentType != nil && *req.Params.XContentType != "" {
 		contentType = *req.Params.XContentType
@@ -77,13 +95,35 @@ func (h *Handler) UploadStorageObject(
 		}, nil
 	}
 
+	// The receipt is this upload's own (#1595): the stored object and its
+	// pins are shared by every upload of these bytes, the name is not.
+	receipt, err := h.Service.IssueUploadReceipt(ctx, id.UserRef, result.Hash, basename)
+	if err != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelError, "storage.upload.receipt_error",
+			slog.Int64("user_ref", id.UserRef),
+			slog.String("err", err.Error()),
+		)
+		return openapi.UploadStorageObject500JSONResponse{
+			InternalErrorJSONResponse: openapi.InternalErrorJSONResponse{Error: "could not store upload"},
+		}, nil
+	}
+	// Conversions, not the generated constants: oapi-codegen names those
+	// constants by collision, so they can be renamed by an unrelated enum.
+	source := openapi.UploadResultOriginalBasenameSource(provenance.SourceUnknown)
+	if basename != nil {
+		source = openapi.UploadResultOriginalBasenameSource(provenance.SourceUploadRequest)
+	}
+
 	return openapi.UploadStorageObject201JSONResponse(openapi.UploadResult{
-		Hash:           result.Hash,
-		Size:           result.Size,
-		ContentType:    result.ContentType,
-		Deduped:        result.Deduped,
-		PinSubjectType: result.Pin.SubjectType,
-		PinSubjectId:   result.Pin.SubjectID,
+		Hash:                   result.Hash,
+		Size:                   result.Size,
+		ContentType:            result.ContentType,
+		Deduped:                result.Deduped,
+		PinSubjectType:         result.Pin.SubjectType,
+		PinSubjectId:           result.Pin.SubjectID,
+		UploadReceipt:          uuid.UUID(receipt.Bytes).String(),
+		OriginalBasename:       basename,
+		OriginalBasenameSource: source,
 	}), nil
 }
 

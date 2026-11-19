@@ -1123,6 +1123,17 @@ test.describe('#1207 the collection cover editor', () => {
     expect(uploaded, 'the uploaded picture did not become the featured cover').toBeTruthy();
     // Registered so afterAll cleans it up like every other fixture.
     if (uploaded) provisioned.push(uploaded);
+    // #1595: the cover editor is the second caller of the shared upload
+    // helper, and it too must pass the upload's receipt, so the new asset
+    // records the file's own name as write-once provenance.
+    const coverAsset = (await (await page.request.get(`/api/v1/assets/${uploaded}`)).json()) as {
+      original_basename?: string | null;
+      original_basename_source?: string;
+    };
+    expect(coverAsset.original_basename, 'the cover upload lost its file name').toBe(
+      `cover-1207-${STAMP}.png`,
+    );
+    expect(coverAsset.original_basename_source).toBe('upload_request');
     expect(uploaded, 'the uploaded picture is one of the members — it should be new').not.toBe(
       memberIds[0],
     );

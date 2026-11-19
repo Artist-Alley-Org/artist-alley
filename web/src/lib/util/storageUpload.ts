@@ -12,6 +12,15 @@
  *  missing. It is XHR rather than `fetch` for the reason it always was:
  *  `fetch` still exposes no upload-progress events.
  *
+ *  #1595: it also sends `file.name` as `X-Original-Filename` and hands
+ *  back the server's `upload_receipt`. The receipt is what carries that
+ *  name to `POST /assets` as the asset's write-once original base name;
+ *  both callers must pass it on, and `metadata.original_filename` is no
+ *  substitute (any client can send it and anyone with edit rights can
+ *  change it). The name is percent-encoded because XHR refuses header
+ *  values outside ISO-8859-1, and a Japanese or accented file name is
+ *  not.
+ *
  *  It does NOT create an asset. The two steps are separate because the
  *  callers legitimately differ on the second one: the upload queue
  *  builds an AssetCreate carrying tags, a mature label, pending field
@@ -22,6 +31,19 @@
 export interface StorageUploadResult {
   hash: string;
   deduped?: boolean;
+  /** Opaque, single use: pass it as `AssetCreate.upload_receipt`. Absent
+   *  only from a server that predates #1595. */
+  upload_receipt?: string;
+  /** What the server recorded from `X-Original-Filename`, or null. */
+  original_basename?: string | null;
+  original_basename_source?: 'upload_request' | 'unknown';
+}
+
+/** The `X-Original-Filename` value for a file name: UTF-8,
+ *  percent-encoded, so any name survives a header. The server strips any
+ *  path and checks the rest; an empty name is not sent at all. */
+export function originalFilenameHeader(name: string): string | null {
+  return name ? encodeURIComponent(name) : null;
 }
 
 export interface StorageUploadOptions {
@@ -44,6 +66,8 @@ export function putStorageObject(
     xhr.open('POST', '/api/v1/storage/objects', true);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.setRequestHeader('X-Content-Type', file.type || 'application/octet-stream');
+    const originalName = originalFilenameHeader(file.name);
+    if (originalName) xhr.setRequestHeader('X-Original-Filename', originalName);
     xhr.responseType = 'json';
     xhr.withCredentials = true;
 

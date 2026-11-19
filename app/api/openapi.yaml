@@ -3780,6 +3780,14 @@ paths:
         The pin subject for this endpoint is always `user:<caller-ref>`.
         Asset entity creation (`POST /assets`) issues `asset:<uuid>`
         pins and removes the `user:` pin once the entity owns the bytes.
+
+        Every successful upload also returns an `upload_receipt` (#1595):
+        an opaque, single-use token bound to the caller, this exact hash
+        and the file name this request carried in
+        `X-Original-Filename`. Pass it to `POST /assets` to record that
+        name on the asset as its write-once original base name. Two
+        uploads of the same bytes get two receipts, each with its own
+        name. A receipt expires if no asset uses it.
       tags: [storage]
       security:
         - cookieAuth: []
@@ -3802,6 +3810,26 @@ paths:
             set the right Content-Type header.
           schema:
             type: string
+        - name: X-Original-Filename
+          in: header
+          required: false
+          description: |
+            The uploaded file's name (#1595), percent-encoded as UTF-8
+            (`encodeURIComponent`); a plain ASCII name needs no encoding,
+            and a literal `%` is sent as `%25`. The server keeps only its
+            base name: path components of either slash style are
+            stripped. It is the name as RECEIVED in this request,
+            untrusted, never an attestation of a name on the uploader's
+            disk, and never a path.
+
+            Omit it when the name is not known; the receipt then records
+            `unknown`. A supplied value that is not a safe base name
+            (malformed encoding, invalid UTF-8, a control character or
+            bidi formatting mark anywhere, nothing left after stripping
+            the path, `.`, `..`, or more than 255 bytes) answers 400
+            before any bytes are stored.
+          schema:
+            type: string
       responses:
         "201":
           description: Upload accepted
@@ -3809,6 +3837,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UploadResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -17647,6 +17677,28 @@ components:
         file_hash: { type: string, nullable: true, description: sha256 of the linked storage object }
         file_extension: { type: string, nullable: true }
         file_size_bytes: { type: integer, format: int64, nullable: true }
+        original_basename:
+          type: string
+          nullable: true
+          description: |
+            The original file's base name as recorded at ingest (#1595).
+            Write-once: no edit changes it, unlike
+            `metadata.original_filename`, which stays an editable claim.
+            Untrusted and never a path. How far to rely on it is said by
+            `original_basename_source`; null exactly when that is
+            `unknown`. Present on the detail, create, edit and
+            duplicate-warning responses; list projections omit both
+            fields.
+        original_basename_source:
+          type: string
+          enum: [upload_request, client_reported, unknown]
+          description: |
+            Where `original_basename` came from (#1595):
+            `upload_request` (the upload request itself carried it, via
+            its receipt), `client_reported` (backfilled from the
+            editable `metadata.original_filename` of an asset made
+            before this field existed), or `unknown`. Neither is ever an
+            attestation of a file name on anyone's disk.
         tags:
           type: array
           items: { type: string }
@@ -18629,6 +18681,23 @@ components:
             the storage layer is re-pinned under `asset:<new-id>` and
             the caller's `user:` pin (from the prior upload) is
             dropped.
+        upload_receipt:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: |
+            The opaque `upload_receipt` from `POST /storage/objects`
+            (#1595). It gives the asset that upload's original base name
+            as write-once provenance (`original_basename`,
+            `original_basename_source: upload_request`). It is used up
+            by the create, must have been issued to the caller, must be
+            for exactly `file_hash`, and must not have expired; anything
+            else answers 400 `upload_receipt is not valid for this
+            upload`. Omit it and the asset's base name is `unknown`:
+            `metadata.original_filename` is never taken as provenance.
+            When the per-user duplicate check answers with an existing
+            asset, the receipt is left unused and that asset keeps the
+            provenance it already has.
         file_extension: { type: string, nullable: true }
         tags:
           type: array
@@ -23470,7 +23539,7 @@ components:
 
     UploadResult:
       type: object
-      required: [hash, size, content_type, deduped, pin_subject_type, pin_subject_id]
+      required: [hash, size, content_type, deduped, pin_subject_type, pin_subject_id, upload_receipt, original_basename_source]
       properties:
         hash:
           type: string
@@ -23495,6 +23564,27 @@ components:
         pin_subject_id:
           type: string
           example: "9"
+        upload_receipt:
+          type: string
+          description: |
+            Opaque single-use token for this upload (#1595). Pass it as
+            `AssetCreate.upload_receipt` to give the new asset this
+            upload's original base name. Bound to the caller and this
+            exact hash; it expires if unused. Its format is not part of
+            the contract.
+        original_basename:
+          type: string
+          nullable: true
+          description: |
+            The base name recorded from `X-Original-Filename`, or null
+            when none was sent. Untrusted: the name as received, never a
+            path.
+        original_basename_source:
+          type: string
+          enum: [upload_request, unknown]
+          description: |
+            `upload_request` when this request carried a file name,
+            `unknown` when it did not.
     CreateApiTokenRequest:
       type: object
       required: [name]
