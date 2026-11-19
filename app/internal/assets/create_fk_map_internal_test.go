@@ -95,6 +95,10 @@ func TestCreateAssetFKMap_CoversEveryForeignKeyOnAssets(t *testing.T) {
 	// with the decision written next to it.
 	excluded := map[string]string{
 		"assets_team_id_fkey": "answers 404 'team not found' so POST /assets is not a team-existence probe (#953)",
+		// #1596: never a client value. Only the version machinery sets it;
+		// an INSERT that names one is refused by assets_version_assign
+		// before any foreign key is checked.
+		"assets_current_version_fkey": "set only by the version machinery; a client cannot send it (#1596)",
 	}
 
 	for _, name := range declared {

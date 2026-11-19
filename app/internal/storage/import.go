@@ -259,14 +259,9 @@ func commitImportOn(ctx context.Context, db txBeginner, backend string, req Impo
 		if verr != nil {
 			return verr
 		}
-		if err := tq.AddPin(ctx, AddPinParams{
-			ObjectHash:     req.Hash,
-			PinSubjectType: req.Pin.SubjectType,
-			PinSubjectID:   req.Pin.SubjectID,
-		}); err != nil {
-			return err
-		}
-		if err := tq.ClearGCEligible(ctx, req.Hash); err != nil {
+		// The object row is already locked by InsertObject's upsert above;
+		// addPinTx clears GC and inserts the pin in that order (#1596).
+		if err := addPinTx(ctx, tq, req.Pin, req.Hash); err != nil {
 			return err
 		}
 		if req.InTx != nil {

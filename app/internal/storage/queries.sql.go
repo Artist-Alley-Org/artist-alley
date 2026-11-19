@@ -282,7 +282,9 @@ WHERE hash = $1
 `
 
 // a fresh upload cancels any pending GC
-// Called when a new pin reactivates a previously GC-eligible object.
+// Called when a new pin reactivates a previously GC-eligible object. A
+// pin's first statement (addPinTx): the UPDATE also takes the object
+// row's lock before the pin row is inserted.
 func (q *Queries) ClearGCEligible(ctx context.Context, hash string) error {
 	_, err := q.db.Exec(ctx, clearGCEligible, hash)
 	return err
@@ -1116,6 +1118,20 @@ SELECT pg_advisory_lock_shared(hashtextextended('storage-import:' || $1::TEXT, 0
 // ends and the lock goes with it, so "lock held" means "import alive".
 func (q *Queries) LockImportHashSharedSession(ctx context.Context, objectHash string) error {
 	_, err := q.db.Exec(ctx, lockImportHashSharedSession, objectHash)
+	return err
+}
+
+const lockObjectForPinChange = `-- name: LockObjectForPinChange :exec
+SELECT 1 FROM storage_objects WHERE hash = $1 FOR UPDATE
+`
+
+// #1596: a pin removal locks the object row BEFORE it changes a pin row,
+// the order every pin writer uses (AddPin, casfetch, migration 00084).
+// A concurrent pinner already holding the lock has committed by the time
+// this returns, so the GC mark that follows, a separate statement with a
+// fresh snapshot, sees that pin.
+func (q *Queries) LockObjectForPinChange(ctx context.Context, hash string) error {
+	_, err := q.db.Exec(ctx, lockObjectForPinChange, hash)
 	return err
 }
 

@@ -105,6 +105,8 @@ type Asset struct {
 	OriginalBasename *string
 	// Where original_basename came from (#1595): upload_request (the upload request itself, via its receipt), client_reported (backfilled from editable metadata.original_filename), unknown. Write-once.
 	OriginalBasenameSource string
+	// The version whose original is this asset's file (#1596). Set only by the version machinery; a local asset has one exactly when it has bytes.
+	CurrentVersionID pgtype.UUID
 }
 
 type AssetAlternate struct {
@@ -233,6 +235,37 @@ type AssetTypeAcl struct {
 	GrantedAt        pgtype.Timestamptz
 	GrantedByUserRef *int64
 	ExpiresAt        pgtype.Timestamptz
+}
+
+// Immutable, numbered, predecessor-linked versions of a LOCAL asset (#1596). A version is a draft until asset_version_seal() fixes its file set; nothing is announced to peers yet. origin backfill_current is a snapshot of the bytes present when migration 00084 ran, not an ingest record.
+type AssetVersion struct {
+	ID                     pgtype.UUID
+	AssetID                pgtype.UUID
+	Number                 int64
+	PredecessorID          pgtype.UUID
+	Origin                 string
+	CreatedAt              pgtype.Timestamptz
+	CreatedByUserRef       *int64
+	OriginalHash           string
+	OriginalSizeBytes      int64
+	OriginalMediaType      string
+	OriginalExtension      *string
+	OriginalBasename       *string
+	OriginalBasenameSource string
+	SealedXid              pgtype.Uint64
+	SealedAt               pgtype.Timestamptz
+	AnnouncedAt            pgtype.Timestamptz
+}
+
+// The sealed file set of an asset version (#1596): written only by asset_version_seal() in the transaction that claimed the version, and never changed afterwards.
+type AssetVersionFile struct {
+	VersionID         pgtype.UUID
+	Role              string
+	ObjectHash        string
+	SizeBytes         int64
+	MediaType         string
+	DerivedFromHash   *string
+	DerivedVariantKey *string
 }
 
 type AssetVisualEmbedding struct {

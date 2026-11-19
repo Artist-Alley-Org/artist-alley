@@ -84,6 +84,13 @@ func (fx *gateFixture) newPeer(t *testing.T) uuid.UUID {
 // storage object row (the size the decision binds to) and the asset.
 func (fx *gateFixture) newOriginalAsset(t *testing.T, ownerRef int64, tier, hash string) uuid.UUID {
 	t.Helper()
+	return fx.newOriginalAssetFrom(t, ownerRef, tier, hash, nil)
+}
+
+// newOriginalAssetFrom is newOriginalAsset for an asset whose origin is
+// another instance (origin non-nil): a received copy.
+func (fx *gateFixture) newOriginalAssetFrom(t *testing.T, ownerRef int64, tier, hash string, origin *uuid.UUID) uuid.UUID {
+	t.Helper()
 	id := uuid.New()
 	tag, err := fx.pool.Exec(context.Background(),
 		`INSERT INTO storage_objects (hash, size_bytes, backend) VALUES ($1, $2, 'fs') ON CONFLICT (hash) DO NOTHING`,
@@ -97,9 +104,9 @@ func (fx *gateFixture) newOriginalAsset(t *testing.T, ownerRef int64, tier, hash
 		})
 	}
 	if _, err := fx.pool.Exec(context.Background(),
-		`INSERT INTO assets (id, title, asset_type, owner_user_ref, file_hash, file_size_bytes, sensitivity)
-		 VALUES ($1, 'Original Test', 1, $2, $3, $4, $5)`,
-		id, ownerRef, hash, origSize, tier,
+		`INSERT INTO assets (id, title, asset_type, owner_user_ref, file_hash, file_size_bytes, sensitivity, origin_server_id)
+		 VALUES ($1, 'Original Test', 1, $2, $3, $4, $5, $6)`,
+		id, ownerRef, hash, origSize, tier, origin,
 	); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
@@ -315,16 +322,17 @@ func TestCanPeerFetchOriginal_SizeIsTheStoredObjects(t *testing.T) {
 }
 
 // A copy received from another instance is not ours to send.
+//
+// #1596: the copy is remote from the moment its row exists, as a received
+// asset is. A local asset with bytes is versioned and can no longer be
+// turned into a remote one after the fact, which is how this test used
+// to build it.
 func TestCanPeerFetchOriginal_OnlyTheOrigin(t *testing.T) {
-	fx, asset, hash := newOriginalFixture(t)
-	fx.insertShare(t, assetShare(asset, federation.ShareScopeView, true))
-	if _, err := fx.pool.Exec(context.Background(), `UPDATE assets SET origin_server_id = $2 WHERE id = $1`, asset, fx.peerID); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = fx.pool.Exec(context.Background(), `UPDATE assets SET origin_server_id = NULL WHERE id = $1`, asset)
-	})
-	wantDeny(t, fx.fetchOriginal(t, shares.OriginalFetchRequest{AssetID: asset, SHA256: hash}), shares.RejectReasonNotOrigin)
+	fx, _, _ := newOriginalFixture(t)
+	hash := origHash(t)
+	received := fx.newOriginalAssetFrom(t, fx.grantorRef, "public", hash, &fx.peerID)
+	fx.insertShare(t, assetShare(received, federation.ShareScopeView, true))
+	wantDeny(t, fx.fetchOriginal(t, shares.OriginalFetchRequest{AssetID: received, SHA256: hash}), shares.RejectReasonNotOrigin)
 }
 
 func TestCanPeerFetchOriginal_MissingDeletedOrNoOriginal(t *testing.T) {

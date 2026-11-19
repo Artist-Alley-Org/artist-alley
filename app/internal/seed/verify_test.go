@@ -638,13 +638,11 @@ func TestVerify_CollapsedAssetIsDiagnosedAndStillFails(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = f.pool.Exec(c, `UPDATE assets SET file_hash = NULL WHERE file_hash = $1`, up.Hash)
+		_, _ = f.pool.Exec(c, `DELETE FROM assets WHERE file_hash = $1`, up.Hash) // releases its version pins (#1596)
 		_, _ = f.pool.Exec(c, `DELETE FROM storage_pins WHERE object_hash = $1`, up.Hash)
 		_, _ = f.pool.Exec(c, `DELETE FROM storage_objects WHERE hash = $1`, up.Hash)
 	})
-	if _, err := f.pool.Exec(ctx, `UPDATE assets SET file_hash = $1 WHERE id = $2`, up.Hash, parseUUID(sibling.ID)); err != nil {
-		t.Fatal(err)
-	}
+	attachBytes(t, f.pool, sibling.ID, up.Hash)
 	// The collapsed entry: same owner, same bytes, no row.
 	collapsed := manifestAsset{
 		ID: uuid.New().String(), AssetType: "image", Title: "collapsed",
@@ -857,5 +855,22 @@ func TestTypedMismatch_ComparesOnlyTheTypedColumn(t *testing.T) {
 	if d := typedMismatch("multi_select", SeedInsertAssetFieldValueParams{ValueOptions: opts},
 		verifyValueRow{options: []string{"b", "a"}}); d == "" {
 		t.Error("reordered options not reported: the seeder writes the manifest's order")
+	}
+}
+
+// attachBytes gives an asset that has none its first bytes the way the
+// schema allows since #1596: a version 1 whose original they are, then
+// the asset moves to it. A direct UPDATE of file_hash is refused.
+func attachBytes(t *testing.T, pool *pgxpool.Pool, assetID, hash string) {
+	t.Helper()
+	ctx := context.Background()
+	v := uuid.New()
+	if _, err := pool.Exec(ctx, `SELECT asset_version_create($1, $2, 1, NULL, 'ingest', $3, 'png', NULL, NULL, NULL)`,
+		parseUUID(assetID), v, hash); err != nil {
+		t.Fatalf("attach bytes: version: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE assets SET file_hash = $1, current_version_id = $2 WHERE id = $3`,
+		hash, v, parseUUID(assetID)); err != nil {
+		t.Fatalf("attach bytes: %v", err)
 	}
 }

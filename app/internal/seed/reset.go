@@ -355,6 +355,11 @@ var polymorphicRefs = []polymorphicRef{
 		Table: "storage_pins", KindColumn: "pin_subject_type", IDColumn: "pin_subject_id",
 		Targets: map[string]polyTarget{
 			"asset": {"assets", "id"},
+			// #1596: a version's pin. Released by the database itself when
+			// its version goes, TRUNCATE included (migration 00084), so it
+			// never dangles; the seeded asset's own "asset" pin above keeps
+			// protecting the blob across a reset.
+			"asset_version": {"asset_versions", "id"},
 		},
 		Sweep:  false,
 		Reason: "#355: pins guard blobs against the storage sweep; unpinning here lets a re-seed's dedup target be reclaimed",
@@ -413,6 +418,11 @@ var nonReferenceKindColumns = map[string]string{
 	"storage_objects.content_type":      "MIME type",
 	"storage_sweep_runs.kind":           "sweep mode (orphan_scan/checksum_verify)",
 	"storage_variants.content_type":     "MIME type",
+
+	// #1596: MIME types of a version's original and of its file-set
+	// entries, not references.
+	"asset_version_files.media_type":     "MIME type",
+	"asset_versions.original_media_type": "MIME type",
 
 	// #1598: a spec §17.4 PREMIS event token (fixity-check/…), not a
 	// reference; the row's asset is a real FK with ON DELETE CASCADE, so

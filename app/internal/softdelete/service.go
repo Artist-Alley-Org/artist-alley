@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,6 +57,13 @@ type Service struct {
 	Pool *pgxpool.Pool
 	Rec  *audit.Recorder
 
+	// GCGrace is how long an object left without a pin by a hard purge
+	// waits before it is GC-eligible (#1596): the storage service's
+	// GCGracePeriod, so a purge schedules bytes exactly as RemovePin
+	// does. Zero leaves the database default, which equals
+	// storage.DefaultGCGracePeriod.
+	GCGrace time.Duration
+
 	// OnAssetsHardDeleted fires once per batch, after the DELETE
 	// commits, with the ids that are now gone (#935).
 	//
@@ -77,6 +85,15 @@ type Service struct {
 	// panicking or slow hook is the composition root's problem, not a
 	// reason to fail a delete that has already committed.
 	OnAssetsHardDeleted func(ctx context.Context, ids []uuid.UUID)
+
+	// purgeHooks are #1596 test seams; zero in production.
+	purgeHooks purgeHooks
+}
+
+// purgeHooks hold HardDeletePastAssets at its two race windows (tests).
+type purgeHooks struct {
+	afterSelect  func(candidates []uuid.UUID) // after the candidate SELECT, before the transaction
+	beforeCommit func()                       // after the DELETE, before its commit
 }
 
 // NewService returns a Service. Audit recorder may be nil (tests);
@@ -264,18 +281,81 @@ func (s *Service) HardDeletePastAssets(ctx context.Context, retentionDays int, b
 	for i, v := range victims {
 		ids[i] = v.ID
 	}
-	if _, err := s.Pool.Exec(ctx, `DELETE FROM assets WHERE id = ANY($1)`, ids); err != nil {
+	if s.purgeHooks.afterSelect != nil {
+		s.purgeHooks.afterSelect(ids)
+	}
+	// #1596: one transaction. Deleting an asset cascades to its versions,
+	// and each version's removal releases its storage pins and schedules
+	// every object left without a pin for GC (migration 00084), so the
+	// purge and the release commit together or not at all. The grace is
+	// the storage service's, passed for this transaction only.
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("softdelete: assets purge: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if s.GCGrace > 0 {
+		if _, err := tx.Exec(ctx, `SELECT set_config('aa.storage_gc_grace', $1, true)`,
+			fmt.Sprintf("%d seconds", int64(s.GCGrace/time.Second))); err != nil {
+			return 0, fmt.Errorf("softdelete: assets purge: gc grace: %w", err)
+		}
+	}
+	// The candidates are only an upper bound: the owner may restore one
+	// after the SELECT above. The DELETE therefore re-checks eligibility
+	// on every row it removes, and only the rows it RETURNS count:
+	//   - a restore committed before the DELETE reaches the row leaves
+	//     deleted_at NULL, so the row does not match;
+	//   - a restore still open when the DELETE reaches the row makes the
+	//     DELETE wait for its row lock; under READ COMMITTED the WHERE is
+	//     then re-evaluated on the restored row, which no longer matches;
+	//   - a restore that reaches the row after the DELETE has locked it
+	//     waits for the purge; once the purge commits the row is gone and
+	//     the restore reports ErrNotFound.
+	// A skipped asset keeps its row, versions and pins, and gets no cache
+	// fan-out and no audit event.
+	rows, err = tx.Query(ctx, `
+		DELETE FROM assets
+		 WHERE id = ANY($1)
+		   AND deleted_at IS NOT NULL
+		   AND deleted_at < NOW() - make_interval(days => $2)
+		RETURNING id, deleted_reason, deleted_at
+	`, ids, retentionDays)
+	if err != nil {
 		return 0, fmt.Errorf("softdelete: assets delete: %w", err)
+	}
+	deleted, err := collectVictims(rows)
+	if err != nil {
+		return 0, fmt.Errorf("softdelete: assets delete: %w", err)
+	}
+	if s.purgeHooks.beforeCommit != nil {
+		s.purgeHooks.beforeCommit()
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("softdelete: assets purge: commit: %w", err)
+	}
+	if len(deleted) == 0 {
+		return 0, nil
+	}
+	// RETURNING has no order; keep the candidates' (oldest first).
+	sort.Slice(deleted, func(i, j int) bool {
+		if !deleted[i].DeletedAt.Equal(deleted[j].DeletedAt) {
+			return deleted[i].DeletedAt.Before(deleted[j].DeletedAt)
+		}
+		return deleted[i].ID.String() < deleted[j].ID.String()
+	})
+	gone := make([]uuid.UUID, len(deleted))
+	for i, v := range deleted {
+		gone[i] = v.ID
 	}
 	// The CASCADEs have fired; tell the packages whose caches they
 	// silently emptied. After the DELETE and before the audit fanout,
 	// so a stale cache window can't outlive the transaction by the
 	// length of a batch's worth of audit writes.
 	if s.OnAssetsHardDeleted != nil {
-		s.OnAssetsHardDeleted(ctx, ids)
+		s.OnAssetsHardDeleted(ctx, gone)
 	}
 	if s.Rec != nil {
-		for _, v := range victims {
+		for _, v := range deleted {
 			daysOver := int(time.Since(v.DeletedAt).Hours()/24) - retentionDays
 			if daysOver < 0 {
 				daysOver = 0
@@ -283,7 +363,7 @@ func (s *Service) HardDeletePastAssets(ctx context.Context, retentionDays int, b
 			s.Rec.AdminAssetHardDeletedByGC(ctx, v.ID.String(), v.Reason, retentionDays, daysOver)
 		}
 	}
-	return len(victims), nil
+	return len(deleted), nil
 }
 
 // HardDeletePastPosts mirrors HardDeletePastAssets for posts.
