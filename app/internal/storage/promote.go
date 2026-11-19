@@ -126,7 +126,7 @@ type Promotion struct {
 
 // promoteHooks are #1596 test seams; zero in production.
 type promoteHooks struct {
-	afterRead    func(parentHash, key string)   // under the variant's shared lock, after the bytes were read
+	afterRead    func(parentHash, key string)    // under the variant's shared lock, after the bytes were read
 	beforeCommit func(ctx context.Context) error // the import's BeforeCommit
 }
 
