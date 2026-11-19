@@ -32,7 +32,9 @@
 package twostack_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,14 +61,16 @@ func newDeleteGate(t *testing.T) *deleteGate {
 	return &deleteGate{undoGate: newUndoGate(t), tokens: map[int64]string{}}
 }
 
-// tokenFor gives a B user an API token and comments.delete.own.
+// tokenFor gives a B user an API token, comments.delete.own and
+// posts.comment (the capability an edit needs, #1572).
 func (g *deleteGate) tokenFor(a likeActor) string {
 	g.t.Helper()
 	if tok, ok := g.tokens[a.ref]; ok {
 		return tok
 	}
 	ctx := context.Background()
-	if _, err := g.b.pool.Exec(ctx, `INSERT INTO user_capability_grants (user_ref, capability_code) VALUES ($1, 'comments.delete.own')`, a.ref); err != nil {
+	if _, err := g.b.pool.Exec(ctx, `INSERT INTO user_capability_grants (user_ref, capability_code)
+		VALUES ($1, 'comments.delete.own'), ($1, 'posts.comment')`, a.ref); err != nil {
 		g.t.Fatal(err)
 	}
 	tok, _ := auth.NewAPIToken()
@@ -78,11 +82,20 @@ func (g *deleteGate) tokenFor(a likeActor) string {
 	return tok
 }
 
-// apiAs calls B's API as token's user and returns the status.
-func (g *deleteGate) apiAs(in *instance, token, method, path string) int {
+// apiAs calls in's API as token's user, with body as JSON when given,
+// and returns the status.
+func (g *deleteGate) apiAs(in *instance, token, method, path string, body ...any) int {
 	g.t.Helper()
-	req, _ := http.NewRequest(method, in.url+"/api/v1"+path, nil)
+	var rd io.Reader
+	if len(body) > 0 {
+		b, _ := json.Marshal(body[0])
+		rd = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequest(method, in.url+"/api/v1"+path, rd)
 	req.Header.Set("Authorization", "Bearer "+token)
+	if rd != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := (&http.Client{Transport: g.tr, Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		g.t.Fatal(err)

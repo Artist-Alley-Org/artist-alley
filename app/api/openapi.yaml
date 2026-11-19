@@ -7739,6 +7739,47 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateComment
+      summary: Edit your own comment
+      description: |
+        Replaces the comment's body and sets edited_at. Only the
+        comment's own local author may edit it (with `posts.comment`,
+        the capability that wrote it). Nobody else can, a moderator
+        included: a moderator removes a comment, it never puts words in
+        its author's mouth. A remote comment is edited only by its
+        author on their own instance. The body is validated like a new
+        comment's. Counts and notifications do not change; @-mentions
+        in the new text do not notify.
+
+        When the comment was federated (#1572), the edit is sent as an
+        Update to exactly the instance its Create went to, encrypted or
+        not at all.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommentUpdate"
+      responses:
+        "200":
+          description: Edited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /posts/{id}/assets:
     parameters:
@@ -22913,6 +22954,16 @@ components:
             When set, the new comment is a reply to this parent.
             Depth and root_id are computed server-side from the
             parent row.
+
+    CommentUpdate:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: The comment's new text, validated like CommentCreate.body.
 
     WhiteboardContent:
       type: object

@@ -130,6 +130,20 @@ RETURNING id, target_kind, target_id, parent_id, root_id, depth,
           like_count, edited_at, deleted_at,
           origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri;
 
+-- name: EditComment :one
+-- The author's edit of a live comment (#1572): new body, edited_at set.
+-- A deleted comment is never edited (no row is returned). body_html is
+-- cleared like a new comment's (the renderer reads body). No counter
+-- trigger fires: it watches deleted_at only.
+UPDATE comments
+   SET body       = $2,
+       body_html  = '',
+       edited_at  = NOW(),
+       updated_at = NOW()
+ WHERE id = $1
+   AND deleted_at IS NULL
+RETURNING *;
+
 -- name: SoftDeleteComment :execrows
 -- Sets deleted_at + clears body so a soft-deleted comment doesn't
 -- leak its content in admin views. The trigger decrements the

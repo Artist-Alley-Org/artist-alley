@@ -200,13 +200,13 @@ type Input struct {
 	TargetPeerID   uuid.UUID
 	RecipientActor string
 
-	// RetractedActivityURI is the id of the activity a retraction
-	// withdraws, and RetractedType that activity's type (#1572): for an
-	// Undo its object and payload target_type (a Like), for a Delete of a
-	// comment the payload's create_activity_uri (a Create). A retraction
-	// goes exactly where that activity went.
-	RetractedActivityURI string
-	RetractedType        string
+	// PriorActivityURI is the id of the earlier activity a follow-up
+	// refers to, and PriorType that activity's type (#1572): for an Undo
+	// its object and payload target_type (a Like), for a Delete or an
+	// Update of a comment the payload's create_activity_uri (a Create). A
+	// follow-up goes exactly where that activity went.
+	PriorActivityURI string
+	PriorType        string
 
 	// Tx, when set, is what an Undo's recipients are read through: the
 	// dispatcher's batch transaction, so an Undo sees the delivery rows
@@ -284,7 +284,7 @@ type Resolver struct {
 	receivedGrant ReceivedGrantLookup
 }
 
-// Querier is the read surface retractionRecipient needs: a pool or a
+// Querier is the read surface priorRecipients needs: a pool or a
 // transaction.
 type Querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
@@ -378,10 +378,12 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	if in.Verb == string(federation.ActivityLike) {
 		return r.likeRecipient(ctx, in)
 	}
-	// A retraction (an Undo of a Like, a Delete of a comment) goes where
-	// the activity it withdraws went (#1572), never by a visibility tier.
-	if in.Verb == string(federation.ActivityUndo) || in.Verb == string(federation.ActivityDelete) {
-		return r.retractionRecipient(ctx, in)
+	// A follow-up (an Undo of a Like, a Delete or an Update of a comment)
+	// goes where the activity it refers to went (#1572), never by a
+	// visibility tier.
+	switch federation.ActivityType(in.Verb) {
+	case federation.ActivityUndo, federation.ActivityDelete, federation.ActivityUpdate:
+		return r.priorRecipients(ctx, in)
 	}
 
 	switch in.Visibility {
@@ -591,10 +593,12 @@ func (r *Resolver) likeRecipient(ctx context.Context, in Input) (Result, error) 
 	return Result{Recipients: out}, nil
 }
 
-// retractionRecipient addresses a retraction (#1572) to exactly the
-// recipients of the activity it withdraws: an Undo of a Like (spec v1
-// §7.5.4) to that Like's, a Delete of a comment (§7.5.5) to that
-// comment's Create's. They are the federation_outbox rows of that
+// priorRecipients addresses a follow-up (#1572) to exactly the
+// recipients of the earlier activity it refers to: an Undo of a Like
+// (spec v1 §7.5.4) to that Like's, a Delete or an Update of a comment
+// (§7.5.5) to that comment's Create's. An Update carries content, so
+// keeping the Create's tier means it is sent encrypted or not at all,
+// exactly like the comment it edits. They are the federation_outbox rows of that
 // activity, which must be this instance's own, of that type, by the same
 // actor (a Create of a comment for a Delete). Each recipient keeps the
 // peer, the target user (whose key an encrypted original was sealed to)
@@ -612,15 +616,15 @@ func (r *Resolver) likeRecipient(ctx context.Context, in Input) (Result, error) 
 // activity or their peer), so the original's recipients are still on
 // record when the retraction is dispatched; in.Tx makes the rows of an
 // original queued earlier in the same batch visible.
-func (r *Resolver) retractionRecipient(ctx context.Context, in Input) (Result, error) {
+func (r *Resolver) priorRecipients(ctx context.Context, in Input) (Result, error) {
 	switch {
-	case in.Verb == string(federation.ActivityUndo) && in.RetractedType == string(federation.ActivityLike):
-	case in.Verb == string(federation.ActivityDelete) && in.TargetKind == "comment" &&
-		in.RetractedType == string(federation.ActivityCreate):
+	case in.Verb == string(federation.ActivityUndo) && in.PriorType == string(federation.ActivityLike):
+	case (in.Verb == string(federation.ActivityDelete) || in.Verb == string(federation.ActivityUpdate)) &&
+		in.TargetKind == "comment" && in.PriorType == string(federation.ActivityCreate):
 	default:
 		return Result{Skipped: SkippedActivityNotFederated}, nil
 	}
-	if in.RetractedActivityURI == "" || in.AuthorURI == "" {
+	if in.PriorActivityURI == "" || in.AuthorURI == "" {
 		return Result{Skipped: SkippedRecipientSetEmpty}, nil
 	}
 	var q Querier = r.pool
@@ -640,9 +644,9 @@ func (r *Resolver) retractionRecipient(ctx context.Context, in Input) (Result, e
 		   AND a.actor_uri = $2
 		   AND o.status IN ('queued', 'sent', 'failed')
 		 ORDER BY 1, 2
-	`, in.RetractedActivityURI, in.AuthorURI, in.RetractedType)
+	`, in.PriorActivityURI, in.AuthorURI, in.PriorType)
 	if err != nil {
-		return Result{}, fmt.Errorf("resolve retraction recipients: %w", err)
+		return Result{}, fmt.Errorf("resolve follow-up recipients: %w", err)
 	}
 	defer rows.Close()
 	var out []Recipient

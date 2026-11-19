@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Kenneth Blossom
 
 // Inbound-federation domain writes: InsertRemoteLike, UndoRemoteLike,
-// InsertRemoteComment and DeleteRemoteComment (#1572). Phase
-// 1.22.D-a-4-dispatch.
+// InsertRemoteComment, DeleteRemoteComment and UpdateRemoteComment
+// (#1572). Phase 1.22.D-a-4-dispatch.
 //
 // These methods implement the inbox.SocialPoster contract +
 // fire the same notification path the local Like / Comment
@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -323,6 +324,13 @@ func (h *Handler) DeleteRemoteComment(ctx context.Context, in RemoteDeleteCommen
 		if err := lockRemoteActor(ctx, tx, in.PeerID, in.ActorURI); err != nil {
 			return err
 		}
+		// A deleted comment is never brought back by an edit (#1572): any
+		// edit still waiting for its Create goes with the comment.
+		if _, err := tx.Exec(ctx, `DELETE FROM federation_remote_comment_pending_edits
+			WHERE peer_id = $1 AND actor_uri = $2 AND create_activity_uri = $3`,
+			in.PeerID, in.ActorURI, in.CreateActivityURI); err != nil {
+			return fmt.Errorf("discard pending comment edit: %w", err)
+		}
 		var id pgtype.UUID
 		var already bool
 		err := tx.QueryRow(ctx, `SELECT id, target_kind, target_id, deleted_at IS NOT NULL FROM comments
@@ -357,6 +365,139 @@ func (h *Handler) DeleteRemoteComment(ctx context.Context, in RemoteDeleteCommen
 		h.invalidatePostCache(ctx, uuid.UUID(targetID.Bytes).String())
 	}
 	return deleted, nil
+}
+
+// pendingEdit is an edit that arrived before its comment's Create.
+type pendingEdit struct {
+	uri, content string
+	published    time.Time
+}
+
+// RemoteUpdateCommentInput is the typed argument for UpdateRemoteComment:
+// the Update's authenticated peer and actor, the comment's Create id (its
+// object), its own id, the new content and its signed published time.
+// Authorize builds the write's authorisation for the comment's target,
+// once the comment is found; nil refuses.
+type RemoteUpdateCommentInput struct {
+	PeerID            uuid.UUID
+	ActorURI          string
+	CreateActivityURI string
+	UpdateActivityURI string
+	Content           string
+	Published         time.Time
+	Authorize         func(targetKind string, targetID uuid.UUID) InboundAuthorizer
+}
+
+// UpdateRemoteComment applies an inbound edit of a comment (#1572): the
+// actor changing its own comment's text. It is bound like a Delete, to
+// the comment with the same peer, actor and Create id, never the Create
+// id alone, and serialised with every inbound write of that actor
+// (lockRemoteActor, taken first).
+//
+// Edits are ordered by (published, Update id): the signed published time
+// a sender keeps strictly increasing per comment, with the id breaking a
+// tie a conforming sender never produces. So every delivery order ends
+// on the same text.
+//
+//   - a live comment takes the content, and edited_at = the edit's
+//     published time, when this edit's key is greater than the one it
+//     shows; an older or repeated edit changes nothing. Counts and
+//     notifications never change.
+//   - a deleted comment is never edited: deletion wins, whatever arrives
+//     after it.
+//   - no such comment: if a Delete of it was recorded (a tombstone), the
+//     edit is dropped; otherwise the newest edit is kept for the Create,
+//     which is then stored with it.
+//
+// An edit adds content, so unlike a retraction it needs the share a new
+// comment needs: Authorize (the comment-scope check of #1570) runs inside
+// the transaction once the target is known. Its refusal is returned as
+// is; any other error is a database failure, writes nothing and is
+// retryable. Returns whether the comment's text changed.
+func (h *Handler) UpdateRemoteComment(ctx context.Context, in RemoteUpdateCommentInput) (bool, error) {
+	if in.CreateActivityURI == "" || in.UpdateActivityURI == "" || in.ActorURI == "" || in.Published.IsZero() {
+		return false, ErrNoCommentActivity
+	}
+	published := in.Published.UTC().Truncate(time.Microsecond) // the column's precision
+	var (
+		applied    bool
+		targetKind string
+		targetID   pgtype.UUID
+	)
+	err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := lockRemoteActor(ctx, tx, in.PeerID, in.ActorURI); err != nil {
+			return err
+		}
+		var (
+			id       pgtype.UUID
+			deleted  bool
+			shownAt  pgtype.Timestamptz
+			shownURI string
+		)
+		err := tx.QueryRow(ctx, `SELECT c.id, c.target_kind, c.target_id, c.deleted_at IS NOT NULL,
+				e.published, coalesce(e.update_activity_uri, '')
+			FROM comments c LEFT JOIN federation_remote_comment_edits e ON e.comment_id = c.id
+			WHERE c.activity_uri = $1 AND c.peer_id = $2 AND c.actor_uri = $3 FOR UPDATE OF c`,
+			in.CreateActivityURI, in.PeerID, in.ActorURI).Scan(&id, &targetKind, &targetID, &deleted, &shownAt, &shownURI)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			var tombstoned bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM federation_remote_comment_tombstones
+				WHERE peer_id = $1 AND actor_uri = $2 AND create_activity_uri = $3)`,
+				in.PeerID, in.ActorURI, in.CreateActivityURI).Scan(&tombstoned); err != nil {
+				return fmt.Errorf("read remote comment tombstone: %w", err)
+			}
+			if tombstoned {
+				return nil
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO federation_remote_comment_pending_edits AS p
+				(peer_id, actor_uri, create_activity_uri, update_activity_uri, content, published)
+				VALUES ($1, $2, $3, $4, $5, $6)
+				ON CONFLICT (peer_id, actor_uri, create_activity_uri) DO UPDATE
+				   SET update_activity_uri = EXCLUDED.update_activity_uri, content = EXCLUDED.content,
+				       published = EXCLUDED.published, received_at = now()
+				 WHERE (EXCLUDED.published, EXCLUDED.update_activity_uri) > (p.published, p.update_activity_uri)`,
+				in.PeerID, in.ActorURI, in.CreateActivityURI, in.UpdateActivityURI, in.Content, published); err != nil {
+				return fmt.Errorf("keep pending comment edit: %w", err)
+			}
+			return nil
+		case err != nil:
+			return fmt.Errorf("read remote comment: %w", err)
+		case deleted:
+			return nil
+		}
+		if in.Authorize == nil {
+			return ErrNoAuthorizer
+		}
+		if err := in.Authorize(targetKind, uuid.UUID(targetID.Bytes))(ctx, tx); err != nil {
+			return err
+		}
+		if shownAt.Valid {
+			shown := shownAt.Time.UTC()
+			if published.Before(shown) || (published.Equal(shown) && in.UpdateActivityURI <= shownURI) {
+				return nil // older or repeated: the comment keeps the newer text
+			}
+		}
+		if _, err := tx.Exec(ctx, `UPDATE comments SET body = $2, body_html = '', edited_at = $3, updated_at = now()
+			WHERE id = $1`, id, in.Content, published); err != nil {
+			return fmt.Errorf("edit remote comment: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO federation_remote_comment_edits (comment_id, update_activity_uri, published)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (comment_id) DO UPDATE SET update_activity_uri = EXCLUDED.update_activity_uri,
+			    published = EXCLUDED.published, applied_at = now()`, id, in.UpdateActivityURI, published); err != nil {
+			return fmt.Errorf("record remote comment edit: %w", err)
+		}
+		applied = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	if applied && targetKind == "post" {
+		h.invalidatePostCache(ctx, uuid.UUID(targetID.Bytes).String())
+	}
+	return applied, nil
 }
 
 // ErrNoCommentActivity: an inbound comment Delete without its ids.
@@ -414,6 +555,7 @@ func (h *Handler) InsertRemoteComment(ctx context.Context, in RemoteCommentInput
 	newID := uuid.New()
 	var rowID uuid.UUID
 	var retracted bool
+	var edited *pendingEdit
 	err = pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
 		if err := lockRemoteActor(ctx, tx, in.PeerID, in.ActorURI); err != nil {
 			return err
@@ -430,6 +572,21 @@ func (h *Handler) InsertRemoteComment(ctx context.Context, in RemoteCommentInput
 		}
 		if retracted {
 			return nil
+		}
+		// An edit that arrived before this Create (#1572): the comment is
+		// stored with that edit's content and order key.
+		var pendingURI, pendingContent string
+		var pendingPublished time.Time
+		err := tx.QueryRow(ctx, `DELETE FROM federation_remote_comment_pending_edits
+			WHERE peer_id = $1 AND actor_uri = $2 AND create_activity_uri = $3
+			RETURNING update_activity_uri, content, published`,
+			in.PeerID, in.ActorURI, in.ActivityURI).Scan(&pendingURI, &pendingContent, &pendingPublished)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+		case err != nil:
+			return fmt.Errorf("read pending comment edit: %w", err)
+		default:
+			edited = &pendingEdit{uri: pendingURI, content: pendingContent, published: pendingPublished}
 		}
 		// Resolve parent_id / root_id / depth. Top-level comments
 		// have parent_id NULL + root_id = self + depth 0. A parent is
@@ -478,6 +635,16 @@ func (h *Handler) InsertRemoteComment(ctx context.Context, in RemoteCommentInput
 			return fmt.Errorf("insert remote comment: %w", err)
 		}
 		rowID = uuid.UUID(row.ID.Bytes)
+		if edited != nil {
+			if _, err := tx.Exec(ctx, `UPDATE comments SET body = $2, body_html = '', edited_at = $3 WHERE id = $1`,
+				row.ID, edited.content, edited.published); err != nil {
+				return fmt.Errorf("apply pending comment edit: %w", err)
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO federation_remote_comment_edits (comment_id, update_activity_uri, published)
+				VALUES ($1, $2, $3)`, row.ID, edited.uri, edited.published); err != nil {
+				return fmt.Errorf("record pending comment edit: %w", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {

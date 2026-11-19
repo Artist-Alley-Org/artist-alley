@@ -383,6 +383,10 @@ func TestWireProjection_FederatedTypes(t *testing.T) {
 		// An author's Delete of a comment carries object_type only (#1572).
 		{"delete_comment", emit.DeleteComment(w.actor, uuid.NewString(), w.postID.String(),
 			"https://local.example/activities/"+uuid.NewString(), []string{post.AuthorURI}).Activity, []string{"object_type"}},
+		// An author's edit of a comment carries object_type and content (#1572).
+		{"update_comment", emit.UpdateComment(w.actor, uuid.NewString(), w.postID.String(),
+			"https://local.example/activities/"+uuid.NewString(), []string{post.AuthorURI}, "edited", time.Now()).Activity,
+			[]string{"content", "object_type"}},
 		// An Undo of a Like carries object_type only (#1572).
 		{"undo_like", emit.UndoLike(w.actor, "https://local.example/activities/"+uuid.NewString(), post).Activity,
 			[]string{"object_type"}},

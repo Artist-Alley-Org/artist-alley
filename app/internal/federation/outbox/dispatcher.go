@@ -349,19 +349,20 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 				targetPeerID, _ = uuid.Parse(p.TargetPeerID)
 			}
 		}
-		// A retraction names the activity it withdraws and that
+		// A follow-up names the earlier activity it refers to and that
 		// activity's type (#1572): an Undo by its object and payload
-		// target_type, a Delete of a comment by its create_activity_uri.
-		var retractedURI, retractedType string
+		// target_type, a Delete or an Update of a comment by its
+		// create_activity_uri.
+		var priorURI, priorType string
 		switch federation.ActivityType(row.ActivityType) {
 		case federation.ActivityUndo:
 			if row.ObjectUri != nil {
-				retractedURI = *row.ObjectUri
+				priorURI = *row.ObjectUri
 			}
-			retractedType = federation.UndoneType(row.Payload)
-		case federation.ActivityDelete:
-			retractedURI = federation.DeletedCreateURI(row.Payload)
-			retractedType = string(federation.ActivityCreate)
+			priorType = federation.UndoneType(row.Payload)
+		case federation.ActivityDelete, federation.ActivityUpdate:
+			priorURI = federation.CommentCreateURI(row.Payload)
+			priorType = string(federation.ActivityCreate)
 		}
 		// A comment Create or a Like is addressed to the target's
 		// instance, and to the actor it is for there (its `to`).
@@ -374,20 +375,20 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 		}
 
 		result, err := d.resolver.Resolve(ctx, Input{
-			Verb:                 row.ActivityType,
-			TargetKind:           targetKind,
-			TargetID:             targetID,
-			ShareID:              shareID,
-			TargetURI:            targetURI,
-			TargetPeerID:         targetPeerID,
-			RecipientActor:       recipientActor,
-			RetractedActivityURI: retractedURI,
-			RetractedType:        retractedType,
-			Tx:                   tx,
-			AuthorRef:            authorRef,
-			AuthorURI:            row.ActorUri,
-			Visibility:           vis,
-			Sensitivity:          sen,
+			Verb:             row.ActivityType,
+			TargetKind:       targetKind,
+			TargetID:         targetID,
+			ShareID:          shareID,
+			TargetURI:        targetURI,
+			TargetPeerID:     targetPeerID,
+			RecipientActor:   recipientActor,
+			PriorActivityURI: priorURI,
+			PriorType:        priorType,
+			Tx:               tx,
+			AuthorRef:        authorRef,
+			AuthorURI:        row.ActorUri,
+			Visibility:       vis,
+			Sensitivity:      sen,
 		})
 		if err != nil {
 			d.logErr(ctx, "outbox.dispatcher.resolve.error", err)

@@ -2463,6 +2463,47 @@ COMMENT ON COLUMN public.federation_remote_actors.signing_key_pinned_at IS 'When
 
 
 --
+-- Name: federation_remote_comment_edits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_remote_comment_edits (
+    comment_id uuid NOT NULL,
+    update_activity_uri text NOT NULL,
+    published timestamp with time zone NOT NULL,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE federation_remote_comment_edits; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_remote_comment_edits IS 'The federated Update (#1572) a remote comment currently shows: its signed published time and id, the order key. An Update applies only when its (published, id) is greater. No row until the first edit, and never for a local comment.';
+
+
+--
+-- Name: federation_remote_comment_pending_edits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_remote_comment_pending_edits (
+    peer_id uuid NOT NULL,
+    actor_uri text NOT NULL,
+    create_activity_uri text NOT NULL,
+    update_activity_uri text NOT NULL,
+    content text NOT NULL,
+    published timestamp with time zone NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE federation_remote_comment_pending_edits; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_remote_comment_pending_edits IS 'The newest federated Update of a comment whose Create has not arrived (#1572), keyed by (peer, signed actor, Create id). The Create is stored with this content. A Delete of the comment discards it. Goes only with its peer.';
+
+
+--
 -- Name: federation_remote_comment_tombstones; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4151,6 +4192,22 @@ ALTER TABLE ONLY public.federation_peers
 
 ALTER TABLE ONLY public.federation_remote_actors
     ADD CONSTRAINT federation_remote_actors_pkey PRIMARY KEY (actor_uri);
+
+
+--
+-- Name: federation_remote_comment_edits federation_remote_comment_edits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_remote_comment_edits
+    ADD CONSTRAINT federation_remote_comment_edits_pkey PRIMARY KEY (comment_id);
+
+
+--
+-- Name: federation_remote_comment_pending_edits federation_remote_comment_pending_edits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_remote_comment_pending_edits
+    ADD CONSTRAINT federation_remote_comment_pending_edits_pkey PRIMARY KEY (peer_id, actor_uri, create_activity_uri);
 
 
 --
@@ -7039,6 +7096,22 @@ ALTER TABLE ONLY public.federation_peer_suggestions
 
 ALTER TABLE ONLY public.federation_remote_actors
     ADD CONSTRAINT federation_remote_actors_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: federation_remote_comment_edits federation_remote_comment_edits_comment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_remote_comment_edits
+    ADD CONSTRAINT federation_remote_comment_edits_comment_id_fkey FOREIGN KEY (comment_id) REFERENCES public.comments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: federation_remote_comment_pending_edits federation_remote_comment_pending_edits_peer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_remote_comment_pending_edits
+    ADD CONSTRAINT federation_remote_comment_pending_edits_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
 
 
 --

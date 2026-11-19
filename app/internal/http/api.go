@@ -2289,6 +2289,25 @@ func (a inboxSocialPosterAdapter) DeleteRemoteComment(ctx context.Context, in in
 	})
 }
 
+// UpdateRemoteComment applies the actor's edit of its own comment (#1572).
+// Unlike a retraction it adds content, so it is authorised exactly like a
+// new comment (the comment-scope share gate of #1570) for the comment's
+// target, which social finds before it calls the authorizer.
+func (a inboxSocialPosterAdapter) UpdateRemoteComment(ctx context.Context, in inbox.RemoteUpdateCommentInput) (bool, error) {
+	applied, err := a.h.UpdateRemoteComment(ctx, social.RemoteUpdateCommentInput{
+		PeerID:            in.PeerID,
+		ActorURI:          in.ActorURI,
+		CreateActivityURI: in.CreateActivityURI,
+		UpdateActivityURI: in.UpdateActivityURI,
+		Content:           in.Content,
+		Published:         in.Published,
+		Authorize: func(kind string, id uuid.UUID) social.InboundAuthorizer {
+			return a.authorizer(federation.ActivityCreate, kind, id, in.PeerID, in.ActorURI)
+		},
+	})
+	return applied, inboundWriteError(err)
+}
+
 func (a inboxSocialPosterAdapter) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
 	id, existed, err := a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
 		TargetKind:        in.TargetKind,
@@ -3592,6 +3611,10 @@ func (s *apiServer) ListPostComments(ctx context.Context, req openapi.ListPostCo
 func (s *apiServer) CreatePostComment(ctx context.Context, req openapi.CreatePostCommentRequestObject) (openapi.CreatePostCommentResponseObject, error) {
 	return s.social.CreatePostComment(ctx, req)
 }
+func (s *apiServer) UpdateComment(ctx context.Context, req openapi.UpdateCommentRequestObject) (openapi.UpdateCommentResponseObject, error) {
+	return s.social.UpdateComment(ctx, req)
+}
+
 func (s *apiServer) DeleteComment(ctx context.Context, req openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
 	return s.social.DeleteComment(ctx, req)
 }

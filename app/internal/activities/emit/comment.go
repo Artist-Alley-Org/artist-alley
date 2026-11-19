@@ -4,6 +4,8 @@
 package emit
 
 import (
+	"time"
+
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 )
@@ -142,6 +144,46 @@ func CreateComment(actor ActorContext, comment CommentRef) Emission {
 		})
 	}
 	return em
+}
+
+// UpdateComment builds the Emission for an Update of a comment (#1572):
+// its author's edit, carrying the new text. Like DeleteComment,
+// createActivityURI and to are set only when the editor is the
+// comment's own local author and the comment's Create is on record; the
+// Update is then federated to exactly where that Create went, naming it
+// by that id. published is the edit's time, which the caller keeps
+// strictly increasing per comment (spec v1 §7.5.5: receivers order edits
+// by it). With createActivityURI empty the Update stays a local record.
+//
+// No notification: an edit is silent, and @-mentions in the new text do
+// not notify.
+func UpdateComment(actor ActorContext, commentID, postID, createActivityURI string, to []string, body string, published time.Time) Emission {
+	actorRef := actor.UserRef
+	commentObjectURI := actor.ObjectURI(activities.ObjectKindComment, commentID)
+	payload := map[string]any{
+		"object_type":    "Note",
+		"content":        body,
+		"target_post_id": postID,
+	}
+	if createActivityURI != "" {
+		payload["create_activity_uri"] = createActivityURI
+	}
+	return Emission{
+		Activity: activities.Input{
+			Type:         federation.ActivityUpdate,
+			ActivityURI:  actor.MintActivityURI(),
+			ActorUserRef: &actorRef,
+			ActorURI:     actor.URI(),
+			Object: &activities.ObjectRef{
+				URI:     commentObjectURI,
+				Kind:    activities.ObjectKindComment,
+				LocalID: commentID,
+			},
+			To:        to,
+			Payload:   payload,
+			Published: published,
+		},
+	}
 }
 
 // DeleteComment builds the Emission for a Delete activity per AP

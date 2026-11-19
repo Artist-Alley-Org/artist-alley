@@ -123,7 +123,7 @@ type MemberContext struct {
 //     (ErrProfileNotNegotiated) and must match it (ErrArchivalInvalid).
 //  3. A type the receiver does not apply is ErrUnsupportedActivity;
 //     so is a Create that is not a comment, an Undo that is not of a
-//     Like, and a Delete that is not of a comment.
+//     Like, and a Delete or an Update that is not of a comment.
 //  4. Every member must be defined for the type (ErrUnknownField) and
 //     well formed (ErrInvalidMember).
 func ValidateMembers(env *Envelope, mc MemberContext) error {
@@ -144,8 +144,8 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 		// name an activity of the actor's own origin before the envelope
 		// is stored (#1572). Its sealed object_type is checked after
 		// decryption.
-		if env.Type == ActivityUndo || env.Type == ActivityDelete {
-			return checkRetractionObject(env)
+		if env.Type == ActivityUndo || env.Type == ActivityDelete || env.Type == ActivityUpdate {
+			return checkPriorActivityObject(env)
 		}
 		return nil
 	}
@@ -178,6 +178,17 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 			return err
 		}
 		allowed[MemberObjectType] = true
+	case ActivityUpdate:
+		// An edit of a comment (#1572, §7.5.5): object_type "Note" and
+		// the comment's Create id, like a Delete, plus the new content.
+		// No inReplyTo: an edit never moves a comment.
+		if err := validateRetraction(env, CommentObjectType); err != nil {
+			return err
+		}
+		if err := checkCommentContent(env.Extra); err != nil {
+			return err
+		}
+		allowed[MemberObjectType], allowed[MemberContent] = true, true
 	case ActivityAAShare, ActivityAAUnshare, ActivityAARevokeShare:
 		share := env.Type == ActivityAAShare
 		if err := validateShareEnvelope(env, mc, share); err != nil {
@@ -239,7 +250,7 @@ func validateCommentCreate(env *Envelope) error {
 // object_type "Note"). object_type is required (missing is
 // ErrInvalidMember); any other value, an Undo of a Follow, a Delete of a
 // post, ..., is ErrUnsupportedActivity; and the object must be the id of
-// the activity being retracted (checkRetractionObject).
+// the activity being retracted (checkPriorActivityObject).
 func validateRetraction(env *Envelope, objectType string) error {
 	raw, ok := env.Extra[MemberObjectType]
 	if !ok {
@@ -252,15 +263,15 @@ func validateRetraction(env *Envelope, objectType string) error {
 	if ot != objectType {
 		return fmt.Errorf("%w: %s of %s", ErrUnsupportedActivity, env.Type, quoteMember(ot))
 	}
-	return checkRetractionObject(env)
+	return checkPriorActivityObject(env)
 }
 
-// checkRetractionObject: a retraction's object is the id of the actor's
+// checkPriorActivityObject: a retraction's object is the id of the actor's
 // own earlier activity (the Like an Undo undoes, the comment Create a
 // Delete deletes), so an absolute https URI on the actor's origin,
 // without a query or fragment, other than the retraction's own id. A
 // retraction can only ever name what its own origin sent.
-func checkRetractionObject(env *Envelope) error {
+func checkPriorActivityObject(env *Envelope) error {
 	sender := originOf(env.Actor)
 	u, err := url.Parse(env.Object)
 	if sender == "" || err != nil || env.Object == "" || originOf(env.Object) != sender ||
@@ -270,11 +281,9 @@ func checkRetractionObject(env *Envelope) error {
 	return nil
 }
 
-// checkCommentMembers checks a comment's content (required: a
-// non-blank string of at most CommentContentMaxRunes code points) and
-// inReplyTo (optional: an absolute https URI). The receiver and the
-// sender (WireMembers) both use it, so one definition holds for both.
-func checkCommentMembers(m map[string]json.RawMessage) error {
+// checkCommentContent: a comment's content member, required, a non-blank
+// string of at most CommentContentMaxRunes code points.
+func checkCommentContent(m map[string]json.RawMessage) error {
 	raw, ok := m[MemberContent]
 	if !ok {
 		return fmt.Errorf("%w: a comment requires %s", ErrInvalidMember, MemberContent)
@@ -288,6 +297,17 @@ func checkCommentMembers(m map[string]json.RawMessage) error {
 	}
 	if n := utf8.RuneCountInString(content); n > CommentContentMaxRunes {
 		return fmt.Errorf("%w: %s is %d characters, more than %d", ErrInvalidMember, MemberContent, n, CommentContentMaxRunes)
+	}
+	return nil
+}
+
+// checkCommentMembers checks a comment's content (required: a
+// non-blank string of at most CommentContentMaxRunes code points) and
+// inReplyTo (optional: an absolute https URI). The receiver and the
+// sender (WireMembers) both use it, so one definition holds for both.
+func checkCommentMembers(m map[string]json.RawMessage) error {
+	if err := checkCommentContent(m); err != nil {
+		return err
 	}
 	if raw, ok := m[MemberInReplyTo]; ok {
 		if err := checkHTTPSURI(raw, MemberInReplyTo); err != nil {
@@ -622,10 +642,10 @@ func walkJSONValue(dec *json.Decoder) error {
 // type about an object of this kind, with this local payload, in v1:
 // Like, a comment Create, aa:Share / aa:Unshare, an Undo of a Like
 // (#1572: its object is an activity and its payload's target_type is
-// "Like"; an Undo of a Follow or a Block stays local), and a Delete of a
-// comment by its own author (#1572: the payload names the comment's
-// Create, create_activity_uri; a moderator's Delete, or a Delete of
-// anything else, stays local). Everything else stays local until a
+// "Like"; an Undo of a Follow or a Block stays local), and a Delete or
+// an Update (edit) of a comment by its own author (#1572: the payload
+// names the comment's Create, create_activity_uri; a moderator's Delete,
+// or a Delete or an Update of anything else, stays local). Everything else stays local until a
 // receiver applies it (spec v1 §7.6, §12.3 activity_not_federated).
 func Federated(t ActivityType, objectKind string, payload []byte) bool {
 	switch t {
@@ -635,17 +655,17 @@ func Federated(t ActivityType, objectKind string, payload []byte) bool {
 		return objectKind == "comment"
 	case ActivityUndo:
 		return objectKind == "activity" && UndoneType(payload) == UndoObjectTypeLike
-	case ActivityDelete:
-		return objectKind == "comment" && absoluteHTTPS(DeletedCreateURI(payload))
+	case ActivityDelete, ActivityUpdate:
+		return objectKind == "comment" && absoluteHTTPS(CommentCreateURI(payload))
 	}
 	return false
 }
 
-// DeletedCreateURI is the id of the comment Create a Delete's local
-// payload says it deletes (create_activity_uri), or "" when the payload
-// does not name one. The emitter sets it only for the comment's own
-// author (#1572).
-func DeletedCreateURI(payload []byte) string {
+// CommentCreateURI is the id of the comment Create a Delete's or an
+// Update's local payload names (create_activity_uri), or "" when it does
+// not name one. The emitters set it only for the comment's own author
+// (#1572).
+func CommentCreateURI(payload []byte) string {
 	var p struct {
 		CreateActivityURI string `json:"create_activity_uri"`
 	}
@@ -684,10 +704,10 @@ func WireObject(t ActivityType, objectKind, objectURI string, payload []byte) (s
 		}
 		return objectURI, nil
 	}
-	if t == ActivityDelete && objectKind == "comment" {
+	if (t == ActivityDelete || t == ActivityUpdate) && objectKind == "comment" {
 		// A Delete of a comment names the comment by the id of the Create
 		// that delivered it (#1572, §7.5.5), never by its local URI.
-		create := DeletedCreateURI(payload)
+		create := CommentCreateURI(payload)
 		if !absoluteHTTPS(create) {
 			return "", fmt.Errorf("%w: a comment Delete names the comment's Create by its https id (create_activity_uri)", ErrNotFederated)
 		}
@@ -763,6 +783,13 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		// Federated admitted only an author's Delete of a comment; the
 		// comment's Create is the envelope object (#1572).
 		out[MemberObjectType] = json.RawMessage(strconv.Quote(CommentObjectType))
+	case ActivityUpdate:
+		// An author's edit of a comment: object_type and the new content;
+		// the comment's Create is the envelope object (#1572).
+		out[MemberObjectType] = json.RawMessage(strconv.Quote(CommentObjectType))
+		if err := copyAs(MemberContent, MemberContent, true); err != nil {
+			return nil, err
+		}
 	case ActivityCreate:
 		out[MemberObjectType] = json.RawMessage(strconv.Quote(CommentObjectType))
 		if err := copyAs(MemberContent, MemberContent, true); err != nil {
@@ -822,6 +849,8 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 	switch t {
 	case ActivityCreate:
 		err = checkCommentMembers(out)
+	case ActivityUpdate:
+		err = checkCommentContent(out)
 	case ActivityAAShare:
 		err = checkShareMembers(out, true)
 		if err == nil {

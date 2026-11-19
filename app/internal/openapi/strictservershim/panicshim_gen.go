@@ -1205,6 +1205,11 @@ func (*PanicShim) DeleteComment(context.Context, openapi.DeleteCommentRequestObj
 	panic("PanicShim: DeleteComment called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// UpdateComment panics by default; test shims override.
+func (*PanicShim) UpdateComment(context.Context, openapi.UpdateCommentRequestObject) (openapi.UpdateCommentResponseObject, error) {
+	panic("PanicShim: UpdateComment called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetEmailTemplates panics by default; test shims override.
 func (*PanicShim) GetEmailTemplates(context.Context, openapi.GetEmailTemplatesRequestObject) (openapi.GetEmailTemplatesResponseObject, error) {
 	panic("PanicShim: GetEmailTemplates called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

@@ -330,6 +330,14 @@ func (a *socialPosterE2EAdapter) InsertRemoteLike(ctx context.Context, kind stri
 	return a.h.InsertRemoteLike(ctx, kind, id, peerID, actorURI, activityURI, a.authorizer(federation.ActivityLike, kind, id, peerID, actorURI))
 }
 
+func (a *socialPosterE2EAdapter) UpdateRemoteComment(ctx context.Context, in inbox.RemoteUpdateCommentInput) (bool, error) {
+	return a.h.UpdateRemoteComment(ctx, social.RemoteUpdateCommentInput{PeerID: in.PeerID, ActorURI: in.ActorURI,
+		CreateActivityURI: in.CreateActivityURI, UpdateActivityURI: in.UpdateActivityURI, Content: in.Content, Published: in.Published,
+		Authorize: func(kind string, id uuid.UUID) social.InboundAuthorizer {
+			return a.authorizer(federation.ActivityCreate, kind, id, in.PeerID, in.ActorURI)
+		}})
+}
+
 func (a *socialPosterE2EAdapter) DeleteRemoteComment(ctx context.Context, in inbox.RemoteDeleteCommentInput) (bool, error) {
 	return a.h.DeleteRemoteComment(ctx, social.RemoteDeleteCommentInput{PeerID: in.PeerID, ActorURI: in.ActorURI,
 		CreateActivityURI: in.CreateActivityURI, DeleteActivityURI: in.DeleteActivityURI})
