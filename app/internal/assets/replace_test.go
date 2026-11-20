@@ -55,6 +55,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/pgvector/pgvector-go"
 
@@ -847,6 +848,15 @@ func TestReplace_AnOldPreviewJobAfterTheReplacementChangesNothing(t *testing.T) 
 // Old-bytes writes that reach the row while the replacement holds its lock
 // wait for it, then match nothing: the compare is in the write's own
 // statement, re-evaluated on the replaced row.
+//
+// CONNECTION BUDGET. The parked replacement holds one connection and each
+// of the five writes holds another while it waits on the row lock, and the
+// observer needs one more to see them waiting. The rig's pool uses
+// pgxpool's default MaxConns, max(4, NumCPU), which is 4 on the CI runner,
+// so sharing it starved the observer and hung the package for ten minutes
+// (PR #1624, CI attempt 1). The writes therefore get a pool of their own
+// sized to them, the observer a dedicated connection with bounded queries,
+// and every exit releases the parked replacement.
 func TestReplace_OldBytesWritesRacingTheReplacementMatchNothing(t *testing.T) {
 	rr := newReconcileRig(t)
 	owner := rr.user("rp-lockrace")
@@ -873,6 +883,10 @@ func TestReplace_OldBytesWritesRacingTheReplacementMatchNothing(t *testing.T) {
 		return nil
 	})
 	t.Cleanup(func() { rr.h.SetReplaceBeforeCommitHook(nil) })
+	// A failed check must not leave the replacement parked on the row lock:
+	// the cleanups below it delete that row.
+	releaseOnce := sync.OnceFunc(func() { close(release) })
+	defer releaseOnce()
 	replaced := make(chan openapi.CreateAssetVersionResponseObject, 1)
 	go func() {
 		resp, err := rr.h.CreateAssetVersion(ctx, openapi.CreateAssetVersionRequestObject{Id: openapi_types.UUID(a),
@@ -885,20 +899,40 @@ func TestReplace_OldBytesWritesRacingTheReplacementMatchNothing(t *testing.T) {
 	<-reached
 	before := rr.state(a) // still the old row: the replacement has not committed
 
-	bg := context.Background()
+	// The writes' own pool: one connection per write and one spare.
+	const racing = 5
+	cfg := rr.pool.Config()
+	cfg.MaxConns, cfg.MinConns = racing+1, 0
+	racers, err := pgxpool.NewWithConfig(rr.ctx, cfg)
+	if err != nil {
+		t.Fatalf("racing writes' pool: %v", err)
+	}
+	t.Cleanup(racers.Close)
+	// The observer's own connection, so no write can starve it.
+	watch, err := pgx.ConnectConfig(rr.ctx, rr.pool.Config().ConnConfig.Copy())
+	if err != nil {
+		t.Fatalf("observer connection: %v", err)
+	}
+	t.Cleanup(func() { _ = watch.Close(context.Background()) })
+
+	// Bounded, so a write that never gets the lock fails the test instead
+	// of the package.
+	bg, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	q := assets.New(rr.pool)
+	rq, rvs := assets.New(racers), visualstore.New(racers)
 	var embedRows int64
 	writes := []func() error{
-		func() error { return q.MarkAssetReady(bg, assets.MarkAssetReadyParams{ID: pg, FileHash: h1}) },
+		func() error { return rq.MarkAssetReady(bg, assets.MarkAssetReadyParams{ID: pg, FileHash: h1}) },
 		func() error {
-			return q.MarkAssetFailed(bg, assets.MarkAssetFailedParams{ID: pg, FileHash: h1, ProcessingError: "late"})
+			return rq.MarkAssetFailed(bg, assets.MarkAssetFailedParams{ID: pg, FileHash: h1, ProcessingError: "late"})
 		},
 		func() error {
-			return q.MergeAssetMetadata(bg, assets.MergeAssetMetadataParams{ID: pg, FileHash: h1, Metadata: []byte(`{"late":true}`)})
+			return rq.MergeAssetMetadata(bg, assets.MergeAssetMetadataParams{ID: pg, FileHash: h1, Metadata: []byte(`{"late":true}`)})
 		},
-		func() error { return pixeldims.Record(bg, rr.pool, a, h1, 64, 48) },
+		func() error { return pixeldims.Record(bg, racers, a, h1, 64, 48) },
 		func() error {
-			n, err := vs.UpsertAssetVisualEmbedding(bg, visualstore.UpsertAssetVisualEmbeddingParams{
+			n, err := rvs.UpsertAssetVisualEmbedding(bg, visualstore.UpsertAssetVisualEmbeddingParams{
 				AssetID: pg, FileHash: h1, Embedding: vector(0.2), Model: "m", Checkpoint: "c", Provider: "p",
 			})
 			embedRows = n
@@ -911,8 +945,11 @@ func TestReplace_OldBytesWritesRacingTheReplacementMatchNothing(t *testing.T) {
 		wg.Add(1)
 		go func(i int, w func() error) { defer wg.Done(); errs[i] = w() }(i, w)
 	}
-	rr.waitForLockWaiters(len(writes))
-	close(release)
+	if len(writes) != racing {
+		t.Fatalf("%d racing writes, the pool is sized for %d", len(writes), racing)
+	}
+	rr.waitForLockWaiters(watch, len(writes))
+	releaseOnce()
 	resp := <-replaced
 	wg.Wait()
 	v := is201(t, "replace", resp)
@@ -944,15 +981,21 @@ func TestReplace_OldBytesWritesRacingTheReplacementMatchNothing(t *testing.T) {
 }
 
 // waitForLockWaiters returns once n backends on this database wait on a
-// lock. Bounded: a write that never blocks on the replacement fails here.
-func (rr *reconcileRig) waitForLockWaiters(n int) {
+// lock, asking on its own connection so the waiters cannot starve it.
+// Bounded twice: 20 seconds overall, and each query 5 seconds, so a stuck
+// connection fails here within seconds instead of exhausting the package
+// timeout.
+func (rr *reconcileRig) waitForLockWaiters(watch *pgx.Conn, n int) {
 	rr.t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		var got int
-		if err := rr.pool.QueryRow(rr.ctx, `SELECT count(*) FROM pg_stat_activity
-			WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`).Scan(&got); err != nil {
-			rr.t.Fatal(err)
+		qctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := watch.QueryRow(qctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`).Scan(&got)
+		cancel()
+		if err != nil {
+			rr.t.Fatalf("observing lock waiters: %v", err)
 		}
 		if got >= n {
 			return
