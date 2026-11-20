@@ -658,12 +658,16 @@ func walkJSONValue(dec *json.Decoder) error {
 // "Like"; an Undo of a Follow or a Block stays local), and a Delete or
 // an Update (edit) of a comment by its own author (#1572: the payload
 // names the comment's Create, create_activity_uri; a moderator's Delete,
-// or a Delete or an Update of anything else, stays local). Everything else stays local until a
-// receiver applies it (spec v1 §7.6, §12.3 activity_not_federated).
+// or a Delete or an Update of anything else, stays local), and an
+// aa:AssetVersion of an asset (#1574, federation/assetsend). Everything
+// else stays local until a receiver applies it (spec v1 §7.6, §12.3
+// activity_not_federated).
 func Federated(t ActivityType, objectKind string, payload []byte) bool {
 	switch t {
 	case ActivityLike, ActivityAAShare, ActivityAAUnshare:
 		return true
+	case ActivityAAAssetVersion:
+		return objectKind == "asset"
 	case ActivityCreate:
 		return objectKind == "comment"
 	case ActivityUndo:
@@ -750,7 +754,10 @@ func WireObject(t ActivityType, objectKind, objectURI string, payload []byte) (s
 // activity's v1 schema defines (§7.5): none for Like; object_type
 // "Like" for an Undo of a Like; object_type "Note" for a Delete of a
 // comment; object_type, content and inReplyTo for a comment; the §7.5.1 / §7.5.2 names for
-// aa:Share / aa:Unshare. Every other payload member (operator notes,
+// aa:Share / aa:Unshare; aa:asset for an aa:AssetVersion (#1574: the
+// member the delivery worker built from the version's sealed rows,
+// AssetVersionMemberKey, sent only to a peer with archival-1 and
+// original-transfer-1). Every other payload member (operator notes,
 // local ids, titles kept for notifications) stays local. A type
 // Federated refuses, a payload missing a required member, or a member
 // whose shape §7.5 refuses (an empty target_peer, a boolean scope) is
@@ -766,6 +773,12 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		// fit one. The resolver skips such a recipient before a row is
 		// queued; a row queued earlier is closed here.
 		return nil, fmt.Errorf("%w: %w: %s is sent only with %s", ErrNotFederated, ErrProfileNotNegotiated, t, ProfileShareLifecycle1)
+	}
+	if t == ActivityAAAssetVersion && (!has(ProfileArchival1) || !has(ProfileOriginalTransfer1)) {
+		// §16.3, as for the share types: never sent to a peer without
+		// both profiles, never stripped to fit one.
+		return nil, fmt.Errorf("%w: %w: %s is sent only with %s and %s", ErrNotFederated, ErrProfileNotNegotiated, t,
+			ProfileArchival1, ProfileOriginalTransfer1)
 	}
 	local := map[string]json.RawMessage{}
 	if len(bytes.TrimSpace(payload)) > 0 && string(bytes.TrimSpace(payload)) != "null" {
@@ -786,6 +799,10 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		return nil
 	}
 	switch t {
+	case ActivityAAAssetVersion:
+		if err := copyAs(AssetVersionMemberKey, MemberArchivalAsset, true); err != nil {
+			return nil, err
+		}
 	case ActivityLike:
 		// No activity members: the liked object is the envelope object.
 	case ActivityUndo:
@@ -874,9 +891,16 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		if err == nil {
 			err = checkHTTPSURI(out[MemberRevokes], MemberRevokes)
 		}
+	case ActivityAAAssetVersion:
+		_, err = ParseArchivalAsset(out[MemberArchivalAsset])
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrNotFederated, t, err)
 	}
 	return out, nil
 }
+
+// AssetVersionMemberKey is the payload key the delivery worker puts an
+// aa:AssetVersion's built aa:asset member under before WireMembers
+// projects it (#1574). The stored local record never holds it.
+const AssetVersionMemberKey = "asset"

@@ -32,6 +32,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/federation/assetsend"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -438,6 +439,22 @@ func (h *AdminHandler) insertGrant(
 			return nil, true, nil
 		}
 		return nil, false, fmt.Errorf("shares: grant: insert: %w", err)
+	}
+
+	// #1574: an original-file share of an asset to the peer as a whole
+	// also announces the asset's current version to that peer
+	// (aa:AssetVersion), in this transaction, after the aa:Share. It is
+	// recorded only for a live local public or team asset and a peer that
+	// negotiated archival-1 and original-transfer-1 (assetsend.Record);
+	// the delivery worker sends it only after this aa:Share reached the
+	// peer.
+	if in.ObjectKind == federation.ShareObjectKindAsset && in.AllowOriginal && in.TargetUserURL == nil {
+		if _, err := assetsend.Record(ctx, tx, h.activities, assetsend.Grant{
+			ShareID: shareID, ShareActivityID: activityID, AssetID: in.ObjectID, PeerID: in.PeerID,
+			PeerURL: peer.InstanceURL, BaseURL: actor.BaseURL, Username: h.usernameFn,
+		}); err != nil {
+			return nil, false, fmt.Errorf("shares: grant: %w", err)
+		}
 	}
 
 	// 3. Audit event (federation.share.granted) — same tx, so

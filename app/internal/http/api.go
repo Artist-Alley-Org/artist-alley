@@ -76,6 +76,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/featured"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/assetingest"
+	"github.com/mscrnt/artist-alley/app/internal/federation/assetsend"
 	"github.com/mscrnt/artist-alley/app/internal/federation/cas"
 	"github.com/mscrnt/artist-alley/app/internal/federation/casfetch"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inboundgrants"
@@ -1532,6 +1533,12 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// pinned key, fetched from the peer's actor document with this
 	// same instance signer.
 	wireOutboxActorSigning(s.outboxDelivery, s.users, baseURLFn)
+	// #1574: an aa:AssetVersion's aa:asset member is built at send time
+	// from the version's sealed rows, and held back until the grant's
+	// aa:Share reached the peer (assetsend). Recorded only toward a peer
+	// with archival-1 and original-transfer-1, which no production peer
+	// has yet.
+	s.outboxDelivery.SetAssetVersionMember(assetsend.Source{Pool: pool}.Member)
 	actorKeys := remote.NewSigningKeyResolver(pool, signer, logger)
 	s.inboxHandler.SetActorKeyResolver(actorKeys)
 	// #72 origin: serves originals only under the #1573 decision, with

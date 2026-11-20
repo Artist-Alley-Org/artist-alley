@@ -166,6 +166,10 @@ type Worker struct {
 	// unwired only the tier stamped at dispatch is used.
 	currentSensitivity SensitivityLookup
 
+	// assetVersionMember builds an aa:AssetVersion's aa:asset member at
+	// send time (#1574). Unwired, no aa:AssetVersion is sent.
+	assetVersionMember AssetVersionMemberFunc
+
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_outbox_pending notification. Buffered=1 so the
 	// LISTEN never blocks; main loop drains extras before
@@ -212,6 +216,17 @@ func (w *Worker) SetActorSigningKey(f ActorSigningKeyFunc) { w.actorSigningKey =
 // after dispatch can raise the protection of a queued row but
 // never lower it. nil-safe (stamped tier only).
 func (w *Worker) SetSensitivityLookup(f SensitivityLookup) { w.currentSensitivity = f }
+
+// AssetVersionMemberFunc returns the aa:asset member of one
+// aa:AssetVersion delivery to peerID, whose activity object is objectURI
+// and local record payload (#1574). An error wrapping
+// federation.ErrNotFederated refuses the delivery for good; any other
+// error retries it under the usual backoff. Boot wires
+// assetsend.Source.Member.
+type AssetVersionMemberFunc func(ctx context.Context, peerID uuid.UUID, objectURI string, payload []byte) (json.RawMessage, error)
+
+// SetAssetVersionMember wires the aa:AssetVersion member source (#1574).
+func (w *Worker) SetAssetVersionMember(f AssetVersionMemberFunc) { w.assetVersionMember = f }
 
 // SetAudit wires the audit recorder for federation.emission.encrypted
 // + federation.emission.skipped(reason=recipient_key_unfetchable).
@@ -394,12 +409,15 @@ func (w *Worker) RunOnce(ctx context.Context) (sent, failed, deferred int) {
 	}
 
 	refused := 0
+	// The outbox rows this round marked sent (#1574: releaseAnnouncements).
+	var sentRows []pgtype.UUID
 	for _, peerRows := range byPeer {
 		if len(peerRows) == 1 {
 			// Solo activity — singleton POST.
 			switch w.deliverOne(ctx, peerRows[0]) {
 			case deliveryOutcomeSent:
 				sent++
+				sentRows = append(sentRows, peerRows[0].ID)
 			case deliveryOutcomeFailedTerminal:
 				failed++
 			case deliveryOutcomeFailedTransient:
@@ -418,7 +436,7 @@ func (w *Worker) RunOnce(ctx context.Context) (sent, failed, deferred int) {
 			// Batched POST. The receiver returns 200 with per-
 			// envelope status; we transition each row
 			// individually based on its result.
-			s, f, d := w.deliverBatched(ctx, peerRows)
+			s, f, d := w.deliverBatched(ctx, peerRows, &sentRows)
 			sent += s
 			failed += f
 			deferred += d
@@ -433,7 +451,40 @@ func (w *Worker) RunOnce(ctx context.Context) (sent, failed, deferred int) {
 			slog.Int("refused", refused),
 		)
 	}
+	if len(sentRows) > 0 {
+		w.releaseAnnouncements(ctx, sentRows)
+	}
 	return sent, failed, deferred
+}
+
+// releaseAnnouncements makes an aa:AssetVersion due now when the aa:Share
+// it waits for (#1574, assetsend) is one of the outbox rows THIS round
+// sent (sentRows): the share went to that peer just now. Its delivery,
+// built while that aa:Share was still queued (they are often in the same
+// batch), was held back only for it: Source.Member checks the share
+// before anything else, so an announcement whose aa:Share was not sent
+// yet cannot have been deferred for its version or a transfer. A
+// deferral recorded after the aa:Share was sent (a draft version, a
+// transient failure) is never touched: no other send, now or later,
+// moves it. This only brings an attempt forward, it adds none.
+func (w *Worker) releaseAnnouncements(ctx context.Context, sentRows []pgtype.UUID) {
+	tag, err := w.pool.Exec(ctx, `
+		UPDATE federation_outbox o SET next_attempt_at = now(), updated_at = now()
+		  FROM activities a, federation_outbox s
+		 WHERE s.id = ANY($1::uuid[]) AND s.status = 'sent'
+		   AND o.status = 'queued' AND o.next_attempt_at > now() AND o.peer_id = s.peer_id
+		   AND a.id = o.activity_id AND a.activity_type = 'aa:AssetVersion'
+		   AND a.payload->>'share_activity_id' = s.activity_id::text`, sentRows)
+	if err != nil {
+		w.logErr(ctx, "outbox.delivery.release_announcements.error", err)
+		return
+	}
+	if tag.RowsAffected() > 0 {
+		select {
+		case w.wake <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // deliverBatched POSTs N outbox rows for the SAME peer in one
@@ -443,14 +494,14 @@ func (w *Worker) RunOnce(ctx context.Context) (sent, failed, deferred int) {
 //
 // Caps at 50 envelopes per batch per spec §10.4; if peerRows
 // has more than 50 we split into multiple batched POSTs.
-func (w *Worker) deliverBatched(ctx context.Context, peerRows []FederationOutbox) (sent, failed, deferred int) {
+func (w *Worker) deliverBatched(ctx context.Context, peerRows []FederationOutbox, sentRows *[]pgtype.UUID) (sent, failed, deferred int) {
 	const batchCap = 50
 	for start := 0; start < len(peerRows); start += batchCap {
 		end := start + batchCap
 		if end > len(peerRows) {
 			end = len(peerRows)
 		}
-		s, f, d := w.deliverOneBatch(ctx, peerRows[start:end])
+		s, f, d := w.deliverOneBatch(ctx, peerRows[start:end], sentRows)
 		sent += s
 		failed += f
 		deferred += d
@@ -460,7 +511,7 @@ func (w *Worker) deliverBatched(ctx context.Context, peerRows []FederationOutbox
 
 // deliverOneBatch POSTs a single batch of up to 50 outbox rows
 // to /federation/inbox/batch on the shared peer.
-func (w *Worker) deliverOneBatch(ctx context.Context, rows []FederationOutbox) (sent, failed, deferred int) {
+func (w *Worker) deliverOneBatch(ctx context.Context, rows []FederationOutbox, sentRows *[]pgtype.UUID) (sent, failed, deferred int) {
 	if len(rows) == 0 {
 		return 0, 0, 0
 	}
@@ -618,10 +669,12 @@ func (w *Worker) deliverOneBatch(ctx context.Context, rows []FederationOutbox) (
 		}
 		switch res.Status {
 		case "accepted", "replayed":
-			_, _ = w.q.MarkOutboxSent(ctx, MarkOutboxSentParams{
+			if n, err := w.q.MarkOutboxSent(ctx, MarkOutboxSentParams{
 				ID:                 row.ID,
 				DeliveredWithKeyID: ptrStr(w.signer.KeyID()),
-			})
+			}); err == nil && n == 1 && sentRows != nil {
+				*sentRows = append(*sentRows, row.ID)
+			}
 			sent++
 		case "rejected":
 			// Terminal — the receiver gave a typed §12.1 reason.
@@ -936,6 +989,30 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 		FROM federation_peers WHERE id = $1`, peerID).Scan(&peerCaps); err != nil {
 		return nil, fmt.Errorf("read recipient capabilities: %w", err)
 	}
+	isAssetVersion := federation.ActivityType(activityType) == federation.ActivityAAAssetVersion
+	if isAssetVersion {
+		// #1574: the aa:asset member is built now, from the version's
+		// sealed rows, never stored with the activity; the source also
+		// holds the announcement back until the grant's aa:Share reached
+		// this peer, and refuses it once the grant is gone.
+		if w.assetVersionMember == nil {
+			return nil, fmt.Errorf("%w: aa:AssetVersion: no member source wired", federation.ErrNotFederated)
+		}
+		member, err := w.assetVersionMember(ctx, peerID, env.Object, payload)
+		if err != nil {
+			return nil, err
+		}
+		local := map[string]json.RawMessage{}
+		if len(payload) > 0 {
+			if err := json.Unmarshal(payload, &local); err != nil {
+				return nil, fmt.Errorf("%w: aa:AssetVersion payload: %v", federation.ErrNotFederated, err)
+			}
+		}
+		local[federation.AssetVersionMemberKey] = member
+		if payload, err = json.Marshal(local); err != nil {
+			return nil, err
+		}
+	}
 	wire, err := federation.WireMembers(federation.ActivityType(activityType), kind, payload,
 		func(token string) bool { return slices.Contains(peerCaps, token) })
 	if err != nil {
@@ -943,6 +1020,13 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	}
 	if len(wire) > 0 {
 		env.Extra = wire
+	}
+	if isAssetVersion {
+		// The member names the envelope object and matches §17.2, as the
+		// receiver will check (§17.1).
+		if err := federation.ValidateArchivalMembers(env, true); err != nil {
+			return nil, fmt.Errorf("%w: %w", federation.ErrNotFederated, err)
+		}
 	}
 
 	// Phase 1.22.I-c — advertise the actor's current encryption

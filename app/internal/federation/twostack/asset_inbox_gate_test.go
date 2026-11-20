@@ -12,11 +12,11 @@
 //   - TEST-ONLY ADVERTISEMENT of archival-1 (here) and
 //     original-transfer-1 (newCASGate), before the real handshake. Neither
 //     is advertised in production.
-//   - THE ANNOUNCEMENT. No sender emits aa:AssetVersion yet, so the test
-//     builds it from A's real asset, signs it with a real A actor's key
-//     (which B pins from A's real actor document) and posts it with A's
-//     instance key over TLS. Everything that receives it is B's
-//     production server.
+//   - THE ANNOUNCEMENT. The test builds it from A's real asset, signs it
+//     with a real A actor's key (which B pins from A's real actor
+//     document) and posts it with A's instance key over TLS; A's own
+//     sender (#1574) is switched off for this gate (senderOffOnA).
+//     Everything that receives it is B's production server.
 
 package twostack_test
 
@@ -139,6 +139,8 @@ func TestTwoStack_AssetInbox(t *testing.T) {
 	peer.KnownCapabilities = append(peer.KnownCapabilities, peer.CapArchival1)
 	t.Cleanup(func() { peer.KnownCapabilities = prev })
 	cg := newCASGate(t)
+	// This gate posts its own announcements: A's own sender is off.
+	cg.senderOffOnA()
 	cg.runWorkers(cg.a)
 	cg.runWorkers(cg.b)
 	ctx := context.Background()
