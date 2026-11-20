@@ -84,6 +84,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
+	"github.com/mscrnt/artist-alley/app/internal/federation/receivedassets"
 	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
 	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
@@ -199,10 +200,11 @@ type apiServer struct {
 	sharesSweeper      *shares.Sweeper
 	inboxHandler       *inbox.Handler
 	actorDocument      *actorDocumentHandler
-	casHandler         *cas.Handler         // #72 origin: serves originals to paired peers
-	casFetch           *casfetch.Client     // #72 receiver; authorised by inboundGrants (#1571)
-	assetIngest        *assetingest.Worker  // #1574 receiver: aa:AssetVersion from the inbox, imports in the background
-	inboundGrants      *inboundgrants.Store // #1571 receiver grant record
+	casHandler         *cas.Handler            // #72 origin: serves originals to paired peers
+	casFetch           *casfetch.Client        // #72 receiver; authorised by inboundGrants (#1571)
+	assetIngest        *assetingest.Worker     // #1574 receiver: aa:AssetVersion from the inbox, imports in the background
+	receivedAssets     *receivedassets.Handler // #1574 view: received records, grant-gated, never local assets
+	inboundGrants      *inboundgrants.Store    // #1571 receiver grant record
 	inboxDispatcher    *inbox.Dispatcher
 	outboxDispatcher   *outbox.Dispatcher
 	outboxDelivery     *outbox.Worker
@@ -1583,6 +1585,11 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		Logger:  logger,
 	}), assetingest.DefaultWorkerConfig(), func() casfetch.Signer { return casfetch.InstanceSigner(signer) })
 	s.inboxDispatcher.SetAssetScheduler(s.assetIngest)
+	// #1574 view: a complete received record is shown to its grant's
+	// audience at /federation/received-assets (and the "Received" account
+	// page), never as a local asset; the original only under a grant that
+	// carries the original-file permission (receivedassets rule.go).
+	s.receivedAssets = &receivedassets.Handler{Pool: pool, Storage: storageSvc}
 	// Phase 1.22.I-e per-recipient encryption hooks. A delivery
 	// is encrypted when the peer negotiated E2E (e2e-encrypted +
 	// nacl-box + x25519, all in KnownCapabilities since I-f) and
@@ -3357,6 +3364,19 @@ func (s *apiServer) invalidateOwnerProfileOnCollectionDelete(ctx context.Context
 
 func (s *apiServer) DownloadAssetFile(ctx context.Context, req openapi.DownloadAssetFileRequestObject) (openapi.DownloadAssetFileResponseObject, error) {
 	return s.assets.DownloadAssetFile(ctx, req)
+}
+
+// #1574 received assets (federation/receivedassets).
+func (s *apiServer) ListReceivedAssets(ctx context.Context, req openapi.ListReceivedAssetsRequestObject) (openapi.ListReceivedAssetsResponseObject, error) {
+	return s.receivedAssets.ListReceivedAssets(ctx, req)
+}
+
+func (s *apiServer) GetReceivedAsset(ctx context.Context, req openapi.GetReceivedAssetRequestObject) (openapi.GetReceivedAssetResponseObject, error) {
+	return s.receivedAssets.GetReceivedAsset(ctx, req)
+}
+
+func (s *apiServer) DownloadReceivedAssetOriginal(ctx context.Context, req openapi.DownloadReceivedAssetOriginalRequestObject) (openapi.DownloadReceivedAssetOriginalResponseObject, error) {
+	return s.receivedAssets.DownloadReceivedAssetOriginal(ctx, req)
 }
 
 // Phase 1.18.B-3 subtitle tracks.

@@ -737,6 +737,10 @@ type FederationReceivedAssetFile struct {
 	DeclaredOriginalFilename *string
 	State                    string
 	VerifiedAt               pgtype.Timestamptz
+	// The receiver's own identification of a verified original's bytes (#1574), written when the record completes; declared_media_type is the sender's claim.
+	DetectedMediaType *string
+	// The tool that produced detected_media_type (#1574).
+	DetectedBy *string
 }
 
 // Display cache for remote actors surfaced in UI. The inbound dispatch handler upserts on every activity from a remote actor; display fields refresh naturally on each interaction. Keyed on actor_uri (globally unique per spec §8.3).

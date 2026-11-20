@@ -14,19 +14,27 @@
 //     original-transfer-1 (newCASGate), before the real handshake. Neither
 //     is advertised in production.
 //
-// "View" is not part of this slice: B holds and verifies the record, and
-// no page or API shows it yet.
+// View (the received-asset read model): a non-admin user of B reads
+// the record through B's real /api/v1/federation/received-assets routes,
+// the original's bytes are A's, and every request re-checks B's grant
+// for the record: a revoke hides it, a view-only regrant shows it again
+// without the original, anonymous callers never see it.
 
 package twostack_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 )
 
@@ -201,6 +209,140 @@ func TestTwoStack_AssetSender(t *testing.T) {
 		}
 	})
 
+	t.Run("a user of B views the record while the grant allows it", func(t *testing.T) {
+		o := g.newOriginal("public")
+		g.sealedOnA(o)
+		share := g.grantWith(o, map[string]any{"allow_original": true})
+		ann := g.announcementsOnA(o)
+		if len(ann) != 1 {
+			t.Fatalf("A recorded %d announcements, want 1", len(ann))
+		}
+		g.recordStateOnB(ann[0], "complete")
+		var id string
+		if err := g.b.pool.QueryRow(ctx, `SELECT id::text FROM federation_received_assets WHERE peer_id = $1 AND activity_uri = $2`,
+			g.peerAonB, ann[0]).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		member := g.memberOnB()
+		listed := func(tok string) bool {
+			t.Helper()
+			st, raw := g.getOnB(tok, "/federation/received-assets?limit=200")
+			if st != http.StatusOK {
+				t.Fatalf("list: %d %s", st, raw)
+			}
+			var l struct {
+				Items []struct {
+					ID string `json:"id"`
+				} `json:"items"`
+			}
+			if err := json.Unmarshal(raw, &l); err != nil {
+				t.Fatal(err)
+			}
+			for _, it := range l.Items {
+				if it.ID == id {
+					return true
+				}
+			}
+			return false
+		}
+		detail := func(tok string) (int, bool) {
+			t.Helper()
+			st, raw := g.getOnB(tok, "/federation/received-assets/"+id)
+			var d struct {
+				OriginalAvailable bool `json:"original_available"`
+				Asset             struct {
+					OriginAssetURI string `json:"origin_asset_uri"`
+					Original       struct {
+						SHA256   string  `json:"sha256"`
+						Detected *string `json:"detected_media_type"`
+					} `json:"original"`
+				} `json:"asset"`
+			}
+			if st == http.StatusOK {
+				if err := json.Unmarshal(raw, &d); err != nil {
+					t.Fatal(err)
+				}
+				if d.Asset.OriginAssetURI != assetURI(o) || d.Asset.Original.SHA256 != o.hash || d.Asset.Original.Detected == nil {
+					t.Fatalf("detail: %s", raw)
+				}
+			}
+			return st, d.OriginalAvailable
+		}
+		originalStatus := func(tok string) int {
+			t.Helper()
+			st, raw := g.getOnB(tok, "/federation/received-assets/"+id+"/original")
+			if st == http.StatusOK && !bytes.Equal(raw, o.body) {
+				t.Fatal("B served bytes that are not A's original")
+			}
+			return st
+		}
+
+		// Granted with the original: listed, detailed, downloadable.
+		if !listed(member) {
+			t.Fatal("B's user does not see the received record")
+		}
+		if st, avail := detail(member); st != http.StatusOK || !avail {
+			t.Fatalf("detail: %d available=%v", st, avail)
+		}
+		if st := originalStatus(member); st != http.StatusOK {
+			t.Fatalf("original: %d", st)
+		}
+		// Anonymous: nothing.
+		if st, _ := g.getOnB("", "/federation/received-assets"); st != http.StatusUnauthorized {
+			t.Fatalf("anonymous list: %d", st)
+		}
+		if st, _ := detail(""); st != http.StatusNotFound {
+			t.Fatalf("anonymous detail: %d", st)
+		}
+		if st := originalStatus(""); st != http.StatusNotFound {
+			t.Fatalf("anonymous original: %d", st)
+		}
+		// Malformed and unknown requests: refused, and (getOnB) no-store.
+		for path, want := range map[string]int{
+			"/federation/received-assets?cursor=bm90LWEtY3Vyc29y":           http.StatusBadRequest,
+			"/federation/received-assets?limit=0":                           http.StatusBadRequest,
+			"/federation/received-assets/not-a-uuid":                        http.StatusBadRequest,
+			"/federation/received-assets/not-a-uuid/original":               http.StatusBadRequest,
+			"/federation/received-assets/" + uuid.NewString():               http.StatusNotFound,
+			"/federation/received-assets/" + uuid.NewString() + "/original": http.StatusNotFound,
+		} {
+			if st, raw := g.getOnB(member, path); st != want {
+				t.Fatalf("%s: %d %s, want %d", path, st, raw, want)
+			}
+		}
+
+		// Revoked on A: gone on B, on the next request.
+		g.revoke(share)
+		g.waitOnB(assetURI(o), "ended/revoked")
+		if listed(member) {
+			t.Fatal("a revoked record is still listed")
+		}
+		if st, _ := detail(member); st != http.StatusNotFound {
+			t.Fatalf("revoked detail: %d", st)
+		}
+		if st := originalStatus(member); st != http.StatusNotFound {
+			t.Fatalf("revoked original: %d", st)
+		}
+
+		// Regranted without the original: the record shows again, the
+		// file does not (B keeps the bytes; only a grant carrying the
+		// original releases them).
+		g.grantWith(o, nil)
+		g.waitOnB(assetURI(o), "live", "ended/revoked")
+		if !listed(member) {
+			t.Fatal("a regranted record is not listed")
+		}
+		if st, avail := detail(member); st != http.StatusOK || avail {
+			t.Fatalf("view-only detail: %d available=%v", st, avail)
+		}
+		if st := originalStatus(member); st != http.StatusNotFound {
+			t.Fatalf("view-only original: %d", st)
+		}
+		if n := g.onB(o, `SELECT count(*) FROM assets WHERE file_hash = $1`); n != 0 {
+			t.Fatal("viewing created an assets row on B")
+		}
+	})
+
 	t.Run("a share without the original announces nothing", func(t *testing.T) {
 		o := g.newOriginal("public")
 		g.sealedOnA(o)
@@ -251,4 +393,44 @@ func (g *casGate) countOnB(sql string, args ...any) int {
 		g.t.Fatal(err)
 	}
 	return n
+}
+
+// memberOnB creates an ordinary (non-admin) user of B with an API token
+// and returns the token.
+func (g *casGate) memberOnB() string {
+	g.t.Helper()
+	ctx := context.Background()
+	var ref int64
+	if err := g.b.pool.QueryRow(ctx, `INSERT INTO "user" (username, fullname, approved) VALUES ($1, 'Gate Member', 1) RETURNING ref`,
+		"member-"+strings.ToLower(uuid.NewString()[:8])).Scan(&ref); err != nil {
+		g.t.Fatal(err)
+	}
+	tok, _ := auth.NewAPIToken()
+	if _, err := g.b.pool.Exec(ctx, `INSERT INTO api_tokens (user_ref, name, token_hash) VALUES ($1, 'twostack member', $2)`,
+		ref, auth.HashAPIToken(tok)); err != nil {
+		g.t.Fatal(err)
+	}
+	return tok
+}
+
+// getOnB GETs B's /api/v1 path with the bearer token, or anonymously
+// when tok is empty.
+func (g *casGate) getOnB(tok, path string) (int, []byte) {
+	g.t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, g.b.url+"/api/v1"+path, nil)
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := (&http.Client{Transport: g.tr, Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		g.t.Fatalf("GET %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	// Every answer of the received-asset routes, refusals included, is
+	// no-store on the wire: a cached 404 would hide a later regrant.
+	if strings.HasPrefix(path, "/federation/received-assets") && resp.Header.Get("Cache-Control") != "no-store" {
+		g.t.Fatalf("GET %s: %d with Cache-Control %q, want no-store", path, resp.StatusCode, resp.Header.Get("Cache-Control"))
+	}
+	return resp.StatusCode, raw
 }

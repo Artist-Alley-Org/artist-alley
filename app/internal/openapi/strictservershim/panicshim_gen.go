@@ -1265,6 +1265,21 @@ func (*PanicShim) GetFederationPeersVisible(context.Context, openapi.GetFederati
 	panic("PanicShim: GetFederationPeersVisible called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListReceivedAssets panics by default; test shims override.
+func (*PanicShim) ListReceivedAssets(context.Context, openapi.ListReceivedAssetsRequestObject) (openapi.ListReceivedAssetsResponseObject, error) {
+	panic("PanicShim: ListReceivedAssets called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetReceivedAsset panics by default; test shims override.
+func (*PanicShim) GetReceivedAsset(context.Context, openapi.GetReceivedAssetRequestObject) (openapi.GetReceivedAssetResponseObject, error) {
+	panic("PanicShim: GetReceivedAsset called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// DownloadReceivedAssetOriginal panics by default; test shims override.
+func (*PanicShim) DownloadReceivedAssetOriginal(context.Context, openapi.DownloadReceivedAssetOriginalRequestObject) (openapi.DownloadReceivedAssetOriginalResponseObject, error) {
+	panic("PanicShim: DownloadReceivedAssetOriginal called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListFields panics by default; test shims override.
 func (*PanicShim) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
 	panic("PanicShim: ListFields called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

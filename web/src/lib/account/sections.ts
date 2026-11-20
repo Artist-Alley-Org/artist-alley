@@ -68,6 +68,9 @@ export const ACCOUNT_ITEMS: AccountItem[] = [
 
   // Workspace
   { slug: 'shared',        group: 'workspace', status: 'live', href: '/account/shared' },
+  // #1574: assets another studio shared with this instance, held and
+  // verified here. Like `shared`, they never appear in browse or search.
+  { slug: 'received',      group: 'workspace', status: 'live', href: '/account/received' },
   // Sits next to `shared` on purpose: one tile is access someone gave
   // you, the other is access you asked for. The page (Phase 1.17.E)
   // shipped without a nav entry, so nothing linked to it until #600.

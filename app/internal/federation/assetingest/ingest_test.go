@@ -1023,3 +1023,44 @@ func (f *fx) addPending(b *asset) uuid.UUID {
 	}
 	return id
 }
+
+// #1574 view: completing a record identifies each verified original from
+// its stored bytes, beside (never from) the sender's declared type; a
+// claim-only entry is never identified.
+func TestReceive_IdentifiesTheVerifiedOriginals(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	a := &asset{id: uuid.New()}
+	a.uri = f.origin.srv.URL + "/assets/" + a.id.String()
+	body := append([]byte{0xff, 0xd8, 0xff, 0xe0}, make([]byte, 2048)...) // a JPEG header
+	_, _ = rand.Read(body[4:])
+	h := f.origin.add(body)
+	a.hash = []string{h}
+	a.files = []map[string]any{fileEntry("original", h, len(body), "claimed.png")} // declared image/png
+	pres := f.origin.add([]byte("preservation copy"))
+	a.files = append(a.files, fileEntry("preservation", pres, len("preservation copy"), ""))
+	f.grant(f.peerID, a.uri, nil)
+	out, err := f.receive(f.envelope(a, a.member(f.version(a), 1, "public")))
+	if err != nil || out.State != assetingest.StateComplete {
+		t.Fatalf("receive: %+v %v", out, err)
+	}
+	var declared string
+	var detected, by *string
+	if err := f.pool.QueryRow(ctx, `SELECT declared_media_type, detected_media_type, detected_by FROM federation_received_asset_files
+		WHERE received_asset_id = $1 AND role = 'original'`, out.RecordID).Scan(&declared, &detected, &by); err != nil {
+		t.Fatal(err)
+	}
+	if declared != "image/png" || detected == nil || *detected != "image/jpeg" || by == nil || *by != assetingest.DetectedBy {
+		t.Fatalf("declared %q, detected %v by %v; want the claim kept and the bytes identified as image/jpeg", declared, detected, by)
+	}
+	if n := f.count(`SELECT count(*) FROM federation_received_asset_files WHERE received_asset_id = $1 AND role <> 'original'
+		AND detected_media_type IS NOT NULL`, out.RecordID); n != 0 {
+		t.Fatal("a claim-only entry was identified")
+	}
+	// The database refuses a complete record whose original was not
+	// identified (migration 00088), and identifying a claim-only entry.
+	if _, err := f.pool.Exec(ctx, `UPDATE federation_received_asset_files SET detected_media_type = 'text/plain', detected_by = 'x'
+		WHERE received_asset_id = $1 AND role <> 'original'`, out.RecordID); err == nil {
+		t.Fatal("a claim-only entry accepted a detection")
+	}
+}

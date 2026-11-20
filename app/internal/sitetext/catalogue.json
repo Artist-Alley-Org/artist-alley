@@ -575,6 +575,10 @@
         "title": "Shared with me",
         "blurb": "Posts other people have given you access to."
       },
+      "received": {
+        "title": "Received from other studios",
+        "blurb": "Assets another studio shared with this instance, verified here."
+      },
       "requests": {
         "title": "Access requests",
         "blurb": "Access you've asked for, and what approvers decided."
@@ -651,6 +655,40 @@
       "empty": "Nobody has shared a post with you yet.",
       "empty_hint": "When someone gives you access to one of their posts, it shows up here and you'll get a notification.",
       "load_more": "Load more"
+    },
+    "received": {
+      "title": "Received from other studios",
+      "intro": "Assets another studio shared with this instance. Every original file arrived and matched the size and checksums it was announced with. They stay here while the share lasts, and they never appear in Browse or Search.",
+      "empty": "Nothing has been received from another studio yet.",
+      "empty_hint": "When a paired studio shares an asset with this instance and its files arrive intact, it shows up here.",
+      "load_more": "Load more",
+      "from": "From",
+      "received_at": "Received",
+      "file": "File",
+      "back": "Back to received assets",
+      "not_found": "This received asset is not available to you.",
+      "source": "Source",
+      "version": "Version",
+      "peer": "Sending studio",
+      "files": "Files",
+      "role": "Role",
+      "size": "Size",
+      "sha256": "SHA-256",
+      "declared_type": "Declared type",
+      "detected_type": "Detected type",
+      "not_detected": "Not identified",
+      "declared_name": "Declared file name",
+      "declared_label": "Declared by the sender, not verified",
+      "declared_claims": "Declared details",
+      "no_claims": "The sender declared no other details.",
+      "state_verified": "Verified",
+      "state_not_transferred": "Not transferred (claim only)",
+      "state_pending": "Pending",
+      "value_verified": "verified here",
+      "value_declared": "declared, not verified",
+      "files_note": "Size and SHA-256 were checked by this instance only for a verified original. For any other file they are what the sender declared, and no fixity check has been run on them.",
+      "download": "Download original",
+      "download_unavailable": "The share does not include the original file."
     },
     "trash": {
       "title": "Trash",
