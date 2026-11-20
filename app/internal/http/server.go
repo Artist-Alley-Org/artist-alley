@@ -30,6 +30,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/email"
 	"github.com/mscrnt/artist-alley/app/internal/email/digest"
 	"github.com/mscrnt/artist-alley/app/internal/federation/casfetch"
+	"github.com/mscrnt/artist-alley/app/internal/federation/receivedassets"
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/iiif"
@@ -406,6 +407,9 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			}
 			return impl.matureResolver
 		}))
+		// #1574: every answer of the received-asset routes is no-store,
+		// refusals included (receivedassets.NoStore).
+		r.Use(receivedassets.NoStore)
 
 		// HLS variants live at multi-segment keys like
 		// `hls/master.m3u8`, `hls/720p/seg00012.ts`. chi's default

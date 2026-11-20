@@ -878,6 +878,129 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /federation/received-assets:
+    get:
+      operationId: listReceivedAssets
+      summary: Assets other studios shared with me, held and verified here (#1574)
+      description: |
+        Received asset records (#1574) this caller may view: records an
+        `aa:AssetVersion` announced, whose every original file arrived and
+        matched its listed size and checksums, held under a live inbound
+        grant. They are NOT local assets: they never appear in browse,
+        search or collections; this list and the "Received" account page
+        are where they surface.
+
+        A record is listed only while ALL of these hold, evaluated in SQL
+        on every request: the caller is signed in; the record is complete;
+        its tier is `public` (a `team` record is held but not shown: the
+        receiver has no team of the origin's to show it to, and widening
+        it would lower the tier, spec v1 §17.2); its sending peer is
+        enabled and connected; and a live, unexpired inbound grant from
+        that peer covers the asset and either names no recipient or names
+        the caller (§16.6). Revoking or expiring the grant drops the record
+        from the next request. Newest first, cursor-paginated. Every
+        answer of this route, the detail and the original, refusals
+        (400, 401, 404) included, is `Cache-Control: no-store`: a cached
+        refusal would hide a later regrant, a cached record would outlive
+        its grant. no-store keeps HTTP caches from storing a copy; it
+        cannot recall bytes a client already received.
+      tags: [federation, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of received assets the caller may view.
+          headers:
+            Cache-Control:
+              description: Always `no-store`, as on every refusal of these routes. Each answer is decided on its request and no HTTP cache may store it.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReceivedAssetList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /federation/received-assets/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getReceivedAsset
+      summary: One received asset record (#1574)
+      description: |
+        The record, under the same rule as the list. Everything the
+        sender stated is reported as declared; `detected_media_type` is
+        this instance's own identification of the verified bytes.
+        `original_available` says whether the caller may receive the
+        original now: that needs the same live grant to carry the
+        original-file permission (`aa:originalTransfer`, §16.6). Every
+        refusal is the same 404, whether the record does not exist, is
+        pending or rejected, is a `team` record, or is not granted to the
+        caller.
+      tags: [federation, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The record.
+          headers:
+            Cache-Control:
+              description: Always `no-store`, as on every refusal of these routes. Each answer is decided on its request and no HTTP cache may store it.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReceivedAssetDetail" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /federation/received-assets/{id}/original:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: downloadReceivedAssetOriginal
+      summary: The verified original file of a received asset (#1574)
+      description: |
+        Streams the original's verified bytes. Allowed only when the
+        record is viewable AND the same live grant carries the
+        original-file permission; checked on this request, so a revoke,
+        an expiry or a regrant without the original refuses the next
+        request. A record with several originals serves the first by
+        position. Every refusal is the same 404.
+      tags: [federation, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The verified bytes.
+          headers:
+            Cache-Control:
+              description: Always `no-store`, as on every refusal of these routes. Each answer is decided on its request and no HTTP cache may store it.
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /federation/peers/visible:
     get:
       operationId: getFederationPeersVisible
@@ -21832,6 +21955,67 @@ components:
           type: string
           nullable: true
 
+    ReceivedAssetFile:
+      type: object
+      description: |
+        One entry of a received asset's announced file set. Only
+        originals are transferred and verified; other roles are the
+        sender's claims (`not_transferred`).
+      required: [position, role, sha256, size_bytes, declared_media_type, state]
+      properties:
+        position: { type: integer }
+        role: { type: string, enum: [original, preservation, access] }
+        sha256: { type: string, description: "SHA-256 of the bytes (verified for an original)." }
+        size_bytes: { type: integer, format: int64 }
+        declared_media_type: { type: string, description: "The sender's claim." }
+        declared_original_filename: { type: string, description: "The sender's claim, a base name, never a path." }
+        detected_media_type: { type: string, description: "This instance's identification of the verified bytes; absent when not identified." }
+        detected_by: { type: string }
+        state: { type: string, enum: [pending, verified, not_transferred] }
+    ReceivedAsset:
+      type: object
+      description: A received asset record (#1574) the caller may view.
+      required: [id, peer_id, peer_url, origin_asset_uri, version_uri, version_number, sensitivity, received_at, completed_at, original]
+      properties:
+        id: { type: string, format: uuid }
+        peer_id: { type: string, format: uuid }
+        peer_url: { type: string, description: "The sending peer's instance URL." }
+        peer_name: { type: string }
+        origin_asset_uri: { type: string, description: "The asset's URI on its origin: the source." }
+        version_uri: { type: string }
+        version_number: { type: integer, format: int64 }
+        sensitivity: { type: string, description: "The origin's tier, applied as a minimum." }
+        received_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        original: { $ref: "#/components/schemas/ReceivedAssetFile" }
+    ReceivedAssetDetail:
+      type: object
+      required: [asset, activity_uri, actor_uri, files, declared, original_available]
+      properties:
+        asset: { $ref: "#/components/schemas/ReceivedAsset" }
+        activity_uri: { type: string, description: "The announcing aa:AssetVersion." }
+        actor_uri: { type: string, description: "The announcing actor on the origin (a claim of the sender)." }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/ReceivedAssetFile" }
+        declared:
+          type: object
+          additionalProperties: true
+          description: |
+            The sender's descriptive claims from `aa:asset`, as received and
+            unverified: rights, requiredStatement, identifiers,
+            accessionNumber, description, aiProvenance, mature, when present.
+        original_available:
+          type: boolean
+          description: Whether the caller may receive the original now.
+    ReceivedAssetList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReceivedAsset" }
+        next_cursor: { type: string }
     FederationShare:
       type: object
       description: |

@@ -442,6 +442,7 @@ var nonReferenceKindColumns = map[string]string{
 	// #1574: the media type a peer declared for a received file, a claim
 	// and not a reference; the row cascades with its record and peer.
 	"federation_received_asset_files.declared_media_type": "declared MIME type (sender claim)",
+	"federation_received_asset_files.detected_media_type": "detected MIME type (this instance's identification, #1574)",
 }
 
 // sweepStmt is one orphan-delete: the SQL plus the kind value it is

@@ -1566,6 +1566,11 @@ BEGIN
             RAISE EXCEPTION 'received asset %: complete with an original that is not verified and pinned (#1574)', r.id
                 USING ERRCODE = 'integrity_constraint_violation';
         END IF;
+        IF EXISTS (SELECT 1 FROM public.federation_received_asset_files f
+                    WHERE f.received_asset_id = r.id AND f.role = 'original' AND f.detected_media_type IS NULL) THEN
+            RAISE EXCEPTION 'received asset %: complete with an original that was not identified (#1574)', r.id
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
         RETURN;
     END IF;
     IF EXISTS (SELECT 1 FROM public.storage_pins WHERE pin_subject_type = 'federation_received_asset' AND pin_subject_id = r.id::text)
@@ -3741,6 +3746,8 @@ CREATE TABLE public.federation_received_asset_files (
     declared_original_filename text,
     state text DEFAULT 'pending'::text NOT NULL,
     verified_at timestamp with time zone,
+    detected_media_type text,
+    detected_by text,
     CONSTRAINT federation_received_asset_files_pkey PRIMARY KEY (received_asset_id, "position"),
     CONSTRAINT federation_received_asset_files_received_asset_id_fkey FOREIGN KEY (received_asset_id) REFERENCES public.federation_received_assets(id) ON DELETE CASCADE,
     CONSTRAINT federation_received_asset_files_position_check CHECK ("position" >= 0 AND "position" < 256),
@@ -3760,8 +3767,27 @@ CREATE TABLE public.federation_received_asset_files (
         WHEN 'original' THEN state = ANY (ARRAY['pending'::text, 'verified'::text])
         ELSE state = 'not_transferred'::text
     END),
-    CONSTRAINT federation_received_asset_files_verified_check CHECK ((state = 'verified'::text) = (verified_at IS NOT NULL))
+    CONSTRAINT federation_received_asset_files_verified_check CHECK ((state = 'verified'::text) = (verified_at IS NOT NULL)),
+    CONSTRAINT federation_received_asset_files_detected_check CHECK (
+        ((detected_media_type IS NULL) = (detected_by IS NULL))
+        AND (detected_media_type IS NULL OR (role = 'original'::text AND state = 'verified'::text
+             AND octet_length(detected_media_type) >= 3 AND octet_length(detected_media_type) <= 255
+             AND octet_length(detected_by) >= 1 AND octet_length(detected_by) <= 128)))
 );
+
+
+--
+-- Name: COLUMN federation_received_asset_files.detected_media_type; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_received_asset_files.detected_media_type IS 'The receiver''s own identification of a verified original''s bytes (#1574), written when the record completes; declared_media_type is the sender''s claim.';
+
+
+--
+-- Name: COLUMN federation_received_asset_files.detected_by; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_received_asset_files.detected_by IS 'The tool that produced detected_media_type (#1574).';
 
 
 --

@@ -83,7 +83,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"slices"
 	"sort"
@@ -646,6 +648,28 @@ type heldPin struct {
 	pin  storage.PinRef
 	hash string
 	size int64
+	// detected is this instance's identification of the verified bytes
+	// (#1574 view: declared vs detected media type).
+	detected string
+}
+
+// DetectedBy names the identification recorded as detected_by.
+const DetectedBy = "net/http.DetectContentType"
+
+// identify reads the head of a held original's verified bytes and names
+// their media type. The sender's declared type is never consulted.
+func (s *Service) identify(ctx context.Context, hash string) (string, error) {
+	body, _, err := s.d.Storage.Download(ctx, hash, storage.VariantOriginal)
+	if err != nil {
+		return "", err
+	}
+	defer body.Close()
+	head := make([]byte, 512)
+	n, err := io.ReadFull(body, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return http.DetectContentType(head[:n]), nil
 }
 
 var errNotPending = errors.New("assetingest: the record is no longer pending")
@@ -760,6 +784,17 @@ func (s *Service) transfer(ctx context.Context, an *announced, id uuid.UUID, att
 		}
 		held = append(held, heldPin{pin: res.Pin, hash: res.Hash, size: res.Size})
 	}
+	// Identify each verified original from its stored bytes, before the
+	// completing transaction writes it (a failure here is a storage
+	// failure: retried, and the ingest pins are released).
+	for i := range held {
+		d, err := s.identify(ctx, held[i].hash)
+		if err != nil {
+			release()
+			return s.fail(ctx, an.ref(), id, attempts, casfetch.ReasonStorage, true, fmt.Errorf("identify %s: %w", held[i].hash, err))
+		}
+		held[i].detected = d
+	}
 	if s.afterFetch != nil {
 		s.afterFetch()
 	}
@@ -870,10 +905,15 @@ func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, hel
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE federation_received_asset_files
-			SET state = 'verified', verified_at = now()
-			WHERE received_asset_id = $1 AND role = 'original'`, id); err != nil {
-			return err
+		// Verified, with this instance's identification of the bytes, in
+		// the same transaction that pins them (migration 00088: a complete
+		// record's originals are identified).
+		for _, h := range held {
+			if _, err := tx.Exec(ctx, `UPDATE federation_received_asset_files
+				SET state = 'verified', verified_at = now(), detected_media_type = $3, detected_by = $4
+				WHERE received_asset_id = $1 AND role = 'original' AND object_hash = $2`, id, h.hash, h.detected, DetectedBy); err != nil {
+				return err
+			}
 		}
 		if s.inComplete != nil {
 			if err := s.inComplete(ctx, tx); err != nil {
