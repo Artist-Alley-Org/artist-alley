@@ -698,6 +698,45 @@ type FederationPeerSuggestion struct {
 	CachedAt             pgtype.Timestamptz
 }
 
+// An aa:asset record a paired peer announced under archival-1 (#1574, spec v1 §17.2, §17.6), one row per announcing activity. complete = every original fetched under a live inbound grant, verified here and pinned under this record in one transaction; pending and rejected hold no pin. Held, not shown: no assets row, no reader yet. record and declared_* values are the sender's untrusted claims.
+type FederationReceivedAsset struct {
+	ID                 pgtype.UUID
+	PeerID             pgtype.UUID
+	ActivityUri        string
+	ActorUri           string
+	OriginAssetUri     string
+	OriginAssetID      pgtype.UUID
+	VersionUri         string
+	VersionNumber      int64
+	FileSetSha256      string
+	Record             []byte
+	Sensitivity        string
+	SignerKeyID        string
+	SignerActorUri     *string
+	State              string
+	Reason             *string
+	Attempts           int32
+	AuthorizingGrantID pgtype.UUID
+	ReceivedAt         pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	CompletedAt        pgtype.Timestamptz
+	CreatedXid         pgtype.Uint64
+}
+
+// The file set of a received asset record (#1574, spec v1 §17.2.2). Originals are fetched and verified (state verified only on a complete record); preservation and access entries are declared claims (not_transferred, #1597). declared_* are untrusted sender claims, never a path.
+type FederationReceivedAssetFile struct {
+	ReceivedAssetID          pgtype.UUID
+	Position                 int32
+	Role                     string
+	ObjectHash               string
+	SizeBytes                int64
+	Checksums                []byte
+	DeclaredMediaType        string
+	DeclaredOriginalFilename *string
+	State                    string
+	VerifiedAt               pgtype.Timestamptz
+}
+
 // Display cache for remote actors surfaced in UI. The inbound dispatch handler upserts on every activity from a remote actor; display fields refresh naturally on each interaction. Keyed on actor_uri (globally unique per spec §8.3).
 type FederationRemoteActor struct {
 	ActorUri    string
