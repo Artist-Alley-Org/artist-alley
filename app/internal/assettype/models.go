@@ -698,6 +698,45 @@ type FederationPeerSuggestion struct {
 	CachedAt             pgtype.Timestamptz `json:"cached_at"`
 }
 
+// An aa:asset record a paired peer announced under archival-1 (#1574, spec v1 §17.2, §17.6), one row per announcing activity. complete = every original fetched under a live inbound grant, verified here and pinned under this record in one transaction; pending and rejected hold no pin. Held, not shown: no assets row, no reader yet. record and declared_* values are the sender's untrusted claims.
+type FederationReceivedAsset struct {
+	ID                 pgtype.UUID        `json:"id"`
+	PeerID             pgtype.UUID        `json:"peer_id"`
+	ActivityUri        string             `json:"activity_uri"`
+	ActorUri           string             `json:"actor_uri"`
+	OriginAssetUri     string             `json:"origin_asset_uri"`
+	OriginAssetID      pgtype.UUID        `json:"origin_asset_id"`
+	VersionUri         string             `json:"version_uri"`
+	VersionNumber      int64              `json:"version_number"`
+	FileSetSha256      string             `json:"file_set_sha256"`
+	Record             []byte             `json:"record"`
+	Sensitivity        string             `json:"sensitivity"`
+	SignerKeyID        string             `json:"signer_key_id"`
+	SignerActorUri     *string            `json:"signer_actor_uri"`
+	State              string             `json:"state"`
+	Reason             *string            `json:"reason"`
+	Attempts           int32              `json:"attempts"`
+	AuthorizingGrantID pgtype.UUID        `json:"authorizing_grant_id"`
+	ReceivedAt         pgtype.Timestamptz `json:"received_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	CreatedXid         pgtype.Uint64      `json:"created_xid"`
+}
+
+// The file set of a received asset record (#1574, spec v1 §17.2.2). Originals are fetched and verified (state verified only on a complete record); preservation and access entries are declared claims (not_transferred, #1597). declared_* are untrusted sender claims, never a path.
+type FederationReceivedAssetFile struct {
+	ReceivedAssetID          pgtype.UUID        `json:"received_asset_id"`
+	Position                 int32              `json:"position"`
+	Role                     string             `json:"role"`
+	ObjectHash               string             `json:"object_hash"`
+	SizeBytes                int64              `json:"size_bytes"`
+	Checksums                []byte             `json:"checksums"`
+	DeclaredMediaType        string             `json:"declared_media_type"`
+	DeclaredOriginalFilename *string            `json:"declared_original_filename"`
+	State                    string             `json:"state"`
+	VerifiedAt               pgtype.Timestamptz `json:"verified_at"`
+}
+
 // Display cache for remote actors surfaced in UI. The inbound dispatch handler upserts on every activity from a remote actor; display fields refresh naturally on each interaction. Keyed on actor_uri (globally unique per spec §8.3).
 type FederationRemoteActor struct {
 	ActorUri    string             `json:"actor_uri"`

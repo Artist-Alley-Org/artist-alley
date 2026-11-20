@@ -360,6 +360,10 @@ var polymorphicRefs = []polymorphicRef{
 			// never dangles; the seeded asset's own "asset" pin above keeps
 			// protecting the blob across a reset.
 			"asset_version": {"asset_versions", "id"},
+			// #1574: a complete received asset record's pin. Released by
+			// the database itself when its record goes, with its peer or a
+			// TRUNCATE (migration 00086), so it never dangles.
+			"federation_received_asset": {"federation_received_assets", "id"},
 		},
 		Sweep:  false,
 		Reason: "#355: pins guard blobs against the storage sweep; unpinning here lets a re-seed's dedup target be reclaimed",
@@ -434,6 +438,10 @@ var nonReferenceKindColumns = map[string]string{
 	// orphan. The rows cascade with their peer.
 	"federation_inbound_grants.object_kind": "kind of a remote object (object_uri); no local id",
 	"federation_inbound_tombstones.kind":    "tombstone reason (revoked/superseded)",
+
+	// #1574: the media type a peer declared for a received file, a claim
+	// and not a reference; the row cascades with its record and peer.
+	"federation_received_asset_files.declared_media_type": "declared MIME type (sender claim)",
 }
 
 // sweepStmt is one orphan-delete: the SQL plus the kind value it is

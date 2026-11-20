@@ -343,6 +343,17 @@ const (
 	EventFederationInboundGrantApplied = "federation.inbound_grant.applied"
 	EventFederationInboundGrantEnded   = "federation.inbound_grant.ended"
 
+	// #1574 received asset records (receiver). Completed: every
+	// original of an announced aa:asset was fetched under a live inbound
+	// grant, verified here and pinned under the record. Deferred: a
+	// transient failure (an outage, a timeout) left the record pending
+	// for a later delivery. Rejected: refused with a closed reason
+	// (fixity_mismatch, no_inbound_grant, version_conflict, ...); nothing
+	// the attempt fetched stays pinned. No acting local user.
+	EventFederationAssetIngestCompleted = "federation.asset_ingest.completed"
+	EventFederationAssetIngestDeferred  = "federation.asset_ingest.deferred"
+	EventFederationAssetIngestRejected  = "federation.asset_ingest.rejected"
+
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side
 	// script the seed agent owns. Visible in the admin audit
@@ -1489,6 +1500,15 @@ func (r *Recorder) VocabularyMerged(ctx context.Context, actor *int64, m Vocabul
 		"asset_values_rewritten":      m.AssetValuesRewritten,
 		"collection_values_rewritten": m.CollectionValuesRewritten,
 	})
+}
+
+// FederationAssetIngest records one #1574 received-asset outcome
+// (EventFederationAssetIngestCompleted / Deferred / Rejected). meta
+// carries peer_id, record_id (when a record exists), activity_uri,
+// origin_asset_uri, version_uri and, where it applies, reason,
+// grant_id and files. No acting local user.
+func (r *Recorder) FederationAssetIngest(ctx context.Context, eventType string, meta map[string]any) {
+	r.write(ctx, eventType, nil, nil, reqContext{}, meta)
 }
 
 // FederationCAS records one #72 original-file transfer event
