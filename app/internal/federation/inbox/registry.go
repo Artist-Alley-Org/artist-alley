@@ -21,11 +21,14 @@
 // flips a type from unsupported to applied.
 //
 // A profile-gated type (profileGated) is applied only for a peer whose
-// stored intersection holds the profile; for any other peer it is
-// unsupported exactly like a type without a handler. aa:Share and
+// stored intersection holds every profile it needs; for any other peer
+// it is unsupported exactly like a type without a handler. aa:Share and
 // aa:Unshare (and its alias aa:RevokeShare) are applied only under
 // share-lifecycle-1 (#1571): without it there is no ordering the
 // receiver can trust, so no grant is created, ended or reordered.
+// aa:AssetVersion is applied only under archival-1 AND
+// original-transfer-1 (#1574): the record it announces is received by
+// fetching its original files, which only original-transfer-1 permits.
 //
 // When aa:Add lands (#882), it MUST apply the same asset gate the HTTP
 // path applies (collections.Handler.mayCollectAsset): the ROW plane
@@ -72,20 +75,29 @@ var appliedHandlers = map[federation.ActivityType]func(*Dispatcher) HandlerFn{
 	federation.ActivityCreate:    CommentHandler,
 	federation.ActivityAAShare:   ShareHandler,
 	federation.ActivityAAUnshare: UnshareHandler,
+	// #1574: scheduled for the asset receiver (handler_asset.go); the
+	// dispatcher never fetches a file itself.
+	federation.ActivityAAAssetVersion: AssetVersionHandler,
 }
 
-// profileGated maps an applied type to the profile its sender must have
-// negotiated with this receiver. The verb is the normalized one.
-var profileGated = map[federation.ActivityType]string{
-	federation.ActivityAAShare:   federation.ProfileShareLifecycle1,
-	federation.ActivityAAUnshare: federation.ProfileShareLifecycle1,
+// profileGated maps an applied type to the profiles its sender must
+// have negotiated with this receiver, all of them. The verb is the
+// normalized one.
+var profileGated = map[federation.ActivityType][]string{
+	federation.ActivityAAShare:        {federation.ProfileShareLifecycle1},
+	federation.ActivityAAUnshare:      {federation.ProfileShareLifecycle1},
+	federation.ActivityAAAssetVersion: {federation.ProfileArchival1, federation.ProfileOriginalTransfer1},
 }
 
 // profileAllows reports whether a peer with these negotiated
 // capabilities meets t's profile requirement (true for an ungated type).
 func profileAllows(t federation.ActivityType, capabilities []string) bool {
-	p, gated := profileGated[normalizeVerb(t)]
-	return !gated || slices.Contains(capabilities, p)
+	for _, p := range profileGated[normalizeVerb(t)] {
+		if !slices.Contains(capabilities, p) {
+			return false
+		}
+	}
+	return true
 }
 
 // normalizeVerb applies the §12.5 #3 alias before any lookup:
@@ -121,11 +133,11 @@ func AppliedActivityTypes() []federation.ActivityType {
 }
 
 // ProfileGatedActivityTypes maps each profile-gated applied type to the
-// profile it needs.
-func ProfileGatedActivityTypes() map[federation.ActivityType]string {
-	out := make(map[federation.ActivityType]string, len(profileGated))
+// profiles it needs, all of them.
+func ProfileGatedActivityTypes() map[federation.ActivityType][]string {
+	out := make(map[federation.ActivityType][]string, len(profileGated))
 	for t, p := range profileGated {
-		out[t] = p
+		out[t] = slices.Clone(p)
 	}
 	return out
 }

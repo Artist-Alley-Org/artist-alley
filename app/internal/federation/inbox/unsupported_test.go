@@ -232,9 +232,10 @@ func unappliedCatalogueTypes() []federation.ActivityType {
 
 // --- the applied set (no database) ------------------------------------
 
-func TestAppliedSet_IsExactlyLikeUndoDeleteUpdateCreateAndProfileGatedShares_AndRegistryMatches(t *testing.T) {
+func TestAppliedSet_IsExactlyLikeUndoDeleteUpdateCreateAndProfileGatedSharesAndAssetVersion_AndRegistryMatches(t *testing.T) {
 	want := []federation.ActivityType{federation.ActivityCreate, federation.ActivityLike,
-		federation.ActivityUndo, federation.ActivityDelete, federation.ActivityUpdate, federation.ActivityAAShare, federation.ActivityAAUnshare}
+		federation.ActivityUndo, federation.ActivityDelete, federation.ActivityUpdate, federation.ActivityAAShare, federation.ActivityAAUnshare,
+		federation.ActivityAAAssetVersion}
 	sort.Slice(want, func(i, j int) bool { return want[i] < want[j] })
 	if got := inbox.AppliedActivityTypes(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("applied set: got %v want %v — update docs/spec/federation/v1.md D3 and §7 with any change", got, want)
@@ -249,11 +250,24 @@ func TestAppliedSet_IsExactlyLikeUndoDeleteUpdateCreateAndProfileGatedShares_And
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("BuildRegistry keys %v != applied set %v (a stub or extra entry crept in)", keys, want)
 	}
-	// #1571: the share types are applied only under share-lifecycle-1.
+	// #1571: the share types are applied only under share-lifecycle-1;
+	// #1574: aa:AssetVersion only under archival-1 AND original-transfer-1.
 	gated := inbox.ProfileGatedActivityTypes()
-	if len(gated) != 2 || gated[federation.ActivityAAShare] != federation.ProfileShareLifecycle1 ||
-		gated[federation.ActivityAAUnshare] != federation.ProfileShareLifecycle1 {
-		t.Errorf("profile-gated set %v, want aa:Share and aa:Unshare under %s", gated, federation.ProfileShareLifecycle1)
+	assetProfiles := []string{federation.ProfileArchival1, federation.ProfileOriginalTransfer1}
+	if len(gated) != 3 || !reflect.DeepEqual(gated[federation.ActivityAAShare], []string{federation.ProfileShareLifecycle1}) ||
+		!reflect.DeepEqual(gated[federation.ActivityAAUnshare], []string{federation.ProfileShareLifecycle1}) ||
+		!reflect.DeepEqual(gated[federation.ActivityAAAssetVersion], assetProfiles) {
+		t.Errorf("profile-gated set %v, want aa:Share and aa:Unshare under %s, aa:AssetVersion under %v",
+			gated, federation.ProfileShareLifecycle1, assetProfiles)
+	}
+	for _, caps := range [][]string{nil, {federation.ProfileArchival1}, {federation.ProfileOriginalTransfer1},
+		{federation.ProfileShareLifecycle1, federation.ProfileArchival1}} {
+		if inbox.Applies(federation.ActivityAAAssetVersion, caps) {
+			t.Errorf("aa:AssetVersion applied with only %v", caps)
+		}
+	}
+	if !inbox.Applies(federation.ActivityAAAssetVersion, assetProfiles) {
+		t.Errorf("aa:AssetVersion not applied with %v", assetProfiles)
 	}
 	lifecycle := []string{federation.ProfileShareLifecycle1}
 	for _, v := range []federation.ActivityType{federation.ActivityAAShare, federation.ActivityAAUnshare, federation.ActivityAARevokeShare} {
@@ -268,6 +282,7 @@ func TestAppliedSet_IsExactlyLikeUndoDeleteUpdateCreateAndProfileGatedShares_And
 		federation.ActivityAnnounce, federation.ActivityRemove, federation.ActivityReject,
 		federation.ActivityAAAssetVersion, federation.ActivityFollow, federation.ActivityAccept, federation.ActivityAdd,
 	} {
+		// aa:AssetVersion needs archival-1 and original-transfer-1 (above).
 		if inbox.Applies(v, lifecycle) {
 			t.Errorf("%s reported as applied; no real handler exists", v)
 		}

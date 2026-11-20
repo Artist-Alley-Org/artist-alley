@@ -57,17 +57,23 @@
 // A final failure (fixity or length mismatch, an origin refusal, no
 // grant, a revoke during the transfer, too large) marks the record
 // rejected with that reason. A transient one (timeout, transport,
-// a 5xx or 429 answer, a lost lease, storage) leaves it pending, up to
-// Config.MaxAttempts, after which it is rejected with the last reason.
-// Either way every ingest pin the attempt obtained is released, so
-// nothing it fetched stays pinned and unpinned bytes go to GC. A crash
-// between fetch and commit leaves ingest pins that casfetch.Reconcile
-// releases. A later delivery of the same activity resumes a pending
-// record; a rejected record never blocks a new announcement.
+// a 5xx or 429 answer, a lost lease, storage) leaves it pending, due
+// again after a capped backoff, up to Config.MaxAttempts, after which it
+// is rejected with the last reason. Either way every ingest pin the
+// attempt obtained is released, so nothing it fetched stays pinned and
+// unpinned bytes go to GC. A crash between fetch and commit leaves
+// ingest pins that casfetch.Reconcile releases. A rejected record never
+// blocks a new announcement.
 //
-// Nothing here is reachable in production: archival-1 and
-// original-transfer-1 are not advertised (peer.KnownCapabilities), and
-// the inbox does not route aa:AssetVersion here yet.
+// # In production
+//
+// Steps 1 and 2 are Schedule, which the inbox dispatcher calls (through
+// Worker.ScheduleAsset) for an aa:AssetVersion from a peer that
+// negotiated both profiles; steps 3 and 4 are Process, which the Worker
+// runs in the background for every pending record (worker.go). Receive
+// is both in one call. No production peer reaches it yet: archival-1 and
+// original-transfer-1 are not advertised (peer.KnownCapabilities), no
+// sender emits aa:AssetVersion, and a complete record is not shown.
 package assetingest
 
 import (
@@ -82,6 +88,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -181,10 +188,22 @@ type Config struct {
 	// MaxAttempts is how many fetch attempts a record gets before a
 	// transient failure becomes its rejection.
 	MaxAttempts int32
+	// Lease is how long an attempt holds its record: while it runs, its
+	// next_attempt_at is kept this far ahead (Worker heartbeat), so no
+	// other worker starts it; a crashed attempt's record is due again
+	// once the lease lapses.
+	Lease time.Duration
+	// RetryBase and RetryMax bound the wait before a transient failure is
+	// retried: RetryBase doubled per attempt, at most RetryMax.
+	RetryBase time.Duration
+	RetryMax  time.Duration
 }
 
 // DefaultConfig returns production bounds.
-func DefaultConfig() Config { return Config{MaxTotalBytes: 32 << 30, MaxAttempts: 5} }
+func DefaultConfig() Config {
+	return Config{MaxTotalBytes: 32 << 30, MaxAttempts: 5, Lease: 10 * time.Minute,
+		RetryBase: 30 * time.Second, RetryMax: 30 * time.Minute}
+}
 
 // Deps wires the service.
 type Deps struct {
@@ -217,7 +236,26 @@ func New(d Deps) *Service {
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = def.MaxAttempts
 	}
+	if cfg.Lease <= 0 {
+		cfg.Lease = def.Lease
+	}
+	if cfg.RetryBase <= 0 {
+		cfg.RetryBase = def.RetryBase
+	}
+	if cfg.RetryMax < cfg.RetryBase {
+		cfg.RetryMax = max(def.RetryMax, cfg.RetryBase)
+	}
 	return &Service{d: d, cfg: cfg}
+}
+
+// retryDelay is the wait before attempt attempts+1 of a transient
+// failure: RetryBase doubled per attempt made, at most RetryMax.
+func (s *Service) retryDelay(attempts int32) time.Duration {
+	d := s.cfg.RetryBase
+	for i := int32(1); i < attempts && d < s.cfg.RetryMax; i++ {
+		d *= 2
+	}
+	return min(d, s.cfg.RetryMax)
 }
 
 // Announcement is one received aa:AssetVersion: the authenticated,
@@ -274,10 +312,34 @@ type record struct {
 	grantID  uuid.UUID
 }
 
-// Receive validates, binds, fetches and completes one announcement (see
-// the package header). It is idempotent per activity: a repeated
-// delivery returns the stored outcome, or resumes a pending record.
+// Receive schedules one announcement and runs its first attempt at once
+// (see the package header): Schedule, then Process with the delivery's
+// own signer. It is idempotent per activity: a repeated delivery returns
+// the stored outcome, or resumes a pending record. The production path
+// is Schedule from the inbox and Process from the Worker; Receive is
+// that path in one call.
 func (s *Service) Receive(ctx context.Context, a Announcement) (Outcome, error) {
+	out, err := s.Schedule(ctx, a)
+	if err != nil || out.State != StatePending {
+		return out, err
+	}
+	res, err := s.process(ctx, out.RecordID, func(keyID, actorURI string) (casfetch.Signer, error) {
+		if keyID != a.Signer.KeyID || actorURI != a.Signer.ActorURI {
+			return casfetch.Signer{}, errOtherSigner
+		}
+		return a.Signer, nil
+	})
+	res.Duplicate = res.Duplicate || out.Duplicate
+	return res, err
+}
+
+// Schedule validates one announcement and binds it to its record (steps
+// 1 and 2 of the package header), without any network transfer. A
+// pending outcome means an import is scheduled: the record is the
+// durable task, which Process (the Worker) runs. A complete record is
+// returned as it is, never fetched again; a refusal is recorded on a
+// rejected record where step 2 says so, or returned with no record.
+func (s *Service) Schedule(ctx context.Context, a Announcement) (Outcome, error) {
 	an, err := s.validate(ctx, a)
 	if err != nil {
 		meta := map[string]any{"peer_id": a.PeerID.String(), "reason": ReasonOf(err), "error": err.Error()}
@@ -291,7 +353,7 @@ func (s *Service) Receive(ctx context.Context, a Announcement) (Outcome, error) 
 	rec, dup, err := s.bind(ctx, an)
 	if err != nil {
 		if !Retryable(err) {
-			s.auditRecord(ctx, audit.EventFederationAssetIngestRejected, an, uuid.Nil, ReasonOf(err), map[string]any{"error": err.Error()})
+			s.auditRecord(ctx, audit.EventFederationAssetIngestRejected, an.ref(), uuid.Nil, ReasonOf(err), map[string]any{"error": err.Error()})
 			return Outcome{State: StateRejected, Reason: ReasonOf(err)}, err
 		}
 		return Outcome{State: StatePending, Reason: ReasonOf(err)}, err
@@ -301,14 +363,12 @@ func (s *Service) Receive(ctx context.Context, a Announcement) (Outcome, error) 
 		return Outcome{RecordID: rec.id, State: rec.state, Duplicate: dup, GrantID: rec.grantID}, nil
 	case StateRejected:
 		if !dup {
-			s.auditRecord(ctx, audit.EventFederationAssetIngestRejected, an, rec.id, rec.reason, nil)
+			s.auditRecord(ctx, audit.EventFederationAssetIngestRejected, an.ref(), rec.id, rec.reason, nil)
 		}
 		return Outcome{RecordID: rec.id, State: rec.state, Reason: rec.reason, Duplicate: dup},
 			&Error{Reason: rec.reason}
 	}
-	out, err := s.process(ctx, an, rec)
-	out.Duplicate = out.Duplicate || dup
-	return out, err
+	return Outcome{RecordID: rec.id, State: StatePending, Duplicate: dup}, nil
 }
 
 // --- validate ---------------------------------------------------------------
@@ -590,18 +650,96 @@ type heldPin struct {
 
 var errNotPending = errors.New("assetingest: the record is no longer pending")
 
-// process runs one fetch attempt for a pending record and completes it.
-func (s *Service) process(ctx context.Context, an *announced, rec record) (Outcome, error) {
-	var attempts int32
-	err := s.d.Pool.QueryRow(ctx, `UPDATE federation_received_assets
-		SET attempts = attempts + 1, updated_at = now()
-		WHERE id = $1 AND state = 'pending' RETURNING attempts`, rec.id).Scan(&attempts)
+// errOtherSigner: Receive's delivery is not the signer the record was
+// bound for; the record is left to its own signer.
+var errOtherSigner = errors.New("assetingest: not the record's signer")
+
+// SignerResolver returns the local identity a record's files are fetched
+// as, from the key id and actor URI it was bound with ("" for the
+// instance). An error rejects the record (foreign_signer): nothing is
+// fetched as anyone else.
+type SignerResolver func(keyID, actorURI string) (casfetch.Signer, error)
+
+// stored is a pending record as bound, the source of every later attempt.
+type stored struct {
+	ref                 recordRef
+	actorURI, digest    string
+	record              []byte
+	signerKey, signerAs string
+}
+
+// announcement rebuilds the announcement the record was bound from.
+func (st stored) announcement(signer casfetch.Signer) Announcement {
+	return Announcement{PeerID: st.ref.peerID, Signer: signer, Envelope: &federation.Envelope{
+		Context: federation.ContextV1, Type: federation.ActivityAAAssetVersion, ID: st.ref.activityURI,
+		Actor: st.actorURI, Object: st.ref.originAssetURI,
+		Extra: map[string]json.RawMessage{federation.MemberArchivalAsset: st.record},
+	}}
+}
+
+// Process runs one attempt for a pending record (step 3 and 4 of the
+// package header): the Worker's entry. The attempt starts from the
+// record as bound, never from a later delivery, and checks everything
+// again first: the peer row and its profiles, the actor and object
+// origins, the aa:asset member, the signer, and the live inbound grant
+// (no_inbound_grant, nothing asked of the origin). A record that is no
+// longer pending is returned as it is.
+func (s *Service) Process(ctx context.Context, id uuid.UUID, signers SignerResolver) (Outcome, error) {
+	return s.process(ctx, id, signers)
+}
+
+func (s *Service) process(ctx context.Context, id uuid.UUID, signers SignerResolver) (Outcome, error) {
+	var st stored
+	err := s.d.Pool.QueryRow(ctx, `SELECT peer_id, activity_uri, actor_uri, origin_asset_uri, version_uri,
+		    file_set_sha256, record, signer_key_id, COALESCE(signer_actor_uri, '')
+		  FROM federation_received_assets WHERE id = $1 AND state = 'pending'`, id).
+		Scan(&st.ref.peerID, &st.ref.activityURI, &st.actorURI, &st.ref.originAssetURI, &st.ref.versionURI,
+			&st.digest, &st.record, &st.signerKey, &st.signerAs)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return s.current(ctx, rec.id)
+		return s.current(ctx, id)
 	}
 	if err != nil {
-		return Outcome{RecordID: rec.id, State: StatePending}, &Error{Reason: casfetch.ReasonStorage, Retryable: true, Err: err}
+		return Outcome{RecordID: id, State: StatePending}, &Error{Reason: casfetch.ReasonStorage, Retryable: true, Err: err}
 	}
+	signer, serr := signers(st.signerKey, st.signerAs)
+	if errors.Is(serr, errOtherSigner) {
+		return s.current(ctx, id)
+	}
+	// The attempt holds the record for a lease, so no worker starts it
+	// meanwhile; the Worker heartbeat keeps the lease while it runs.
+	var attempts int32
+	err = s.d.Pool.QueryRow(ctx, `UPDATE federation_received_assets
+		SET attempts = attempts + 1, next_attempt_at = now() + make_interval(secs => $2), updated_at = now()
+		WHERE id = $1 AND state = 'pending' RETURNING attempts`, id, s.cfg.Lease.Seconds()).Scan(&attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return s.current(ctx, id)
+	}
+	if err != nil {
+		return Outcome{RecordID: id, State: StatePending}, &Error{Reason: casfetch.ReasonStorage, Retryable: true, Err: err}
+	}
+	if serr != nil {
+		return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonForeignSigner, false, serr)
+	}
+	an, err := s.validate(ctx, st.announcement(signer))
+	if err != nil {
+		reason := ReasonOf(err)
+		return s.fail(ctx, st.ref, id, attempts, reason, reason == casfetch.ReasonPeerUnavailable, err)
+	}
+	if an.digest != st.digest {
+		return s.fail(ctx, st.ref, id, attempts, ReasonArchivalInvalid, false, errors.New("the stored file set does not match its digest"))
+	}
+	if _, err := s.d.Grants.Allows(ctx, s.grantQuery(an)); err != nil {
+		if errors.Is(err, inboundgrants.ErrNoGrant) {
+			return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonNoInboundGrant, false, err)
+		}
+		return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonStorage, true, err)
+	}
+	return s.transfer(ctx, an, id, attempts)
+}
+
+// transfer fetches every original of a started attempt and completes the
+// record.
+func (s *Service) transfer(ctx context.Context, an *announced, id uuid.UUID, attempts int32) (Outcome, error) {
 	var held []heldPin
 	release := func() {
 		for _, h := range held {
@@ -618,28 +756,28 @@ func (s *Service) process(ctx context.Context, an *announced, rec record) (Outco
 		})
 		if err != nil {
 			release()
-			return s.fail(ctx, an, rec.id, attempts, casfetch.ReasonOf(err), retryableFetch(err), err)
+			return s.fail(ctx, an.ref(), id, attempts, casfetch.ReasonOf(err), retryableFetch(err), err)
 		}
 		held = append(held, heldPin{pin: res.Pin, hash: res.Hash, size: res.Size})
 	}
 	if s.afterFetch != nil {
 		s.afterFetch()
 	}
-	grantID, err := s.complete(ctx, an, rec.id, held)
+	grantID, err := s.complete(ctx, an, id, held)
 	release() // the ingest pins: removed in the commit, or released here
 	if err != nil {
 		var e *Error
 		switch {
 		case errors.Is(err, errNotPending):
-			return s.current(ctx, rec.id)
+			return s.current(ctx, id)
 		case errors.As(err, &e):
-			return s.fail(ctx, an, rec.id, attempts, e.Reason, e.Retryable, err)
+			return s.fail(ctx, an.ref(), id, attempts, e.Reason, e.Retryable, err)
 		}
-		return s.fail(ctx, an, rec.id, attempts, casfetch.ReasonStorage, true, err)
+		return s.fail(ctx, an.ref(), id, attempts, casfetch.ReasonStorage, true, err)
 	}
-	s.auditRecord(ctx, audit.EventFederationAssetIngestCompleted, an, rec.id, "", map[string]any{
+	s.auditRecord(ctx, audit.EventFederationAssetIngestCompleted, an.ref(), id, "", map[string]any{
 		"grant_id": grantID.String(), "files": len(an.originals)})
-	return Outcome{RecordID: rec.id, State: StateComplete, GrantID: grantID}, nil
+	return Outcome{RecordID: id, State: StateComplete, GrantID: grantID}, nil
 }
 
 func extraChecksums(cs []federation.ArchivalChecksum) []federation.ArchivalChecksum {
@@ -750,19 +888,27 @@ func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, hel
 	return grantID, err
 }
 
-// fail records a failed attempt: pending (retryable, attempts left) or
-// rejected. The attempt's ingest pins are already released.
-func (s *Service) fail(ctx context.Context, an *announced, id uuid.UUID, attempts int32, reason string, retryable bool, cause error) (Outcome, error) {
+// fail records a failed attempt: pending (retryable, attempts left),
+// due again after retryDelay, or rejected. An attempt whose own context
+// ended (the process is stopping) decides nothing: the record stays
+// pending and is due again at once, for the next process. The attempt's
+// ingest pins are already released.
+func (s *Service) fail(ctx context.Context, ref recordRef, id uuid.UUID, attempts int32, reason string, retryable bool, cause error) (Outcome, error) {
 	if reason == "" {
 		reason = casfetch.ReasonStorage
 	}
+	stopping := ctx.Err() != nil
 	state := StateRejected
-	if retryable && attempts < s.cfg.MaxAttempts {
+	if stopping || (retryable && attempts < s.cfg.MaxAttempts) {
 		state = StatePending
 	}
+	delay := s.retryDelay(attempts)
+	if stopping {
+		delay = 0
+	}
 	tag, err := s.d.Pool.Exec(context.WithoutCancel(ctx), `UPDATE federation_received_assets
-		SET state = $2, reason = $3, updated_at = now()
-		WHERE id = $1 AND state = 'pending'`, id, state, reason)
+		SET state = $2, reason = $3, next_attempt_at = now() + make_interval(secs => $4), updated_at = now()
+		WHERE id = $1 AND state = 'pending'`, id, state, reason, delay.Seconds())
 	if err != nil {
 		return Outcome{RecordID: id, State: StatePending, Reason: reason},
 			&Error{Reason: reason, Retryable: true, Err: errors.Join(cause, err)}
@@ -774,7 +920,7 @@ func (s *Service) fail(ctx context.Context, an *announced, id uuid.UUID, attempt
 	if state == StatePending {
 		event = audit.EventFederationAssetIngestDeferred
 	}
-	s.auditRecord(ctx, event, an, id, reason, map[string]any{"attempts": attempts, "error": cause.Error()})
+	s.auditRecord(ctx, event, ref, id, reason, map[string]any{"attempts": attempts, "error": cause.Error()})
 	return Outcome{RecordID: id, State: state, Reason: reason}, &Error{Reason: reason, Retryable: state == StatePending, Err: cause}
 }
 
@@ -795,10 +941,20 @@ func (s *Service) current(ctx context.Context, id uuid.UUID) (Outcome, error) {
 	return out, &Error{Reason: r.reason, Retryable: true}
 }
 
-func (s *Service) auditRecord(ctx context.Context, event string, an *announced, id uuid.UUID, reason string, extra map[string]any) {
+// recordRef identifies a record in its audit events.
+type recordRef struct {
+	peerID                                  uuid.UUID
+	activityURI, originAssetURI, versionURI string
+}
+
+func (an *announced) ref() recordRef {
+	return recordRef{peerID: an.peer.ID, activityURI: an.env.ID, originAssetURI: an.env.Object, versionURI: an.asset.Version.ID}
+}
+
+func (s *Service) auditRecord(ctx context.Context, event string, ref recordRef, id uuid.UUID, reason string, extra map[string]any) {
 	meta := map[string]any{
-		"peer_id": an.peer.ID.String(), "record_id": id.String(), "activity_uri": an.env.ID,
-		"origin_asset_uri": an.env.Object, "version_uri": an.asset.Version.ID,
+		"peer_id": ref.peerID.String(), "record_id": id.String(), "activity_uri": ref.activityURI,
+		"origin_asset_uri": ref.originAssetURI, "version_uri": ref.versionURI,
 	}
 	if reason != "" {
 		meta["reason"] = reason

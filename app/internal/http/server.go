@@ -997,6 +997,12 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.api != nil && s.api.casFetch != nil {
 		go runCASReconciler(runCtx, s.api.casFetch, s.logger)
 	}
+	// #1574 received asset worker: imports pending records the inbox
+	// dispatcher scheduled, a bounded number at a time.
+	if s.api != nil && s.api.assetIngest != nil {
+		go s.api.assetIngest.Run(runCtx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "assetingest.worker.start")
+	}
 	if s.api != nil && s.api.sharesSweeper != nil {
 		go s.api.sharesSweeper.Run(runCtx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "shares.sweeper.start")

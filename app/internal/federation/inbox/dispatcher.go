@@ -187,6 +187,10 @@ type Dispatcher struct {
 	inboundGrants *inboundgrants.Store
 	localBaseURL  func(ctx context.Context) string
 
+	// #1574: the asset receiver aa:AssetVersion is scheduled on. See
+	// handler_asset.go.
+	assetScheduler AssetScheduler
+
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_inbox_pending notification. Buffered=1 so the
 	// LISTEN never blocks; main loop drains extras before

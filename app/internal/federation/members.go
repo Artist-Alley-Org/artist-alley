@@ -201,6 +201,19 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 		} else {
 			allowed[MemberRevokes] = true
 		}
+	case ActivityAAAssetVersion:
+		// #1574, §17.1: applied only under archival-1 with
+		// original-transfer-1 (the receiver's registry gate), so
+		// ValidateArchivalMembers above has required aa:asset and checked
+		// that it names the envelope object. A peer announces only its
+		// own assets: the object is on the actor's origin.
+		if env.Object == "" {
+			return fmt.Errorf("%w: aa:AssetVersion requires object", ErrInvalidMember)
+		}
+		if origin := OriginOf(env.Actor); origin == "" || OriginOf(env.Object) != origin {
+			return fmt.Errorf("%w: aa:AssetVersion object is not on the actor's origin", ErrInvalidMember)
+		}
+		allowed[MemberArchivalAsset] = true
 	default:
 		// An applied type with no activity members defined carries
 		// none: only the base set is allowed. A handler that needs

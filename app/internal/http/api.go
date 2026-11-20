@@ -75,6 +75,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/email"
 	"github.com/mscrnt/artist-alley/app/internal/featured"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/federation/assetingest"
 	"github.com/mscrnt/artist-alley/app/internal/federation/cas"
 	"github.com/mscrnt/artist-alley/app/internal/federation/casfetch"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inboundgrants"
@@ -199,6 +200,7 @@ type apiServer struct {
 	actorDocument      *actorDocumentHandler
 	casHandler         *cas.Handler         // #72 origin: serves originals to paired peers
 	casFetch           *casfetch.Client     // #72 receiver; authorised by inboundGrants (#1571)
+	assetIngest        *assetingest.Worker  // #1574 receiver: aa:AssetVersion from the inbox, imports in the background
 	inboundGrants      *inboundgrants.Store // #1571 receiver grant record
 	inboxDispatcher    *inbox.Dispatcher
 	outboxDispatcher   *outbox.Dispatcher
@@ -1542,9 +1544,9 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		Audit:     auditRec,
 		Logger:    logger,
 	})
-	// #72 receiver: no production caller until ingest (#1574). Every
-	// fetch and reuse is authorised against the inbound grant record
-	// (#1571), re-checked inside the import commit.
+	// #72 receiver, called by the #1574 asset worker below. Every fetch
+	// and reuse is authorised against the inbound grant record (#1571),
+	// re-checked inside the import commit.
 	casCfg := casfetch.DefaultConfig()
 	casCfg.TempDir = storageSvc.TempDir
 	casCfg.LocalBaseURL = baseURLFn
@@ -1557,6 +1559,23 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		Logger:  logger,
 		Config:  casCfg,
 	})
+	// #1574: the inbox dispatcher schedules each aa:AssetVersion on a
+	// received asset record (no transfer on the dispatcher), and the
+	// worker (started in Server.Run) imports pending records in the
+	// background, fetching as this instance. Reached only from a peer
+	// whose stored intersection holds archival-1 and original-transfer-1,
+	// neither of which is in peer.KnownCapabilities, so no production
+	// peer has them yet; a complete record is held, not shown.
+	s.assetIngest = assetingest.NewWorker(assetingest.New(assetingest.Deps{
+		Pool:    pool,
+		Storage: storageSvc,
+		Peers:   casfetchPeerLookup{reg: s.peers},
+		Grants:  s.inboundGrants,
+		Fetcher: s.casFetch,
+		Audit:   auditRec,
+		Logger:  logger,
+	}), assetingest.DefaultWorkerConfig(), func() casfetch.Signer { return casfetch.InstanceSigner(signer) })
+	s.inboxDispatcher.SetAssetScheduler(s.assetIngest)
 	// Phase 1.22.I-e per-recipient encryption hooks. A delivery
 	// is encrypted when the peer negotiated E2E (e2e-encrypted +
 	// nacl-box + x25519, all in KnownCapabilities since I-f) and
