@@ -35,9 +35,11 @@ Accepted.
 - **Slice 2:** access-copy promotion and the selection policy, then
   reconciliation, which seals versions with verified access copies and
   adds rendition successors (both below).
-- **Still to come:** nothing is announced to peers yet. Replacement, the
-  versions read endpoint, the sender and the access-only transfer
-  profile are later work.
+- **Replacement:** `POST /assets/{id}/versions` replaces an asset's
+  original file as a new version (below).
+- **Still to come:** nothing is announced to peers yet. The versions
+  read endpoint, the sender and the access-only transfer profile are
+  later work.
 
 ## Context
 
@@ -212,6 +214,112 @@ its own content-addressed object, addressed by the variant's SHA-256:
   Other kinds get a preview only.
 - **Determinism:** the choice depends only on the ladder and the keys
   present.
+
+### Replacing the original makes the next version
+
+`POST /assets/{id}/versions` takes bytes the caller already uploaded,
+named by its upload receipt, and the `expected_version` it is replacing
+(`Asset.current_version`).
+
+**Who may:**
+- an editor of the asset (the `UpdateAsset` rule) may replace it;
+- a reader gets 403;
+- a caller who cannot read the asset's content gets 404, as does a
+  missing or deleted asset.
+
+**What one transaction does:**
+- locks the asset row, so concurrent replacements serialise and only one
+  wins (409 for the rest);
+- refuses a stale version, the same bytes, bytes the owner already has in
+  another live asset, or a received asset (409), and a bad receipt or an
+  unknown object (400);
+- uses up the receipt, so a replacement that fails leaves it usable;
+- creates version n+1 with origin `replacement`, the current version as
+  predecessor and the receipt's base name as provenance; its trigger pins
+  the new original to it;
+- moves the `asset:` pin to the new bytes, while the old bytes stay
+  pinned to their own version for the life of the asset;
+- points the asset at the new file, extension, size, thumbhash and
+  processing state;
+- queues the new bytes' preview processing. A type with nothing to
+  process is set ready instead, which requests the reconcile in the same
+  statement;
+- queues the rest of the per-bytes work an upload gets (metadata
+  extraction, transcription for audio and video, the visual embedding),
+  each job naming the new hash, and clears the old picture's visual
+  embedding. Nothing is keyed so that it could merge with a job still
+  running for the old bytes. The text embedding reads title and tags, not
+  the file, so it is left alone.
+
+A committed version therefore always has its work queued, and the old
+bytes' fixity rows and events, keyed by object hash, are untouched.
+
+**The old file's facts go with it.** In the same transaction, the asset
+sheds what the old bytes' workers had already written, so the new version
+never shows the old file's facts while its own processing is pending, and
+a field the new file lacks does not keep the old file's value (extraction's
+`skip_if_set` would otherwise treat it as occupied):
+- `page_count`, and the metadata namespaces the preview workers own
+  (`audio`, `pdf`, `font`, `ebook`, `comic`, `archive`, `text`); every
+  other metadata key stays;
+- extracted field values (`set_by` exif, iptc or xmp, the only extractor
+  provenances the column admits) and the measured `pixel_width` and
+  `pixel_height` (`computed`). Each removal gets a history entry, old
+  value to null, `set_by` `replacement`, by the caller. A person's,
+  an API's, an import's and a default's values, and every other computed
+  value, stay;
+- the asset's pending extraction failures, soft-dismissed (kept as admin
+  history), as the re-extract path does;
+- its AI subtitle tracks (`source_format` whisper, which no upload can
+  carry), each track's pin released and its bytes scheduled for GC unless
+  something else holds them. A person's tracks stay. The track cache is
+  dropped in this process and, by NOTIFY, every other one after the
+  commit.
+
+The old version's own record (provenance, fixity, predecessor link) is
+untouched, and the new bytes' jobs write the facts again for the new file.
+A transcription of the old recording that finishes late is refused and
+releases the bytes it stored, but never a pin that a live track with
+identical bytes uses; a track row and its pin always commit together.
+
+A track's bytes are held exactly while a track uses them. Every change to
+a track row (an upload, an AI transcript, an overwrite, a delete, the
+replacement's retirement) locks the asset row first and the object rows in
+hash order, and in the same transaction releases the bytes the row held
+before when no track of that (asset, language) still uses them, scheduling
+them for GC once nothing else holds them. A write that fails after its
+bytes were stored releases them too. So a replacement leaves nothing of
+the old recording's transcripts pinned, however many times a language was
+transcribed.
+
+**The file type stays in its class.** Every replacement names its
+extension, which is lowercased, stripped of a leading dot and must then be
+1 to 32 letters or digits (400 otherwise). It must classify like the
+current file, the same viewer kind and the same asset type an upload would
+be promoted to, or the replacement is refused with 409; a different kind
+of file is a new asset. The bytes are not inspected to confirm the
+extension: here, as on `POST /assets`, it is the caller's statement of the
+file's type.
+
+**A job for the old bytes cannot change the new version.** Preview,
+extraction, transcription and embedding jobs that were queued for, or
+read, the old bytes can still be running. Each of their writes to the
+asset compares the hash it was dispatched for in the same statement, or
+under the asset row lock in the same transaction:
+- processing status and error;
+- thumbhash, pixel dimensions and page count;
+- format metadata;
+- extracted field values;
+- AI subtitle tracks;
+- extraction failure reports;
+- the visual vector.
+
+The replacement holds that row lock too. A write that reaches the row
+after the replacement committed matches nothing, and one that waits on the
+replacement's lock is re-evaluated on the replaced row and matches nothing.
+So the new version stays a draft until its own job ends. Renditions keyed
+by the old hash are still written, because those bytes remain a version of
+the asset.
 
 ### Reconciliation seals versions and adds rendition successors
 

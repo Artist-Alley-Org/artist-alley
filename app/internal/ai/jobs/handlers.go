@@ -484,9 +484,10 @@ type TranscribeOrchestrator interface {
 // local type so this package doesn't pull ai/transcribe in. The boot
 // wire adapter converts between the two.
 type TranscribeOrchestratorOpts struct {
-	LanguageHint  string
-	ForceModel    string
-	SubtitleLabel string
+	LanguageHint     string
+	ForceModel       string
+	SubtitleLabel    string
+	ExpectedFileHash string
 }
 
 // TranscribeOrchestratorResult carries the resulting language for
@@ -503,6 +504,11 @@ type TranscribePayload struct {
 	AssetID    uuid.UUID `json:"asset_id"`
 	LangHint   string    `json:"lang_hint,omitempty"`   // operator-supplied override
 	ForceModel string    `json:"force_model,omitempty"` // operator-supplied model override
+	// FileHash is the original the job was queued for, when the
+	// producer knows it (a replacement always does, #1596). Absent on
+	// older payloads; the transcript write is still guarded by the
+	// hash read when the job starts.
+	FileHash string `json:"file_hash,omitempty"`
 }
 
 // TranscribeHandler implements jobs.Handler for ai.transcribe.
@@ -538,9 +544,16 @@ func (h *TranscribeHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 	}
 
 	res, err := h.Orchestrator.TranscribeAsset(ctx, p.AssetID, TranscribeOrchestratorOpts{
-		LanguageHint: p.LangHint,
-		ForceModel:   p.ForceModel,
+		LanguageHint:     p.LangHint,
+		ForceModel:       p.ForceModel,
+		ExpectedFileHash: p.FileHash,
 	})
+	if errors.Is(err, ai.ErrAssetSuperseded) {
+		// Replaced before or while this ran (#1596). The replacement
+		// queued a transcription of the new bytes; nothing was written.
+		result, _ := json.Marshal(map[string]any{"superseded": true})
+		return result, nil
+	}
 	if err != nil {
 		if errors.Is(err, ai.ErrAssetNotFound) {
 			return nil, &jobs.TerminalError{Err: err}

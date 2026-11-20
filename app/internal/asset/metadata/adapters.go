@@ -45,17 +45,18 @@ func NewPoolAssetAttributeWriter(pool *pgxpool.Pool) *PoolAssetAttributeWriter {
 
 // SetAssetPageCount implements [AssetAttributeWriter]. Zero
 // pageCount is a no-op so extractors can call unconditionally.
-func (w *PoolAssetAttributeWriter) SetAssetPageCount(ctx context.Context, assetID uuid.UUID, pageCount int) error {
+func (w *PoolAssetAttributeWriter) SetAssetPageCount(ctx context.Context, assetID uuid.UUID, fileHash string, pageCount int) error {
 	if w == nil || w.pool == nil {
 		return errors.New("metadata: PoolAssetAttributeWriter: nil pool")
 	}
-	if pageCount <= 0 {
+	if pageCount <= 0 || fileHash == "" {
 		return nil
 	}
 	n := int32(pageCount)
 	return assets.New(w.pool).SetAssetPageCount(ctx, assets.SetAssetPageCountParams{
 		ID:        pgtype.UUID{Bytes: assetID, Valid: true},
 		PageCount: &n,
+		FileHash:  fileHash,
 	})
 }
 

@@ -85,10 +85,16 @@ const SetBy = "computed"
 // the whole catalogue, and an unguarded upsert would fire two of those
 // per asset per run for values that did not change.
 const recordSQL = `
+WITH cur AS (
+    SELECT id FROM assets
+     WHERE id = $1::UUID AND file_hash = $4::TEXT
+       FOR NO KEY UPDATE
+)
 INSERT INTO asset_field_value (asset_id, field_id, value_num, set_by, set_at)
-SELECT $1::UUID, fd.id, v.num, '` + SetBy + `', NOW()
-  FROM (VALUES ('` + Width + `', $2::DOUBLE PRECISION),
-               ('` + Height + `', $3::DOUBLE PRECISION)) AS v(code, num)
+SELECT cur.id, fd.id, v.num, '` + SetBy + `', NOW()
+  FROM cur
+  CROSS JOIN (VALUES ('` + Width + `', $2::DOUBLE PRECISION),
+                     ('` + Height + `', $3::DOUBLE PRECISION)) AS v(code, num)
   JOIN field_definition fd ON fd.code = v.code
 ON CONFLICT (asset_id, field_id) DO UPDATE
    SET value_num = EXCLUDED.value_num,
@@ -96,17 +102,30 @@ ON CONFLICT (asset_id, field_id) DO UPDATE
        set_at    = NOW()
  WHERE asset_field_value.value_num IS DISTINCT FROM EXCLUDED.value_num`
 
-// Record writes an asset's pixel dimensions.
+// Record writes an asset's pixel dimensions, measured from the bytes
+// whose file_hash is fileHash.
 //
-// Returns nil for a nil pool, a nil asset id or a non-positive pair —
-// callers hand it whatever they measured and this is the one place that
-// decides what is worth storing, mirroring [Sane] on the read side. A
-// zero or negative dimension is a decode that went wrong, and writing
-// it would put a divide-by-zero in the browse payload.
-func Record(ctx context.Context, pool *pgxpool.Pool, assetID uuid.UUID, w, h int) error {
-	if pool == nil || assetID == uuid.Nil || w <= 0 || h <= 0 {
+// Returns nil for a nil pool, a nil asset id, an empty hash or a
+// non-positive pair: callers hand it whatever they measured and this is
+// the one place that decides what is worth storing, mirroring [Sane] on
+// the read side. A zero or negative dimension is a decode that went
+// wrong, and writing it would put a divide-by-zero in the browse
+// payload.
+//
+// THE HASH GUARD (#1596). An asset's original can be replaced while a
+// preview job for the old bytes is still running, and that job's
+// measurement is of a picture the asset no longer shows. The `cur` CTE
+// locks the asset row only while it still has fileHash, in the same
+// statement as the write: a replacement that commits first makes it
+// match nothing, and one that is waiting on the lock waits for this
+// write and then supersedes it. NO KEY UPDATE rather than SHARE because
+// the asset_field_value trigger updates the same asset row
+// (rebuild_asset_search_text), and two SHARE holders upgrading would
+// deadlock.
+func Record(ctx context.Context, pool *pgxpool.Pool, assetID uuid.UUID, fileHash string, w, h int) error {
+	if pool == nil || assetID == uuid.Nil || fileHash == "" || w <= 0 || h <= 0 {
 		return nil
 	}
-	_, err := pool.Exec(ctx, recordSQL, assetID, float64(w), float64(h))
+	_, err := pool.Exec(ctx, recordSQL, assetID, float64(w), float64(h), fileHash)
 	return err
 }

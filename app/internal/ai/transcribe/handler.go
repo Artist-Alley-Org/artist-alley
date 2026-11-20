@@ -102,6 +102,9 @@ type Router interface {
 // passes a concrete *subtitles.Handler.
 type SubtitleHandler interface {
 	Upsert(ctx context.Context, t subtitles.Track) (subtitles.Track, error)
+	// ReleaseUnusedTrackBytes drops the (asset, lang) pin from VTT bytes
+	// no live track uses; see subtitles.Handler.ReleaseUnusedTrackBytes.
+	ReleaseUnusedTrackBytes(ctx context.Context, assetID uuid.UUID, lang, hash string) error
 }
 
 // Config knobs for the orchestrator. All fields have safe defaults
@@ -185,6 +188,10 @@ type TranscribeOpts struct {
 	// SubtitleLabel — operator-friendly label for the subtitle row.
 	// Empty → handler generates one from the model name.
 	SubtitleLabel string
+	// ExpectedFileHash is the original the job was queued for (#1596).
+	// When set and the asset shows other bytes, TranscribeAsset returns
+	// ai.ErrAssetSuperseded without listening to anything.
+	ExpectedFileHash string
 }
 
 // TranscribeAsset runs the full pipeline for one asset and writes a
@@ -203,6 +210,9 @@ func (h *Handler) TranscribeAsset(ctx context.Context, assetID uuid.UUID, opts T
 	}
 	if asset.ContentHash == "" {
 		return subtitles.Track{}, fmt.Errorf("transcribe: asset %s has no file_hash", assetID)
+	}
+	if opts.ExpectedFileHash != "" && asset.ContentHash != opts.ExpectedFileHash {
+		return subtitles.Track{}, fmt.Errorf("transcribe: %s: %w", assetID, ai.ErrAssetSuperseded)
 	}
 
 	// Stage the asset bytes to a temp file — ffmpeg needs a seekable
@@ -278,17 +288,6 @@ func (h *Handler) TranscribeAsset(ctx context.Context, assetID uuid.UUID, opts T
 
 	vttBytes := ToWebVTT(stitched)
 
-	// Pin tuple matches the existing subtitle upload path so storage
-	// GC keeps the bytes alive while the row references them.
-	hash, err := h.storage.PutBytes(ctx, vttBytes,
-		"text/vtt; charset=utf-8",
-		"subtitle_track",
-		assetID.String()+"-"+lang,
-	)
-	if err != nil {
-		return subtitles.Track{}, fmt.Errorf("transcribe: store VTT: %w", err)
-	}
-
 	// Confidence from the stitched transcript's average — whisper_local
 	// fills Confidence on the Transcript directly via exp(avg_logprob).
 	// For providers without a confidence (gemini), default to 1.0 so
@@ -300,16 +299,12 @@ func (h *Handler) TranscribeAsset(ctx context.Context, assetID uuid.UUID, opts T
 		confidence = c
 	}
 
-	track, err := h.subs.Upsert(ctx, subtitles.Track{
-		AssetID:      assetID,
-		Lang:         lang,
-		Label:        label,
-		FileHash:     hash,
-		SourceFormat: "whisper",
-		Confidence:   confidence,
-	})
+	// Guarded by the bytes this transcript was made from (#1596): a
+	// replacement that committed while the provider was listening makes
+	// the write match nothing, and the stored VTT is released.
+	track, err := storeAITrack(ctx, h.storage, h.subs, assetID, lang, label, vttBytes, confidence, asset.ContentHash)
 	if err != nil {
-		return subtitles.Track{}, fmt.Errorf("transcribe: upsert subtitle %s/%s: %w", assetID, lang, err)
+		return subtitles.Track{}, fmt.Errorf("transcribe: %w", err)
 	}
 	if h.logger != nil {
 		h.logger.Info("ai.transcribe.complete",
@@ -429,30 +424,13 @@ func (w *Writer) SetAITranscriptForAsset(ctx context.Context, in ai.TranscriptIn
 		}
 	}
 
-	hash, err := w.storage.PutBytes(ctx, in.VTTContent,
-		"text/vtt; charset=utf-8",
-		"subtitle_track",
-		in.AssetID.String()+"-"+lang,
-	)
-	if err != nil {
-		return fmt.Errorf("transcribe.Writer: store VTT: %w", err)
-	}
-
 	confidence := in.Confidence
 	if confidence <= 0 || confidence > 1 {
 		confidence = 1.0
 	}
 
-	_, err = w.subs.Upsert(ctx, subtitles.Track{
-		AssetID:      in.AssetID,
-		Lang:         lang,
-		Label:        "AI",
-		FileHash:     hash,
-		SourceFormat: "whisper",
-		Confidence:   confidence,
-	})
-	if err != nil {
-		return fmt.Errorf("transcribe.Writer: upsert subtitle: %w", err)
+	if _, err := storeAITrack(ctx, w.storage, w.subs, in.AssetID, lang, "AI", in.VTTContent, confidence, in.ExpectedFileHash); err != nil {
+		return fmt.Errorf("transcribe.Writer: %w", err)
 	}
 
 	if w.logger != nil {
@@ -464,6 +442,45 @@ func (w *Writer) SetAITranscriptForAsset(ctx context.Context, in ai.TranscriptIn
 			"model", in.Model)
 	}
 	return nil
+}
+
+// storeAITrack stores one AI transcript's VTT bytes, pinned to the
+// (asset, lang) track, and writes the track. Both writers use it.
+//
+// expectedFileHash is the original the words came from (#1596). When the
+// asset no longer shows it the write is refused and the result wraps
+// ai.ErrAssetSuperseded. Empty means no expectation. On that refusal or
+// any other failed write the bytes just stored are released (their pin
+// dropped unless a live track of the same language has identical bytes)
+// rather than pinned for ever.
+func storeAITrack(ctx context.Context, st StorageWriter, subs SubtitleHandler, assetID uuid.UUID, lang, label string, vtt []byte, confidence float64, expectedFileHash string) (subtitles.Track, error) {
+	hash, err := st.PutBytes(ctx, vtt, "text/vtt; charset=utf-8",
+		subtitles.PinSubjectTypeTrack, subtitles.TrackPinSubjectID(assetID, lang))
+	if err != nil {
+		return subtitles.Track{}, fmt.Errorf("store VTT: %w", err)
+	}
+	track, err := subs.Upsert(ctx, subtitles.Track{
+		AssetID:               assetID,
+		Lang:                  lang,
+		Label:                 label,
+		FileHash:              hash,
+		SourceFormat:          subtitles.SourceFormatAI,
+		Confidence:            confidence,
+		ExpectedAssetFileHash: expectedFileHash,
+	})
+	if err != nil {
+		// Any refused or failed write releases the bytes just stored, so
+		// they are not pinned for ever; the release keeps the pin when a
+		// live track of this language has identical bytes.
+		if errors.Is(err, subtitles.ErrAssetSuperseded) {
+			err = ai.ErrAssetSuperseded
+		}
+		if rerr := subs.ReleaseUnusedTrackBytes(ctx, assetID, lang, hash); rerr != nil {
+			return subtitles.Track{}, fmt.Errorf("upsert subtitle %s/%s: %w (and releasing its bytes failed: %v)", assetID, lang, err, rerr)
+		}
+		return subtitles.Track{}, fmt.Errorf("upsert subtitle %s/%s: %w", assetID, lang, err)
+	}
+	return track, nil
 }
 
 // Compile-time interface check.

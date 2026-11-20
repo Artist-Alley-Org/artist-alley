@@ -117,11 +117,11 @@ func (h *FontHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("preview.font: extension %q is not a supported font format", p.FileExtension)}
 	}
 
-	h.markProcessing(ctx, p.AssetID)
+	h.markProcessing(ctx, p.AssetID, p.FileHash)
 
 	data, err := h.loadSource(ctx, p.FileHash)
 	if err != nil {
-		h.markFailed(ctx, p.AssetID, err.Error())
+		h.markFailed(ctx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 
@@ -156,12 +156,12 @@ func (h *FontHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 		result.Variants = append(result.Variants, "raster")
 	}
 
-	if err := h.persistMetadata(ctx, p.AssetID, meta); err != nil {
+	if err := h.persistMetadata(ctx, p.AssetID, p.FileHash, meta); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.font.persist_meta_failed",
 			slog.String("err", err.Error()))
 	}
 
-	h.markReady(ctx, p.AssetID)
+	h.markReady(ctx, p.AssetID, p.FileHash)
 	result.WorkS = time.Since(started).Seconds()
 	return json.Marshal(result)
 }
@@ -310,35 +310,37 @@ func (h *FontHandler) fanCardToLadder(ctx context.Context, assetID uuid.UUID, ha
 	})
 }
 
-func (h *FontHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta FontMetadata) error {
-	payload, err := json.Marshal(map[string]any{"font": meta})
+func (h *FontHandler) persistMetadata(ctx context.Context, id uuid.UUID, hash string, meta FontMetadata) error {
+	payload, err := json.Marshal(map[string]any{assets.MetadataNamespaceFont: meta})
 	if err != nil {
 		return err
 	}
 	return assets.New(h.Pool).MergeAssetMetadata(ctx, assets.MergeAssetMetadataParams{
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
+		FileHash: hash,
 	})
 }
 
-func (h *FontHandler) markProcessing(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *FontHandler) markProcessing(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.font.mark_processing_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *FontHandler) markReady(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *FontHandler) markReady(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.font.mark_ready_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *FontHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
+func (h *FontHandler) markFailed(ctx context.Context, id uuid.UUID, hash, msg string) {
 	if err := assets.New(h.Pool).MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.font.mark_failed_failed",
 			slog.String("asset_id", id.String()),

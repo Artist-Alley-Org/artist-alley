@@ -323,6 +323,13 @@ var ErrNoMetadata = errors.New("metadata: source contains no extractable metadat
 // failure_record error_kind="library_panic".
 var ErrLibraryPanic = errors.New("metadata: extraction library panicked")
 
+// ErrAssetSuperseded is returned by a writer that refused a write
+// because the asset's original was replaced after the job read it
+// (#1596): its file_hash is no longer the one the value came from. The
+// job handler treats it as a finished no-op, not a failure, because
+// the replacement queued its own extraction of the new bytes.
+var ErrAssetSuperseded = errors.New("metadata: asset original was replaced; extraction is of bytes it no longer shows")
+
 // ---------------------------------------------------------------------------
 // Applier + asset-side handles
 // ---------------------------------------------------------------------------
@@ -367,8 +374,10 @@ type ApplySummary struct {
 type AssetAttributeWriter interface {
 	// SetAssetPageCount writes assets.page_count. Idempotent — safe
 	// to call on every extraction. Zero pageCount is a no-op so
-	// extractors can freely call it without guarding.
-	SetAssetPageCount(ctx context.Context, assetID uuid.UUID, pageCount int) error
+	// extractors can freely call it without guarding. fileHash is the
+	// bytes the count was read from; the write matches nothing once
+	// the asset's original has been replaced (#1596).
+	SetAssetPageCount(ctx context.Context, assetID uuid.UUID, fileHash string, pageCount int) error
 }
 
 // PreviewVariantWriter persists the `embedded-preview` storage

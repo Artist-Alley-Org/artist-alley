@@ -275,7 +275,7 @@ func TestExtractPathNeverWritesPixelDimensions(t *testing.T) {
 	})
 
 	// The preview pipeline got there first, as it does on upload.
-	if err := pixeldims.Record(ctx, pool, assetID, displayedW, displayedH); err != nil {
+	if err := pixeldims.Record(ctx, pool, assetID, assetFileHash(t, pool, assetID), displayedW, displayedH); err != nil {
 		t.Fatalf("pixeldims.Record: %v", err)
 	}
 
@@ -338,7 +338,7 @@ func TestRecordedPixelDimensionsReachIIIF(t *testing.T) {
 			`DELETE FROM asset_field_value WHERE asset_id = $1`, assetID)
 	})
 
-	if err := pixeldims.Record(ctx, pool, assetID, wantW, wantH); err != nil {
+	if err := pixeldims.Record(ctx, pool, assetID, assetFileHash(t, pool, assetID), wantW, wantH); err != nil {
 		t.Fatalf("pixeldims.Record: %v", err)
 	}
 
@@ -357,3 +357,14 @@ func TestRecordedPixelDimensionsReachIIIF(t *testing.T) {
 }
 
 func ptrRef(v int64) *int64 { return &v }
+
+// assetFileHash is the file the asset shows, which Record is told it
+// measured (#1596).
+func assetFileHash(t *testing.T, pool *pgxpool.Pool, id uuid.UUID) string {
+	t.Helper()
+	var h string
+	if err := pool.QueryRow(context.Background(), `SELECT file_hash FROM assets WHERE id = $1`, id).Scan(&h); err != nil {
+		t.Fatalf("asset hash: %v", err)
+	}
+	return h
+}

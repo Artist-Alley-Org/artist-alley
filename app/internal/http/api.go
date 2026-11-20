@@ -2496,9 +2496,10 @@ func (a transcribeOrchestratorAdapter) TranscribeAsset(
 	opts aijobs.TranscribeOrchestratorOpts,
 ) (aijobs.TranscribeOrchestratorResult, error) {
 	track, err := a.orch.TranscribeAsset(ctx, assetID, aitranscribe.TranscribeOpts{
-		LanguageHint:  opts.LanguageHint,
-		ForceModel:    opts.ForceModel,
-		SubtitleLabel: opts.SubtitleLabel,
+		LanguageHint:     opts.LanguageHint,
+		ForceModel:       opts.ForceModel,
+		SubtitleLabel:    opts.SubtitleLabel,
+		ExpectedFileHash: opts.ExpectedFileHash,
 	})
 	if err != nil {
 		return aijobs.TranscribeOrchestratorResult{}, err
@@ -2975,13 +2976,16 @@ func (a feedbackConfigAdapter) Get(ctx context.Context) (feedback.Config, error)
 // visualembed.
 type visualEmbedDispatcherAdapter struct{ d *visualembed.Dispatcher }
 
-func (a visualEmbedDispatcherAdapter) Dispatch(ctx context.Context, in assets.VisualEmbedInput) {
+func (a visualEmbedDispatcherAdapter) Dispatch(ctx context.Context, in assets.VisualEmbedInput) error {
 	if a.d == nil {
-		return
+		return nil
 	}
-	a.d.Dispatch(ctx, visualembed.DispatchInput{
+	return a.d.Dispatch(ctx, visualembed.DispatchInput{
 		AssetID:       in.AssetID,
 		FileExtension: in.FileExtension,
+		FileHash:      in.FileHash,
+		Version:       in.Version,
+		DB:            in.DB,
 	})
 }
 
@@ -3183,6 +3187,15 @@ func (s *apiServer) GetAsset(ctx context.Context, req openapi.GetAssetRequestObj
 
 func (s *apiServer) UpdateAsset(ctx context.Context, req openapi.UpdateAssetRequestObject) (openapi.UpdateAssetResponseObject, error) {
 	resp, err := s.assets.UpdateAsset(ctx, req)
+	s.invalidateSearchOnAssetWrite(ctx, uuid.UUID(req.Id), err)
+	return resp, err
+}
+
+// CreateAssetVersion replaces an asset's file as a new version (#1596).
+// The asset's bytes changed, so the search cache drops as for any asset
+// write.
+func (s *apiServer) CreateAssetVersion(ctx context.Context, req openapi.CreateAssetVersionRequestObject) (openapi.CreateAssetVersionResponseObject, error) {
+	resp, err := s.assets.CreateAssetVersion(ctx, req)
 	s.invalidateSearchOnAssetWrite(ctx, uuid.UUID(req.Id), err)
 	return resp, err
 }
@@ -5917,7 +5930,18 @@ func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p asse
 		if sanitised := richtext.SanitizeValueText(p.FieldType, &s); sanitised != nil {
 			s = *sanitised
 		}
-		return metadata.WriteMirroredValue(ctx, a.pool, p.AssetID, col, s)
+		mtx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return fmt.Errorf("metadata extraction: begin tx: %w", err)
+		}
+		defer func() { _ = mtx.Rollback(ctx) }()
+		if err := lockAssetAtExtractedHash(ctx, mtx, pgAsset, p.FileHash); err != nil {
+			return err
+		}
+		if err := metadata.WriteMirroredValue(ctx, mtx, p.AssetID, col, s); err != nil {
+			return err
+		}
+		return mtx.Commit(ctx)
 	}
 
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -5987,6 +6011,15 @@ func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p asse
 		}
 	}
 
+	// The asset must still show the bytes this value was extracted
+	// from (#1596), checked under the row lock the upsert's trigger
+	// would take anyway. After the vocabulary step, not before, so this
+	// path takes field then asset like the API path does; a refusal
+	// rolls the minted terms back with everything else.
+	if err := lockAssetAtExtractedHash(ctx, tx, pgAsset, p.FileHash); err != nil {
+		return err
+	}
+
 	// The previous value, for the audit row's old_value. Read inside
 	// the tx and before the upsert, which is the only order in which
 	// it is the value being replaced.
@@ -6046,6 +6079,31 @@ func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p asse
 	return nil
 }
 
+// lockAssetAtExtractedHash locks the asset row while it still has the
+// file_hash an extracted value came from, and reports
+// assetmetadata.ErrAssetSuperseded when it does not (#1596). The
+// row lock is held to the caller's commit, so a replacement cannot move
+// the asset between this check and the write: one that committed first
+// makes this match nothing, and one waiting on the lock waits for the
+// write. NO KEY UPDATE because the field-value trigger updates this
+// row in the same transaction.
+func lockAssetAtExtractedHash(ctx context.Context, tx pgx.Tx, id pgtype.UUID, fileHash string) error {
+	if fileHash == "" {
+		return fmt.Errorf("metadata extraction: no file hash to guard the write with")
+	}
+	var one int
+	err := tx.QueryRow(ctx,
+		`SELECT 1 FROM assets WHERE id = $1 AND file_hash = $2 FOR NO KEY UPDATE`,
+		id, fileHash).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return assetmetadata.ErrAssetSuperseded
+	}
+	if err != nil {
+		return fmt.Errorf("metadata extraction: lock asset: %w", err)
+	}
+	return nil
+}
+
 // metaExtractEnqueuer adapts jobs.Service into the
 // assetmetadata.ChildEnqueuer contract — when the backfill
 // coordinator walks the asset list it asks for one extract
@@ -6071,11 +6129,20 @@ func (a metaFailureAdapter) RecordExtractionFailure(ctx context.Context, p asset
 	if err != nil || raw == nil {
 		raw = []byte(`null`)
 	}
+	// Recorded only while the asset still shows the bytes the failure was
+	// found in (#1596), under the row lock a replacement also takes: a
+	// replacement that commits first makes this insert nothing, and a
+	// replacement that waits on this insert's lock then dismisses it with
+	// the old file's other failures. An old file's failure is never filed
+	// against its replacement.
 	_, err = a.pool.Exec(ctx, `
+		WITH cur AS (
+		    SELECT id FROM assets WHERE id = $1 AND file_hash = $7 FOR NO KEY UPDATE
+		)
 		INSERT INTO extraction_failure
 		    (asset_id, format, error_kind, message, field_key, raw_value)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, p.AssetID, p.Format, p.ErrorKind, p.Message, string(p.FieldKey), raw)
+		SELECT cur.id, $2, $3, $4, $5, $6 FROM cur
+	`, p.AssetID, p.Format, p.ErrorKind, p.Message, string(p.FieldKey), raw, p.FileHash)
 	return err
 }
 

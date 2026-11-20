@@ -47,6 +47,11 @@ var ErrSubtitlesNotApplicable = errors.New("subtitles: asset has no audio or vid
 // 422 (it exists but isn't audio/video).
 var ErrAssetNotFound = errors.New("subtitles: asset not found")
 
+// ErrAssetSuperseded is returned by Upsert when the caller named the
+// original the track was made from and the asset no longer shows it
+// (#1596): its original was replaced after the transcription read it.
+var ErrAssetSuperseded = errors.New("subtitles: asset original was replaced; track is of bytes it no longer shows")
+
 // rfc5646Pattern mirrors the CHECK constraint on
 // asset_subtitle_tracks.lang. Keep the two in lockstep — if you
 // loosen one without the other, schema-layer INSERTs reject

@@ -137,11 +137,11 @@ func (h *GifHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 	jobCtx, cancel := context.WithTimeout(ctx, h.MaxJobDuration)
 	defer cancel()
 
-	h.markProcessing(jobCtx, p.AssetID)
+	h.markProcessing(jobCtx, p.AssetID, p.FileHash)
 
 	work, cleanup, err := stageSource(jobCtx, h.Storage, h.TempDir, "aa-gif-*", p.FileHash, h.MaxSourceBytes)
 	if err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 	defer cleanup()
@@ -150,7 +150,7 @@ func (h *GifHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 	if err != nil {
 		// Not a GIF, or one truncated past the point of reading. Either
 		// way no retry will change it.
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("preview.gif: %w", err)}
 	}
 	result := GifResult{Frames: frames, Animated: frames > 1}
@@ -166,7 +166,7 @@ func (h *GifHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 		// and deliberately nothing more. No probe, no ffmpeg, no sheet.
 		src, err := decodeImageFile(work.sourcePath)
 		if err != nil {
-			h.markFailed(jobCtx, p.AssetID, err.Error())
+			h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 			return nil, &jobs.TerminalError{Err: fmt.Errorf("preview.gif: decode still: %w", err)}
 		}
 		if err := fanToLadder(jobCtx, ladderInput{
@@ -177,7 +177,7 @@ func (h *GifHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 			return nil, fmt.Errorf("preview.gif: ladder: %w", err)
 		}
 		result.Variants = append(result.Variants, "ladder")
-		h.markReady(jobCtx, p.AssetID)
+		h.markReady(jobCtx, p.AssetID, p.FileHash)
 		result.WorkS = time.Since(started).Seconds()
 		return json.Marshal(result)
 	}
@@ -186,7 +186,7 @@ func (h *GifHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 	// it is, through the same helpers preview.video uses.
 	probe, err := probeMedia(jobCtx, h.ffprobeBin(), work.sourcePath)
 	if err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("preview.gif: probe: %w", err)}
 	}
 	result.DurationS = probe.DurationS
@@ -232,7 +232,7 @@ func (h *GifHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 		result.Variants = append(result.Variants, "sprites")
 	}
 
-	h.markReady(jobCtx, p.AssetID)
+	h.markReady(jobCtx, p.AssetID, p.FileHash)
 	result.WorkS = time.Since(started).Seconds()
 	return json.Marshal(result)
 }
@@ -382,24 +382,25 @@ func (h *GifHandler) ffprobeBin() string {
 	return "ffprobe"
 }
 
-func (h *GifHandler) markProcessing(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *GifHandler) markProcessing(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		logAttrs(h.Logger, ctx, slog.LevelWarn, "preview.gif.mark_processing_failed",
 			slog.String("asset_id", id.String()), slog.String("err", err.Error()))
 	}
 }
 
-func (h *GifHandler) markReady(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *GifHandler) markReady(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		logAttrs(h.Logger, ctx, slog.LevelWarn, "preview.gif.mark_ready_failed",
 			slog.String("asset_id", id.String()), slog.String("err", err.Error()))
 	}
 }
 
-func (h *GifHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
+func (h *GifHandler) markFailed(ctx context.Context, id uuid.UUID, hash, msg string) {
 	if err := assets.New(h.Pool).MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		logAttrs(h.Logger, ctx, slog.LevelWarn, "preview.gif.mark_failed_failed",
 			slog.String("asset_id", id.String()), slog.String("err", err.Error()))

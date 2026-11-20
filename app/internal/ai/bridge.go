@@ -52,6 +52,12 @@ var (
 	// coming back into existence).
 	ErrAssetNotFound = errors.New("ai: asset not found")
 
+	// ErrAssetSuperseded is returned when the asset's original was
+	// replaced after the job was queued for (or read) the old bytes
+	// (#1596). Job handlers finish as a no-op: the replacement queued
+	// its own job for the new bytes, so retrying this one is wrong.
+	ErrAssetSuperseded = errors.New("ai: asset original was replaced; job is for bytes it no longer shows")
+
 	// ErrAssetKindNotSupported is returned when an AI operation is
 	// invoked against an asset kind that doesn't support it
 	// (e.g. transcription against an image). Job handlers should map
@@ -240,6 +246,10 @@ type TranscriptInput struct {
 	Confidence float64
 	Model      string
 	Provider   string
+	// ExpectedFileHash is the original the transcript was made from
+	// (#1596). When set and the asset now shows other bytes, the write is
+	// refused with ErrAssetSuperseded and the stored VTT released.
+	ExpectedFileHash string
 }
 
 // ---------------------------------------------------------------------------

@@ -61,6 +61,9 @@ func (s *stubSubs) Upsert(_ context.Context, t subtitles.Track) (subtitles.Track
 	s.got = t
 	return t, s.err
 }
+func (s *stubSubs) ReleaseUnusedTrackBytes(context.Context, uuid.UUID, string, string) error {
+	return nil
+}
 
 func TestWriter_HappyPath_StoresVTT_AndUpsertsTrack(t *testing.T) {
 	st := &stubStorage{}

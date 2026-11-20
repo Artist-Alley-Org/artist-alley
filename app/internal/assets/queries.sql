@@ -84,10 +84,17 @@ RETURNING id, title, description, asset_type, owner_user_ref, status,
 -- column. Preview workers (audio / video / 3D) use this to stamp
 -- their own namespace ({"audio": {...}}, {"video": {...}}) without
 -- stomping previously-written keys.
+-- #1596: guarded by the file_hash the job was dispatched for. A job
+-- for bytes the asset no longer shows (its original was replaced)
+-- matches nothing, so it cannot stamp the newer version. The compare
+-- is in the same statement as the write: under READ COMMITTED an
+-- UPDATE that waits on a replacement's row lock re-evaluates the
+-- WHERE on the replaced row, so there is no check-then-write gap.
 UPDATE assets
 SET metadata   = COALESCE(metadata, '{}'::jsonb) || sqlc.arg('metadata')::jsonb,
     updated_at = NOW()
-WHERE id = sqlc.arg('id') AND deleted_at IS NULL;
+WHERE id = sqlc.arg('id') AND deleted_at IS NULL
+  AND file_hash = sqlc.arg('file_hash')::TEXT;
 
 -- name: SoftDeleteAsset :exec
 -- deleted_by_user_ref records WHO removed the row, because #931's
@@ -228,32 +235,46 @@ ON CONFLICT (asset_id, tag) DO NOTHING;
 -- Worker claimed a preview job for this asset. Best-effort — failing
 -- here just means the admin queue view shows the asset as pending a
 -- moment longer.
+-- #1596: guarded by the file_hash the job was dispatched for. A job
+-- for bytes the asset no longer shows (its original was replaced)
+-- matches nothing, so it cannot stamp the newer version. The compare
+-- is in the same statement as the write: under READ COMMITTED an
+-- UPDATE that waits on a replacement's row lock re-evaluates the
+-- WHERE on the replaced row, so there is no check-then-write gap.
 UPDATE assets
    SET processing_status     = 'processing',
        processing_started_at = COALESCE(processing_started_at, NOW()),
        processing_attempts   = processing_attempts + 1,
        updated_at            = NOW()
- WHERE id = $1
+ WHERE id = sqlc.arg('id')
+   AND file_hash = sqlc.arg('file_hash')::TEXT
    AND processing_status <> 'ready';
 
 -- name: MarkAssetReady :exec
 -- All configured variants are written; flip to steady state.
+-- Guarded by file_hash like MarkAssetProcessing: an old job finishing
+-- after a replacement must not mark the new version ready, because
+-- ready is what requests the new version's seal (00085).
 UPDATE assets
    SET processing_status      = 'ready',
        processing_finished_at = NOW(),
        processing_error       = NULL,
        updated_at             = NOW()
- WHERE id = $1;
+ WHERE id = sqlc.arg('id')
+   AND file_hash = sqlc.arg('file_hash')::TEXT;
 
 -- name: MarkAssetFailed :exec
 -- Variant generation hit a terminal error. The admin UI surfaces
 -- processing_error and offers a retry that re-enqueues.
+-- Guarded by file_hash like MarkAssetReady: an old job's late failure
+-- must not fail (or seal) the newer version.
 UPDATE assets
    SET processing_status      = 'failed',
        processing_error       = sqlc.arg('processing_error')::TEXT,
        processing_finished_at = NOW(),
        updated_at             = NOW()
- WHERE id = $1;
+ WHERE id = sqlc.arg('id')
+   AND file_hash = sqlc.arg('file_hash')::TEXT;
 
 -- name: ListAssetsForBackfill :many
 -- Backfill helper. Returns asset rows whose extension is in the given
@@ -272,11 +293,14 @@ SELECT id, file_hash, file_extension
 -- name: SetAssetThumbhashIfMissing :exec
 -- Only writes when the column is NULL — never overwrites an existing
 -- thumbhash so the preview worker can backfill cheaply without
--- racing the synchronous compute in CreateAsset.
+-- racing the synchronous compute in CreateAsset. Guarded by the
+-- file_hash the pixels came from (#1596): a blur of replaced bytes
+-- must not land on the newer version.
 UPDATE assets
-   SET thumbhash  = $2,
+   SET thumbhash  = sqlc.arg('thumbhash'),
        updated_at = NOW()
- WHERE id = $1
+ WHERE id = sqlc.arg('id')
+   AND file_hash = sqlc.arg('file_hash')::TEXT
    AND thumbhash IS NULL;
 
 -- name: SetAssetThumbhash :exec
@@ -286,11 +310,13 @@ UPDATE assets
 -- makes a corrected card fade up from the stale image it just replaced.
 -- Every other writer must keep using SetAssetThumbhashIfMissing, whose
 -- NULL guard is what stops the worker racing CreateAsset's synchronous
--- compute and what makes the backfill safe to re-run.
+-- compute and what makes the backfill safe to re-run. Guarded by
+-- file_hash like the if-missing form (#1596).
 UPDATE assets
-   SET thumbhash  = $2,
+   SET thumbhash  = sqlc.arg('thumbhash'),
        updated_at = NOW()
- WHERE id = $1;
+ WHERE id = sqlc.arg('id')
+   AND file_hash = sqlc.arg('file_hash')::TEXT;
 
 -- name: SetAssetPageCount :exec
 -- Idempotent page-count stamp from the metadata pipeline (PDF today;
@@ -298,9 +324,12 @@ UPDATE assets
 -- same asset should converge to the current truth, not preserve a
 -- stale value from an older extractor. Does not touch updated_at
 -- because page_count is asset-intrinsic, not an editorial change.
+-- Guarded by the file_hash that was extracted (#1596): an extraction
+-- of replaced bytes must not stamp the newer version's page count.
 UPDATE assets
-   SET page_count = $2
- WHERE id = $1;
+   SET page_count = sqlc.arg('page_count')
+ WHERE id = sqlc.arg('id')
+   AND file_hash = sqlc.arg('file_hash')::TEXT;
 
 -- name: AddAssetCompanion :one
 -- Attach a companion blob to an asset under a given relative path.
@@ -518,3 +547,106 @@ WHERE id = sqlc.arg(id)
   AND file_hash = sqlc.arg(file_hash)
   AND expires_at > now()
 RETURNING original_basename, original_basename_source;
+
+-- name: LockAssetForReplace :one
+-- #1596: the asset row a source replacement changes, locked for the
+-- whole transaction: two replacements of one asset serialise here, and
+-- the second then sees the first's version and answers 409.
+SELECT owner_user_ref, team_id, file_hash, file_extension, current_version_id, origin_server_id
+  FROM assets
+ WHERE id = $1 AND deleted_at IS NULL
+   FOR UPDATE;
+
+-- name: GetAssetVersionNumber :one
+SELECT number FROM asset_versions WHERE id = $1;
+
+-- name: GetAssetCurrentVersionNumber :one
+-- #1596: Asset.current_version for GET /assets/{id}; local assets only.
+SELECT v.number
+  FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+ WHERE a.id = $1 AND a.origin_server_id IS NULL;
+
+-- name: OwnerHasLiveAssetWithHash :one
+-- #1596: the per-owner unique index (migration 00016) as a pre-check, so
+-- a replacement with bytes the owner already has elsewhere is a clean
+-- 409 rather than a constraint error.
+SELECT EXISTS (SELECT 1 FROM assets
+                WHERE owner_user_ref = sqlc.arg(owner_user_ref) AND file_hash = sqlc.arg(file_hash)::TEXT
+                  AND deleted_at IS NULL AND id <> sqlc.arg(id))::BOOLEAN AS value;
+
+-- name: CreateReplacementVersion :exec
+-- #1596: version n+1 of a local asset, origin replacement, predecessor
+-- its current version; the version's original is pinned by the version
+-- insert trigger (migration 00084). Provenance from the upload receipt.
+SELECT asset_version_create(sqlc.arg(asset_id)::UUID, sqlc.arg(version_id)::UUID, sqlc.arg(number)::BIGINT,
+                            sqlc.arg(predecessor_id)::UUID, 'replacement', sqlc.arg(file_hash)::TEXT,
+                            sqlc.narg(file_extension)::TEXT, sqlc.narg(original_basename)::TEXT,
+                            sqlc.arg(original_basename_source)::TEXT, sqlc.narg(created_by)::BIGINT);
+
+-- name: MoveAssetToVersion :exec
+-- #1596: the asset follows its new version: bytes, extension, size,
+-- thumbhash, processing state. Setting processing_status (ready or
+-- pending) is what the version triggers key on (migration 00085): ready
+-- requests the reconcile at once, pending waits for processing to end.
+--
+-- The facts the old bytes' workers wrote onto the asset row go with them:
+-- page_count (written only by extraction) and the metadata namespaces
+-- the preview workers own (preview_namespaces, assets.PreviewMetadataNamespaces).
+-- Every other metadata key, including whatever a client stored, stays.
+-- The new bytes' own jobs, queued in the same transaction, write them
+-- again for the new file.
+UPDATE assets
+   SET file_hash              = sqlc.arg(file_hash)::TEXT,
+       file_extension         = sqlc.narg(file_extension)::TEXT,
+       file_size_bytes        = (SELECT size_bytes FROM storage_objects WHERE hash = sqlc.arg(file_hash)::TEXT),
+       thumbhash              = sqlc.narg(thumbhash),
+       page_count             = NULL,
+       metadata               = metadata - COALESCE(sqlc.arg(preview_namespaces)::TEXT[], '{}'::TEXT[]),
+       processing_status      = sqlc.arg(processing_status)::TEXT,
+       processing_error       = NULL,
+       processing_started_at  = NULL,
+       processing_finished_at = NULL,
+       current_version_id     = sqlc.arg(version_id)::UUID,
+       updated_at             = NOW()
+ WHERE id = sqlc.arg(id);
+
+-- name: RetireReplacedBytesFieldValues :many
+-- #1596: the field values the old bytes' workers derived, removed in the
+-- replacement's transaction. Exactly two provenances qualify:
+--   * an extractor's: set_by in extracted_by (exif, iptc, xmp: the only
+--     extractor names the set_by CHECK admits);
+--   * the two measured dimensions: set_by 'computed' on the
+--     dimension_codes fields (pixel_width, pixel_height). Other computed
+--     values are not facts about the bytes and stay.
+-- A person's value ('manual'), an API or import value, an upload default
+-- and every other field are untouched. RETURNING carries each removed row
+-- so the caller writes its history entry (old value -> null).
+WITH gone AS (
+    DELETE FROM asset_field_value
+     WHERE asset_id = sqlc.arg(asset_id)
+       AND (set_by = ANY(sqlc.arg(extracted_by)::TEXT[])
+            OR (set_by = 'computed'
+                AND field_id IN (SELECT id FROM field_definition
+                                  WHERE code = ANY(sqlc.arg(dimension_codes)::TEXT[]))))
+    RETURNING field_id, value_text, value_num, value_date, value_options, value_ref, set_by
+)
+SELECT gone.field_id, fd.type AS field_type, gone.value_text, gone.value_num, gone.value_date,
+       gone.value_options, gone.value_ref, gone.set_by
+  FROM gone
+  JOIN field_definition fd ON fd.id = gone.field_id;
+
+-- name: DismissExtractionFailuresForReplacedBytes :execrows
+-- #1596: the replacement's counterpart of the re-extract path's
+-- DismissExtractionFailuresForAsset (asset/metadata). The pending
+-- failures describe the old file; soft-dismissing keeps every row as
+-- admin history but takes them out of the current-asset queue.
+UPDATE extraction_failure
+   SET dismissed_at = NOW()
+ WHERE asset_id = $1
+   AND dismissed_at IS NULL;
+
+-- name: GetAssetVersionView :one
+SELECT id, number, predecessor_id, origin, created_at, original_hash, original_size_bytes,
+       original_media_type, original_extension
+  FROM asset_versions
+ WHERE id = $1;

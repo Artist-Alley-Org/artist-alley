@@ -428,7 +428,7 @@ func TestThumbhashBackfill_NeverOverwritesAnExistingHash(t *testing.T) {
 	// filter would exclude this row, so going through the writer is the
 	// only way to prove the writer itself refuses.
 	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
-	setThumbhashIfMissing(ctx, rig.pool, rig.logger, "test", assetID, img)
+	setThumbhashIfMissing(ctx, rig.pool, rig.logger, "test", assetID, hash, img)
 
 	if got := rig.thumbhashOf(t, assetID); !bytes.Equal(got, sentinel) {
 		t.Errorf("existing thumbhash was overwritten: %x -> %x", sentinel, got)

@@ -24,9 +24,10 @@ func (q *Queries) CountSubtitleTracksForAsset(ctx context.Context, assetID pgtyp
 	return count, err
 }
 
-const deleteSubtitleTrack = `-- name: DeleteSubtitleTrack :execrows
+const deleteSubtitleTrack = `-- name: DeleteSubtitleTrack :one
 DELETE FROM asset_subtitle_tracks
  WHERE asset_id = $1 AND lang = $2
+RETURNING file_hash
 `
 
 type DeleteSubtitleTrackParams struct {
@@ -34,16 +35,35 @@ type DeleteSubtitleTrackParams struct {
 	Lang    string
 }
 
-// Returns the number of rows affected so the handler can
-// distinguish 204 (deleted) from 404 (not-found) without a
-// prior GET round-trip. Cache invalidation MUST follow at the
-// handler layer.
-func (q *Queries) DeleteSubtitleTrack(ctx context.Context, arg DeleteSubtitleTrackParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteSubtitleTrack, arg.AssetID, arg.Lang)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// RETURNING the removed track's bytes: the handler releases their pin
+// in the same transaction (#1596), and no row (pgx.ErrNoRows) is the
+// 404. Cache invalidation MUST follow at the handler layer.
+func (q *Queries) DeleteSubtitleTrack(ctx context.Context, arg DeleteSubtitleTrackParams) (string, error) {
+	row := q.db.QueryRow(ctx, deleteSubtitleTrack, arg.AssetID, arg.Lang)
+	var file_hash string
+	err := row.Scan(&file_hash)
+	return file_hash, err
+}
+
+const ensureTrackPin = `-- name: EnsureTrackPin :exec
+INSERT INTO storage_pins (object_hash, pin_subject_type, pin_subject_id)
+SELECT hash, 'subtitle_track', $1
+  FROM storage_objects
+ WHERE hash = $2
+ON CONFLICT (object_hash, pin_subject_type, pin_subject_id) DO NOTHING
+`
+
+type EnsureTrackPinParams struct {
+	PinSubjectID string
+	ObjectHash   string
+}
+
+// #1596: a track row's pin, asserted in the row's own transaction (see
+// Handler.Upsert). Only for bytes that exist: the object row is the
+// caller's lock target, and a hash with no object has nothing to hold.
+func (q *Queries) EnsureTrackPin(ctx context.Context, arg EnsureTrackPinParams) error {
+	_, err := q.db.Exec(ctx, ensureTrackPin, arg.PinSubjectID, arg.ObjectHash)
+	return err
 }
 
 const getAssetRenderableKind = `-- name: GetAssetRenderableKind :one
@@ -139,10 +159,122 @@ func (q *Queries) ListSubtitleTracksForAsset(ctx context.Context, assetID pgtype
 	return items, nil
 }
 
+const lockAssetForTrackWrite = `-- name: LockAssetForTrackWrite :one
+SELECT id FROM assets
+ WHERE id = $1
+   AND ($2::TEXT = ''
+        OR file_hash = $2::TEXT)
+   FOR NO KEY UPDATE
+`
+
+type LockAssetForTrackWriteParams struct {
+	AssetID       pgtype.UUID
+	AssetFileHash string
+}
+
+// #1596: every track row change locks the asset row first (the order the
+// replacement uses: asset, then track rows, then object rows), and, with
+// asset_file_hash, only while the asset still shows those original bytes.
+// No row means the asset is gone or, with a hash, replaced.
+func (q *Queries) LockAssetForTrackWrite(ctx context.Context, arg LockAssetForTrackWriteParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockAssetForTrackWrite, arg.AssetID, arg.AssetFileHash)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const releaseUnusedTrackPin = `-- name: ReleaseUnusedTrackPin :execrows
+DELETE FROM storage_pins
+ WHERE object_hash = $1
+   AND pin_subject_type = 'subtitle_track'
+   AND pin_subject_id = $2
+   AND NOT EXISTS (
+       SELECT 1 FROM asset_subtitle_tracks t
+        WHERE t.asset_id = $3
+          AND t.lang = $4
+          AND t.file_hash = $1)
+`
+
+type ReleaseUnusedTrackPinParams struct {
+	ObjectHash   string
+	PinSubjectID string
+	AssetID      pgtype.UUID
+	Lang         string
+}
+
+// #1596: drops one (asset, lang) track pin from bytes no live track of
+// that (asset, lang) uses. A track's pin is keyed (VTT hash,
+// 'subtitle_track', '<asset>-<lang>'), and identical VTT bytes share
+// that one row, so the NOT EXISTS is what keeps a retired or refused
+// track's release from unpinning a live track with the same bytes. The
+// caller locks the object row first (LockObjectForPinChange), so this
+// statement's snapshot sees any track row committed before it; a track
+// written after it re-asserts its own pin in its own transaction (see
+// Handler.Upsert).
+func (q *Queries) ReleaseUnusedTrackPin(ctx context.Context, arg ReleaseUnusedTrackPinParams) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseUnusedTrackPin,
+		arg.ObjectHash,
+		arg.PinSubjectID,
+		arg.AssetID,
+		arg.Lang,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retireAITracksForAsset = `-- name: RetireAITracksForAsset :many
+DELETE FROM asset_subtitle_tracks
+ WHERE asset_id = $1
+   AND source_format = 'whisper'
+RETURNING lang, file_hash
+`
+
+type RetireAITracksForAssetRow struct {
+	Lang     string
+	FileHash string
+}
+
+// #1596: an original replacement removes the AI tracks made from the
+// recording it replaces, in the replacement's transaction. Only
+// source_format 'whisper' is AI-produced: the upload API accepts
+// vtt/srt/ssa/ass/sub/idx and never writes it, so a person's track is
+// never matched. RETURNING gives the caller each removed track's bytes,
+// whose pin it then releases.
+func (q *Queries) RetireAITracksForAsset(ctx context.Context, assetID pgtype.UUID) ([]RetireAITracksForAssetRow, error) {
+	rows, err := q.db.Query(ctx, retireAITracksForAsset, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RetireAITracksForAssetRow
+	for rows.Next() {
+		var i RetireAITracksForAssetRow
+		if err := rows.Scan(&i.Lang, &i.FileHash); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertSubtitleTrack = `-- name: UpsertSubtitleTrack :one
+WITH cur AS (
+    SELECT id FROM assets
+     WHERE id = $6
+       AND ($7::TEXT = ''
+            OR file_hash = $7::TEXT)
+       FOR NO KEY UPDATE
+)
 INSERT INTO asset_subtitle_tracks
     (asset_id, lang, label, file_hash, source_format, confidence)
-VALUES ($1, $2, $3, $4, $5, $6)
+SELECT cur.id, $1, $2, $3,
+       $4, $5
+  FROM cur
 ON CONFLICT (asset_id, lang) DO UPDATE
     SET label = EXCLUDED.label,
         file_hash = EXCLUDED.file_hash,
@@ -153,26 +285,37 @@ RETURNING asset_id, lang, label, file_hash, source_format, confidence, created_a
 `
 
 type UpsertSubtitleTrackParams struct {
-	AssetID      pgtype.UUID
-	Lang         string
-	Label        string
-	FileHash     string
-	SourceFormat string
-	Confidence   float32
+	Lang          string
+	Label         string
+	FileHash      string
+	SourceFormat  string
+	Confidence    float32
+	AssetID       pgtype.UUID
+	AssetFileHash string
 }
 
 // Idempotent insert. Re-upload of the same (asset, lang) overwrites
 // the file_hash + source_format + confidence (operator action via
 // the upload endpoint OR conversion-job retry). Cache invalidation
 // MUST follow this query at the handler layer.
+//
+// asset_file_hash (#1596): when non-empty, the track is written only
+// while the asset still shows those original bytes. A transcription
+// of a replaced original matches nothing (no row returned) instead of
+// attaching the old recording's words to the new one. The row lock is
+// taken in the same statement as the write, so a replacement either
+// commits first (no match) or waits for this write and supersedes it.
+// NO KEY UPDATE, not SHARE, so two writers on one asset queue rather
+// than deadlock. Empty means "no expectation" (a person's upload).
 func (q *Queries) UpsertSubtitleTrack(ctx context.Context, arg UpsertSubtitleTrackParams) (AssetSubtitleTrack, error) {
 	row := q.db.QueryRow(ctx, upsertSubtitleTrack,
-		arg.AssetID,
 		arg.Lang,
 		arg.Label,
 		arg.FileHash,
 		arg.SourceFormat,
 		arg.Confidence,
+		arg.AssetID,
+		arg.AssetFileHash,
 	)
 	var i AssetSubtitleTrack
 	err := row.Scan(

@@ -5,7 +5,10 @@ package visualembed
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -50,6 +53,21 @@ type Dispatcher struct {
 type DispatchInput struct {
 	AssetID       uuid.UUID
 	FileExtension string
+
+	// The three below are set by an original replacement (#1596),
+	// which must queue the new bytes' embedding in its own transaction.
+	//
+	// FileHash goes into the payload so a job for replaced bytes
+	// finishes as a no-op. Version scopes the idempotency key to the
+	// asset version: the per-asset key would coalesce the new
+	// version's job behind an old one still running, which then writes
+	// nothing (its bytes are gone) and leaves the new picture
+	// unembedded. DB, when set, is the transaction the job is inserted
+	// on; an insert error is returned so the caller's commit fails with
+	// it instead of committing a version without its work.
+	FileHash string
+	Version  int64
+	DB       jobs.DBTX
 }
 
 // Dispatch enqueues a visualembed job when all guards pass. Silent
@@ -62,26 +80,33 @@ type DispatchInput struct {
 //  1. Provider registered
 //  2. Sysconfig auto_embed enabled
 //  3. Asset is an image (extension sniff)
-func (d *Dispatcher) Dispatch(ctx context.Context, in DispatchInput) {
+//
+// The returned error is non-nil only for a failed transactional insert
+// (in.DB set); every skip, and a best-effort pool enqueue failure,
+// returns nil.
+func (d *Dispatcher) Dispatch(ctx context.Context, in DispatchInput) error {
 	// Nil receiver → silent no-op (defence in depth; callers shouldn't
 	// need to nil-check the seam).
 	if d == nil {
-		return
+		return nil
 	}
 	if d.Provider == nil {
 		d.Counter.RecordSkipped()
-		return
+		return nil
 	}
 	if d.EnabledGetter != nil {
 		enabled, err := d.EnabledGetter(ctx)
 		if err != nil || !enabled {
 			d.Counter.RecordSkipped()
-			return
+			return nil
 		}
 	}
 	if !IsImageExtension(in.FileExtension) {
 		d.Counter.RecordSkipped()
-		return
+		return nil
+	}
+	if in.DB != nil {
+		return d.enqueueOn(ctx, in)
 	}
 	// Nil Jobs is a boot-wire error (dispatcher constructed without
 	// its jobs.Service). Skip counter fires so operators see it on
@@ -92,10 +117,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, in DispatchInput) {
 				slog.String("asset_id", in.AssetID.String()))
 		}
 		d.Counter.RecordSkipped()
-		return
+		return nil
 	}
 
-	payload := Payload{AssetID: in.AssetID}
+	payload := Payload{AssetID: in.AssetID, FileHash: in.FileHash}
 	opts := jobs.EnqueueOpts{
 		IdempotencyKey: idempotencyKey(in.AssetID),
 	}
@@ -115,6 +140,32 @@ func (d *Dispatcher) Dispatch(ctx context.Context, in DispatchInput) {
 		// jobs-framework observability separately.
 		d.Counter.RecordSkipped()
 	}
+	return nil
+}
+
+// enqueueOn inserts the job on the caller's transaction (#1596). No
+// unique-violation recovery as in jobs.Service.Enqueue: a failed insert
+// aborts the transaction, and the version-scoped key cannot collide
+// with a job for any other version of the asset.
+func (d *Dispatcher) enqueueOn(ctx context.Context, in DispatchInput) error {
+	b, err := json.Marshal(Payload{AssetID: in.AssetID, FileHash: in.FileHash})
+	if err != nil {
+		return fmt.Errorf("visualembed: marshal payload: %w", err)
+	}
+	key := idempotencyKey(in.AssetID) + "|v" + strconv.FormatInt(in.Version, 10)
+	params := jobs.EnqueueJobParams{
+		Type:           string(JobTypeVisualEmbed),
+		Payload:        b,
+		IdempotencyKey: &key,
+	}
+	if d.MaxAttempts > 0 {
+		m := int32(d.MaxAttempts)
+		params.MaxAttempts = &m
+	}
+	if _, err := jobs.New(in.DB).EnqueueJob(ctx, params); err != nil {
+		return fmt.Errorf("visualembed: enqueue: %w", err)
+	}
+	return nil
 }
 
 // idempotencyKey is deterministic per-asset so a retry of the upload

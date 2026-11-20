@@ -118,11 +118,11 @@ func (h *TextHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 	jobCtx, cancel := context.WithTimeout(ctx, h.MaxJobDuration)
 	defer cancel()
 
-	h.markProcessing(jobCtx, p.AssetID)
+	h.markProcessing(jobCtx, p.AssetID, p.FileHash)
 
 	body, cleanup, err := h.stage(jobCtx, p.FileHash)
 	if err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 	defer cleanup()
@@ -152,12 +152,12 @@ func (h *TextHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 		}
 	}
 
-	if err := h.persistMetadata(jobCtx, p.AssetID, meta); err != nil {
+	if err := h.persistMetadata(jobCtx, p.AssetID, p.FileHash, meta); err != nil {
 		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.text.persist_meta_failed",
 			slog.String("err", err.Error()))
 	}
 
-	h.markReady(jobCtx, p.AssetID)
+	h.markReady(jobCtx, p.AssetID, p.FileHash)
 	result.WorkS = time.Since(started).Seconds()
 	return json.Marshal(result)
 }
@@ -307,35 +307,37 @@ func (h *TextHandler) fanCardToLadder(ctx context.Context, assetID uuid.UUID, ha
 	})
 }
 
-func (h *TextHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta TextMetadata) error {
-	payload, err := json.Marshal(map[string]any{"text": meta})
+func (h *TextHandler) persistMetadata(ctx context.Context, id uuid.UUID, hash string, meta TextMetadata) error {
+	payload, err := json.Marshal(map[string]any{assets.MetadataNamespaceText: meta})
 	if err != nil {
 		return err
 	}
 	return assets.New(h.Pool).MergeAssetMetadata(ctx, assets.MergeAssetMetadataParams{
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
+		FileHash: hash,
 	})
 }
 
-func (h *TextHandler) markProcessing(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *TextHandler) markProcessing(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.text.mark_processing_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *TextHandler) markReady(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *TextHandler) markReady(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.text.mark_ready_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *TextHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
+func (h *TextHandler) markFailed(ctx context.Context, id uuid.UUID, hash, msg string) {
 	if err := assets.New(h.Pool).MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.text.mark_failed_failed",
 			slog.String("asset_id", id.String()),

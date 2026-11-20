@@ -990,6 +990,11 @@ func (*PanicShim) DownloadAssetVariant(context.Context, openapi.DownloadAssetVar
 	panic("PanicShim: DownloadAssetVariant called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// CreateAssetVersion panics by default; test shims override.
+func (*PanicShim) CreateAssetVersion(context.Context, openapi.CreateAssetVersionRequestObject) (openapi.CreateAssetVersionResponseObject, error) {
+	panic("PanicShim: CreateAssetVersion called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListCapabilities panics by default; test shims override.
 func (*PanicShim) ListCapabilities(context.Context, openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
 	panic("PanicShim: ListCapabilities called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

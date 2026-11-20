@@ -103,11 +103,11 @@ func (h *PSDHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 	jobCtx, cancel := context.WithTimeout(ctx, h.MaxJobDuration)
 	defer cancel()
 
-	h.markProcessing(jobCtx, p.AssetID)
+	h.markProcessing(jobCtx, p.AssetID, p.FileHash)
 
 	src, cleanup, err := h.stage(jobCtx, p.FileHash, p.FileExtension)
 	if err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 	defer cleanup()
@@ -124,7 +124,7 @@ func (h *PSDHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 			AssetID: p.AssetID, Hash: p.FileHash, Kind: "psd",
 		})
-		h.markReady(jobCtx, p.AssetID)
+		h.markReady(jobCtx, p.AssetID, p.FileHash)
 		result.WorkS = time.Since(started).Seconds()
 		return json.Marshal(result)
 	}
@@ -142,7 +142,7 @@ func (h *PSDHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 			slog.String("err", err.Error()))
 		// Slow path: ImageMagick renders the flattened composite.
 		if err := h.renderViaImageMagick(jobCtx, src, posterPath); err != nil {
-			h.markFailed(jobCtx, p.AssetID, err.Error())
+			h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 			return nil, &jobs.TerminalError{Err: fmt.Errorf("preview.psd: imagemagick: %w", err)}
 		}
 		result.Source = "imagemagick"
@@ -155,7 +155,7 @@ func (h *PSDHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 		result.Variants = append(result.Variants, "raster")
 	}
 
-	h.markReady(jobCtx, p.AssetID)
+	h.markReady(jobCtx, p.AssetID, p.FileHash)
 	result.WorkS = time.Since(started).Seconds()
 	return json.Marshal(result)
 }
@@ -379,24 +379,25 @@ func (h *PSDHandler) convertBin() string {
 	return "convert"
 }
 
-func (h *PSDHandler) markProcessing(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *PSDHandler) markProcessing(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.psd.mark_processing_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *PSDHandler) markReady(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *PSDHandler) markReady(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.psd.mark_ready_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *PSDHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
+func (h *PSDHandler) markFailed(ctx context.Context, id uuid.UUID, hash, msg string) {
 	if err := assets.New(h.Pool).MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.psd.mark_failed_failed",
 			slog.String("asset_id", id.String()),

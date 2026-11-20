@@ -89,20 +89,20 @@ func (h *ArchiveHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawM
 	jobCtx, cancel := context.WithTimeout(ctx, h.MaxJobDuration)
 	defer cancel()
 
-	h.markProcessingArchive(jobCtx, p.AssetID)
+	h.markProcessingArchive(jobCtx, p.AssetID, p.FileHash)
 
 	manifest, err := h.extractManifest(jobCtx, p.FileHash, format)
 	if err != nil {
-		h.markFailedArchive(jobCtx, p.AssetID, err.Error())
+		h.markFailedArchive(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 
-	if err := h.persistArchiveMetadata(jobCtx, p.AssetID, manifest); err != nil {
+	if err := h.persistArchiveMetadata(jobCtx, p.AssetID, p.FileHash, manifest); err != nil {
 		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.archive.persist_failed",
 			slog.String("asset_id", p.AssetID.String()),
 			slog.String("err", err.Error()))
 	}
-	h.markReadyArchive(jobCtx, p.AssetID)
+	h.markReadyArchive(jobCtx, p.AssetID, p.FileHash)
 
 	return json.Marshal(ArchiveResult{
 		Manifest: manifest,
@@ -150,35 +150,37 @@ func (h *ArchiveHandler) extractManifest(ctx context.Context, hash, format strin
 	return archive.ManifestTAR(rc, compressed)
 }
 
-func (h *ArchiveHandler) persistArchiveMetadata(ctx context.Context, id uuid.UUID, m *archive.Manifest) error {
-	payload, err := json.Marshal(map[string]any{"archive": m})
+func (h *ArchiveHandler) persistArchiveMetadata(ctx context.Context, id uuid.UUID, hash string, m *archive.Manifest) error {
+	payload, err := json.Marshal(map[string]any{assets.MetadataNamespaceArchive: m})
 	if err != nil {
 		return err
 	}
 	return assets.New(h.Pool).MergeAssetMetadata(ctx, assets.MergeAssetMetadataParams{
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
+		FileHash: hash,
 	})
 }
 
-func (h *ArchiveHandler) markProcessingArchive(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *ArchiveHandler) markProcessingArchive(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.archive.mark_processing_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *ArchiveHandler) markReadyArchive(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *ArchiveHandler) markReadyArchive(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.archive.mark_ready_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *ArchiveHandler) markFailedArchive(ctx context.Context, id uuid.UUID, msg string) {
+func (h *ArchiveHandler) markFailedArchive(ctx context.Context, id uuid.UUID, hash, msg string) {
 	if err := assets.New(h.Pool).MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.archive.mark_failed_failed",
 			slog.String("asset_id", id.String()),

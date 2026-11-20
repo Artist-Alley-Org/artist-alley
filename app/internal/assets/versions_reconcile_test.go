@@ -327,7 +327,7 @@ func TestReconcile_ProcessingInFlightIsSkipped_FailedIsSealed(t *testing.T) {
 	}
 	// Processing fails: the terminal event requests a reconcile, which
 	// seals with whatever verified copy exists.
-	if err := assets.New(rr.pool).MarkAssetFailed(rr.ctx, assets.MarkAssetFailedParams{ID: pgtype.UUID{Bytes: a, Valid: true}, ProcessingError: "boom"}); err != nil {
+	if err := assets.New(rr.pool).MarkAssetFailed(rr.ctx, assets.MarkAssetFailedParams{ID: pgtype.UUID{Bytes: a, Valid: true}, FileHash: h, ProcessingError: "boom"}); err != nil {
 		t.Fatal(err)
 	}
 	if n := rr.reconcileJobs(h); n < 1 {
@@ -453,7 +453,7 @@ func TestReconcile_TriggersRequestReconciles(t *testing.T) {
 	if rr.reconcileJobs(h2) != 0 {
 		t.Fatal("a pending asset requested a reconcile before processing ended")
 	}
-	if err := assets.New(rr.pool).MarkAssetReady(rr.ctx, pgtype.UUID{Bytes: a2, Valid: true}); err != nil {
+	if err := assets.New(rr.pool).MarkAssetReady(rr.ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: a2, Valid: true}, FileHash: h2}); err != nil {
 		t.Fatal(err)
 	}
 	if rr.reconcileJobs(h2) != 1 {

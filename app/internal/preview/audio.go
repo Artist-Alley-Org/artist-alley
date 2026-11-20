@@ -242,11 +242,11 @@ func (h *AudioHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	jobCtx, cancel := context.WithTimeout(ctx, h.MaxJobDuration)
 	defer cancel()
 
-	h.markProcessing(jobCtx, p.AssetID)
+	h.markProcessing(jobCtx, p.AssetID, p.FileHash)
 
 	src, cleanup, err := h.stage(jobCtx, p.FileHash, p.FileExtension)
 	if err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 	defer cleanup()
@@ -327,12 +327,12 @@ func (h *AudioHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 
 	// Persist metadata onto the asset so the post detail page can
 	// show duration / artist / title without re-probing.
-	if err := h.persistMetadata(jobCtx, p.AssetID, meta); err != nil {
+	if err := h.persistMetadata(jobCtx, p.AssetID, p.FileHash, meta); err != nil {
 		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.audio.persist_meta_failed",
 			slog.String("err", err.Error()))
 	}
 
-	h.markReady(jobCtx, p.AssetID)
+	h.markReady(jobCtx, p.AssetID, p.FileHash)
 	result.WorkS = time.Since(started).Seconds()
 	return json.Marshal(result)
 }
@@ -650,8 +650,8 @@ func (h *AudioHandler) fanWaveformToLadder(ctx context.Context, assetID uuid.UUI
 // persistMetadata merges the probed audio metadata into the asset's
 // `metadata` JSONB column under an "audio" key. Existing fields stay
 // put — we only own our own namespace.
-func (h *AudioHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta AudioMetadata) error {
-	payload, err := json.Marshal(map[string]any{"audio": meta})
+func (h *AudioHandler) persistMetadata(ctx context.Context, id uuid.UUID, hash string, meta AudioMetadata) error {
+	payload, err := json.Marshal(map[string]any{assets.MetadataNamespaceAudio: meta})
 	if err != nil {
 		return err
 	}
@@ -659,6 +659,7 @@ func (h *AudioHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta A
 	return q.MergeAssetMetadata(ctx, assets.MergeAssetMetadataParams{
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
+		FileHash: hash,
 	})
 }
 
@@ -675,24 +676,25 @@ func (h *AudioHandler) ffprobeBin() string {
 	return "ffprobe"
 }
 
-func (h *AudioHandler) markProcessing(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *AudioHandler) markProcessing(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.audio.mark_processing_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *AudioHandler) markReady(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *AudioHandler) markReady(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.audio.mark_ready_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *AudioHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
+func (h *AudioHandler) markFailed(ctx context.Context, id uuid.UUID, hash, msg string) {
 	if err := assets.New(h.Pool).MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.audio.mark_failed_failed",
 			slog.String("asset_id", id.String()),
