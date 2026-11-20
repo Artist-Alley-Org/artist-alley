@@ -133,6 +133,9 @@ const CacheDomainEPUBChapter = "asset.epub.chapter"
 // Handler implements the asset-entity slice of
 // openapi.StrictServerInterface.
 type Handler struct {
+	// replaceHooks are #1596 test seams (replace.go); zero in production.
+	replaceHooks replaceHooks
+
 	Pool    *pgxpool.Pool
 	Storage *storage.Service
 	Logger  *slog.Logger
@@ -253,7 +256,10 @@ func (h *Handler) SetManifestCache(c *presentation.Cache) { h.manifests = c }
 // interface lives here (consumer-defined) so the assets package
 // doesn't import the visualembed package.
 type VisualEmbedDispatcher interface {
-	Dispatch(ctx context.Context, in VisualEmbedInput)
+	// Dispatch returns an error only when in.DB is set and the
+	// transactional insert failed; skips and best-effort enqueues
+	// return nil.
+	Dispatch(ctx context.Context, in VisualEmbedInput) error
 }
 
 // VisualEmbedInput mirrors visualembed.DispatchInput as a local type
@@ -262,6 +268,13 @@ type VisualEmbedDispatcher interface {
 type VisualEmbedInput struct {
 	AssetID       uuid.UUID
 	FileExtension string
+	// FileHash, Version and DB are set by an original replacement
+	// (#1596): the job carries the new bytes' hash, its idempotency key
+	// is scoped to the version, and it is inserted on the replacement's
+	// transaction. See visualembed.DispatchInput.
+	FileHash string
+	Version  int64
+	DB       jobs.DBTX
 }
 
 // SetVisualEmbedDispatcher injects the visualembed dispatcher for the
@@ -794,9 +807,12 @@ func (h *Handler) CreateAsset(
 		// when the asset isn't an image; guards live inside Dispatch
 		// so this call site stays uniform with ai.embed.
 		if h.visualEmbedDispatcher != nil {
-			h.visualEmbedDispatcher.Dispatch(ctx, VisualEmbedInput{
+			// Best effort, like the fanouts around it: the pool path
+			// logs its own enqueue failure and returns nil.
+			_ = h.visualEmbedDispatcher.Dispatch(ctx, VisualEmbedInput{
 				AssetID:       newID,
 				FileExtension: strDefault(in.FileExtension, ""),
+				FileHash:      *fileHashPtr,
 			})
 		}
 
@@ -1195,6 +1211,16 @@ func (h *Handler) GetAsset(
 	out := rowToAssetWithDetails(row, tags, details)
 	if err := h.enrichAssetDerived(ctx, &out); err != nil {
 		return nil, err
+	}
+	// #1596: the version a replacement must name. Never on a withheld
+	// placeholder (its keys are an allow-list), and only for a local asset
+	// with a file (the query finds nothing otherwise).
+	if !out.Restricted {
+		if n, err := q.GetAssetCurrentVersionNumber(ctx, row.ID); err == nil {
+			out.CurrentVersion = &n
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("assets: current version: %w", err)
+		}
 	}
 	return openapi.GetAsset200JSONResponse(out), nil
 }

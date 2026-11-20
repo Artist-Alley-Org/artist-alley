@@ -47,6 +47,12 @@ const providerName = "aa-clip-visual-local"
 // Payload is the JSON body of a visualembed job.
 type Payload struct {
 	AssetID uuid.UUID `json:"asset_id"`
+	// FileHash is the original the job was queued for, when the
+	// producer knows it (a replacement always does, #1596). A job whose
+	// hash the asset no longer shows finishes as a no-op. Absent on
+	// older payloads; the write is still guarded by the hash read when
+	// the job starts.
+	FileHash string `json:"file_hash,omitempty"`
 }
 
 // StorageAccessor is the narrow surface the job needs to fetch bytes.
@@ -163,6 +169,9 @@ func (j *Job) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessage, err
 		j.Counter.RecordPermanentFailed()
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("visualembed: asset missing file_hash")}
 	}
+	if p.FileHash != "" && *asset.FileHash != p.FileHash {
+		return supersededResult(p.AssetID), nil
+	}
 
 	// Wait for the shared rate limiter before touching the sidecar.
 	// Bounded by RateLimitWaitTimeout; if the sidecar is overwhelmed
@@ -235,13 +244,15 @@ func (j *Job) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessage, err
 	// (asset_id) primary key + refresh model/checkpoint/updated_at.
 	vec := pgvector.NewVector(embedding.Vector)
 	assetIDPg := pgtype.UUID{Bytes: p.AssetID, Valid: true}
-	if err := j.VisualStore.UpsertAssetVisualEmbedding(ctx, visualstore.UpsertAssetVisualEmbeddingParams{
+	n, err := j.VisualStore.UpsertAssetVisualEmbedding(ctx, visualstore.UpsertAssetVisualEmbeddingParams{
 		AssetID:    assetIDPg,
-		Column2:    &vec,
+		FileHash:   *asset.FileHash,
+		Embedding:  &vec,
 		Model:      embedding.Model,
 		Checkpoint: embedding.Checkpoint,
 		Provider:   providerName,
-	}); err != nil {
+	})
+	if err != nil {
 		if j.Logger != nil {
 			j.Logger.LogAttrs(ctx, slog.LevelWarn, "visualembed.upsert_error",
 				slog.String("asset_id", p.AssetID.String()),
@@ -249,6 +260,13 @@ func (j *Job) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessage, err
 		}
 		j.Counter.RecordTransientFailed()
 		return nil, fmt.Errorf("visualembed: upsert: %w", err)
+	}
+	if n == 0 {
+		// The guarded upsert found the asset on other bytes: replaced
+		// while the sidecar was embedding (#1596). The replacement
+		// queued its own embedding; this vector describes nothing the
+		// asset shows, so it is dropped.
+		return supersededResult(p.AssetID), nil
 	}
 
 	j.Counter.RecordSuccess()
@@ -259,6 +277,16 @@ func (j *Job) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessage, err
 		"checkpoint": embedding.Checkpoint,
 	})
 	return result, nil
+}
+
+// supersededResult is the job result for an embedding of an original
+// the asset no longer shows (#1596). A finished no-op, not a failure.
+func supersededResult(assetID uuid.UUID) json.RawMessage {
+	result, _ := json.Marshal(map[string]any{
+		"asset_id":   assetID.String(),
+		"superseded": true,
+	})
+	return result
 }
 
 // IsTransientProviderError classifies provider errors. Sidecar

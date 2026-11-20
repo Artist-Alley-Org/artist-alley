@@ -127,11 +127,11 @@ func (h *RasterHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMe
 		return nil, fmt.Errorf("preview.raster: load config: %w", err)
 	}
 
-	h.markProcessing(ctx, p.AssetID)
+	h.markProcessing(ctx, p.AssetID, p.FileHash)
 
 	src, sourceBytes, err := h.loadSourceWithMeta(ctx, p.FileHash, p.FileExtension)
 	if err != nil {
-		h.markFailed(ctx, p.AssetID, err.Error())
+		h.markFailed(ctx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 
@@ -165,7 +165,7 @@ func (h *RasterHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMe
 			continue
 		}
 		if err := h.writeVariant(ctx, p.FileHash, src, v); err != nil {
-			h.markFailed(ctx, p.AssetID, fmt.Sprintf("variant %s: %v", v.Key, err))
+			h.markFailed(ctx, p.AssetID, p.FileHash, fmt.Sprintf("variant %s: %v", v.Key, err))
 			return nil, fmt.Errorf("preview.raster: variant %s: %w", v.Key, err)
 		}
 		result.Generated = append(result.Generated, v.Key)
@@ -186,9 +186,9 @@ func (h *RasterHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMe
 	// dimensions describe the picture the card shows rather than the
 	// byte order on disk — an orientation=6 phone photo records
 	// portrait, which is what the tile has to reserve.
-	stampSourceShape(ctx, h.Pool, h.Logger, "raster", p.AssetID, src, p.Force)
+	stampSourceShape(ctx, h.Pool, h.Logger, "raster", p.AssetID, p.FileHash, src, p.Force)
 
-	h.markReady(ctx, p.AssetID)
+	h.markReady(ctx, p.AssetID, p.FileHash)
 	result.DurationS = time.Since(started).Seconds()
 	return json.Marshal(result)
 }
@@ -456,9 +456,9 @@ func hasAlpha(img image.Image) bool {
 // asset-row updates
 // ---------------------------------------------------------------------------
 
-func (h *RasterHandler) markProcessing(ctx context.Context, id uuid.UUID) {
+func (h *RasterHandler) markProcessing(ctx context.Context, id uuid.UUID, hash string) {
 	q := assets.New(h.Pool)
-	if err := q.MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+	if err := q.MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.raster.mark_processing_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()),
@@ -466,9 +466,9 @@ func (h *RasterHandler) markProcessing(ctx context.Context, id uuid.UUID) {
 	}
 }
 
-func (h *RasterHandler) markReady(ctx context.Context, id uuid.UUID) {
+func (h *RasterHandler) markReady(ctx context.Context, id uuid.UUID, hash string) {
 	q := assets.New(h.Pool)
-	if err := q.MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+	if err := q.MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.raster.mark_ready_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()),
@@ -476,11 +476,12 @@ func (h *RasterHandler) markReady(ctx context.Context, id uuid.UUID) {
 	}
 }
 
-func (h *RasterHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
+func (h *RasterHandler) markFailed(ctx context.Context, id uuid.UUID, hash, msg string) {
 	q := assets.New(h.Pool)
 	if err := q.MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.raster.mark_failed_failed",
 			slog.String("asset_id", id.String()),

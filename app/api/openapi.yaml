@@ -4511,6 +4511,65 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /assets/{id}/versions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: createAssetVersion
+      summary: Replace an asset's file with new bytes, as a new version
+      description: |
+        #1596. Replaces the asset's original file with bytes already
+        uploaded through `POST /storage/objects`, named by that upload's
+        `upload_receipt`, and makes them the asset's next version. The
+        previous version and its bytes stay, retained for the life of the
+        asset; nothing about them changes.
+
+        Who may: the caller must be able to edit the asset (its owner, a
+        team or global `assets.admin`, or `system.admin`); a reader gets
+        403. An asset the caller cannot read, or that does not exist or
+        is deleted, is 404, so this does not confirm a hidden asset
+        exists.
+
+        Concurrency: `expected_version` must equal the asset's
+        `current_version`; otherwise 409, so two replacements based on
+        the same version cannot both win.
+
+        In one transaction: the receipt is used up (a failed replacement
+        leaves it usable), version n+1 is created with origin
+        `replacement` and the current version as its predecessor, the
+        new bytes are pinned to it, the asset's file, extension, size,
+        thumbhash and processing state move to them, and the new bytes'
+        preview processing is queued. Processing ends by sealing the
+        version with its verified renditions; a file type with nothing to
+        process is sealed by the same reconciliation without waiting.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssetVersionCreate" }
+      responses:
+        "201":
+          description: The new version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetVersion" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /assets/{id}/alternates:
     parameters:
       - name: id
@@ -17617,6 +17676,60 @@ components:
           type: string
           format: date-time
           nullable: true
+    AssetVersionCreate:
+      type: object
+      description: |
+        A replacement of an asset's file (#1596). The bytes must already
+        be uploaded by the caller (`POST /storage/objects`).
+      required: [file_hash, upload_receipt, expected_version, file_extension]
+      properties:
+        file_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: sha256 of the uploaded bytes, as `POST /storage/objects` returned it.
+        upload_receipt:
+          type: string
+          maxLength: 64
+          description: |
+            The `upload_receipt` of that upload. It must have been issued
+            to the caller, for exactly `file_hash`, and not yet be used or
+            expired; it is used up only if the replacement succeeds. The
+            upload's base name becomes the new version's
+            `original_basename` provenance.
+        file_extension:
+          type: string
+          minLength: 1
+          maxLength: 33
+          description: |
+            The new file's extension, required on every replacement. It is
+            normalized (lowercased, one leading dot dropped) and must then be
+            1 to 32 letters or digits (400 otherwise). It must classify like
+            the current file (the same viewer kind and asset type), or the
+            replacement is refused with 409; a different kind of file is a
+            new asset. The bytes are not inspected to confirm it: like
+            `POST /assets`, the extension is the caller's statement of the
+            file's type.
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The asset's `current_version` the caller is replacing.
+    AssetVersion:
+      type: object
+      description: One version of a local asset (#1596).
+      required: [id, number, origin, created_at, original_hash, original_size_bytes, original_media_type]
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: integer, format: int64 }
+        predecessor_id: { type: string, format: uuid, nullable: true }
+        origin:
+          type: string
+          enum: [ingest, replacement, rendition, backfill_current]
+        created_at: { type: string, format: date-time }
+        original_hash: { type: string, description: sha256 of the version's original file }
+        original_size_bytes: { type: integer, format: int64 }
+        original_media_type: { type: string }
+        original_extension: { type: string, nullable: true }
     Asset:
       type: object
       description: |
@@ -17743,6 +17856,18 @@ components:
         file_hash: { type: string, nullable: true, description: sha256 of the linked storage object }
         file_extension: { type: string, nullable: true }
         file_size_bytes: { type: integer, format: int64, nullable: true }
+        current_version:
+          type: integer
+          format: int64
+          nullable: true
+          readOnly: true
+          description: |
+            The number of the asset's current version (#1596): 1 for the
+            bytes it was created with, then one more for each replacement
+            of its file and each change to its access renditions. Pass it
+            as `expected_version` to `POST /assets/{id}/versions`. Present
+            on `GET /assets/{id}` for a local asset with a file; absent
+            elsewhere and on a received (remote) asset.
         original_basename:
           type: string
           nullable: true

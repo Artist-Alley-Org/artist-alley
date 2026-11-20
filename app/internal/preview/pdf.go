@@ -125,11 +125,11 @@ func (h *PDFHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 	jobCtx, cancel := context.WithTimeout(ctx, h.MaxJobDuration)
 	defer cancel()
 
-	h.markProcessing(jobCtx, p.AssetID)
+	h.markProcessing(jobCtx, p.AssetID, p.FileHash)
 
 	src, cleanup, err := h.stage(jobCtx, p.FileHash)
 	if err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 	defer cleanup()
@@ -170,12 +170,12 @@ func (h *PDFHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 		}
 	}
 
-	if err := h.persistMetadata(jobCtx, p.AssetID, meta); err != nil {
+	if err := h.persistMetadata(jobCtx, p.AssetID, p.FileHash, meta); err != nil {
 		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.pdf.persist_meta_failed",
 			slog.String("err", err.Error()))
 	}
 
-	h.markReady(jobCtx, p.AssetID)
+	h.markReady(jobCtx, p.AssetID, p.FileHash)
 	result.WorkS = time.Since(started).Seconds()
 	return json.Marshal(result)
 }
@@ -324,14 +324,15 @@ func (h *PDFHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, h
 	})
 }
 
-func (h *PDFHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta PDFMetadata) error {
-	payload, err := json.Marshal(map[string]any{"pdf": meta})
+func (h *PDFHandler) persistMetadata(ctx context.Context, id uuid.UUID, hash string, meta PDFMetadata) error {
+	payload, err := json.Marshal(map[string]any{assets.MetadataNamespacePDF: meta})
 	if err != nil {
 		return err
 	}
 	return assets.New(h.Pool).MergeAssetMetadata(ctx, assets.MergeAssetMetadataParams{
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
+		FileHash: hash,
 	})
 }
 
@@ -348,24 +349,25 @@ func (h *PDFHandler) pdfinfoBin() string {
 	return "pdfinfo"
 }
 
-func (h *PDFHandler) markProcessing(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *PDFHandler) markProcessing(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.pdf.mark_processing_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *PDFHandler) markReady(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *PDFHandler) markReady(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.pdf.mark_ready_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *PDFHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
+func (h *PDFHandler) markFailed(ctx context.Context, id uuid.UUID, hash, msg string) {
 	if err := assets.New(h.Pool).MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.pdf.mark_failed_failed",
 			slog.String("asset_id", id.String()),

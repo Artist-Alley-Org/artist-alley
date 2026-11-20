@@ -77,11 +77,19 @@ func dimsPool(t *testing.T) *pgxpool.Pool {
 func seedDimsAsset(t *testing.T, pool *pgxpool.Pool, status string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
+	// A file, because the dimensions are measured from one: Record only
+	// writes for the bytes the asset shows (#1596).
+	hash := fmt.Sprintf("%064x", id[:])
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO storage_objects (hash, size_bytes, content_type, backend)
+		VALUES ($1, 1024, 'image/png', 'fs') ON CONFLICT (hash) DO NOTHING`, hash); err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity,
-		                    processing_status, created_at)
-		VALUES ($1,'#196 dims probe',$2,(SELECT MIN(ref) FROM asset_types),$3,'public','ready',NOW())`,
-		id, dimsOwner, status); err != nil {
+		                    processing_status, file_hash, file_extension, created_at)
+		VALUES ($1,'#196 dims probe',$2,(SELECT MIN(ref) FROM asset_types),$3,'public','ready',$4,'png',NOW())`,
+		id, dimsOwner, status, hash); err != nil {
 		t.Fatalf("seed asset: %v", err)
 	}
 	t.Cleanup(func() {
@@ -90,6 +98,16 @@ func seedDimsAsset(t *testing.T, pool *pgxpool.Pool, status string) uuid.UUID {
 		_, _ = pool.Exec(bg, `DELETE FROM assets WHERE id = $1`, id)
 	})
 	return id
+}
+
+// dimsHash is the file the asset shows, which Record is told it measured.
+func dimsHash(t *testing.T, pool *pgxpool.Pool, id uuid.UUID) string {
+	t.Helper()
+	var h string
+	if err := pool.QueryRow(context.Background(), `SELECT file_hash FROM assets WHERE id = $1`, id).Scan(&h); err != nil {
+		t.Fatalf("asset hash: %v", err)
+	}
+	return h
 }
 
 // plantRaw writes one dimension value directly, bypassing Record's
@@ -161,7 +179,7 @@ func TestManifest_MeasuredPortrait_CanvasAndImageCarryTheRealSize(t *testing.T) 
 	ctx := context.Background()
 	id := seedDimsAsset(t, pool, "active")
 	// A portrait phone photo as the preview pipeline records it.
-	if err := pixeldims.Record(ctx, pool, id, 1080, 1920); err != nil {
+	if err := pixeldims.Record(ctx, pool, id, dimsHash(t, pool, id), 1080, 1920); err != nil {
 		t.Fatalf("pixeldims.Record: %v", err)
 	}
 
@@ -238,7 +256,7 @@ func TestManifest_NoValidPair_KeepsThePlaceholderCanvas(t *testing.T) {
 func TestManifest_HiddenAssetWithRecordedSize_Stays404(t *testing.T) {
 	pool := dimsPool(t)
 	id := seedDimsAsset(t, pool, "draft") // not anonymously visible
-	if err := pixeldims.Record(context.Background(), pool, id, 1080, 1920); err != nil {
+	if err := pixeldims.Record(context.Background(), pool, id, dimsHash(t, pool, id), 1080, 1920); err != nil {
 		t.Fatalf("pixeldims.Record: %v", err)
 	}
 	code, _, _, raw := canvasSizes(t, dimsRoute(pool), id)
@@ -369,7 +387,7 @@ func TestManifestCache_DimensionWritesInvalidateEveryProcess(t *testing.T) {
 	b.warm(t, id, [2]int{1200, 900})
 
 	// The preview pipeline records the size (its only writer).
-	if err := pixeldims.Record(ctx, pool, id, 1080, 1920); err != nil {
+	if err := pixeldims.Record(ctx, pool, id, dimsHash(t, pool, id), 1080, 1920); err != nil {
 		t.Fatalf("pixeldims.Record: %v", err)
 	}
 	waitDropped(t, id, "first measurement", a, b)
@@ -378,7 +396,7 @@ func TestManifestCache_DimensionWritesInvalidateEveryProcess(t *testing.T) {
 
 	// A re-render records a new size: the already-measured manifests
 	// must drop again, not keep the first size.
-	if err := pixeldims.Record(ctx, pool, id, 1440, 2560); err != nil {
+	if err := pixeldims.Record(ctx, pool, id, dimsHash(t, pool, id), 1440, 2560); err != nil {
 		t.Fatalf("pixeldims.Record (re-render): %v", err)
 	}
 	waitDropped(t, id, "re-render", a, b)
@@ -395,7 +413,7 @@ func TestManifestCache_InvalidationIsKeyedNotDomainWide(t *testing.T) {
 	p.warm(t, target, [2]int{1200, 900})
 	p.warm(t, other, [2]int{1200, 900})
 
-	if err := pixeldims.Record(ctx, pool, target, 1080, 1920); err != nil {
+	if err := pixeldims.Record(ctx, pool, target, dimsHash(t, pool, target), 1080, 1920); err != nil {
 		t.Fatalf("pixeldims.Record: %v", err)
 	}
 	waitDropped(t, target, "target", p)

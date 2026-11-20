@@ -127,6 +127,13 @@ type WriteAssetFieldValueParams struct {
 	// this is set, so in practice false means "every entry is a
 	// resolved slug, store them verbatim".
 	OpenVocabulary bool
+
+	// FileHash is the asset file_hash the value was extracted from
+	// (#1596). The writer must refuse, in the same transaction as the
+	// write, when the asset no longer shows those bytes, and report it
+	// as [ErrAssetSuperseded]: an extraction of a replaced original is
+	// a fact about a version the asset has moved past.
+	FileHash string
 }
 
 // FailureWriter records one extraction_failure row for the admin
@@ -144,6 +151,10 @@ type RecordExtractionFailureParams struct {
 	Message   string
 	FieldKey  CanonicalField
 	RawValue  any
+	// FileHash is the original the failure was found in (#1596). The
+	// writer records it only while the asset still shows those bytes,
+	// so an old file's failure is never filed against its replacement.
+	FileHash string
 }
 
 // DefaultApplier is the production [Applier]. Composes the three
@@ -332,7 +343,8 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 				// An IPTC credit line and an XMP rights statement both
 				// claimed to be EXIF, which is a lie the audit history
 				// keeps and no reader can detect.
-				SetBy: result.sourceFor(fc.Source),
+				SetBy:    result.sourceFor(fc.Source),
+				FileHash: asset.FileHash,
 			}); err != nil {
 				return summary, fmt.Errorf("metadata.Apply: write %s: %w", fc.Source, err)
 			}
@@ -384,6 +396,7 @@ func (a *DefaultApplier) reject(
 			Message:   fr.Message,
 			FieldKey:  fr.Field,
 			RawValue:  fr.RawValue,
+			FileHash:  asset.FileHash,
 		})
 	}
 }

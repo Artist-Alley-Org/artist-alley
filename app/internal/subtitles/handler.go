@@ -43,6 +43,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -51,12 +53,27 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
 // cacheDomainAssetSubtitleTracks is the per-asset LRU domain
 // used by the cache.Registry. Cross-process invalidation broadcasts
 // (NOTIFY/LISTEN per ADR 0013) pick this up automatically.
 const cacheDomainAssetSubtitleTracks = "asset.subtitle_tracks"
+
+// PinSubjectTypeTrack is the storage pin subject a track's VTT bytes are
+// held by, one subject per (asset, lang): see [TrackPinSubjectID].
+const PinSubjectTypeTrack = "subtitle_track"
+
+// SourceFormatAI is the source_format of a track the AI transcriber
+// wrote. The upload API accepts only file formats (vtt, srt, ...), so
+// this value marks a track no person supplied.
+const SourceFormatAI = "whisper"
+
+// TrackPinSubjectID is the pin subject id of the (asset, lang) track.
+func TrackPinSubjectID(assetID uuid.UUID, lang string) string {
+	return assetID.String() + "-" + lang
+}
 
 // Track is the package-public projection of a row from
 // asset_subtitle_tracks. Distinct from the sqlc-generated row
@@ -70,6 +87,13 @@ type Track struct {
 	SourceFormat string
 	Confidence   float64
 	CreatedAt    time.Time
+
+	// ExpectedAssetFileHash is write-only, read by [Handler.Upsert]
+	// and never filled on a read. When set, the track is written only
+	// while the asset still shows that original (#1596), and Upsert
+	// reports [ErrAssetSuperseded] otherwise. The AI transcriber sets
+	// it to the bytes it listened to; a person's upload leaves it empty.
+	ExpectedAssetFileHash string
 }
 
 // Handler is the subtitles package's primary surface. Construct
@@ -141,6 +165,15 @@ func (h *Handler) GetForAsset(ctx context.Context, assetID uuid.UUID) ([]Track, 
 // language tags before they hit the schema CHECK).
 //
 // Cache is invalidated AFTER the upsert commits.
+//
+// The row and its pin commit together (#1596). The caller stored the VTT
+// bytes, pinned, before this call; the pin is asserted again here, in the
+// row's own transaction, because a concurrent release of an unused pin
+// (a refused late transcription with identical bytes, or a replacement
+// retiring the old track) can drop that shared pin row in between. The
+// bytes the row held before are released in the same transaction when no
+// track of (asset, lang) uses them any more, so an overwrite never leaves
+// the old transcript pinned.
 func (h *Handler) Upsert(ctx context.Context, t Track) (Track, error) {
 	if err := RequiresAudioVideo(ctx, h.queries, t.AssetID); err != nil {
 		return Track{}, err
@@ -148,19 +181,167 @@ func (h *Handler) Upsert(ctx context.Context, t Track) (Track, error) {
 	if err := ValidateLang(t.Lang); err != nil {
 		return Track{}, err
 	}
-	row, err := h.queries.UpsertSubtitleTrack(ctx, UpsertSubtitleTrackParams{
-		AssetID:      pgtype.UUID{Bytes: t.AssetID, Valid: true},
-		Lang:         t.Lang,
-		Label:        t.Label,
-		FileHash:     t.FileHash,
-		SourceFormat: t.SourceFormat,
-		Confidence:   float32(t.Confidence),
+	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Track{}, fmt.Errorf("subtitles: upsert begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := New(tx)
+	pgAsset := pgtype.UUID{Bytes: t.AssetID, Valid: true}
+
+	// Asset row first, guarded by the expected original: the replacement
+	// takes this lock too, so a track write and a replacement serialise.
+	if _, err := q.LockAssetForTrackWrite(ctx, LockAssetForTrackWriteParams{AssetID: pgAsset, AssetFileHash: t.ExpectedAssetFileHash}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if t.ExpectedAssetFileHash != "" {
+				return Track{}, ErrAssetSuperseded
+			}
+			return Track{}, ErrAssetNotFound
+		}
+		return Track{}, fmt.Errorf("subtitles: upsert %s/%s: lock asset: %w", t.AssetID, t.Lang, err)
+	}
+	// The bytes this (asset, lang) track holds now, released below once
+	// the row points elsewhere (#1596). Read under the asset lock, which
+	// every track writer takes first, so it is the row being replaced.
+	prior := ""
+	if cur, err := q.GetSubtitleTrack(ctx, GetSubtitleTrackParams{AssetID: pgAsset, Lang: t.Lang}); err == nil {
+		prior = cur.FileHash
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Track{}, fmt.Errorf("subtitles: upsert %s/%s: read current: %w", t.AssetID, t.Lang, err)
+	}
+	if err := lockTrackObjects(ctx, tx, t.FileHash, prior); err != nil {
+		return Track{}, err
+	}
+	row, err := q.UpsertSubtitleTrack(ctx, UpsertSubtitleTrackParams{
+		AssetID:       pgAsset,
+		Lang:          t.Lang,
+		Label:         t.Label,
+		FileHash:      t.FileHash,
+		SourceFormat:  t.SourceFormat,
+		Confidence:    float32(t.Confidence),
+		AssetFileHash: t.ExpectedAssetFileHash,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if t.ExpectedAssetFileHash != "" {
+			return Track{}, ErrAssetSuperseded
+		}
+		return Track{}, ErrAssetNotFound
+	}
 	if err != nil {
 		return Track{}, fmt.Errorf("subtitles: upsert %s/%s: %w", t.AssetID, t.Lang, err)
 	}
+	if err := storage.New(tx).ClearGCEligible(ctx, t.FileHash); err != nil {
+		return Track{}, fmt.Errorf("subtitles: upsert %s/%s: pin: %w", t.AssetID, t.Lang, err)
+	}
+	if err := q.EnsureTrackPin(ctx, EnsureTrackPinParams{ObjectHash: t.FileHash, PinSubjectID: TrackPinSubjectID(t.AssetID, t.Lang)}); err != nil {
+		return Track{}, fmt.Errorf("subtitles: upsert %s/%s: pin: %w", t.AssetID, t.Lang, err)
+	}
+	if prior != "" && prior != t.FileHash {
+		if err := releaseTrackPin(ctx, tx, t.AssetID, t.Lang, prior, storage.DefaultGCGracePeriod); err != nil {
+			return Track{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Track{}, fmt.Errorf("subtitles: upsert %s/%s: commit: %w", t.AssetID, t.Lang, err)
+	}
 	h.invalidate(ctx, t.AssetID)
 	return fromRow(row), nil
+}
+
+// lockTrackObjects locks the object rows a track write touches, in hash
+// order, after the asset row: two writers trading bytes between
+// assets then queue instead of deadlocking. A hash with no object row
+// locks nothing.
+func lockTrackObjects(ctx context.Context, tx pgx.Tx, hashes ...string) error {
+	uniq := make([]string, 0, len(hashes))
+	for _, h := range hashes {
+		if h != "" && !slices.Contains(uniq, h) {
+			uniq = append(uniq, h)
+		}
+	}
+	slices.Sort(uniq)
+	sq := storage.New(tx)
+	for _, h := range uniq {
+		if err := sq.LockObjectForPinChange(ctx, h); err != nil {
+			return fmt.Errorf("subtitles: lock %s: %w", h, err)
+		}
+	}
+	return nil
+}
+
+// ReleaseUnusedTrackBytes drops the (asset, lang) track pin from VTT
+// bytes that no live track of that (asset, lang) uses, and marks them
+// for GC after the default grace when nothing else holds them (#1596).
+// The AI transcriber calls it when its write was refused because the
+// asset's original was replaced: it stored and pinned the transcript
+// first, and without this the pin would hold those bytes for ever.
+func (h *Handler) ReleaseUnusedTrackBytes(ctx context.Context, assetID uuid.UUID, lang, hash string) error {
+	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("subtitles: release begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := releaseTrackPin(ctx, tx, assetID, lang, hash, storage.DefaultGCGracePeriod); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// RetireAITracks removes, on the caller's transaction, every AI track of
+// the asset and releases each one's pin (#1596). An original replacement
+// calls it: those tracks are the words of the recording it replaces. A
+// person's tracks stay. The caller holds the asset row lock and calls
+// [InvalidateTracksOn] after its commit.
+func RetireAITracks(ctx context.Context, tx pgx.Tx, assetID uuid.UUID, grace time.Duration) (int, error) {
+	rows, err := New(tx).RetireAITracksForAsset(ctx, pgtype.UUID{Bytes: assetID, Valid: true})
+	if err != nil {
+		return 0, fmt.Errorf("subtitles: retire AI tracks: %w", err)
+	}
+	// Object rows in hash order, as every multi-object track write locks them.
+	slices.SortFunc(rows, func(x, y RetireAITracksForAssetRow) int { return strings.Compare(x.FileHash, y.FileHash) })
+	for _, r := range rows {
+		if err := releaseTrackPin(ctx, tx, assetID, r.Lang, r.FileHash, grace); err != nil {
+			return 0, err
+		}
+	}
+	return len(rows), nil
+}
+
+// releaseTrackPin is the one pin release both paths use: object row
+// locked first (the order every pin writer uses), the pin dropped only
+// when no live track of (asset, lang) uses the bytes, and the GC mark
+// decided in a fresh statement.
+func releaseTrackPin(ctx context.Context, tx pgx.Tx, assetID uuid.UUID, lang, hash string, grace time.Duration) error {
+	sq := storage.New(tx)
+	if err := sq.LockObjectForPinChange(ctx, hash); err != nil {
+		return fmt.Errorf("subtitles: release %s: lock: %w", hash, err)
+	}
+	n, err := New(tx).ReleaseUnusedTrackPin(ctx, ReleaseUnusedTrackPinParams{
+		ObjectHash: hash, PinSubjectID: TrackPinSubjectID(assetID, lang),
+		AssetID: pgtype.UUID{Bytes: assetID, Valid: true}, Lang: lang,
+	})
+	if err != nil {
+		return fmt.Errorf("subtitles: release %s: %w", hash, err)
+	}
+	if n == 0 {
+		return nil
+	}
+	if err := sq.MarkGCEligibleIfOrphaned(ctx, storage.MarkGCEligibleIfOrphanedParams{
+		Hash: hash, Column2: pgtype.Interval{Microseconds: grace.Microseconds(), Valid: true},
+	}); err != nil {
+		return fmt.Errorf("subtitles: release %s: gc mark: %w", hash, err)
+	}
+	return nil
+}
+
+// InvalidateTracksOn drops the asset's cached track list in this process
+// and broadcasts the drop to every other one, for a writer that changed
+// the tracks without holding a [Handler] (#1596: the replacement).
+func InvalidateTracksOn(ctx context.Context, registry *cache.Registry, assetID uuid.UUID) error {
+	if registry == nil {
+		return nil
+	}
+	return registry.InvalidateNow(ctx, cacheDomainAssetSubtitleTracks, assetID.String())
 }
 
 // Delete removes a single (assetID, lang) track. Returns:
@@ -177,15 +358,33 @@ func (h *Handler) Delete(ctx context.Context, assetID uuid.UUID, lang string) er
 	if err := RequiresAudioVideo(ctx, h.queries, assetID); err != nil {
 		return err
 	}
-	n, err := h.queries.DeleteSubtitleTrack(ctx, DeleteSubtitleTrackParams{
-		AssetID: pgtype.UUID{Bytes: assetID, Valid: true},
-		Lang:    lang,
-	})
+	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("subtitles: delete begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := New(tx)
+	pgAsset := pgtype.UUID{Bytes: assetID, Valid: true}
+	if _, err := q.LockAssetForTrackWrite(ctx, LockAssetForTrackWriteParams{AssetID: pgAsset}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrAssetNotFound
+		}
+		return fmt.Errorf("subtitles: delete %s/%s: lock asset: %w", assetID, lang, err)
+	}
+	hash, err := q.DeleteSubtitleTrack(ctx, DeleteSubtitleTrackParams{AssetID: pgAsset, Lang: lang})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrTrackNotFound
+	}
 	if err != nil {
 		return fmt.Errorf("subtitles: delete %s/%s: %w", assetID, lang, err)
 	}
-	if n == 0 {
-		return ErrTrackNotFound
+	// The removed track's bytes lose their (asset, lang) pin in the same
+	// transaction (#1596) and are scheduled for GC once nothing holds them.
+	if err := releaseTrackPin(ctx, tx, assetID, lang, hash, storage.DefaultGCGracePeriod); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("subtitles: delete %s/%s: commit: %w", assetID, lang, err)
 	}
 	h.invalidate(ctx, assetID)
 	return nil

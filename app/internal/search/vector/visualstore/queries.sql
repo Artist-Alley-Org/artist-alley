@@ -1,14 +1,30 @@
 -- Phase 1.16.B-3-followup — asset_visual_embedding row I/O + query.
 
--- name: UpsertAssetVisualEmbedding :exec
+-- name: UpsertAssetVisualEmbedding :execrows
 -- Idempotent: re-embedding an asset (backfill re-run OR sidecar
 -- model swap) updates the row + touches updated_at. Provider +
 -- model + checkpoint are recorded per row so a future "reindex
 -- visual embeddings against a different model" pass can target
 -- rows by (provider, model, checkpoint).
+--
+-- file_hash is the original the vector was computed from (#1596).
+-- The row is written only while the asset still shows those bytes,
+-- so an embedding of a replaced original writes nothing (0 rows)
+-- instead of making the new picture findable by the old one. The
+-- asset row lock is taken in the same statement as the write: a
+-- replacement that commits first makes it match nothing, and one
+-- waiting on the lock waits for this write and then clears it.
+WITH cur AS (
+    SELECT id FROM assets
+     WHERE id = sqlc.arg('asset_id')
+       AND file_hash = sqlc.arg('file_hash')::TEXT
+       FOR NO KEY UPDATE
+)
 INSERT INTO asset_visual_embedding
     (asset_id, embedding, model, checkpoint, provider, updated_at)
-VALUES ($1, $2::vector, $3, $4, $5, NOW())
+SELECT cur.id, sqlc.arg('embedding')::vector, sqlc.arg('model'),
+       sqlc.arg('checkpoint'), sqlc.arg('provider'), NOW()
+  FROM cur
 ON CONFLICT (asset_id) DO UPDATE
     SET embedding  = EXCLUDED.embedding,
         model      = EXCLUDED.model,

@@ -317,9 +317,13 @@ func (j *Job) processAsset(ctx context.Context, assetID uuid.UUID, fileHash *str
 	// Persist.
 	vec := pgvector.NewVector(embedding.Vector)
 	assetIDPg := pgtype.UUID{Bytes: assetID, Valid: true}
-	if err := j.VisualStore.UpsertAssetVisualEmbedding(ctx, visualstore.UpsertAssetVisualEmbeddingParams{
+	// Guarded by the hash these bytes were read under (#1596). Zero
+	// rows means the original was replaced mid-run; the replacement
+	// queued an embedding of the new bytes, so this is not a failure.
+	if _, err := j.VisualStore.UpsertAssetVisualEmbedding(ctx, visualstore.UpsertAssetVisualEmbeddingParams{
 		AssetID:    assetIDPg,
-		Column2:    &vec,
+		FileHash:   *fileHash,
+		Embedding:  &vec,
 		Model:      embedding.Model,
 		Checkpoint: embedding.Checkpoint,
 		Provider:   "aa-clip-visual-local",

@@ -115,11 +115,11 @@ func (h *ComicHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	jobCtx, cancel := context.WithTimeout(ctx, h.MaxJobDuration)
 	defer cancel()
 
-	h.markProcessing(jobCtx, p.AssetID)
+	h.markProcessing(jobCtx, p.AssetID, p.FileHash)
 
 	src, cleanup, err := h.stage(jobCtx, p.FileHash, p.FileExtension)
 	if err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 	defer cleanup()
@@ -128,7 +128,7 @@ func (h *ComicHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 
 	meta, coverBytes, err := h.extractCover(jobCtx, src, p.FileExtension)
 	if err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("preview.comic: %w", err)}
 	}
 	result.Metadata = meta
@@ -139,7 +139,7 @@ func (h *ComicHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		// thumbnail kicks in client-side.
 		h.Logger.LogAttrs(jobCtx, slog.LevelInfo, "preview.comic.no_pages",
 			slog.String("asset_id", p.AssetID.String()))
-		h.markReady(jobCtx, p.AssetID)
+		h.markReady(jobCtx, p.AssetID, p.FileHash)
 		result.WorkS = time.Since(started).Seconds()
 		return json.Marshal(result)
 	}
@@ -161,12 +161,12 @@ func (h *ComicHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		result.Variants = append(result.Variants, "raster")
 	}
 
-	if err := h.persistMetadata(jobCtx, p.AssetID, meta); err != nil {
+	if err := h.persistMetadata(jobCtx, p.AssetID, p.FileHash, meta); err != nil {
 		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.comic.persist_meta_failed",
 			slog.String("err", err.Error()))
 	}
 
-	h.markReady(jobCtx, p.AssetID)
+	h.markReady(jobCtx, p.AssetID, p.FileHash)
 	result.WorkS = time.Since(started).Seconds()
 	return json.Marshal(result)
 }
@@ -404,14 +404,15 @@ func (h *ComicHandler) fanCoverToLadder(ctx context.Context, assetID uuid.UUID, 
 	})
 }
 
-func (h *ComicHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta ComicMetadata) error {
-	payload, err := json.Marshal(map[string]any{"comic": meta})
+func (h *ComicHandler) persistMetadata(ctx context.Context, id uuid.UUID, hash string, meta ComicMetadata) error {
+	payload, err := json.Marshal(map[string]any{assets.MetadataNamespaceComic: meta})
 	if err != nil {
 		return err
 	}
 	return assets.New(h.Pool).MergeAssetMetadata(ctx, assets.MergeAssetMetadataParams{
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
+		FileHash: hash,
 	})
 }
 
@@ -426,24 +427,25 @@ func (h *ComicHandler) lsarBin() string {
 	return "lsar"
 }
 
-func (h *ComicHandler) markProcessing(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *ComicHandler) markProcessing(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.comic.mark_processing_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *ComicHandler) markReady(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *ComicHandler) markReady(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.comic.mark_ready_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *ComicHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
+func (h *ComicHandler) markFailed(ctx context.Context, id uuid.UUID, hash, msg string) {
 	if err := assets.New(h.Pool).MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.comic.mark_failed_failed",
 			slog.String("asset_id", id.String()),

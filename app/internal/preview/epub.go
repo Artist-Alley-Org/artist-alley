@@ -131,11 +131,11 @@ func (h *EPUBHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 	jobCtx, cancel := context.WithTimeout(ctx, h.MaxJobDuration)
 	defer cancel()
 
-	h.markProcessing(jobCtx, p.AssetID)
+	h.markProcessing(jobCtx, p.AssetID, p.FileHash)
 
 	src, cleanup, err := h.stage(jobCtx, p.FileHash)
 	if err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 	defer cleanup()
@@ -146,7 +146,7 @@ func (h *EPUBHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 	if err != nil {
 		// Hard fail — if we can't even open the zip, the file is
 		// corrupt and there's nothing to ship.
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("epub: %w", err)}
 	}
 	meta.HasCover = len(coverBytes) > 0
@@ -176,12 +176,12 @@ func (h *EPUBHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 			slog.String("title", meta.Title))
 	}
 
-	if err := h.persistMetadata(jobCtx, p.AssetID, meta); err != nil {
+	if err := h.persistMetadata(jobCtx, p.AssetID, p.FileHash, meta); err != nil {
 		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.ebook.persist_meta_failed",
 			slog.String("err", err.Error()))
 	}
 
-	h.markReady(jobCtx, p.AssetID)
+	h.markReady(jobCtx, p.AssetID, p.FileHash)
 	result.WorkS = time.Since(started).Seconds()
 	return json.Marshal(result)
 }
@@ -489,35 +489,37 @@ func (h *EPUBHandler) fanCoverToLadder(ctx context.Context, assetID uuid.UUID, h
 	})
 }
 
-func (h *EPUBHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta EPUBMetadata) error {
-	payload, err := json.Marshal(map[string]any{"ebook": meta})
+func (h *EPUBHandler) persistMetadata(ctx context.Context, id uuid.UUID, hash string, meta EPUBMetadata) error {
+	payload, err := json.Marshal(map[string]any{assets.MetadataNamespaceEbook: meta})
 	if err != nil {
 		return err
 	}
 	return assets.New(h.Pool).MergeAssetMetadata(ctx, assets.MergeAssetMetadataParams{
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
+		FileHash: hash,
 	})
 }
 
-func (h *EPUBHandler) markProcessing(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *EPUBHandler) markProcessing(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.ebook.mark_processing_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *EPUBHandler) markReady(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *EPUBHandler) markReady(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.ebook.mark_ready_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *EPUBHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
+func (h *EPUBHandler) markFailed(ctx context.Context, id uuid.UUID, hash, msg string) {
 	if err := assets.New(h.Pool).MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.ebook.mark_failed_failed",
 			slog.String("asset_id", id.String()),

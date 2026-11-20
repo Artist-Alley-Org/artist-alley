@@ -441,8 +441,16 @@ func TestVerify_ExtraImportRowFails(t *testing.T) {
 func TestVerify_ComputedRowsAreInformationalNotFailures(t *testing.T) {
 	f := newVerifyFixture(t)
 	ctx := context.Background()
-	if err := pixeldims.Record(ctx, f.pool, uuid.UUID(f.assetID(1).Bytes), 640, 480); err != nil {
-		t.Fatalf("pixeldims.Record: %v", err)
+	// The rows pixeldims.Record writes, planted directly: the seeder's
+	// assets carry no bytes (file_hash NULL), and Record writes only for
+	// the bytes an asset shows (#1596). Same codes, same provenance.
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO asset_field_value (asset_id, field_id, value_num, set_by)
+		SELECT $1, fd.id, v.num, $4
+		  FROM (VALUES ($2::TEXT, 640::DOUBLE PRECISION), ($3::TEXT, 480::DOUBLE PRECISION)) AS v(code, num)
+		  JOIN field_definition fd ON fd.code = v.code`,
+		f.assetID(1), pixeldims.Width, pixeldims.Height, pixeldims.SetBy); err != nil {
+		t.Fatalf("plant computed dimensions: %v", err)
 	}
 	// A computed row on one of the fixture's own fields, absent from
 	// the second asset's profile entry, for the general rule.

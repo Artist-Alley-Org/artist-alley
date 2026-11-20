@@ -151,8 +151,8 @@ func (h *HTTPHandler) UploadSubtitleTrack(
 	hash, err := h.storage.PutBytes(
 		ctx, conv.VTT,
 		"text/vtt; charset=utf-8",
-		"subtitle_track",
-		assetID.String()+"-"+req.Body.Lang,
+		PinSubjectTypeTrack,
+		TrackPinSubjectID(assetID, req.Body.Lang),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("subtitles store VTT: %w", err)
@@ -171,6 +171,13 @@ func (h *HTTPHandler) UploadSubtitleTrack(
 		Confidence:   conv.Confidence,
 	})
 	if err != nil {
+		// The VTT was stored and pinned above; a failed write must not
+		// leave it pinned for ever (#1596). Kept when a live track of this
+		// language has identical bytes.
+		if rerr := h.domain.ReleaseUnusedTrackBytes(ctx, assetID, req.Body.Lang, hash); rerr != nil && h.logger != nil {
+			h.logger.LogAttrs(ctx, slog.LevelWarn, "subtitles.upload.release_failed",
+				slog.String("asset_id", assetID.String()), slog.String("err", rerr.Error()))
+		}
 		return mapPolicyErrorToUpload(err), nil
 	}
 	return openapi.UploadSubtitleTrack202JSONResponse(trackToAPI(track)), nil

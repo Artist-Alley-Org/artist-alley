@@ -290,6 +290,43 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 	return i, err
 }
 
+const createReplacementVersion = `-- name: CreateReplacementVersion :exec
+SELECT asset_version_create($1::UUID, $2::UUID, $3::BIGINT,
+                            $4::UUID, 'replacement', $5::TEXT,
+                            $6::TEXT, $7::TEXT,
+                            $8::TEXT, $9::BIGINT)
+`
+
+type CreateReplacementVersionParams struct {
+	AssetID                pgtype.UUID
+	VersionID              pgtype.UUID
+	Number                 int64
+	PredecessorID          pgtype.UUID
+	FileHash               string
+	FileExtension          *string
+	OriginalBasename       *string
+	OriginalBasenameSource string
+	CreatedBy              *int64
+}
+
+// #1596: version n+1 of a local asset, origin replacement, predecessor
+// its current version; the version's original is pinned by the version
+// insert trigger (migration 00084). Provenance from the upload receipt.
+func (q *Queries) CreateReplacementVersion(ctx context.Context, arg CreateReplacementVersionParams) error {
+	_, err := q.db.Exec(ctx, createReplacementVersion,
+		arg.AssetID,
+		arg.VersionID,
+		arg.Number,
+		arg.PredecessorID,
+		arg.FileHash,
+		arg.FileExtension,
+		arg.OriginalBasename,
+		arg.OriginalBasenameSource,
+		arg.CreatedBy,
+	)
+	return err
+}
+
 const deleteAITagsForAsset = `-- name: DeleteAITagsForAsset :exec
 DELETE FROM asset_tag
  WHERE asset_id = $1 AND source = 'ai'
@@ -325,6 +362,25 @@ DELETE FROM asset_companions
 func (q *Queries) DeleteAssetCompanion(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteAssetCompanion, id)
 	return err
+}
+
+const dismissExtractionFailuresForReplacedBytes = `-- name: DismissExtractionFailuresForReplacedBytes :execrows
+UPDATE extraction_failure
+   SET dismissed_at = NOW()
+ WHERE asset_id = $1
+   AND dismissed_at IS NULL
+`
+
+// #1596: the replacement's counterpart of the re-extract path's
+// DismissExtractionFailuresForAsset (asset/metadata). The pending
+// failures describe the old file; soft-dismissing keeps every row as
+// admin history but takes them out of the current-asset queue.
+func (q *Queries) DismissExtractionFailuresForReplacedBytes(ctx context.Context, assetID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, dismissExtractionFailuresForReplacedBytes, assetID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getAsset = `-- name: GetAsset :one
@@ -577,6 +633,20 @@ func (q *Queries) GetAssetCompanionByPath(ctx context.Context, arg GetAssetCompa
 	return i, err
 }
 
+const getAssetCurrentVersionNumber = `-- name: GetAssetCurrentVersionNumber :one
+SELECT v.number
+  FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+ WHERE a.id = $1 AND a.origin_server_id IS NULL
+`
+
+// #1596: Asset.current_version for GET /assets/{id}; local assets only.
+func (q *Queries) GetAssetCurrentVersionNumber(ctx context.Context, id pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, getAssetCurrentVersionNumber, id)
+	var number int64
+	err := row.Scan(&number)
+	return number, err
+}
+
 const getAssetDeletedBy = `-- name: GetAssetDeletedBy :one
 SELECT deleted_by_user_ref
   FROM assets
@@ -715,6 +785,53 @@ func (q *Queries) GetAssetSensitivity(ctx context.Context, id pgtype.UUID) (stri
 	var sensitivity string
 	err := row.Scan(&sensitivity)
 	return sensitivity, err
+}
+
+const getAssetVersionNumber = `-- name: GetAssetVersionNumber :one
+SELECT number FROM asset_versions WHERE id = $1
+`
+
+func (q *Queries) GetAssetVersionNumber(ctx context.Context, id pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, getAssetVersionNumber, id)
+	var number int64
+	err := row.Scan(&number)
+	return number, err
+}
+
+const getAssetVersionView = `-- name: GetAssetVersionView :one
+SELECT id, number, predecessor_id, origin, created_at, original_hash, original_size_bytes,
+       original_media_type, original_extension
+  FROM asset_versions
+ WHERE id = $1
+`
+
+type GetAssetVersionViewRow struct {
+	ID                pgtype.UUID
+	Number            int64
+	PredecessorID     pgtype.UUID
+	Origin            string
+	CreatedAt         pgtype.Timestamptz
+	OriginalHash      string
+	OriginalSizeBytes int64
+	OriginalMediaType string
+	OriginalExtension *string
+}
+
+func (q *Queries) GetAssetVersionView(ctx context.Context, id pgtype.UUID) (GetAssetVersionViewRow, error) {
+	row := q.db.QueryRow(ctx, getAssetVersionView, id)
+	var i GetAssetVersionViewRow
+	err := row.Scan(
+		&i.ID,
+		&i.Number,
+		&i.PredecessorID,
+		&i.Origin,
+		&i.CreatedAt,
+		&i.OriginalHash,
+		&i.OriginalSizeBytes,
+		&i.OriginalMediaType,
+		&i.OriginalExtension,
+	)
+	return i, err
 }
 
 const insertAITagForAsset = `-- name: InsertAITagForAsset :exec
@@ -1147,24 +1264,61 @@ func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) 
 	return items, nil
 }
 
+const lockAssetForReplace = `-- name: LockAssetForReplace :one
+SELECT owner_user_ref, team_id, file_hash, file_extension, current_version_id, origin_server_id
+  FROM assets
+ WHERE id = $1 AND deleted_at IS NULL
+   FOR UPDATE
+`
+
+type LockAssetForReplaceRow struct {
+	OwnerUserRef     *int64
+	TeamID           pgtype.UUID
+	FileHash         *string
+	FileExtension    *string
+	CurrentVersionID pgtype.UUID
+	OriginServerID   pgtype.UUID
+}
+
+// #1596: the asset row a source replacement changes, locked for the
+// whole transaction: two replacements of one asset serialise here, and
+// the second then sees the first's version and answers 409.
+func (q *Queries) LockAssetForReplace(ctx context.Context, id pgtype.UUID) (LockAssetForReplaceRow, error) {
+	row := q.db.QueryRow(ctx, lockAssetForReplace, id)
+	var i LockAssetForReplaceRow
+	err := row.Scan(
+		&i.OwnerUserRef,
+		&i.TeamID,
+		&i.FileHash,
+		&i.FileExtension,
+		&i.CurrentVersionID,
+		&i.OriginServerID,
+	)
+	return i, err
+}
+
 const markAssetFailed = `-- name: MarkAssetFailed :exec
 UPDATE assets
    SET processing_status      = 'failed',
-       processing_error       = $2::TEXT,
+       processing_error       = $1::TEXT,
        processing_finished_at = NOW(),
        updated_at             = NOW()
- WHERE id = $1
+ WHERE id = $2
+   AND file_hash = $3::TEXT
 `
 
 type MarkAssetFailedParams struct {
-	ID              pgtype.UUID
 	ProcessingError string
+	ID              pgtype.UUID
+	FileHash        string
 }
 
 // Variant generation hit a terminal error. The admin UI surfaces
 // processing_error and offers a retry that re-enqueues.
+// Guarded by file_hash like MarkAssetReady: an old job's late failure
+// must not fail (or seal) the newer version.
 func (q *Queries) MarkAssetFailed(ctx context.Context, arg MarkAssetFailedParams) error {
-	_, err := q.db.Exec(ctx, markAssetFailed, arg.ID, arg.ProcessingError)
+	_, err := q.db.Exec(ctx, markAssetFailed, arg.ProcessingError, arg.ID, arg.FileHash)
 	return err
 }
 
@@ -1176,8 +1330,14 @@ UPDATE assets
        processing_attempts   = processing_attempts + 1,
        updated_at            = NOW()
  WHERE id = $1
+   AND file_hash = $2::TEXT
    AND processing_status <> 'ready'
 `
+
+type MarkAssetProcessingParams struct {
+	ID       pgtype.UUID
+	FileHash string
+}
 
 // ---------------------------------------------------------------------------
 // Preview-pipeline state transitions (Phase 1.18.A)
@@ -1185,8 +1345,14 @@ UPDATE assets
 // Worker claimed a preview job for this asset. Best-effort — failing
 // here just means the admin queue view shows the asset as pending a
 // moment longer.
-func (q *Queries) MarkAssetProcessing(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, markAssetProcessing, id)
+// #1596: guarded by the file_hash the job was dispatched for. A job
+// for bytes the asset no longer shows (its original was replaced)
+// matches nothing, so it cannot stamp the newer version. The compare
+// is in the same statement as the write: under READ COMMITTED an
+// UPDATE that waits on a replacement's row lock re-evaluates the
+// WHERE on the replaced row, so there is no check-then-write gap.
+func (q *Queries) MarkAssetProcessing(ctx context.Context, arg MarkAssetProcessingParams) error {
+	_, err := q.db.Exec(ctx, markAssetProcessing, arg.ID, arg.FileHash)
 	return err
 }
 
@@ -1197,11 +1363,20 @@ UPDATE assets
        processing_error       = NULL,
        updated_at             = NOW()
  WHERE id = $1
+   AND file_hash = $2::TEXT
 `
 
+type MarkAssetReadyParams struct {
+	ID       pgtype.UUID
+	FileHash string
+}
+
 // All configured variants are written; flip to steady state.
-func (q *Queries) MarkAssetReady(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, markAssetReady, id)
+// Guarded by file_hash like MarkAssetProcessing: an old job finishing
+// after a replacement must not mark the new version ready, because
+// ready is what requests the new version's seal (00085).
+func (q *Queries) MarkAssetReady(ctx context.Context, arg MarkAssetReadyParams) error {
+	_, err := q.db.Exec(ctx, markAssetReady, arg.ID, arg.FileHash)
 	return err
 }
 
@@ -1210,20 +1385,101 @@ UPDATE assets
 SET metadata   = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
     updated_at = NOW()
 WHERE id = $2 AND deleted_at IS NULL
+  AND file_hash = $3::TEXT
 `
 
 type MergeAssetMetadataParams struct {
 	Metadata []byte
 	ID       pgtype.UUID
+	FileHash string
 }
 
 // Shallow-merge an incoming JSONB blob into the existing metadata
 // column. Preview workers (audio / video / 3D) use this to stamp
 // their own namespace ({"audio": {...}}, {"video": {...}}) without
 // stomping previously-written keys.
+// #1596: guarded by the file_hash the job was dispatched for. A job
+// for bytes the asset no longer shows (its original was replaced)
+// matches nothing, so it cannot stamp the newer version. The compare
+// is in the same statement as the write: under READ COMMITTED an
+// UPDATE that waits on a replacement's row lock re-evaluates the
+// WHERE on the replaced row, so there is no check-then-write gap.
 func (q *Queries) MergeAssetMetadata(ctx context.Context, arg MergeAssetMetadataParams) error {
-	_, err := q.db.Exec(ctx, mergeAssetMetadata, arg.Metadata, arg.ID)
+	_, err := q.db.Exec(ctx, mergeAssetMetadata, arg.Metadata, arg.ID, arg.FileHash)
 	return err
+}
+
+const moveAssetToVersion = `-- name: MoveAssetToVersion :exec
+UPDATE assets
+   SET file_hash              = $1::TEXT,
+       file_extension         = $2::TEXT,
+       file_size_bytes        = (SELECT size_bytes FROM storage_objects WHERE hash = $1::TEXT),
+       thumbhash              = $3,
+       page_count             = NULL,
+       metadata               = metadata - COALESCE($4::TEXT[], '{}'::TEXT[]),
+       processing_status      = $5::TEXT,
+       processing_error       = NULL,
+       processing_started_at  = NULL,
+       processing_finished_at = NULL,
+       current_version_id     = $6::UUID,
+       updated_at             = NOW()
+ WHERE id = $7
+`
+
+type MoveAssetToVersionParams struct {
+	FileHash          string
+	FileExtension     *string
+	Thumbhash         []byte
+	PreviewNamespaces []string
+	ProcessingStatus  string
+	VersionID         pgtype.UUID
+	ID                pgtype.UUID
+}
+
+// #1596: the asset follows its new version: bytes, extension, size,
+// thumbhash, processing state. Setting processing_status (ready or
+// pending) is what the version triggers key on (migration 00085): ready
+// requests the reconcile at once, pending waits for processing to end.
+//
+// The facts the old bytes' workers wrote onto the asset row go with them:
+// page_count (written only by extraction) and the metadata namespaces
+// the preview workers own (preview_namespaces, assets.PreviewMetadataNamespaces).
+// Every other metadata key, including whatever a client stored, stays.
+// The new bytes' own jobs, queued in the same transaction, write them
+// again for the new file.
+func (q *Queries) MoveAssetToVersion(ctx context.Context, arg MoveAssetToVersionParams) error {
+	_, err := q.db.Exec(ctx, moveAssetToVersion,
+		arg.FileHash,
+		arg.FileExtension,
+		arg.Thumbhash,
+		arg.PreviewNamespaces,
+		arg.ProcessingStatus,
+		arg.VersionID,
+		arg.ID,
+	)
+	return err
+}
+
+const ownerHasLiveAssetWithHash = `-- name: OwnerHasLiveAssetWithHash :one
+SELECT EXISTS (SELECT 1 FROM assets
+                WHERE owner_user_ref = $1 AND file_hash = $2::TEXT
+                  AND deleted_at IS NULL AND id <> $3)::BOOLEAN AS value
+`
+
+type OwnerHasLiveAssetWithHashParams struct {
+	OwnerUserRef *int64
+	FileHash     string
+	ID           pgtype.UUID
+}
+
+// #1596: the per-owner unique index (migration 00016) as a pre-check, so
+// a replacement with bytes the owner already has elsewhere is a clean
+// 409 rather than a constraint error.
+func (q *Queries) OwnerHasLiveAssetWithHash(ctx context.Context, arg OwnerHasLiveAssetWithHashParams) (bool, error) {
+	row := q.db.QueryRow(ctx, ownerHasLiveAssetWithHash, arg.OwnerUserRef, arg.FileHash, arg.ID)
+	var value bool
+	err := row.Scan(&value)
+	return value, err
 }
 
 const removeAssetTag = `-- name: RemoveAssetTag :exec
@@ -1261,15 +1517,90 @@ func (q *Queries) ReplaceAssetTags(ctx context.Context, arg ReplaceAssetTagsPara
 	return err
 }
 
+const retireReplacedBytesFieldValues = `-- name: RetireReplacedBytesFieldValues :many
+WITH gone AS (
+    DELETE FROM asset_field_value
+     WHERE asset_id = $1
+       AND (set_by = ANY($2::TEXT[])
+            OR (set_by = 'computed'
+                AND field_id IN (SELECT id FROM field_definition
+                                  WHERE code = ANY($3::TEXT[]))))
+    RETURNING field_id, value_text, value_num, value_date, value_options, value_ref, set_by
+)
+SELECT gone.field_id, fd.type AS field_type, gone.value_text, gone.value_num, gone.value_date,
+       gone.value_options, gone.value_ref, gone.set_by
+  FROM gone
+  JOIN field_definition fd ON fd.id = gone.field_id
+`
+
+type RetireReplacedBytesFieldValuesParams struct {
+	AssetID        pgtype.UUID
+	ExtractedBy    []string
+	DimensionCodes []string
+}
+
+type RetireReplacedBytesFieldValuesRow struct {
+	FieldID      pgtype.UUID
+	FieldType    string
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+	SetBy        string
+}
+
+// #1596: the field values the old bytes' workers derived, removed in the
+// replacement's transaction. Exactly two provenances qualify:
+//   - an extractor's: set_by in extracted_by (exif, iptc, xmp: the only
+//     extractor names the set_by CHECK admits);
+//   - the two measured dimensions: set_by 'computed' on the
+//     dimension_codes fields (pixel_width, pixel_height). Other computed
+//     values are not facts about the bytes and stay.
+//
+// A person's value ('manual'), an API or import value, an upload default
+// and every other field are untouched. RETURNING carries each removed row
+// so the caller writes its history entry (old value -> null).
+func (q *Queries) RetireReplacedBytesFieldValues(ctx context.Context, arg RetireReplacedBytesFieldValuesParams) ([]RetireReplacedBytesFieldValuesRow, error) {
+	rows, err := q.db.Query(ctx, retireReplacedBytesFieldValues, arg.AssetID, arg.ExtractedBy, arg.DimensionCodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RetireReplacedBytesFieldValuesRow
+	for rows.Next() {
+		var i RetireReplacedBytesFieldValuesRow
+		if err := rows.Scan(
+			&i.FieldID,
+			&i.FieldType,
+			&i.ValueText,
+			&i.ValueNum,
+			&i.ValueDate,
+			&i.ValueOptions,
+			&i.ValueRef,
+			&i.SetBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setAssetPageCount = `-- name: SetAssetPageCount :exec
 UPDATE assets
-   SET page_count = $2
- WHERE id = $1
+   SET page_count = $1
+ WHERE id = $2
+   AND file_hash = $3::TEXT
 `
 
 type SetAssetPageCountParams struct {
-	ID        pgtype.UUID
 	PageCount *int32
+	ID        pgtype.UUID
+	FileHash  string
 }
 
 // Idempotent page-count stamp from the metadata pipeline (PDF today;
@@ -1277,8 +1608,10 @@ type SetAssetPageCountParams struct {
 // same asset should converge to the current truth, not preserve a
 // stale value from an older extractor. Does not touch updated_at
 // because page_count is asset-intrinsic, not an editorial change.
+// Guarded by the file_hash that was extracted (#1596): an extraction
+// of replaced bytes must not stamp the newer version's page count.
 func (q *Queries) SetAssetPageCount(ctx context.Context, arg SetAssetPageCountParams) error {
-	_, err := q.db.Exec(ctx, setAssetPageCount, arg.ID, arg.PageCount)
+	_, err := q.db.Exec(ctx, setAssetPageCount, arg.PageCount, arg.ID, arg.FileHash)
 	return err
 }
 
@@ -1308,14 +1641,16 @@ func (q *Queries) SetAssetSensitivity(ctx context.Context, arg SetAssetSensitivi
 
 const setAssetThumbhash = `-- name: SetAssetThumbhash :exec
 UPDATE assets
-   SET thumbhash  = $2,
+   SET thumbhash  = $1,
        updated_at = NOW()
- WHERE id = $1
+ WHERE id = $2
+   AND file_hash = $3::TEXT
 `
 
 type SetAssetThumbhashParams struct {
-	ID        pgtype.UUID
 	Thumbhash []byte
+	ID        pgtype.UUID
+	FileHash  string
 }
 
 // Overwrites unconditionally. The ONLY caller is a forced re-render
@@ -1324,30 +1659,35 @@ type SetAssetThumbhashParams struct {
 // makes a corrected card fade up from the stale image it just replaced.
 // Every other writer must keep using SetAssetThumbhashIfMissing, whose
 // NULL guard is what stops the worker racing CreateAsset's synchronous
-// compute and what makes the backfill safe to re-run.
+// compute and what makes the backfill safe to re-run. Guarded by
+// file_hash like the if-missing form (#1596).
 func (q *Queries) SetAssetThumbhash(ctx context.Context, arg SetAssetThumbhashParams) error {
-	_, err := q.db.Exec(ctx, setAssetThumbhash, arg.ID, arg.Thumbhash)
+	_, err := q.db.Exec(ctx, setAssetThumbhash, arg.Thumbhash, arg.ID, arg.FileHash)
 	return err
 }
 
 const setAssetThumbhashIfMissing = `-- name: SetAssetThumbhashIfMissing :exec
 UPDATE assets
-   SET thumbhash  = $2,
+   SET thumbhash  = $1,
        updated_at = NOW()
- WHERE id = $1
+ WHERE id = $2
+   AND file_hash = $3::TEXT
    AND thumbhash IS NULL
 `
 
 type SetAssetThumbhashIfMissingParams struct {
-	ID        pgtype.UUID
 	Thumbhash []byte
+	ID        pgtype.UUID
+	FileHash  string
 }
 
 // Only writes when the column is NULL — never overwrites an existing
 // thumbhash so the preview worker can backfill cheaply without
-// racing the synchronous compute in CreateAsset.
+// racing the synchronous compute in CreateAsset. Guarded by the
+// file_hash the pixels came from (#1596): a blur of replaced bytes
+// must not land on the newer version.
 func (q *Queries) SetAssetThumbhashIfMissing(ctx context.Context, arg SetAssetThumbhashIfMissingParams) error {
-	_, err := q.db.Exec(ctx, setAssetThumbhashIfMissing, arg.ID, arg.Thumbhash)
+	_, err := q.db.Exec(ctx, setAssetThumbhashIfMissing, arg.Thumbhash, arg.ID, arg.FileHash)
 	return err
 }
 

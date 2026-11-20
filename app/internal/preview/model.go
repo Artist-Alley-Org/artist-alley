@@ -144,11 +144,11 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	jobCtx, cancel := context.WithTimeout(ctx, h.MaxJobDuration)
 	defer cancel()
 
-	h.markProcessing(jobCtx, p.AssetID)
+	h.markProcessing(jobCtx, p.AssetID, p.FileHash)
 
 	work, cleanup, err := h.stage(jobCtx, p.FileHash, p.FileExtension)
 	if err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
 	}
 	defer cleanup()
@@ -193,7 +193,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 				slog.String("asset_id", p.AssetID.String()),
 				slog.String("ext", p.FileExtension),
 				slog.String("err", err.Error()))
-			h.markReady(jobCtx, p.AssetID)
+			h.markReady(jobCtx, p.AssetID, p.FileHash)
 			return json.Marshal(ModelResult{
 				FrameCount: 0,
 				WorkS:      time.Since(started).Seconds(),
@@ -209,7 +209,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.mview_convert_failed",
 				slog.String("asset_id", p.AssetID.String()),
 				slog.String("err", err.Error()))
-			h.markReady(jobCtx, p.AssetID)
+			h.markReady(jobCtx, p.AssetID, p.FileHash)
 			return json.Marshal(ModelResult{
 				FrameCount: 0,
 				Variants:   []string{"raster"},
@@ -249,7 +249,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 			AssetID: p.AssetID, Hash: p.FileHash, Kind: "model",
 		})
-		h.markReady(jobCtx, p.AssetID)
+		h.markReady(jobCtx, p.AssetID, p.FileHash)
 		result.WorkS = time.Since(started).Seconds()
 		return json.Marshal(result)
 	}
@@ -277,7 +277,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 			slog.String("ext", renderExt))
 		result.FrameCount = 0
 		result.Skipped = append(result.Skipped, "render:no_renderer_for_format")
-		h.markReady(jobCtx, p.AssetID)
+		h.markReady(jobCtx, p.AssetID, p.FileHash)
 		result.WorkS = time.Since(started).Seconds()
 		return json.Marshal(result)
 	}
@@ -296,7 +296,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// binds textures the same way the live viewer does, the raster ladder
 	// fans straight off the poster.
 	if err := h.renderThreeJS(jobCtx, work.sourcePath, work.dir, renderOut); err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
+		h.markFailed(jobCtx, p.AssetID, p.FileHash, err.Error())
 		return nil, fmt.Errorf("preview.model: render: %w", err)
 	}
 	// --- raster ladder: fan the poster into col / preview / screen / hires
@@ -384,7 +384,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// Skipped unconditionally, including on runs that had just uploaded
 	// it.
 
-	h.markReady(jobCtx, p.AssetID)
+	h.markReady(jobCtx, p.AssetID, p.FileHash)
 	result.WorkS = time.Since(started).Seconds()
 	return json.Marshal(result)
 }
@@ -880,24 +880,25 @@ func (h *ModelHandler) writeSprites(ctx context.Context, hash, framesDir string)
 // Shared plumbing — variantExists / mark* mirror VideoHandler.
 // ---------------------------------------------------------------------------
 
-func (h *ModelHandler) markProcessing(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *ModelHandler) markProcessing(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, assets.MarkAssetProcessingParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mark_processing_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *ModelHandler) markReady(ctx context.Context, id uuid.UUID) {
-	if err := assets.New(h.Pool).MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+func (h *ModelHandler) markReady(ctx context.Context, id uuid.UUID, hash string) {
+	if err := assets.New(h.Pool).MarkAssetReady(ctx, assets.MarkAssetReadyParams{ID: pgtype.UUID{Bytes: id, Valid: true}, FileHash: hash}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mark_ready_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}
 }
-func (h *ModelHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
+func (h *ModelHandler) markFailed(ctx context.Context, id uuid.UUID, hash, msg string) {
 	if err := assets.New(h.Pool).MarkAssetFailed(ctx, assets.MarkAssetFailedParams{
 		ID:              pgtype.UUID{Bytes: id, Valid: true},
 		ProcessingError: msg,
+		FileHash:        hash,
 	}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mark_failed_failed",
 			slog.String("asset_id", id.String()),

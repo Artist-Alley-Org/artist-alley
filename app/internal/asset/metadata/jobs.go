@@ -42,6 +42,13 @@ type AssetLookup interface {
 // on purpose — the handler re-resolves everything else.
 type ExtractJobPayload struct {
 	AssetID uuid.UUID `json:"asset_id"`
+	// FileHash is the original this job was queued for, when the
+	// producer knows it (a replacement always does, #1596). A job whose
+	// hash the asset no longer shows finishes as a no-op: the
+	// replacement queued its own extraction. Absent on older payloads,
+	// where the hash read at job start is the one every write is
+	// guarded by.
+	FileHash string `json:"file_hash,omitempty"`
 }
 
 // ExtractJobHandler implements [jobs.Handler] for the
@@ -162,6 +169,10 @@ type ExtractJobResult struct {
 	FieldsSkippedMode       []CanonicalField `json:"fields_skipped_mode,omitempty"`
 	FieldsSkippedValidation []CanonicalField `json:"fields_skipped_validation,omitempty"`
 	FailureCount            int              `json:"failure_count,omitempty"`
+	// Superseded is true when the asset's original was replaced
+	// before or while this job ran (#1596), so nothing was written
+	// for the bytes it read.
+	Superseded bool `json:"superseded,omitempty"`
 }
 
 // Handle implements [jobs.Handler]. See package doc + the type
@@ -178,6 +189,9 @@ func (h *ExtractJobHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 	}
 	if !found {
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("metadata.extract: asset %s gone before job ran", p.AssetID)}
+	}
+	if p.FileHash != "" && asset.FileHash != p.FileHash {
+		return jsonMarshalIgnoreErr(ExtractJobResult{Superseded: true}), nil
 	}
 
 	rc, mimeType, err := h.loader.LoadSource(ctx, asset)
@@ -196,7 +210,7 @@ func (h *ExtractJobHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 		}
 	}
 	if len(supporting) == 0 {
-		h.recordFailure(ctx, asset.ID, mimeType, "unsupported_format",
+		h.recordFailure(ctx, asset, mimeType, "unsupported_format",
 			fmt.Sprintf("no registered extractor for %q", mimeType), "")
 		h.recordResult(mimeType, ResultUnsupportedFormat)
 		return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
@@ -246,6 +260,12 @@ func (h *ExtractJobHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 
 	// Apply the extracted values + record per-field failures.
 	summary, err := h.applier.Apply(ctx, asset, result)
+	if errors.Is(err, ErrAssetSuperseded) {
+		// Replaced while this job ran. Writes before the replacement
+		// committed are the old version's and are overwritten by the
+		// new version's own extraction; nothing after it landed.
+		return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType, Superseded: true}), nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("metadata.extract: apply: %w", err)
 	}
@@ -255,7 +275,7 @@ func (h *ExtractJobHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 	// here logs but does NOT fail the job — the field-value writes
 	// already landed and re-extraction will converge.
 	if result.PageCount > 0 && h.attrs != nil {
-		if err := h.attrs.SetAssetPageCount(ctx, asset.ID, result.PageCount); err != nil && h.logger != nil {
+		if err := h.attrs.SetAssetPageCount(ctx, asset.ID, asset.FileHash, result.PageCount); err != nil && h.logger != nil {
 			h.logger.LogAttrs(ctx, slog.LevelWarn,
 				"metadata.extract.page_count_write_error",
 				slog.String("asset_id", asset.ID.String()),
@@ -344,15 +364,15 @@ func (h *ExtractJobHandler) runExtractors(
 			// Supports() said yes and Extract() said no. A real
 			// disagreement inside one extractor, worth a row, but
 			// scoped to that extractor.
-			h.recordFailure(ctx, asset.ID, mimeType, "unsupported_format",
+			h.recordFailure(ctx, asset, mimeType, "unsupported_format",
 				fmt.Sprintf("%s: %s", e.Name(), err.Error()), "")
 			hardFailures = append(hardFailures, ResultUnsupportedFormat)
 		case errors.Is(err, ErrMalformedFile):
-			h.recordFailure(ctx, asset.ID, mimeType, "malformed_file",
+			h.recordFailure(ctx, asset, mimeType, "malformed_file",
 				fmt.Sprintf("%s: %s", e.Name(), err.Error()), "")
 			hardFailures = append(hardFailures, ResultMalformedFile)
 		case errors.Is(err, ErrLibraryPanic):
-			h.recordFailure(ctx, asset.ID, mimeType, "library_panic",
+			h.recordFailure(ctx, asset, mimeType, "library_panic",
 				fmt.Sprintf("%s: %s", e.Name(), err.Error()), "")
 			hardFailures = append(hardFailures, ResultLibraryError)
 		default:
@@ -365,20 +385,21 @@ func (h *ExtractJobHandler) runExtractors(
 // recordFailure is a soft-error helper — if the failure-recording
 // write itself fails we log + move on; the job's own outcome
 // shouldn't change because the admin-queue write didn't land.
-func (h *ExtractJobHandler) recordFailure(ctx context.Context, assetID uuid.UUID, format, kind, msg string, field CanonicalField) {
+func (h *ExtractJobHandler) recordFailure(ctx context.Context, asset AssetRef, format, kind, msg string, field CanonicalField) {
 	if h.failures == nil {
 		return
 	}
 	if err := h.failures.RecordExtractionFailure(ctx, RecordExtractionFailureParams{
-		AssetID:   assetID,
+		AssetID:   asset.ID,
 		Format:    format,
 		ErrorKind: kind,
 		Message:   msg,
 		FieldKey:  field,
+		FileHash:  asset.FileHash,
 	}); err != nil && h.logger != nil {
 		h.logger.LogAttrs(ctx, slog.LevelWarn,
 			"metadata.extract.failure_record_error",
-			slog.String("asset_id", assetID.String()),
+			slog.String("asset_id", asset.ID.String()),
 			slog.String("err", err.Error()),
 		)
 	}

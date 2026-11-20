@@ -161,11 +161,19 @@ func (q *Queries) SearchByVisualEmbedding(ctx context.Context, arg SearchByVisua
 	return items, nil
 }
 
-const upsertAssetVisualEmbedding = `-- name: UpsertAssetVisualEmbedding :exec
+const upsertAssetVisualEmbedding = `-- name: UpsertAssetVisualEmbedding :execrows
 
+WITH cur AS (
+    SELECT id FROM assets
+     WHERE id = $5
+       AND file_hash = $6::TEXT
+       FOR NO KEY UPDATE
+)
 INSERT INTO asset_visual_embedding
     (asset_id, embedding, model, checkpoint, provider, updated_at)
-VALUES ($1, $2::vector, $3, $4, $5, NOW())
+SELECT cur.id, $1::vector, $2,
+       $3, $4, NOW()
+  FROM cur
 ON CONFLICT (asset_id) DO UPDATE
     SET embedding  = EXCLUDED.embedding,
         model      = EXCLUDED.model,
@@ -175,11 +183,12 @@ ON CONFLICT (asset_id) DO UPDATE
 `
 
 type UpsertAssetVisualEmbeddingParams struct {
-	AssetID    pgtype.UUID
-	Column2    *pgvector.Vector
+	Embedding  *pgvector.Vector
 	Model      string
 	Checkpoint string
 	Provider   string
+	AssetID    pgtype.UUID
+	FileHash   string
 }
 
 // Phase 1.16.B-3-followup — asset_visual_embedding row I/O + query.
@@ -188,13 +197,25 @@ type UpsertAssetVisualEmbeddingParams struct {
 // model + checkpoint are recorded per row so a future "reindex
 // visual embeddings against a different model" pass can target
 // rows by (provider, model, checkpoint).
-func (q *Queries) UpsertAssetVisualEmbedding(ctx context.Context, arg UpsertAssetVisualEmbeddingParams) error {
-	_, err := q.db.Exec(ctx, upsertAssetVisualEmbedding,
-		arg.AssetID,
-		arg.Column2,
+//
+// file_hash is the original the vector was computed from (#1596).
+// The row is written only while the asset still shows those bytes,
+// so an embedding of a replaced original writes nothing (0 rows)
+// instead of making the new picture findable by the old one. The
+// asset row lock is taken in the same statement as the write: a
+// replacement that commits first makes it match nothing, and one
+// waiting on the lock waits for this write and then clears it.
+func (q *Queries) UpsertAssetVisualEmbedding(ctx context.Context, arg UpsertAssetVisualEmbeddingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upsertAssetVisualEmbedding,
+		arg.Embedding,
 		arg.Model,
 		arg.Checkpoint,
 		arg.Provider,
+		arg.AssetID,
+		arg.FileHash,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

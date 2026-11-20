@@ -110,7 +110,7 @@ func fanToLadder(ctx context.Context, in ladderInput) error {
 			return err
 		}
 	}
-	stampSourceShape(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Src, in.Overwrite)
+	stampSourceShape(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Hash, in.Src, in.Overwrite)
 	return nil
 }
 
@@ -133,18 +133,22 @@ func fanToLadder(ctx context.Context, in ladderInput) error {
 // encoded. That is the point: re-running an asset's preview job is the
 // operator's natural "fix this asset" gesture, and an asset whose
 // variants predate either stamp has the bytes but not the fact.
-func stampSourceShape(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image, overwrite bool) {
+// hash is the file_hash the job was dispatched for (#1596). Every
+// stamp below is guarded by it in the same statement that writes it,
+// so a job still rendering replaced bytes cannot stamp the version the
+// asset shows now; its renditions are keyed by its own hash and stay.
+func stampSourceShape(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, hash string, src image.Image, overwrite bool) {
 	// A forced re-render replaces the stamp as well as the rungs (#760).
 	// The thumbhash is a blur of the pixels we just declared wrong, and
 	// it is what the card shows FIRST — leaving it means a corrected
 	// thumbnail fades up out of the magenta one it replaced. Everywhere
 	// else the never-overwrite rule stands; see setThumbhash*.
 	if overwrite {
-		setThumbhash(ctx, pool, logger, kind, id, src)
+		setThumbhash(ctx, pool, logger, kind, id, hash, src)
 	} else {
-		setThumbhashIfMissing(ctx, pool, logger, kind, id, src)
+		setThumbhashIfMissing(ctx, pool, logger, kind, id, hash, src)
 	}
-	setPixelDims(ctx, pool, logger, kind, id, src)
+	setPixelDims(ctx, pool, logger, kind, id, hash, src)
 }
 
 // setPixelDims records the ladder source's width and height on the
@@ -158,12 +162,12 @@ func stampSourceShape(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logg
 // mis-sizes the tile with total confidence and never corrects. If a
 // replace-file or a renderer change altered the shape, the shape we
 // just decoded is the true one.
-func setPixelDims(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image) {
-	if pool == nil || src == nil || id == uuid.Nil {
+func setPixelDims(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, hash string, src image.Image) {
+	if pool == nil || src == nil || id == uuid.Nil || hash == "" {
 		return
 	}
 	b := src.Bounds()
-	if err := pixeldims.Record(ctx, pool, id, b.Dx(), b.Dy()); err != nil {
+	if err := pixeldims.Record(ctx, pool, id, hash, b.Dx(), b.Dy()); err != nil {
 		logAttrs(logger, ctx, slog.LevelDebug, "preview."+kind+".pixel_dims_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
@@ -364,7 +368,7 @@ func healThumbhashOnSkip(ctx context.Context, in ladderInput) {
 			slog.String("err", err.Error()))
 		return
 	}
-	setThumbhashIfMissing(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, src)
+	setThumbhashIfMissing(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Hash, src)
 }
 
 // defaultMaxVariantBytes caps a rendered-rung read-back. Rungs are small
@@ -454,18 +458,18 @@ func decodeStoredVariant(ctx context.Context, st *storage.Service, hash, key str
 // SetAssetThumbhashIfMissing, whose NULL guard is what keeps the
 // synchronous compute in CreateAsset from racing the worker, and what
 // makes the #645 backfill safe to re-run.
-func setThumbhashIfMissing(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image) {
-	encodeThumbhash(ctx, pool, logger, kind, id, src, false)
+func setThumbhashIfMissing(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, hash string, src image.Image) {
+	encodeThumbhash(ctx, pool, logger, kind, id, hash, src, false)
 }
 
 // setThumbhash overwrites the stamp. Only the forced re-render path
 // calls it — see fanToLadder.
-func setThumbhash(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image) {
-	encodeThumbhash(ctx, pool, logger, kind, id, src, true)
+func setThumbhash(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, hash string, src image.Image) {
+	encodeThumbhash(ctx, pool, logger, kind, id, hash, src, true)
 }
 
-func encodeThumbhash(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image, overwrite bool) {
-	if pool == nil || src == nil || id == uuid.Nil {
+func encodeThumbhash(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, hash string, src image.Image, overwrite bool) {
+	if pool == nil || src == nil || id == uuid.Nil || hash == "" {
 		return
 	}
 	tb := thumbhash.EncodeImage(src)
@@ -477,11 +481,13 @@ func encodeThumbhash(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logge
 	if overwrite {
 		err = q.SetAssetThumbhash(ctx, assets.SetAssetThumbhashParams{
 			ID:        pgtype.UUID{Bytes: id, Valid: true},
+			FileHash:  hash,
 			Thumbhash: tb,
 		})
 	} else {
 		err = q.SetAssetThumbhashIfMissing(ctx, assets.SetAssetThumbhashIfMissingParams{
 			ID:        pgtype.UUID{Bytes: id, Valid: true},
+			FileHash:  hash,
 			Thumbhash: tb,
 		})
 	}

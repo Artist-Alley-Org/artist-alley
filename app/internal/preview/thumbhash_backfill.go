@@ -140,7 +140,7 @@ func (h *ThumbhashBackfillHandler) Handle(ctx context.Context, job *jobs.Claim) 
 					slog.String("err", err.Error()))
 				continue
 			}
-			setThumbhashIfMissing(ctx, h.Pool, h.Logger, "thumbhash_backfill", id, src)
+			setThumbhashIfMissing(ctx, h.Pool, h.Logger, "thumbhash_backfill", id, row.FileHash, src)
 			result.Stamped++
 		}
 		if len(page) < thumbhashBackfillBatch {
