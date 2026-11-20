@@ -721,6 +721,8 @@ type FederationReceivedAsset struct {
 	UpdatedAt          pgtype.Timestamptz
 	CompletedAt        pgtype.Timestamptz
 	CreatedXid         pgtype.Uint64
+	// When a pending record may be started (#1574): now() when bound, a lease ahead while an attempt runs, a capped backoff ahead after a transient failure. assetingest.Worker claims due pending records with FOR UPDATE SKIP LOCKED.
+	NextAttemptAt pgtype.Timestamptz
 }
 
 // The file set of a received asset record (#1574, spec v1 §17.2.2). Originals are fetched and verified (state verified only on a complete record); preservation and access entries are declared claims (not_transferred, #1597). declared_* are untrusted sender claims, never a path.

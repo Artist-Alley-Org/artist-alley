@@ -80,13 +80,20 @@ type origin struct {
 	srv   *httptest.Server
 	mu    sync.Mutex
 	files map[string][]byte
-	mode  map[string]string // "" ok | tamper | short | length | missing | unavailable
+	mode  map[string]string // "" ok | tamper | short | length | missing | unavailable | hold
 	gets  map[string]*atomic.Int32
 	heads atomic.Int32
+	// hold: the GET sends its headers, then waits for release (or its
+	// request to end) before the body. inflight counts held GETs;
+	// maxInflight is the most at once.
+	release     chan struct{}
+	inflight    atomic.Int32
+	maxInflight atomic.Int32
 }
 
 func newOrigin(t *testing.T) *origin {
-	o := &origin{files: map[string][]byte{}, mode: map[string]string{}, gets: map[string]*atomic.Int32{}}
+	o := &origin{files: map[string][]byte{}, mode: map[string]string{}, gets: map[string]*atomic.Int32{},
+		release: make(chan struct{})}
 	// TLS: a federation origin is https (federation.OriginOf).
 	o.srv = httptest.NewTLSServer(http.HandlerFunc(o.serve))
 	t.Cleanup(o.srv.Close)
@@ -155,6 +162,21 @@ func (o *origin) serve(w http.ResponseWriter, r *http.Request) {
 	case "length":
 		w.Header().Set("Content-Length", fmt.Sprint(len(body)+1))
 		_, _ = w.Write(append(bytes.Clone(body), 'x'))
+	case "hold":
+		n := o.inflight.Add(1)
+		for m := o.maxInflight.Load(); n > m && !o.maxInflight.CompareAndSwap(m, n); m = o.maxInflight.Load() {
+		}
+		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+		w.WriteHeader(200)
+		if fl, ok := w.(http.Flusher); ok {
+			fl.Flush()
+		}
+		select {
+		case <-o.release:
+		case <-r.Context().Done():
+		}
+		o.inflight.Add(-1)
+		_, _ = w.Write(body)
 	default:
 		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
 		_, _ = w.Write(body)

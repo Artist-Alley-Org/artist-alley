@@ -3656,6 +3656,7 @@ CREATE TABLE public.federation_received_assets (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     completed_at timestamp with time zone,
     created_xid xid8 DEFAULT pg_current_xact_id() NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT federation_received_assets_pkey PRIMARY KEY (id),
     CONSTRAINT federation_received_assets_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE,
     CONSTRAINT federation_received_assets_state_check CHECK (state = ANY (ARRAY['pending'::text, 'complete'::text, 'rejected'::text])),
@@ -3703,10 +3704,26 @@ CREATE INDEX federation_received_assets_peer_asset_idx
 
 
 --
+-- Name: federation_received_assets_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_received_assets_due_idx
+    ON public.federation_received_assets USING btree (next_attempt_at, id)
+    WHERE (state = 'pending'::text);
+
+
+--
 -- Name: TABLE federation_received_assets; Type: COMMENT; Schema: public; Owner: -
 --
 
 COMMENT ON TABLE public.federation_received_assets IS 'An aa:asset record a paired peer announced under archival-1 (#1574, spec v1 §17.2, §17.6), one row per announcing activity. complete = every original fetched under a live inbound grant, verified here and pinned under this record in one transaction; pending and rejected hold no pin. Held, not shown: no assets row, no reader yet. record and declared_* values are the sender''s untrusted claims.';
+
+
+--
+-- Name: COLUMN federation_received_assets.next_attempt_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_received_assets.next_attempt_at IS 'When a pending record may be started (#1574): now() when bound, a lease ahead while an attempt runs, a capped backoff ahead after a transient failure. assetingest.Worker claims due pending records with FOR UPDATE SKIP LOCKED.';
 
 
 --
