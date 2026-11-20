@@ -369,6 +369,11 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	if isShareVerb(in.Verb) {
 		return r.shareRecipient(ctx, in)
 	}
+	// An aa:AssetVersion (#1574) rides on one original-file share and
+	// goes to that share's peer only, like the share itself.
+	if in.Verb == string(federation.ActivityAAAssetVersion) {
+		return r.assetVersionRecipient(ctx, in)
+	}
 	if in.Verb == string(federation.ActivityCreate) && in.TargetKind == "comment" {
 		return r.commentRecipient(ctx, in)
 	}
@@ -494,6 +499,60 @@ func (r *Resolver) shareRecipient(ctx context.Context, in Input) (Result, error)
 		return Result{Skipped: SkippedRecipientSetEmpty}, nil
 	}
 	return Result{Recipients: recipients}, nil
+}
+
+// assetVersionRecipient addresses an aa:AssetVersion (#1574) to the peer
+// of the share it rides on, read live: the share an unrevoked, unexpired
+// original-file grant of exactly this asset to the peer as a whole (no
+// recipient: the receiver fetches as its instance, §8.5), the asset
+// public or team (never a restricted or embargoed announcement,
+// §7.5.7.4), the peer enabled and connected, and both archival-1 and
+// original-transfer-1 in its stored intersection (profile_not_negotiated
+// otherwise, audited per peer). The delivery worker checks the grant
+// again, and sends only after the grant's aa:Share reached the peer
+// (assetsend.Source.Member).
+func (r *Resolver) assetVersionRecipient(ctx context.Context, in Input) (Result, error) {
+	if in.ShareID == (uuid.UUID{}) {
+		return Result{Skipped: SkippedShareNotFound}, nil
+	}
+	if in.Sensitivity != SensitivityPublic && in.Sensitivity != SensitivityTeam {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	var (
+		peerID     pgtype.UUID
+		encryption string
+		grants     bool
+		usable     bool
+		profiles   bool
+	)
+	err := r.pool.QueryRow(ctx, `
+		SELECT s.peer_id, p.encryption_policy,
+		       (s.object_kind = 'asset' AND s.object_id = $2 AND s.allow_original AND s.target_user_url IS NULL
+		        AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > NOW())),
+		       (p.enabled AND p.status = 'connected'),
+		       (p.capabilities ? $3 AND p.capabilities ? $4)
+		  FROM federation_shares s
+		  JOIN federation_peers p ON p.id = s.peer_id
+		 WHERE s.id = $1
+	`, in.ShareID, in.TargetID, federation.ProfileArchival1, federation.ProfileOriginalTransfer1).
+		Scan(&peerID, &encryption, &grants, &usable, &profiles)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Result{Skipped: SkippedShareNotFound}, nil
+	}
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve asset version recipient: %w", err)
+	}
+	if !grants || !usable {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	id := uuid.UUID(peerID.Bytes)
+	if !profiles {
+		if r.emissionSkippedForPeer != nil {
+			r.emissionSkippedForPeer(ctx, id, SkippedProfileNotNegotiated, in.Verb)
+		}
+		return Result{Skipped: SkippedProfileNotNegotiated}, nil
+	}
+	return Result{Recipients: []Recipient{{PeerID: id, EncryptionTier: encryption}}}, nil
 }
 
 // commentRecipient addresses a comment Create to the paired peer that

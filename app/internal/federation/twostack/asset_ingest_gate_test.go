@@ -11,10 +11,9 @@
 //   - TEST-ONLY ADVERTISEMENT of archival-1 (here) and
 //     original-transfer-1 (newCASGate), before the real handshake. Neither
 //     is advertised in production until the rest of #1574 lands.
-//   - THE ANNOUNCEMENT. No sender emits aa:AssetVersion yet, and the
-//     inbox does not route it to the receiver core, so the test builds the
-//     envelope from A's real asset and hands it to B's receiver core
-//     directly. Everything it relies on is production: the pairing, A's
+//   - THE ANNOUNCEMENT. The test builds the envelope from A's real asset
+//     and hands it to B's receiver core directly; A's own sender (#1574)
+//     is switched off for this gate (senderOffOnA). Everything it relies on is production: the pairing, A's
 //     admin share API and #1573 policy, A's outbox delivering aa:Share to
 //     B's inbox, B's inbound grant record, the casfetch client with B's
 //     identity, and B's database and storage.
@@ -56,6 +55,8 @@ func TestTwoStack_AssetIngest(t *testing.T) {
 			}
 		}
 	}
+	// This gate hands B the announcement itself: A's own sender is off.
+	g.senderOffOnA()
 	g.runWorkers(g.a)
 	g.runWorkers(g.b)
 	ctx := context.Background()
