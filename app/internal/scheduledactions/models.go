@@ -1230,6 +1230,16 @@ type StorageVariant struct {
 	FixityCheckedAt  pgtype.Timestamptz `json:"fixity_checked_at"`
 }
 
+// Every verified digest recorded for a derived variant the access policy can choose (#1596): (object, key, generation) -> digest. Insert-only, each row mirroring a verified storage_variants row; the provenance an access copy is sealed against.
+type StorageVariantDigestHistory struct {
+	ObjectHash       string             `json:"object_hash"`
+	VariantKey       string             `json:"variant_key"`
+	Generation       int64              `json:"generation"`
+	ContentSha256    string             `json:"content_sha256"`
+	ContentSizeBytes int64              `json:"content_size_bytes"`
+	RecordedAt       pgtype.Timestamptz `json:"recorded_at"`
+}
+
 type SystemConfig struct {
 	Key       string             `json:"key"`
 	Value     []byte             `json:"value"`

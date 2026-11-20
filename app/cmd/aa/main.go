@@ -120,6 +120,16 @@ func main() {
 		}
 		return
 	}
+	// `aa reconcile-asset-versions [-apply]` requests version
+	// reconciliation for drafts migration 00084 backfilled, once their
+	// original is verified (#1596). Dry run by default.
+	if len(os.Args) > 1 && os.Args[1] == "reconcile-asset-versions" {
+		if err := runReconcileAssetVersions(os.Args[2:]); err != nil {
+			slog.Error("reconcile-asset-versions failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
 	// `aa sweep-fixtures ...` removes rows left behind by dogfood and
 	// integration runs in a long-lived dev database (#1245). Dry run by
 	// default; -apply is required to delete.

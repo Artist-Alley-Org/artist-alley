@@ -899,19 +899,79 @@ BEGIN
         RAISE EXCEPTION 'asset version %: files are written only by asset_version_seal() in the sealing transaction (#1596)', NEW.version_id
             USING ERRCODE = 'integrity_constraint_violation';
     END IF;
-    -- Access and preview copies are accepted only once they can be
-    -- promoted from a #1597-verified variant (a later slice).
-    IF NEW.role <> 'original' THEN
-        RAISE EXCEPTION 'asset version %: only the original is accepted until verified access copies exist (#1596)', NEW.version_id
-            USING ERRCODE = 'integrity_constraint_violation';
-    END IF;
-    IF NEW.object_hash <> v.original_hash OR NEW.size_bytes <> v.original_size_bytes THEN
-        RAISE EXCEPTION 'asset version %: the original file is the version''s own original (#1596)', NEW.version_id
-            USING ERRCODE = 'integrity_constraint_violation';
+    IF NEW.role = 'original' THEN
+        IF NEW.object_hash <> v.original_hash OR NEW.size_bytes <> v.original_size_bytes THEN
+            RAISE EXCEPTION 'asset version %: the original file is the version''s own original (#1596)', NEW.version_id
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+    ELSE
+        PERFORM public.asset_version_copy_check(NEW.version_id, NEW.role, NEW.object_hash, NEW.size_bytes,
+                                                NEW.derived_from_hash, NEW.derived_variant_key);
     END IF;
     PERFORM public.asset_version_pin(NEW.object_hash, NEW.version_id, NEW.size_bytes);
     RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: asset_version_copy_check(uuid, text, text, bigint, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_version_copy_check(p_version uuid, p_role text, p_hash text, p_size bigint,
+                                                p_from text, p_key text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v record;
+    o record;
+BEGIN
+    SELECT asset_id, number, original_hash INTO v FROM public.asset_versions WHERE id = p_version;
+    IF p_role NOT IN ('preview', 'access') THEN
+        RAISE EXCEPTION 'asset version %: % is not an access role (#1596)', p_version, p_role
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF p_from IS DISTINCT FROM v.original_hash OR p_key IS NULL THEN
+        RAISE EXCEPTION 'asset version %: an access copy is a named derivative of the version''s own original (#1596)', p_version
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    SELECT so.size_bytes AS object_size, sv.fixity_status, sv.content_sha256, sv.content_size_bytes INTO o
+      FROM public.storage_objects so
+      LEFT JOIN public.storage_variants sv ON sv.object_hash = so.hash AND sv.variant_key = 'original'
+     WHERE so.hash = p_hash;
+    IF NOT FOUND OR o.object_size <> p_size OR o.fixity_status IS DISTINCT FROM 'verified'
+       OR o.content_sha256 IS DISTINCT FROM p_hash OR o.content_size_bytes IS DISTINCT FROM p_size THEN
+        RAISE EXCEPTION 'asset version %: access copy % is not a verified object of its own (#1596)', p_version, p_hash
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.storage_variant_digest_history
+                    WHERE object_hash = v.original_hash AND variant_key = p_key
+                      AND content_sha256 = p_hash AND content_size_bytes = p_size) THEN
+        RAISE EXCEPTION 'asset version %: access copy % has no recorded provenance as variant % of this original (#1596)', p_version, p_hash, p_key
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.storage_pins
+                    WHERE object_hash = p_hash AND pin_subject_type = 'version_promote')
+       AND NOT EXISTS (SELECT 1 FROM public.asset_version_files f
+                         JOIN public.asset_versions pv ON pv.id = f.version_id
+                        WHERE pv.asset_id = v.asset_id AND pv.number < v.number AND pv.sealed_at IS NOT NULL
+                          AND f.role = p_role AND f.object_hash = p_hash) THEN
+        RAISE EXCEPTION 'asset version %: access copy % is neither a held promotion nor carried forward from an earlier version (#1596)', p_version, p_hash
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: asset_access_candidate_key(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_access_candidate_key(p_key text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT p_key ~ '^[a-z0-9][a-z0-9_-]{0,63}$'
+       AND p_key <> ALL (ARRAY['original', 'poster', 'cover', 'embedded-preview', 'iso']);
 $$;
 
 
@@ -971,11 +1031,8 @@ CREATE FUNCTION public.asset_version_seal(p_version uuid, p_access jsonb DEFAULT
     AS $$
 DECLARE
     v record;
+    e jsonb;
 BEGIN
-    IF p_access IS NOT NULL AND p_access <> '[]'::jsonb THEN
-        RAISE EXCEPTION 'asset version %: access copies cannot be sealed until verified promotion exists (#1596)', p_version
-            USING ERRCODE = 'feature_not_supported';
-    END IF;
     SELECT id, sealed_at, original_hash, original_size_bytes, original_media_type INTO v
       FROM public.asset_versions WHERE id = p_version FOR UPDATE;
     IF NOT FOUND THEN
@@ -984,10 +1041,112 @@ BEGIN
     IF v.sealed_at IS NOT NULL THEN
         RAISE EXCEPTION 'asset version %: already sealed (#1596)', p_version USING ERRCODE = 'integrity_constraint_violation';
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.storage_variants
+                    WHERE object_hash = v.original_hash AND variant_key = 'original' AND fixity_status = 'verified'
+                      AND content_sha256 = v.original_hash AND content_size_bytes = v.original_size_bytes) THEN
+        RAISE EXCEPTION 'asset version %: the original''s stored bytes are not verified (#1596)', p_version
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF p_access IS NOT NULL AND jsonb_typeof(p_access) <> 'array' THEN
+        RAISE EXCEPTION 'asset version %: access entries are an array (#1596)', p_version
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     UPDATE public.asset_versions SET sealed_xid = pg_current_xact_id() WHERE id = p_version;
     INSERT INTO public.asset_version_files (version_id, role, object_hash, size_bytes, media_type)
     VALUES (p_version, 'original', v.original_hash, v.original_size_bytes, v.original_media_type);
+    FOR e IN SELECT * FROM jsonb_array_elements(COALESCE(p_access, '[]'::jsonb)) LOOP
+        INSERT INTO public.asset_version_files (version_id, role, object_hash, size_bytes, media_type, derived_from_hash, derived_variant_key)
+        VALUES (p_version, e->>'role', e->>'object_hash', (e->>'size_bytes')::bigint, e->>'media_type',
+                e->>'derived_from_hash', e->>'derived_variant_key');
+    END LOOP;
     UPDATE public.asset_versions SET sealed_at = now() WHERE id = p_version;
+END;
+$$;
+
+
+--
+-- Name: asset_version_reconcile_enqueue(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_version_reconcile_enqueue(p_hash text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    k text;
+    running uuid;
+    i int := 0;
+BEGIN
+    IF p_hash IS NULL THEN
+        RETURN;
+    END IF;
+    k := 'version-reconcile:' || p_hash;
+    LOOP
+        SELECT id INTO running FROM public.jobs
+         WHERE type = 'asset.version_reconcile' AND idempotency_key = k AND status = 'running'
+         LIMIT 1;
+        EXIT WHEN running IS NULL OR i >= 8;
+        k := k || ':after:' || running::text;
+        i := i + 1;
+    END LOOP;
+    INSERT INTO public.jobs (type, payload, priority, idempotency_key)
+    VALUES ('asset.version_reconcile', jsonb_build_object('object_hash', p_hash), 200, k)
+    ON CONFLICT (type, idempotency_key)
+       WHERE ((idempotency_key IS NOT NULL) AND (status = ANY (ARRAY['pending'::text, 'running'::text])))
+    DO NOTHING;
+END;
+$$;
+
+
+--
+-- Name: storage_variants_recorded(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.storage_variants_recorded() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.variant_key = 'original' OR NEW.fixity_status <> 'verified' OR NEW.content_sha256 IS NULL
+       OR NOT public.asset_access_candidate_key(NEW.variant_key) THEN
+        RETURN NULL;
+    END IF;
+    IF TG_OP = 'UPDATE' AND OLD.fixity_status = 'verified' AND OLD.content_sha256 IS NOT DISTINCT FROM NEW.content_sha256
+       AND OLD.generation = NEW.generation THEN
+        RETURN NULL;
+    END IF;
+    INSERT INTO public.storage_variant_digest_history (object_hash, variant_key, generation, content_sha256, content_size_bytes)
+    VALUES (NEW.object_hash, NEW.variant_key, NEW.generation, NEW.content_sha256, NEW.content_size_bytes)
+    ON CONFLICT (object_hash, variant_key, generation) DO NOTHING;
+    IF NOT EXISTS (SELECT 1 FROM public.jobs
+                    WHERE type LIKE 'preview.%' AND status IN ('pending', 'running')
+                      AND payload->>'file_hash' = NEW.object_hash) THEN
+        PERFORM public.asset_version_reconcile_enqueue(NEW.object_hash);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: storage_variant_digest_history_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.storage_variant_digest_history_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION 'storage variant digest history is immutable (#1596)'
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.storage_variants
+                    WHERE object_hash = NEW.object_hash AND variant_key = NEW.variant_key AND generation = NEW.generation
+                      AND fixity_status = 'verified' AND content_sha256 = NEW.content_sha256
+                      AND content_size_bytes = NEW.content_size_bytes) THEN
+        RAISE EXCEPTION 'storage variant digest history: %/% generation % is not a verified variant row with that digest (#1596)',
+            NEW.object_hash, NEW.variant_key, NEW.generation
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -1023,6 +1182,25 @@ BEGIN
     IF NEW.current_version_id IS NOT NULL THEN
         PERFORM public.asset_version_create(NEW.id, NEW.current_version_id, 1, NULL, 'ingest', NEW.file_hash, NEW.file_extension,
                                             NEW.original_basename, NEW.original_basename_source, NEW.owner_user_ref);
+        IF NEW.processing_status IN ('ready', 'failed') THEN
+            PERFORM public.asset_version_reconcile_enqueue(NEW.file_hash);
+        END IF;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: assets_version_terminal(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assets_version_terminal() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.origin_server_id IS NULL AND NEW.file_hash IS NOT NULL AND NEW.processing_status IN ('ready', 'failed') THEN
+        PERFORM public.asset_version_reconcile_enqueue(NEW.file_hash);
     END IF;
     RETURN NULL;
 END;
@@ -4250,6 +4428,37 @@ CREATE TABLE public.storage_sweep_runs (
     CONSTRAINT storage_sweep_runs_kind_check CHECK ((kind = ANY (ARRAY['orphan_scan'::text, 'checksum_verify'::text]))),
     CONSTRAINT storage_sweep_runs_status_check CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text])))
 );
+
+
+--
+-- Name: storage_variant_digest_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.storage_variant_digest_history (
+    object_hash text NOT NULL,
+    variant_key text NOT NULL,
+    generation bigint NOT NULL,
+    content_sha256 text NOT NULL,
+    content_size_bytes bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT storage_variant_digest_history_pkey PRIMARY KEY (object_hash, variant_key, generation),
+    CONSTRAINT storage_variant_digest_history_check CHECK ((content_sha256 ~ '^[0-9a-f]{64}$'::text)
+        AND (content_size_bytes >= 0) AND (variant_key <> 'original'::text))
+);
+
+
+--
+-- Name: TABLE storage_variant_digest_history; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.storage_variant_digest_history IS 'Every verified digest recorded for a derived variant the access policy can choose (#1596): (object, key, generation) -> digest. Insert-only, each row mirroring a verified storage_variants row; the provenance an access copy is sealed against.';
+
+
+--
+-- Name: storage_variant_digest_history_digest_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_variant_digest_history_digest_idx ON public.storage_variant_digest_history USING btree (content_sha256);
 
 
 --
@@ -7508,6 +7717,27 @@ CREATE TRIGGER assets_version_assign_trg BEFORE INSERT ON public.assets FOR EACH
 --
 
 CREATE TRIGGER assets_version_one_trg AFTER INSERT ON public.assets FOR EACH ROW EXECUTE FUNCTION public.assets_version_one();
+
+
+--
+-- Name: assets assets_version_terminal_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER assets_version_terminal_trg AFTER UPDATE OF processing_status ON public.assets FOR EACH ROW EXECUTE FUNCTION public.assets_version_terminal();
+
+
+--
+-- Name: storage_variants storage_variants_recorded_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER storage_variants_recorded_trg AFTER INSERT OR UPDATE ON public.storage_variants FOR EACH ROW EXECUTE FUNCTION public.storage_variants_recorded();
+
+
+--
+-- Name: storage_variant_digest_history storage_variant_digest_history_guard_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER storage_variant_digest_history_guard_trg BEFORE INSERT OR UPDATE OR DELETE ON public.storage_variant_digest_history FOR EACH ROW EXECUTE FUNCTION public.storage_variant_digest_history_guard();
 
 
 --

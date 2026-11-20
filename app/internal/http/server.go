@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/audiobook"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
@@ -250,6 +251,15 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// fading up from a blur. The handlers are fixed for new ingests;
 	// this backfills what is already on disk.
 	jobRegistry.Register(preview.NewThumbhashBackfillHandler(pool, storageSvc, sysCfg, logger))
+	// #1596: version reconciliation. The database requests it (migration
+	// 00085): on every terminal processing event, on an insert that needs
+	// no processing, and in the same statement that records a verified
+	// digest for a key the access policy can choose while no preview job
+	// for the bytes is in flight.
+	jobRegistry.Register(&assets.VersionReconciler{
+		Pool: pool, Storage: storageSvc, Logger: logger,
+		Ladder: func(ctx context.Context) (sysconfig.PreviewConfig, error) { return sysCfg.GetPreviews(ctx) },
+	})
 	// Audiobook post-processing — Phase B-2 stubs. Registered so
 	// the dispatcher knows the type names + the admin queue page
 	// renders them; the actual ffmpeg work is a TODO in

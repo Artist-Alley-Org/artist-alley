@@ -533,6 +533,11 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 		pool.Close()
 		t.Fatalf("ping: %v", err)
 	}
+	// Closed when the test ends (registered first, so it runs after the
+	// test's own row cleanups). Without it every fixture kept its
+	// connections until the package exited, and enough fixtures ran the
+	// server out of connections (#1596's reconcile tests tipped it).
+	t.Cleanup(pool.Close)
 	return pool
 }
 

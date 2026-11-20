@@ -30,12 +30,14 @@ excerpt: >-
 
 ## Status (2026-11-19)
 
-Accepted. The first slice of #1596 implements the version model and
-its retention rules. The second slice's first part adds access-copy
-promotion and the selection policy (below), but nothing seals or uses
-them yet. Nothing is announced to peers. Sealing access copies, the
-reconcile job, replacement, the versions read endpoint and the
-access-only transfer profile are later work.
+Accepted.
+- **Slice 1:** the version model and its retention rules.
+- **Slice 2:** access-copy promotion and the selection policy, then
+  reconciliation, which seals versions with verified access copies and
+  adds rendition successors (both below).
+- **Still to come:** nothing is announced to peers yet. Replacement, the
+  versions read endpoint, the sender and the access-only transfer
+  profile are later work.
 
 ## Context
 
@@ -83,11 +85,31 @@ is the asset's file.
   the current transaction (by transaction id, not time), writes the
   file rows, then sets `sealed_at`. After the seal the file set cannot
   change, and `announced_at` can be set once, only on a sealed version.
-- **In this slice a file set holds only the original.** The seal refuses
-  any access entry, and the file table refuses every role but
-  `original`. Access copies are accepted only once a later slice
-  promotes them from a #1597-verified variant, immutable by its own
-  digest. The `access` role stays in the schema for that slice.
+- **A file set holds the original and at most one `preview` and one
+  `access` copy.** Migration 00085 enforces this in the database:
+  - **the original:** no version is sealed unless the original's stored
+    bytes are verified for exactly its hash and size;
+  - **a copy:** it is accepted only if all four hold:
+    - it is derived from the version's own original under a named
+      variant key;
+    - it is a verified object of its own;
+    - its digest and size are in the immutable digest history of exactly
+      that variant of that original (provenance);
+    - it is held, either by a live promotion pin or because it is the
+      same object in the same role of an earlier sealed version of the
+      asset (carried forward unchanged).
+- **Provenance.** `storage_variant_digest_history` keeps every verified
+  digest recorded for a variant the policy can choose, by object, key and
+  generation:
+  - it is insert-only, and each row must mirror a verified variant row;
+  - a regeneration adds a row and removes none, so a copy promoted
+    before a regeneration still seals;
+  - an unrelated object cannot be presented as an asset's rendition.
+- **Role vocabulary.** `preview` and `access` are the local byte classes
+  of spec §7.5.7 (a display rendition, and the largest rendition served
+  for viewing), which share decisions need to tell apart. Both are wire
+  role `access` in §17.2.2; the sender maps them. `preservation` is not
+  used.
 
 ### Pin lifetime and GC
 
@@ -190,6 +212,52 @@ its own content-addressed object, addressed by the variant's SHA-256:
   Other kinds get a preview only.
 - **Determinism:** the choice depends only on the ladder and the keys
   present.
+
+### Reconciliation seals versions and adds rendition successors
+
+One `asset.version_reconcile` job per object hash
+(`assets.VersionReconciler`).
+
+**Who requests it:**
+- the database on every terminal processing event (an asset set to
+  ready or failed, which covers every preview handler);
+- the database when an asset that needs no processing is inserted;
+- the statement that records a verified digest for a key the policy can
+  choose, unless a preview job for those bytes is in flight (so a
+  re-render never seals a half-written ladder). The request and the
+  record commit together or not at all, so a verified change is never
+  left unrequested. HLS segments, frames, sprites and covers never
+  request one;
+- the operator command.
+
+Requests coalesce per hash. One that arrives while a job runs is queued
+after that job, so no request is lost. The type is capped at two
+concurrent jobs.
+
+**What one run does, for every local asset whose current version's
+original is the hash:**
+- **Skips** an asset still processing, and everything when the original
+  is unverified.
+- **Promotes** each chosen variant once. An unverified, missing or
+  changed variant is omitted, never published.
+- **Seals** a draft with the original and the copies.
+- **Leaves alone** a sealed version whose copies already match, so a
+  rerun is a no-op.
+- **Adds exactly one successor** when a chosen copy changed or is new:
+  origin `rendition`, the same original, sealed with the new copies and
+  every unchanged one carried forward. The predecessor keeps its file
+  set, pins and bytes. A copy that cannot be promoted now is not a
+  change.
+
+**Transient pins:** every promotion's pin is released after the
+transactions that pin the copies to their versions have finished, on
+success and on failure. Stale promotion pins are released in a bounded
+batch at the start of each run.
+
+**Operator path:** `aa reconcile-asset-versions [-apply]` requests
+reconciliation for drafts the 00084 backfill made, but only for hashes
+whose original is verified; the rest wait for
+`aa backfill-variant-digests`.
 
 ## Consequences
 

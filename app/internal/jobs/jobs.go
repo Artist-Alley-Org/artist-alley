@@ -126,6 +126,13 @@ const (
 	// today; ffmpeg subtitles-filter integration is Phase
 	// 1.18.B-3-b. Enqueued from POST /assets/{id}/burn-subtitles.
 	TypeSubtitleBurn JobType = "subtitle.burn"
+
+	// TypeAssetVersionReconcile seals and extends the version history of
+	// every local asset on one object hash (#1596, assets/
+	// versions_reconcile.go). Requested by the database on every terminal
+	// processing event (migration 00085) and by verified variant writes
+	// outside processing; coalesced per hash.
+	TypeAssetVersionReconcile JobType = "asset.version_reconcile"
 )
 
 // Priority defaults. Lower numbers run sooner. Handlers can override.
