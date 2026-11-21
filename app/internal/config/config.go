@@ -131,6 +131,12 @@ type Config struct {
 	// is enforced at the edge (nginx), not here. Off = zero footprint.
 	DemoMode bool
 
+	// FederationEventRetentionDays mirrors AA_FEDERATION_EVENT_RETENTION_DAYS
+	// (#1574): how long the receiver keeps its transfer and fixity event
+	// ledger (federation_transfer_events) before the daily sweep removes a
+	// row. Default 365; at least 30, which the database also enforces.
+	FederationEventRetentionDays int
+
 	// Setup-wizard prefills. Pre-populating these via env makes it
 	// possible to script a deployment (Helm chart, Terraform, CI
 	// install test) without anyone typing into the browser form. None
@@ -187,6 +193,8 @@ func Load() (Config, error) {
 
 		DemoMode: envBool("AA_DEMO_MODE", false),
 
+		FederationEventRetentionDays: envInt("AA_FEDERATION_EVENT_RETENTION_DAYS", 365),
+
 		StorageBackend:        envStr("AA_STORAGE_BACKEND", "fs"),
 		StorageFSRoot:         envStr("AA_STORAGE_FS_ROOT", "/var/lib/artist-alley/storage"),
 		StorageS3Endpoint:     envStr("AA_STORAGE_S3_ENDPOINT", ""),
@@ -216,6 +224,9 @@ func Load() (Config, error) {
 	}
 	if c.ScrambleKey == "" {
 		return c, errors.New("config: AA_SCRAMBLE_KEY is required (must match the legacy $scramble_key)")
+	}
+	if c.FederationEventRetentionDays < 30 {
+		return c, fmt.Errorf("config: AA_FEDERATION_EVENT_RETENTION_DAYS=%d is below the 30-day minimum", c.FederationEventRetentionDays)
 	}
 	return c, nil
 }

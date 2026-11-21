@@ -192,6 +192,7 @@ Everything is environment-variable driven. The full list lives in
 | `AA_EMAIL_MODE`                | `smtp`               | `smtp` / `capture` (record in-memory, never deliver) / `disabled` |
 | `AA_LICENSE_PATH`              | `/etc/artist-alley/license.lic` | license file (optional); no commercial or paid licenses are offered yet, and without one the built-in community defaults apply |
 | `AA_ORG_KEY_PATH`              | `/etc/artist-alley/org.key` | organization key file (optional) |
+| `AA_FEDERATION_EVENT_RETENTION_DAYS` | `365`          | days the history of files received from other servers is kept before the daily sweep removes it; at least `30` |
 | `AA_LOG_LEVEL`                 | `info`               | `debug` / `info` / `warn` / `error` |
 | `AA_LOG_FORMAT`                | `json`               | or `text` |
 

@@ -1725,6 +1725,10 @@
             "title": "Inbox",
             "blurb": "Inbound activities from paired peers + their dispatch state. Read-only."
           },
+          "received": {
+            "title": "Received assets",
+            "blurb": "Assets peers sent to this instance, and the history of each transfer and checksum check, kept after removal."
+          },
           "blocklist": {
             "title": "Block list",
             "blurb": "Peers this instance refuses to federate with. Arrives with the moderation hooks in a future release."

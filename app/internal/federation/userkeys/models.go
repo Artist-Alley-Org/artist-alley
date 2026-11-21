@@ -828,6 +828,44 @@ type FederationShare struct {
 	AllowOriginal bool
 }
 
+// The receiver's durable ledger of transfer and fixity events (#1574): snapshots with no foreign key, immutable, deleted only past the retention period (aa.federation_event_retention, default 365 days, at least 30).
+type FederationTransferEvent struct {
+	ID                pgtype.UUID
+	OccurredAt        pgtype.Timestamptz
+	PeerID            pgtype.UUID
+	PeerInstanceUrl   string
+	PeerDisplayName   *string
+	ReceivedAssetID   pgtype.UUID
+	ActivityUri       string
+	OriginAssetUri    string
+	VersionUri        string
+	VersionNumber     int64
+	Sensitivity       string
+	FilePosition      *int32
+	FileRole          *string
+	ObjectHash        *string
+	DeclaredMediaType *string
+	EventType         string
+	Outcome           string
+	Reason            *string
+	ExpectedSha256    *string
+	ExpectedSizeBytes *int64
+	// Where the observation came from: received_bytes, stored_bytes, response_header (Content-Length, no byte read) or unavailable.
+	ObservedBasis     *string
+	ObservedSha256    *string
+	ObservedSizeBytes *int64
+	// The body was read only to one byte past its listed size: observed_size_bytes is a lower bound and there is no digest.
+	ObservedTruncated bool
+	MismatchAlgorithm *string
+	MismatchExpected  *string
+	MismatchObserved  *string
+	Attempt           int32
+	AgentName         string
+	AgentVersion      *string
+	RecordStateAfter  string
+	Detail            *string
+}
+
 // Per-user X25519 keypairs for NaCl-box encrypted federation. Phase 1.22.I-b. Private key column is atrest-wrapped (AES-GCM, host master key per app/internal/atrest). See ADR 0049 §Track B.
 type FederationUserKey struct {
 	UserRef int64

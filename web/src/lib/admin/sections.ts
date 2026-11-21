@@ -219,6 +219,8 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'shares',        status: 'live',   href: '/admin/federation/shares', cap: 'federation.read' },
       { key: 'outbox',        status: 'live',   href: '/admin/federation/outbox', cap: 'federation.read' },
       { key: 'inbox',         status: 'live',   href: '/admin/federation/inbox', cap: 'federation.read' },
+      // #1574: received records and the transfer event ledger (system.admin API).
+      { key: 'received',      status: 'live',   href: '/admin/federation/received', cap: 'system.admin' },
       { key: 'blocklist',     status: 'future' },
       { key: 'activitypub',   status: 'future' },
     ],

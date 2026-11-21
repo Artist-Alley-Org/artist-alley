@@ -122,6 +122,10 @@ type Error struct {
 	OriginReason string // the origin's reason, for origin_refused
 	Status       int    // HTTP status, where one was received
 	Err          error
+	// Observed is the evidence of a fixity_mismatch or length_mismatch
+	// (#1574 transfer ledger): what arrived, against the request's listed
+	// SHA256 and Size. Nil for every other reason.
+	Observed *Observation
 }
 
 func (e *Error) Error() string {
@@ -423,9 +427,13 @@ type Request struct {
 
 // Result is what a successful Fetch holds.
 type Result struct {
-	Hash     string
-	Size     int64
-	Deduped  bool // bytes were already held; no GET was made
+	Hash    string
+	Size    int64
+	Deduped bool // bytes were already held; no GET was made
+	// Reused: the bytes this instance already held were re-verified and
+	// used, and nothing was fetched (#1574 ledger: observed from
+	// stored_bytes rather than received_bytes).
+	Reused   bool
 	IngestID uuid.UUID
 	Pin      storage.PinRef
 }
@@ -610,11 +618,13 @@ func (c *Client) reuse(ctx context.Context, req Request) (*Result, bool, error) 
 	if err != nil {
 		return nil, false, nil
 	}
-	verr := federation.VerifyFileFixity(c.fileOf(req), rc)
+	file := c.fileOf(req)
+	obs := newObserver(file)
+	verr := federation.VerifyFileFixity(file, io.TeeReader(rc, obs))
 	rc.Close()
 	if verr != nil {
 		if errors.Is(verr, federation.ErrFixityMismatch) {
-			return nil, false, fail(ReasonFixityMismatch, verr)
+			return nil, false, &Error{Reason: ReasonFixityMismatch, Err: verr, Observed: obs.observation(ObservedStored, file)}
 		}
 		return nil, false, fail(ReasonStorage, verr)
 	}
@@ -658,7 +668,7 @@ func (c *Client) reuse(ctx context.Context, req Request) (*Result, bool, error) 
 		}
 		return nil, false, fail(ReasonStorage, err)
 	}
-	return &Result{Hash: req.SHA256, Size: req.Size, Deduped: true, IngestID: ingest, Pin: pin}, true, nil
+	return &Result{Hash: req.SHA256, Size: req.Size, Deduped: true, Reused: true, IngestID: ingest, Pin: pin}, true, nil
 }
 
 var errObjectGone = errors.New("casfetch: held object disappeared before the pin")
@@ -909,7 +919,7 @@ func (c *Client) download(ctx context.Context, req Request, p Peer, key leaseKey
 		case errors.Is(err, errLeaseNotHeld):
 			return nil, fail(ReasonLeaseLost, err)
 		case errors.Is(err, storage.ErrImportMismatch):
-			return nil, fail(ReasonFixityMismatch, err)
+			return nil, &Error{Reason: ReasonFixityMismatch, Err: err, Observed: &Observation{Basis: ObservedUnavailable}}
 		}
 		return nil, fail(ReasonStorage, err)
 	}
@@ -936,7 +946,8 @@ func (c *Client) get(ctx context.Context, req Request, p Peer, tmpPath string) e
 	}
 	if resp.ContentLength >= 0 && resp.ContentLength != req.Size {
 		return &Error{Reason: ReasonLengthMismatch, Status: resp.StatusCode,
-			Err: fmt.Errorf("Content-Length %d, expected %d", resp.ContentLength, req.Size)}
+			Err:      fmt.Errorf("Content-Length %d, expected %d", resp.ContentLength, req.Size),
+			Observed: &Observation{Basis: ObservedHeader, Size: resp.ContentLength, HasSize: true}}
 	}
 	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -944,7 +955,9 @@ func (c *Client) get(ctx context.Context, req Request, p Peer, tmpPath string) e
 	}
 	body := &idleReader{r: resp.Body, timeout: c.cfg.IdleTimeout, cancel: cancel}
 	body.arm()
-	verr := federation.VerifyFileFixity(c.fileOf(req), io.TeeReader(body, f))
+	file := c.fileOf(req)
+	obs := newObserver(file)
+	verr := federation.VerifyFileFixity(file, io.TeeReader(body, io.MultiWriter(f, obs)))
 	body.stop()
 	cerr := f.Sync()
 	if err := f.Close(); cerr == nil {
@@ -954,7 +967,7 @@ func (c *Client) get(ctx context.Context, req Request, p Peer, tmpPath string) e
 	case verr != nil && body.timedOut():
 		return fail(ReasonTimeout, verr)
 	case verr != nil && errors.Is(verr, federation.ErrFixityMismatch):
-		return fail(ReasonFixityMismatch, verr)
+		return &Error{Reason: ReasonFixityMismatch, Err: verr, Observed: obs.observation(ObservedReceived, file)}
 	case verr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return fail(ReasonTimeout, verr)
 	case verr != nil:

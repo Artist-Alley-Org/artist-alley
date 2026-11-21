@@ -443,6 +443,11 @@ var nonReferenceKindColumns = map[string]string{
 	// and not a reference; the row cascades with its record and peer.
 	"federation_received_asset_files.declared_media_type": "declared MIME type (sender claim)",
 	"federation_received_asset_files.detected_media_type": "detected MIME type (this instance's identification, #1574)",
+	// #1574 slice 2: the transfer and fixity event ledger. Snapshots with
+	// no foreign key by design (migration 00089): kept across content
+	// resets, removed only by the retention sweep.
+	"federation_transfer_events.event_type":          "ledger event type (transfer / fixity-check / ingestion)",
+	"federation_transfer_events.declared_media_type": "declared MIME type snapshot (sender claim)",
 }
 
 // sweepStmt is one orphan-delete: the SQL plus the kind value it is
