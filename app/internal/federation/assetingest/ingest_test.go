@@ -159,6 +159,8 @@ func (o *origin) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(b)
 	case "short":
 		_, _ = w.Write(body[:len(body)/2])
+	case "long": // no Content-Length: the body runs past its listed size
+		_, _ = w.Write(append(bytes.Clone(body), bytes.Repeat([]byte("x"), 64)...))
 	case "length":
 		w.Header().Set("Content-Length", fmt.Sprint(len(body)+1))
 		_, _ = w.Write(append(bytes.Clone(body), 'x'))

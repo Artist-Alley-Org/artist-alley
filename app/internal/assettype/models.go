@@ -828,6 +828,44 @@ type FederationShare struct {
 	AllowOriginal bool `json:"allow_original"`
 }
 
+// The receiver's durable ledger of transfer and fixity events (#1574): snapshots with no foreign key, immutable, deleted only past the retention period (aa.federation_event_retention, default 365 days, at least 30).
+type FederationTransferEvent struct {
+	ID                pgtype.UUID        `json:"id"`
+	OccurredAt        pgtype.Timestamptz `json:"occurred_at"`
+	PeerID            pgtype.UUID        `json:"peer_id"`
+	PeerInstanceUrl   string             `json:"peer_instance_url"`
+	PeerDisplayName   *string            `json:"peer_display_name"`
+	ReceivedAssetID   pgtype.UUID        `json:"received_asset_id"`
+	ActivityUri       string             `json:"activity_uri"`
+	OriginAssetUri    string             `json:"origin_asset_uri"`
+	VersionUri        string             `json:"version_uri"`
+	VersionNumber     int64              `json:"version_number"`
+	Sensitivity       string             `json:"sensitivity"`
+	FilePosition      *int32             `json:"file_position"`
+	FileRole          *string            `json:"file_role"`
+	ObjectHash        *string            `json:"object_hash"`
+	DeclaredMediaType *string            `json:"declared_media_type"`
+	EventType         string             `json:"event_type"`
+	Outcome           string             `json:"outcome"`
+	Reason            *string            `json:"reason"`
+	ExpectedSha256    *string            `json:"expected_sha256"`
+	ExpectedSizeBytes *int64             `json:"expected_size_bytes"`
+	// Where the observation came from: received_bytes, stored_bytes, response_header (Content-Length, no byte read) or unavailable.
+	ObservedBasis     *string `json:"observed_basis"`
+	ObservedSha256    *string `json:"observed_sha256"`
+	ObservedSizeBytes *int64  `json:"observed_size_bytes"`
+	// The body was read only to one byte past its listed size: observed_size_bytes is a lower bound and there is no digest.
+	ObservedTruncated bool    `json:"observed_truncated"`
+	MismatchAlgorithm *string `json:"mismatch_algorithm"`
+	MismatchExpected  *string `json:"mismatch_expected"`
+	MismatchObserved  *string `json:"mismatch_observed"`
+	Attempt           int32   `json:"attempt"`
+	AgentName         string  `json:"agent_name"`
+	AgentVersion      *string `json:"agent_version"`
+	RecordStateAfter  string  `json:"record_state_after"`
+	Detail            *string `json:"detail"`
+}
+
 // Per-user X25519 keypairs for NaCl-box encrypted federation. Phase 1.22.I-b. Private key column is atrest-wrapped (AES-GCM, host master key per app/internal/atrest). See ADR 0049 §Track B.
 type FederationUserKey struct {
 	UserRef int64 `json:"user_ref"`

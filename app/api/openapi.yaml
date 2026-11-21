@@ -1540,6 +1540,120 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/federation/transfer-events:
+    get:
+      operationId: listFederationTransferEvents
+      summary: The receiver's transfer and fixity event ledger (#1574)
+      description: |
+        Every transfer, fixity-check and ingestion event the receiver
+        recorded for assets other instances announced to it, newest first.
+        Rows are snapshots with no link to the record or the peer, so they
+        stay readable after either is deleted: `record_exists` and
+        `peer_exists` say whether those still exist. A mismatched file's
+        row carries what was listed (`expected_*`) and what arrived
+        (`observed_*`); the bytes themselves were never kept.
+
+        Rows are kept for AA_FEDERATION_EVENT_RETENTION_DAYS (default
+        365, at least 30) and removed only by the daily sweep. Gated on
+        `system.admin`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: peer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: received_asset_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: event_type
+          in: query
+          required: false
+          schema: { type: string }
+          description: "transfer, fixity-check or ingestion."
+        - name: outcome
+          in: query
+          required: false
+          schema: { type: string }
+          description: "success, failure or warning."
+        - name: reason
+          in: query
+          required: false
+          schema: { type: string }
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Ledger rows matching the filter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationTransferEventList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/received-assets:
+    get:
+      operationId: listAdminReceivedAssets
+      summary: Every received asset record, for operators (#1574)
+      description: |
+        The receiver's records of assets other instances announced to it,
+        in every state (pending, complete, rejected) and every held tier,
+        `team` included, newest first. No bytes and no grant check: this
+        is the operator's view of what the receiver holds and why. A
+        record goes with its peer; its events stay in the ledger
+        (`/admin/federation/transfer-events`). Gated on `system.admin`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema: { type: string }
+          description: "pending, complete or rejected."
+        - name: peer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Received asset records matching the filter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminReceivedAssetList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/federation/peers/{id}/cancel-pending:
     parameters:
       - name: id
@@ -22300,6 +22414,95 @@ components:
           nullable: true
           description: Local activities row the dispatcher created for this inbound envelope.
 
+    FederationTransferEvent:
+      type: object
+      description: |
+        One row of the receiver's transfer and fixity event ledger
+        (federation_transfer_events, #1574). Identities are snapshots taken
+        when the event was written. The file fields are set for transfer
+        and fixity-check events. `observed_basis` says where an
+        observation came from: received_bytes, stored_bytes,
+        response_header (the Content-Length, before any byte was read) or
+        unavailable. `observed_truncated`: an overlong body was read only
+        to one byte past its listed size, so `observed_size_bytes` is a
+        lower bound and there is no digest.
+      required: [id, occurred_at, peer_id, peer_instance_url, received_asset_id, activity_uri, origin_asset_uri,
+                 version_uri, version_number, sensitivity, event_type, outcome, observed_truncated, attempt,
+                 agent_name, record_state_after, record_exists, peer_exists]
+      properties:
+        id: { type: string, format: uuid }
+        occurred_at: { type: string, format: date-time }
+        peer_id: { type: string, format: uuid }
+        peer_instance_url: { type: string }
+        peer_display_name: { type: string }
+        received_asset_id: { type: string, format: uuid }
+        activity_uri: { type: string }
+        origin_asset_uri: { type: string }
+        version_uri: { type: string }
+        version_number: { type: integer, format: int64 }
+        sensitivity: { type: string }
+        file_position: { type: integer }
+        file_role: { type: string, description: "original, preservation or access." }
+        object_hash: { type: string }
+        declared_media_type: { type: string }
+        event_type: { type: string, description: "transfer, fixity-check or ingestion." }
+        outcome: { type: string, description: "success, failure or warning." }
+        reason: { type: string }
+        expected_sha256: { type: string }
+        expected_size_bytes: { type: integer, format: int64 }
+        observed_basis: { type: string, description: "received_bytes, stored_bytes, response_header or unavailable." }
+        observed_sha256: { type: string }
+        observed_size_bytes: { type: integer, format: int64 }
+        observed_truncated: { type: boolean }
+        mismatch_algorithm: { type: string }
+        mismatch_expected: { type: string }
+        mismatch_observed: { type: string }
+        attempt: { type: integer }
+        agent_name: { type: string }
+        agent_version: { type: string }
+        record_state_after: { type: string, description: "pending, complete or rejected." }
+        detail: { type: string }
+        record_exists: { type: boolean, description: "Whether the received asset record still exists." }
+        peer_exists: { type: boolean, description: "Whether the peer still exists." }
+    FederationTransferEventList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationTransferEvent" }
+        next_cursor: { type: string }
+    AdminReceivedAsset:
+      type: object
+      description: A received asset record as operators see it (#1574), in any state and tier, without bytes.
+      required: [id, peer_id, peer_url, activity_uri, origin_asset_uri, version_uri, version_number, sensitivity,
+                 state, attempts, received_at, file_count, original_count, original_bytes]
+      properties:
+        id: { type: string, format: uuid }
+        peer_id: { type: string, format: uuid }
+        peer_url: { type: string }
+        peer_name: { type: string }
+        activity_uri: { type: string }
+        origin_asset_uri: { type: string }
+        version_uri: { type: string }
+        version_number: { type: integer, format: int64 }
+        sensitivity: { type: string }
+        state: { type: string, description: "pending, complete or rejected." }
+        reason: { type: string }
+        attempts: { type: integer }
+        received_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        file_count: { type: integer }
+        original_count: { type: integer }
+        original_bytes: { type: integer, format: int64 }
+    AdminReceivedAssetList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminReceivedAsset" }
+        next_cursor: { type: string }
     FederationInboxList:
       type: object
       required: [items]

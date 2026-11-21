@@ -217,6 +217,9 @@ type Deps struct {
 	Audit   Auditor
 	Logger  *slog.Logger
 	Config  Config
+	// AgentVersion is the software version recorded on ledger events
+	// (federation_transfer_events.agent_version).
+	AgentVersion string
 }
 
 // Service receives asset records.
@@ -638,6 +641,14 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, an *announced, state, r
 			return record{}, err
 		}
 	}
+	// A record refused as it is bound: its ledger row, in the same
+	// transaction (#1574 slice 2).
+	if state == StateRejected {
+		if err := s.writeEvents(ctx, tx, r.id, 0, StateRejected,
+			event{typ: EventIngestion, outcome: OutcomeFailure, reason: reason}); err != nil {
+			return record{}, err
+		}
+	}
 	return r, nil
 }
 
@@ -648,6 +659,9 @@ type heldPin struct {
 	pin  storage.PinRef
 	hash string
 	size int64
+	// basis says where the verified bytes came from (the ledger's
+	// observed_basis): received from the origin, or already stored here.
+	basis string
 	// detected is this instance's identification of the verified bytes
 	// (#1574 view: declared vs detected media type).
 	detected string
@@ -742,21 +756,21 @@ func (s *Service) process(ctx context.Context, id uuid.UUID, signers SignerResol
 		return Outcome{RecordID: id, State: StatePending}, &Error{Reason: casfetch.ReasonStorage, Retryable: true, Err: err}
 	}
 	if serr != nil {
-		return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonForeignSigner, false, serr)
+		return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonForeignSigner, false, serr, nil)
 	}
 	an, err := s.validate(ctx, st.announcement(signer))
 	if err != nil {
 		reason := ReasonOf(err)
-		return s.fail(ctx, st.ref, id, attempts, reason, reason == casfetch.ReasonPeerUnavailable, err)
+		return s.fail(ctx, st.ref, id, attempts, reason, reason == casfetch.ReasonPeerUnavailable, err, nil)
 	}
 	if an.digest != st.digest {
-		return s.fail(ctx, st.ref, id, attempts, ReasonArchivalInvalid, false, errors.New("the stored file set does not match its digest"))
+		return s.fail(ctx, st.ref, id, attempts, ReasonArchivalInvalid, false, errors.New("the stored file set does not match its digest"), nil)
 	}
 	if _, err := s.d.Grants.Allows(ctx, s.grantQuery(an)); err != nil {
 		if errors.Is(err, inboundgrants.ErrNoGrant) {
-			return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonNoInboundGrant, false, err)
+			return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonNoInboundGrant, false, err, nil)
 		}
-		return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonStorage, true, err)
+		return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonStorage, true, err, nil)
 	}
 	return s.transfer(ctx, an, id, attempts)
 }
@@ -780,9 +794,13 @@ func (s *Service) transfer(ctx context.Context, an *announced, id uuid.UUID, att
 		})
 		if err != nil {
 			release()
-			return s.fail(ctx, an.ref(), id, attempts, casfetch.ReasonOf(err), retryableFetch(err), err)
+			return s.fail(ctx, an.ref(), id, attempts, casfetch.ReasonOf(err), retryableFetch(err), err, fileOf(f))
 		}
-		held = append(held, heldPin{pin: res.Pin, hash: res.Hash, size: res.Size})
+		basis := casfetch.ObservedReceived
+		if res.Reused {
+			basis = casfetch.ObservedStored
+		}
+		held = append(held, heldPin{pin: res.Pin, hash: res.Hash, size: res.Size, basis: basis})
 	}
 	// Identify each verified original from its stored bytes, before the
 	// completing transaction writes it (a failure here is a storage
@@ -791,14 +809,14 @@ func (s *Service) transfer(ctx context.Context, an *announced, id uuid.UUID, att
 		d, err := s.identify(ctx, held[i].hash)
 		if err != nil {
 			release()
-			return s.fail(ctx, an.ref(), id, attempts, casfetch.ReasonStorage, true, fmt.Errorf("identify %s: %w", held[i].hash, err))
+			return s.fail(ctx, an.ref(), id, attempts, casfetch.ReasonStorage, true, fmt.Errorf("identify %s: %w", held[i].hash, err), nil)
 		}
 		held[i].detected = d
 	}
 	if s.afterFetch != nil {
 		s.afterFetch()
 	}
-	grantID, err := s.complete(ctx, an, id, held)
+	grantID, err := s.complete(ctx, an, id, attempts, held)
 	release() // the ingest pins: removed in the commit, or released here
 	if err != nil {
 		var e *Error
@@ -806,9 +824,9 @@ func (s *Service) transfer(ctx context.Context, an *announced, id uuid.UUID, att
 		case errors.Is(err, errNotPending):
 			return s.current(ctx, id)
 		case errors.As(err, &e):
-			return s.fail(ctx, an.ref(), id, attempts, e.Reason, e.Retryable, err)
+			return s.fail(ctx, an.ref(), id, attempts, e.Reason, e.Retryable, err, nil)
 		}
-		return s.fail(ctx, an.ref(), id, attempts, casfetch.ReasonStorage, true, err)
+		return s.fail(ctx, an.ref(), id, attempts, casfetch.ReasonStorage, true, err, nil)
 	}
 	s.auditRecord(ctx, audit.EventFederationAssetIngestCompleted, an.ref(), id, "", map[string]any{
 		"grant_id": grantID.String(), "files": len(an.originals)})
@@ -845,7 +863,7 @@ func retryableFetch(err error) bool {
 
 // complete records the held originals under the record in one
 // transaction, after checking the record, the peer and the grant again.
-func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, held []heldPin) (uuid.UUID, error) {
+func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, attempts int32, held []heldPin) (uuid.UUID, error) {
 	var grantID uuid.UUID
 	err := pgx.BeginFunc(ctx, s.d.Pool, func(tx pgx.Tx) error {
 		var state string
@@ -920,10 +938,21 @@ func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, hel
 				return err
 			}
 		}
-		_, err = tx.Exec(ctx, `UPDATE federation_received_assets
+		if _, err := tx.Exec(ctx, `UPDATE federation_received_assets
 			SET state = 'complete', reason = NULL, completed_at = now(), authorizing_grant_id = $2, updated_at = now()
-			WHERE id = $1`, id, grantID)
-		return err
+			WHERE id = $1`, id, grantID); err != nil {
+			return err
+		}
+		// The ledger (#1574 slice 2), in this transaction: each original's
+		// verified size and digest, then the completion.
+		evs := make([]event, 0, len(an.originals)+1)
+		for _, f := range an.originals {
+			h := byHash[f.hash]
+			evs = append(evs, event{typ: EventFixityCheck, outcome: OutcomeSuccess, file: fileOf(f),
+				observed: &casfetch.Observation{Basis: h.basis, SHA256: h.hash, Size: h.size, HasSize: true}})
+		}
+		evs = append(evs, event{typ: EventIngestion, outcome: OutcomeSuccess})
+		return s.writeEvents(ctx, tx, id, attempts, StateComplete, evs...)
 	})
 	return grantID, err
 }
@@ -933,7 +962,7 @@ func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, hel
 // ended (the process is stopping) decides nothing: the record stays
 // pending and is due again at once, for the next process. The attempt's
 // ingest pins are already released.
-func (s *Service) fail(ctx context.Context, ref recordRef, id uuid.UUID, attempts int32, reason string, retryable bool, cause error) (Outcome, error) {
+func (s *Service) fail(ctx context.Context, ref recordRef, id uuid.UUID, attempts int32, reason string, retryable bool, cause error, at *ledgerFile) (Outcome, error) {
 	if reason == "" {
 		reason = casfetch.ReasonStorage
 	}
@@ -946,21 +975,51 @@ func (s *Service) fail(ctx context.Context, ref recordRef, id uuid.UUID, attempt
 	if stopping {
 		delay = 0
 	}
-	tag, err := s.d.Pool.Exec(context.WithoutCancel(ctx), `UPDATE federation_received_assets
-		SET state = $2, reason = $3, next_attempt_at = now() + make_interval(secs => $4), updated_at = now()
-		WHERE id = $1 AND state = 'pending'`, id, state, reason, delay.Seconds())
+	// The ledger row says what this attempt saw (#1574 slice 2): a warning
+	// while the record stays pending, a failure once it is rejected, with
+	// the expected and observed size and digest of a mismatched file. It is
+	// written in the same transaction as the state change.
+	ev := event{typ: eventTypeOf(reason, at != nil), outcome: OutcomeFailure, reason: reason, detail: cause.Error()}
+	if state == StatePending {
+		ev.outcome = OutcomeWarning
+	}
+	if ev.typ != EventIngestion {
+		ev.file = at
+	}
+	if ev.typ == EventFixityCheck {
+		var ce *casfetch.Error
+		if errors.As(cause, &ce) && ce.Observed != nil {
+			ev.observed = ce.Observed
+		} else {
+			ev.observed = &casfetch.Observation{Basis: casfetch.ObservedUnavailable}
+		}
+	}
+	// Not the attempt's own context: a stopping process still records
+	// its deferral.
+	wctx := context.WithoutCancel(ctx)
+	changed := false
+	err := pgx.BeginFunc(wctx, s.d.Pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(wctx, `UPDATE federation_received_assets
+			SET state = $2, reason = $3, next_attempt_at = now() + make_interval(secs => $4), updated_at = now()
+			WHERE id = $1 AND state = 'pending'`, id, state, reason, delay.Seconds())
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		changed = true
+		return s.writeEvents(wctx, tx, id, attempts, state, ev)
+	})
 	if err != nil {
 		return Outcome{RecordID: id, State: StatePending, Reason: reason},
 			&Error{Reason: reason, Retryable: true, Err: errors.Join(cause, err)}
 	}
-	if tag.RowsAffected() == 0 {
+	if !changed {
 		return s.current(ctx, id)
 	}
-	event := audit.EventFederationAssetIngestRejected
+	auditEvent := audit.EventFederationAssetIngestRejected
 	if state == StatePending {
-		event = audit.EventFederationAssetIngestDeferred
+		auditEvent = audit.EventFederationAssetIngestDeferred
 	}
-	s.auditRecord(ctx, event, ref, id, reason, map[string]any{"attempts": attempts, "error": cause.Error()})
+	s.auditRecord(ctx, auditEvent, ref, id, reason, map[string]any{"attempts": attempts, "error": cause.Error()})
 	return Outcome{RecordID: id, State: state, Reason: reason}, &Error{Reason: reason, Retryable: state == StatePending, Err: cause}
 }
 

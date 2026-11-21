@@ -395,6 +395,11 @@ func (*PanicShim) PreviewFederationPeerDefederation(context.Context, openapi.Pre
 	panic("PanicShim: PreviewFederationPeerDefederation called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListAdminReceivedAssets panics by default; test shims override.
+func (*PanicShim) ListAdminReceivedAssets(context.Context, openapi.ListAdminReceivedAssetsRequestObject) (openapi.ListAdminReceivedAssetsResponseObject, error) {
+	panic("PanicShim: ListAdminReceivedAssets called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListFederationShares panics by default; test shims override.
 func (*PanicShim) ListFederationShares(context.Context, openapi.ListFederationSharesRequestObject) (openapi.ListFederationSharesResponseObject, error) {
 	panic("PanicShim: ListFederationShares called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -423,6 +428,11 @@ func (*PanicShim) ListFederationPeerSuggestions(context.Context, openapi.ListFed
 // RefreshFederationPeerSuggestions panics by default; test shims override.
 func (*PanicShim) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
 	panic("PanicShim: RefreshFederationPeerSuggestions called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListFederationTransferEvents panics by default; test shims override.
+func (*PanicShim) ListFederationTransferEvents(context.Context, openapi.ListFederationTransferEventsRequestObject) (openapi.ListFederationTransferEventsResponseObject, error) {
+	panic("PanicShim: ListFederationTransferEvents called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // RotateUserFederationKeysAsAdmin panics by default; test shims override.

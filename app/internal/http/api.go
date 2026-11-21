@@ -996,6 +996,23 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 					slog.String("err", err.Error()),
 				)
 			}
+			// #1574 slice 2: the daily retention sweep of the transfer and
+			// fixity event ledger (AA_FEDERATION_EVENT_RETENTION_DAYS,
+			// default 365, at least 30; the database enforces the same
+			// bound). 03:00 UTC, beside the audit purge.
+			retentionDays := cfg.FederationEventRetentionDays
+			if retentionDays == 0 {
+				retentionDays = assetingest.DefaultEventRetentionDays
+			}
+			jobSvc.Registry.Register(&assetingest.EventRetentionJob{
+				Pool: pool, Jobs: jobSvc, Logger: logger, Days: retentionDays, HourUTC: 3,
+			})
+			if err := assetingest.EnsureEventRetentionScheduled(context.Background(), jobSvc, 3); err != nil {
+				logger.LogAttrs(context.Background(), slog.LevelWarn,
+					"federation.transfer_events.retention.initial_enqueue_error",
+					slog.String("err", err.Error()),
+				)
+			}
 			if err := softdelete.EnsureScheduled(context.Background(), jobSvc, sysCfg); err != nil {
 				logger.LogAttrs(context.Background(), slog.LevelWarn,
 					"softdelete.gc.initial_enqueue_error",
@@ -1583,6 +1600,8 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		Fetcher: s.casFetch,
 		Audit:   auditRec,
 		Logger:  logger,
+		// #1574 slice 2: the version recorded on transfer ledger events.
+		AgentVersion: storageSvc.AgentVersion,
 	}), assetingest.DefaultWorkerConfig(), func() casfetch.Signer { return casfetch.InstanceSigner(signer) })
 	s.inboxDispatcher.SetAssetScheduler(s.assetIngest)
 	// #1574 view: a complete received record is shown to its grant's
@@ -3369,6 +3388,17 @@ func (s *apiServer) DownloadAssetFile(ctx context.Context, req openapi.DownloadA
 // #1574 received assets (federation/receivedassets).
 func (s *apiServer) ListReceivedAssets(ctx context.Context, req openapi.ListReceivedAssetsRequestObject) (openapi.ListReceivedAssetsResponseObject, error) {
 	return s.receivedAssets.ListReceivedAssets(ctx, req)
+}
+
+// #1574 slice 2: the operator's view of the transfer and fixity event
+// ledger and of every received record (system.admin, receivedassets
+// admin.go).
+func (s *apiServer) ListFederationTransferEvents(ctx context.Context, req openapi.ListFederationTransferEventsRequestObject) (openapi.ListFederationTransferEventsResponseObject, error) {
+	return s.receivedAssets.ListFederationTransferEvents(ctx, req)
+}
+
+func (s *apiServer) ListAdminReceivedAssets(ctx context.Context, req openapi.ListAdminReceivedAssetsRequestObject) (openapi.ListAdminReceivedAssetsResponseObject, error) {
+	return s.receivedAssets.ListAdminReceivedAssets(ctx, req)
 }
 
 func (s *apiServer) GetReceivedAsset(ctx context.Context, req openapi.GetReceivedAssetRequestObject) (openapi.GetReceivedAssetResponseObject, error) {

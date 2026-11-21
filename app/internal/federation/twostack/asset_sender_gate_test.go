@@ -369,6 +369,89 @@ func TestTwoStack_AssetSender(t *testing.T) {
 		}
 		g.nothingOnB(o)
 	})
+
+	// #1574 slice 2. LAST: it removes the peer on B.
+	t.Run("a tampered transfer stays visible to B's operator after B removes the peer", func(t *testing.T) {
+		o := g.newOriginal("public")
+		g.sealedOnA(o)
+		g.a.setFront(func(w http.ResponseWriter, r *http.Request, h http.Handler) {
+			if r.Method != http.MethodGet {
+				h.ServeHTTP(w, r)
+				return
+			}
+			h.ServeHTTP(&writerHook{ResponseWriter: w, mutate: func(p []byte) []byte {
+				if len(p) > 0 {
+					p[0] ^= 0xff
+				}
+				return p
+			}}, r)
+		})
+		defer g.a.setFront(nil)
+		g.grantWith(o, map[string]any{"allow_original": true})
+		ann := g.announcementsOnA(o)
+		if len(ann) != 1 {
+			t.Fatalf("A recorded %d announcements, want 1", len(ann))
+		}
+		g.recordStateOnB(ann[0], "rejected/fixity_mismatch")
+		var recordID string
+		if err := g.b.pool.QueryRow(ctx, `SELECT id::text FROM federation_received_assets WHERE peer_id = $1 AND activity_uri = $2`,
+			g.peerAonB, ann[0]).Scan(&recordID); err != nil {
+			t.Fatal(err)
+		}
+		g.nothingOnB(o)
+
+		type ev struct {
+			ReceivedAssetID string  `json:"received_asset_id"`
+			EventType       string  `json:"event_type"`
+			Outcome         string  `json:"outcome"`
+			Reason          *string `json:"reason"`
+			PeerURL         string  `json:"peer_instance_url"`
+			ExpectedSHA256  *string `json:"expected_sha256"`
+			ObservedSHA256  *string `json:"observed_sha256"`
+			ObservedBasis   *string `json:"observed_basis"`
+			RecordExists    bool    `json:"record_exists"`
+			PeerExists      bool    `json:"peer_exists"`
+		}
+		ledger := func() ev {
+			t.Helper()
+			var out struct {
+				Items []ev `json:"items"`
+			}
+			if st := g.api(g.b, http.MethodGet, "/admin/federation/transfer-events?received_asset_id="+recordID, nil, &out); st != http.StatusOK {
+				t.Fatalf("B's ledger: %d", st)
+			}
+			if len(out.Items) != 1 {
+				t.Fatalf("B's ledger has %d rows for the record: %+v", len(out.Items), out.Items)
+			}
+			return out.Items[0]
+		}
+		check := func(e ev) {
+			t.Helper()
+			if e.EventType != "fixity-check" || e.Outcome != "failure" || e.Reason == nil || *e.Reason != "fixity_mismatch" ||
+				e.PeerURL != g.a.url || e.ExpectedSHA256 == nil || *e.ExpectedSHA256 != o.hash ||
+				e.ObservedSHA256 == nil || *e.ObservedSHA256 == o.hash || e.ObservedBasis == nil || *e.ObservedBasis != "received_bytes" {
+				t.Fatalf("B's ledger row: %+v", e)
+			}
+		}
+		before := ledger()
+		check(before)
+		if !before.RecordExists || !before.PeerExists {
+			t.Fatalf("before removal: %+v", before)
+		}
+		// B's operator removes A, through B's admin API; the record goes
+		// with the peer.
+		if st := g.api(g.b, http.MethodDelete, "/admin/federation/peers/"+g.peerAonB.String(), nil, nil); st != http.StatusNoContent {
+			t.Fatalf("B removing A: %d", st)
+		}
+		if n := g.countOnB(`SELECT count(*) FROM federation_received_assets WHERE id = $1`, recordID); n != 0 {
+			t.Fatal("the record outlived its peer on B")
+		}
+		after := ledger()
+		check(after)
+		if after.RecordExists || after.PeerExists {
+			t.Fatalf("after removal: %+v", after)
+		}
+	})
 }
 
 // senderOffOnA keeps A from announcing anything itself (#1574 sender):

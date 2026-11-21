@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
@@ -603,5 +604,86 @@ func TestNoStore_EveryAnswerOfTheRoutes(t *testing.T) {
 				t.Errorf("%s answering %d: Cache-Control %q, want %q", path, status, got, want)
 			}
 		}
+	}
+}
+
+// TestAdmin_RequiresSystemAdminAndListsEveryRecord (#1574 slice 2): both
+// operator endpoints answer 401 to an anonymous caller and 403 to a
+// signed-in caller without system.admin; for an operator the record list
+// holds every state and tier, team included; unknown filters are 400.
+func TestAdmin_RequiresSystemAdminAndListsEveryRecord(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	pub := f.complete(f.peerA, "public")
+	team := f.complete(f.peerA, "team")
+	pend := record{id: uuid.New(), peer: f.peerA, hash: strings.Repeat("ce", 32), body: []byte("x")}
+	pend.object = f.peerA.url + "/assets/" + uuid.NewString()
+	f.insert(pend, "public", "pending")
+	rej := record{id: uuid.New(), peer: f.peerA, hash: strings.Repeat("cf", 32), body: []byte("x")}
+	rej.object = f.peerA.url + "/assets/" + uuid.NewString()
+	f.insert(rej, "public", "rejected")
+
+	admin := auth.WithIdentity(ctx, &auth.Identity{UserRef: f.admin, Capabilities: []string{"system.admin"}})
+	member := as(f.u1)
+	pid := openapi_types.UUID(f.peerA.id)
+
+	for name, c := range map[string]context.Context{"anonymous": ctx, "member": member} {
+		r1, err := f.h.ListAdminReceivedAssets(c, openapi.ListAdminReceivedAssetsRequestObject{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r2, err := f.h.ListFederationTransferEvents(c, openapi.ListFederationTransferEventsRequestObject{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch name {
+		case "anonymous":
+			_, ok1 := r1.(openapi.ListAdminReceivedAssets401JSONResponse)
+			_, ok2 := r2.(openapi.ListFederationTransferEvents401JSONResponse)
+			if !ok1 || !ok2 {
+				t.Errorf("anonymous: %T %T", r1, r2)
+			}
+		default:
+			_, ok1 := r1.(openapi.ListAdminReceivedAssets403JSONResponse)
+			_, ok2 := r2.(openapi.ListFederationTransferEvents403JSONResponse)
+			if !ok1 || !ok2 {
+				t.Errorf("member: %T %T", r1, r2)
+			}
+		}
+	}
+
+	res, err := f.h.ListAdminReceivedAssets(admin, openapi.ListAdminReceivedAssetsRequestObject{
+		Params: openapi.ListAdminReceivedAssetsParams{PeerId: &pid}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, ok := res.(openapi.ListAdminReceivedAssets200JSONResponse)
+	if !ok {
+		t.Fatalf("admin: %T", res)
+	}
+	got := map[uuid.UUID]string{}
+	for _, it := range list.Items {
+		got[uuid.UUID(it.Id)] = it.State + "/" + it.Sensitivity
+	}
+	for id, want := range map[uuid.UUID]string{pub.id: "complete/public", team.id: "complete/team",
+		pend.id: "pending/public", rej.id: "rejected/public"} {
+		if got[id] != want {
+			t.Errorf("record %s: %q, want %q", id, got[id], want)
+		}
+	}
+	bad := "nonsense"
+	if r, _ := f.h.ListAdminReceivedAssets(admin, openapi.ListAdminReceivedAssetsRequestObject{
+		Params: openapi.ListAdminReceivedAssetsParams{State: &bad}}); func() bool {
+		_, ok := r.(openapi.ListAdminReceivedAssets400JSONResponse)
+		return !ok
+	}() {
+		t.Errorf("unknown state: %T", r)
+	}
+	if r, _ := f.h.ListFederationTransferEvents(admin, openapi.ListFederationTransferEventsRequestObject{
+		Params: openapi.ListFederationTransferEventsParams{Outcome: &bad}}); func() bool {
+		_, ok := r.(openapi.ListFederationTransferEvents400JSONResponse)
+		return !ok
+	}() {
+		t.Errorf("unknown outcome: %T", r)
 	}
 }
