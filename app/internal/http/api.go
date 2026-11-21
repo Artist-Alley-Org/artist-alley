@@ -4323,7 +4323,23 @@ func (s *apiServer) GetFederationShareGrantContext(ctx context.Context, req open
 
 // --- federation outbox + inbox admin (Phase 1.22.D-c) -------------------
 
+// ListFederationOutbox and ListFederationInbox answer only the federation
+// read capability (the seeded Auditor role, #356 / #958) or system.admin,
+// like the other federation admin read surfaces: both lists carry peer,
+// actor and activity detail. The gate comes before any parameter is read
+// or the store is touched.
 func (s *apiServer) ListFederationOutbox(ctx context.Context, req openapi.ListFederationOutboxRequestObject) (openapi.ListFederationOutboxResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListFederationOutbox401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("federation.read") && !caller.Can("system.admin") {
+		return openapi.ListFederationOutbox403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "federation.read capability required"},
+		}, nil
+	}
 	f := outbox.AdminListOutboxFilter{}
 	if req.Params.PeerId != nil {
 		pid := uuid.UUID(*req.Params.PeerId)
@@ -4374,6 +4390,13 @@ func (s *apiServer) RequeueFederationOutbox(ctx context.Context, req openapi.Req
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
+	// A write: system.admin only (#356 keeps every federation write
+	// there; federation.read does not reach it).
+	if !caller.Can("system.admin") {
+		return openapi.RequeueFederationOutbox403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
 	updated, err := s.outboxAdmin.RequeueOutbox(ctx, nil, caller.UserRef, uuid.UUID(req.Id))
 	if err != nil {
 		switch {
@@ -4388,6 +4411,17 @@ func (s *apiServer) RequeueFederationOutbox(ctx context.Context, req openapi.Req
 }
 
 func (s *apiServer) ListFederationInbox(ctx context.Context, req openapi.ListFederationInboxRequestObject) (openapi.ListFederationInboxResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListFederationInbox401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("federation.read") && !caller.Can("system.admin") {
+		return openapi.ListFederationInbox403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "federation.read capability required"},
+		}, nil
+	}
 	f := outbox.AdminListInboxFilter{}
 	if req.Params.PeerId != nil {
 		pid := uuid.UUID(*req.Params.PeerId)
@@ -4436,6 +4470,12 @@ func (s *apiServer) CancelFederationPeerPending(ctx context.Context, req openapi
 	if caller == nil {
 		return openapi.CancelFederationPeerPending401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	// A write: system.admin only, as for the re-queue above.
+	if !caller.Can("system.admin") {
+		return openapi.CancelFederationPeerPending403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
 		}, nil
 	}
 	count, err := s.outboxAdmin.CancelPendingForPeer(ctx, nil, caller.UserRef, uuid.UUID(req.Id))
