@@ -562,6 +562,16 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
+		// #1575: the origin withdrew this asset (§17.3), before or after
+		// an earlier announcement. A new announcement of it, delayed or
+		// replayed, is refused and never resurrects it; only a redelivery
+		// of an activity already recorded (above) finds its record.
+		if tomb, err := tombstoneOf(ctx, tx, an.peer.ID, an.env.Object); err != nil {
+			return err
+		} else if tomb != nil {
+			rec, err = s.insert(ctx, tx, an, StateRejected, ReasonWithdrawn)
+			return err
+		}
 		var liveVersion, liveDigest string
 		r, err = scanRecord(tx.QueryRow(ctx, `SELECT `+recordCols+` FROM federation_received_assets
 			WHERE peer_id = $1 AND origin_asset_uri = $2 AND state <> 'rejected'`, an.peer.ID, an.env.Object))
@@ -1092,7 +1102,7 @@ func (s *Service) current(ctx context.Context, id uuid.UUID) (Outcome, error) {
 	switch r.state {
 	case StateComplete:
 		return out, nil
-	case StateRejected:
+	case StateRejected, StateWithdrawn:
 		return out, &Error{Reason: r.reason}
 	}
 	return out, &Error{Reason: r.reason, Retryable: true}

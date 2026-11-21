@@ -688,7 +688,12 @@
       "value_declared": "declared, not verified",
       "files_note": "Size and SHA-256 were checked by this instance only for a verified original. For any other file they are what the sender declared, and no fixity check has been run on them.",
       "download": "Download original",
-      "download_unavailable": "The share does not include the original file."
+      "download_unavailable": "The share does not include the original file.",
+      "withdrawn_title": "Withdrawn by the sending studio",
+      "withdrawn_body": "The studio that shared this asset has withdrawn it. Its files are no longer kept or available here.",
+      "withdrawn_on": "Withdrawn",
+      "withdrawn_reason": "Reason given by the sending studio",
+      "withdrawn_last_version": "Last version"
     },
     "trash": {
       "title": "Trash",

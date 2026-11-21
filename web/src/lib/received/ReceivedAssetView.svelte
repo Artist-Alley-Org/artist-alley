@@ -13,6 +13,12 @@
   // carries the original file (original_available), and the download
   // itself is checked again by the server.
   //
+  // A record its sending studio withdrew (#1575, spec v1 §17.3) answers
+  // 410 with the withdrawal notice, only to a caller who could view it:
+  // when it was withdrawn, the studio's own reason if it gave one
+  // (labelled as theirs), and what was withdrawn. Nothing of the record
+  // is shown and no download is offered.
+  //
   // `id` can change while this component stays mounted (a client
   // navigation from one received asset to another reuses the page). Each
   // change clears the previous record AT ONCE, so neither it nor its
@@ -27,6 +33,7 @@
     originalUrl,
     verifiedHere,
     type ReceivedAssetDetail,
+    type ReceivedAssetWithdrawal,
   } from '$lib/received/received';
 
   let { id }: { id: string } = $props();
@@ -34,6 +41,7 @@
   let detail = $state<ReceivedAssetDetail | null>(null);
   let loading = $state(true);
   let missing = $state(false);
+  let withdrawn = $state<ReceivedAssetWithdrawal | null>(null);
   let error = $state<string | null>(null);
 
   // The newest request's number; a response from any other is dropped.
@@ -51,6 +59,7 @@
     const mine = ++seq;
     detail = null;
     missing = false;
+    withdrawn = null;
     error = null;
     loading = true;
     try {
@@ -60,6 +69,10 @@
       if (mine !== seq) return;
       if (r.response?.status === 404) {
         missing = true;
+        return;
+      }
+      if (r.response?.status === 410) {
+        withdrawn = r.error as ReceivedAssetWithdrawal;
         return;
       }
       if (r.error || !r.data) {
@@ -96,6 +109,23 @@
   <p class="rounded border border-border px-3 py-2 text-sm text-fg-muted" data-testid="received-missing">
     {t('account.received.not_found')}
   </p>
+{:else if withdrawn}
+  <section class="rounded border border-border px-4 py-3 text-sm" data-testid="received-withdrawn">
+    <h2 class="mb-1 text-lg font-semibold">{t('account.received.withdrawn_title')}</h2>
+    <p class="mb-3 text-fg-muted">{t('account.received.withdrawn_body')}</p>
+    <dl class="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1">
+      <dt class="text-fg-muted">{t('account.received.withdrawn_on')}</dt>
+      <dd data-testid="received-withdrawn-deleted">{new Date(withdrawn.deleted).toLocaleString()}</dd>
+      {#if withdrawn.reason}
+        <dt class="text-fg-muted">{t('account.received.withdrawn_reason')}</dt>
+        <dd class="break-words" data-testid="received-withdrawn-reason">{withdrawn.reason}</dd>
+      {/if}
+      <dt class="text-fg-muted">{t('account.received.source')}</dt>
+      <dd class="break-all">{withdrawn.origin_asset_uri}</dd>
+      <dt class="text-fg-muted">{t('account.received.withdrawn_last_version')}</dt>
+      <dd class="break-all">{withdrawn.last_version}</dd>
+    </dl>
+  </section>
 {:else if error}
   <p role="alert" class="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
     {error}

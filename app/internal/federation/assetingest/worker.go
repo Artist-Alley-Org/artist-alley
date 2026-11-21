@@ -117,6 +117,20 @@ func (w *Worker) ScheduleAsset(ctx context.Context, peerID uuid.UUID, env *feder
 	return res, err
 }
 
+// WithdrawAsset is the inbox's withdrawal receiver (#1575): it applies an
+// origin's aa:tombstone (Service.Withdraw). Nothing is fetched.
+func (w *Worker) WithdrawAsset(ctx context.Context, peerID uuid.UUID, env *federation.Envelope) (inbox.AssetScheduled, error) {
+	out, err := w.svc.Withdraw(ctx, peerID, env)
+	res := inbox.AssetScheduled{State: StateWithdrawn, Reason: ReasonOf(err), Retryable: Retryable(err)}
+	if len(out.Records) > 0 {
+		res.RecordID = out.Records[0]
+	}
+	if err != nil {
+		res.State = ""
+	}
+	return res, err
+}
+
 // Run claims and runs due records until ctx ends, then waits for the
 // imports it started. Safe to call once per process.
 func (w *Worker) Run(ctx context.Context) {

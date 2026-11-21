@@ -74,6 +74,28 @@ func pngBytes(t *testing.T) []byte {
 // creates a public image asset from it.
 func (g *casGate) uploadAsset(body []byte) original {
 	g.t.Helper()
+	hash, receipt := g.uploadOnA(body)
+	var asset struct {
+		ID string `json:"id"`
+	}
+	if st := g.api(g.a, http.MethodPost, "/assets", map[string]any{"title": "Harbour", "asset_type": 1,
+		"file_hash": hash, "upload_receipt": receipt, "file_extension": "png"}, &asset); st != http.StatusCreated {
+		g.t.Fatalf("create asset: %d %+v", st, asset)
+	}
+	// As stored: a new asset is public by default, and points at the
+	// uploaded bytes.
+	var tier, fileHash string
+	if err := g.a.pool.QueryRow(context.Background(), `SELECT sensitivity, file_hash FROM assets WHERE id = $1`,
+		asset.ID).Scan(&tier, &fileHash); err != nil || tier != "public" || fileHash != hash {
+		g.t.Fatalf("the uploaded asset is %q over %s (%v)", tier, fileHash, err)
+	}
+	return original{asset: uuid.MustParse(asset.ID), hash: hash, body: body}
+}
+
+// uploadOnA uploads body through A's real upload API as A's admin,
+// returning its hash and upload receipt.
+func (g *casGate) uploadOnA(body []byte) (hash, receipt string) {
+	g.t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, g.a.url+"/api/v1/storage/objects", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+g.a.token)
 	req.Header.Set("Content-Type", "application/octet-stream")
@@ -96,21 +118,7 @@ func (g *casGate) uploadAsset(body []byte) original {
 	if up.Hash != hex.EncodeToString(sum[:]) {
 		g.t.Fatalf("A stored %s for bytes hashing to %x", up.Hash, sum)
 	}
-	var asset struct {
-		ID string `json:"id"`
-	}
-	if st := g.api(g.a, http.MethodPost, "/assets", map[string]any{"title": "Harbour", "asset_type": 1,
-		"file_hash": up.Hash, "upload_receipt": up.Receipt, "file_extension": "png"}, &asset); st != http.StatusCreated {
-		g.t.Fatalf("create asset: %d %+v", st, asset)
-	}
-	// As stored: a new asset is public by default, and points at the
-	// uploaded bytes.
-	var tier, fileHash string
-	if err := g.a.pool.QueryRow(context.Background(), `SELECT sensitivity, file_hash FROM assets WHERE id = $1`,
-		asset.ID).Scan(&tier, &fileHash); err != nil || tier != "public" || fileHash != up.Hash {
-		g.t.Fatalf("the uploaded asset is %q over %s (%v)", tier, fileHash, err)
-	}
-	return original{asset: uuid.MustParse(asset.ID), hash: up.Hash, body: body}
+	return up.Hash, up.Receipt
 }
 
 // receivedOnB is B's record id for activityURI.

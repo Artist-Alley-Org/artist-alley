@@ -274,8 +274,15 @@ func UndoHandler(d *Dispatcher) HandlerFn {
 // delivered by that Create, needs no live share (§7.1), and is processed
 // the same way whether or not the comment exists, was already deleted or
 // belongs to someone else. A database error is retryable.
+//
+// A Delete carrying aa:tombstone is not a comment's: it is an origin's
+// withdrawal of an asset (#1575, spec v1 §17.3), handed to the asset
+// receiver (handler_asset.go).
 func DeleteHandler(d *Dispatcher) HandlerFn {
 	return func(ctx context.Context, env *federation.Envelope, peerID uuid.UUID, peerURL string, row FederationInbox) (DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {
+		if isAssetWithdrawal(env) {
+			return d.assetWithdrawal(ctx, env, peerID)
+		}
 		if d.social == nil {
 			return OutcomeFailed, "", uuid.UUID{}, errors.New("DeleteHandler: SocialPoster not wired")
 		}

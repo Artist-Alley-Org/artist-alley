@@ -165,3 +165,76 @@ func TestResolver_AssetVersion_ProfilesAndGrantReadLive(t *testing.T) {
 		}
 	}
 }
+
+// #1575: an asset's withdrawal goes to the one peer its emitter named
+// (a peer the asset was announced to), read live, with both profiles. It
+// needs no share: a revoked, expired or absent share does not stop it.
+
+func assetWithdrawalInput(asset, peer uuid.UUID) outbox.Input {
+	return outbox.Input{Verb: string(federation.ActivityDelete), TargetKind: "asset", TargetID: asset,
+		TargetPeerID: peer, Visibility: outbox.VisibilityPrivate, Sensitivity: outbox.SensitivityPublic}
+}
+
+func TestResolver_AssetWithdrawal_GoesToTheNamedPeerOnly(t *testing.T) {
+	f := newShareFixture(t)
+	ctx := context.Background()
+	var calls []skipCall
+	f.r.SetEmissionSkippedForPeer(func(_ context.Context, p uuid.UUID, reason outbox.SkippedReason, verb string) {
+		calls = append(calls, skipCall{p, reason, verb})
+	})
+	f.negotiate(t, f.peer, bothAssetProfiles)
+	f.negotiate(t, f.other, bothAssetProfiles)
+	asset := uuid.New()
+	// The other peer holds a live original share of the same asset; it
+	// was not named, so it is not a recipient.
+	f.assetShare(t, asset, func(in *shares.InsertInput) { in.PeerID = f.other })
+	got, err := f.r.Resolve(ctx, assetWithdrawalInput(asset, f.peer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	onlyPeer(t, "withdrawal with no share", got, f.peer)
+
+	// A revoked share to the named peer does not stop it.
+	r := f.assetShare(t, asset, nil)
+	if _, err := f.svc.Revoke(ctx, r.ID, f.activity(t, "aa:Unshare")); err != nil {
+		t.Fatal(err)
+	}
+	got, err = f.r.Resolve(ctx, assetWithdrawalInput(asset, f.peer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	onlyPeer(t, "withdrawal after the share was revoked", got, f.peer)
+
+	// Nobody named, or a peer that is gone.
+	for _, p := range []uuid.UUID{uuid.Nil, uuid.New()} {
+		got, err := f.r.Resolve(ctx, assetWithdrawalInput(asset, p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		noRecipients(t, "peer "+p.String(), got)
+	}
+	// Without both profiles: skipped and audited for that peer.
+	for _, caps := range []string{`[]`, `["share-lifecycle-1","archival-1"]`, `["share-lifecycle-1","original-transfer-1"]`} {
+		f.negotiate(t, f.peer, caps)
+		got, err := f.r.Resolve(ctx, assetWithdrawalInput(asset, f.peer))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Skipped != outbox.SkippedProfileNotNegotiated || len(got.Recipients) != 0 {
+			t.Fatalf("with %s: %+v, want profile_not_negotiated", caps, got)
+		}
+	}
+	if len(calls) != 3 || calls[0] != (skipCall{f.peer, outbox.SkippedProfileNotNegotiated, string(federation.ActivityDelete)}) {
+		t.Fatalf("per-peer audit calls %+v", calls)
+	}
+	// A disabled peer.
+	f.negotiate(t, f.peer, bothAssetProfiles)
+	if _, err := f.pool.Exec(ctx, `UPDATE federation_peers SET enabled = FALSE WHERE id = $1`, f.peer); err != nil {
+		t.Fatal(err)
+	}
+	got, err = f.r.Resolve(ctx, assetWithdrawalInput(asset, f.peer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	noRecipients(t, "a disabled peer", got)
+}

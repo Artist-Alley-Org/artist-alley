@@ -65,8 +65,11 @@ import (
 //
 // Delete and Update are applied only as a Delete or an edit of a comment
 // (#1572), the same way: object_type "Note" is required, and a Delete or
-// an Update of a post, an asset, a profile or anything else is
-// unsupported_activity.
+// an Update of a post, a profile or anything else is
+// unsupported_activity. The one other Delete is an origin's withdrawal of
+// an asset (#1575): it carries aa:tombstone (archival-1, checked by
+// ValidateMembers) and no object_type, and DeleteHandler hands it to the
+// asset receiver, which also requires original-transfer-1.
 var appliedHandlers = map[federation.ActivityType]func(*Dispatcher) HandlerFn{
 	federation.ActivityLike:      LikeHandler,
 	federation.ActivityUndo:      UndoHandler,

@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/assetsend"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
+	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 )
 
 // #1574 sender through the real delivery worker: an aa:AssetVersion is
@@ -149,6 +151,7 @@ func newAVFx(t *testing.T) *avFx {
 		}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	wireTestActorSigner(t, f.worker)
 	f.worker.SetAssetVersionMember(assetsend.Source{Pool: pool}.Member)
+	f.worker.SetAssetWithdrawalMember(assetsend.Source{Pool: pool}.Tombstone)
 	return f
 }
 
@@ -466,5 +469,400 @@ func TestDelivery_AssetVersion_ReleasedWhenItsShareIsSentLater(t *testing.T) {
 	f.worker.RunOnce(ctx)
 	if got := f.stub.types(); len(got) != 2 || got[1] != string(federation.ActivityAAAssetVersion) {
 		t.Fatalf("sent %v", got)
+	}
+}
+
+// #1575: an asset's withdrawal through the real delivery worker. It waits
+// for the peer's announcement, is released when that is sent, then goes
+// once with only the aa:tombstone built from the last sealed version.
+
+// withdraw soft-deletes a and records its withdrawals, as the delete
+// handler does, then queues each to the peer due now, as the dispatcher
+// does.
+func (f *avFx) withdraw(a avAsset) []uuid.UUID {
+	f.t.Helper()
+	ctx := context.Background()
+	var ids []uuid.UUID
+	if err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE assets SET deleted_at = now() WHERE id = $1`, a.id); err != nil {
+			return err
+		}
+		var err error
+		ids, err = assetsend.RecordWithdrawals(ctx, tx, f.writer, assetsend.Deleted{AssetID: a.id, BaseURL: avLocal,
+			Username: func(context.Context, int64) string { return "alice" }})
+		return err
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+	for _, id := range ids {
+		if _, err := f.pool.Exec(ctx, `INSERT INTO federation_outbox (activity_id, peer_id, sensitivity) VALUES ($1, $2, 'public')`,
+			id, f.peer); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	return ids
+}
+
+// inFlight has the announcement of g built for the peer, as the delivery
+// worker does right before its request, and leaves its row queued: a
+// delivery in flight. Its aa:Share is marked delivered first, as the
+// member requires.
+func (f *avFx) inFlight(g avGrant) {
+	f.t.Helper()
+	ctx := context.Background()
+	if _, err := f.pool.Exec(ctx, `UPDATE federation_outbox SET status = 'sent' WHERE activity_id = $1 AND peer_id = $2`,
+		g.shareActivity, f.peer); err != nil {
+		f.t.Fatal(err)
+	}
+	var object string
+	var payload []byte
+	if err := f.pool.QueryRow(ctx, `SELECT object_uri, payload FROM activities WHERE id = $1`, g.announcement).Scan(&object, &payload); err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err := (assetsend.Source{Pool: f.pool}).Member(ctx, g.announcement, f.peer, object, payload); err != nil {
+		f.t.Fatalf("build the announcement: %v", err)
+	}
+}
+
+func TestDelivery_AssetWithdrawal_AfterItsAnnouncementThenOnce(t *testing.T) {
+	f := newAVFx(t)
+	ctx := context.Background()
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := f.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := f.newAsset("public", true)
+	g := f.grant(a, true)
+	exec(`UPDATE federation_outbox SET status = 'sent' WHERE activity_id = $1`, g.shareActivity)
+	// The announcement is built, and its request still in flight, when the
+	// asset is deleted.
+	exec(`UPDATE federation_outbox SET next_attempt_at = now() + interval '1 hour' WHERE activity_id = $1`, g.announcement)
+	f.inFlight(g)
+	ids := f.withdraw(a)
+	if len(ids) != 1 {
+		t.Fatalf("%d withdrawals, want 1", len(ids))
+	}
+	wd := ids[0]
+
+	f.worker.RunOnce(ctx)
+	if len(f.stub.types()) != 0 {
+		t.Fatalf("sent %v before the announcement", f.stub.types())
+	}
+	// Held back without counting an attempt (rev629: waiting is not a
+	// failed attempt).
+	if st, attempts, due := f.row(wd); st != "queued" || attempts != 0 || due {
+		t.Fatalf("withdrawal before its announcement: %s, %d attempts, due %v", st, attempts, due)
+	}
+	// The in-flight request completes (marked sent here, as its own
+	// round would); an unrelated send does not release the withdrawal.
+	exec(`UPDATE federation_outbox SET status = 'sent' WHERE activity_id = $1`, g.announcement)
+	exec(`UPDATE federation_outbox SET next_attempt_at = now() + interval '1 hour' WHERE activity_id = $1`, wd)
+	other := f.unrelatedShare()
+	f.worker.RunOnce(ctx)
+	if st, _, due := f.row(wd); st != "queued" || due {
+		t.Fatalf("an unrelated send released the withdrawal: %s due %v", st, due)
+	}
+	_ = other
+
+	// Released by its own announcement's send, in that round.
+	b := f.newAsset("public", true)
+	gb := f.grant(b, true)
+	exec(`UPDATE federation_outbox SET status = 'sent' WHERE activity_id = $1`, gb.shareActivity)
+	f.worker.RunOnce(ctx) // b's announcement is sent
+	if st, _, _ := f.row(gb.announcement); st != "sent" {
+		t.Fatalf("b's announcement %s", st)
+	}
+	exec(`UPDATE federation_outbox SET next_attempt_at = now() + interval '1 hour', status = 'queued' WHERE activity_id = $1`, gb.announcement)
+	idsB := f.withdraw(b)
+	exec(`UPDATE federation_outbox SET next_attempt_at = now() + interval '1 hour' WHERE activity_id = $1`, idsB[0])
+	exec(`UPDATE federation_outbox SET next_attempt_at = now() WHERE activity_id = $1`, gb.announcement)
+	exec(`UPDATE assets SET deleted_at = NULL WHERE id = $1`, b.id) // so its announcement can still be built
+	before := len(f.stub.types())
+	f.worker.RunOnce(ctx)
+	if got := f.stub.types(); len(got) != before+1 || got[len(got)-1] != string(federation.ActivityAAAssetVersion) {
+		t.Fatalf("sent %v", got)
+	}
+	if st, _, due := f.row(idsB[0]); st != "queued" || !due {
+		t.Fatalf("withdrawal after its announcement was sent: %s due %v; want released", st, due)
+	}
+	f.worker.RunOnce(ctx)
+	got := f.stub.types()
+	if got[len(got)-1] != string(federation.ActivityDelete) {
+		t.Fatalf("sent %v, want the Delete last", got)
+	}
+	if st, _, _ := f.row(idsB[0]); st != "sent" {
+		t.Fatalf("withdrawal %s", st)
+	}
+	env := f.stub.last()
+	var object string
+	_ = json.Unmarshal(env["object"], &object)
+	if object != avLocal+"/assets/"+b.id.String() {
+		t.Fatalf("object %s", object)
+	}
+	if _, ok := env["signature"]; !ok {
+		t.Fatal("the withdrawal is not actor-signed")
+	}
+	for _, local := range []string{"asset_id", "versions", "announcements", "version_id", "announcement_activity_id", "target_peer_id", "deleted",
+		federation.AssetTombstoneMemberKey, federation.MemberObjectType} {
+		if _, ok := env[local]; ok {
+			t.Errorf("%q is on the wire", local)
+		}
+	}
+	ts, err := federation.ParseArchivalTombstone(env[federation.MemberArchivalTombstone])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ts.ID != object || ts.LastVersion != object+"/versions/1" || len(ts.Files) != 1 || ts.Files[0].ContentURI != "cas://"+b.hash {
+		t.Fatalf("aa:tombstone %+v", ts)
+	}
+	// Once.
+	n := len(f.stub.types())
+	f.worker.RunOnce(ctx)
+	if len(f.stub.types()) != n {
+		t.Fatal("sent again")
+	}
+}
+
+func TestDelivery_AssetWithdrawal_NeverWhenTheAnnouncementReachedNothing(t *testing.T) {
+	f := newAVFx(t)
+	ctx := context.Background()
+	for _, status := range []string{"failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			a := f.newAsset("public", true)
+			g := f.grant(a, true)
+			f.inFlight(g)
+			ids := f.withdraw(a)
+			if len(ids) != 1 {
+				t.Fatalf("%d withdrawals, want 1", len(ids))
+			}
+			if _, err := f.pool.Exec(ctx, `UPDATE federation_outbox SET status = $2 WHERE activity_id = $1`, g.announcement, status); err != nil {
+				t.Fatal(err)
+			}
+			before := len(f.stub.types())
+			f.worker.RunOnce(ctx)
+			for _, typ := range f.stub.types()[before:] {
+				if typ == string(federation.ActivityDelete) {
+					t.Fatal("a withdrawal was sent for an announcement that reached nothing")
+				}
+			}
+			if st, _, _ := f.row(ids[0]); st != "failed" {
+				t.Fatalf("withdrawal %s, want failed for good", st)
+			}
+		})
+	}
+}
+
+// rev628: a withdrawal still queued when the retention purge removes the
+// asset and its versions is sent unchanged, with the delivery-time tier
+// recheck wired as in production (the asset's tier, pgx.ErrNoRows once
+// it is gone).
+func TestDelivery_AssetWithdrawal_SentAfterTheAssetIsPurged(t *testing.T) {
+	f := newAVFx(t)
+	ctx := context.Background()
+	f.worker.SetSensitivityLookup(func(ctx context.Context, kind string, id uuid.UUID) (outbox.Sensitivity, error) {
+		if kind != "asset" {
+			return "", errors.New("unsupported kind")
+		}
+		var tier string
+		if err := f.pool.QueryRow(ctx, `SELECT sensitivity FROM assets WHERE id = $1`, id).Scan(&tier); err != nil {
+			return "", err
+		}
+		return outbox.Sensitivity(tier), nil
+	})
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := f.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := f.newAsset("public", true)
+	g := f.grant(a, true)
+	f.worker.RunOnce(ctx)
+	f.worker.RunOnce(ctx)
+	if st, _, _ := f.row(g.announcement); st != "sent" {
+		t.Fatalf("announcement %s", st)
+	}
+	ids := f.withdraw(a)
+	// Held back, then the asset is purged through the production service.
+	exec(`UPDATE federation_outbox SET next_attempt_at = now() + interval '1 hour' WHERE activity_id = $1`, ids[0])
+	exec(`UPDATE assets SET deleted_at = now() - interval '3 days' WHERE id = $1`, a.id)
+	if n, err := softdelete.NewService(f.pool, nil).HardDeletePastAssets(ctx, 1, 1000); err != nil || n < 1 {
+		t.Fatalf("purge: %d %v", n, err)
+	}
+	var left int
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM asset_versions WHERE asset_id = $1`, a.id).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("the purge left %d versions (%v)", left, err)
+	}
+	exec(`UPDATE federation_outbox SET next_attempt_at = now() WHERE activity_id = $1`, ids[0])
+	before := len(f.stub.types())
+	f.worker.RunOnce(ctx)
+	if st, _, _ := f.row(ids[0]); st != "sent" {
+		var lastErr *string
+		_ = f.pool.QueryRow(ctx, `SELECT last_error FROM federation_outbox WHERE activity_id = $1`, ids[0]).Scan(&lastErr)
+		t.Fatalf("withdrawal after the purge: %s (%v)", st, lastErr)
+	}
+	got := f.stub.types()
+	if len(got) != before+1 || got[len(got)-1] != string(federation.ActivityDelete) {
+		t.Fatalf("sent %v", got)
+	}
+	env := f.stub.last()
+	if _, sealed := env["encryption"]; sealed {
+		t.Fatal("unexpectedly sealed")
+	}
+	ts, err := federation.ParseArchivalTombstone(env[federation.MemberArchivalTombstone])
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := avLocal + "/assets/" + a.id.String()
+	if ts.ID != object || ts.LastVersion != object+"/versions/1" || len(ts.Files) != 1 || ts.Files[0].Checksums[0].Value != a.hash {
+		t.Fatalf("aa:tombstone after the purge %+v", ts)
+	}
+}
+
+// revokeShare ends g's share, as an aa:Unshare does here.
+func (f *avFx) revokeShare(g avGrant) {
+	f.t.Helper()
+	if _, err := f.pool.Exec(context.Background(), `UPDATE federation_shares SET revoked_at = now(), revoked_activity_id = $2 WHERE id = $1`,
+		g.share, g.shareActivity); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// newVersion seals version n of a over fresh stored bytes and makes it
+// current, as a replacement upload does.
+func (f *avFx) newVersion(a *avAsset, n int64) {
+	f.t.Helper()
+	ctx := context.Background()
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	hash := hex.EncodeToString(b)
+	for _, q := range []string{
+		`INSERT INTO storage_objects (hash, size_bytes, content_type, backend) VALUES ($1, 3, 'image/png', 'fs')`,
+		`INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type, content_sha256, content_size_bytes,
+		    digest_source, fixity_status) VALUES ($1, 'original', 3, 'image/png', $1, 3, 'write', 'verified')`,
+	} {
+		if _, err := f.pool.Exec(ctx, q, hash); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	f.t.Cleanup(func() {
+		c := context.Background()
+		_, _ = f.pool.Exec(c, `DELETE FROM storage_pins WHERE object_hash = $1`, hash)
+		_, _ = f.pool.Exec(c, `DELETE FROM storage_variants WHERE object_hash = $1`, hash)
+		_, _ = f.pool.Exec(c, `DELETE FROM storage_objects WHERE hash = $1`, hash)
+	})
+	v := uuid.New()
+	if err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT asset_version_create($1, $2, $3, $4, 'replacement', $5, 'png', NULL, 'unknown', NULL)`,
+			a.id, v, n, a.version, hash); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE assets SET current_version_id = $2, file_hash = $3 WHERE id = $1`, a.id, v, hash); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `SELECT asset_version_seal($1, '[]'::jsonb)`, v)
+		return err
+	}); err != nil {
+		f.t.Fatalf("version %d: %v", n, err)
+	}
+	a.version, a.hash = v, hash
+}
+
+// sentTombstone is the last envelope's aa:tombstone, which must be a
+// Delete.
+func (f *avFx) sentTombstone() *federation.ArchivalTombstone {
+	f.t.Helper()
+	got := f.stub.types()
+	if len(got) == 0 || got[len(got)-1] != string(federation.ActivityDelete) {
+		f.t.Fatalf("sent %v, want the Delete last", got)
+	}
+	ts, err := federation.ParseArchivalTombstone(f.stub.last()[federation.MemberArchivalTombstone])
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return ts
+}
+
+// rev629, 1: a regrant's second announcement of the version the peer
+// already has, queued and going nowhere, does not hold the withdrawal
+// back: it is sent at once naming that version, using one attempt.
+func TestDelivery_AssetWithdrawal_AQueuedRegrantOfTheSentVersionDoesNotHoldItBack(t *testing.T) {
+	f := newAVFx(t)
+	ctx := context.Background()
+	a := f.newAsset("public", true)
+	h1 := a.hash
+	g1 := f.grant(a, true)
+	f.worker.RunOnce(ctx)
+	f.worker.RunOnce(ctx)
+	if st, _, _ := f.row(g1.announcement); st != "sent" {
+		t.Fatalf("first announcement %s", st)
+	}
+	f.revokeShare(g1)
+	g2 := f.grant(a, false) // the same version 1 again; its aa:Share is held back
+	if _, err := f.pool.Exec(ctx, `UPDATE federation_outbox SET next_attempt_at = now() + interval '1 hour' WHERE activity_id = $1`, g2.announcement); err != nil {
+		t.Fatal(err)
+	}
+	ids := f.withdraw(a)
+	f.worker.RunOnce(ctx)
+	if st, attempts, _ := f.row(ids[0]); st != "sent" || attempts != 0 {
+		t.Fatalf("withdrawal with a queued regrant of version 1: %s after %d failed attempts, want sent", st, attempts)
+	}
+	object := avLocal + "/assets/" + a.id.String()
+	if ts := f.sentTombstone(); ts.LastVersion != object+"/versions/1" || ts.Files[0].Checksums[0].Value != h1 {
+		t.Fatalf("tombstone %s", ts.LastVersion)
+	}
+}
+
+// rev629, the broader dependency: waiting for a higher version's queued
+// announcement counts no attempt, however many rounds it takes, so it
+// never exhausts the withdrawal; when that announcement fails, the
+// version already sent is named.
+func TestDelivery_AssetWithdrawal_WaitingCountsNoAttempt(t *testing.T) {
+	f := newAVFx(t)
+	ctx := context.Background()
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := f.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := f.newAsset("public", true)
+	h1 := a.hash
+	g1 := f.grant(a, true)
+	f.worker.RunOnce(ctx)
+	f.worker.RunOnce(ctx)
+	f.revokeShare(g1)
+	f.newVersion(&a, 2)
+	g2 := f.grant(a, false) // announces version 2; held back
+	exec(`UPDATE federation_outbox SET next_attempt_at = now() + interval '1 hour' WHERE activity_id IN ($1, $2)`, g2.announcement, g2.shareActivity)
+	f.inFlight(g2) // built: its request may still reach the peer
+	ids := f.withdraw(a)
+	for round := 0; round < 8; round++ { // past the outbox's cap of 5 attempts
+		exec(`UPDATE federation_outbox SET next_attempt_at = now() WHERE activity_id = $1`, ids[0])
+		f.worker.RunOnce(ctx)
+		if st, attempts, due := f.row(ids[0]); st != "queued" || due {
+			t.Fatalf("round %d waiting for version 2: %s after %d attempts, due %v", round, st, attempts, due)
+		}
+	}
+	if _, attempts, _ := f.row(ids[0]); attempts != 0 {
+		t.Fatalf("waiting counted %d attempts", attempts)
+	}
+	for _, typ := range f.stub.types() {
+		if typ == string(federation.ActivityDelete) {
+			t.Fatal("the withdrawal was sent while version 2 might still reach the peer")
+		}
+	}
+	// Version 2's announcement is given up: version 1 is named.
+	exec(`UPDATE federation_outbox SET status = 'failed' WHERE activity_id = $1`, g2.announcement)
+	exec(`UPDATE federation_outbox SET next_attempt_at = now() WHERE activity_id = $1`, ids[0])
+	f.worker.RunOnce(ctx)
+	if st, attempts, _ := f.row(ids[0]); st != "sent" || attempts != 0 {
+		t.Fatalf("after version 2's announcement failed: %s, %d attempts", st, attempts)
+	}
+	object := avLocal + "/assets/" + a.id.String()
+	if ts := f.sentTombstone(); ts.LastVersion != object+"/versions/1" || ts.Files[0].Checksums[0].Value != h1 {
+		t.Fatalf("tombstone %s, want version 1", ts.LastVersion)
 	}
 }

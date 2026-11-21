@@ -282,3 +282,171 @@ func TestDispatch_AssetVersion_SchedulesWithoutTransferring(t *testing.T) {
 		}
 	})
 }
+
+// #1575: an origin's Delete of its asset carrying aa:tombstone is
+// admitted under archival-1 and handed to the asset receiver (an
+// AssetWithdrawer), never to the comment path.
+
+func tombstoneMember(object string) map[string]any {
+	hash := strings.Repeat("ab", 32)
+	return map[string]any{federation.MemberArchivalTombstone: map[string]any{
+		"id": object, "formerType": "aa:Asset", "deleted": "2026-11-21T09:00:00Z", "lastVersion": object + "/versions/1",
+		"files": []map[string]any{{"role": "original", "contentUri": "cas://" + hash,
+			"checksums": []map[string]string{{"algorithm": "sha256", "value": hash}}}},
+	}}
+}
+
+type fakeWithdrawer struct {
+	mu    sync.Mutex
+	calls []string
+	peers []uuid.UUID
+	res   inbox.AssetScheduled
+	err   error
+}
+
+func (w *fakeWithdrawer) WithdrawAsset(_ context.Context, peerID uuid.UUID, env *federation.Envelope) (inbox.AssetScheduled, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.calls = append(w.calls, env.ID)
+	w.peers = append(w.peers, peerID)
+	return w.res, w.err
+}
+
+func (w *fakeWithdrawer) count() int { w.mu.Lock(); defer w.mu.Unlock(); return len(w.calls) }
+
+func TestInbox_AssetWithdrawal_AdmittedOnlyUnderArchival(t *testing.T) {
+	fx := newFixture(t)
+	own := func() string { return fx.peerURL + "/assets/" + uuid.NewString() }
+	fx.withProfiles()
+	o := own()
+	env := fx.shareEnvelope(federation.ActivityDelete, "", o, tombstoneMember(o))
+	if rr := fx.postSingle(env); rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("without archival-1: %d (%s)", rr.Code, rr.Body.String())
+	}
+	if n := fx.countRows(activityIDOf(t, env)); n != 0 {
+		t.Fatalf("%d rows stored without archival-1", n)
+	}
+
+	fx.withProfiles(assetProfiles...)
+	for name, c := range map[string]struct {
+		object  string
+		members map[string]any
+		reason  federation.InboxStatus
+	}{
+		"another instance's asset":      {"https://third.example/assets/x", tombstoneMember("https://third.example/assets/x"), federation.InboxStatusInvalidMember},
+		"a tombstone of another object": {o, tombstoneMember(own()), federation.InboxStatusArchivalInvalid},
+		"object_type beside it": {o, func() map[string]any {
+			m := tombstoneMember(o)
+			m["object_type"] = "Note"
+			return m
+		}(), federation.InboxStatusUnknownField},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := fx.shareEnvelope(federation.ActivityDelete, "", c.object, c.members)
+			if rr := fx.postSingle(env); rr.Code != http.StatusBadRequest {
+				t.Fatalf("status %d (%s)", rr.Code, rr.Body.String())
+			}
+			if n := fx.countRows(activityIDOf(t, env)); n != 0 {
+				t.Fatalf("%d rows stored", n)
+			}
+			if last := fx.rejects.last(); last == nil || last.reason != c.reason {
+				t.Errorf("last reject %+v, want %s", last, c.reason)
+			}
+		})
+	}
+	env = fx.shareEnvelope(federation.ActivityDelete, "", o, tombstoneMember(o))
+	if rr := fx.postSingle(env); rr.Code != http.StatusAccepted {
+		t.Fatalf("a valid withdrawal: %d (%s)", rr.Code, rr.Body.String())
+	}
+	if row, ok := fx.storedRow(activityIDOf(t, env)); !ok || row.Status != "pending" {
+		t.Fatalf("stored %+v ok=%v", row, ok)
+	}
+}
+
+func TestDispatch_AssetWithdrawal_GoesToTheAssetReceiver(t *testing.T) {
+	fx := newFixture(t)
+	fx.withProfiles(assetProfiles...)
+	dispatcher := func(w inbox.AssetWithdrawer) *inbox.Dispatcher {
+		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		d := inbox.NewDispatcher(inbox.DispatcherConfig{Interval: time.Hour, BatchSize: 100, MaxAttempts: 5}, fx.q,
+			func(_ context.Context, id uuid.UUID) (inbox.PeerInfo, error) {
+				return inbox.PeerInfo{ID: id, InstanceURL: fx.peerURL, Enabled: true, Connected: true, Capabilities: assetProfiles}, nil
+			}, nil, logger)
+		d.SetRegistry(inbox.BuildRegistry(d, logger))
+		d.SetLocalBaseURL(func(context.Context) string { return shareLocal })
+		// No SocialPoster: a withdrawal never reaches the comment path.
+		if w != nil {
+			d.SetAssetWithdrawer(w)
+		}
+		return d
+	}
+	stored := func(t *testing.T) (inbox.FederationInbox, string) {
+		t.Helper()
+		o := fx.peerURL + "/assets/" + uuid.NewString()
+		env := fx.shareEnvelope(federation.ActivityDelete, "", o, tombstoneMember(o))
+		if rr := fx.postSingle(env); rr.Code != http.StatusAccepted {
+			t.Fatalf("post: %d %s", rr.Code, rr.Body.String())
+		}
+		row, _ := fx.storedRow(activityIDOf(t, env))
+		return row, activityIDOf(t, env)
+	}
+	reload := func(t *testing.T, id string) inbox.FederationInbox {
+		t.Helper()
+		row, ok := fx.storedRow(id)
+		if !ok {
+			t.Fatal("row gone")
+		}
+		return row
+	}
+
+	t.Run("applied: processed once", func(t *testing.T) {
+		w := &fakeWithdrawer{res: inbox.AssetScheduled{RecordID: uuid.New(), State: "withdrawn"}}
+		row, id := stored(t)
+		if out := dispatcher(w).DispatchRow(context.Background(), row); out != inbox.OutcomeProcessed {
+			t.Fatalf("dispatch: %v (%s)", out, reload(t, id).LastError)
+		}
+		if w.count() != 1 || w.calls[0] != id || w.peers[0] != fx.peerID || reload(t, id).Status != "processed" {
+			t.Fatalf("calls %v peers %v status %s", w.calls, w.peers, reload(t, id).Status)
+		}
+	})
+	t.Run("a refusal is rejected with its reason", func(t *testing.T) {
+		w := &fakeWithdrawer{res: inbox.AssetScheduled{Reason: "foreign_origin"}, err: errors.New("not the peer's asset")}
+		row, id := stored(t)
+		if out := dispatcher(w).DispatchRow(context.Background(), row); out != inbox.OutcomeRejected {
+			t.Fatalf("dispatch: %v", out)
+		}
+		r := reload(t, id)
+		if r.RejectReason == nil || *r.RejectReason != string(federation.InboxStatusInvalidObject) {
+			t.Fatalf("row %s %v", r.Status, r.RejectReason)
+		}
+	})
+	t.Run("a profile refusal is rejected as such", func(t *testing.T) {
+		w := &fakeWithdrawer{res: inbox.AssetScheduled{Reason: "profile_not_negotiated"}, err: errors.New("no original-transfer-1")}
+		row, id := stored(t)
+		if out := dispatcher(w).DispatchRow(context.Background(), row); out != inbox.OutcomeRejected {
+			t.Fatalf("dispatch: %v", out)
+		}
+		if r := reload(t, id); r.RejectReason == nil || *r.RejectReason != string(federation.InboxStatusProfileNotNegotiated) {
+			t.Fatalf("reason %v", r.RejectReason)
+		}
+	})
+	t.Run("a transient failure stays pending", func(t *testing.T) {
+		w := &fakeWithdrawer{res: inbox.AssetScheduled{Retryable: true, Reason: "storage_error"}, err: errors.New("db blip")}
+		row, id := stored(t)
+		if out := dispatcher(w).DispatchRow(context.Background(), row); out != inbox.OutcomeFailed {
+			t.Fatalf("dispatch: %v", out)
+		}
+		if r := reload(t, id); r.Status != "pending" || r.DispatchAttempts != 1 {
+			t.Fatalf("row %s attempts %d", r.Status, r.DispatchAttempts)
+		}
+	})
+	t.Run("an unwired receiver fails, never processed", func(t *testing.T) {
+		row, id := stored(t)
+		if out := dispatcher(nil).DispatchRow(context.Background(), row); out != inbox.OutcomeFailed {
+			t.Fatalf("dispatch: %v", out)
+		}
+		if r := reload(t, id); r.Status == "processed" {
+			t.Fatal("processed without a receiver")
+		}
+	})
+}

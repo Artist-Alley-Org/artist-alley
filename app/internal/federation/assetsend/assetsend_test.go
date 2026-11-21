@@ -191,7 +191,7 @@ func (f *fx) shareDelivered(g grant, status string) {
 
 func (f *fx) member(g grant) (federation.ArchivalAsset, error) {
 	f.t.Helper()
-	raw, err := f.src.Member(context.Background(), f.peer, g.objectURI, g.payload)
+	raw, err := f.src.Member(context.Background(), g.announcement, f.peer, g.objectURI, g.payload)
 	if err != nil {
 		return federation.ArchivalAsset{}, err
 	}
@@ -279,8 +279,8 @@ func TestMember_BuildsTheSealedVersionAfterTheGrantIsDelivered(t *testing.T) {
 		t.Fatalf("file %+v", file)
 	}
 	// Stable: a retry builds the same member.
-	again, err := f.src.Member(context.Background(), f.peer, g.objectURI, g.payload)
-	first, _ := f.src.Member(context.Background(), f.peer, g.objectURI, g.payload)
+	again, err := f.src.Member(context.Background(), g.announcement, f.peer, g.objectURI, g.payload)
+	first, _ := f.src.Member(context.Background(), g.announcement, f.peer, g.objectURI, g.payload)
 	if err != nil || string(again) != string(first) {
 		t.Fatalf("retry built another member: %v", err)
 	}

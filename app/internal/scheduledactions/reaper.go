@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -56,7 +57,12 @@ type ReaperJob struct {
 	// a post target through (#1238). See the Publisher interface for why
 	// the arm cannot own an UPDATE instead.
 	Publisher Publisher
-	Logger    *slog.Logger
+	// Withdrawals records, inside the delete arm's own transaction, the
+	// federation withdrawals of an asset it soft-deleted (#1575,
+	// assetsend.RecordWithdrawals), as assets.Handler.DeleteAsset does.
+	// Nil records none (tests that do not federate).
+	Withdrawals func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error
+	Logger      *slog.Logger
 }
 
 // Type implements jobs.Handler.
@@ -68,7 +74,7 @@ func (h *ReaperJob) Type() jobs.JobType { return JobTypeReap }
 // whose collaborator is nil in the test and non-nil in production is an
 // arm nothing tests.
 func (h *ReaperJob) newExecutor() *executor {
-	return &executor{rec: h.Rec, notifier: h.Notifier, publisher: h.Publisher}
+	return &executor{rec: h.Rec, notifier: h.Notifier, publisher: h.Publisher, withdrawals: h.Withdrawals}
 }
 
 // Handle runs one reaper tick: drain up to maxPerTick due actions, then
@@ -195,7 +201,7 @@ func (h *ReaperJob) runInSavepoint(ctx context.Context, tx pgx.Tx, exec *executo
 	if err != nil {
 		return err
 	}
-	if err := exec.execute(ctx, New(sp), audit.New(sp), action); err != nil {
+	if err := exec.execute(ctx, sp, New(sp), audit.New(sp), action); err != nil {
 		_ = sp.Rollback(ctx)
 		return err
 	}

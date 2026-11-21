@@ -72,12 +72,14 @@ type executor struct {
 	rec       *audit.Recorder
 	notifier  Notifier
 	publisher Publisher
+	// withdrawals: ReaperJob.Withdrawals (#1575).
+	withdrawals func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error
 }
 
 // execute dispatches one action. q + auditQ are bound to the SAME
-// transaction (a savepoint of the reaper's claim tx), so everything an
+// transaction tx (a savepoint of the reaper's claim tx), so everything an
 // executor writes rolls back together on error.
-func (e *executor) execute(ctx context.Context, q *Queries, auditQ *audit.Queries, a ScheduledAction) error {
+func (e *executor) execute(ctx context.Context, tx pgx.Tx, q *Queries, auditQ *audit.Queries, a ScheduledAction) error {
 	var p actionParams
 	if len(a.Params) > 0 {
 		if err := json.Unmarshal(a.Params, &p); err != nil {
@@ -93,7 +95,7 @@ func (e *executor) execute(ctx context.Context, q *Queries, auditQ *audit.Querie
 		// the recipe operators think in; the params can stay empty.
 		return e.changeSensitivity(ctx, q, auditQ, a, "restricted")
 	case ActionDelete:
-		return e.softDelete(ctx, q, auditQ, a, p.Reason)
+		return e.softDelete(ctx, tx, q, auditQ, a, p.Reason)
 	case ActionChangeState:
 		return e.changeState(ctx, q, auditQ, a, p)
 	case ActionNotify:
@@ -136,7 +138,7 @@ func (e *executor) changeSensitivity(ctx context.Context, q *Queries, auditQ *au
 	return nil
 }
 
-func (e *executor) softDelete(ctx context.Context, q *Queries, auditQ *audit.Queries, a ScheduledAction, reason string) error {
+func (e *executor) softDelete(ctx context.Context, tx pgx.Tx, q *Queries, auditQ *audit.Queries, a ScheduledAction, reason string) error {
 	id, err := e.assetTarget(a)
 	if err != nil {
 		return err
@@ -159,6 +161,15 @@ func (e *executor) softDelete(ctx context.Context, q *Queries, auditQ *audit.Que
 	})
 	if err != nil {
 		return fmt.Errorf("delete: %w", err)
+	}
+	// #1575: a scheduled delete withdraws the asset from every peer it
+	// was announced to, in the same savepoint, exactly as an interactive
+	// one does. Nothing is withdrawn twice: an already-deleted asset
+	// (rows==0) was withdrawn when it was deleted.
+	if n > 0 && e.withdrawals != nil {
+		if err := e.withdrawals(ctx, tx, uuid.UUID(id.Bytes)); err != nil {
+			return fmt.Errorf("delete: record withdrawals: %w", err)
+		}
 	}
 	// rows==0 means the asset was already soft-deleted or is gone.
 	// Deleting an already-deleted thing is idempotent SUCCESS, not a
