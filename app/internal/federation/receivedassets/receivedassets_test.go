@@ -211,6 +211,36 @@ func (f *fx) insert(r record, sensitivity, state string) {
 	}
 }
 
+// withdraw applies an origin's tombstone to r as the receiver does
+// (assetingest.Service.Withdraw): the tombstone kept, the record's pins
+// released, the record and its originals withdrawn.
+func (f *fx) withdraw(r record, reason *string) {
+	f.t.Helper()
+	ctx := context.Background()
+	tomb := fmt.Sprintf(`{"id":%q,"formerType":"aa:Asset","deleted":"2026-11-21T09:00:00Z","lastVersion":%q,"files":[{"role":"original","contentUri":"cas://%s","checksums":[{"algorithm":"sha256","value":"%s"}]}]}`,
+		r.object, r.object+"/versions/1", r.hash, r.hash)
+	if err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		for _, q := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO federation_received_tombstones (peer_id, origin_asset_uri, activity_uri, actor_uri, tombstone, deleted, reason, last_version)
+			  VALUES ($1, $2, $3, $4, $5::jsonb, '2026-11-21T09:00:00Z', $6, $7)`,
+				[]any{r.peer.id, r.object, r.peer.url + "/activities/" + uuid.NewString(), r.peer.url + "/users/alice", tomb, reason, r.object + "/versions/1"}},
+			{`SELECT federation_received_asset_release_pins(ARRAY[$1::text])`, []any{r.id.String()}},
+			{`UPDATE federation_received_assets SET state = 'withdrawn', reason = 'withdrawn', withdrawn_at = now() WHERE id = $1`, []any{r.id}},
+			{`UPDATE federation_received_asset_files SET state = 'withdrawn' WHERE received_asset_id = $1 AND role = 'original'`, []any{r.id}},
+		} {
+			if _, err := tx.Exec(ctx, q.sql, q.args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		f.t.Fatalf("withdraw: %v", err)
+	}
+}
+
 // grant applies an aa:Share from r's peer as the inbox would.
 func (f *fx) grant(r record, original bool, target string, supersedes string) string {
 	f.t.Helper()
@@ -388,6 +418,37 @@ func TestRulesSQL_MatchGo(t *testing.T) {
 			f.grant(r, true, "", "")
 			return r
 		},
+		// #1575: a withdrawn record, under each grant shape.
+		"withdrawn, peer-wide": func() record {
+			r := f.complete(f.peerA, "public")
+			f.grant(r, true, "", "")
+			f.withdraw(r, nil)
+			return r
+		},
+		"withdrawn, to u1": func() record {
+			r := f.complete(f.peerA, "public")
+			f.grant(r, false, localBase+"/users/"+f.u1Name, "")
+			f.withdraw(r, nil)
+			return r
+		},
+		"withdrawn, revoked": func() record {
+			r := f.complete(f.peerA, "public")
+			f.revoke(r, f.grant(r, true, "", ""))
+			f.withdraw(r, nil)
+			return r
+		},
+		"withdrawn, team tier": func() record {
+			r := f.complete(f.peerA, "team")
+			f.grant(r, true, "", "")
+			f.withdraw(r, nil)
+			return r
+		},
+		"withdrawn, another peer's grant": func() record {
+			r := f.complete(f.peerA, "public")
+			f.grantFrom(f.peerX, r)
+			f.withdraw(r, nil)
+			return r
+		},
 	}
 	for name, mk := range cases {
 		r := mk()
@@ -396,14 +457,23 @@ func TestRulesSQL_MatchGo(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		for _, caller := range []int64{0, f.u1, f.u2} {
-			var view, orig bool
+			var view, orig, notice bool
 			var now time.Time
-			if err := f.pool.QueryRow(ctx, `SELECT `+receivedassets.ViewableSQL("r", "$2")+`, `+receivedassets.OriginalReadableSQL("r", "$2")+`, now()
-				FROM federation_received_assets r WHERE r.id = $1`, r.id, caller).Scan(&view, &orig, &now); err != nil {
+			if err := f.pool.QueryRow(ctx, `SELECT `+receivedassets.ViewableSQL("r", "$2")+`, `+receivedassets.OriginalReadableSQL("r", "$2")+`,
+				`+receivedassets.WithdrawnVisibleSQL("r", "$2")+`, now()
+				FROM federation_received_assets r WHERE r.id = $1`, r.id, caller).Scan(&view, &orig, &notice, &now); err != nil {
 				t.Fatal(err)
 			}
 			if gv, gor := receivedassets.Viewable(facts, caller, now), receivedassets.OriginalReadable(facts, caller, now); gv != view || gor != orig {
 				t.Errorf("%s, caller %d: SQL viewable=%v original=%v, Go viewable=%v original=%v", name, caller, view, orig, gv, gor)
+			}
+			if gn := receivedassets.WithdrawnVisible(facts, caller, now); gn != notice {
+				t.Errorf("%s, caller %d: SQL withdrawal notice=%v, Go=%v", name, caller, notice, gn)
+			}
+			// The notice is only ever for a withdrawn record, and a
+			// withdrawn record is never viewable.
+			if notice && facts.State != "withdrawn" || facts.State == "withdrawn" && (view || orig) {
+				t.Errorf("%s, caller %d: state %s viewable=%v original=%v notice=%v", name, caller, facts.State, view, orig, notice)
 			}
 		}
 	}
@@ -686,4 +756,92 @@ func TestAdmin_RequiresSystemAdminAndListsEveryRecord(t *testing.T) {
 	}() {
 		t.Errorf("unknown outcome: %T", r)
 	}
+}
+
+// #1575: a withdrawn record answers 410 with the origin's tombstone
+// (detail and original) to a caller who could view it, and 404 to anyone
+// else, the same as a record that does not exist.
+func TestAPI_WithdrawnAnswersTheNoticeOnlyToWhoCouldView(t *testing.T) {
+	f := newFx(t)
+	reason := "withdrawn by the artist"
+	r := f.complete(f.peerA, "public")
+	f.grant(r, true, "", "")
+	f.want("before withdrawal", f.u1, r, everything)
+	f.withdraw(r, &reason)
+
+	for _, caller := range []int64{f.u1, f.u2} {
+		if got := f.view(caller, r); got != nothing {
+			t.Fatalf("caller %d after withdrawal: %+v, want nothing served", caller, got)
+		}
+		get, err := f.h.GetReceivedAsset(as(caller), openapi.GetReceivedAssetRequestObject{Id: r.id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, ok := get.(openapi.GetReceivedAsset410JSONResponse)
+		if !ok {
+			t.Fatalf("detail for %d: %T, want 410", caller, get)
+		}
+		if uuid.UUID(n.Id) != r.id || n.OriginAssetUri != r.object || n.LastVersion != r.object+"/versions/1" ||
+			n.Deleted != "2026-11-21T09:00:00Z" || n.Reason == nil || *n.Reason != reason || n.WithdrawnAt.IsZero() {
+			t.Fatalf("notice %+v", n)
+		}
+		orig, err := f.h.DownloadReceivedAssetOriginal(as(caller), openapi.DownloadReceivedAssetOriginalRequestObject{Id: r.id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := orig.(openapi.DownloadReceivedAssetOriginal410JSONResponse); !ok {
+			t.Fatalf("original for %d: %T, want 410", caller, orig)
+		}
+	}
+
+	// Who could not view it gets what a missing record gets.
+	notFound := func(name string, caller int64, id uuid.UUID) {
+		t.Helper()
+		get, err := f.h.GetReceivedAsset(as(caller), openapi.GetReceivedAssetRequestObject{Id: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := get.(openapi.GetReceivedAsset404JSONResponse); !ok {
+			t.Errorf("%s detail: %T, want 404", name, get)
+		}
+		orig, err := f.h.DownloadReceivedAssetOriginal(as(caller), openapi.DownloadReceivedAssetOriginalRequestObject{Id: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := orig.(openapi.DownloadReceivedAssetOriginal404JSONResponse); !ok {
+			t.Errorf("%s original: %T, want 404", name, orig)
+		}
+	}
+	notFound("a record that does not exist", f.u1, uuid.New())
+	targeted := f.complete(f.peerA, "public")
+	f.grant(targeted, true, localBase+"/users/"+f.u1Name, "")
+	f.withdraw(targeted, nil)
+	notFound("another user's targeted grant", f.u2, targeted.id)
+	if _, ok := mustGet(t, f, f.u1, targeted.id).(openapi.GetReceivedAsset410JSONResponse); !ok {
+		t.Error("the targeted recipient does not get the notice")
+	}
+	team := f.complete(f.peerA, "team")
+	f.grant(team, true, "", "")
+	f.withdraw(team, nil)
+	notFound("a team-tier record", f.u1, team.id)
+	ungranted := f.complete(f.peerA, "public")
+	f.withdraw(ungranted, nil)
+	notFound("a record with no grant", f.u1, ungranted.id)
+	// Anonymous callers.
+	get, err := f.h.GetReceivedAsset(as(0), openapi.GetReceivedAssetRequestObject{Id: r.id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := get.(openapi.GetReceivedAsset410JSONResponse); ok {
+		t.Error("an anonymous caller got the notice")
+	}
+}
+
+func mustGet(t *testing.T, f *fx, caller int64, id uuid.UUID) openapi.GetReceivedAssetResponseObject {
+	t.Helper()
+	get, err := f.h.GetReceivedAsset(as(caller), openapi.GetReceivedAssetRequestObject{Id: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return get
 }

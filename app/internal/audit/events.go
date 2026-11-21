@@ -358,6 +358,9 @@ const (
 	EventFederationAssetIngestCompleted = "federation.asset_ingest.completed"
 	EventFederationAssetIngestDeferred  = "federation.asset_ingest.deferred"
 	EventFederationAssetIngestRejected  = "federation.asset_ingest.rejected"
+	// #1575: an origin withdrew a received record (aa:tombstone, spec v1
+	// §17.3): its pins released, the record kept as withdrawn.
+	EventFederationAssetIngestWithdrawn = "federation.asset_ingest.withdrawn"
 
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side

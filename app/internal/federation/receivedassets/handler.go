@@ -183,6 +183,13 @@ func (h *Handler) GetReceivedAsset(ctx context.Context, req openapi.GetReceivedA
 		 WHERE r.id = $2 AND `+ViewableSQL("r", "$1"), caller, uuid.UUID(req.Id)),
 		&d.ActivityUri, &d.ActorUri, &record, &d.OriginalAvailable)
 	if errors.Is(err, pgx.ErrNoRows) {
+		w, ok, werr := h.withdrawal(ctx, caller, uuid.UUID(req.Id))
+		if werr != nil {
+			return nil, werr
+		}
+		if ok {
+			return openapi.GetReceivedAsset410JSONResponse(w), nil
+		}
 		return openapi.GetReceivedAsset404JSONResponse{NotFoundJSONResponse: notFound()}, nil
 	}
 	if err != nil {
@@ -239,6 +246,13 @@ func (h *Handler) DownloadReceivedAssetOriginal(ctx context.Context, req openapi
 		 WHERE r.id = $2 AND `+OriginalReadableSQL("r", "$1")+`
 		 ORDER BY f.position LIMIT 1`, caller, uuid.UUID(req.Id)).Scan(&hash)
 	if errors.Is(err, pgx.ErrNoRows) {
+		w, ok, werr := h.withdrawal(ctx, caller, uuid.UUID(req.Id))
+		if werr != nil {
+			return nil, werr
+		}
+		if ok {
+			return openapi.DownloadReceivedAssetOriginal410JSONResponse(w), nil
+		}
 		return openapi.DownloadReceivedAssetOriginal404JSONResponse{NotFoundJSONResponse: notFound()}, nil
 	}
 	if err != nil {
@@ -253,6 +267,25 @@ func (h *Handler) DownloadReceivedAssetOriginal(ctx context.Context, req openapi
 	}
 	return openapi.DownloadReceivedAssetOriginal200ApplicationoctetStreamResponse{Body: body, ContentLength: info.Size,
 		Headers: openapi.DownloadReceivedAssetOriginal200ResponseHeaders{CacheControl: noStore()}}, nil
+}
+
+// withdrawal is record id's withdrawal notice when caller may see it
+// (WithdrawnVisibleSQL, #1575), with the origin's tombstone values; ok is
+// false for every other record, which the caller then gets as 404.
+func (h *Handler) withdrawal(ctx context.Context, caller int64, id uuid.UUID) (openapi.ReceivedAssetWithdrawal, bool, error) {
+	var w openapi.ReceivedAssetWithdrawal
+	err := h.Pool.QueryRow(ctx, `SELECT r.id, r.origin_asset_uri, r.withdrawn_at, t.deleted, t.reason, t.last_version
+		  FROM federation_received_assets r
+		  JOIN federation_received_tombstones t ON t.peer_id = r.peer_id AND t.origin_asset_uri = r.origin_asset_uri
+		 WHERE r.id = $2 AND `+WithdrawnVisibleSQL("r", "$1"), caller, id).
+		Scan(&w.Id, &w.OriginAssetUri, &w.WithdrawnAt, &w.Deleted, &w.Reason, &w.LastVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return w, false, nil
+	}
+	if err != nil {
+		return w, false, fmt.Errorf("receivedassets: withdrawal: %w", err)
+	}
+	return w, true, nil
 }
 
 // noStore is the Cache-Control the 200 responses declare (the OpenAPI

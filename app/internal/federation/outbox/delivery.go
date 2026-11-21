@@ -58,6 +58,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -169,6 +170,9 @@ type Worker struct {
 	// assetVersionMember builds an aa:AssetVersion's aa:asset member at
 	// send time (#1574). Unwired, no aa:AssetVersion is sent.
 	assetVersionMember AssetVersionMemberFunc
+	// assetWithdrawalMember builds an asset Delete's aa:tombstone member
+	// at send time (#1575).
+	assetWithdrawalMember AssetVersionMemberFunc
 
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_outbox_pending notification. Buffered=1 so the
@@ -218,15 +222,21 @@ func (w *Worker) SetActorSigningKey(f ActorSigningKeyFunc) { w.actorSigningKey =
 func (w *Worker) SetSensitivityLookup(f SensitivityLookup) { w.currentSensitivity = f }
 
 // AssetVersionMemberFunc returns the aa:asset member of one
-// aa:AssetVersion delivery to peerID, whose activity object is objectURI
-// and local record payload (#1574). An error wrapping
-// federation.ErrNotFederated refuses the delivery for good; any other
-// error retries it under the usual backoff. Boot wires
+// aa:AssetVersion delivery of activity activityID to peerID, whose
+// activity object is objectURI and local record payload (#1574). An error
+// wrapping federation.ErrNotFederated refuses the delivery for good; one
+// wrapping federation.ErrWaitingForDelivery defers it without counting an
+// attempt; any other error retries it under the usual backoff. Boot wires
 // assetsend.Source.Member.
-type AssetVersionMemberFunc func(ctx context.Context, peerID uuid.UUID, objectURI string, payload []byte) (json.RawMessage, error)
+type AssetVersionMemberFunc func(ctx context.Context, activityID, peerID uuid.UUID, objectURI string, payload []byte) (json.RawMessage, error)
 
 // SetAssetVersionMember wires the aa:AssetVersion member source (#1574).
 func (w *Worker) SetAssetVersionMember(f AssetVersionMemberFunc) { w.assetVersionMember = f }
+
+// SetAssetWithdrawalMember wires the source of an asset Delete's
+// aa:tombstone member (#1575), with the same contract as the aa:asset
+// source. Boot wires assetsend.Source.Tombstone.
+func (w *Worker) SetAssetWithdrawalMember(f AssetVersionMemberFunc) { w.assetWithdrawalMember = f }
 
 // SetAudit wires the audit recorder for federation.emission.encrypted
 // + federation.emission.skipped(reason=recipient_key_unfetchable).
@@ -467,14 +477,24 @@ func (w *Worker) RunOnce(ctx context.Context) (sent, failed, deferred int) {
 // deferral recorded after the aa:Share was sent (a draft version, a
 // transient failure) is never touched: no other send, now or later,
 // moves it. This only brings an attempt forward, it adds none.
+//
+// The same holds one step later for an asset's withdrawal (#1575): a
+// Delete of an asset waits only while an announcement of that asset to
+// that peer is queued (assetsend Source.Tombstone), and checks that before
+// anything else, so it is released the same way when an announcement of
+// that asset to that peer is sent.
 func (w *Worker) releaseAnnouncements(ctx context.Context, sentRows []pgtype.UUID) {
 	tag, err := w.pool.Exec(ctx, `
 		UPDATE federation_outbox o SET next_attempt_at = now(), updated_at = now()
 		  FROM activities a, federation_outbox s
 		 WHERE s.id = ANY($1::uuid[]) AND s.status = 'sent'
 		   AND o.status = 'queued' AND o.next_attempt_at > now() AND o.peer_id = s.peer_id
-		   AND a.id = o.activity_id AND a.activity_type = 'aa:AssetVersion'
-		   AND a.payload->>'share_activity_id' = s.activity_id::text`, sentRows)
+		   AND a.id = o.activity_id
+		   AND ((a.activity_type = 'aa:AssetVersion' AND a.payload->>'share_activity_id' = s.activity_id::text)
+		     OR (a.activity_type = 'Delete' AND a.object_kind = 'asset' AND EXISTS (
+		         SELECT 1 FROM activities sa
+		          WHERE sa.id = s.activity_id AND sa.activity_type = 'aa:AssetVersion'
+		            AND sa.object_kind = 'asset' AND sa.object_local_id = a.object_local_id)))`, sentRows)
 	if err != nil {
 		w.logErr(ctx, "outbox.delivery.release_announcements.error", err)
 		return
@@ -562,6 +582,11 @@ func (w *Worker) deliverOneBatch(ctx context.Context, rows []FederationOutbox, s
 		if errors.Is(err, federation.ErrNotFederated) {
 			w.markNotFederated(ctx, row, err)
 			failed++
+			continue
+		}
+		if errors.Is(err, federation.ErrWaitingForDelivery) {
+			w.markWaiting(ctx, row, err)
+			deferred++
 			continue
 		}
 		if err != nil {
@@ -746,6 +771,10 @@ func (w *Worker) deliverOne(ctx context.Context, row FederationOutbox) deliveryO
 		w.markNotFederated(ctx, row, err)
 		return deliveryOutcomeFailedTerminal
 	}
+	if errors.Is(err, federation.ErrWaitingForDelivery) {
+		w.markWaiting(ctx, row, err)
+		return deliveryOutcomeFailedTransient
+	}
 	if err != nil {
 		w.markAttemptFailed(ctx, row, fmt.Errorf("rebuild envelope: %w", err))
 		return deliveryOutcomeFailedTransient
@@ -849,6 +878,26 @@ func (w *Worker) markAttemptFailed(ctx context.Context, row FederationOutbox, er
 		NextAttemptAt: pgtype.Timestamptz{Time: next, Valid: true},
 		LastError:     err.Error(),
 	})
+}
+
+// waitingRecheck is how soon a row waiting for another delivery
+// (markWaiting) is looked at again. A send of what it waits for brings it
+// forward at once (releaseAnnouncements); this only bounds how long a
+// row waits after what it waited for was given up.
+const waitingRecheck = 5 * time.Minute
+
+// markWaiting defers a row whose member waits for another delivery to the
+// same peer (federation.ErrWaitingForDelivery, #1575) WITHOUT counting an
+// attempt: nothing was tried, and the wait is bounded by that other
+// delivery, which counts its own attempts under the same cap. Counting
+// them here would let a slow announcement exhaust its withdrawal's
+// attempts and drop the withdrawal for good.
+func (w *Worker) markWaiting(ctx context.Context, row FederationOutbox, err error) {
+	if _, xerr := w.pool.Exec(ctx, `UPDATE federation_outbox
+		   SET next_attempt_at = now() + make_interval(secs => $2), last_error = $3, updated_at = now()
+		 WHERE id = $1 AND status = 'queued'`, row.ID, waitingRecheck.Seconds(), err.Error()); xerr != nil {
+		w.logErr(ctx, "outbox.delivery.mark_waiting.error", xerr)
+	}
 }
 
 // nextAttemptAt returns the absolute time of the n-th attempt
@@ -990,25 +1039,33 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 		return nil, fmt.Errorf("read recipient capabilities: %w", err)
 	}
 	isAssetVersion := federation.ActivityType(activityType) == federation.ActivityAAAssetVersion
-	if isAssetVersion {
+	isAssetWithdrawal := federation.ActivityType(activityType) == federation.ActivityDelete && kind == "asset"
+	if isAssetVersion || isAssetWithdrawal {
 		// #1574: the aa:asset member is built now, from the version's
 		// sealed rows, never stored with the activity; the source also
 		// holds the announcement back until the grant's aa:Share reached
-		// this peer, and refuses it once the grant is gone.
-		if w.assetVersionMember == nil {
-			return nil, fmt.Errorf("%w: aa:AssetVersion: no member source wired", federation.ErrNotFederated)
+		// this peer, and refuses it once the grant is gone. #1575: an
+		// asset's withdrawal, likewise, carries an aa:tombstone built now
+		// from its last sealed version, held back until the peer's
+		// announcement was delivered.
+		source, key, what := w.assetVersionMember, federation.AssetVersionMemberKey, "aa:AssetVersion"
+		if isAssetWithdrawal {
+			source, key, what = w.assetWithdrawalMember, federation.AssetTombstoneMemberKey, "asset Delete"
 		}
-		member, err := w.assetVersionMember(ctx, peerID, env.Object, payload)
+		if source == nil {
+			return nil, fmt.Errorf("%w: %s: no member source wired", federation.ErrNotFederated, what)
+		}
+		member, err := source(ctx, activityID, peerID, env.Object, payload)
 		if err != nil {
 			return nil, err
 		}
 		local := map[string]json.RawMessage{}
 		if len(payload) > 0 {
 			if err := json.Unmarshal(payload, &local); err != nil {
-				return nil, fmt.Errorf("%w: aa:AssetVersion payload: %v", federation.ErrNotFederated, err)
+				return nil, fmt.Errorf("%w: %s payload: %v", federation.ErrNotFederated, what, err)
 			}
 		}
-		local[federation.AssetVersionMemberKey] = member
+		local[key] = member
 		if payload, err = json.Marshal(local); err != nil {
 			return nil, err
 		}
@@ -1021,9 +1078,9 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	if len(wire) > 0 {
 		env.Extra = wire
 	}
-	if isAssetVersion {
-		// The member names the envelope object and matches §17.2, as the
-		// receiver will check (§17.1).
+	if isAssetVersion || isAssetWithdrawal {
+		// The member names the envelope object and matches §17.2 (or
+		// §17.3), as the receiver will check (§17.1).
 		if err := federation.ValidateArchivalMembers(env, true); err != nil {
 			return nil, fmt.Errorf("%w: %w", federation.ErrNotFederated, err)
 		}
@@ -1062,7 +1119,7 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	//   EmissionRefused   — env DOES NOT dispatch; we return
 	//                       policy.ErrEmissionRefused so the
 	//                       caller marks the row refused + audits.
-	tier := w.effectiveSensitivity(ctx, sensitivityFromRow, objectKind, objectLocalID)
+	tier := w.effectiveSensitivity(ctx, sensitivityFromRow, isAssetWithdrawal, objectKind, objectLocalID)
 	if err := w.tryEncryptFor(ctx, env, outboxID, peerID, recipientActorURI,
 		tier, encKeyVersion, encKeyPrivateEnc); err != nil {
 		return nil, err
@@ -1144,12 +1201,20 @@ func stricterSensitivity(a, b Sensitivity) Sensitivity {
 //   - The result never drops below the stamped tier: an asset
 //     made public, or removed from the post, after dispatch does
 //     not lower a queued restricted row.
+//   - An asset's withdrawal (#1575, withdrawal) whose asset no
+//     longer exists (the lookup answers pgx.ErrNoRows: the soft-
+//     deleted asset was purged) keeps its stamped tier. The stamp
+//     was read from the soft-deleted row at dispatch, and a purged
+//     asset's tier can no longer change, so this lowers nothing;
+//     without it, a withdrawal still queued at the purge would be
+//     refused as unresolved and the peer would keep serving the
+//     asset. A missing or empty stamp is still unresolved.
 //
 // This narrows the gap between dispatch and delivery to the
 // moment before the POST. It is not retroactive revocation: a
 // change committed while a POST is in flight, or after it, does
 // not recall what the peer already received.
-func (w *Worker) effectiveSensitivity(ctx context.Context, stamped *string, objectKind, objectLocalID *string) Sensitivity {
+func (w *Worker) effectiveSensitivity(ctx context.Context, stamped *string, withdrawal bool, objectKind, objectLocalID *string) Sensitivity {
 	tier := SensitivityUnresolved
 	if stamped != nil && *stamped != "" {
 		tier = Sensitivity(*stamped)
@@ -1162,6 +1227,9 @@ func (w *Worker) effectiveSensitivity(ctx context.Context, stamped *string, obje
 		return stricterSensitivity(tier, SensitivityUnresolved)
 	}
 	current, err := w.currentSensitivity(ctx, *objectKind, id)
+	if withdrawal && errors.Is(err, pgx.ErrNoRows) && stamped != nil && *stamped != "" {
+		return tier
+	}
 	if err != nil || current == "" {
 		if err != nil && w.logger != nil {
 			w.logger.LogAttrs(ctx, slog.LevelWarn, "outbox.delivery.sensitivity.unresolved",

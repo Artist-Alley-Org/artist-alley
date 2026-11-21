@@ -67,6 +67,49 @@ type AssetScheduler interface {
 // processed without its record.
 func (d *Dispatcher) SetAssetScheduler(s AssetScheduler) { d.assetScheduler = s }
 
+// AssetWithdrawer applies an origin's withdrawal of an asset: a Delete of
+// an aa:Asset carrying aa:tombstone (#1575, spec v1 §17.3). Production
+// wires assetingest.Worker.
+type AssetWithdrawer interface {
+	WithdrawAsset(ctx context.Context, peerID uuid.UUID, env *federation.Envelope) (AssetScheduled, error)
+}
+
+// SetAssetWithdrawer wires the withdrawal receiver. Unwired, every asset
+// Delete fails (retried, then terminal): a withdrawal is never recorded as
+// processed without being applied.
+func (d *Dispatcher) SetAssetWithdrawer(w AssetWithdrawer) { d.assetWithdrawer = w }
+
+// isAssetWithdrawal: a Delete carrying aa:tombstone (ValidateMembers
+// admitted it only as an asset withdrawal under archival-1).
+func isAssetWithdrawal(env *federation.Envelope) bool {
+	if env == nil || env.Type != federation.ActivityDelete {
+		return false
+	}
+	_, ok := env.Extra[federation.MemberArchivalTombstone]
+	return ok
+}
+
+// assetWithdrawal applies one asset Delete. A tombstone kept (with or
+// without a record to withdraw, or already kept) marks the row processed;
+// a refusal with nothing kept rejects it with its §12.1 reason; a
+// transient failure leaves it for the dispatcher's retry.
+func (d *Dispatcher) assetWithdrawal(ctx context.Context, env *federation.Envelope, peerID uuid.UUID) (DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {
+	if d.assetWithdrawer == nil {
+		return OutcomeFailed, "", uuid.Nil, errors.New("inbox: no asset receiver wired for an asset Delete")
+	}
+	res, err := d.assetWithdrawer.WithdrawAsset(ctx, peerID, env)
+	switch {
+	case res.Retryable:
+		if err == nil {
+			err = errors.New("asset receiver: retry")
+		}
+		return OutcomeFailed, "", uuid.Nil, err
+	case err == nil:
+		return OutcomeProcessed, "", uuid.Nil, nil
+	}
+	return OutcomeRejected, AssetRejectStatus(res.Reason), uuid.Nil, fmt.Errorf("asset receiver %s: %w", res.Reason, err)
+}
+
 // AssetVersionHandler schedules one aa:AssetVersion; see the file header.
 func AssetVersionHandler(d *Dispatcher) HandlerFn {
 	return func(ctx context.Context, env *federation.Envelope, peerID uuid.UUID, _ string, _ FederationInbox) (DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {

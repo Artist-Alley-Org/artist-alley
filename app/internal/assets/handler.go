@@ -161,6 +161,11 @@ type Handler struct {
 	// restored fires from the softdelete.Service directly). Nil-safe.
 	Audit *audit.Recorder
 
+	// withdrawals records, in the soft delete's own transaction, the
+	// asset's withdrawal to every peer it was announced to (#1575,
+	// assetsend.RecordWithdrawals). nil records nothing.
+	withdrawals func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error
+
 	// SoftDelete handles restore (clear deleted_at + audit) via the
 	// shared softdelete.Service. Nil at construction time in tests;
 	// wired at boot in api.go alongside the gc coordinator.
@@ -1890,6 +1895,11 @@ func (h *Handler) UpdateAsset(
 // DeleteAsset
 // ---------------------------------------------------------------------------
 
+// SetWithdrawalRecorder wires the federation withdrawal recorder (#1575).
+func (h *Handler) SetWithdrawalRecorder(f func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error) {
+	h.withdrawals = f
+}
+
 func (h *Handler) DeleteAsset(
 	ctx context.Context,
 	req openapi.DeleteAssetRequestObject,
@@ -1944,12 +1954,24 @@ func (h *Handler) DeleteAsset(
 	// deleted_by_user_ref is what makes the delete undoable by the
 	// person who did it (#931) — see auth.CanRestoreDeleted.
 	deleter := caller.UserRef
-	if err := q.SoftDeleteAsset(ctx, SoftDeleteAssetParams{
-		ID:               pgID,
-		DeletedReason:    softDeleteReasonPtr(reason),
-		DeletedByUserRef: &deleter,
+	// The soft delete and its federation withdrawals (#1575) commit
+	// together: a deleted asset always has its withdrawals queued.
+	if err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := New(tx).SoftDeleteAsset(ctx, SoftDeleteAssetParams{
+			ID:               pgID,
+			DeletedReason:    softDeleteReasonPtr(reason),
+			DeletedByUserRef: &deleter,
+		}); err != nil {
+			return fmt.Errorf("assets: soft-delete: %w", err)
+		}
+		if h.withdrawals != nil {
+			if err := h.withdrawals(ctx, tx, uuid.UUID(pgID.Bytes)); err != nil {
+				return fmt.Errorf("assets: record withdrawals: %w", err)
+			}
+		}
+		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("assets: soft-delete: %w", err)
+		return nil, err
 	}
 	if h.Audit != nil {
 		h.Audit.AdminAssetSoftDeleted(ctx, nil, uuid.UUID(pgID.Bytes).String(), caller.UserRef, reason)

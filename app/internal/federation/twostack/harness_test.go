@@ -143,6 +143,9 @@ type instance struct {
 
 	handler atomic.Pointer[http.Handler]
 	front   atomic.Pointer[func(http.ResponseWriter, *http.Request, http.Handler)]
+	// inboxFront wraps this instance's /federation/inbox routes (#1575):
+	// what a peer delivers, as it arrives.
+	inboxFront atomic.Pointer[func(http.ResponseWriter, *http.Request, http.Handler)]
 
 	casGETs  atomic.Int32
 	casHEADs atomic.Int32
@@ -166,7 +169,22 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if strings.HasPrefix(r.URL.Path, "/federation/inbox") {
+		if f := in.inboxFront.Load(); f != nil {
+			(*f)(w, r, *h)
+			return
+		}
+	}
 	(*h).ServeHTTP(w, r)
+}
+
+// setInboxFront wraps the instance's inbox routes with f (nil removes it).
+func (in *instance) setInboxFront(f func(http.ResponseWriter, *http.Request, http.Handler)) {
+	if f == nil {
+		in.inboxFront.Store(nil)
+		return
+	}
+	in.inboxFront.Store(&f)
 }
 
 func (in *instance) setFront(f func(http.ResponseWriter, *http.Request, http.Handler)) {

@@ -967,6 +967,16 @@ paths:
               schema: { $ref: "#/components/schemas/ReceivedAssetDetail" }
         "404":
           $ref: "#/components/responses/NotFound"
+        "410":
+          description: |
+            The origin withdrew this asset (spec v1 §17.3). Given only to a
+            caller who could view the record while its grant lasts (the same
+            signed-in, public-tier, connected-peer and live-grant rule as a
+            200); anyone else gets the same 404, so the notice reveals
+            nothing. The record and its original are no longer served.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReceivedAssetWithdrawal" }
 
   /federation/received-assets/{id}/original:
     parameters:
@@ -983,7 +993,8 @@ paths:
         original-file permission; checked on this request, so a revoke,
         an expiry or a regrant without the original refuses the next
         request. A record with several originals serves the first by
-        position. Every refusal is the same 404.
+        position. Every refusal is the same 404, except a withdrawn
+        record's notice (410) to a caller who could view it.
       tags: [federation, account]
       security:
         - cookieAuth: []
@@ -1000,6 +1011,16 @@ paths:
               schema: { type: string, format: binary }
         "404":
           $ref: "#/components/responses/NotFound"
+        "410":
+          description: |
+            The origin withdrew this asset (spec v1 §17.3). Given only to a
+            caller who could view the record while its grant lasts (the same
+            signed-in, public-tier, connected-peer and live-grant rule as a
+            200); anyone else gets the same 404, so the notice reveals
+            nothing. The record and its original are no longer served.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReceivedAssetWithdrawal" }
 
   /federation/peers/visible:
     get:
@@ -1673,7 +1694,7 @@ paths:
       summary: Every received asset record, for operators (#1574)
       description: |
         The receiver's records of assets other instances announced to it,
-        in every state (pending, complete, rejected) and every held tier,
+        in every state (pending, complete, rejected, withdrawn) and every held tier,
         `team` included, newest first. No bytes and no grant check: this
         is the operator's view of what the receiver holds and why. A
         record goes with its peer; its events stay in the ledger
@@ -1687,7 +1708,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: "pending, complete or rejected."
+          description: "pending, complete, rejected or withdrawn."
         - name: peer_id
           in: query
           required: false
@@ -22504,7 +22525,7 @@ components:
         file_role: { type: string, description: "original, preservation or access." }
         object_hash: { type: string }
         declared_media_type: { type: string }
-        event_type: { type: string, description: "transfer, fixity-check or ingestion." }
+        event_type: { type: string, description: "transfer, fixity-check, ingestion or deaccession (the origin withdrew the asset, #1575)." }
         outcome: { type: string, description: "success, failure or warning." }
         reason: { type: string }
         expected_sha256: { type: string }
@@ -22519,7 +22540,7 @@ components:
         attempt: { type: integer }
         agent_name: { type: string }
         agent_version: { type: string }
-        record_state_after: { type: string, description: "pending, complete or rejected." }
+        record_state_after: { type: string, description: "pending, complete, rejected or withdrawn." }
         detail: { type: string }
         record_exists: { type: boolean, description: "Whether the received asset record still exists." }
         peer_exists: { type: boolean, description: "Whether the peer still exists." }
@@ -22531,6 +22552,20 @@ components:
           type: array
           items: { $ref: "#/components/schemas/FederationTransferEvent" }
         next_cursor: { type: string }
+    ReceivedAssetWithdrawal:
+      type: object
+      description: |
+        The notice of a received asset its origin withdrew (#1575, spec v1
+        §17.3). The origin's values are its claims, as sent.
+      required: [id, origin_asset_uri, withdrawn_at, deleted, last_version]
+      properties:
+        id: { type: string, format: uuid }
+        origin_asset_uri: { type: string }
+        withdrawn_at: { type: string, format: date-time, description: "When this instance applied the withdrawal." }
+        deleted: { type: string, description: "When the origin says it deleted the asset (RFC 3339, as sent)." }
+        reason: { type: string, description: "The origin's reason, when it sent one." }
+        last_version: { type: string, description: "The last version the origin had (its version URI)." }
+
     AdminReceivedAsset:
       type: object
       description: A received asset record as operators see it (#1574), in any state and tier, without bytes.
@@ -22546,7 +22581,7 @@ components:
         version_uri: { type: string }
         version_number: { type: integer, format: int64 }
         sensitivity: { type: string }
-        state: { type: string, description: "pending, complete or rejected." }
+        state: { type: string, description: "pending, complete, rejected or withdrawn." }
         reason: { type: string }
         attempts: { type: integer }
         received_at: { type: string, format: date-time }

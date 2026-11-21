@@ -11,8 +11,12 @@ package scheduledactions
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // A user-scheduled delete records the user who scheduled it, so that
@@ -86,5 +90,54 @@ func TestReaper_SoftDelete_SystemScheduledLeavesDeleterNull(t *testing.T) {
 	if deletedBy != nil {
 		t.Errorf("deleted_by_user_ref = %d, want NULL — a system-scheduled delete has no actor "+
 			"and must not claim one", *deletedBy)
+	}
+}
+
+// #1575: a scheduled delete records the asset's federation withdrawals
+// inside its own savepoint, like the interactive delete: once, with the
+// asset already deleted in that transaction; a failure to record them
+// undoes the delete; an asset already deleted is not withdrawn again.
+func TestReaper_SoftDelete_RecordsWithdrawalsInTheSameTransaction(t *testing.T) {
+	pool := saPool(t)
+	store := NewStore(pool)
+	ctx := context.Background()
+	asset := seedAsset(t, pool, "public")
+	var calls []uuid.UUID
+	h := newReaper(t, pool, &fakeNotifier{})
+	h.Withdrawals = func(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+		var deleted bool
+		if err := tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM assets WHERE id = $1`, id).Scan(&deleted); err != nil {
+			return err
+		}
+		if !deleted {
+			return errors.New("withdrawals recorded before the asset was deleted in this transaction")
+		}
+		calls = append(calls, id)
+		return nil
+	}
+	schedule(t, store, ScheduleInput{Action: ActionDelete, TargetKind: TargetAsset, TargetID: asset.String(), ScheduledFor: at(-time.Second)})
+	if done, failed := drain(t, h); done != 1 || failed != 0 {
+		t.Fatalf("done %d failed %d", done, failed)
+	}
+	if len(calls) != 1 || calls[0] != asset {
+		t.Fatalf("withdrawal calls %v, want [%s]", calls, asset)
+	}
+	// Already deleted: nothing withdrawn again.
+	schedule(t, store, ScheduleInput{Action: ActionDelete, TargetKind: TargetAsset, TargetID: asset.String(), ScheduledFor: at(-time.Second)})
+	drain(t, h)
+	if len(calls) != 1 {
+		t.Fatalf("an already-deleted asset was withdrawn again (%d calls)", len(calls))
+	}
+
+	// A failure to record the withdrawals undoes the delete.
+	other := seedAsset(t, pool, "public")
+	h.Withdrawals = func(context.Context, pgx.Tx, uuid.UUID) error { return errors.New("outbox unavailable") }
+	schedule(t, store, ScheduleInput{Action: ActionDelete, TargetKind: TargetAsset, TargetID: other.String(), ScheduledFor: at(-time.Second)})
+	if done, failed := drain(t, h); done != 0 || failed != 1 {
+		t.Fatalf("done %d failed %d, want the action failed", done, failed)
+	}
+	var deleted bool
+	if err := pool.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM assets WHERE id = $1`, other).Scan(&deleted); err != nil || deleted {
+		t.Fatalf("the asset is deleted (%v, %v) though its withdrawals were not recorded", deleted, err)
 	}
 }

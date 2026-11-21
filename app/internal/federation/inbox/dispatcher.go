@@ -190,6 +190,8 @@ type Dispatcher struct {
 	// #1574: the asset receiver aa:AssetVersion is scheduled on. See
 	// handler_asset.go.
 	assetScheduler AssetScheduler
+	// assetWithdrawer applies asset Deletes with aa:tombstone (#1575).
+	assetWithdrawer AssetWithdrawer
 
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_inbox_pending notification. Buffered=1 so the
