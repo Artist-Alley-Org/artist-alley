@@ -34,7 +34,9 @@
 //
 // Crossing offers (both sides pending_outbound) and a re-offer from
 // a peer we are connected to are answered by confirming back to
-// the offerer first; see handleOffer.
+// the offerer first; see handleOffer. Renegotiate sends such a
+// re-offer on purpose (§16.2), to store a new capability intersection
+// on both sides without re-pairing.
 //
 // # Trust model (the bootstrap problem)
 //
@@ -61,6 +63,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -194,6 +197,15 @@ var (
 	// confirm is not a valid acceptance (wrong status code, not
 	// JSON, malformed, missing or unexpected fields, a redirect).
 	ErrHandshakeAnswer = errors.New("handshake: peer's answer is not an acceptance")
+
+	// ErrRenegotiateState: Renegotiate was asked for a peer row that
+	// is not connected, or is disabled. Nothing is sent.
+	ErrRenegotiateState = errors.New("handshake: the peer cannot be renegotiated in its current state")
+
+	// ErrRenegotiateNotCompleted: the peer answered the renegotiation
+	// offer without completing it (it has no connected record of this
+	// instance, or its confirm did not reach this instance).
+	ErrRenegotiateNotCompleted = errors.New("handshake: the peer did not complete the renegotiation")
 )
 
 // HTTPDoer is the http.Client subset the outbound transport
@@ -446,7 +458,8 @@ func samePeerKey(a, b string) bool {
 // Calling it again for a URL whose row is still pending_outbound
 // re-sends the offer (new nonce) on that same row: that is the
 // retry after a failed offer or a lost answer (#1592). A row in any
-// other state is returned as is, with nothing sent.
+// other state is returned as is, with nothing sent: a connected peer is
+// renegotiated only by the explicit Renegotiate action.
 //
 // Success means the peer answered with a valid HandshakeAccepted:
 // accepted_pending (its admin decides), or completed when offers
@@ -511,18 +524,7 @@ func (e *Engine) InitiateOffer(
 	// Build + sign the offer envelope. SupportedCapabilities is
 	// Phase 1.22.I-d's wire bump: receivers intersect with their
 	// own KnownCapabilities + persist the result (see handleOffer).
-	env := Envelope{
-		Protocol:              HandshakeProtocol,
-		Type:                  HandshakeTypeOffer,
-		From:                  e.localBaseURL,
-		FromDisplayName:       e.localDisplayName,
-		FromPublicKeyPEM:      string(id.PublicKeyPEM()),
-		To:                    url,
-		Nonce:                 mustNonce(),
-		Timestamp:             e.now().Format(time.RFC3339Nano),
-		SupportedCapabilities: KnownCapabilities,
-	}
-	status, err := e.postEnvelope(ctx, url, env, id)
+	status, err := e.postEnvelope(ctx, url, e.envelope(HandshakeTypeOffer, url, id), id)
 	if err == nil && status == handshakeCompleted {
 		// Offers crossed and the peer says the pairing is complete.
 		// That is true here only if the peer's confirm back has
@@ -578,19 +580,128 @@ func (e *Engine) confirmTo(ctx context.Context, peerURL string) error {
 	if err != nil {
 		return err
 	}
-	env := Envelope{
+	_, err = e.postEnvelope(ctx, peerURL, e.envelope(HandshakeTypeConfirm, peerURL, id), id)
+	return err
+}
+
+// envelope is a fresh offer or confirm from this instance to `to`,
+// advertising KnownCapabilities, with a new nonce and the current time.
+func (e *Engine) envelope(typ, to string, id *identity.Identity) Envelope {
+	return Envelope{
 		Protocol:              HandshakeProtocol,
-		Type:                  HandshakeTypeConfirm,
+		Type:                  typ,
 		From:                  e.localBaseURL,
 		FromDisplayName:       e.localDisplayName,
 		FromPublicKeyPEM:      string(id.PublicKeyPEM()),
-		To:                    peerURL,
+		To:                    to,
 		Nonce:                 mustNonce(),
 		Timestamp:             e.now().Format(time.RFC3339Nano),
 		SupportedCapabilities: KnownCapabilities,
 	}
-	_, err = e.postEnvelope(ctx, peerURL, env, id)
-	return err
+}
+
+// RenegotiationResult is what Renegotiate observed: the peer row after
+// the attempt, and the stored capability intersection before and after.
+type RenegotiationResult struct {
+	Peer     *Peer
+	Previous CapabilitySet
+	Current  CapabilitySet
+}
+
+// Renegotiate sends a fresh signed offer to a peer this instance is
+// already CONNECTED to (spec §16.2, §11.2), so both sides store a new
+// capability intersection without re-pairing. The peer's row, key,
+// status and everything that names the peer (shares, grants, inbox and
+// outbox rows, received records) are untouched; only the stored
+// intersection and its capabilities_negotiated_at move.
+//
+// The exchange is the existing connected-row path: the peer checks that
+// the offer carries the key it holds for us (a different key is
+// refused, ErrHandshakeKeyConflict), confirms back, and stores its own
+// intersection only once that confirm was accepted. This instance
+// stores its intersection when the peer's confirm arrives
+// (handleConfirm), which again requires the key on record. So a
+// renegotiation can neither change a key nor add a token that either
+// side does not advertise.
+//
+// Policy:
+//   - Only a connected, enabled row: anything else is
+//     ErrRenegotiateState and nothing is sent. A pending row is paired
+//     with InitiateOffer or AcceptInbound; a disabled row is enabled
+//     first.
+//   - A transport failure, a refusal or an answer that is not an
+//     acceptance changes nothing here (the reason is appended to the
+//     row's notes).
+//   - accepted_pending means the peer has no connected record of us and
+//     filed a new pairing request for its admin: ErrRenegotiateNotCompleted,
+//     nothing changed here.
+//   - completed is believed only if the peer's confirm has moved this
+//     row's capabilities_negotiated_at; otherwise
+//     ErrRenegotiateNotCompleted.
+//   - If the peer's confirm arrived but its final answer was lost or
+//     failed, this side may already hold the new intersection while the
+//     peer kept its old one. The error says so (Previous and Current
+//     differ); repeating the action converges both sides, since the
+//     result depends only on what each side advertises.
+//   - Concurrent or repeated renegotiations, from either side, converge
+//     to the same intersection; none creates a row.
+//
+// The result is non-nil whenever the row exists, also with an error.
+func (e *Engine) Renegotiate(ctx context.Context, peerID uuid.UUID) (*RenegotiationResult, error) {
+	id, err := e.identity.Get()
+	if err != nil {
+		return nil, err
+	}
+	row, err := e.registry.ByID(ctx, peerID)
+	if err != nil {
+		return nil, err
+	}
+	res := &RenegotiationResult{Peer: row, Previous: row.Capabilities, Current: row.Capabilities}
+	switch {
+	case row.Status != federation.PeerStatusConnected || row.InstancePublicKey == pendingKeyPlaceholder:
+		return res, fmt.Errorf("%w: the peer is %s; only a connected peer is renegotiated (pair or accept it instead)",
+			ErrRenegotiateState, row.Status)
+	case !row.Enabled:
+		return res, fmt.Errorf("%w: the peer is disabled; enable it first", ErrRenegotiateState)
+	}
+	before := row.CapabilitiesNegotiatedAt
+
+	status, err := e.postEnvelope(ctx, row.InstanceURL, e.envelope(HandshakeTypeOffer, row.InstanceURL, id), id)
+	if err == nil {
+		switch status {
+		case handshakeCompleted:
+		case handshakeAcceptedPending:
+			err = fmt.Errorf("%w: the peer has no connected record of this instance and recorded a new pairing request for its admin to accept",
+				ErrRenegotiateNotCompleted)
+		default:
+			err = fmt.Errorf("%w: the peer answered %q", ErrRenegotiateNotCompleted, status)
+		}
+	}
+	cur, gerr := e.registry.ByID(ctx, peerID)
+	if gerr != nil {
+		return res, gerr
+	}
+	res.Peer, res.Current = cur, cur.Capabilities
+	if err == nil {
+		switch {
+		case cur.Status != federation.PeerStatusConnected || !samePeerKey(cur.InstancePublicKey, row.InstancePublicKey):
+			err = fmt.Errorf("%w: the peer row changed during the renegotiation", ErrRenegotiateNotCompleted)
+		case cur.CapabilitiesNegotiatedAt.Valid == before.Valid && cur.CapabilitiesNegotiatedAt.Time.Equal(before.Time):
+			err = fmt.Errorf("%w: the peer answered %q, but its confirmation, with its capability list, has not reached this instance",
+				ErrRenegotiateNotCompleted, handshakeCompleted)
+		}
+	}
+	if err != nil {
+		if !slices.Equal(res.Previous, res.Current) {
+			err = fmt.Errorf("%w (this instance already stored the intersection the peer confirmed; renegotiate again so both sides match)", err)
+		}
+		_ = e.registry.appendNote(ctx, peerID, "renegotiation failed: "+err.Error())
+		if cur2, gerr := e.registry.ByID(ctx, peerID); gerr == nil {
+			res.Peer = cur2
+		}
+		return res, fmt.Errorf("handshake: renegotiate: %w", err)
+	}
+	return res, nil
 }
 
 // --- envelope helpers ----------------------------------------------------

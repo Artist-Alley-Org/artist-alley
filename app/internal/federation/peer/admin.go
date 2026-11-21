@@ -13,6 +13,7 @@ package peer
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/google/uuid"
@@ -312,12 +313,25 @@ func isUniqueViolation(err error) bool {
 type AdminHandshakeHandler struct {
 	registry *Registry
 	engine   *Engine
+	// renegotiated, when set, records each renegotiation attempt
+	// (audit.Recorder.PeerRenegotiated).
+	renegotiated RenegotiationAudit
 }
+
+// RenegotiationAudit records one renegotiation attempt: the acting
+// admin, the peer, the outcome ("renegotiated", "refused", "failed"),
+// the reason for a refusal or failure, and the stored intersection
+// before and after.
+type RenegotiationAudit func(ctx context.Context, req *http.Request, actorUserRef int64,
+	peerID, outcome, reason string, previous, current []string)
 
 // NewAdminHandshakeHandler wires the admin handshake surface.
 func NewAdminHandshakeHandler(r *Registry, e *Engine) *AdminHandshakeHandler {
 	return &AdminHandshakeHandler{registry: r, engine: e}
 }
+
+// SetRenegotiationAudit installs the renegotiation audit hook.
+func (h *AdminHandshakeHandler) SetRenegotiationAudit(fn RenegotiationAudit) { h.renegotiated = fn }
 
 // InitiateFederationHandshake — POST /admin/federation/peers/initiate.
 func (h *AdminHandshakeHandler) InitiateFederationHandshake(
@@ -428,4 +442,69 @@ func (h *AdminHandshakeHandler) AcceptFederationPeer(
 	}
 	updated, _ := h.registry.ByID(ctx, uuid.UUID(req.Id))
 	return openapi.AcceptFederationPeer200JSONResponse(peerToAPI(*updated)), nil
+}
+
+// RenegotiateFederationPeer: POST /admin/federation/peers/{id}/renegotiate
+// (spec v1 §16.2). system.admin only, checked before the peer is read or
+// anything is sent. Every attempt on an existing peer is audited, refused
+// and failed ones included; an unknown peer is a 404 with no audit row.
+func (h *AdminHandshakeHandler) RenegotiateFederationPeer(
+	ctx context.Context,
+	req openapi.RenegotiateFederationPeerRequestObject,
+) (openapi.RenegotiateFederationPeerResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.RenegotiateFederationPeer401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can(capAdmin) {
+		return openapi.RenegotiateFederationPeer403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+		}, nil
+	}
+	peerID := uuid.UUID(req.Id)
+	res, err := h.engine.Renegotiate(ctx, peerID)
+	if errors.Is(err, ErrPeerNotFound) {
+		return openapi.RenegotiateFederationPeer404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "peer not found"},
+		}, nil
+	}
+	if res == nil {
+		return nil, err
+	}
+	outcome, reason := "renegotiated", ""
+	switch {
+	case errors.Is(err, ErrRenegotiateState):
+		outcome, reason = "refused", err.Error()
+	case err != nil:
+		outcome, reason = "failed", err.Error()
+	}
+	if h.renegotiated != nil {
+		h.renegotiated(ctx, nil, id.UserRef, peerID.String(), outcome, reason,
+			capabilityStrings(res.Previous), capabilityStrings(res.Current))
+	}
+	body := openapi.FederationPeerRenegotiation{
+		Peer:                 peerToAPI(*res.Peer),
+		PreviousCapabilities: capabilityStrings(res.Previous),
+		Capabilities:         capabilityStrings(res.Current),
+	}
+	switch outcome {
+	case "refused":
+		return openapi.RenegotiateFederationPeer409JSONResponse{Error: err.Error()}, nil
+	case "failed":
+		msg := err.Error()
+		body.Error = &msg
+		return openapi.RenegotiateFederationPeer502JSONResponse(body), nil
+	}
+	return openapi.RenegotiateFederationPeer200JSONResponse(body), nil
+}
+
+// capabilityStrings is a stored intersection as plain strings, never nil.
+func capabilityStrings(c CapabilitySet) []string {
+	out := make([]string, 0, len(c))
+	for _, t := range c {
+		out = append(out, string(t))
+	}
+	return out
 }

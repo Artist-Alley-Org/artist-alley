@@ -234,6 +234,52 @@
     if (!r.error) await load();
   }
 
+  // #1574, spec v1 §16.2: negotiate a connected peer's capabilities
+  // again, without re-pairing. One result per row; the list reloads so
+  // the row's notes and status are current.
+  type Renegotiation = {
+    id: string;
+    kind: 'changed' | 'unchanged' | 'error';
+    added: string[];
+    removed: string[];
+    partial: boolean;
+    detail: string;
+  };
+  let renegotiating = $state<string | null>(null);
+  let renegotiation = $state<Renegotiation | null>(null);
+
+  async function renegotiate(p: Peer): Promise<void> {
+    renegotiating = p.id;
+    renegotiation = null;
+    try {
+      const r = await api.POST('/admin/federation/peers/{id}/renegotiate', {
+        params: { path: { id: p.id } },
+      });
+      const body = (r.data ?? r.error) as
+        | { previous_capabilities?: string[]; capabilities?: string[]; error?: string }
+        | undefined;
+      const before = body?.previous_capabilities ?? [];
+      const after = body?.capabilities ?? [];
+      const added = after.filter((c) => !before.includes(c));
+      const removed = before.filter((c) => !after.includes(c));
+      if (r.error) {
+        renegotiation = {
+          id: p.id, kind: 'error', added, removed,
+          partial: added.length > 0 || removed.length > 0,
+          detail: body?.error ?? '',
+        };
+      } else {
+        renegotiation = {
+          id: p.id, kind: added.length || removed.length ? 'changed' : 'unchanged',
+          added, removed, partial: false, detail: '',
+        };
+      }
+      await load();
+    } finally {
+      renegotiating = null;
+    }
+  }
+
   async function setTier(p: Peer, tier: Peer['trust_tier']): Promise<void> {
     const r = await api.PATCH('/admin/federation/peers/{id}', {
       params: { path: { id: p.id } },
@@ -620,11 +666,52 @@
               {p.last_seen_at ? new Date(p.last_seen_at).toLocaleString() : t('admin.federation.never_seen')}
             </td>
             <td class="px-3 py-2 text-right">
-              <button
-                type="button"
-                class="rounded-md border border-danger/40 bg-danger/10 px-2 py-0.5 text-xs text-danger hover:bg-danger/20"
-                onclick={() => openDefederateModal(p)}
-              >{t('admin.federation.defederate')}</button>
+              <div class="flex flex-wrap justify-end gap-1">
+                {#if p.status === 'connected'}
+                  <button
+                    type="button"
+                    data-testid="renegotiate"
+                    class="rounded-md border border-border bg-surface px-2 py-0.5 text-xs hover:bg-state-hover disabled:opacity-50"
+                    onclick={() => renegotiate(p)}
+                    disabled={!p.enabled || renegotiating !== null}
+                    title={p.enabled ? t('admin.federation.renegotiate_help') : t('admin.federation.renegotiate_disabled_help')}
+                  >{renegotiating === p.id ? t('common.loading') : t('admin.federation.renegotiate')}</button>
+                {/if}
+                <button
+                  type="button"
+                  class="rounded-md border border-danger/40 bg-danger/10 px-2 py-0.5 text-xs text-danger hover:bg-danger/20"
+                  onclick={() => openDefederateModal(p)}
+                >{t('admin.federation.defederate')}</button>
+              </div>
+              {#if renegotiation?.id === p.id}
+                <div
+                  role={renegotiation.kind === 'error' ? 'alert' : 'status'}
+                  data-testid="renegotiate-result"
+                  class={renegotiation.kind === 'error'
+                    ? 'mt-2 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-left text-xs text-danger'
+                    : 'mt-2 rounded border border-border bg-surface-elevated px-2 py-1 text-left text-xs'}
+                >
+                  {#if renegotiation.kind === 'changed'}
+                    <p>{t('admin.federation.renegotiate_changed')}</p>
+                  {:else if renegotiation.kind === 'unchanged'}
+                    <p>{t('admin.federation.renegotiate_unchanged')}</p>
+                  {:else}
+                    <p>{t('admin.federation.renegotiate_error')}</p>
+                    {#if renegotiation.partial}
+                      <p class="mt-1">{t('admin.federation.renegotiate_partial')}</p>
+                    {/if}
+                    {#if renegotiation.detail}
+                      <p class="mt-1 break-all font-mono text-[11px]">{renegotiation.detail}</p>
+                    {/if}
+                  {/if}
+                  {#if renegotiation.added.length}
+                    <p class="mt-1 font-mono text-[11px]">{t('admin.federation.renegotiate_added', { list: renegotiation.added.join(', ') })}</p>
+                  {/if}
+                  {#if renegotiation.removed.length}
+                    <p class="mt-1 font-mono text-[11px]">{t('admin.federation.renegotiate_removed', { list: renegotiation.removed.join(', ') })}</p>
+                  {/if}
+                </div>
+              {/if}
             </td>
           </tr>
         {/each}

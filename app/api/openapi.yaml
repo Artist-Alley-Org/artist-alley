@@ -1107,6 +1107,65 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/federation/peers/{id}/renegotiate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: renegotiateFederationPeer
+      summary: Negotiate a connected peer's capabilities again
+      description: |
+        Sends a fresh signed handshake offer to a peer this instance is
+        already connected to (spec v1 §16.2, §11.2), so both instances
+        store a new capability intersection without re-pairing. The
+        peer row, its key and status, and everything that names the
+        peer (shares, grants, inbox and outbox rows, received records)
+        are kept; only the stored intersection and its negotiation time
+        change. Gated on `system.admin`.
+
+        The peer confirms back only if the offer carries the key it
+        holds for this instance, and this instance stores the result
+        only from a confirm signed with the key it holds for the peer,
+        so a changed key is refused on either side. A token is stored
+        only if both instances advertise it.
+
+        Only a connected, enabled peer is renegotiated (409 otherwise;
+        nothing is sent). A peer that does not complete the exchange is
+        a 502 with the stored sets before and after the attempt: a
+        failure before the peer's confirm changes nothing here; if the
+        confirm arrived but the final answer was lost, this instance may
+        already hold the new set, and renegotiating again converges.
+        Emits a `federation.peer.renegotiated` audit event with the
+        outcome.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Renegotiated; both sides stored the new intersection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeerRenegotiation" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The peer is not connected, or is disabled. Nothing was sent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: The peer did not complete the renegotiation (unreachable, refused, or no connected record of this instance).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeerRenegotiation" }
+
   /admin/federation/peers/{id}/accept:
     parameters:
       - name: id
@@ -22801,6 +22860,27 @@ components:
             false; explicit opt-in.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    FederationPeerRenegotiation:
+      type: object
+      description: |
+        The outcome of a capability renegotiation with a connected peer:
+        the peer row after the attempt and the stored intersection
+        before and after it. `error` is set only on a 502.
+      required: [peer, previous_capabilities, capabilities]
+      properties:
+        peer: { $ref: "#/components/schemas/FederationPeer" }
+        previous_capabilities:
+          type: array
+          description: The stored intersection before the attempt.
+          items: { type: string }
+        capabilities:
+          type: array
+          description: The stored intersection after the attempt.
+          items: { type: string }
+        error:
+          type: string
+          description: Why the peer did not complete the renegotiation (502 only).
 
     FederationVisiblePeer:
       type: object
