@@ -203,6 +203,11 @@ const (
 	EventFederationOutboxRequeued       = "federation.outbox.requeued"
 	EventFederationPeerCascadeCancelled = "federation.peer.cascade_cancelled"
 
+	// #1574 (spec v1 §16.2): an admin asked to negotiate a connected
+	// peer's capabilities again. One row per attempt, with the outcome
+	// and the stored intersection before and after it.
+	EventFederationPeerRenegotiated = "federation.peer.renegotiated"
+
 	// 1.22.I-b per-user federation keypair events. Fired from the
 	// three user-create paths (bootstrap, /setup, /admin/seed/users)
 	// when EnsureCurrentForUser actually mints a new keypair — the
@@ -847,6 +852,35 @@ func (r *Recorder) PeerCascadeCancelled(
 		"cancelled_count": cancelledCount,
 	}
 	r.write(ctx, EventFederationPeerCascadeCancelled, nil, &actorUserRef, ctxFromRequest(req), meta)
+}
+
+// PeerRenegotiated records a federation.peer.renegotiated event: one
+// admin renegotiation attempt with a connected peer (spec v1 §16.2).
+// outcome is "renegotiated", "refused" (nothing was sent: the peer is
+// not connected or is disabled) or "failed" (the peer did not complete
+// it); reason is the error text for the last two. previous and current
+// are the stored intersection before and after the attempt.
+func (r *Recorder) PeerRenegotiated(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	peerID, outcome, reason string,
+	previous, current []string,
+) {
+	if previous == nil {
+		previous = []string{}
+	}
+	if current == nil {
+		current = []string{}
+	}
+	meta := map[string]any{
+		"peer_id":               peerID,
+		"outcome":               outcome,
+		"reason":                reason,
+		"previous_capabilities": previous,
+		"capabilities":          current,
+	}
+	r.write(ctx, EventFederationPeerRenegotiated, nil, &actorUserRef, ctxFromRequest(req), meta)
 }
 
 // SeedTimestampsBackfilled records an

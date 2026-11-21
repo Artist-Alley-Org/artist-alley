@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -380,7 +381,8 @@ func TestInitiateOffer_ResendsForPendingOutbound(t *testing.T) {
 	}
 }
 
-// A connected row is not re-offered by InitiateOffer.
+// A connected row is not re-offered by Pair by URL (InitiateOffer);
+// only the explicit Renegotiate action re-offers it (§16.2).
 func TestInitiateOffer_ConnectedRowIsNotReoffered(t *testing.T) {
 	doer := &fakeDoer{respond: func(typ string) *http.Response {
 		return answer(200, "application/json", ack("accepted_pending"))
@@ -399,8 +401,262 @@ func TestInitiateOffer_ConnectedRowIsNotReoffered(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(doer.paths) != 1 {
-		t.Errorf("POSTs = %d, want 1 (a connected row is not re-offered)", len(doer.paths))
+		t.Errorf("POSTs = %d, want 1 (Pair by URL does not re-offer a connected row)", len(doer.paths))
 	}
+
+	// Renegotiate does send one offer. This peer answers accepted_pending
+	// (it has no connected record of us), so nothing changes here.
+	before := mustPeer(t, fx, url)
+	res, err := eng.Renegotiate(context.Background(), before.ID)
+	if !errors.Is(err, peer.ErrRenegotiateNotCompleted) {
+		t.Fatalf("Renegotiate against accepted_pending: err = %v, want ErrRenegotiateNotCompleted", err)
+	}
+	if len(doer.paths) != 2 || doer.types[1] != peer.HandshakeTypeOffer || doer.urls[1] != url+canonicalHandshakePath {
+		t.Fatalf("Renegotiate sent %v to %v, want one offer to %s", doer.types, doer.urls, url+canonicalHandshakePath)
+	}
+	assertUnchanged(t, fx, url, before)
+	if res == nil || !slices.Equal(res.Previous, before.Capabilities) || !slices.Equal(res.Current, before.Capabilities) {
+		t.Errorf("result %+v, want the unchanged set %v", res, before.Capabilities)
+	}
+}
+
+// connectedPeer pairs url with this engine (Pair by URL, then the
+// peer's confirm signed by key advertising caps) and returns the row.
+func connectedPeer(t *testing.T, fx *hsFixture, eng *peer.Engine, url string, key ed25519.PrivateKey, caps peer.CapabilitySet) *peer.Peer {
+	t.Helper()
+	if _, err := eng.InitiateOffer(context.Background(), url, "", fixtureAdmin(t, context.Background(), fx.pool)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.HandleInbound(context.Background(),
+		signedFrom(t, key, peer.HandshakeTypeConfirm, url, fx.baseURL, caps)); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	p := mustPeer(t, fx, url)
+	if p.Status != federation.PeerStatusConnected || !slices.Equal(p.Capabilities, peer.Intersect(peer.KnownCapabilities, caps)) {
+		t.Fatalf("fixture: %s with %v", p.Status, p.Capabilities)
+	}
+	return p
+}
+
+func mustPeer(t *testing.T, fx *hsFixture, url string) *peer.Peer {
+	t.Helper()
+	p, err := fx.registry.ByInstanceURL(context.Background(), url)
+	if err != nil {
+		t.Fatalf("record of %s: %v", url, err)
+	}
+	return p
+}
+
+// assertUnchanged: the row still has before's identity, key, status,
+// enablement and stored intersection, with the same negotiation time,
+// and it is the only row for the URL.
+func assertUnchanged(t *testing.T, fx *hsFixture, url string, before *peer.Peer) {
+	t.Helper()
+	p, err := fx.registry.ByID(context.Background(), before.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ID != before.ID || p.InstancePublicKey != before.InstancePublicKey || p.Status != before.Status || p.Enabled != before.Enabled {
+		t.Errorf("row changed: %s %s enabled=%v", p.ID, p.Status, p.Enabled)
+	}
+	if !slices.Equal(p.Capabilities, before.Capabilities) || !p.CapabilitiesNegotiatedAt.Time.Equal(before.CapabilitiesNegotiatedAt.Time) {
+		t.Errorf("stored intersection changed: %v at %v, was %v at %v",
+			p.Capabilities, p.CapabilitiesNegotiatedAt.Time, before.Capabilities, before.CapabilitiesNegotiatedAt.Time)
+	}
+	var n int
+	_ = fx.pool.QueryRow(context.Background(), `SELECT count(*) FROM federation_peers WHERE instance_url=$1`, url).Scan(&n)
+	if n != 1 {
+		t.Errorf("rows for %s = %d, want 1", url, n)
+	}
+}
+
+// Renegotiate of a connected peer that confirms back: the new
+// intersection is stored on the same row, and a repeat converges.
+func TestRenegotiate_StoresTheNewIntersectionOnTheSameRow(t *testing.T) {
+	key := newKey(t)
+	var eng *peer.Engine
+	var fx *hsFixture
+	var url string
+	advertised := peer.KnownCapabilities
+	doer := &fakeDoer{respond: func(typ string) *http.Response {
+		if typ != peer.HandshakeTypeOffer {
+			return answer(200, "application/json", ack("accepted_pending"))
+		}
+		// The peer confirms back first, as handleOffer does.
+		if _, err := eng.HandleInbound(context.Background(),
+			signedFrom(t, key, peer.HandshakeTypeConfirm, url, fx.baseURL, advertised)); err != nil {
+			return answer(500, "application/json", `{"error":"confirm refused"}`)
+		}
+		return answer(200, "application/json", ack("completed"))
+	}}
+	fx, eng = contractEngine(t, doer)
+	url = peerURL(t, fx)
+	old := peer.CapabilitySet{peer.CapE2EEncrypted}
+	advertised = old
+	before := connectedPeer(t, fx, eng, url, key, old)
+	advertised = peer.KnownCapabilities
+
+	res, err := eng.Renegotiate(context.Background(), before.ID)
+	if err != nil {
+		t.Fatalf("Renegotiate: %v", err)
+	}
+	want := peer.Intersect(peer.KnownCapabilities, peer.KnownCapabilities)
+	if !slices.Equal(res.Previous, old) || !slices.Equal(res.Current, want) {
+		t.Fatalf("Previous %v Current %v, want %v then %v", res.Previous, res.Current, old, want)
+	}
+	after := mustPeer(t, fx, url)
+	if after.ID != before.ID || after.InstancePublicKey != before.InstancePublicKey || after.Status != federation.PeerStatusConnected {
+		t.Fatalf("the row changed identity, key or status")
+	}
+	if !after.CapabilitiesNegotiatedAt.Time.After(before.CapabilitiesNegotiatedAt.Time) || !slices.Equal(after.Capabilities, want) {
+		t.Fatalf("stored %v at %v", after.Capabilities, after.CapabilitiesNegotiatedAt.Time)
+	}
+	res2, err := eng.Renegotiate(context.Background(), before.ID)
+	if err != nil || !slices.Equal(res2.Previous, want) || !slices.Equal(res2.Current, want) {
+		t.Fatalf("repeat: %v, %+v", err, res2)
+	}
+	var n int
+	_ = fx.pool.QueryRow(context.Background(), `SELECT count(*) FROM federation_peers WHERE instance_url=$1`, url).Scan(&n)
+	if n != 1 {
+		t.Errorf("rows = %d, want 1", n)
+	}
+}
+
+// Only a connected, enabled row is renegotiated; nothing is sent
+// otherwise.
+func TestRenegotiate_RefusesWithoutSending(t *testing.T) {
+	doer := &fakeDoer{respond: func(string) *http.Response {
+		return answer(200, "application/json", ack("accepted_pending"))
+	}}
+	fx, eng := contractEngine(t, doer)
+	ctx := context.Background()
+
+	pendingURL := peerURL(t, fx)
+	pending, err := eng.InitiateOffer(ctx, pendingURL, "", fixtureAdmin(t, ctx, fx.pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := len(doer.paths)
+	if _, err := eng.Renegotiate(ctx, pending.ID); !errors.Is(err, peer.ErrRenegotiateState) {
+		t.Errorf("pending_outbound: err = %v, want ErrRenegotiateState", err)
+	}
+
+	url := peerURL(t, fx)
+	p := connectedPeer(t, fx, eng, url, newKey(t), peer.KnownCapabilities)
+	off := false
+	if _, err := fx.registry.Update(ctx, p.ID, peer.UpdateInput{Enabled: &off}); err != nil {
+		t.Fatal(err)
+	}
+	disabled := mustPeer(t, fx, url)
+	sent = len(doer.paths)
+	if _, err := eng.Renegotiate(ctx, p.ID); !errors.Is(err, peer.ErrRenegotiateState) {
+		t.Errorf("disabled: err = %v, want ErrRenegotiateState", err)
+	}
+	if len(doer.paths) != sent {
+		t.Errorf("a refused renegotiation sent %d POSTs", len(doer.paths)-sent)
+	}
+	assertUnchanged(t, fx, url, disabled)
+
+	if _, err := eng.Renegotiate(ctx, uuid.New()); !errors.Is(err, peer.ErrPeerNotFound) {
+		t.Errorf("unknown peer: err = %v, want ErrPeerNotFound", err)
+	}
+}
+
+type errDoer struct{ n int }
+
+func (d *errDoer) Do(*http.Request) (*http.Response, error) {
+	d.n++
+	return nil, errors.New("dial tcp: connection refused")
+}
+
+// A renegotiation the peer does not complete changes nothing here: a
+// transport failure, a refusal, a completed answer without its confirm,
+// and a confirm signed with another key.
+func TestRenegotiate_FailureChangesNothing(t *testing.T) {
+	ctx := context.Background()
+	t.Run("transport failure", func(t *testing.T) {
+		pair := &fakeDoer{respond: func(string) *http.Response { return answer(200, "application/json", ack("accepted_pending")) }}
+		fx, eng := contractEngine(t, pair)
+		url := peerURL(t, fx)
+		before := connectedPeer(t, fx, eng, url, newKey(t), peer.CapabilitySet{peer.CapE2EEncrypted})
+		down := &errDoer{}
+		eng2 := peer.NewEngine(fx.registry, fx.idMgr, down)
+		eng2.SetLocalBaseURL(fx.baseURL)
+		if _, err := eng2.Renegotiate(ctx, before.ID); err == nil || errors.Is(err, peer.ErrRenegotiateState) {
+			t.Fatalf("err = %v, want a transport failure", err)
+		}
+		if down.n != 1 {
+			t.Fatalf("offers attempted = %d, want 1", down.n)
+		}
+		assertUnchanged(t, fx, url, before)
+		if p := mustPeer(t, fx, url); !strings.Contains(p.Notes, "renegotiation failed") {
+			t.Errorf("the failure is not in the notes: %q", p.Notes)
+		}
+	})
+	for _, c := range []struct {
+		name    string
+		respond func(eng *peer.Engine, fx *hsFixture, url string) *http.Response
+	}{
+		{"refused", func(*peer.Engine, *hsFixture, string) *http.Response {
+			return answer(400, "application/json", `{"error":"handshake: peer key differs from the key on record"}`)
+		}},
+		{"completed without the confirm", func(*peer.Engine, *hsFixture, string) *http.Response {
+			return answer(200, "application/json", ack("completed"))
+		}},
+		{"confirm signed with another key", func(eng *peer.Engine, fx *hsFixture, url string) *http.Response {
+			_, err := eng.HandleInbound(context.Background(),
+				signedFrom(t, newKey(t), peer.HandshakeTypeConfirm, url, fx.baseURL, peer.KnownCapabilities))
+			if !errors.Is(err, peer.ErrHandshakeKeyConflict) {
+				t.Errorf("a confirm with another key: err = %v, want ErrHandshakeKeyConflict", err)
+			}
+			return answer(400, "application/json", `{"error":"could not confirm back"}`)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var eng *peer.Engine
+			var fx *hsFixture
+			var url string
+			renegotiating := false
+			doer := &fakeDoer{respond: func(typ string) *http.Response {
+				if !renegotiating {
+					return answer(200, "application/json", ack("accepted_pending"))
+				}
+				return c.respond(eng, fx, url)
+			}}
+			fx, eng = contractEngine(t, doer)
+			url = peerURL(t, fx)
+			before := connectedPeer(t, fx, eng, url, newKey(t), peer.CapabilitySet{peer.CapE2EEncrypted})
+			renegotiating = true
+			res, err := eng.Renegotiate(ctx, before.ID)
+			if !errors.Is(err, peer.ErrRenegotiateNotCompleted) && !errors.Is(err, peer.ErrHandshakeAnswer) {
+				t.Fatalf("err = %v, want a failed renegotiation", err)
+			}
+			assertUnchanged(t, fx, url, before)
+			if res == nil || !slices.Equal(res.Current, before.Capabilities) {
+				t.Errorf("result %+v, want the unchanged set", res)
+			}
+		})
+	}
+}
+
+// An offer from a connected peer signed with another key is refused
+// before anything is sent or stored (the receiving side of a
+// renegotiation, §16.2).
+func TestHandleInbound_ReofferWithAnotherKeyIsRefused(t *testing.T) {
+	doer := &fakeDoer{respond: func(string) *http.Response { return answer(200, "application/json", ack("accepted_pending")) }}
+	fx, eng := contractEngine(t, doer)
+	url := peerURL(t, fx)
+	before := connectedPeer(t, fx, eng, url, newKey(t), peer.KnownCapabilities)
+	sent := len(doer.paths)
+	_, err := eng.HandleInbound(context.Background(),
+		signedFrom(t, newKey(t), peer.HandshakeTypeOffer, url, fx.baseURL, peer.CapabilitySet{}))
+	if !errors.Is(err, peer.ErrHandshakeKeyConflict) {
+		t.Fatalf("err = %v, want ErrHandshakeKeyConflict", err)
+	}
+	if len(doer.paths) != sent {
+		t.Errorf("a refused re-offer sent %d confirms back", len(doer.paths)-sent)
+	}
+	assertUnchanged(t, fx, url, before)
 }
 
 // --- receiving side: repeated and crossing envelopes -------------------

@@ -1243,6 +1243,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.fedEngine.SetLocalBaseURL(sysconfigBaseURLFn(sysCfg)(context.Background()))
 	s.fedEngine.SetLocalDisplayName(sysconfigSiteNameFn(sysCfg)(context.Background()))
 	s.peersHandshake = peer.NewAdminHandshakeHandler(s.peers, s.fedEngine)
+	s.peersHandshake.SetRenegotiationAudit(auditRec.PeerRenegotiated)
 	s.peersPublic = peer.NewPublicHandler(
 		s.fedIdentity,
 		s.fedEngine,
@@ -5556,6 +5557,10 @@ func (s *apiServer) ListFederationPendingInbound(ctx context.Context, req openap
 
 func (s *apiServer) AcceptFederationPeer(ctx context.Context, req openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
 	return s.peersHandshake.AcceptFederationPeer(ctx, req)
+}
+
+func (s *apiServer) RenegotiateFederationPeer(ctx context.Context, req openapi.RenegotiateFederationPeerRequestObject) (openapi.RenegotiateFederationPeerResponseObject, error) {
+	return s.peersHandshake.RenegotiateFederationPeer(ctx, req)
 }
 
 // --- federation peers admin (Phase 1.22.B-a) -----------------------------

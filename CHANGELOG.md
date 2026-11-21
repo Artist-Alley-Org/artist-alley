@@ -9,6 +9,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Paired instances can negotiate their capabilities again without re-pairing (#1574).** On
+  **Admin > Federation > Peers**, a connected, enabled peer now has **Negotiate again**: it sends
+  the peer a fresh signed offer, and both instances record the capabilities they now have in
+  common. The pairing stays as it is, with the same key, and so do its shares, grants and
+  everything received from it; the page shows what was added or removed. A peer whose key changed
+  is refused, a token is recorded only if both instances advertise it, and every attempt is audited
+  (`federation.peer.renegotiated`). Until now, the only way for an older pairing to pick up a newly
+  supported capability was to remove the peer and pair again, which deleted that data. Nothing
+  renegotiates automatically on upgrade. API: `POST /admin/federation/peers/{id}/renegotiate`.
 - **The origin side of original-file transfer between instances (#72).** A paired instance can
   request an asset's original file with a signed `GET` or `HEAD` of
   `/federation/assets/{asset_id}/files/original/{sha256}?size=N`. Each request is decided from this
