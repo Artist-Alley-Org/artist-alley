@@ -124,6 +124,14 @@ const (
 	// with another actor, object, version, file set or claim. Nothing is
 	// written; the record of the first delivery stands.
 	ReasonActivityConflict = "activity_conflict"
+	// ReasonAwaitingGrant (#1574 slice 3): a pending record no grant yet
+	// authorises (neither a peer-wide asset grant nor a peer-wide collection
+	// grant whose recorded membership lists the asset), and whose peer has
+	// no direct row of the peer-wide asset tuple for it yet. It waits, fetching
+	// nothing and using no attempt, until a grant arrives (which wakes it)
+	// or Config.GrantWait from received_at runs out (rejected
+	// no_inbound_grant). See awaitGrant.
+	ReasonAwaitingGrant = "awaiting_grant"
 )
 
 // Error is a typed refusal or failure. Retryable means the record (if
@@ -199,12 +207,15 @@ type Config struct {
 	// retried: RetryBase doubled per attempt, at most RetryMax.
 	RetryBase time.Duration
 	RetryMax  time.Duration
+	// GrantWait bounds how long a record announced before its grant waits
+	// for it, from received_at (#1574 slice 3, ReasonAwaitingGrant).
+	GrantWait time.Duration
 }
 
 // DefaultConfig returns production bounds.
 func DefaultConfig() Config {
 	return Config{MaxTotalBytes: 32 << 30, MaxAttempts: 5, Lease: 10 * time.Minute,
-		RetryBase: 30 * time.Second, RetryMax: 30 * time.Minute}
+		RetryBase: 30 * time.Second, RetryMax: 30 * time.Minute, GrantWait: 24 * time.Hour}
 }
 
 // Deps wires the service.
@@ -229,6 +240,9 @@ type Service struct {
 	// Test hooks (export_test.go).
 	afterFetch func()
 	inComplete func(ctx context.Context, tx pgx.Tx) error
+	// inAwait runs inside awaitGrant's transaction, after it found no
+	// grant row and before it records the wait.
+	inAwait func()
 }
 
 // New builds a service. Zero Config fields take DefaultConfig values.
@@ -249,6 +263,9 @@ func New(d Deps) *Service {
 	}
 	if cfg.RetryMax < cfg.RetryBase {
 		cfg.RetryMax = max(def.RetryMax, cfg.RetryBase)
+	}
+	if cfg.GrantWait <= 0 {
+		cfg.GrantWait = def.GrantWait
 	}
 	return &Service{d: d, cfg: cfg}
 }
@@ -575,8 +592,36 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 			rec, err = s.insert(ctx, tx, an, StateRejected, casfetch.ReasonTooLarge)
 			return err
 		}
+		// The peer's grants cannot change under this decision (the lock
+		// ApplyShare holds), so a grant committed meanwhile is either seen
+		// here or wakes the record it finds waiting.
+		if err := inboundgrants.LockPeerTx(ctx, tx, an.peer.ID); err != nil {
+			return err
+		}
 		if _, err := s.d.Grants.AllowsTx(ctx, tx, s.grantQuery(an)); err != nil {
 			if !errors.Is(err, inboundgrants.ErrNoGrant) {
+				return err
+			}
+			// AllowsTx authorised neither a peer-wide asset grant nor a
+			// peer-wide collection grant through a recorded membership.
+			// With no direct row of the peer-wide asset tuple for this
+			// peer and asset, the aa:Share may not be applied yet (the
+			// inbox dispatches the two independently): wait for it. A
+			// direct row of that tuple (live without the original,
+			// revoked, superseded, expired) is a decision the origin
+			// already made: refuse. A grant to one local user, or a direct
+			// row of another kind, neither refuses nor ends the wait.
+			exists, err := grantRowExists(ctx, tx, an.peer.ID, an.env.Object)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				rec, err = s.insert(ctx, tx, an, StatePending, ReasonAwaitingGrant)
+				if err != nil {
+					return err
+				}
+				_, err = tx.Exec(ctx, `UPDATE federation_received_assets SET next_attempt_at = `+awaitNextSQL+`
+					WHERE id = $1`, rec.id, s.cfg.GrantWait.Seconds())
 				return err
 			}
 			rec, err = s.insert(ctx, tx, an, StateRejected, casfetch.ReasonNoInboundGrant)
@@ -641,11 +686,17 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, an *announced, state, r
 			return record{}, err
 		}
 	}
-	// A record refused as it is bound: its ledger row, in the same
-	// transaction (#1574 slice 2).
-	if state == StateRejected {
+	// A record refused as it is bound, or bound to wait for its grant:
+	// its ledger row, in the same transaction (#1574 slices 2 and 3).
+	switch {
+	case state == StateRejected:
 		if err := s.writeEvents(ctx, tx, r.id, 0, StateRejected,
 			event{typ: EventIngestion, outcome: OutcomeFailure, reason: reason}); err != nil {
+			return record{}, err
+		}
+	case reason == ReasonAwaitingGrant:
+		if err := s.writeEvents(ctx, tx, r.id, 0, StatePending,
+			event{typ: EventIngestion, outcome: OutcomeWarning, reason: reason}); err != nil {
 			return record{}, err
 		}
 	}
@@ -742,6 +793,13 @@ func (s *Service) process(ctx context.Context, id uuid.UUID, signers SignerResol
 	signer, serr := signers(st.signerKey, st.signerAs)
 	if errors.Is(serr, errOtherSigner) {
 		return s.current(ctx, id)
+	}
+	// A record whose grant has not arrived waits here, before an attempt
+	// is counted and before anything is fetched (#1574 slice 3).
+	if serr == nil {
+		if out, decided, err := s.awaitGrant(ctx, st, id, signer); decided {
+			return out, err
+		}
 	}
 	// The attempt holds the record for a lease, so no worker starts it
 	// meanwhile; the Worker heartbeat keeps the lease while it runs.

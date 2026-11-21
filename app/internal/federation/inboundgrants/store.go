@@ -166,7 +166,32 @@ type Store struct {
 	localBaseURL func(ctx context.Context) string
 	audit        *audit.Recorder
 	logger       *slog.Logger
+	arrival      ArrivalHook
 }
+
+// Arrival is the grant row ApplyShare recorded: its peer, the object's
+// kind and URI, and the target user it names ("" for the peer as a whole).
+type Arrival struct {
+	PeerID        uuid.UUID
+	ObjectKind    string
+	ObjectURI     string
+	TargetUserURI string
+}
+
+// ArrivalHook is told when ApplyShare records a grant row (live, or ended
+// on arrival): InTx inside the transaction that records it, After once
+// that transaction has committed. The receiver core uses it to wake,
+// exactly, the received asset records waiting for that grant's tuple
+// (#1574 slice 3); it decides from the Arrival which records that is. A
+// duplicate Share records nothing and calls neither.
+type ArrivalHook struct {
+	InTx  func(ctx context.Context, tx pgx.Tx, a Arrival) error
+	After func()
+}
+
+// SetArrivalHook installs h. Call it while wiring, before the store is
+// used.
+func (s *Store) SetArrivalHook(h ArrivalHook) { s.arrival = h }
 
 // New wires the store. localBaseURL is this instance's base URL (the
 // origin target_user URIs must be on); rec and logger may be nil.
@@ -184,6 +209,14 @@ func (s *Store) localOrigin(ctx context.Context) string {
 // lockPeer serialises every grant apply of one peer for the rest of tx:
 // a Share and the Unshare that names it, or two Shares of one tuple,
 // never interleave their reads and writes.
+// LockPeerTx takes, in tx, the per-peer lock ApplyShare and ApplyUnshare
+// hold while they change that peer's grants: a caller deciding something
+// from the absence of a grant sees either the state before such a change
+// or the state after it, never a change in progress.
+func LockPeerTx(ctx context.Context, tx pgx.Tx, peerID uuid.UUID) error {
+	return lockPeer(ctx, tx, peerID)
+}
+
 func lockPeer(ctx context.Context, tx pgx.Tx, peerID uuid.UUID) error {
 	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('federation_inbound_grants:' || $1::text, 0))`, peerID)
 	return err
@@ -395,10 +428,19 @@ func (s *Store) ApplyShare(ctx context.Context, sh Share) (Result, error) {
 				"by_activity_uri": sh.ActivityURI,
 			})
 		}
+		if s.arrival.InTx != nil {
+			if err := s.arrival.InTx(ctx, tx, Arrival{PeerID: sh.PeerID, ObjectKind: string(sh.ObjectKind),
+				ObjectURI: sh.ObjectURI, TargetUserURI: sh.TargetUserURI}); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("inboundgrants: apply aa:Share: %w", err)
+	}
+	if res.Outcome != OutcomeDuplicate && s.arrival.After != nil {
+		s.arrival.After()
 	}
 	return res, nil
 }
@@ -519,13 +561,21 @@ func (s *Store) allows(ctx context.Context, db queryer, q Query, lock bool) (uui
 	// the locking statement would do: both can be evaluated before the
 	// wait. Candidates are bounded and ordered longest-lived first, so a
 	// live grant, if any covers the use, is among them.
+	//
+	// The object: a grant naming it directly, or a collection grant whose
+	// recorded membership lists it. For an original file (#1574 review) a
+	// direct match must be a grant of an ASSET: a grant of another kind
+	// whose URI happens to equal the asset's (a collection grant carrying
+	// allow_original, say) covers no asset's original. A collection grant
+	// still covers its members' originals through the membership branch.
+	// Other classes are unchanged.
 	sql := `SELECT g.id, g.expires_at FROM federation_inbound_grants g
 		JOIN federation_peers p ON p.id = g.peer_id
 		WHERE g.peer_id = $1 AND g.state = 'live'
 		  AND p.enabled AND p.status = 'connected'
 		  AND (g.recipient_user_ref IS NULL AND g.target_user_uri IS NULL
 		       OR g.recipient_user_ref = $2)
-		  AND (g.object_uri = $3
+		  AND ((g.object_uri = $3 AND (NOT $4::boolean OR g.object_kind = 'asset'))
 		       OR (g.object_kind = 'collection' AND EXISTS (
 		             SELECT 1 FROM federation_inbound_memberships m
 		              WHERE m.peer_id = g.peer_id AND m.container_uri = g.object_uri AND m.member_uri = $3)))

@@ -226,7 +226,7 @@ func TestTwoStack_AssetInbox(t *testing.T) {
 		}
 	})
 
-	t.Run("without a grant: recorded, A never asked", func(t *testing.T) {
+	t.Run("without a grant: recorded waiting for it, A never asked", func(t *testing.T) {
 		o := g.newOriginal("public")
 		heads, gets := g.a.casHEADs.Load(), g.a.casGETs.Load()
 		id, body := g.announce(o, g.assetURI(o), nil)
@@ -236,7 +236,8 @@ func TestTwoStack_AssetInbox(t *testing.T) {
 		if got := g.inboxOnB(id); got != "processed" {
 			t.Fatalf("B's inbox row: %s", got)
 		}
-		if got := g.recordOnB(id, "rejected/no_inbound_grant"); got != "rejected/no_inbound_grant" {
+		// #1574 slice 3: no grant row yet, so the record waits for one.
+		if got := g.recordOnB(id, "pending/awaiting_grant"); got != "pending/awaiting_grant" {
 			t.Fatal(got)
 		}
 		if g.a.casHEADs.Load() != heads || g.a.casGETs.Load() != gets {

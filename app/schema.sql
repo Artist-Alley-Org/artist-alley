@@ -3678,7 +3678,7 @@ CREATE TABLE public.federation_received_assets (
         'version_unsupported'::text, 'redirect_refused'::text, 'class_not_available'::text, 'foreign_origin'::text,
         'foreign_signer'::text, 'invalid_request'::text, 'http_status'::text, 'timeout'::text,
         'transport_error'::text, 'lease_lost'::text, 'storage_error'::text, 'peer_unavailable'::text,
-        'profile_not_negotiated'::text, 'archival_invalid'::text])),
+        'profile_not_negotiated'::text, 'archival_invalid'::text, 'awaiting_grant'::text])),
     CONSTRAINT federation_received_assets_sensitivity_check CHECK (sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text])),
     -- Only public and team records are ever held (§7.5.7.4: v1 has no
     -- encrypted file transport).
@@ -3860,7 +3860,7 @@ CREATE TABLE public.federation_transfer_events (
         'version_unsupported'::text, 'redirect_refused'::text, 'class_not_available'::text, 'foreign_origin'::text,
         'foreign_signer'::text, 'invalid_request'::text, 'http_status'::text, 'timeout'::text,
         'transport_error'::text, 'lease_lost'::text, 'storage_error'::text, 'peer_unavailable'::text,
-        'profile_not_negotiated'::text, 'archival_invalid'::text]))),
+        'profile_not_negotiated'::text, 'archival_invalid'::text, 'awaiting_grant'::text]))),
     -- A file is named whole or not at all; transfer and fixity-check events
     -- always name one, and its expected digest is its listed one.
     CONSTRAINT federation_transfer_events_file_check CHECK (

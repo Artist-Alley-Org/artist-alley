@@ -422,6 +422,42 @@ func TestAllows_ContainerOnlyThroughRecordedMembership(t *testing.T) {
 	f.wantRefused("", f.asset("m3"))
 }
 
+// TestAllows_OriginalNeedsAnAssetGrantOnADirectMatch (#1574 review): a
+// grant of another kind whose object URI equals an asset's covers no
+// original of that asset. A collection grant still covers its members'
+// originals through a recorded membership, an asset grant covers its own,
+// and a non-original use is unchanged.
+func TestAllows_OriginalNeedsAnAssetGrantOnADirectMatch(t *testing.T) {
+	f := newFx(t)
+	x := f.asset("x")
+	wrong := f.apply(f.share("gwrong", func(s *inboundgrants.Share) {
+		s.ObjectKind, s.ObjectURI, s.AllowOriginal = federation.ShareObjectKindCollection, x, true
+	}))
+	if wrong.Outcome != inboundgrants.OutcomeLive {
+		t.Fatalf("the wrong-kind grant: %+v", wrong)
+	}
+	f.wantRefused("", x, original)
+	f.wantAllowed("", x, wrong.GrantID) // not an original: unchanged
+	// The legitimate collection path: a membership recorded for a real
+	// container covers its member's original.
+	coll := f.sender + "/collections/c9"
+	cg := f.apply(f.share("gcoll", func(s *inboundgrants.Share) {
+		s.ObjectKind, s.ObjectURI, s.AllowOriginal = federation.ShareObjectKindCollection, coll, true
+	}))
+	if _, err := f.pool.Exec(context.Background(),
+		`INSERT INTO federation_inbound_memberships (peer_id, container_uri, member_uri) VALUES ($1, $2, $3)`,
+		f.peerID, coll, x); err != nil {
+		t.Fatal(err)
+	}
+	f.wantAllowed("", x, cg.GrantID, original)
+	// And an asset grant covers its own original directly.
+	y := f.asset("y")
+	ag := f.apply(f.share("gasset", func(s *inboundgrants.Share) {
+		s.ObjectKind, s.ObjectURI, s.AllowOriginal = federation.ShareObjectKindAsset, y, true
+	}))
+	f.wantAllowed("", y, ag.GrantID, original)
+}
+
 // No positive cache: the decision right after a revoke, from the same
 // store, refuses.
 func TestAllows_NoPositiveCache(t *testing.T) {
