@@ -612,15 +612,19 @@ func TestReceive_FixityFailuresKeepNothing(t *testing.T) {
 }
 
 func TestReceive_GrantRequired(t *testing.T) {
-	t.Run("no grant: refused before asking the origin", func(t *testing.T) {
+	t.Run("no grant at all: waits for it, before asking the origin", func(t *testing.T) {
 		f := newFx(t)
 		a := f.newAsset(1)
 		out, err := f.receive(f.envelope(a, a.member(f.version(a), 1, "public")))
-		wantReason(t, err, casfetch.ReasonNoInboundGrant)
-		if out.RecordID == uuid.Nil || f.origin.heads.Load() != 0 {
+		// #1574 slice 3: no grant row yet, so the record waits for one.
+		wantReason(t, err, assetingest.ReasonAwaitingGrant)
+		if !assetingest.Retryable(err) || out.State != assetingest.StatePending || out.RecordID == uuid.Nil || f.origin.heads.Load() != 0 {
 			t.Fatalf("outcome %+v, origin HEADs %d", out, f.origin.heads.Load())
 		}
-		// Refused when the record is bound: no fetch attempt was made.
+		if st, r := f.state(out.RecordID); st != assetingest.StatePending || r != assetingest.ReasonAwaitingGrant {
+			t.Fatalf("stored %s/%s", st, r)
+		}
+		// Waiting uses no fetch attempt.
 		if n := f.count(`SELECT attempts FROM federation_received_assets WHERE id = $1`, out.RecordID); n != 0 {
 			t.Fatalf("%d fetch attempts for an announcement without a grant", n)
 		}
@@ -666,8 +670,10 @@ func TestReceive_GrantRequired(t *testing.T) {
 		a := f.newAsset(1)
 		other := newOrigin(t)
 		f.grant(f.addPeer(other.srv.URL, bothProfiles), a.uri, nil)
+		// No grant row from THIS peer: it waits for one (#1574 slice 3),
+		// and another peer's grant never authorises it.
 		_, err := f.receive(f.envelope(a, a.member(f.version(a), 1, "public")))
-		wantReason(t, err, casfetch.ReasonNoInboundGrant)
+		wantReason(t, err, assetingest.ReasonAwaitingGrant)
 		f.nothingUsable(a.hash...)
 	})
 	t.Run("revoked between the fetch and the commit", func(t *testing.T) {
@@ -777,11 +783,11 @@ func TestReceive_RecordedRefusals(t *testing.T) {
 			t.Fatal("the origin was asked")
 		}
 	})
-	t.Run("a refusal never blocks a later announcement (reordered grant)", func(t *testing.T) {
+	t.Run("an announcement before its grant is not lost (reordered grant)", func(t *testing.T) {
 		f := newFx(t)
 		a := f.newAsset(1)
 		first, err := f.receive(f.envelope(a, a.member(f.version(a), 1, "public")))
-		wantReason(t, err, casfetch.ReasonNoInboundGrant)
+		wantReason(t, err, assetingest.ReasonAwaitingGrant)
 		f.grant(f.peerID, a.uri, nil)
 		// The refused activity keeps its stored answer.
 		if _, err := f.receive(f.envelope(a, a.member(f.version(a), 1, "public"))); err != nil {

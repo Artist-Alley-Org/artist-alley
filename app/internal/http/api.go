@@ -1604,6 +1604,11 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		AgentVersion: storageSvc.AgentVersion,
 	}), assetingest.DefaultWorkerConfig(), func() casfetch.Signer { return casfetch.InstanceSigner(signer) })
 	s.inboxDispatcher.SetAssetScheduler(s.assetIngest)
+	// #1574 slice 3: a grant row recorded for a peer and asset wakes,
+	// exactly, the records of that peer and asset waiting for their grant
+	// (assetingest.WakeAwaiting in the grant's transaction), then the
+	// worker.
+	s.inboundGrants.SetArrivalHook(inboundgrants.ArrivalHook{InTx: assetingest.WakeAwaiting, After: s.assetIngest.Wake})
 	// #1574 view: a complete received record is shown to its grant's
 	// audience at /federation/received-assets (and the "Received" account
 	// page), never as a local asset; the original only under a grant that
