@@ -162,6 +162,14 @@ func announce(ctx context.Context, tx pgx.Tx, w *activities.Writer, actor emit.A
 		Scan(&currentNumber); err != nil {
 		return nil, fmt.Errorf("assetsend: read the current version: %w", err)
 	}
+	// The flags every announcement recorded now carries (#1575): read
+	// under the caller's lock of the asset row, so a flag change commits
+	// before or after this, never between.
+	var flags emit.AssetFlags
+	if err := tx.QueryRow(ctx, `SELECT mature, COALESCE(ai_provenance, '') FROM assets WHERE id = $1`, assetID).
+		Scan(&flags.Mature, &flags.AIProvenance); err != nil {
+		return nil, fmt.Errorf("assetsend: read the asset's flags: %w", err)
+	}
 	usable, err := usableVersions(ctx, tx, assetID, to.peerID)
 	if err != nil {
 		return nil, err
@@ -221,7 +229,7 @@ func announce(ctx context.Context, tx pgx.Tx, w *activities.Writer, actor emit.A
 	ids := make([]uuid.UUID, 0, len(versions))
 	for _, v := range versions {
 		em := emit.AssetVersion(actor, emit.AssetVersionRef{AssetID: assetID, VersionID: v, ShareID: to.shareID,
-			ShareActivityID: to.shareActivityID, PeerURL: to.peerURL})
+			ShareActivityID: to.shareActivityID, PeerURL: to.peerURL, Flags: &flags})
 		row, err := w.RecordActivity(ctx, tx, em.Activity)
 		if err != nil {
 			return nil, fmt.Errorf("assetsend: record aa:AssetVersion: %w", err)

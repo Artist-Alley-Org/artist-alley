@@ -69,7 +69,9 @@ import (
 // unsupported_activity. The one other Delete is an origin's withdrawal of
 // an asset (#1575): it carries aa:tombstone (archival-1, checked by
 // ValidateMembers) and no object_type, and DeleteHandler hands it to the
-// asset receiver, which also requires original-transfer-1.
+// asset receiver, which also requires original-transfer-1. The one other
+// Update, likewise, is an origin's Update of its asset's flags (#1575): it
+// carries aa:asset, and UpdateHandler hands it to the asset receiver.
 var appliedHandlers = map[federation.ActivityType]func(*Dispatcher) HandlerFn{
 	federation.ActivityLike:      LikeHandler,
 	federation.ActivityUndo:      UndoHandler,

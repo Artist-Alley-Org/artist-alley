@@ -25,7 +25,7 @@ var assetProfiles = []string{federation.ProfileShareLifecycle1, federation.Profi
 type announcement struct {
 	id, actorURI, objectURI string
 	actorRef                int64
-	payload                 map[string]string
+	payload                 map[string]any
 }
 
 // announcements lists the aa:AssetVersion activities recorded for asset.
@@ -86,14 +86,16 @@ func TestAdminGrant_OriginalAssetShareAnnouncesTheCurrentVersion(t *testing.T) {
 		FROM federation_shares s, assets a WHERE s.id = $1 AND a.id = $2`, created.Id, asset).Scan(&shareActivity, &version); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"share_id": created.Id.String(), "share_activity_id": shareActivity.String(),
-		"asset_id": asset.String(), "version_id": version.String()}
+	// #1575: the asset's mature and aiProvenance as recorded, so every
+	// delivery of the announcement carries the same flags.
+	want := map[string]any{"share_id": created.Id.String(), "share_activity_id": shareActivity.String(),
+		"asset_id": asset.String(), "version_id": version.String(), "mature": false, "ai_provenance": ""}
 	if len(a.payload) != len(want) {
 		t.Fatalf("payload %v, want exactly %v", a.payload, want)
 	}
 	for k, v := range want {
 		if a.payload[k] != v {
-			t.Errorf("payload %s = %q, want %q", k, a.payload[k], v)
+			t.Errorf("payload %s = %v, want %v", k, a.payload[k], v)
 		}
 	}
 	// The owner announces its own asset; the object is the asset URI.

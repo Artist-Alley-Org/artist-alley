@@ -166,6 +166,12 @@ type Handler struct {
 	// assetsend.RecordWithdrawals). nil records nothing.
 	withdrawals func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error
 
+	// flagUpdates records, in an edit's own transaction, an Update of the
+	// asset's mature and aiProvenance flags to every peer that holds the
+	// asset under a live share (#1575, assetsend.RecordFlagUpdates), when
+	// the edit changed either. nil records nothing.
+	flagUpdates func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error
+
 	// SoftDelete handles restore (clear deleted_at + audit) via the
 	// shared softdelete.Service. Nil at construction time in tests;
 	// wired at boot in api.go alongside the gc coordinator.
@@ -1824,6 +1830,26 @@ func (h *Handler) UpdateAsset(
 		aiProvenancePtr = v
 	}
 
+	// #1575: the flags before the edit, read under the row lock the
+	// UPDATE then holds, so a change is told to the peers holding the
+	// asset in this same transaction.
+	type assetFlags struct {
+		mature bool
+		ai     string
+	}
+	var flagsBefore *assetFlags
+	if h.flagUpdates != nil && (maturePtr != nil || aiProvenancePtr != nil || clearAI) {
+		var b assetFlags
+		err := tx.QueryRow(ctx, `SELECT mature, COALESCE(ai_provenance, '') FROM assets WHERE id = $1 FOR UPDATE`, pgID).
+			Scan(&b.mature, &b.ai)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("assets: read the flags: %w", err)
+		}
+		if err == nil {
+			flagsBefore = &b
+		}
+	}
+
 	row, err := q.UpdateAsset(ctx, UpdateAssetParams{
 		ID:                pgID,
 		Title:             titlePtr,
@@ -1841,6 +1867,17 @@ func (h *Handler) UpdateAsset(
 			}, nil
 		}
 		return nil, fmt.Errorf("assets: update: %w", err)
+	}
+	if flagsBefore != nil {
+		after := assetFlags{mature: row.Mature}
+		if row.AiProvenance != nil {
+			after.ai = *row.AiProvenance
+		}
+		if after != *flagsBefore {
+			if err := h.flagUpdates(ctx, tx, uuid.UUID(pgID.Bytes)); err != nil {
+				return nil, fmt.Errorf("assets: record the flag update: %w", err)
+			}
+		}
 	}
 
 	// Tag replacement when the client sends a tags array.
@@ -1898,6 +1935,12 @@ func (h *Handler) UpdateAsset(
 // SetWithdrawalRecorder wires the federation withdrawal recorder (#1575).
 func (h *Handler) SetWithdrawalRecorder(f func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error) {
 	h.withdrawals = f
+}
+
+// SetFlagUpdateRecorder wires the federation recorder of an asset's flag
+// changes (#1575).
+func (h *Handler) SetFlagUpdateRecorder(f func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error) {
+	h.flagUpdates = f
 }
 
 func (h *Handler) DeleteAsset(

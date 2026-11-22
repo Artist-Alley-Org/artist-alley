@@ -1776,6 +1776,20 @@ $$;
 
 
 --
+-- Name: federation_received_asset_revisions_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_received_asset_revisions_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'received asset revision %: a revision is immutable (#1575)', OLD.id
+        USING ERRCODE = 'integrity_constraint_violation';
+END;
+$$;
+
+
+--
 -- Name: federation_received_asset_files_update_check(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3974,11 +3988,49 @@ COMMENT ON COLUMN public.federation_received_asset_files.detected_by IS 'The too
 
 
 --
+-- Name: federation_received_asset_revisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_received_asset_revisions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    peer_id uuid NOT NULL,
+    origin_asset_uri text NOT NULL,
+    activity_uri text NOT NULL,
+    activity_type text NOT NULL,
+    actor_uri text NOT NULL,
+    published timestamp with time zone NOT NULL,
+    version_uri text NOT NULL,
+    file_set_sha256 text NOT NULL,
+    mature boolean NOT NULL,
+    ai_provenance text,
+    record jsonb NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT federation_received_asset_revisions_ai_check CHECK (((ai_provenance IS NULL) OR (ai_provenance = ANY (ARRAY['none'::text, 'assisted'::text, 'generated'::text])))),
+    CONSTRAINT federation_received_asset_revisions_digest_check CHECK ((file_set_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT federation_received_asset_revisions_type_check CHECK ((activity_type = ANY (ARRAY['aa:AssetVersion'::text, 'Update'::text])))
+);
+
+
+--
+-- Name: TABLE federation_received_asset_revisions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_received_asset_revisions IS 'An origin''s mature and aiProvenance flags of an asset as this instance received them (#1575, spec v1 §17.2.8): one immutable row per accepted aa:AssetVersion or flag Update, ordered by the activity''s signed published, then its URI. The flags shown are the greatest row''s. Read by nothing that decides access.';
+
+
+--
 -- Name: federation_received_asset_files_hash_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX federation_received_asset_files_hash_idx
     ON public.federation_received_asset_files USING btree (object_hash);
+
+
+--
+-- Name: federation_received_asset_revisions_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_received_asset_revisions_order_idx ON public.federation_received_asset_revisions USING btree (peer_id, origin_asset_uri, published DESC, activity_uri DESC);
 
 
 --
@@ -6101,6 +6153,22 @@ ALTER TABLE ONLY public.federation_peers
 
 ALTER TABLE ONLY public.federation_peers
     ADD CONSTRAINT federation_peers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: federation_received_asset_revisions federation_received_asset_revisions_activity_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_received_asset_revisions
+    ADD CONSTRAINT federation_received_asset_revisions_activity_key UNIQUE (peer_id, activity_uri);
+
+
+--
+-- Name: federation_received_asset_revisions federation_received_asset_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_received_asset_revisions
+    ADD CONSTRAINT federation_received_asset_revisions_pkey PRIMARY KEY (id);
 
 
 --
@@ -8698,6 +8766,13 @@ CREATE TRIGGER federation_received_asset_files_write_check_trg BEFORE INSERT OR 
 
 
 --
+-- Name: federation_received_asset_revisions federation_received_asset_revisions_immutable_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_received_asset_revisions_immutable_trg BEFORE UPDATE ON public.federation_received_asset_revisions FOR EACH ROW EXECUTE FUNCTION public.federation_received_asset_revisions_immutable();
+
+
+--
 -- Name: federation_received_assets federation_received_assets_commit_check_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -9244,6 +9319,14 @@ ALTER TABLE ONLY public.federation_outbox
 
 ALTER TABLE ONLY public.federation_peer_suggestions
     ADD CONSTRAINT federation_peer_suggestions_source_peer_id_fkey FOREIGN KEY (source_peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: federation_received_asset_revisions federation_received_asset_revisions_peer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_received_asset_revisions
+    ADD CONSTRAINT federation_received_asset_revisions_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
 
 
 --

@@ -130,7 +130,8 @@ type MemberContext struct {
 //     (ErrProfileNotNegotiated) and must match it (ErrArchivalInvalid).
 //  3. A type the receiver does not apply is ErrUnsupportedActivity;
 //     so is a Create that is not a comment, an Undo that is not of a
-//     Like, and a Delete or an Update that is not of a comment.
+//     Like, and a Delete or an Update that is not of a comment or (with
+//     its archival-1 member) of an asset.
 //  4. Every member must be defined for the type (ErrUnknownField) and
 //     well formed (ErrInvalidMember).
 func ValidateMembers(env *Envelope, mc MemberContext) error {
@@ -197,6 +198,17 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 		}
 		allowed[MemberObjectType] = true
 	case ActivityUpdate:
+		if _, ok := env.Extra[MemberArchivalAsset]; ok {
+			// #1575, §17.2.8: an origin's Update of its own asset's
+			// flags. ValidateArchivalMembers above required archival-1
+			// and checked aa:asset names the envelope object; the object
+			// is an asset URI on the actor's own origin.
+			if err := checkPriorActivityObject(env); err != nil {
+				return err
+			}
+			allowed[MemberArchivalAsset] = true
+			break
+		}
 		// An edit of a comment (#1572, §7.5.5): object_type "Note" and
 		// the comment's Create id, like a Delete, plus the new content.
 		// No inReplyTo: an edit never moves a comment.
@@ -676,8 +688,9 @@ func walkJSONValue(dec *json.Decoder) error {
 // "Like"; an Undo of a Follow or a Block stays local), and a Delete or
 // an Update (edit) of a comment by its own author (#1572: the payload
 // names the comment's Create, create_activity_uri; a moderator's Delete,
-// or a Delete or an Update of anything else, stays local), and an
-// aa:AssetVersion of an asset (#1574, federation/assetsend). Everything
+// or a Delete or an Update of anything else, stays local), an
+// aa:AssetVersion of an asset (#1574, federation/assetsend), and a Delete
+// (its withdrawal) or an Update (its flags) of an asset (#1575). Everything
 // else stays local until a receiver applies it (spec v1 §7.6, §12.3
 // activity_not_federated).
 func Federated(t ActivityType, objectKind string, payload []byte) bool {
@@ -694,7 +707,9 @@ func Federated(t ActivityType, objectKind string, payload []byte) bool {
 		// #1575: an asset's Delete is its withdrawal (aa:tombstone).
 		return objectKind == "asset" || (objectKind == "comment" && absoluteHTTPS(CommentCreateURI(payload)))
 	case ActivityUpdate:
-		return objectKind == "comment" && absoluteHTTPS(CommentCreateURI(payload))
+		// #1575: an Update of an asset carries its mature and aiProvenance
+		// flags (aa:asset, federation/assetsend).
+		return objectKind == "asset" || (objectKind == "comment" && absoluteHTTPS(CommentCreateURI(payload)))
 	}
 	return false
 }
@@ -795,7 +810,7 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		// queued; a row queued earlier is closed here.
 		return nil, fmt.Errorf("%w: %w: %s is sent only with %s", ErrNotFederated, ErrProfileNotNegotiated, t, ProfileShareLifecycle1)
 	}
-	if (t == ActivityAAAssetVersion || (t == ActivityDelete && objectKind == "asset")) &&
+	if (t == ActivityAAAssetVersion || ((t == ActivityDelete || t == ActivityUpdate) && objectKind == "asset")) &&
 		(!has(ProfileArchival1) || !has(ProfileOriginalTransfer1)) {
 		// §16.3, as for the share types: never sent to a peer without
 		// both profiles, never stripped to fit one.
@@ -845,6 +860,15 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		// is the envelope object (#1572).
 		out[MemberObjectType] = json.RawMessage(strconv.Quote(CommentObjectType))
 	case ActivityUpdate:
+		if objectKind == "asset" {
+			// #1575: an Update of an asset's flags, its aa:asset built by
+			// the delivery worker from what was recorded
+			// (AssetVersionMemberKey); the asset is the envelope object.
+			if err := copyAs(AssetVersionMemberKey, MemberArchivalAsset, true); err != nil {
+				return nil, err
+			}
+			break
+		}
 		// An author's edit of a comment: object_type and the new content;
 		// the comment's Create is the envelope object (#1572).
 		out[MemberObjectType] = json.RawMessage(strconv.Quote(CommentObjectType))
@@ -911,7 +935,11 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 	case ActivityCreate:
 		err = checkCommentMembers(out)
 	case ActivityUpdate:
-		err = checkCommentContent(out)
+		if objectKind == "asset" {
+			_, err = ParseArchivalAsset(out[MemberArchivalAsset])
+		} else {
+			err = checkCommentContent(out)
+		}
 	case ActivityAAShare:
 		err = checkShareMembers(out, true)
 		if err == nil {

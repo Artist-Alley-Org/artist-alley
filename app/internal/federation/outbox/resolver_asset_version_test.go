@@ -238,3 +238,45 @@ func TestResolver_AssetWithdrawal_GoesToTheNamedPeerOnly(t *testing.T) {
 	}
 	noRecipients(t, "a disabled peer", got)
 }
+
+// #1575: an Update of an asset's flags is addressed like an
+// aa:AssetVersion: the share it rides on, read live, that share's peer
+// only, never at a tier that cannot be sent in plaintext; an Update of a
+// comment is still addressed where its Create went (resolver_test.go).
+func TestResolver_AssetFlagUpdate_GoesToItsSharesPeerOnly(t *testing.T) {
+	f := newShareFixture(t)
+	ctx := context.Background()
+	f.negotiate(t, f.peer, bothAssetProfiles)
+	f.negotiate(t, f.other, bothAssetProfiles)
+	asset := uuid.New()
+	s := f.assetShare(t, asset, nil)
+	f.assetShare(t, asset, func(in *shares.InsertInput) { in.PeerID = f.other })
+	update := func(tier outbox.Sensitivity) outbox.Input {
+		in := assetVersionInput(asset, s.ID, tier)
+		in.Verb = string(federation.ActivityUpdate)
+		return in
+	}
+	for _, tier := range []outbox.Sensitivity{outbox.SensitivityPublic, outbox.SensitivityTeam} {
+		got, err := f.r.Resolve(ctx, update(tier))
+		if err != nil {
+			t.Fatal(err)
+		}
+		onlyPeer(t, "asset Update at "+string(tier), got, f.peer)
+	}
+	for _, tier := range []outbox.Sensitivity{outbox.SensitivityRestricted, outbox.SensitivityEmbargo, outbox.SensitivityUnresolved} {
+		got, err := f.r.Resolve(ctx, update(tier))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Skipped == outbox.SkippedNone || len(got.Recipients) != 0 {
+			t.Fatalf("at %s: %+v, want skipped with nobody", tier, got)
+		}
+	}
+	// The share ended: nobody.
+	if _, err := f.pool.Exec(ctx, `UPDATE federation_shares SET revoked_at = now() WHERE id = $1`, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := f.r.Resolve(ctx, update(outbox.SensitivityPublic)); err != nil || len(got.Recipients) != 0 {
+		t.Fatalf("after the share was revoked: %+v %v", got, err)
+	}
+}

@@ -760,6 +760,23 @@ type FederationReceivedAssetFile struct {
 	DetectedBy *string
 }
 
+// An origin's mature and aiProvenance flags of an asset as this instance received them (#1575, spec v1 §17.2.8): one immutable row per accepted aa:AssetVersion or flag Update, ordered by the activity's signed published, then its URI. The flags shown are the greatest row's. Read by nothing that decides access.
+type FederationReceivedAssetRevision struct {
+	ID             pgtype.UUID
+	PeerID         pgtype.UUID
+	OriginAssetUri string
+	ActivityUri    string
+	ActivityType   string
+	ActorUri       string
+	Published      pgtype.Timestamptz
+	VersionUri     string
+	FileSetSha256  string
+	Mature         bool
+	AiProvenance   *string
+	Record         []byte
+	ReceivedAt     pgtype.Timestamptz
+}
+
 // The aa:tombstone an origin sent for an asset (#1575, spec v1 §17.3), kept once per (peer, asset), also before any announcement of it. Its presence withdraws every record of that asset from that peer and refuses later announcements.
 type FederationReceivedTombstone struct {
 	ID             pgtype.UUID

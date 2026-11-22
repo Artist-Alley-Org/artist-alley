@@ -845,3 +845,58 @@ func mustGet(t *testing.T, f *fx, caller int64, id uuid.UUID) openapi.GetReceive
 	}
 	return get
 }
+
+// #1575 (spec v1 §17.2.8): the declared mature and aiProvenance are those
+// of the asset's newest revision by (published, activity URI), whatever
+// order revisions arrived in; with none, the record's own claims. They are
+// display only: who sees the record is unchanged.
+func TestAPI_DeclaredFlagsFollowTheNewestRevision(t *testing.T) {
+	f := newFx(t)
+	r := f.complete(f.peerA, "public")
+	f.grant(r, true, "", "")
+	declared := func() map[string]interface{} {
+		t.Helper()
+		got, err := f.h.GetReceivedAsset(as(f.u1), openapi.GetReceivedAssetRequestObject{Id: r.id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok, is := got.(openapi.GetReceivedAsset200JSONResponse)
+		if !is {
+			t.Fatalf("detail: %T", got)
+		}
+		return ok.Body.Declared
+	}
+	if d := declared(); d["mature"] != false || d["aiProvenance"] != nil {
+		t.Fatalf("without a revision: %v", d)
+	}
+	t0 := time.Now().UTC().Truncate(time.Microsecond)
+	revision := func(at time.Duration, uri string, mature bool, ai *string) {
+		t.Helper()
+		if _, err := f.pool.Exec(context.Background(), `INSERT INTO federation_received_asset_revisions
+			(peer_id, origin_asset_uri, activity_uri, activity_type, actor_uri, published, version_uri, file_set_sha256, mature, ai_provenance, record)
+			VALUES ($1, $2, $3, 'Update', $4, $5, $6, $7, $8, $9, '{}'::jsonb)`,
+			r.peer.id, r.object, r.peer.url+"/activities/"+uri, r.peer.url+"/users/alice", t0.Add(at),
+			r.object+"/versions/1", strings.Repeat("0", 64), mature, ai); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gen := "generated"
+	revision(2*time.Second, "b", true, &gen)
+	revision(time.Second, "a", false, nil) // older, arriving after
+	if d := declared(); d["mature"] != true || d["aiProvenance"] != "generated" {
+		t.Fatalf("after an older revision arrived last: %v", d)
+	}
+	revision(2*time.Second, "c", false, nil) // the same time, a greater URI
+	if d := declared(); d["mature"] != false || d["aiProvenance"] != nil {
+		t.Fatalf("the greater URI on equal times: %v", d)
+	}
+	// The other claims are the record's own.
+	if d := declared(); d["rights"] != "http://rightsstatements.org/vocab/InC/1.0/" {
+		t.Fatalf("other claims: %v", d)
+	}
+	// Revisions decide nothing about who sees a record.
+	team := f.complete(f.peerA, "team")
+	f.grant(team, true, "", "")
+	f.want("a team record with no revision", f.u1, team, nothing)
+	f.want("the public record", f.u1, r, everything)
+}

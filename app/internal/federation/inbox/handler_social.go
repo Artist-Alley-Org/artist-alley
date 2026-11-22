@@ -308,7 +308,9 @@ func DeleteHandler(d *Dispatcher) HandlerFn {
 // object_type "Note", the comment's Create id on the actor's own origin
 // and a valid content, checked at receipt and again after decryption;
 // every other Update is unsupported_activity and never reaches this
-// handler.
+// handler, except an Update carrying aa:asset: an origin's Update of its
+// asset's flags (#1575, spec v1 §17.2.8), handed to the asset receiver
+// (handler_asset.go).
 //
 // Bound like a Delete to the row's authenticated peer and the envelope's
 // verified actor, it edits only that actor's comment delivered by that
@@ -319,6 +321,9 @@ func DeleteHandler(d *Dispatcher) HandlerFn {
 // database error is retryable.
 func UpdateHandler(d *Dispatcher) HandlerFn {
 	return func(ctx context.Context, env *federation.Envelope, peerID uuid.UUID, peerURL string, row FederationInbox) (DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {
+		if isAssetFlagUpdate(env) {
+			return d.assetFlagUpdate(ctx, env, peerID)
+		}
 		if d.social == nil {
 			return OutcomeFailed, "", uuid.UUID{}, errors.New("UpdateHandler: SocialPoster not wired")
 		}

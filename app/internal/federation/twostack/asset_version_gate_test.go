@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -317,5 +318,136 @@ func TestTwoStack_AVersionReplacedBeforeItWasSealedIsPassedOver(t *testing.T) {
 	}
 	if n := len(g.announcementsOnA(o)); n != 3 {
 		t.Fatalf("A announced %d times, want 3", n)
+	}
+}
+
+// #1575 (spec v1 §17.2.8): an asset's mature and aiProvenance flags, end
+// to end. A edits the flags through its real API; B shows them on the
+// record it holds, its tier and visibility unchanged. A new file version
+// follows; a second edit, made while that version's announcement is still
+// on its way, reaches B before the version it names, is kept, and still
+// shows once the version is complete. A withdraws the asset; B withdraws
+// every version.
+func TestTwoStack_AnAssetsFlagsFollowItsOrigin(t *testing.T) {
+	g := archivalGate(t)
+	g.runWorkers(g.a)
+	g.runWorkers(g.b)
+	member := g.memberOnB()
+	ctx := context.Background()
+
+	o, _, ann1, id1 := g.importedOnB()
+	patch := func(body map[string]any) {
+		t.Helper()
+		if st := g.api(g.a, http.MethodPatch, "/assets/"+o.asset.String(), body, nil); st != http.StatusOK {
+			t.Fatalf("PATCH on A: %d", st)
+		}
+	}
+	revisionsOnB := func(versionSuffix string) int {
+		return g.countOnB(`SELECT count(*) FROM federation_received_asset_revisions
+			WHERE activity_type = 'Update' AND version_uri LIKE '%' || $1 AND origin_asset_uri LIKE '%' || $2`,
+			versionSuffix, o.asset.String())
+	}
+	waitRevisions := func(versionSuffix string, want int) {
+		t.Helper()
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			if revisionsOnB(versionSuffix) >= want {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("B kept %d Updates naming %s, want %d", revisionsOnB(versionSuffix), versionSuffix, want)
+	}
+	declared := func(id string) map[string]any {
+		t.Helper()
+		st, raw := g.getOnB(member, "/federation/received-assets/"+id)
+		if st != http.StatusOK {
+			t.Fatalf("B's detail of %s: %d", id, st)
+		}
+		var d struct {
+			Declared map[string]any `json:"declared"`
+			Asset    struct {
+				Sensitivity string `json:"sensitivity"`
+			} `json:"asset"`
+		}
+		if err := json.Unmarshal(raw, &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.Asset.Sensitivity != "public" {
+			t.Fatalf("B's record tier changed: %s", d.Asset.Sensitivity)
+		}
+		return d.Declared
+	}
+
+	// 1. The flags change on A.
+	if d := declared(id1); d["mature"] != false || d["aiProvenance"] != nil {
+		t.Fatalf("B before the edit: %v", d)
+	}
+	patch(map[string]any{"mature": true, "ai_provenance": "generated"})
+	waitRevisions("/versions/1", 1)
+	if d := declared(id1); d["mature"] != true || d["aiProvenance"] != "generated" {
+		t.Fatalf("B after the edit: %v", d)
+	}
+
+	// 2. A new file version, its announcement held at B's door; a second
+	// edit meanwhile names it, and reaches B first.
+	var held atomic.Int32
+	g.b.setInboxFront(func(w http.ResponseWriter, r *http.Request, h http.Handler) {
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			if bytes.Contains(body, []byte(`"aa:AssetVersion"`)) && bytes.Contains(body, []byte(o.asset.String()+"/versions/2")) {
+				held.Add(1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			r.ContentLength = int64(len(body))
+		}
+		h.ServeHTTP(w, r)
+	})
+	body2 := pngBytes(t)
+	hash2, receipt := g.uploadOnA(body2)
+	if st := g.api(g.a, http.MethodPost, "/assets/"+o.asset.String()+"/versions", map[string]any{
+		"file_hash": hash2, "upload_receipt": receipt, "expected_version": 1, "file_extension": "png"}, nil); st != http.StatusCreated {
+		t.Fatalf("version 2 on A: %d", st)
+	}
+	g.sealedOnA(o)
+	deadline := time.Now().Add(60 * time.Second)
+	for held.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if held.Load() == 0 {
+		t.Fatal("A never tried to deliver version 2")
+	}
+	patch(map[string]any{"mature": false, "clear_ai_provenance": true})
+	waitRevisions("/versions/2", 1)
+	if n := g.countOnB(`SELECT count(*) FROM federation_received_assets WHERE origin_asset_uri LIKE '%' || $1 AND version_number = 2`,
+		o.asset.String()); n != 0 {
+		t.Fatalf("B holds %d records of version 2 before its announcement arrived", n)
+	}
+	g.b.setInboxFront(nil)
+	if _, err := g.a.pool.Exec(ctx, `UPDATE federation_outbox o SET next_attempt_at = now() FROM activities a
+		WHERE a.id = o.activity_id AND a.activity_type = 'aa:AssetVersion' AND a.object_local_id = $1 AND o.status = 'queued'`,
+		o.asset.String()); err != nil {
+		t.Fatal(err)
+	}
+	ann := g.announcementsOnA(o)
+	ann2 := ann[len(ann)-1]
+	g.recordStateOnB(ann2, "complete")
+	g.recordStateOnB(ann1, "superseded")
+	id2 := g.receivedOnB(ann2)
+	if d := declared(id2); d["mature"] != false || d["aiProvenance"] != nil {
+		t.Fatalf("B's version 2, after the Update that reached it first: %v", d)
+	}
+	if st, got := g.getOnB(member, "/federation/received-assets/"+id2+"/original"); st != http.StatusOK || !bytes.Equal(got, body2) {
+		t.Fatalf("version 2's original on B: %d", st)
+	}
+
+	// 3. A withdraws the asset: every version on B is withdrawn.
+	g.deleteOnA(o, "")
+	g.recordStateOnB(ann1, "withdrawn/withdrawn")
+	g.recordStateOnB(ann2, "withdrawn/withdrawn")
+	if st, _ := g.getOnB(member, "/federation/received-assets/"+id2); st != http.StatusGone {
+		t.Fatalf("version 2 after the withdrawal: %d", st)
 	}
 }

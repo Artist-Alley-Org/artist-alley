@@ -228,8 +228,37 @@ func (h *Handler) GetReceivedAsset(ctx context.Context, req openapi.GetReceivedA
 			d.Declared[k] = v
 		}
 	}
+	if err := h.overlayFlags(ctx, uuid.UUID(a.PeerId), a.OriginAssetUri, d.Declared); err != nil {
+		return nil, err
+	}
 	return openapi.GetReceivedAsset200JSONResponse{Body: d,
 		Headers: openapi.GetReceivedAsset200ResponseHeaders{CacheControl: noStore()}}, nil
+}
+
+// overlayFlags replaces the declared mature and aiProvenance with those of
+// the asset's newest revision from its peer (#1575, spec v1 §17.2.8): the
+// greatest by the carrying activity's signed published, then its URI. A
+// record from before revisions were kept has none, and keeps its own
+// claims. Display only: nothing here decides who sees the record.
+func (h *Handler) overlayFlags(ctx context.Context, peerID uuid.UUID, assetURI string, declared map[string]interface{}) error {
+	var mature bool
+	var ai *string
+	err := h.Pool.QueryRow(ctx, `SELECT mature, ai_provenance FROM federation_received_asset_revisions
+		WHERE peer_id = $1 AND origin_asset_uri = $2
+		ORDER BY published DESC, activity_uri DESC LIMIT 1`, peerID, assetURI).Scan(&mature, &ai)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("receivedassets: flags: %w", err)
+	}
+	declared["mature"] = mature
+	if ai != nil {
+		declared["aiProvenance"] = *ai
+	} else {
+		delete(declared, "aiProvenance")
+	}
+	return nil
 }
 
 // DownloadReceivedAssetOriginal streams the record's first verified

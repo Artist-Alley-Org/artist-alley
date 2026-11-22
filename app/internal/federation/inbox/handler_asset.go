@@ -79,6 +79,49 @@ type AssetWithdrawer interface {
 // processed without being applied.
 func (d *Dispatcher) SetAssetWithdrawer(w AssetWithdrawer) { d.assetWithdrawer = w }
 
+// AssetFlagUpdater applies an origin's Update of an asset's mature and
+// aiProvenance flags: an Update of an aa:Asset carrying aa:asset (#1575,
+// spec v1 §17.2.8). Production wires assetingest.Worker.
+type AssetFlagUpdater interface {
+	UpdateAssetFlags(ctx context.Context, peerID uuid.UUID, env *federation.Envelope) (AssetScheduled, error)
+}
+
+// SetAssetFlagUpdater wires the flag Update receiver. Unwired, every asset
+// Update fails (retried, then terminal): it is never recorded as processed
+// without being applied.
+func (d *Dispatcher) SetAssetFlagUpdater(u AssetFlagUpdater) { d.assetFlagUpdater = u }
+
+// isAssetFlagUpdate: an Update carrying aa:asset (ValidateMembers admitted
+// it only as an asset's flag Update under archival-1).
+func isAssetFlagUpdate(env *federation.Envelope) bool {
+	if env == nil || env.Type != federation.ActivityUpdate {
+		return false
+	}
+	_, ok := env.Extra[federation.MemberArchivalAsset]
+	return ok
+}
+
+// assetFlagUpdate applies one asset Update, as assetWithdrawal does a
+// withdrawal: a revision kept (or already kept) marks the row processed, a
+// refusal rejects it with its §12.1 reason, a transient failure leaves it
+// for the dispatcher's retry.
+func (d *Dispatcher) assetFlagUpdate(ctx context.Context, env *federation.Envelope, peerID uuid.UUID) (DispatchOutcome, federation.InboxStatus, uuid.UUID, error) {
+	if d.assetFlagUpdater == nil {
+		return OutcomeFailed, "", uuid.Nil, errors.New("inbox: no asset receiver wired for an asset Update")
+	}
+	res, err := d.assetFlagUpdater.UpdateAssetFlags(ctx, peerID, env)
+	switch {
+	case res.Retryable:
+		if err == nil {
+			err = errors.New("asset receiver: retry")
+		}
+		return OutcomeFailed, "", uuid.Nil, err
+	case err == nil:
+		return OutcomeProcessed, "", uuid.Nil, nil
+	}
+	return OutcomeRejected, AssetRejectStatus(res.Reason), uuid.Nil, fmt.Errorf("asset receiver %s: %w", res.Reason, err)
+}
+
 // isAssetWithdrawal: a Delete carrying aa:tombstone (ValidateMembers
 // admitted it only as an asset withdrawal under archival-1).
 func isAssetWithdrawal(env *federation.Envelope) bool {

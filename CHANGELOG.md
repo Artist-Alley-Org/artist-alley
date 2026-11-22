@@ -9,6 +9,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A shared asset's mature and AI-provenance flags follow it to the paired instances that hold it
+  (#1575).** When the owner changes whether an asset is mature, or what it declares about AI use,
+  every paired instance that was sent the asset and still holds a live share of it is told, and shows
+  the new flags on the copy it holds. Each change is kept there as its own record, in the order the
+  owner made them, whatever order they arrive in, also when one arrives before the version it names;
+  a repeated one changes nothing, and none is applied once the owner has withdrawn the asset. Each
+  announcement of a version also carries the flags it had when it was made, so a retry never sends
+  different ones. **Not covered:** the asset's sensitivity tier is not synchronized (a peer that cannot
+  receive encrypted activities could not be told of a raised tier, so none is told), description,
+  rights and identifiers are not sent yet, and instances whose share has ended are not told.
+  **Not live yet:** this works only between instances that both have the `archival-1` and
+  `original-transfer-1` profiles, which no production instance advertises yet.
 - **A new version of a shared asset reaches the paired instances that already have it (#1575).** When
   the owner uploads a new version of an asset shared with a paired instance, or a re-rendered copy
   makes a new version, that instance is now told about it at once, under the share it already has,

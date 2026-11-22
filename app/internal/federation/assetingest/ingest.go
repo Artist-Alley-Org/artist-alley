@@ -399,7 +399,7 @@ func (s *Service) Receive(ctx context.Context, a Announcement) (Outcome, error) 
 // returned as it is, never fetched again; a refusal is recorded on a
 // rejected record where step 2 says so, or returned with no record.
 func (s *Service) Schedule(ctx context.Context, a Announcement) (Outcome, error) {
-	an, err := s.validate(ctx, a)
+	an, err := s.validate(ctx, a, federation.ActivityAAAssetVersion)
 	if err != nil {
 		meta := map[string]any{"peer_id": a.PeerID.String(), "reason": ReasonOf(err), "error": err.Error()}
 		if a.Envelope != nil {
@@ -434,7 +434,10 @@ func (s *Service) Schedule(ctx context.Context, a Announcement) (Outcome, error)
 
 // --- validate ---------------------------------------------------------------
 
-func (s *Service) validate(ctx context.Context, a Announcement) (*announced, error) {
+// validate checks one aa:asset announcement of type want (an
+// aa:AssetVersion, or an Update of the asset's flags, update.go) from its
+// peer and builds what bind and Process work from.
+func (s *Service) validate(ctx context.Context, a Announcement, want federation.ActivityType) (*announced, error) {
 	env := a.Envelope
 	if env == nil || a.PeerID == uuid.Nil {
 		return nil, &Error{Reason: casfetch.ReasonInvalidRequest, Err: errors.New("no envelope or peer")}
@@ -450,8 +453,8 @@ func (s *Service) validate(ctx context.Context, a Announcement) (*announced, err
 		return nil, &Error{Reason: casfetch.ReasonProfile,
 			Err: fmt.Errorf("%w: archival-1 and original-transfer-1 are not both negotiated", federation.ErrProfileNotNegotiated)}
 	}
-	if env.Type != federation.ActivityAAAssetVersion {
-		return nil, &Error{Reason: ReasonUnsupportedActivity, Err: fmt.Errorf("%s is not received as an asset record", env.Type)}
+	if env.Type != want {
+		return nil, &Error{Reason: ReasonUnsupportedActivity, Err: fmt.Errorf("%s is not received as an asset %s", env.Type, want)}
 	}
 	if err := federation.ValidateArchivalMembers(env, true); err != nil {
 		reason := ReasonArchivalInvalid
@@ -619,8 +622,10 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 		}
 		switch {
 		case pl.duplicate != nil:
+			// A version held here, announced again under a new activity:
+			// the same version, and its flags as of that activity (#1575).
 			rec, dup = *pl.duplicate, true
-			return nil
+			return recordRevision(ctx, tx, an)
 		case pl.refusal != "":
 			rec, err = s.insert(ctx, tx, an, StateRejected, pl.refusal)
 			return err
@@ -662,9 +667,11 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 				if err != nil {
 					return err
 				}
-				_, err = tx.Exec(ctx, `UPDATE federation_received_assets SET next_attempt_at = `+awaitNextSQL+`
-					WHERE id = $1`, rec.id, s.cfg.GrantWait.Seconds())
-				return err
+				if _, err = tx.Exec(ctx, `UPDATE federation_received_assets SET next_attempt_at = `+awaitNextSQL+`
+					WHERE id = $1`, rec.id, s.cfg.GrantWait.Seconds()); err != nil {
+					return err
+				}
+				return recordRevision(ctx, tx, an)
 			}
 			rec, err = s.insert(ctx, tx, an, StateRejected, casfetch.ReasonNoInboundGrant)
 			return err
@@ -674,12 +681,16 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 			if err != nil {
 				return err
 			}
-			_, err = tx.Exec(ctx, `UPDATE federation_received_assets SET next_attempt_at = `+awaitNextSQL+`
-				WHERE id = $1`, rec.id, s.cfg.PredecessorWait.Seconds())
+			if _, err = tx.Exec(ctx, `UPDATE federation_received_assets SET next_attempt_at = `+awaitNextSQL+`
+				WHERE id = $1`, rec.id, s.cfg.PredecessorWait.Seconds()); err != nil {
+				return err
+			}
+			return recordRevision(ctx, tx, an)
+		}
+		if rec, err = s.insert(ctx, tx, an, StatePending, ""); err != nil {
 			return err
 		}
-		rec, err = s.insert(ctx, tx, an, StatePending, "")
-		return err
+		return recordRevision(ctx, tx, an)
 	})
 	if err != nil {
 		var e *Error
@@ -883,7 +894,7 @@ func (s *Service) process(ctx context.Context, id uuid.UUID, signers SignerResol
 	if serr != nil {
 		return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonForeignSigner, false, serr, nil)
 	}
-	an, err := s.validate(ctx, st.announcement(signer))
+	an, err := s.validate(ctx, st.announcement(signer), federation.ActivityAAAssetVersion)
 	if err != nil {
 		reason := ReasonOf(err)
 		return s.fail(ctx, st.ref, id, attempts, reason, reason == casfetch.ReasonPeerUnavailable, err, nil)

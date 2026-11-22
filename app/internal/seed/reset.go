@@ -443,6 +443,10 @@ var nonReferenceKindColumns = map[string]string{
 	// and not a reference; the row cascades with its record and peer.
 	"federation_received_asset_files.declared_media_type": "declared MIME type (sender claim)",
 	"federation_received_asset_files.detected_media_type": "detected MIME type (this instance's identification, #1574)",
+	// #1575: the type of the activity a received asset revision came
+	// with (aa:AssetVersion or Update), not a reference; the row cascades
+	// with its peer.
+	"federation_received_asset_revisions.activity_type": "type of the received activity (aa:AssetVersion / Update); cascades with its peer",
 	// #1574 slice 2: the transfer and fixity event ledger. Snapshots with
 	// no foreign key by design (migration 00089): kept across content
 	// resets, removed only by the retention sweep.

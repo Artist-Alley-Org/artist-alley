@@ -160,6 +160,10 @@ type payload struct {
 	ShareActivityID uuid.UUID `json:"share_activity_id"`
 	AssetID         uuid.UUID `json:"asset_id"`
 	VersionID       uuid.UUID `json:"version_id"`
+	// The flags when the announcement was recorded (#1575); absent on a
+	// record from before then.
+	Mature       *bool   `json:"mature"`
+	AIProvenance *string `json:"ai_provenance"`
 }
 
 // refused is a final refusal: the outbox marks the delivery not
@@ -195,31 +199,8 @@ func (s Source) Member(ctx context.Context, activityID, peerID uuid.UUID, object
 	}
 
 	// The grant: still live, as granted, and its aa:Share delivered first.
-	var live bool
-	var shareStatus string
-	err := s.Pool.QueryRow(ctx, `
-		SELECT (s.object_kind = 'asset' AND s.object_id = $2 AND s.peer_id = $3 AND s.allow_original
-		        AND s.target_user_url IS NULL AND s.revoked_at IS NULL
-		        AND (s.expires_at IS NULL OR s.expires_at > now())),
-		       COALESCE((SELECT o.status FROM federation_outbox o
-		                  WHERE o.activity_id = $4 AND o.peer_id = $3 AND o.target_user_url IS NULL), '')
-		  FROM federation_shares s
-		 WHERE s.id = $1`, p.ShareID, p.AssetID, peerID, p.ShareActivityID).Scan(&live, &shareStatus)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, refused("the share no longer exists")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("assetsend: read the share: %w", err)
-	}
-	if !live {
-		return nil, refused("the share was revoked, expired or does not grant this peer the original")
-	}
-	switch shareStatus {
-	case "sent":
-	case "", "queued":
-		return nil, fmt.Errorf("%w: the aa:Share is not delivered to the peer yet", ErrNotReady)
-	default:
-		return nil, refused("the aa:Share was not delivered (%s)", shareStatus)
+	if err := s.shareDelivered(ctx, p.ShareID, p.AssetID, peerID, p.ShareActivityID); err != nil {
+		return nil, err
 	}
 
 	// The version, as sealed.
@@ -230,7 +211,7 @@ func (s Source) Member(ctx context.Context, activityID, peerID uuid.UUID, object
 		created                             time.Time
 		predecessor                         *int64
 	)
-	err = s.Pool.QueryRow(ctx, `
+	err := s.Pool.QueryRow(ctx, `
 		SELECT a.sensitivity, a.mature, COALESCE(a.ai_provenance, ''),
 		       (a.origin_server_id IS NULL AND a.deleted_at IS NULL),
 		       v.number, v.created_at, v.sealed_at IS NOT NULL, COALESCE(v.original_basename, ''),
@@ -256,10 +237,69 @@ func (s Source) Member(ctx context.Context, activityID, peerID uuid.UUID, object
 		return nil, fmt.Errorf("%w: the version's file set is not sealed yet", ErrNotReady)
 	}
 
+	if p.Mature != nil {
+		// The flags as recorded (#1575), so a change after the
+		// announcement was recorded never changes what a redelivery of it
+		// claims. A record from before then has none: the live ones.
+		mature, aiProvenance = *p.Mature, ""
+		if p.AIProvenance != nil {
+			aiProvenance = *p.AIProvenance
+		}
+	}
+
 	sealedFiles, err := versionFiles(ctx, s.Pool, p.VersionID)
 	if err != nil {
 		return nil, err
 	}
+	raw, err := versionMember(objectURI, number, created, predecessor, basename, sealedFiles, sensitivity, mature, aiProvenance)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.recordClaims(ctx, activityID, peerID, p.AssetID, number, sealedFiles); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+// shareDelivered checks, at send time, that the share an asset activity
+// rides on still grants peerID the original of assetID as a whole, live
+// and unexpired, and that its aa:Share was delivered to that peer: an
+// ErrNotReady error while it is on its way, a final refusal otherwise.
+func (s Source) shareDelivered(ctx context.Context, shareID, assetID, peerID, shareActivityID uuid.UUID) error {
+	var live bool
+	var shareStatus string
+	err := s.Pool.QueryRow(ctx, `
+		SELECT (s.object_kind = 'asset' AND s.object_id = $2 AND s.peer_id = $3 AND s.allow_original
+		        AND s.target_user_url IS NULL AND s.revoked_at IS NULL
+		        AND (s.expires_at IS NULL OR s.expires_at > now())),
+		       COALESCE((SELECT o.status FROM federation_outbox o
+		                  WHERE o.activity_id = $4 AND o.peer_id = $3 AND o.target_user_url IS NULL), '')
+		  FROM federation_shares s
+		 WHERE s.id = $1`, shareID, assetID, peerID, shareActivityID).Scan(&live, &shareStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return refused("the share no longer exists")
+	}
+	if err != nil {
+		return fmt.Errorf("assetsend: read the share: %w", err)
+	}
+	if !live {
+		return refused("the share was revoked, expired or does not grant this peer the original")
+	}
+	switch shareStatus {
+	case "sent":
+		return nil
+	case "", "queued":
+		return fmt.Errorf("%w: the aa:Share is not delivered to the peer yet", ErrNotReady)
+	}
+	return refused("the aa:Share was not delivered (%s)", shareStatus)
+}
+
+// versionMember builds and checks the aa:asset member of one sealed
+// version: its identity and predecessor, its sealed files (the original
+// with its base name, dropped when §17.2.2 refuses it), and the tier and
+// flags given.
+func versionMember(objectURI string, number int64, created time.Time, predecessor *int64, basename string,
+	sealedFiles []versionFile, sensitivity string, mature bool, aiProvenance string) (json.RawMessage, error) {
 	type file struct {
 		Role       string              `json:"role"`
 		ContentURI string              `json:"contentUri"`
@@ -304,9 +344,6 @@ func (s Source) Member(ctx context.Context, activityID, peerID uuid.UUID, object
 	}
 	if err != nil {
 		return nil, refused("the member does not match archival-1: %v", err)
-	}
-	if err := s.recordClaims(ctx, activityID, peerID, p.AssetID, number, sealedFiles); err != nil {
-		return nil, err
 	}
 	return raw, nil
 }
