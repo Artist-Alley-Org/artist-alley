@@ -52,8 +52,10 @@ func (g *assetInboxGate) announce(o original, object string, signWith []byte) (s
 	g.t.Helper()
 	member := map[string]any{
 		"id": object,
+		// A version is immutable once announced (§17.2.1): every
+		// announcement of version 1 states the same creation time.
 		"version": map[string]any{"id": object + "/versions/1", "number": 1,
-			"created": time.Now().UTC().Format(time.RFC3339), "predecessor": nil},
+			"created": "2026-11-22T10:00:00Z", "predecessor": nil},
 		"files": []map[string]any{{"role": "original", "contentUri": "cas://" + o.hash,
 			"checksums": []map[string]string{{"algorithm": "sha256", "value": o.hash}}, "size": len(o.body),
 			"mediaType": "image/png", "originalFilename": "inbox-gate.png"}},

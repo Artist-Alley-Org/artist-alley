@@ -250,7 +250,12 @@ func TestTwoStack_AssetWithdrawal(t *testing.T) {
 	})
 
 	t.Run("a newer version never announced to B is not named to B", func(t *testing.T) {
-		o, _, ann, id := g.importedOnB()
+		o, share, ann, id := g.importedOnB()
+		// Revoked first, so version 2's seal finds no live share and
+		// announces it to nobody (#1575: a seal announces under the live
+		// shares).
+		g.revoke(share)
+		g.waitOnB(assetURI(o), "ended/revoked")
 		hash2, receipt := g.uploadOnA(pngBytes(t))
 		var v struct {
 			Number int `json:"number"`
@@ -260,16 +265,24 @@ func TestTwoStack_AssetWithdrawal(t *testing.T) {
 			t.Fatalf("version 2 on A: %d %+v", st, v)
 		}
 		g.sealedOnA(o) // version 2, sealed and current, announced to nobody
+		if n := len(g.announcementsOnA(o)); n != 1 {
+			t.Fatalf("A announced %d versions, want version 1 only", n)
+		}
 		g.deleteOnA(o, "")
 		g.recordStateOnB(ann, "withdrawn/withdrawn")
-		st, raw := g.getOnB(member, "/federation/received-assets/"+id)
-		if st != http.StatusGone || !bytes.Contains(raw, []byte(`"last_version":"`+assetURI(o)+`/versions/1"`)) {
-			t.Fatalf("notice %d %s, want version 1", st, raw)
+		// The share was revoked, so no user sees the notice (404); what B
+		// keeps names version 1.
+		if st, _ := g.getOnB(member, "/federation/received-assets/"+id); st != http.StatusNotFound {
+			t.Fatalf("detail %d, want 404 after the revoke", st)
 		}
 		var kept []byte
-		if err := g.b.pool.QueryRow(context.Background(), `SELECT tombstone::text FROM federation_received_tombstones
-			WHERE peer_id = $1 AND origin_asset_uri = $2`, g.peerAonB, assetURI(o)).Scan(&kept); err != nil {
+		var last string
+		if err := g.b.pool.QueryRow(context.Background(), `SELECT tombstone::text, last_version FROM federation_received_tombstones
+			WHERE peer_id = $1 AND origin_asset_uri = $2`, g.peerAonB, assetURI(o)).Scan(&kept, &last); err != nil {
 			t.Fatal(err)
+		}
+		if last != assetURI(o)+"/versions/1" {
+			t.Fatalf("B's kept tombstone names %s, want version 1", last)
 		}
 		if bytes.Contains(kept, []byte(hash2)) || bytes.Contains(kept, []byte("/versions/2")) || !bytes.Contains(kept, []byte(o.hash)) {
 			t.Fatalf("B's kept tombstone names what B was never sent: %s", kept)

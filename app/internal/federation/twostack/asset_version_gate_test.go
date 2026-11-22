@@ -175,3 +175,55 @@ func TestTwoStack_AssetVersionSuccessor(t *testing.T) {
 		}
 	}
 }
+
+// #1575: a new version uploaded on A reaches B under the share that
+// already exists, with no revoke or regrant. A's production version
+// reconciler seals version 2 and, in that transaction, announces it to
+// B under the live share; B receives it as version 1's successor.
+func TestTwoStack_ANewVersionIsAnnouncedWithoutARegrant(t *testing.T) {
+	g := archivalGate(t)
+	g.runWorkers(g.a)
+	g.runWorkers(g.b)
+	member := g.memberOnB()
+	ctx := context.Background()
+
+	o, share, ann1, id1 := g.importedOnB()
+	body2 := pngBytes(t)
+	hash2, receipt := g.uploadOnA(body2)
+	if st := g.api(g.a, http.MethodPost, "/assets/"+o.asset.String()+"/versions", map[string]any{
+		"file_hash": hash2, "upload_receipt": receipt, "expected_version": 1, "file_extension": "png"}, nil); st != http.StatusCreated {
+		t.Fatalf("version 2 on A: %d", st)
+	}
+	g.sealedOnA(o)
+	var ann2 string
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		if ann := g.announcementsOnA(o); len(ann) == 2 {
+			ann2 = ann[1]
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if ann2 == "" {
+		t.Fatalf("A announced %d versions, want version 2 announced under the existing share", len(g.announcementsOnA(o)))
+	}
+	var shareID, versionNumber string
+	if err := g.a.pool.QueryRow(ctx, `SELECT a.payload->>'share_id', v.number::text FROM activities a
+		JOIN asset_versions v ON v.id::text = a.payload->>'version_id' WHERE a.activity_uri = $1`, ann2).Scan(&shareID, &versionNumber); err != nil ||
+		shareID != share || versionNumber != "2" {
+		t.Fatalf("A's second announcement is version %s under share %s (%v), want version 2 under %s", versionNumber, shareID, err, share)
+	}
+	g.recordStateOnB(ann2, "complete")
+	g.recordStateOnB(ann1, "superseded")
+	id2 := g.receivedOnB(ann2)
+	if st, got := g.getOnB(member, "/federation/received-assets/"+id2+"/original"); st != http.StatusOK || !bytes.Equal(got, body2) {
+		t.Fatalf("version 2's original on B: %d", st)
+	}
+	if st, _ := g.getOnB(member, "/federation/received-assets/"+id1); st != http.StatusNotFound {
+		t.Fatalf("version 1 after it was replaced: %d", st)
+	}
+	// Nothing else is announced: A's reconciler running again adds none.
+	if n := len(g.announcementsOnA(o)); n != 2 {
+		t.Fatalf("A announced %d times, want 2", n)
+	}
+}
