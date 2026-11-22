@@ -143,6 +143,16 @@ type grant struct {
 // row for a, then Record, in one transaction, as the grant handler does.
 func (f *fx) grantAndRecord(a asset, mut func(sql *string)) grant {
 	f.t.Helper()
+	g, err := f.grantAndRecordErr(a, mut)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return g
+}
+
+// grantAndRecordErr is grantAndRecord returning its error (safe outside
+// the test goroutine).
+func (f *fx) grantAndRecordErr(a asset, mut func(sql *string)) (grant, error) {
 	ctx := context.Background()
 	g := grant{share: uuid.New()}
 	if err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
@@ -165,15 +175,15 @@ func (f *fx) grantAndRecord(a asset, mut func(sql *string)) grant {
 		g.announcement = id
 		return err
 	}); err != nil {
-		f.t.Fatal(err)
+		return g, err
 	}
 	if g.announcement != uuid.Nil {
 		if err := f.pool.QueryRow(ctx, `SELECT object_uri, payload FROM activities WHERE id = $1`, g.announcement).
 			Scan(&g.objectURI, &g.payload); err != nil {
-			f.t.Fatal(err)
+			return g, err
 		}
 	}
-	return g
+	return g, nil
 }
 
 // shareDelivered records the aa:Share's outbox row to the peer in status.

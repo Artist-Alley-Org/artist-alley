@@ -18,6 +18,10 @@
 // Anything else records nothing, so a peer without the profiles (every
 // production peer: neither is advertised) sees no change at all.
 //
+// RecordSealed (sealed.go, #1575) runs inside the transaction that seals
+// a later version, and announces it, under the same rule, to the peer of
+// every such share that is live then, catching each peer up in order.
+//
 // # What is sent
 //
 // The local record holds references only: the share, its aa:Share, the
@@ -80,8 +84,15 @@ type Grant struct {
 }
 
 // Record writes the aa:AssetVersion for g inside tx when g is eligible
-// (see the package header), returning its activity id, or uuid.Nil when
-// nothing is announced.
+// (see the package header), returning the activity id of the current
+// version's announcement, or uuid.Nil when nothing is announced.
+//
+// The current version is always announced, also when it was announced to
+// the peer before (a receiver that refused or never completed it gets it
+// again; the same version is a duplicate there otherwise). Before it, the
+// peer is caught up (#1575, sealed.go): every sealed version between the
+// highest version it holds or will receive and the current one, in order,
+// so the receiver's chain stays contiguous.
 func Record(ctx context.Context, tx pgx.Tx, w *activities.Writer, g Grant) (uuid.UUID, error) {
 	var (
 		owner    *int64
@@ -89,6 +100,10 @@ func Record(ctx context.Context, tx pgx.Tx, w *activities.Writer, g Grant) (uuid
 		eligible bool
 	)
 	// The share as written in this transaction, the asset and the peer.
+	// The asset row is held FOR SHARE (#1575): a version being sealed or
+	// moved to holds it FOR UPDATE, so a grant reads the current version
+	// after that change commits, and a seal after this grant sees the
+	// share (RecordSealed), and no version is announced to neither.
 	err := tx.QueryRow(ctx, `
 		SELECT a.owner_user_ref, a.current_version_id,
 		       (s.object_kind = 'asset' AND s.object_id = a.id AND s.peer_id = p.id AND s.allow_original
@@ -99,7 +114,8 @@ func Record(ctx context.Context, tx pgx.Tx, w *activities.Writer, g Grant) (uuid
 		        AND p.enabled AND p.status = 'connected'
 		        AND p.capabilities ? $3 AND p.capabilities ? $4)
 		  FROM federation_shares s, assets a, federation_peers p
-		 WHERE s.id = $6 AND a.id = $1 AND p.id = $2`,
+		 WHERE s.id = $6 AND a.id = $1 AND p.id = $2
+		   FOR SHARE OF a`,
 		g.AssetID, g.PeerID, federation.ProfileArchival1, federation.ProfileOriginalTransfer1, g.ShareActivityID, g.ShareID).
 		Scan(&owner, &version, &eligible)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -115,14 +131,16 @@ func Record(ctx context.Context, tx pgx.Tx, w *activities.Writer, g Grant) (uuid
 	if username == "" {
 		return uuid.Nil, nil
 	}
-	em := emit.AssetVersion(emit.ActorContext{UserRef: *owner, Username: username, BaseURL: strings.TrimRight(g.BaseURL, "/")},
-		emit.AssetVersionRef{AssetID: g.AssetID, VersionID: *version, ShareID: g.ShareID,
-			ShareActivityID: g.ShareActivityID, PeerURL: g.PeerURL})
-	row, err := w.RecordActivity(ctx, tx, em.Activity)
+	to := target{shareID: g.ShareID, shareActivityID: g.ShareActivityID, peerID: g.PeerID, peerURL: g.PeerURL}
+	actor := emit.ActorContext{UserRef: *owner, Username: username, BaseURL: strings.TrimRight(g.BaseURL, "/")}
+	ids, err := announce(ctx, tx, w, actor, g.AssetID, *version, to, true)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("assetsend: record aa:AssetVersion: %w", err)
+		return uuid.Nil, err
 	}
-	return row.ID, nil
+	if len(ids) == 0 {
+		return uuid.Nil, nil
+	}
+	return ids[len(ids)-1], nil
 }
 
 // payload is an announcement's local record (emit.AssetVersion).

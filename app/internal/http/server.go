@@ -257,10 +257,13 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// no processing, and in the same statement that records a verified
 	// digest for a key the access policy can choose while no preview job
 	// for the bytes is in flight.
-	jobRegistry.Register(&assets.VersionReconciler{
+	// #1575: its announcer (a sealed version announced under the asset's
+	// existing shares) is installed once the API server exists, below.
+	versionReconciler := &assets.VersionReconciler{
 		Pool: pool, Storage: storageSvc, Logger: logger,
 		Ladder: func(ctx context.Context) (sysconfig.PreviewConfig, error) { return sysCfg.GetPreviews(ctx) },
-	})
+	}
+	jobRegistry.Register(versionReconciler)
 	// Audiobook post-processing — Phase B-2 stubs. Registered so
 	// the dispatcher knows the type names + the admin queue page
 	// renders them; the actual ffmpeg work is a TODO in
@@ -446,6 +449,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 
 		impl = newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, licState, backend.Name())
 		impl.version = version
+		versionReconciler.SetAnnouncer(impl.sealedVersionAnnouncer(sysCfg))
 		// Hand the provider registry to the auth handler now that
 		// both exist. Done out-of-band rather than threading through
 		// newAPIServer's positional args — same shape as the

@@ -9,6 +9,16 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A new version of a shared asset reaches the paired instances that already have it (#1575).** When
+  the owner uploads a new version of an asset shared with a paired instance, or a re-rendered copy
+  makes a new version, that instance is now told about it at once, under the share it already has,
+  with no need to share again. An instance that missed versions is brought up to date in order, so
+  the versions it receives always follow on from the one it holds; a version is never announced
+  twice, and nothing is announced if saving the version fails. **Not live yet:** like receiving
+  assets, this works only between instances that both have the `archival-1` and
+  `original-transfer-1` profiles, which no production instance advertises yet. A version replaced
+  before it was finished is never sent, so an instance holding the version before it cannot take
+  the later ones.
 - **A paired instance can receive a newer version of an asset it already holds (#1575).** When
   a paired instance announces a new version of an asset this instance received, the new version is
   received alongside the one held: its files are fetched and checked while the current version stays

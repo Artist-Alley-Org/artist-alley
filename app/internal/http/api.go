@@ -1794,6 +1794,18 @@ func (a collectionsMetadataGateAdapter) UpsertCollectionFieldValueInTx(
 // Cheap because sysconfig itself is cached; ensures emits pick
 // up admin-time URL changes without a restart. Empty string
 // fallback when sysconfig hasn't been initialized (tests).
+// sealedVersionAnnouncer is the version reconciler's announcer (#1575):
+// inside the transaction that seals an asset's current version, it
+// announces that version to the peers of the asset's existing
+// original-file shares, catching each up in order (assetsend.RecordSealed).
+func (s *apiServer) sealedVersionAnnouncer(sysCfg *sysconfig.Store) func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error {
+	return func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error {
+		_, err := assetsend.RecordSealed(ctx, tx, s.activities, assetsend.Sealed{
+			AssetID: assetID, BaseURL: sysconfigBaseURLFn(sysCfg)(ctx), Username: usernameResolverFor(s.users)})
+		return err
+	}
+}
+
 func sysconfigBaseURLFn(sysCfg *sysconfig.Store) func(ctx context.Context) string {
 	return func(ctx context.Context) string {
 		if sysCfg == nil {

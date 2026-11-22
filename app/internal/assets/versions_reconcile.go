@@ -91,6 +91,20 @@ type VersionReconciler struct {
 	Logger *slog.Logger
 
 	hooks reconcileHooks
+
+	// announce (#1575) runs inside the transaction that seals a version
+	// (a draft sealed, or a rendition successor sealed and made
+	// current), after the asset points at it and while the asset row is
+	// held: the federation sender announces the new version to the peers
+	// of the asset's existing shares (assetsend.RecordSealed). An error
+	// rolls the seal back, so the job retries both. Nil announces nothing.
+	announce func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error
+}
+
+// SetAnnouncer installs the sealed-version announcer (see announce).
+// Call before the reconciler runs.
+func (r *VersionReconciler) SetAnnouncer(f func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error) {
+	r.announce = f
 }
 
 // reconcileHooks are #1596 test seams; zero in production.
@@ -342,6 +356,9 @@ func (r *VersionReconciler) reconcileAsset(ctx context.Context, a boundAsset, ha
 			if err := sealVersion(ctx, tx, *cur, desired); err != nil {
 				return err
 			}
+			if err := r.announceSealed(ctx, tx, a.id); err != nil {
+				return err
+			}
 			outcome = "sealed"
 			return nil
 		}
@@ -371,10 +388,25 @@ func (r *VersionReconciler) reconcileAsset(ctx context.Context, a boundAsset, ha
 		if _, err := tx.Exec(ctx, `UPDATE assets SET current_version_id = $2 WHERE id = $1`, a.id, next); err != nil {
 			return fmt.Errorf("move to the successor: %w", err)
 		}
+		if err := r.announceSealed(ctx, tx, a.id); err != nil {
+			return err
+		}
 		outcome = "successor"
 		return nil
 	})
 	return outcome, err
+}
+
+// announceSealed runs the announcer for the asset whose current version
+// tx just sealed.
+func (r *VersionReconciler) announceSealed(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error {
+	if r.announce == nil {
+		return nil
+	}
+	if err := r.announce(ctx, tx, assetID); err != nil {
+		return fmt.Errorf("announce the sealed version: %w", err)
+	}
+	return nil
 }
 
 func sealVersion(ctx context.Context, tx pgx.Tx, version uuid.UUID, copies map[string]versionCopy) error {
