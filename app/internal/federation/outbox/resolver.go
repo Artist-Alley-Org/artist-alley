@@ -374,6 +374,12 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	if in.Verb == string(federation.ActivityAAAssetVersion) {
 		return r.assetVersionRecipient(ctx, in)
 	}
+	// An Update of an asset's flags (#1575) rides on one live
+	// original-file share and goes to that share's peer only, like an
+	// aa:AssetVersion, under the same live checks.
+	if in.Verb == string(federation.ActivityUpdate) && in.TargetKind == "asset" {
+		return r.assetVersionRecipient(ctx, in)
+	}
 	// An asset's withdrawal (#1575) goes to the one peer it was announced
 	// to, named by its emitter.
 	if in.Verb == string(federation.ActivityDelete) && in.TargetKind == "asset" {

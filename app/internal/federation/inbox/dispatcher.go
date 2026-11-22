@@ -192,6 +192,8 @@ type Dispatcher struct {
 	assetScheduler AssetScheduler
 	// assetWithdrawer applies asset Deletes with aa:tombstone (#1575).
 	assetWithdrawer AssetWithdrawer
+	// assetFlagUpdater applies asset Updates with aa:asset (#1575).
+	assetFlagUpdater AssetFlagUpdater
 
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_inbox_pending notification. Buffered=1 so the

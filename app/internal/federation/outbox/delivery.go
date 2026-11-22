@@ -170,6 +170,9 @@ type Worker struct {
 	// assetVersionMember builds an aa:AssetVersion's aa:asset member at
 	// send time (#1574). Unwired, no aa:AssetVersion is sent.
 	assetVersionMember AssetVersionMemberFunc
+	// assetFlagUpdateMember builds an asset Update's aa:asset member at
+	// send time (#1575, assetsend.Source.FlagUpdateMember).
+	assetFlagUpdateMember AssetVersionMemberFunc
 	// assetWithdrawalMember builds an asset Delete's aa:tombstone member
 	// at send time (#1575).
 	assetWithdrawalMember AssetVersionMemberFunc
@@ -237,6 +240,11 @@ func (w *Worker) SetAssetVersionMember(f AssetVersionMemberFunc) { w.assetVersio
 // aa:tombstone member (#1575), with the same contract as the aa:asset
 // source. Boot wires assetsend.Source.Tombstone.
 func (w *Worker) SetAssetWithdrawalMember(f AssetVersionMemberFunc) { w.assetWithdrawalMember = f }
+
+// SetAssetFlagUpdateMember wires the source of an asset Update's aa:asset
+// member (#1575), with the same contract as the aa:asset source. Boot
+// wires assetsend.Source.FlagUpdateMember.
+func (w *Worker) SetAssetFlagUpdateMember(f AssetVersionMemberFunc) { w.assetFlagUpdateMember = f }
 
 // SetAudit wires the audit recorder for federation.emission.encrypted
 // + federation.emission.skipped(reason=recipient_key_unfetchable).
@@ -1040,7 +1048,8 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	}
 	isAssetVersion := federation.ActivityType(activityType) == federation.ActivityAAAssetVersion
 	isAssetWithdrawal := federation.ActivityType(activityType) == federation.ActivityDelete && kind == "asset"
-	if isAssetVersion || isAssetWithdrawal {
+	isAssetFlagUpdate := federation.ActivityType(activityType) == federation.ActivityUpdate && kind == "asset"
+	if isAssetVersion || isAssetWithdrawal || isAssetFlagUpdate {
 		// #1574: the aa:asset member is built now, from the version's
 		// sealed rows, never stored with the activity; the source also
 		// holds the announcement back until the grant's aa:Share reached
@@ -1049,8 +1058,13 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 		// from its last sealed version, held back until the peer's
 		// announcement was delivered.
 		source, key, what := w.assetVersionMember, federation.AssetVersionMemberKey, "aa:AssetVersion"
-		if isAssetWithdrawal {
+		switch {
+		case isAssetWithdrawal:
 			source, key, what = w.assetWithdrawalMember, federation.AssetTombstoneMemberKey, "asset Delete"
+		case isAssetFlagUpdate:
+			// #1575: an Update of the asset's flags, its aa:asset built
+			// from what was recorded and the named version's sealed rows.
+			source, what = w.assetFlagUpdateMember, "asset Update"
 		}
 		if source == nil {
 			return nil, fmt.Errorf("%w: %s: no member source wired", federation.ErrNotFederated, what)
@@ -1078,7 +1092,7 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	if len(wire) > 0 {
 		env.Extra = wire
 	}
-	if isAssetVersion || isAssetWithdrawal {
+	if isAssetVersion || isAssetWithdrawal || isAssetFlagUpdate {
 		// The member names the envelope object and matches §17.2 (or
 		// §17.3), as the receiver will check (§17.1).
 		if err := federation.ValidateArchivalMembers(env, true); err != nil {

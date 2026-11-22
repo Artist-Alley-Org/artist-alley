@@ -117,6 +117,18 @@ func (w *Worker) ScheduleAsset(ctx context.Context, peerID uuid.UUID, env *feder
 	return res, err
 }
 
+// UpdateAssetFlags is the inbox's receiver of an asset Update (#1575): it
+// keeps an origin's mature and aiProvenance flags (Service.ApplyFlagUpdate).
+// Nothing is fetched.
+func (w *Worker) UpdateAssetFlags(ctx context.Context, peerID uuid.UUID, env *federation.Envelope) (inbox.AssetScheduled, error) {
+	signer := w.signer()
+	if signer.KeyID == "" {
+		return inbox.AssetScheduled{Retryable: true}, errors.New("assetingest: this instance has no signing identity yet")
+	}
+	_, err := w.svc.ApplyFlagUpdate(ctx, Announcement{PeerID: peerID, Envelope: env, Signer: signer})
+	return inbox.AssetScheduled{Reason: ReasonOf(err), Retryable: Retryable(err)}, err
+}
+
 // WithdrawAsset is the inbox's withdrawal receiver (#1575): it applies an
 // origin's aa:tombstone (Service.Withdraw). Nothing is fetched.
 func (w *Worker) WithdrawAsset(ctx context.Context, peerID uuid.UUID, env *federation.Envelope) (inbox.AssetScheduled, error) {

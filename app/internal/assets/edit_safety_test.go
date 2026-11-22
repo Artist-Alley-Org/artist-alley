@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
@@ -183,3 +185,69 @@ func TestUpdateAsset_EditSafety_MicrosecondPrecisionTolerated(t *testing.T) {
 		t.Errorf("sub-µs delta should not trigger 409 (truncate both sides); got %T", resp)
 	}
 }
+
+// #1575: an edit tells the federation flag recorder, in its own
+// transaction, exactly when it changes mature or aiProvenance, and never
+// for an edit that leaves both as they were or touches neither.
+func TestUpdateAsset_RecordsAFlagUpdateOnlyWhenAFlagChanges(t *testing.T) {
+	id, _, h := seedAssetForEditSafety(t)
+	ctx := authedCtx(525252)
+	var calls []uuid.UUID
+	var failNext error
+	h.SetFlagUpdateRecorder(func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error {
+		var mature bool
+		if err := tx.QueryRow(ctx, `SELECT mature FROM assets WHERE id = $1`, assetID).Scan(&mature); err != nil {
+			return err
+		}
+		calls = append(calls, assetID)
+		err := failNext
+		failNext = nil
+		return err
+	})
+	patch := func(body openapi.AssetUpdate) openapi.UpdateAssetResponseObject {
+		t.Helper()
+		resp, err := h.UpdateAsset(ctx, openapi.UpdateAssetRequestObject{Id: openapi_types.UUID(id), Body: &body})
+		if err != nil && failNext == nil && !errors.Is(err, errFlagRecorder) {
+			t.Fatalf("UpdateAsset: %v", err)
+		}
+		return resp
+	}
+	yes, no := true, false
+	title := "retitled"
+	gen := openapi.AssetUpdateAiProvenance("generated")
+	steps := []struct {
+		name  string
+		body  openapi.AssetUpdate
+		calls int
+	}{
+		{"a title only", openapi.AssetUpdate{Title: &title}, 0},
+		{"mature unchanged (false)", openapi.AssetUpdate{Mature: &no}, 0},
+		{"mature raised", openapi.AssetUpdate{Mature: &yes}, 1},
+		{"mature again true", openapi.AssetUpdate{Mature: &yes}, 1},
+		{"aiProvenance declared", openapi.AssetUpdate{AiProvenance: &gen}, 2},
+		{"aiProvenance the same", openapi.AssetUpdate{AiProvenance: &gen}, 2},
+		{"aiProvenance cleared", openapi.AssetUpdate{ClearAiProvenance: &yes}, 3},
+	}
+	for _, s := range steps {
+		patch(s.body)
+		if len(calls) != s.calls {
+			t.Fatalf("%s: %d recorder calls, want %d", s.name, len(calls), s.calls)
+		}
+	}
+	for _, c := range calls {
+		if c != id {
+			t.Fatalf("the recorder was called for %s", c)
+		}
+	}
+	// The recorder's error rolls the edit back.
+	failNext = errFlagRecorder
+	if _, err := h.UpdateAsset(ctx, openapi.UpdateAssetRequestObject{Id: openapi_types.UUID(id), Body: &openapi.AssetUpdate{Mature: &no}}); !errors.Is(err, errFlagRecorder) {
+		t.Fatalf("an edit whose recorder failed: %v", err)
+	}
+	var mature bool
+	if err := h.Pool.QueryRow(context.Background(), `SELECT mature FROM assets WHERE id = $1`, id).Scan(&mature); err != nil || !mature {
+		t.Fatalf("mature is %v after a failed recorder (%v), want the edit rolled back", mature, err)
+	}
+}
+
+var errFlagRecorder = errors.New("the flag recorder failed")

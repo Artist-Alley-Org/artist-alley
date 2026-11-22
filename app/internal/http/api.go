@@ -1277,6 +1277,14 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// #1575: deleting an asset withdraws it from every peer it was
 	// announced to (a Delete with aa:tombstone, built at send time).
 	s.assets.SetWithdrawalRecorder(recordWithdrawals)
+	// #1575: an edit that changes an asset's mature or aiProvenance flag
+	// tells every peer holding the asset under a live share (an Update
+	// with aa:asset, built at send time from what was recorded).
+	s.assets.SetFlagUpdateRecorder(func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error {
+		_, err := assetsend.RecordFlagUpdates(ctx, tx, s.activities, assetsend.FlagChange{
+			AssetID: assetID, BaseURL: sysconfigBaseURLFn(sysCfg)(ctx), Username: usernameResolverFor(s.users)})
+		return err
+	})
 	s.sharesAdmin = shares.NewAdminHandler(
 		s.sharesRegistry,
 		s.activities,
@@ -1574,6 +1582,8 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// #1575: an asset Delete's aa:tombstone, likewise, from its last sealed
 	// version, after the peer's announcement was delivered.
 	s.outboxDelivery.SetAssetWithdrawalMember(assetsend.Source{Pool: pool}.Tombstone)
+	// #1575: an asset Update's aa:asset, built from what was recorded.
+	s.outboxDelivery.SetAssetFlagUpdateMember(assetsend.Source{Pool: pool}.FlagUpdateMember)
 	actorKeys := remote.NewSigningKeyResolver(pool, signer, logger)
 	s.inboxHandler.SetActorKeyResolver(actorKeys)
 	// #72 origin: serves originals only under the #1573 decision, with
@@ -1622,6 +1632,8 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.inboxDispatcher.SetAssetScheduler(s.assetIngest)
 	// #1575: an origin's aa:tombstone withdraws its received records.
 	s.inboxDispatcher.SetAssetWithdrawer(s.assetIngest)
+	// #1575: an origin's Update of its asset's mature and aiProvenance.
+	s.inboxDispatcher.SetAssetFlagUpdater(s.assetIngest)
 	// #1574 slice 3: a grant row recorded for a peer and asset wakes,
 	// exactly, the records of that peer and asset waiting for their grant
 	// (assetingest.WakeAwaiting in the grant's transaction), then the

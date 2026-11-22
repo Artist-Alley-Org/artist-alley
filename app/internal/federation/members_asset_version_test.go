@@ -151,9 +151,15 @@ func TestFederated_DeleteOfAnAsset(t *testing.T) {
 			t.Errorf("a Delete of %q federates", kind)
 		}
 	}
-	// An asset's Update is not federated by this slice.
-	if federation.Federated(federation.ActivityUpdate, "asset", nil) {
-		t.Error("an asset's Update federates")
+	// #1575: an asset's Update (its mature and aiProvenance flags)
+	// federates; an Update of a post or a collection still does not.
+	if !federation.Federated(federation.ActivityUpdate, "asset", nil) {
+		t.Error("an asset's Update does not federate")
+	}
+	for _, kind := range []string{"", "post", "collection"} {
+		if federation.Federated(federation.ActivityUpdate, kind, nil) {
+			t.Errorf("an Update of %q federates", kind)
+		}
 	}
 }
 
@@ -221,5 +227,83 @@ func TestValidateMembers_AssetWithdrawal(t *testing.T) {
 	e.Extra[federation.MemberObjectType] = json.RawMessage(`"Note"`)
 	if err := federation.ValidateMembers(e, archival); !errors.Is(err, federation.ErrUnknownField) {
 		t.Errorf("object_type beside aa:tombstone: %v", err)
+	}
+}
+
+// #1575: an asset's Update carries its mature and aiProvenance flags. Its
+// only wire member is the aa:asset the delivery worker built from what was
+// recorded, sent only with both profiles; inbound, an Update carrying
+// aa:asset is admitted only under archival-1, for an asset on the actor's
+// own origin, and an edit of a comment is unchanged.
+func TestWireMembers_AssetFlagUpdate(t *testing.T) {
+	both := func(tok string) bool {
+		return tok == federation.ProfileArchival1 || tok == federation.ProfileOriginalTransfer1
+	}
+	for name, negotiated := range map[string]func(string) bool{
+		"no profile":               nil,
+		"archival-1 only":          func(tok string) bool { return tok == federation.ProfileArchival1 },
+		"original-transfer-1 only": func(tok string) bool { return tok == federation.ProfileOriginalTransfer1 },
+	} {
+		_, err := federation.WireMembers(federation.ActivityUpdate, "asset", avPayload(t, avMember(t)), negotiated)
+		if !errors.Is(err, federation.ErrNotFederated) || !errors.Is(err, federation.ErrProfileNotNegotiated) {
+			t.Errorf("%s: %v, want not federated: profile not negotiated", name, err)
+		}
+	}
+	wire, err := federation.WireMembers(federation.ActivityUpdate, "asset", avPayload(t, avMember(t)), both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wire) != 1 || string(wire[federation.MemberArchivalAsset]) != string(avMember(t)) {
+		t.Fatalf("wire members %v, want exactly the built aa:asset (no object_type, no content)", wire)
+	}
+	if _, err := federation.WireMembers(federation.ActivityUpdate, "asset", avPayload(t, nil), both); !errors.Is(err, federation.ErrNotFederated) {
+		t.Errorf("without a member: %v", err)
+	}
+	var bad map[string]any
+	_ = json.Unmarshal(avMember(t), &bad)
+	delete(bad, "mature")
+	raw, _ := json.Marshal(bad)
+	if _, err := federation.WireMembers(federation.ActivityUpdate, "asset", avPayload(t, raw), both); !errors.Is(err, federation.ErrNotFederated) ||
+		!errors.Is(err, federation.ErrArchivalInvalid) {
+		t.Errorf("a member §17.2 refuses: %v, want not federated: archival invalid", err)
+	}
+}
+
+func TestValidateMembers_AssetFlagUpdate(t *testing.T) {
+	archival := federation.MemberContext{
+		Negotiated: func(tok string) bool { return tok == federation.ProfileArchival1 },
+		Applied:    func(federation.ActivityType) bool { return true },
+	}
+	upd := func(object string, member json.RawMessage) *federation.Envelope {
+		return &federation.Envelope{Context: federation.ContextV1, Type: federation.ActivityUpdate,
+			ID: "https://a.example/activities/u1", Actor: "https://a.example/users/alice", Object: object,
+			Extra: map[string]json.RawMessage{federation.MemberArchivalAsset: member}}
+	}
+	if err := federation.ValidateMembers(upd(avAsset, avMember(t)), archival); err != nil {
+		t.Fatalf("a valid asset Update: %v", err)
+	}
+	none := archival
+	none.Negotiated = nil
+	if err := federation.ValidateMembers(upd(avAsset, avMember(t)), none); !errors.Is(err, federation.ErrProfileNotNegotiated) {
+		t.Errorf("without archival-1: %v", err)
+	}
+	foreign := "https://b.example/assets/6f1c2b8e-2d4a-4c1e-9b7a-0c3d5e7f9a11"
+	var m map[string]any
+	_ = json.Unmarshal(avMember(t), &m)
+	m["id"] = foreign
+	foreignMember, _ := json.Marshal(m)
+	if err := federation.ValidateMembers(upd(foreign, foreignMember), archival); !errors.Is(err, federation.ErrInvalidMember) {
+		t.Errorf("an asset on another origin: %v", err)
+	}
+	if err := federation.ValidateMembers(upd(avAsset+"x", avMember(t)), archival); !errors.Is(err, federation.ErrArchivalInvalid) {
+		t.Errorf("a member of another object: %v", err)
+	}
+	// An asset Update carries nothing a comment edit does.
+	for _, extra := range []string{federation.MemberObjectType, federation.MemberContent} {
+		e := upd(avAsset, avMember(t))
+		e.Extra[extra] = json.RawMessage(`"Note"`)
+		if err := federation.ValidateMembers(e, archival); !errors.Is(err, federation.ErrUnknownField) {
+			t.Errorf("%s beside aa:asset: %v", extra, err)
+		}
 	}
 }
