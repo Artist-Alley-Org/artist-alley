@@ -749,6 +749,13 @@ BEGIN
             RAISE EXCEPTION 'asset version %: a sealed file set includes its original (#1596)', OLD.id
                 USING ERRCODE = 'integrity_constraint_violation';
         END IF;
+        -- Only the latest version is sealed (#1575), checked under the
+        -- asset row lock version creation takes (see the file header).
+        PERFORM 1 FROM public.assets WHERE id = OLD.asset_id FOR UPDATE;
+        IF EXISTS (SELECT 1 FROM public.asset_versions WHERE asset_id = OLD.asset_id AND number > OLD.number) THEN
+            RAISE EXCEPTION 'asset version %: a later version exists; only the latest version is sealed (#1575)', OLD.id
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
     END IF;
     IF NEW.announced_at IS DISTINCT FROM OLD.announced_at AND (OLD.announced_at IS NOT NULL OR NEW.sealed_at IS NULL) THEN
         RAISE EXCEPTION 'asset version %: only a sealed version is announced, once (#1596)', OLD.id
@@ -1030,16 +1037,28 @@ CREATE FUNCTION public.asset_version_seal(p_version uuid, p_access jsonb DEFAULT
     LANGUAGE plpgsql
     AS $$
 DECLARE
+    v_asset uuid;
     v record;
     e jsonb;
 BEGIN
-    SELECT id, sealed_at, original_hash, original_size_bytes, original_media_type INTO v
+    -- The asset row first (the order version creation uses), then the
+    -- version row.
+    SELECT asset_id INTO v_asset FROM public.asset_versions WHERE id = p_version;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'asset version % does not exist (#1596)', p_version USING ERRCODE = 'no_data_found';
+    END IF;
+    PERFORM 1 FROM public.assets WHERE id = v_asset FOR UPDATE;
+    SELECT id, number, sealed_at, original_hash, original_size_bytes, original_media_type INTO v
       FROM public.asset_versions WHERE id = p_version FOR UPDATE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'asset version % does not exist (#1596)', p_version USING ERRCODE = 'no_data_found';
     END IF;
     IF v.sealed_at IS NOT NULL THEN
         RAISE EXCEPTION 'asset version %: already sealed (#1596)', p_version USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.asset_versions WHERE asset_id = v_asset AND number > v.number) THEN
+        RAISE EXCEPTION 'asset version %: a later version exists; only the latest version is sealed (#1575)', p_version
+            USING ERRCODE = 'integrity_constraint_violation';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM public.storage_variants
                     WHERE object_hash = v.original_hash AND variant_key = 'original' AND fixity_status = 'verified'
@@ -1635,8 +1654,9 @@ $$;
 -- Name: federation_received_assets_chain_check(); Type: FUNCTION; Schema: public; Owner: -
 --
 
--- The predecessor link names the same peer's record of the same asset,
--- one version number lower, with the version id the record must follow.
+-- The predecessor link names the same peer's record of the same asset, a
+-- lower version number, with the version id the record must follow, and
+-- no version this instance holds of the asset lies between the two.
 CREATE FUNCTION public.federation_received_assets_chain_check() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -1649,8 +1669,14 @@ BEGIN
     SELECT peer_id, origin_asset_uri, version_number, version_uri INTO p
       FROM public.federation_received_assets WHERE id = NEW.predecessor_id;
     IF NOT FOUND OR p.peer_id <> NEW.peer_id OR p.origin_asset_uri <> NEW.origin_asset_uri
-       OR p.version_number <> NEW.version_number - 1 OR p.version_uri IS DISTINCT FROM NEW.predecessor_version_uri THEN
-        RAISE EXCEPTION 'received asset %: % is not the previous version of the same asset from the same peer (#1575)', NEW.id, NEW.predecessor_id
+       OR p.version_number >= NEW.version_number OR p.version_uri IS DISTINCT FROM NEW.predecessor_version_uri THEN
+        RAISE EXCEPTION 'received asset %: % is not an earlier version of the same asset from the same peer (#1575)', NEW.id, NEW.predecessor_id
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.federation_received_assets r
+                WHERE r.peer_id = NEW.peer_id AND r.origin_asset_uri = NEW.origin_asset_uri AND r.state <> 'rejected'
+                  AND r.version_number > p.version_number AND r.version_number < NEW.version_number) THEN
+        RAISE EXCEPTION 'received asset %: a version held between it and its predecessor % is passed over (#1575)', NEW.id, NEW.predecessor_id
             USING ERRCODE = 'integrity_constraint_violation';
     END IF;
     RETURN NEW;

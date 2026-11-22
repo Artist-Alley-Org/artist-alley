@@ -37,6 +37,17 @@
 // never changes, so every retry of the same activity sends the same
 // version and file set.
 //
+// The predecessor is the asset's previous SEALED version (the greatest
+// sealed number below this one), not the version it was created over: a
+// version that stayed a draft is never announced, so naming it would
+// leave the receiver waiting for a version that never comes (#1575). The
+// numbers then skip the draft's. Only the latest version is ever sealed
+// (migration 00093), so once this version exists the sealed versions
+// below it are final, and every announcement of it names the same
+// predecessor. With no sealed version below it the version it was
+// created over is named, as before: a receiver holding nothing of the
+// asset takes it as its first version.
+//
 // # Order and refusal (Source.Member, per delivery)
 //
 //   - The announcement goes to a peer only after that peer's aa:Share of
@@ -222,7 +233,9 @@ func (s Source) Member(ctx context.Context, activityID, peerID uuid.UUID, object
 	err = s.Pool.QueryRow(ctx, `
 		SELECT a.sensitivity, a.mature, COALESCE(a.ai_provenance, ''),
 		       (a.origin_server_id IS NULL AND a.deleted_at IS NULL),
-		       v.number, v.created_at, v.sealed_at IS NOT NULL, COALESCE(v.original_basename, ''), pv.number
+		       v.number, v.created_at, v.sealed_at IS NOT NULL, COALESCE(v.original_basename, ''),
+		       COALESCE((SELECT max(s.number) FROM asset_versions s
+		                  WHERE s.asset_id = a.id AND s.number < v.number AND s.sealed_at IS NOT NULL), pv.number)
 		  FROM assets a
 		  JOIN asset_versions v ON v.asset_id = a.id AND v.id = $2
 		  LEFT JOIN asset_versions pv ON pv.id = v.predecessor_id

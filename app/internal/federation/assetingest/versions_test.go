@@ -21,8 +21,9 @@ import (
 
 // #1575 (spec v1 §17.2.1): later versions of a received asset. Each
 // version is its own immutable record; a later one is accepted only as
-// the exact successor of the version below it, is fetched while the
-// current version stays complete, and replaces it in one transaction.
+// the successor of the version its predecessor names (one or more
+// numbers below it, with nothing held between them), is fetched while
+// the current version stays complete, and replaces it in one transaction.
 
 // versionURI is the origin's id of a's version n.
 func (f *fx) versionURI(a *asset, n int) string {
@@ -672,5 +673,250 @@ func TestVersions_AVersionIsImmutableOnceAnnounced(t *testing.T) {
 	}
 	if n := f.count(`SELECT count(*) FROM federation_received_assets WHERE peer_id = $1 AND origin_asset_uri = $2`, f.peerID, a.uri); n != records {
 		t.Fatalf("%d records, want %d: a duplicate wrote a record", n, records)
+	}
+}
+
+// announceAfter is the envelope announcing a's version n with files,
+// following version p (0 for none). A sender passes over a version that
+// stayed a draft, so p may be more than one below n (migration 00093).
+func (f *fx) announceAfter(a *asset, n, p int, files []map[string]any) *federation.Envelope {
+	pred := ""
+	if p > 0 {
+		pred = f.versionURI(a, p)
+	}
+	return f.envelope(a, a.memberAt(f.versionURI(a, n), n, pred, files))
+}
+
+// predecessorOf is the record a complete record is linked to.
+func (f *fx) predecessorOf(id uuid.UUID) uuid.UUID {
+	f.t.Helper()
+	var p *uuid.UUID
+	if err := f.pool.QueryRow(context.Background(), `SELECT predecessor_id FROM federation_received_assets WHERE id = $1`, id).Scan(&p); err != nil || p == nil {
+		f.t.Fatalf("record %s has no predecessor link (%v)", id, err)
+	}
+	return *p
+}
+
+// A sender never announces a version that stayed a draft, so the next
+// version it announces names the version below the draft and skips its
+// number (#1575, migration 00093). The receiver accepts it as the
+// successor of the version it names, and only while the chain stays
+// consistent with what it holds.
+func TestVersions_ASuccessorMayPassOverANumberThatWasNeverAnnounced(t *testing.T) {
+	f := newFx(t)
+	received := func(a *asset, n int) uuid.UUID {
+		t.Helper()
+		out, err := f.receive(f.announceV(a, n, a.files))
+		if err != nil || out.State != assetingest.StateComplete {
+			t.Fatalf("version %d: %+v %v", n, out, err)
+		}
+		return out.RecordID
+	}
+	a := f.newAsset(1)
+	f.grant(f.peerID, a.uri, nil)
+	v1 := received(a, 1)
+	files3, _ := f.originals(1)
+	// Bound as version 1's successor, due at once: it waits for nothing.
+	s3, err := f.schedule(f.announceAfter(a, 3, 1, files3))
+	if err != nil || s3.State != assetingest.StatePending || s3.Reason != "" || !f.due(s3.RecordID) {
+		t.Fatalf("version 3 after version 1 scheduled: %+v %v, due %v", s3, err, f.due(s3.RecordID))
+	}
+	out3, err := f.process(s3.RecordID)
+	if err != nil || out3.State != assetingest.StateComplete {
+		t.Fatalf("version 3 after version 1: %+v %v", out3, err)
+	}
+	if got := f.chain(a); got != "1:superseded 3:complete" || f.predecessorOf(out3.RecordID) != v1 {
+		t.Fatalf("chain %s", got)
+	}
+	files4, _ := f.originals(1)
+	if out4, err := f.receive(f.announceAfter(a, 4, 3, files4)); err != nil || out4.State != assetingest.StateComplete {
+		t.Fatalf("version 4 after version 3: %+v %v", out4, err)
+	}
+	if res, err := f.receive(f.announceAfter(a, 3, 1, files3)); err != nil || !res.Duplicate || res.RecordID != out3.RecordID {
+		t.Fatalf("version 3 again: %+v %v", res, err)
+	}
+	if got := f.chain(a); got != "1:superseded 3:superseded 4:complete" {
+		t.Fatalf("chain %s", got)
+	}
+
+	t.Run("a successor before the version it names waits and is woken", func(t *testing.T) {
+		b := f.newAsset(1)
+		f.grant(f.peerID, b.uri, nil)
+		received(b, 1)
+		files5, hash5 := f.originals(1)
+		s5, err := f.schedule(f.announceAfter(b, 5, 3, files5))
+		if st, reason := f.state(s5.RecordID); err != nil || st != assetingest.StatePending || reason != assetingest.ReasonAwaitingPredecessor {
+			t.Fatalf("version 5 before version 3: %s/%s %v", st, reason, err)
+		}
+		if res, err := f.process(s5.RecordID); res.State != assetingest.StatePending || f.origin.getCount(hash5[0]) != 0 {
+			t.Fatalf("version 5 checked: %+v %v", res, err)
+		}
+		files3, _ := f.originals(1)
+		out3, err := f.receive(f.announceAfter(b, 3, 1, files3))
+		if err != nil || out3.State != assetingest.StateComplete {
+			t.Fatalf("version 3: %+v %v", out3, err)
+		}
+		if !f.due(s5.RecordID) {
+			t.Fatal("version 3's completion did not wake version 5")
+		}
+		if out5, err := f.process(s5.RecordID); err != nil || out5.State != assetingest.StateComplete || f.predecessorOf(out5.RecordID) != out3.RecordID {
+			t.Fatalf("version 5: %+v %v", out5, err)
+		}
+		if got := f.chain(b); got != "1:superseded 3:superseded 5:complete" {
+			t.Fatalf("chain %s", got)
+		}
+	})
+
+	t.Run("a chain that contradicts what is held fails closed", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			setup func(b *asset) // versions held before the announcement
+			n, p  int
+			chain string // the chain after the refusal
+		}{
+			{"a version held between it and the version it names", func(b *asset) { received(b, 1); received(b, 2) }, 3, 1, "1:superseded 2:complete"},
+			{"a version still being received between them", func(b *asset) {
+				received(b, 1)
+				files, _ := f.originals(1)
+				if _, err := f.schedule(f.announceV(b, 2, files)); err != nil {
+					t.Fatal(err)
+				}
+			}, 3, 1, "1:complete 2:pending"},
+			{"a predecessor numbered above it", func(b *asset) {
+				received(b, 1)
+				files, _ := f.originals(1)
+				if _, err := f.receive(f.announceAfter(b, 3, 1, files)); err != nil {
+					t.Fatal(err)
+				}
+			}, 2, 3, "1:superseded 3:complete"},
+			{"a later version that passes over it", func(b *asset) {
+				received(b, 1)
+				files, _ := f.originals(1)
+				if _, err := f.schedule(f.announceAfter(b, 4, 1, files)); err != nil {
+					t.Fatal(err)
+				}
+			}, 3, 2, "1:complete 4:pending"},
+			{"a later version that follows it with a version held between them", func(b *asset) {
+				received(b, 1)
+				files, _ := f.originals(1)
+				if _, err := f.schedule(f.announceAfter(b, 5, 3, files)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.schedule(f.announceAfter(b, 4, 2, files)); err != nil {
+					t.Fatal(err)
+				}
+			}, 3, 1, "1:complete 4:pending 5:pending"},
+			{"a later version that already follows the same version", func(b *asset) {
+				received(b, 1)
+				files, _ := f.originals(1)
+				if _, err := f.schedule(f.announceAfter(b, 5, 3, files)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.schedule(f.announceAfter(b, 4, 1, files)); err != nil {
+					t.Fatal(err)
+				}
+			}, 3, 1, "1:complete 4:pending 5:pending"},
+			{"a version waiting on a predecessor not held, one number below", func(b *asset) { received(b, 1); received(b, 2) }, 3, 0, "1:superseded 2:complete"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				b := f.newAsset(1)
+				f.grant(f.peerID, b.uri, nil)
+				tc.setup(b)
+				files, hashes := f.originals(1)
+				env := f.announceAfter(b, tc.n, tc.p, files)
+				if tc.p == 0 {
+					// A predecessor the receiver does not hold.
+					env = f.envelope(b, b.memberAt(f.versionURI(b, tc.n), tc.n, f.versionURI(b, tc.n)+"-elsewhere", files))
+				}
+				res, err := f.receive(env)
+				wantReason(t, err, assetingest.ReasonVersionConflict)
+				if res.State != assetingest.StateRejected || f.origin.getCount(hashes[0]) != 0 {
+					t.Fatalf("%+v", res)
+				}
+				if got := f.chain(b); got != tc.chain {
+					t.Fatalf("a refused version changed the chain: %s", got)
+				}
+			})
+		}
+	})
+}
+
+func TestVersions_TheWaitForAPredecessorAcrossAGapIsBounded(t *testing.T) {
+	f := newFx(t, assetingest.Config{PredecessorWait: time.Second})
+	a := f.newAsset(1)
+	f.grant(f.peerID, a.uri, nil)
+	if v1, err := f.receive(f.announceV(a, 1, a.files)); err != nil || v1.State != assetingest.StateComplete {
+		t.Fatalf("version 1: %+v %v", v1, err)
+	}
+	files5, hash5 := f.originals(1)
+	s5, err := f.schedule(f.announceAfter(a, 5, 3, files5))
+	if st, reason := f.state(s5.RecordID); err != nil || st != assetingest.StatePending || reason != assetingest.ReasonAwaitingPredecessor {
+		t.Fatalf("version 5 naming an unknown version 3: %s/%s %v", st, reason, err)
+	}
+	time.Sleep(1200 * time.Millisecond)
+	res, err := f.process(s5.RecordID)
+	wantReason(t, err, assetingest.ReasonPredecessorMissing)
+	if res.State != assetingest.StateRejected || f.origin.getCount(hash5[0]) != 0 {
+		t.Fatalf("after the wait: %+v", res)
+	}
+	f.nothingUsable(hash5...)
+	if got := f.chain(a); got != "1:complete" {
+		t.Fatalf("chain %s", got)
+	}
+}
+
+// The chain trigger (migration 00093) accepts a link to a lower version
+// with the version id the record names, more than one number below it,
+// and refuses a link to a version that is not lower, or one that passes
+// over a version held between the two.
+func TestVersions_TheDatabaseHoldsAChainWithGaps(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	a := f.newAsset(1)
+	f.grant(f.peerID, a.uri, nil)
+	v1, err := f.receive(f.announceV(a, 1, a.files))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files2, _ := f.originals(1)
+	s2, err := f.schedule(f.announceV(a, 2, files2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// insertLinked writes, and rolls back, a pending record of version n
+	// that names the record pred, and returns the error.
+	insertLinked := func(n int, pred uuid.UUID) error {
+		tx, err := f.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck
+		_, err = tx.Exec(ctx, `INSERT INTO federation_received_assets (peer_id, activity_uri, actor_uri, origin_asset_uri, origin_asset_id,
+			   version_uri, version_number, file_set_sha256, record, sensitivity, signer_key_id, state, predecessor_version_uri, predecessor_id)
+			 SELECT r.peer_id, r.activity_uri || '-gap', r.actor_uri, r.origin_asset_uri, r.origin_asset_id, $3, $2,
+			   r.file_set_sha256, r.record, r.sensitivity, r.signer_key_id, 'pending', p.version_uri, p.id
+			  FROM federation_received_assets r, federation_received_assets p WHERE r.id = $1 AND p.id = $4`,
+			v1.RecordID, n, f.versionURI(a, n), pred)
+		return err
+	}
+	const lower, passed = "is not an earlier version", "is passed over"
+	for _, tc := range []struct {
+		name string
+		n    int
+		pred uuid.UUID
+		want string // "" accepted by the trigger
+	}{
+		{"a link two numbers down", 4, s2.RecordID, ""},
+		{"a link to a later version", 1, s2.RecordID, lower},
+		{"a link to the same number", 2, s2.RecordID, lower},
+		{"a link passing over a held version", 3, v1.RecordID, passed},
+	} {
+		err := insertLinked(tc.n, tc.pred)
+		switch {
+		case tc.want == "" && err != nil && (strings.Contains(err.Error(), lower) || strings.Contains(err.Error(), passed)):
+			t.Fatalf("%s: refused by the chain trigger: %v", tc.name, err)
+		case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+			t.Fatalf("%s: %v, want %q", tc.name, err, tc.want)
+		}
 	}
 }
