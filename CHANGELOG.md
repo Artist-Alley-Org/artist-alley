@@ -9,6 +9,20 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A paired instance can receive a newer version of an asset it already holds (#1575).** When
+  a paired instance announces a new version of an asset this instance received, the new version is
+  received alongside the one held: its files are fetched and checked while the current version stays
+  visible, and only once every original file has arrived intact, and the share still allows it, does
+  it replace the current version, in one step. Earlier versions are kept with their files and
+  history, and are visible to operators. A version is accepted only as the direct successor of the
+  version held here; a repeated announcement changes nothing, and a version that reuses a known
+  version with different files, skips back to an older version, or names a different predecessor is
+  refused. A version that arrives before the one it follows waits for it, for up to 24 hours. A
+  withdrawal removes every version, and a failed or revoked transfer leaves the current version as
+  it was. **Not live yet:** this works only between instances that both have the `archival-1` and
+  `original-transfer-1` profiles, which no production instance advertises yet, and a sending
+  instance announces a new version only when a share is granted. API: the `superseded` state in
+  the admin received-asset list.
 - **A deleted asset is withdrawn from the instances it was sent to (#1575).** When an asset that
   was announced to a paired instance is deleted, through the delete button or a scheduled delete,
   this instance now tells each instance it was announced to, and no other, that the asset was

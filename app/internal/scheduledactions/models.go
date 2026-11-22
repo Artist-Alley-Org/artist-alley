@@ -734,6 +734,12 @@ type FederationReceivedAsset struct {
 	// When a pending record may be started (#1574): now() when bound, a lease ahead while an attempt runs, a capped backoff ahead after a transient failure. assetingest.Worker claims due pending records with FOR UPDATE SKIP LOCKED.
 	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
 	WithdrawnAt   pgtype.Timestamptz `json:"withdrawn_at"`
+	// The version id this record must follow (#1575, spec v1 §17.2.1): set when it was bound as the successor of a version this instance had accepted of the asset; NULL for the first version received of it.
+	PredecessorVersionUri *string `json:"predecessor_version_uri"`
+	// The record of that predecessor, linked once, as this record completes and the predecessor becomes superseded (#1575).
+	PredecessorID pgtype.UUID `json:"predecessor_id"`
+	// When a verified successor replaced this complete version (#1575). A superseded record keeps its originals verified and pinned.
+	SupersededAt pgtype.Timestamptz `json:"superseded_at"`
 }
 
 // The file set of a received asset record (#1574, spec v1 §17.2.2). Originals are fetched and verified (state verified only on a complete record); preservation and access entries are declared claims (not_transferred, #1597). declared_* are untrusted sender claims, never a path.

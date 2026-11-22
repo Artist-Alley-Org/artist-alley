@@ -18,8 +18,9 @@
 //  1. The tombstone is kept once per (peer, asset)
 //     (federation_received_tombstones). A repeated or second tombstone of
 //     the same asset changes nothing: the first is kept.
-//  2. Every pending or complete record of that asset from that peer
-//     becomes withdrawn: its own pins are released
+//  2. Every pending, complete or superseded record of that asset from
+//     that peer (every version held or being received, #1575) becomes
+//     withdrawn: its own pins are released
 //     (federation_received_asset_release_pins: no other pin owner is
 //     touched), its originals are marked withdrawn, and one ledger event
 //     (deaccession, success) is written. A rejected record holds nothing
@@ -128,7 +129,7 @@ func (s *Service) Withdraw(ctx context.Context, peerID uuid.UUID, env *federatio
 			return nil
 		}
 		rows, err := tx.Query(ctx, `SELECT id, attempts FROM federation_received_assets
-			WHERE peer_id = $1 AND origin_asset_uri = $2 AND state IN ('pending', 'complete')
+			WHERE peer_id = $1 AND origin_asset_uri = $2 AND state IN ('pending', 'complete', 'superseded')
 			ORDER BY id FOR UPDATE`, peerID, env.Object)
 		if err != nil {
 			return err

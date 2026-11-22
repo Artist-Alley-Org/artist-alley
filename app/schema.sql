@@ -1535,11 +1535,11 @@ $$;
 -- Name: federation_received_asset_require_consistent(p_record uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
--- The commit-time invariant of one record: a complete record has at
--- least one original and every original verified and pinned under it
--- at its size; a pending or rejected record holds no pin and no verified
--- file. A record that no longer exists is not checked (its pins went
--- with it, federation_received_asset_release_pins).
+-- The commit-time invariant of one record: a complete or superseded
+-- record has at least one original and every original verified, pinned
+-- under it at its size and identified, and a superseded one has its
+-- successor; a pending, rejected or withdrawn record holds no pin and no
+-- verified file. A record that no longer exists is not checked.
 CREATE FUNCTION public.federation_received_asset_require_consistent(p_record uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
@@ -1550,9 +1550,9 @@ BEGIN
     IF NOT FOUND THEN
         RETURN;
     END IF;
-    IF r.state = 'complete' THEN
+    IF r.state = ANY (ARRAY['complete'::text, 'superseded'::text]) THEN
         IF NOT EXISTS (SELECT 1 FROM public.federation_received_asset_files WHERE received_asset_id = r.id AND role = 'original') THEN
-            RAISE EXCEPTION 'received asset %: complete without an original file (#1574)', r.id
+            RAISE EXCEPTION 'received asset %: % without an original file (#1574)', r.id, r.state
                 USING ERRCODE = 'integrity_constraint_violation';
         END IF;
         IF EXISTS (
@@ -1563,12 +1563,18 @@ BEGIN
                       JOIN public.storage_objects o ON o.hash = p.object_hash
                      WHERE p.pin_subject_type = 'federation_received_asset' AND p.pin_subject_id = r.id::text
                        AND p.object_hash = f.object_hash AND o.size_bytes = f.size_bytes))) THEN
-            RAISE EXCEPTION 'received asset %: complete with an original that is not verified and pinned (#1574)', r.id
+            RAISE EXCEPTION 'received asset %: % with an original that is not verified and pinned (#1574)', r.id, r.state
                 USING ERRCODE = 'integrity_constraint_violation';
         END IF;
         IF EXISTS (SELECT 1 FROM public.federation_received_asset_files f
                     WHERE f.received_asset_id = r.id AND f.role = 'original' AND f.detected_media_type IS NULL) THEN
-            RAISE EXCEPTION 'received asset %: complete with an original that was not identified (#1574)', r.id
+            RAISE EXCEPTION 'received asset %: % with an original that was not identified (#1574)', r.id, r.state
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        IF r.state = 'superseded' AND NOT EXISTS (
+            SELECT 1 FROM public.federation_received_assets s
+             WHERE s.predecessor_id = r.id AND s.state = ANY (ARRAY['complete'::text, 'superseded'::text, 'withdrawn'::text])) THEN
+            RAISE EXCEPTION 'received asset %: superseded without a successor (#1575)', r.id
                 USING ERRCODE = 'integrity_constraint_violation';
         END IF;
         RETURN;
@@ -1626,13 +1632,41 @@ $$;
 
 
 --
+-- Name: federation_received_assets_chain_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+-- The predecessor link names the same peer's record of the same asset,
+-- one version number lower, with the version id the record must follow.
+CREATE FUNCTION public.federation_received_assets_chain_check() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    p record;
+BEGIN
+    IF NEW.predecessor_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT peer_id, origin_asset_uri, version_number, version_uri INTO p
+      FROM public.federation_received_assets WHERE id = NEW.predecessor_id;
+    IF NOT FOUND OR p.peer_id <> NEW.peer_id OR p.origin_asset_uri <> NEW.origin_asset_uri
+       OR p.version_number <> NEW.version_number - 1 OR p.version_uri IS DISTINCT FROM NEW.predecessor_version_uri THEN
+        RAISE EXCEPTION 'received asset %: % is not the previous version of the same asset from the same peer (#1575)', NEW.id, NEW.predecessor_id
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: federation_received_assets_update_check(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 -- A complete record is final: its claims, file set and grant are never
--- rewritten, and it never goes back to pending or rejected. Its origin
--- can withdraw it (00091, §17.3): pending or complete to withdrawn, which
--- is final too.
+-- rewritten, and it never goes back to pending or rejected. It is
+-- withdrawn (00091) or superseded by its verified successor (00092);
+-- superseded is final except for a withdrawal. A record is linked to its
+-- predecessor once, as it completes.
 CREATE FUNCTION public.federation_received_assets_update_check() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -1645,11 +1679,29 @@ BEGIN
         RAISE EXCEPTION 'received asset %: a rejected record is not changed (#1574)', OLD.id
             USING ERRCODE = 'integrity_constraint_violation';
     END IF;
-    IF OLD.state = 'complete' AND (NEW.state <> 'withdrawn'
+    IF OLD.state = 'superseded' AND (NEW.state <> 'withdrawn'
+       OR NEW.completed_at IS DISTINCT FROM OLD.completed_at
+       OR NEW.authorizing_grant_id IS DISTINCT FROM OLD.authorizing_grant_id
+       OR NEW.attempts <> OLD.attempts
+       OR NEW.superseded_at IS DISTINCT FROM OLD.superseded_at) THEN
+        RAISE EXCEPTION 'received asset %: a superseded version is kept as it is, only withdrawn (#1575)', OLD.id
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF OLD.state = 'complete' AND (NEW.state <> ALL (ARRAY['withdrawn'::text, 'superseded'::text])
        OR NEW.completed_at IS DISTINCT FROM OLD.completed_at
        OR NEW.authorizing_grant_id IS DISTINCT FROM OLD.authorizing_grant_id
        OR NEW.attempts <> OLD.attempts) THEN
-        RAISE EXCEPTION 'received asset %: a complete record is not changed, only withdrawn (#1574, #1575)', OLD.id
+        RAISE EXCEPTION 'received asset %: a complete record is not changed, only withdrawn or superseded (#1574, #1575)', OLD.id
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF NEW.predecessor_id IS DISTINCT FROM OLD.predecessor_id
+       AND NOT (OLD.state = 'pending' AND NEW.state = 'complete' AND OLD.predecessor_id IS NULL) THEN
+        RAISE EXCEPTION 'received asset %: a record is linked to its predecessor once, as it completes (#1575)', OLD.id
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF NEW.superseded_at IS DISTINCT FROM OLD.superseded_at
+       AND NOT (OLD.state = 'complete' AND NEW.state = 'superseded') THEN
+        RAISE EXCEPTION 'received asset %: superseded_at is set only as a complete version is superseded (#1575)', OLD.id
             USING ERRCODE = 'integrity_constraint_violation';
     END IF;
     IF NEW.peer_id <> OLD.peer_id OR NEW.activity_uri <> OLD.activity_uri OR NEW.actor_uri <> OLD.actor_uri
@@ -1658,7 +1710,8 @@ BEGIN
        OR NEW.file_set_sha256 <> OLD.file_set_sha256 OR NEW.record <> OLD.record
        OR NEW.sensitivity <> OLD.sensitivity OR NEW.signer_key_id <> OLD.signer_key_id
        OR NEW.signer_actor_uri IS DISTINCT FROM OLD.signer_actor_uri OR NEW.received_at <> OLD.received_at
-       OR NEW.created_xid <> OLD.created_xid THEN
+       OR NEW.created_xid <> OLD.created_xid
+       OR NEW.predecessor_version_uri IS DISTINCT FROM OLD.predecessor_version_uri THEN
         RAISE EXCEPTION 'received asset %: only its state, reason, attempts and commit are updated (#1574)', OLD.id
             USING ERRCODE = 'integrity_constraint_violation';
     END IF;
@@ -3686,25 +3739,38 @@ CREATE TABLE public.federation_received_assets (
     created_xid xid8 DEFAULT pg_current_xact_id() NOT NULL,
     next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
     withdrawn_at timestamp with time zone,
+    predecessor_version_uri text,
+    predecessor_id uuid,
+    superseded_at timestamp with time zone,
     CONSTRAINT federation_received_assets_pkey PRIMARY KEY (id),
     CONSTRAINT federation_received_assets_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE,
-    CONSTRAINT federation_received_assets_state_check CHECK (state = ANY (ARRAY['pending'::text, 'complete'::text, 'rejected'::text, 'withdrawn'::text])),
-    -- complete: no reason, a commit time and the grant; rejected: a
-    -- reason; withdrawn (00091): reason withdrawn and its time; pending:
-    -- possibly the last transient reason.
+    CONSTRAINT federation_received_assets_predecessor_fkey FOREIGN KEY (predecessor_id) REFERENCES public.federation_received_assets(id),
+    CONSTRAINT federation_received_assets_state_check CHECK (state = ANY (ARRAY['pending'::text, 'complete'::text, 'superseded'::text, 'rejected'::text, 'withdrawn'::text])),
+    -- complete: no reason, a commit time and the grant; superseded
+    -- (00092): the same and when it was replaced; rejected: a reason;
+    -- withdrawn (00091): reason withdrawn and its time; pending: possibly
+    -- the last transient reason.
     CONSTRAINT federation_received_assets_state_shape_check CHECK (CASE state
-        WHEN 'complete' THEN reason IS NULL AND completed_at IS NOT NULL AND authorizing_grant_id IS NOT NULL AND withdrawn_at IS NULL
-        WHEN 'rejected' THEN reason IS NOT NULL AND completed_at IS NULL AND authorizing_grant_id IS NULL AND withdrawn_at IS NULL
+        WHEN 'complete' THEN reason IS NULL AND completed_at IS NOT NULL AND authorizing_grant_id IS NOT NULL AND withdrawn_at IS NULL AND superseded_at IS NULL
+        WHEN 'superseded' THEN reason IS NULL AND completed_at IS NOT NULL AND authorizing_grant_id IS NOT NULL AND withdrawn_at IS NULL AND superseded_at IS NOT NULL
+        WHEN 'rejected' THEN reason IS NOT NULL AND completed_at IS NULL AND authorizing_grant_id IS NULL AND withdrawn_at IS NULL AND superseded_at IS NULL
         WHEN 'withdrawn' THEN reason = 'withdrawn'::text AND withdrawn_at IS NOT NULL
-        ELSE completed_at IS NULL AND authorizing_grant_id IS NULL AND withdrawn_at IS NULL
+        ELSE completed_at IS NULL AND authorizing_grant_id IS NULL AND withdrawn_at IS NULL AND superseded_at IS NULL
     END),
+    -- 00092: a record links a predecessor only if it was bound as a
+    -- successor, and a successor that holds its bytes is linked.
+    CONSTRAINT federation_received_assets_chain_check CHECK (
+        (predecessor_id IS NULL OR predecessor_version_uri IS NOT NULL)
+        AND (predecessor_version_uri IS NULL OR version_number > 1)
+        AND (state <> ALL (ARRAY['complete'::text, 'superseded'::text]) OR predecessor_version_uri IS NULL OR predecessor_id IS NOT NULL)),
     CONSTRAINT federation_received_assets_reason_check CHECK (reason IS NULL OR reason = ANY (ARRAY[
         'no_inbound_grant'::text, 'fixity_mismatch'::text, 'length_mismatch'::text, 'origin_refused'::text,
         'revoked_during_fetch'::text, 'too_large'::text, 'sensitivity_refused'::text, 'version_conflict'::text,
         'version_unsupported'::text, 'redirect_refused'::text, 'class_not_available'::text, 'foreign_origin'::text,
         'foreign_signer'::text, 'invalid_request'::text, 'http_status'::text, 'timeout'::text,
         'transport_error'::text, 'lease_lost'::text, 'storage_error'::text, 'peer_unavailable'::text,
-        'profile_not_negotiated'::text, 'archival_invalid'::text, 'awaiting_grant'::text, 'withdrawn'::text])),
+        'profile_not_negotiated'::text, 'archival_invalid'::text, 'awaiting_grant'::text, 'withdrawn'::text,
+        'awaiting_predecessor'::text, 'predecessor_missing'::text, 'version_stale'::text])),
     CONSTRAINT federation_received_assets_sensitivity_check CHECK (sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text])),
     -- Only public and team records are ever held (§7.5.7.4: v1 has no
     -- encrypted file transport).
@@ -3718,12 +3784,51 @@ CREATE TABLE public.federation_received_assets (
 
 
 --
--- Name: federation_received_assets_live_key; Type: INDEX; Schema: public; Owner: -
+-- Name: federation_received_assets_version_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX federation_received_assets_live_key
-    ON public.federation_received_assets USING btree (peer_id, origin_asset_uri)
+-- 00092: one record per version number and per version id of an asset
+-- (a rejected one never blocks a later announcement); one current
+-- version, one first version, one successor per version.
+CREATE UNIQUE INDEX federation_received_assets_version_key
+    ON public.federation_received_assets USING btree (peer_id, origin_asset_uri, version_number)
     WHERE (state <> 'rejected'::text);
+
+
+--
+-- Name: federation_received_assets_version_uri_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX federation_received_assets_version_uri_key
+    ON public.federation_received_assets USING btree (peer_id, origin_asset_uri, version_uri)
+    WHERE (state <> 'rejected'::text);
+
+
+--
+-- Name: federation_received_assets_current_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX federation_received_assets_current_key
+    ON public.federation_received_assets USING btree (peer_id, origin_asset_uri)
+    WHERE (state = 'complete'::text);
+
+
+--
+-- Name: federation_received_assets_first_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX federation_received_assets_first_key
+    ON public.federation_received_assets USING btree (peer_id, origin_asset_uri)
+    WHERE (state <> 'rejected'::text AND predecessor_version_uri IS NULL);
+
+
+--
+-- Name: federation_received_assets_successor_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX federation_received_assets_successor_key
+    ON public.federation_received_assets USING btree (predecessor_id)
+    WHERE (predecessor_id IS NOT NULL);
 
 
 --
@@ -3755,6 +3860,27 @@ COMMENT ON TABLE public.federation_received_assets IS 'An aa:asset record a pair
 --
 
 COMMENT ON COLUMN public.federation_received_assets.next_attempt_at IS 'When a pending record may be started (#1574): now() when bound, a lease ahead while an attempt runs, a capped backoff ahead after a transient failure. assetingest.Worker claims due pending records with FOR UPDATE SKIP LOCKED.';
+
+
+--
+-- Name: COLUMN federation_received_assets.predecessor_version_uri; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_received_assets.predecessor_version_uri IS 'The version id this record must follow (#1575, spec v1 §17.2.1): set when it was bound as the successor of a version this instance had accepted of the asset; NULL for the first version received of it.';
+
+
+--
+-- Name: COLUMN federation_received_assets.predecessor_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_received_assets.predecessor_id IS 'The record of that predecessor, linked once, as this record completes and the predecessor becomes superseded (#1575).';
+
+
+--
+-- Name: COLUMN federation_received_assets.superseded_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_received_assets.superseded_at IS 'When a verified successor replaced this complete version (#1575). A superseded record keeps its originals verified and pinned.';
 
 
 --
@@ -3956,7 +4082,8 @@ CREATE TABLE public.federation_transfer_events (
         'version_unsupported'::text, 'redirect_refused'::text, 'class_not_available'::text, 'foreign_origin'::text,
         'foreign_signer'::text, 'invalid_request'::text, 'http_status'::text, 'timeout'::text,
         'transport_error'::text, 'lease_lost'::text, 'storage_error'::text, 'peer_unavailable'::text,
-        'profile_not_negotiated'::text, 'archival_invalid'::text, 'awaiting_grant'::text, 'withdrawn'::text]))),
+        'profile_not_negotiated'::text, 'archival_invalid'::text, 'awaiting_grant'::text, 'withdrawn'::text,
+        'awaiting_predecessor'::text, 'predecessor_missing'::text, 'version_stale'::text]))),
     -- A file is named whole or not at all; transfer and fixity-check events
     -- always name one, and its expected digest is its listed one.
     CONSTRAINT federation_transfer_events_file_check CHECK (
@@ -8510,6 +8637,14 @@ CREATE TRIGGER federation_inbox_dispatch_notify_trg AFTER INSERT ON public.feder
 --
 
 CREATE TRIGGER federation_outbox_dispatch_notify_trg AFTER INSERT ON public.federation_outbox FOR EACH ROW EXECUTE FUNCTION public.federation_outbox_dispatch_notify();
+
+
+--
+-- Name: federation_received_assets federation_received_assets_chain_check_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_received_assets_chain_check_trg BEFORE INSERT OR UPDATE OF predecessor_id ON public.federation_received_assets
+    FOR EACH ROW EXECUTE FUNCTION public.federation_received_assets_chain_check();
 
 
 --

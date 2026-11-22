@@ -898,7 +898,9 @@ paths:
         enabled and connected; and a live, unexpired inbound grant from
         that peer covers the asset and either names no recipient or names
         the caller (§16.6). Revoking or expiring the grant drops the record
-        from the next request. Newest first, cursor-paginated. Every
+        from the next request. Of an asset's versions only the current one
+        is listed: a later version replaces it once its originals are
+        verified here (#1575, §17.2.1). Newest first, cursor-paginated. Every
         answer of this route, the detail and the original, refusals
         (400, 401, 404) included, is `Cache-Control: no-store`: a cached
         refusal would hide a later regrant, a cached record would outlive
@@ -949,8 +951,8 @@ paths:
         original now: that needs the same live grant to carry the
         original-file permission (`aa:originalTransfer`, §16.6). Every
         refusal is the same 404, whether the record does not exist, is
-        pending or rejected, is a `team` record, or is not granted to the
-        caller.
+        pending or rejected, is an earlier version a later one replaced
+        (#1575), is a `team` record, or is not granted to the caller.
       tags: [federation, account]
       security:
         - cookieAuth: []
@@ -1694,7 +1696,7 @@ paths:
       summary: Every received asset record, for operators (#1574)
       description: |
         The receiver's records of assets other instances announced to it,
-        in every state (pending, complete, rejected, withdrawn) and every held tier,
+        in every state (pending, complete, superseded, rejected, withdrawn) and every held tier,
         `team` included, newest first. No bytes and no grant check: this
         is the operator's view of what the receiver holds and why. A
         record goes with its peer; its events stay in the ledger
@@ -1708,7 +1710,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: "pending, complete, rejected or withdrawn."
+          description: "pending, complete, superseded, rejected or withdrawn."
         - name: peer_id
           in: query
           required: false
@@ -22581,7 +22583,7 @@ components:
         version_uri: { type: string }
         version_number: { type: integer, format: int64 }
         sensitivity: { type: string }
-        state: { type: string, description: "pending, complete, rejected or withdrawn." }
+        state: { type: string, description: "pending, complete, superseded (an earlier version a verified later one replaced, #1575), rejected or withdrawn." }
         reason: { type: string }
         attempts: { type: integer }
         received_at: { type: string, format: date-time }
