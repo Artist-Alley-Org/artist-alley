@@ -574,9 +574,14 @@ func TestReceive_AllowedOriginalImport(t *testing.T) {
 			t.Fatalf("the accepted record became %s", st)
 		}
 	})
-	t.Run("another version id is not received until #1575", func(t *testing.T) {
+	t.Run("a later version that does not follow the held version fails closed", func(t *testing.T) {
+		// Its predecessor is not version 1's id (#1575: a successor names
+		// the version below it); versions_test.go covers the successor.
 		_, err := f.receive(f.envelope(a, a.member(f.version(a)+"-2", 2, "public")))
-		wantReason(t, err, assetingest.ReasonVersionUnsupported)
+		wantReason(t, err, assetingest.ReasonVersionConflict)
+		if st, _ := f.state(out.RecordID); st != assetingest.StateComplete {
+			t.Fatalf("the accepted record became %s", st)
+		}
 	})
 }
 

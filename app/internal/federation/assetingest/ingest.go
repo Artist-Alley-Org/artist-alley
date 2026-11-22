@@ -29,11 +29,15 @@
 //  2. Bind, in one short transaction serialised per (peer, asset):
 //     the same activity finds its own record (a repeated delivery),
 //     which must be the identical announcement (activity_conflict
-//     otherwise; foreign_signer for another signer). A
-//     live record for the asset with the same version id and file set is
-//     a duplicate; with another file set, version_conflict (§17.2.1, fail
-//     closed); with another version id, version_unsupported (version
-//     lifecycle is #1575). A restricted or embargoed tier
+//     otherwise; foreign_signer for another signer). The version is then
+//     placed among the versions of the asset this instance holds or is
+//     receiving (versions.go, #1575): the same version id and file set is
+//     a duplicate; a version id or number already taken by other bytes
+//     is version_conflict (§17.2.1, fail closed); an older version than
+//     the first one held is version_stale; a later one must be the exact
+//     successor of the version below it (number + 1, predecessor that
+//     version's id) and waits, pending, until that version is complete
+//     (awaiting_predecessor). A restricted or embargoed tier
 //     (sensitivity_refused, §7.5.7.4), a file set over the size budget
 //     (too_large) and no live inbound grant for (peer, signer, asset,
 //     original) (no_inbound_grant, #1571) are recorded as rejected. Only
@@ -44,13 +48,17 @@
 //     access entries are claims only (§8.5 serves the original class;
 //     derivatives are #1597).
 //  4. Complete, in ONE transaction: the record is locked and still
-//     pending; the peer row (FOR SHARE) and the grant (AllowsTx, its row
-//     held FOR SHARE) are checked again; every object row is locked and
+//     pending, under the asset's lock; no tombstone is kept for the
+//     asset; the peer row (FOR SHARE) and the grant (AllowsTx, its row
+//     held FOR SHARE) are checked again; a successor's predecessor is
+//     still the asset's complete version; every object row is locked and
 //     taken off pending GC; the record pins each original and the ingest
-//     pins go; the originals are marked verified and the record
-//     complete, with the grant's id. The database refuses a commit that
-//     leaves a complete record with an unpinned or unverified original,
-//     or a pending or rejected one holding a pin (migration 00086).
+//     pins go; the originals are marked verified, the predecessor (if
+//     any) becomes superseded, keeping its pins, and the record complete,
+//     with the grant's id. The database refuses a commit that leaves a
+//     complete or superseded record with an unpinned or unverified
+//     original, a superseded one without its successor, or a pending or
+//     rejected one holding a pin (migrations 00086, 00092).
 //
 // # Failure
 //
@@ -112,6 +120,9 @@ const (
 	StatePending  = "pending"
 	StateComplete = "complete"
 	StateRejected = "rejected"
+	// StateSuperseded (#1575): a complete version a verified successor
+	// replaced. It keeps its originals verified and pinned (§17.2.1).
+	StateSuperseded = "superseded"
 )
 
 // Reasons this package adds to casfetch's (which pass through unchanged).
@@ -119,7 +130,21 @@ const (
 	ReasonUnsupportedActivity = "unsupported_activity"
 	ReasonArchivalInvalid     = "archival_invalid"
 	ReasonVersionConflict     = "version_conflict"
-	ReasonVersionUnsupported  = "version_unsupported"
+	// ReasonVersionUnsupported was every other version id before #1575
+	// received later versions. Nothing records it now; stored records
+	// keep it.
+	ReasonVersionUnsupported = "version_unsupported"
+	// ReasonVersionStale (#1575): a version older than the first one this
+	// instance holds of the asset. Never received, so no record goes
+	// back to an older version.
+	ReasonVersionStale = "version_stale"
+	// ReasonAwaitingPredecessor (#1575): a successor whose predecessor is
+	// not complete here yet (still arriving, or not announced yet). It
+	// waits, pending, fetching nothing and using no attempt, until that
+	// version completes (which wakes it) or Config.PredecessorWait from
+	// received_at runs out (rejected predecessor_missing).
+	ReasonAwaitingPredecessor = "awaiting_predecessor"
+	ReasonPredecessorMissing  = "predecessor_missing"
 	// ReasonActivityConflict: an activity id already recorded arrived
 	// with another actor, object, version, file set or claim. Nothing is
 	// written; the record of the first delivery stands.
@@ -210,12 +235,17 @@ type Config struct {
 	// GrantWait bounds how long a record announced before its grant waits
 	// for it, from received_at (#1574 slice 3, ReasonAwaitingGrant).
 	GrantWait time.Duration
+	// PredecessorWait bounds how long a successor announced before its
+	// predecessor completed waits for it, from received_at (#1575,
+	// ReasonAwaitingPredecessor).
+	PredecessorWait time.Duration
 }
 
 // DefaultConfig returns production bounds.
 func DefaultConfig() Config {
 	return Config{MaxTotalBytes: 32 << 30, MaxAttempts: 5, Lease: 10 * time.Minute,
-		RetryBase: 30 * time.Second, RetryMax: 30 * time.Minute, GrantWait: 24 * time.Hour}
+		RetryBase: 30 * time.Second, RetryMax: 30 * time.Minute, GrantWait: 24 * time.Hour,
+		PredecessorWait: 24 * time.Hour}
 }
 
 // Deps wires the service.
@@ -266,6 +296,9 @@ func New(d Deps) *Service {
 	}
 	if cfg.GrantWait <= 0 {
 		cfg.GrantWait = def.GrantWait
+	}
+	if cfg.PredecessorWait <= 0 {
+		cfg.PredecessorWait = def.PredecessorWait
 	}
 	return &Service{d: d, cfg: cfg}
 }
@@ -323,6 +356,10 @@ type announced struct {
 	total         int64
 	digest        string
 	signer        casfetch.Signer
+	// predecessorURI is the version this record must follow (#1575): the
+	// version id below it when it was bound as a successor, "" for the
+	// first version received of the asset.
+	predecessorURI string
 }
 
 // record is the stored state Receive works from.
@@ -381,8 +418,10 @@ func (s *Service) Schedule(ctx context.Context, a Announcement) (Outcome, error)
 		return Outcome{State: StatePending, Reason: ReasonOf(err)}, err
 	}
 	switch rec.state {
-	case StateComplete:
+	case StateComplete, StateSuperseded:
 		return Outcome{RecordID: rec.id, State: rec.state, Duplicate: dup, GrantID: rec.grantID}, nil
+	case StateWithdrawn:
+		return Outcome{RecordID: rec.id, State: rec.state, Reason: rec.reason, Duplicate: dup}, &Error{Reason: rec.reason}
 	case StateRejected:
 		if !dup {
 			s.auditRecord(ctx, audit.EventFederationAssetIngestRejected, an.ref(), rec.id, rec.reason, nil)
@@ -572,28 +611,21 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 			rec, err = s.insert(ctx, tx, an, StateRejected, ReasonWithdrawn)
 			return err
 		}
-		var liveVersion, liveDigest string
-		r, err = scanRecord(tx.QueryRow(ctx, `SELECT `+recordCols+` FROM federation_received_assets
-			WHERE peer_id = $1 AND origin_asset_uri = $2 AND state <> 'rejected'`, an.peer.ID, an.env.Object))
-		switch {
-		case err == nil:
-			if err := tx.QueryRow(ctx, `SELECT version_uri, file_set_sha256 FROM federation_received_assets WHERE id = $1`,
-				r.id).Scan(&liveVersion, &liveDigest); err != nil {
-				return err
-			}
-			if liveVersion == an.asset.Version.ID && liveDigest == an.digest {
-				rec, dup = r, true
-				return nil
-			}
-			reason := ReasonVersionUnsupported
-			if liveVersion == an.asset.Version.ID {
-				reason = ReasonVersionConflict
-			}
-			rec, err = s.insert(ctx, tx, an, StateRejected, reason)
-			return err
-		case !errors.Is(err, pgx.ErrNoRows):
+		// #1575 (§17.2.1): where this version stands among the versions of
+		// the asset held or being received here.
+		pl, err := s.place(ctx, tx, an)
+		if err != nil {
 			return err
 		}
+		switch {
+		case pl.duplicate != nil:
+			rec, dup = *pl.duplicate, true
+			return nil
+		case pl.refusal != "":
+			rec, err = s.insert(ctx, tx, an, StateRejected, pl.refusal)
+			return err
+		}
+		an.predecessorURI = pl.predecessorURI
 		switch {
 		case an.asset.Sensitivity != "public" && an.asset.Sensitivity != "team":
 			rec, err = s.insert(ctx, tx, an, StateRejected, casfetch.ReasonSensitivity)
@@ -637,6 +669,15 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 			rec, err = s.insert(ctx, tx, an, StateRejected, casfetch.ReasonNoInboundGrant)
 			return err
 		}
+		if !pl.predecessorReady {
+			rec, err = s.insert(ctx, tx, an, StatePending, ReasonAwaitingPredecessor)
+			if err != nil {
+				return err
+			}
+			_, err = tx.Exec(ctx, `UPDATE federation_received_assets SET next_attempt_at = `+awaitNextSQL+`
+				WHERE id = $1`, rec.id, s.cfg.PredecessorWait.Seconds())
+			return err
+		}
 		rec, err = s.insert(ctx, tx, an, StatePending, "")
 		return err
 	})
@@ -664,14 +705,20 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, an *announced, state, r
 	if an.signer.ActorURI != "" {
 		actorArg = &an.signer.ActorURI
 	}
+	// A refusal is not a version of the chain: only a pending record names
+	// the version it must follow.
+	var predArg *string
+	if state == StatePending && an.predecessorURI != "" {
+		predArg = &an.predecessorURI
+	}
 	r, err := scanRecord(tx.QueryRow(ctx, `INSERT INTO federation_received_assets
 		(peer_id, activity_uri, actor_uri, origin_asset_uri, origin_asset_id, version_uri, version_number,
-		 file_set_sha256, record, sensitivity, signer_key_id, signer_actor_uri, state, reason)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		 file_set_sha256, record, sensitivity, signer_key_id, signer_actor_uri, state, reason, predecessor_version_uri)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING `+recordCols,
 		an.peer.ID, an.env.ID, an.env.Actor, an.env.Object, an.originAssetID, an.asset.Version.ID,
 		an.asset.Version.Number, an.digest, []byte(an.raw), an.asset.Sensitivity, an.signer.KeyID, actorArg,
-		state, reasonArg))
+		state, reasonArg, predArg))
 	if err != nil {
 		return record{}, err
 	}
@@ -704,7 +751,7 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, an *announced, state, r
 			event{typ: EventIngestion, outcome: OutcomeFailure, reason: reason}); err != nil {
 			return record{}, err
 		}
-	case reason == ReasonAwaitingGrant:
+	case reason == ReasonAwaitingGrant || reason == ReasonAwaitingPredecessor:
 		if err := s.writeEvents(ctx, tx, r.id, 0, StatePending,
 			event{typ: EventIngestion, outcome: OutcomeWarning, reason: reason}); err != nil {
 			return record{}, err
@@ -765,6 +812,8 @@ type stored struct {
 	actorURI, digest    string
 	record              []byte
 	signerKey, signerAs string
+	versionNumber       int64
+	predecessorURI      string
 }
 
 // announcement rebuilds the announcement the record was bound from.
@@ -790,10 +839,11 @@ func (s *Service) Process(ctx context.Context, id uuid.UUID, signers SignerResol
 func (s *Service) process(ctx context.Context, id uuid.UUID, signers SignerResolver) (Outcome, error) {
 	var st stored
 	err := s.d.Pool.QueryRow(ctx, `SELECT peer_id, activity_uri, actor_uri, origin_asset_uri, version_uri,
-		    file_set_sha256, record, signer_key_id, COALESCE(signer_actor_uri, '')
+		    file_set_sha256, record, signer_key_id, COALESCE(signer_actor_uri, ''),
+		    version_number, COALESCE(predecessor_version_uri, '')
 		  FROM federation_received_assets WHERE id = $1 AND state = 'pending'`, id).
 		Scan(&st.ref.peerID, &st.ref.activityURI, &st.actorURI, &st.ref.originAssetURI, &st.ref.versionURI,
-			&st.digest, &st.record, &st.signerKey, &st.signerAs)
+			&st.digest, &st.record, &st.signerKey, &st.signerAs, &st.versionNumber, &st.predecessorURI)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s.current(ctx, id)
 	}
@@ -809,6 +859,13 @@ func (s *Service) process(ctx context.Context, id uuid.UUID, signers SignerResol
 	if serr == nil {
 		if out, decided, err := s.awaitGrant(ctx, st, id, signer); decided {
 			return out, err
+		}
+		// A successor fetches nothing until its predecessor is complete
+		// here (#1575, versions.go).
+		if st.predecessorURI != "" {
+			if out, decided, err := s.awaitPredecessor(ctx, st, id); decided {
+				return out, err
+			}
 		}
 	}
 	// The attempt holds the record for a lease, so no worker starts it
@@ -834,6 +891,7 @@ func (s *Service) process(ctx context.Context, id uuid.UUID, signers SignerResol
 	if an.digest != st.digest {
 		return s.fail(ctx, st.ref, id, attempts, ReasonArchivalInvalid, false, errors.New("the stored file set does not match its digest"), nil)
 	}
+	an.predecessorURI = st.predecessorURI
 	if _, err := s.d.Grants.Allows(ctx, s.grantQuery(an)); err != nil {
 		if errors.Is(err, inboundgrants.ErrNoGrant) {
 			return s.fail(ctx, st.ref, id, attempts, casfetch.ReasonNoInboundGrant, false, err, nil)
@@ -884,7 +942,7 @@ func (s *Service) transfer(ctx context.Context, an *announced, id uuid.UUID, att
 	if s.afterFetch != nil {
 		s.afterFetch()
 	}
-	grantID, err := s.complete(ctx, an, id, attempts, held)
+	grantID, superseded, err := s.complete(ctx, an, id, attempts, held)
 	release() // the ingest pins: removed in the commit, or released here
 	if err != nil {
 		var e *Error
@@ -896,8 +954,11 @@ func (s *Service) transfer(ctx context.Context, an *announced, id uuid.UUID, att
 		}
 		return s.fail(ctx, an.ref(), id, attempts, casfetch.ReasonStorage, true, err, nil)
 	}
-	s.auditRecord(ctx, audit.EventFederationAssetIngestCompleted, an.ref(), id, "", map[string]any{
-		"grant_id": grantID.String(), "files": len(an.originals)})
+	meta := map[string]any{"grant_id": grantID.String(), "files": len(an.originals), "version_number": an.asset.Version.Number}
+	if superseded != uuid.Nil {
+		meta["supersedes"] = superseded.String()
+	}
+	s.auditRecord(ctx, audit.EventFederationAssetIngestCompleted, an.ref(), id, "", meta)
 	return Outcome{RecordID: id, State: StateComplete, GrantID: grantID}, nil
 }
 
@@ -930,16 +991,32 @@ func retryableFetch(err error) bool {
 }
 
 // complete records the held originals under the record in one
-// transaction, after checking the record, the peer and the grant again.
-func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, attempts int32, held []heldPin) (uuid.UUID, error) {
-	var grantID uuid.UUID
-	err := pgx.BeginFunc(ctx, s.d.Pool, func(tx pgx.Tx) error {
+// transaction, after checking the record, the withdrawal, the peer, the
+// grant and (for a successor) the predecessor again. A successor
+// becomes the asset's complete version in the same transaction as its
+// predecessor becomes superseded; superseded is that predecessor's id.
+func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, attempts int32, held []heldPin) (grantID, superseded uuid.UUID, err error) {
+	err = pgx.BeginFunc(ctx, s.d.Pool, func(tx pgx.Tx) error {
+		// The asset's lock first, as bind and Withdraw take it: an
+		// announcement, a withdrawal and an activation of one asset never
+		// interleave.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 1574))`,
+			"asset "+an.peer.ID.String()+" "+an.env.Object); err != nil {
+			return err
+		}
 		var state string
 		if err := tx.QueryRow(ctx, `SELECT state FROM federation_received_assets WHERE id = $1 FOR UPDATE`, id).Scan(&state); err != nil {
 			return err
 		}
 		if state != StatePending {
 			return errNotPending
+		}
+		// A withdrawal moves every pending record of the asset out of
+		// pending in its own transaction; the kept tombstone is checked too.
+		if tomb, err := tombstoneOf(ctx, tx, an.peer.ID, an.env.Object); err != nil {
+			return err
+		} else if tomb != nil {
+			return &Error{Reason: ReasonWithdrawn, Err: errors.New("the origin withdrew the asset")}
 		}
 		// The receiver's peer record, as it is now (§8.5: re-read as the
 		// bytes are recorded).
@@ -963,6 +1040,13 @@ func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, att
 			return err
 		}
 		grantID = g
+		if an.predecessorURI != "" {
+			p, err := lockPredecessor(ctx, tx, an)
+			if err != nil {
+				return err
+			}
+			superseded = p
+		}
 		pin := storage.PinRef{SubjectType: PinSubjectType, SubjectID: id.String()}
 		q := storage.New(tx)
 		byHash := map[string]heldPin{}
@@ -1006,9 +1090,25 @@ func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, att
 				return err
 			}
 		}
+		// The predecessor first: one complete version per asset
+		// (federation_received_assets_current_key).
+		var predArg *uuid.UUID
+		if superseded != uuid.Nil {
+			if _, err := tx.Exec(ctx, `UPDATE federation_received_assets
+				SET state = 'superseded', superseded_at = now(), updated_at = now()
+				WHERE id = $1`, superseded); err != nil {
+				return err
+			}
+			predArg = &superseded
+		}
 		if _, err := tx.Exec(ctx, `UPDATE federation_received_assets
-			SET state = 'complete', reason = NULL, completed_at = now(), authorizing_grant_id = $2, updated_at = now()
-			WHERE id = $1`, id, grantID); err != nil {
+			SET state = 'complete', reason = NULL, completed_at = now(), authorizing_grant_id = $2,
+			    predecessor_id = $3, updated_at = now()
+			WHERE id = $1`, id, grantID, predArg); err != nil {
+			return err
+		}
+		// The successor waiting for this version, if one was announced.
+		if err := wakeSuccessor(ctx, tx, an); err != nil {
 			return err
 		}
 		// The ledger (#1574 slice 2), in this transaction: each original's
@@ -1022,7 +1122,7 @@ func (s *Service) complete(ctx context.Context, an *announced, id uuid.UUID, att
 		evs = append(evs, event{typ: EventIngestion, outcome: OutcomeSuccess})
 		return s.writeEvents(ctx, tx, id, attempts, StateComplete, evs...)
 	})
-	return grantID, err
+	return grantID, superseded, err
 }
 
 // fail records a failed attempt: pending (retryable, attempts left),
@@ -1100,7 +1200,7 @@ func (s *Service) current(ctx context.Context, id uuid.UUID) (Outcome, error) {
 	}
 	out := Outcome{RecordID: r.id, State: r.state, Reason: r.reason, Duplicate: true, GrantID: r.grantID}
 	switch r.state {
-	case StateComplete:
+	case StateComplete, StateSuperseded:
 		return out, nil
 	case StateRejected, StateWithdrawn:
 		return out, &Error{Reason: r.reason}

@@ -189,7 +189,7 @@ func (h *Handler) ListAdminReceivedAssets(ctx context.Context, req openapi.ListA
 	if !ok {
 		return openapi.ListAdminReceivedAssets400JSONResponse{BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "limit must be 1 to 500"}}, nil
 	}
-	if !oneOf(p.State, "pending", "complete", "rejected", "withdrawn") {
+	if !oneOf(p.State, "pending", "complete", "superseded", "rejected", "withdrawn") {
 		return openapi.ListAdminReceivedAssets400JSONResponse{BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "unknown state"}}, nil
 	}
 	var where []string
