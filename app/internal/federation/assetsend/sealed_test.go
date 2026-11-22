@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/assetsend"
 )
 
@@ -689,6 +691,321 @@ func TestRecordSealed_AMissingPredecessorIsRepairedNotSkipped(t *testing.T) {
 		ids3, err := f.sealNext(&a, 3, true, nil)
 		if nums, _ := f.announced(ids3); err != nil || !equal(nums, 3) {
 			t.Fatalf("version 3 announced %v (%v), want 3 alone: the peer's chain starts at 2", nums, err)
+		}
+	})
+}
+
+// memberOf builds the aa:asset member announcement id sends (its share's
+// aa:Share must be delivered), and returns it with its raw bytes.
+func (f *fx) memberOf(id uuid.UUID) (federation.ArchivalAsset, string) {
+	f.t.Helper()
+	var objectURI string
+	var payload []byte
+	if err := f.pool.QueryRow(context.Background(), `SELECT object_uri, payload FROM activities WHERE id = $1`, id).
+		Scan(&objectURI, &payload); err != nil {
+		f.t.Fatal(err)
+	}
+	raw, err := f.src.Member(context.Background(), id, f.peer, objectURI, payload)
+	if err != nil {
+		f.t.Fatalf("member of %s: %v", id, err)
+	}
+	m, perr := federation.ParseArchivalAsset(raw)
+	if perr != nil {
+		f.t.Fatalf("Member returned a member §17.2 refuses: %v (%s)", perr, raw)
+	}
+	return *m, string(raw)
+}
+
+// predecessorOf is the member's version predecessor ("" for none).
+func predecessorOf(m federation.ArchivalAsset) string {
+	if m.Version.Predecessor == nil {
+		return ""
+	}
+	return *m.Version.Predecessor
+}
+
+// A version that stayed a draft is never announced, so the next sealed
+// version names the version sealed before the draft as its predecessor
+// (#1575, migration 00093), and the receiver holding that one can accept
+// it. The predecessor is fixed: every member built for the version is the
+// same.
+func TestMember_NamesThePreviousSealedVersionAsItsPredecessor(t *testing.T) {
+	f := newFx(t)
+	a := f.newAsset("public", true)
+	g := f.grantAndRecord(a, nil)
+	f.shareDelivered(g, "sent")
+	f.dispatched([]uuid.UUID{g.announcement}, f.peer, "sent")
+	sealed := func(n int64) uuid.UUID {
+		t.Helper()
+		ids, err := f.sealNext(&a, n, true, nil)
+		if nums, _ := f.announced(ids); err != nil || !equal(nums, n) {
+			t.Fatalf("version %d announced %v (%v), want %d alone", n, nums, err, n)
+		}
+		f.dispatched(ids, f.peer, "sent")
+		return ids[0]
+	}
+	draft := func(n int64) uuid.UUID {
+		t.Helper()
+		if _, err := f.sealNext(&a, n, false, nil); err != nil {
+			t.Fatal(err)
+		}
+		return a.version
+	}
+	want := func(id uuid.UUID, n int64, pred int64) string {
+		t.Helper()
+		m, raw := f.memberOf(id)
+		if m.Version.Number != n || predecessorOf(m) != fmt.Sprintf("%s/versions/%d", a.uri, pred) {
+			t.Fatalf("version %d's member names %q as its predecessor, want version %d", m.Version.Number, predecessorOf(m), pred)
+		}
+		return raw
+	}
+
+	v2 := draft(2) // abandoned: replaced before it was sealed
+	id3 := sealed(3)
+	raw3 := want(id3, 3, 1)
+	if _, again := f.memberOf(id3); again != raw3 {
+		t.Fatalf("version 3's member changed between two builds:\n%s\n%s", raw3, again)
+	}
+	v4, v5 := draft(4), draft(5)
+	want(sealed(6), 6, 3)
+	want(sealed(7), 7, 6) // a contiguous successor still names the version below it
+	for _, d := range []uuid.UUID{v2, v4, v5} {
+		if n := f.versionAnnouncements(a, d); n != 0 {
+			t.Fatalf("a draft was announced %d times", n)
+		}
+	}
+	if _, again := f.memberOf(id3); again != raw3 {
+		t.Fatal("version 3's member changed after later versions were sealed")
+	}
+
+	t.Run("with no sealed version below it, the version it was created over", func(t *testing.T) {
+		b := f.newAsset("public", false) // version 1 stays a draft (a backfilled version)
+		gb := f.grantAndRecord(b, nil)
+		f.shareDelivered(gb, "sent")
+		ids, err := f.sealNext(&b, 2, true, nil)
+		if nums, _ := f.announced(ids); err != nil || !equal(nums, 2) {
+			t.Fatalf("version 2 announced %v (%v)", nums, err)
+		}
+		m, _ := f.memberOf(ids[0])
+		if m.Version.Number != 2 || predecessorOf(m) != b.uri+"/versions/1" {
+			t.Fatalf("version 2 names %q", predecessorOf(m))
+		}
+		// The grant's announcement of the draft is never built: its bytes
+		// are never sent, and it can no longer be sealed.
+		if _, err := f.member(gb); !errors.Is(err, assetsend.ErrNotReady) {
+			t.Fatalf("the draft's announcement: %v, want ErrNotReady", err)
+		}
+	})
+
+	t.Run("a regrant after an abandoned draft announces the current version after the last delivered one", func(t *testing.T) {
+		c := f.newAsset("public", true)
+		gc := f.grantAndRecord(c, nil)
+		f.shareDelivered(gc, "sent")
+		f.dispatched([]uuid.UUID{gc.announcement}, f.peer, "sent") // version 1 delivered
+		f.revokeShare(gc)
+		if _, err := f.sealNext(&c, 2, false, nil); err != nil { // abandoned
+			t.Fatal(err)
+		}
+		if ids, err := f.sealNext(&c, 3, true, nil); err != nil || len(ids) != 0 {
+			t.Fatalf("version 3 under a revoked share: %v %v", ids, err)
+		}
+		g2 := f.grantAndRecord(c, nil)
+		f.shareDelivered(g2, "sent")
+		var all []uuid.UUID
+		if err := f.pool.QueryRow(context.Background(), `SELECT array_agg(id) FROM activities WHERE activity_type = 'aa:AssetVersion'
+			AND payload->>'share_id' = $1`, g2.share.String()).Scan(&all); err != nil {
+			t.Fatal(err)
+		}
+		if nums, _ := f.announced(all); !equal(nums, 3) {
+			t.Fatalf("the regrant announced %v, want 3 alone", nums)
+		}
+		m, _ := f.memberOf(g2.announcement)
+		if predecessorOf(m) != c.uri+"/versions/1" {
+			t.Fatalf("version 3 names %q", predecessorOf(m))
+		}
+	})
+
+	t.Run("a failed seal after an abandoned draft announces nothing", func(t *testing.T) {
+		d := f.newAsset("public", true)
+		gd := f.grantAndRecord(d, nil)
+		f.dispatched([]uuid.UUID{gd.announcement}, f.peer, "sent")
+		if _, err := f.sealNext(&d, 2, false, nil); err != nil {
+			t.Fatal(err)
+		}
+		current := d.version
+		if _, err := f.sealNext(&d, 3, true, errors.New("the sealing transaction failed")); err == nil {
+			t.Fatal("the failing seal committed")
+		}
+		var versions, announcements int
+		if err := f.pool.QueryRow(context.Background(), `SELECT (SELECT count(*) FROM asset_versions WHERE asset_id = $1),
+			  (SELECT count(*) FROM activities WHERE activity_type = 'aa:AssetVersion' AND object_local_id = $1::text)`, d.id).
+			Scan(&versions, &announcements); err != nil {
+			t.Fatal(err)
+		}
+		if versions != 2 || announcements != 1 || d.version != current {
+			t.Fatalf("after the rollback: %d versions, %d announcements", versions, announcements)
+		}
+	})
+}
+
+// sealErr seals version v in a transaction of its own, with the function
+// or (direct) with the statements the function runs, and returns the
+// error.
+func (f *fx) sealErr(v uuid.UUID, direct bool) error {
+	ctx := context.Background()
+	return pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		if !direct {
+			_, err := tx.Exec(ctx, `SELECT asset_version_seal($1, '[]'::jsonb)`, v)
+			return err
+		}
+		for _, q := range []string{
+			`UPDATE asset_versions SET sealed_xid = pg_current_xact_id() WHERE id = $1`,
+			`INSERT INTO asset_version_files (version_id, role, object_hash, size_bytes, media_type)
+			 SELECT id, 'original', original_hash, original_size_bytes, original_media_type FROM asset_versions WHERE id = $1`,
+			`UPDATE asset_versions SET sealed_at = now() WHERE id = $1`,
+		} {
+			if _, err := tx.Exec(ctx, q, v); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+const onlyLatest = "only the latest version is sealed"
+
+// Only the asset's latest version is sealed (#1575, migration 00093), so
+// the sealed versions below a version are final once it exists and the
+// predecessor it is announced with never changes.
+func TestSeal_OnlyTheLatestVersionIsSealed(t *testing.T) {
+	f := newFx(t)
+	a := f.newAsset("public", true)
+	if _, err := f.sealNext(&a, 2, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	abandoned := a.version
+	if _, err := f.sealNext(&a, 3, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, direct := range []bool{false, true} {
+		if err := f.sealErr(abandoned, direct); err == nil || !strings.Contains(err.Error(), onlyLatest) {
+			t.Fatalf("sealing the abandoned version 2 (direct %v): %v", direct, err)
+		}
+	}
+	if err := f.sealErr(a.version, false); err != nil {
+		t.Fatalf("sealing the latest version: %v", err)
+	}
+}
+
+// waitsOnLock waits until the backend pid is waiting for a lock.
+func (f *fx) waitsOnLock(pid int) {
+	f.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting bool
+		if err := f.pool.QueryRow(context.Background(), `SELECT COALESCE(wait_event_type = 'Lock', false) FROM pg_stat_activity WHERE pid = $1`, pid).
+			Scan(&waiting); err == nil && waiting {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	f.t.Fatalf("backend %d never waited for a lock", pid)
+}
+
+// inTx runs stmt (with args) in a transaction of its own on another
+// goroutine, sends its backend pid once the transaction has begun, then
+// commits, and sends the statement's or the commit's error.
+func (f *fx) inTx(stmt string, args ...any) (<-chan int, <-chan error) {
+	pid, done := make(chan int, 1), make(chan error, 1)
+	go func() {
+		ctx := context.Background()
+		tx, err := f.pool.Begin(ctx)
+		if err != nil {
+			pid <- 0
+			done <- err
+			return
+		}
+		var p int
+		if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&p); err != nil {
+			pid <- 0
+			_ = tx.Rollback(ctx)
+			done <- err
+			return
+		}
+		pid <- p
+		if _, err := tx.Exec(ctx, stmt, args...); err != nil {
+			_ = tx.Rollback(ctx)
+			done <- err
+			return
+		}
+		done <- tx.Commit(ctx)
+	}()
+	return pid, done
+}
+
+// A seal and the creation of a later version of the same asset serialise
+// on the asset row, which both take first.
+func TestSeal_ASealAndANewVersionOfTheSameAssetAreOrdered(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	const create = `SELECT asset_version_create($1, $2, 2, $3, 'replacement', $4, 'png', NULL, 'unknown', NULL)`
+	t.Run("a seal waiting for an uncommitted later version is refused once it commits", func(t *testing.T) {
+		a := f.newAsset("public", false)
+		hash := f.storedBytes()
+		tx, err := f.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck
+		if _, err := tx.Exec(ctx, create, a.id, uuid.New(), a.version, hash); err != nil {
+			t.Fatal(err)
+		}
+		pid, done := f.inTx(`SELECT asset_version_seal($1, '[]'::jsonb)`, a.version)
+		f.waitsOnLock(<-pid)
+		select {
+		case err := <-done:
+			t.Fatalf("the seal finished while a later version was uncommitted: %v", err)
+		default:
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; err == nil || !strings.Contains(err.Error(), onlyLatest) {
+			t.Fatalf("the seal after the later version committed: %v", err)
+		}
+	})
+	t.Run("a later version waits for a seal in progress, and both commit", func(t *testing.T) {
+		a := f.newAsset("public", false)
+		hash := f.storedBytes()
+		// A third transaction holds the original's object row (as a pin
+		// writer does), so the seal stops part way, after it has taken the
+		// asset row and the version row.
+		hold, err := f.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer hold.Rollback(ctx) //nolint:errcheck
+		if _, err := hold.Exec(ctx, `SELECT 1 FROM storage_objects WHERE hash = $1 FOR UPDATE`, a.hash); err != nil {
+			t.Fatal(err)
+		}
+		sealPID, sealed := f.inTx(`SELECT asset_version_seal($1, '[]'::jsonb)`, a.version)
+		f.waitsOnLock(<-sealPID)
+		next := uuid.New()
+		createPID, created := f.inTx(create, a.id, next, a.version, hash)
+		f.waitsOnLock(<-createPID)
+		if err := hold.Rollback(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-sealed; err != nil {
+			t.Fatalf("the seal: %v", err)
+		}
+		if err := <-created; err != nil {
+			t.Fatalf("the later version: %v", err)
+		}
+		var v1Sealed, v2Draft bool
+		if err := f.pool.QueryRow(ctx, `SELECT (SELECT sealed_at IS NOT NULL FROM asset_versions WHERE id = $1),
+			  (SELECT sealed_at IS NULL FROM asset_versions WHERE id = $2)`, a.version, next).Scan(&v1Sealed, &v2Draft); err != nil || !v1Sealed || !v2Draft {
+			t.Fatalf("version 1 sealed %v, version 2 a draft %v (%v)", v1Sealed, v2Draft, err)
 		}
 	})
 }

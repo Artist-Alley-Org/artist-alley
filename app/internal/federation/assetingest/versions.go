@@ -31,12 +31,21 @@
 //     goes back to an older version. When the first version was refused
 //     and only waiting successors remain, an older version becomes the
 //     new first version instead.
-//  5. Otherwise it is a successor: it must follow the version named by
-//     its predecessor, one number lower. A version recorded there with
-//     another id is version_conflict. If that version is complete, the
-//     successor is received like a first version; if not (still being
-//     received, or not announced yet), it is recorded pending,
-//     awaiting_predecessor.
+//  5. Otherwise it is a successor: it follows the version named by its
+//     predecessor, which has a lower number. A sender passes over a
+//     version that stayed a draft (never announced), so the two numbers
+//     may be more than one apart (00093). The chain must stay consistent
+//     with what is held, or the successor is version_conflict:
+//     - a held predecessor is lower than the successor, and no held
+//     version lies between the two;
+//     - while the predecessor is not held, no other version is held one
+//     number below the successor (the sender's predecessor would be it);
+//     - no held later version follows the same predecessor, or follows a
+//     held version below the successor (passing over it), and one that
+//     follows the successor has nothing held between the two.
+//     If the predecessor is complete, the successor is received like a
+//     first version; if not (still being received, or not announced
+//     yet), it is recorded pending, awaiting_predecessor.
 //
 // The tier, size and grant checks then apply as to any announcement.
 //
@@ -181,13 +190,49 @@ func (s *Service) place(ctx context.Context, tx pgx.Tx, an *announced) (placemen
 		// and every number here is above the first version's.
 		return placement{refusal: ReasonArchivalInvalid}, nil
 	}
+	held := func(uri string) *version {
+		for i := range vs {
+			if vs[i].uri == uri {
+				return &vs[i]
+			}
+		}
+		return nil
+	}
 	pl := placement{predecessorURI: *pred}
-	for _, v := range vs {
-		if v.number == n-1 {
-			if v.uri != *pred {
+	if p := held(*pred); p != nil {
+		if p.number >= n {
+			return placement{refusal: ReasonVersionConflict}, nil
+		}
+		for _, v := range vs {
+			if v.number > p.number && v.number < n {
 				return placement{refusal: ReasonVersionConflict}, nil
 			}
-			pl.predecessorReady = v.rec.state == StateComplete
+		}
+		pl.predecessorReady = p.rec.state == StateComplete
+	} else {
+		for _, v := range vs {
+			if v.number == n-1 {
+				return placement{refusal: ReasonVersionConflict}, nil
+			}
+		}
+	}
+	for _, v := range vs {
+		if v.number <= n || v.predecessorURI == "" {
+			continue
+		}
+		switch v.predecessorURI {
+		case an.asset.Version.ID:
+			for _, w := range vs {
+				if w.number > n && w.number < v.number {
+					return placement{refusal: ReasonVersionConflict}, nil
+				}
+			}
+		case *pred:
+			return placement{refusal: ReasonVersionConflict}, nil
+		default:
+			if q := held(v.predecessorURI); q != nil && q.number < n {
+				return placement{refusal: ReasonVersionConflict}, nil
+			}
 		}
 	}
 	return pl, nil
@@ -213,9 +258,9 @@ func (s *Service) awaitPredecessor(ctx context.Context, st stored, id uuid.UUID)
 		verdict = proceed
 		var predState string
 		err := tx.QueryRow(ctx, `SELECT state FROM federation_received_assets
-			WHERE peer_id = $1 AND origin_asset_uri = $2 AND version_uri = $3 AND version_number = $4
+			WHERE peer_id = $1 AND origin_asset_uri = $2 AND version_uri = $3 AND version_number < $4
 			  AND state <> 'rejected'`,
-			st.ref.peerID, st.ref.originAssetURI, st.predecessorURI, st.versionNumber-1).Scan(&predState)
+			st.ref.peerID, st.ref.originAssetURI, st.predecessorURI, st.versionNumber).Scan(&predState)
 		switch {
 		case err == nil && predState == StateComplete:
 			return nil
@@ -287,9 +332,9 @@ func lockPredecessor(ctx context.Context, tx pgx.Tx, an *announced) (uuid.UUID, 
 	var id uuid.UUID
 	var state string
 	err := tx.QueryRow(ctx, `SELECT id, state FROM federation_received_assets
-		WHERE peer_id = $1 AND origin_asset_uri = $2 AND version_uri = $3 AND version_number = $4
+		WHERE peer_id = $1 AND origin_asset_uri = $2 AND version_uri = $3 AND version_number < $4
 		  AND state <> 'rejected'
-		FOR UPDATE`, an.peer.ID, an.env.Object, an.predecessorURI, an.asset.Version.Number-1).Scan(&id, &state)
+		FOR UPDATE`, an.peer.ID, an.env.Object, an.predecessorURI, an.asset.Version.Number).Scan(&id, &state)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return uuid.Nil, &Error{Reason: ReasonAwaitingPredecessor, Retryable: true, Err: errors.New("the predecessor version is not held")}
@@ -309,7 +354,7 @@ func lockPredecessor(ctx context.Context, tx pgx.Tx, an *announced) (uuid.UUID, 
 func wakeSuccessor(ctx context.Context, tx pgx.Tx, an *announced) error {
 	_, err := tx.Exec(ctx, `UPDATE federation_received_assets SET next_attempt_at = now(), updated_at = now()
 		WHERE state = 'pending' AND reason = $3 AND peer_id = $1 AND origin_asset_uri = $2
-		  AND version_number = $4 AND predecessor_version_uri = $5`,
-		an.peer.ID, an.env.Object, ReasonAwaitingPredecessor, an.asset.Version.Number+1, an.asset.Version.ID)
+		  AND version_number > $4 AND predecessor_version_uri = $5`,
+		an.peer.ID, an.env.Object, ReasonAwaitingPredecessor, an.asset.Version.Number, an.asset.Version.ID)
 	return err
 }

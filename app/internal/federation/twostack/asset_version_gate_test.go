@@ -227,3 +227,95 @@ func TestTwoStack_ANewVersionIsAnnouncedWithoutARegrant(t *testing.T) {
 		t.Fatalf("A announced %d times, want 2", n)
 	}
 }
+
+// #1575 (migration 00093): a version replaced before it was sealed is
+// never announced, nor are its bytes sent. A's next sealed version names
+// version 1 as its predecessor, and B receives it as version 1's
+// successor, two numbers up. A rendition successor of it (a re-rendered
+// access copy, sealed by A's reconciler) then follows it as usual.
+func TestTwoStack_AVersionReplacedBeforeItWasSealedIsPassedOver(t *testing.T) {
+	g := archivalGate(t)
+	g.runWorkers(g.a)
+	g.runWorkers(g.b)
+	member := g.memberOnB()
+	ctx := context.Background()
+
+	o, share, ann1, id1 := g.importedOnB()
+	replace := func(body []byte, expected int, unverified bool) string {
+		t.Helper()
+		hash, receipt := g.uploadOnA(body)
+		if unverified {
+			// The original fails its fixity check before A seals it, so
+			// version 2 can never be sealed: it stays a draft.
+			if _, err := g.a.pool.Exec(ctx, `UPDATE storage_variants SET fixity_status = 'mismatch'
+				WHERE object_hash = $1 AND variant_key = 'original'`, hash); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if st := g.api(g.a, http.MethodPost, "/assets/"+o.asset.String()+"/versions", map[string]any{
+			"file_hash": hash, "upload_receipt": receipt, "expected_version": expected, "file_extension": "png"}, nil); st != http.StatusCreated {
+			t.Fatalf("version %d on A: %d", expected+1, st)
+		}
+		return hash
+	}
+	hash2 := replace(pngBytes(t), 1, true)
+	body3 := pngBytes(t)
+	hash3 := replace(body3, 2, false)
+	g.sealedOnA(o)
+	announcement := func(n int) string {
+		t.Helper()
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			if ann := g.announcementsOnA(o); len(ann) == n {
+				return ann[n-1]
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("A announced %d versions, want %d", len(g.announcementsOnA(o)), n)
+		return ""
+	}
+	numberOnA := func(ann string) string {
+		t.Helper()
+		var shareID, number string
+		if err := g.a.pool.QueryRow(ctx, `SELECT a.payload->>'share_id', v.number::text FROM activities a
+			JOIN asset_versions v ON v.id::text = a.payload->>'version_id' WHERE a.activity_uri = $1`, ann).Scan(&shareID, &number); err != nil || shareID != share {
+			t.Fatalf("announcement %s: share %s (%v)", ann, shareID, err)
+		}
+		return number
+	}
+	ann3 := announcement(2)
+	if n := numberOnA(ann3); n != "3" {
+		t.Fatalf("A's second announcement is version %s, want version 3 (version 2 stayed a draft)", n)
+	}
+	g.recordStateOnB(ann3, "complete")
+	g.recordStateOnB(ann1, "superseded")
+	id3 := g.receivedOnB(ann3)
+	if n := g.countOnB(`SELECT count(*) FROM federation_received_assets s JOIN federation_received_assets p ON p.id = s.predecessor_id
+		WHERE s.id::text = $1 AND p.id::text = $2 AND s.version_number = 3 AND p.version_number = 1`, id3, id1); n != 1 {
+		t.Fatal("B's version 3 is not linked to its version 1")
+	}
+	if st, got := g.getOnB(member, "/federation/received-assets/"+id3+"/original"); st != http.StatusOK || !bytes.Equal(got, body3) {
+		t.Fatalf("version 3's original on B: %d", st)
+	}
+	if n := g.countOnB(`SELECT count(*) FROM storage_objects WHERE hash = $1`, hash2); n != 0 {
+		t.Fatal("the abandoned version's bytes reached B")
+	}
+
+	// A re-rendered access copy of version 3: A's reconciler seals a
+	// rendition successor, version 4, which follows version 3.
+	if _, err := g.storageOf(g.a).PutVariant(ctx, hash3, "hires", bytes.NewReader(pngBytes(t)), "image/webp"); err != nil {
+		t.Fatal(err)
+	}
+	ann4 := announcement(3)
+	if n := numberOnA(ann4); n != "4" {
+		t.Fatalf("A's third announcement is version %s, want the rendition successor 4", n)
+	}
+	g.recordStateOnB(ann4, "complete")
+	g.recordStateOnB(ann3, "superseded")
+	if n := g.countOnB(`SELECT count(*) FROM federation_received_assets WHERE peer_id = $1 AND state <> 'rejected'`, g.peerAonB); n < 3 {
+		t.Fatalf("B holds %d versions", n)
+	}
+	if n := len(g.announcementsOnA(o)); n != 3 {
+		t.Fatalf("A announced %d times, want 3", n)
+	}
+}

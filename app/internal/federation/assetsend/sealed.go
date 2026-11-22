@@ -4,10 +4,13 @@
 // Announcing a newly sealed version under the shares that already exist
 // (#1575, spec v1 §17.2.1).
 //
-// A receiver accepts a later version only as the exact successor of the
-// version it holds (number + 1, predecessor that version's id). So once a
-// peer was announced a version, every later sealed version of the asset
-// must reach it, in order, with none skipped.
+// A receiver accepts a later version only as the successor of the
+// version it holds (the version its predecessor names, with no version it
+// holds between them). A version names the asset's previous SEALED
+// version as its predecessor (Source.Member), so a version that stayed a
+// draft is passed over. So once a peer was announced a version, every
+// later sealed version of the asset must reach it, in order, with none
+// skipped.
 //
 // # When
 //
@@ -51,12 +54,13 @@
 // always announces the current version (Record).
 //
 // A version that stayed a draft (superseded before it was sealed: a
-// successor may follow a draft) is never announced, since only sealed
-// versions are, and the chain passes over it rather than stopping there,
-// so the versions after it are not announced again on every seal. A peer
-// holding the version before it still cannot accept the versions after it
-// (their predecessor never arrives): the protocol has no way to skip a
-// number.
+// successor may follow a draft) is never announced, nor are its bytes,
+// since only sealed versions are, and the chain passes over it rather
+// than stopping there, so the versions after it are not announced again
+// on every seal. The next sealed version names the sealed version below
+// the draft as its predecessor, so a peer holding that one accepts it
+// (#1575, migration 00093: a draft can never be sealed once a later
+// version exists, so that predecessor never changes).
 package assetsend
 
 import (

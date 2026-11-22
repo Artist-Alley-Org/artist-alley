@@ -34,10 +34,10 @@
 //     receiving (versions.go, #1575): the same version id and file set is
 //     a duplicate; a version id or number already taken by other bytes
 //     is version_conflict (§17.2.1, fail closed); an older version than
-//     the first one held is version_stale; a later one must be the exact
-//     successor of the version below it (number + 1, predecessor that
-//     version's id) and waits, pending, until that version is complete
-//     (awaiting_predecessor). A restricted or embargoed tier
+//     the first one held is version_stale; a later one must follow the
+//     version its predecessor names (a lower number, possibly more than
+//     one lower, with nothing held between them) and waits, pending, until
+//     that version is complete (awaiting_predecessor). A restricted or embargoed tier
 //     (sensitivity_refused, §7.5.7.4), a file set over the size budget
 //     (too_large) and no live inbound grant for (peer, signer, asset,
 //     original) (no_inbound_grant, #1571) are recorded as rejected. Only
