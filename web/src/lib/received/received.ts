@@ -17,6 +17,8 @@ import type { components } from '$api/schema';
 export type ReceivedAsset = components['schemas']['ReceivedAsset'];
 export type ReceivedAssetDetail = components['schemas']['ReceivedAssetDetail'];
 export type ReceivedAssetFile = components['schemas']['ReceivedAssetFile'];
+/** The notice a withdrawn record answers (410) to a caller who could view it (#1575). */
+export type ReceivedAssetWithdrawal = components['schemas']['ReceivedAssetWithdrawal'];
 
 /** Human byte size, base 1024. */
 export function formatBytes(n: number): string {

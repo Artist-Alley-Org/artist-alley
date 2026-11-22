@@ -44,6 +44,10 @@
 //     is revoked or expired, its aa:Share failed or was refused, the asset
 //     is gone, remote or no longer public or team: restricted and
 //     embargoed assets are never announced (§7.5.7.4).
+//   - A member that is built is recorded first (recordClaims, #1575):
+//     what this delivery tells the peer, under a share lock of the live
+//     asset row, so that a later withdrawal names exactly what was
+//     delivered (withdraw.go). A deleted asset's build is refused there.
 package assetsend
 
 import (
@@ -140,12 +144,18 @@ func refused(format string, args ...any) error {
 var ErrNotReady = errors.New("assetsend: not ready to announce")
 
 // Source builds aa:asset members for the delivery worker.
-type Source struct{ Pool *pgxpool.Pool }
+type Source struct {
+	Pool *pgxpool.Pool
+	// afterRead, when set (tests only, export_test.go), runs right after
+	// Tombstone's read of the announcements, where a concurrent delivery
+	// may change one (#1575).
+	afterRead func()
+}
 
 // Member is the aa:asset member of one announcement to peerID, whose
 // activity object is objectURI and local record rawPayload, or the
 // reason it is not sent now (ErrNotReady) or ever (ErrNotFederated).
-func (s Source) Member(ctx context.Context, peerID uuid.UUID, objectURI string, rawPayload []byte) (json.RawMessage, error) {
+func (s Source) Member(ctx context.Context, activityID, peerID uuid.UUID, objectURI string, rawPayload []byte) (json.RawMessage, error) {
 	var p payload
 	if err := json.Unmarshal(rawPayload, &p); err != nil || p.ShareID == uuid.Nil || p.ShareActivityID == uuid.Nil ||
 		p.AssetID == uuid.Nil || p.VersionID == uuid.Nil {
@@ -215,10 +225,9 @@ func (s Source) Member(ctx context.Context, peerID uuid.UUID, objectURI string, 
 		return nil, fmt.Errorf("%w: the version's file set is not sealed yet", ErrNotReady)
 	}
 
-	rows, err := s.Pool.Query(ctx, `SELECT role, object_hash, size_bytes, media_type FROM asset_version_files
-		WHERE version_id = $1 ORDER BY role, object_hash`, p.VersionID)
+	sealedFiles, err := versionFiles(ctx, s.Pool, p.VersionID)
 	if err != nil {
-		return nil, fmt.Errorf("assetsend: read the file set: %w", err)
+		return nil, err
 	}
 	type file struct {
 		Role       string              `json:"role"`
@@ -228,45 +237,26 @@ func (s Source) Member(ctx context.Context, peerID uuid.UUID, objectURI string, 
 		MediaType  string              `json:"mediaType"`
 		Filename   string              `json:"originalFilename,omitempty"`
 	}
-	var files []file
-	for rows.Next() {
-		var role, hash, mediaType string
-		var size int64
-		if err := rows.Scan(&role, &hash, &size, &mediaType); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("assetsend: read the file set: %w", err)
-		}
-		f := file{Role: role, ContentURI: "cas://" + hash,
-			Checksums: []map[string]string{{"algorithm": "sha256", "value": hash}}, Size: size, MediaType: mediaType}
-		switch role {
-		case "original":
+	files := make([]file, 0, len(sealedFiles))
+	for _, vf := range sealedFiles {
+		f := file{Role: vf.role, ContentURI: "cas://" + vf.hash,
+			Checksums: []map[string]string{{"algorithm": "sha256", "value": vf.hash}}, Size: vf.size, MediaType: vf.mediaType}
+		if vf.role == "original" {
 			f.Filename = basename
-		case "preview", "access":
-			// Both local derivative classes are the wire role access
-			// (§17.2.2; migration 00085).
-			f.Role = "access"
-		default:
-			rows.Close()
-			return nil, refused("the file set lists role %q", role)
 		}
 		files = append(files, f)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("assetsend: read the file set: %w", err)
-	}
 
-	versionURI := func(n int64) string { return fmt.Sprintf("%s/versions/%d", objectURI, n) }
 	member := map[string]any{
 		"id": objectURI,
-		"version": map[string]any{"id": versionURI(number), "number": number,
+		"version": map[string]any{"id": versionURI(objectURI, number), "number": number,
 			"created": created.UTC().Format(time.RFC3339), "predecessor": nil},
 		"files":       files,
 		"sensitivity": sensitivity,
 		"mature":      mature,
 	}
 	if predecessor != nil {
-		member["version"].(map[string]any)["predecessor"] = versionURI(*predecessor)
+		member["version"].(map[string]any)["predecessor"] = versionURI(objectURI, *predecessor)
 	}
 	if aiProvenance != "" {
 		member["aiProvenance"] = aiProvenance
@@ -284,6 +274,9 @@ func (s Source) Member(ctx context.Context, peerID uuid.UUID, objectURI string, 
 	if err != nil {
 		return nil, refused("the member does not match archival-1: %v", err)
 	}
+	if err := s.recordClaims(ctx, activityID, peerID, p.AssetID, number, sealedFiles); err != nil {
+		return nil, err
+	}
 	return raw, nil
 }
 
@@ -297,4 +290,104 @@ func validMember(m map[string]any) (json.RawMessage, error) {
 		return nil, err
 	}
 	return raw, nil
+}
+
+// versionURI is the id of an asset's version number n (§17.2.1).
+func versionURI(assetURI string, n int64) string { return fmt.Sprintf("%s/versions/%d", assetURI, n) }
+
+// versionFile is one file of a sealed version, with its wire role.
+type versionFile struct {
+	role, hash, mediaType string
+	size                  int64
+}
+
+// versionFiles is versionID's sealed file set in (role, hash) order, each
+// with its wire role: both local derivative classes are the wire role
+// access (§17.2.2; migration 00085). Any other role refuses the delivery.
+func versionFiles(ctx context.Context, q interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, versionID uuid.UUID) ([]versionFile, error) {
+	rows, err := q.Query(ctx, `SELECT role, object_hash, size_bytes, media_type FROM asset_version_files
+		WHERE version_id = $1 ORDER BY role, object_hash`, versionID)
+	if err != nil {
+		return nil, fmt.Errorf("assetsend: read the file set: %w", err)
+	}
+	defer rows.Close()
+	var out []versionFile
+	for rows.Next() {
+		var f versionFile
+		if err := rows.Scan(&f.role, &f.hash, &f.size, &f.mediaType); err != nil {
+			return nil, fmt.Errorf("assetsend: read the file set: %w", err)
+		}
+		switch f.role {
+		case "original":
+		case "preview", "access":
+			f.role = "access"
+		default:
+			return nil, fmt.Errorf("%w: the file set lists role %q", federation.ErrNotFederated, f.role)
+		}
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("assetsend: read the file set: %w", err)
+	}
+	return out, nil
+}
+
+// recordClaims keeps what this delivery of announcement activityID tells
+// peerID (#1575): the version number and the sealed files' wire role and
+// sha256, as federation_asset_announcement_claims, so the asset's
+// withdrawal can name the highest version actually delivered to that
+// peer, also after the asset is purged (withdraw.go).
+//
+// It runs under a share lock of the asset row, and only while the asset
+// is live and local: a soft delete's UPDATE of that row waits for it, and
+// a build that starts after the delete committed finds the asset deleted
+// and is refused. So every announcement that can still be sent after a
+// delete has its claims committed before the delete does (the delete's
+// RecordWithdrawals sees them), and nothing is sent without its claims.
+func (s Source) recordClaims(ctx context.Context, activityID, peerID, assetID uuid.UUID, number int64, sealed []versionFile) error {
+	type claim struct {
+		Role   string `json:"role"`
+		SHA256 string `json:"sha256"`
+	}
+	files := make([]claim, 0, len(sealed))
+	for _, f := range sealed {
+		files = append(files, claim{Role: f.role, SHA256: f.hash})
+	}
+	raw, err := json.Marshal(files)
+	if err != nil {
+		return err
+	}
+	return pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		var live bool
+		err := tx.QueryRow(ctx, `SELECT TRUE FROM assets WHERE id = $1 AND deleted_at IS NULL AND origin_server_id IS NULL FOR SHARE`,
+			assetID).Scan(&live)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return refused("the asset is deleted or not local")
+		}
+		if err != nil {
+			return fmt.Errorf("assetsend: lock the asset: %w", err)
+		}
+		tag, err := tx.Exec(ctx, `INSERT INTO federation_asset_announcement_claims (activity_id, peer_id, asset_id, version_number, files)
+			SELECT $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::jsonb
+			 WHERE EXISTS (SELECT 1 FROM activities WHERE id = $1::uuid AND activity_type = $6 AND object_local_id = $3::uuid::text)
+			ON CONFLICT (activity_id, peer_id) DO NOTHING`,
+			activityID, peerID, assetID, number, raw, string(federation.ActivityAAAssetVersion))
+		if err != nil {
+			return fmt.Errorf("assetsend: record the announcement's claims: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			var n int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM federation_asset_announcement_claims
+				WHERE activity_id = $1 AND peer_id = $2 AND asset_id = $3 AND version_number = $4`,
+				activityID, peerID, assetID, number).Scan(&n); err != nil {
+				return fmt.Errorf("assetsend: read the announcement's claims: %w", err)
+			}
+			if n != 1 {
+				return refused("the delivery is not this asset's announcement %s", activityID)
+			}
+		}
+		return nil
+	})
 }

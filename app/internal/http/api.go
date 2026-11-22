@@ -1183,6 +1183,14 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// block + channel-pref gating).
 	s.activities = activities.NewWriter(pool, logger, cacheReg)
 	s.activities.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	// #1575: every soft delete of an asset (the delete endpoint and the
+	// scheduled delete below) records, in its own transaction, the
+	// asset's withdrawal from each peer it was announced to.
+	recordWithdrawals := func(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error {
+		_, err := assetsend.RecordWithdrawals(ctx, tx, s.activities, assetsend.Deleted{
+			AssetID: assetID, BaseURL: sysconfigBaseURLFn(sysCfg)(ctx), Username: usernameResolverFor(s.users)})
+		return err
+	}
 
 	// #40 sprint 1 — the scheduled-action reaper. A recurring job on
 	// the queue that drains due scheduled_actions through five audited
@@ -1198,12 +1206,13 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// publish from being a post that exists here and nowhere else. The
 	// identity it acts as is wired in server.go — SetActorLoader.
 	jobSvc.Registry.Register(&scheduledactions.ReaperJob{
-		Pool:      pool,
-		Jobs:      jobSvc,
-		Rec:       auditRec,
-		Notifier:  socialNotifyAdapter{w: notifWriter},
-		Publisher: s.posts,
-		Logger:    logger,
+		Pool:        pool,
+		Jobs:        jobSvc,
+		Rec:         auditRec,
+		Notifier:    socialNotifyAdapter{w: notifWriter},
+		Publisher:   s.posts,
+		Withdrawals: recordWithdrawals,
+		Logger:      logger,
 	})
 	if err := scheduledactions.EnsureScheduled(context.Background(), jobSvc); err != nil {
 		logger.LogAttrs(context.Background(), slog.LevelWarn,
@@ -1265,6 +1274,9 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// audit invariant (audit row commits in the SAME tx as the
 	// share row + the aa:Share/aa:Unshare activity row).
 	s.sharesRegistry = shares.NewRegistry(pool, logger, cacheReg)
+	// #1575: deleting an asset withdraws it from every peer it was
+	// announced to (a Delete with aa:tombstone, built at send time).
+	s.assets.SetWithdrawalRecorder(recordWithdrawals)
 	s.sharesAdmin = shares.NewAdminHandler(
 		s.sharesRegistry,
 		s.activities,
@@ -1559,6 +1571,9 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// with archival-1 and original-transfer-1, which no production peer
 	// has yet.
 	s.outboxDelivery.SetAssetVersionMember(assetsend.Source{Pool: pool}.Member)
+	// #1575: an asset Delete's aa:tombstone, likewise, from its last sealed
+	// version, after the peer's announcement was delivered.
+	s.outboxDelivery.SetAssetWithdrawalMember(assetsend.Source{Pool: pool}.Tombstone)
 	actorKeys := remote.NewSigningKeyResolver(pool, signer, logger)
 	s.inboxHandler.SetActorKeyResolver(actorKeys)
 	// #72 origin: serves originals only under the #1573 decision, with
@@ -1605,6 +1620,8 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		AgentVersion: storageSvc.AgentVersion,
 	}), assetingest.DefaultWorkerConfig(), func() casfetch.Signer { return casfetch.InstanceSigner(signer) })
 	s.inboxDispatcher.SetAssetScheduler(s.assetIngest)
+	// #1575: an origin's aa:tombstone withdraws its received records.
+	s.inboxDispatcher.SetAssetWithdrawer(s.assetIngest)
 	// #1574 slice 3: a grant row recorded for a peer and asset wakes,
 	// exactly, the records of that peer and asset waiting for their grant
 	// (assetingest.WakeAwaiting in the grant's transaction), then the

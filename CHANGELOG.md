@@ -9,6 +9,24 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A deleted asset is withdrawn from the instances it was sent to (#1575).** When an asset that
+  was announced to a paired instance is deleted, through the delete button or a scheduled delete,
+  this instance now tells each instance it was announced to, and no other, that the asset was
+  withdrawn. The message names the asset and the last version that instance was actually sent, with
+  that version's files and checksums, never a newer version it was not sent, and never the delete
+  reason typed here. It is sent even if the share was revoked or expired since, only after that
+  instance received the asset's announcement, and still after the deleted asset is purged for good. The receiving instance keeps the
+  withdrawal, stops serving the asset at once, releases its own hold on the files, and records a
+  `deaccession` event in its transfer ledger. A user who could see the asset there now gets a
+  withdrawal notice (`410`) on the asset and its original file instead of an unexplained `404`;
+  everyone else gets the same `404` as for an asset that does not exist. A withdrawal that arrives
+  before the announcement, or twice, is handled: the asset is never brought back. Restoring the
+  asset here does not undo the withdrawal there. **Not live yet:** like receiving assets, this works
+  only between instances that both have the `archival-1` and `original-transfer-1` profiles, which
+  no production instance advertises yet. API: the `410` answers of
+  `GET /federation/received-assets/{id}` and `GET /federation/received-assets/{id}/original`
+  (`ReceivedAssetWithdrawal`), and the `withdrawn` state and `deaccession` event in the admin
+  received-asset and transfer-event lists.
 - **Paired instances can negotiate their capabilities again without re-pairing (#1574).** On
   **Admin > Federation > Peers**, a connected, enabled peer now has **Negotiate again**: it sends
   the peer a fresh signed offer, and both instances record the capabilities they now have in

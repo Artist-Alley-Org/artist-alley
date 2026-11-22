@@ -374,6 +374,11 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	if in.Verb == string(federation.ActivityAAAssetVersion) {
 		return r.assetVersionRecipient(ctx, in)
 	}
+	// An asset's withdrawal (#1575) goes to the one peer it was announced
+	// to, named by its emitter.
+	if in.Verb == string(federation.ActivityDelete) && in.TargetKind == "asset" {
+		return r.assetWithdrawalRecipient(ctx, in)
+	}
 	if in.Verb == string(federation.ActivityCreate) && in.TargetKind == "comment" {
 		return r.commentRecipient(ctx, in)
 	}
@@ -553,6 +558,45 @@ func (r *Resolver) assetVersionRecipient(ctx context.Context, in Input) (Result,
 		return Result{Skipped: SkippedProfileNotNegotiated}, nil
 	}
 	return Result{Recipients: []Recipient{{PeerID: id, EncryptionTier: encryption}}}, nil
+}
+
+// assetWithdrawalRecipient addresses an asset's withdrawal (#1575) to the
+// one peer its emitter named (TargetPeerID: a peer the asset was announced
+// to), read live: enabled and connected, with both archival-1 and
+// original-transfer-1 in its stored intersection (profile_not_negotiated
+// otherwise, audited per peer). No share is required: a withdrawal only
+// takes access away, and names what the peer already received
+// (assetsend). The delivery worker sends it only after that peer's
+// announcement was delivered.
+func (r *Resolver) assetWithdrawalRecipient(ctx context.Context, in Input) (Result, error) {
+	if in.TargetPeerID == (uuid.UUID{}) {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	var (
+		encryption string
+		usable     bool
+		profiles   bool
+	)
+	err := r.pool.QueryRow(ctx, `
+		SELECT encryption_policy, (enabled AND status = 'connected'), (capabilities ? $2 AND capabilities ? $3)
+		  FROM federation_peers WHERE id = $1
+	`, in.TargetPeerID, federation.ProfileArchival1, federation.ProfileOriginalTransfer1).Scan(&encryption, &usable, &profiles)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve asset withdrawal recipient: %w", err)
+	}
+	if !usable {
+		return Result{Skipped: SkippedRecipientSetEmpty}, nil
+	}
+	if !profiles {
+		if r.emissionSkippedForPeer != nil {
+			r.emissionSkippedForPeer(ctx, in.TargetPeerID, SkippedProfileNotNegotiated, in.Verb)
+		}
+		return Result{Skipped: SkippedProfileNotNegotiated}, nil
+	}
+	return Result{Recipients: []Recipient{{PeerID: in.TargetPeerID, EncryptionTier: encryption}}}, nil
 }
 
 // commentRecipient addresses a comment Create to the paired peer that

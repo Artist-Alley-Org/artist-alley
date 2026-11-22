@@ -92,6 +92,13 @@ var (
 	// ErrNotFederated: the sender does not federate this activity in
 	// v1, or its local payload lacks a member the wire schema needs.
 	ErrNotFederated = errors.New("federation: activity_not_federated")
+
+	// ErrWaitingForDelivery: an activity's member cannot be built until
+	// another activity to the same peer is delivered or given up, and
+	// that one is bounded by its own retries (#1575: an asset's
+	// withdrawal behind a queued announcement). The delivery worker
+	// tries again later without counting an attempt.
+	ErrWaitingForDelivery = errors.New("federation: waiting for another delivery to the peer")
 )
 
 // MemberContext is what ValidateMembers needs to know about the sender
@@ -174,6 +181,17 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 		}
 		allowed[MemberObjectType] = true
 	case ActivityDelete:
+		if _, ok := env.Extra[MemberArchivalTombstone]; ok {
+			// #1575, §17.1 / §17.3: an origin's withdrawal of its own
+			// asset. ValidateArchivalMembers above required archival-1
+			// and checked the tombstone names the envelope object; the
+			// object is an asset URI on the actor's own origin.
+			if err := checkPriorActivityObject(env); err != nil {
+				return err
+			}
+			allowed[MemberArchivalTombstone] = true
+			break
+		}
 		if err := validateRetraction(env, CommentObjectType); err != nil {
 			return err
 		}
@@ -672,7 +690,10 @@ func Federated(t ActivityType, objectKind string, payload []byte) bool {
 		return objectKind == "comment"
 	case ActivityUndo:
 		return objectKind == "activity" && UndoneType(payload) == UndoObjectTypeLike
-	case ActivityDelete, ActivityUpdate:
+	case ActivityDelete:
+		// #1575: an asset's Delete is its withdrawal (aa:tombstone).
+		return objectKind == "asset" || (objectKind == "comment" && absoluteHTTPS(CommentCreateURI(payload)))
+	case ActivityUpdate:
 		return objectKind == "comment" && absoluteHTTPS(CommentCreateURI(payload))
 	}
 	return false
@@ -774,7 +795,8 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		// queued; a row queued earlier is closed here.
 		return nil, fmt.Errorf("%w: %w: %s is sent only with %s", ErrNotFederated, ErrProfileNotNegotiated, t, ProfileShareLifecycle1)
 	}
-	if t == ActivityAAAssetVersion && (!has(ProfileArchival1) || !has(ProfileOriginalTransfer1)) {
+	if (t == ActivityAAAssetVersion || (t == ActivityDelete && objectKind == "asset")) &&
+		(!has(ProfileArchival1) || !has(ProfileOriginalTransfer1)) {
 		// §16.3, as for the share types: never sent to a peer without
 		// both profiles, never stripped to fit one.
 		return nil, fmt.Errorf("%w: %w: %s is sent only with %s and %s", ErrNotFederated, ErrProfileNotNegotiated, t,
@@ -810,8 +832,17 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		// the envelope object (#1572).
 		out[MemberObjectType] = json.RawMessage(strconv.Quote(UndoObjectTypeLike))
 	case ActivityDelete:
-		// Federated admitted only an author's Delete of a comment; the
-		// comment's Create is the envelope object (#1572).
+		if objectKind == "asset" {
+			// #1575: the withdrawal of an asset, its aa:tombstone built
+			// by the delivery worker from the last sealed version
+			// (AssetTombstoneMemberKey); the asset is the envelope object.
+			if err := copyAs(AssetTombstoneMemberKey, MemberArchivalTombstone, true); err != nil {
+				return nil, err
+			}
+			break
+		}
+		// Otherwise an author's Delete of a comment; the comment's Create
+		// is the envelope object (#1572).
 		out[MemberObjectType] = json.RawMessage(strconv.Quote(CommentObjectType))
 	case ActivityUpdate:
 		// An author's edit of a comment: object_type and the new content;
@@ -893,6 +924,10 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 		}
 	case ActivityAAAssetVersion:
 		_, err = ParseArchivalAsset(out[MemberArchivalAsset])
+	case ActivityDelete:
+		if objectKind == "asset" {
+			_, err = ParseArchivalTombstone(out[MemberArchivalTombstone])
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrNotFederated, t, err)
@@ -904,3 +939,8 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 // aa:AssetVersion's built aa:asset member under before WireMembers
 // projects it (#1574). The stored local record never holds it.
 const AssetVersionMemberKey = "asset"
+
+// AssetTombstoneMemberKey is the payload key the delivery worker puts an
+// asset Delete's built aa:tombstone member under before WireMembers
+// projects it (#1575). The stored local record never holds it.
+const AssetTombstoneMemberKey = "tombstone"

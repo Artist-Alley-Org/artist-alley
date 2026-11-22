@@ -31,6 +31,12 @@
 //     not peer-wide, the same as inboundgrants.AllowsTx. Any scope will
 //     do: view is the lowest.
 //
+// WithdrawnVisible (the withdrawal notice, #1575, spec v1 §17.3): the
+// viewing rule with the record withdrawn instead of complete. A caller who
+// could view the record while its grant lasts gets a notice instead of an
+// unexplained 404; anyone else still gets 404, so the notice reveals
+// nothing about the asset to a caller who could not see it.
+//
 // OriginalReadable (the original file): the same rule, with the SAME
 // grant row also carrying the original-file permission (allow_original,
 // §16.6: "for an original file, it carries aa:originalTransfer"). A
@@ -72,16 +78,24 @@ type Facts struct {
 
 // Viewable reports whether caller may see the record (Go twin of
 // ViewableSQL).
-func Viewable(f Facts, caller int64, now time.Time) bool { return allowed(f, caller, now, false) }
+func Viewable(f Facts, caller int64, now time.Time) bool {
+	return allowed(f, caller, now, "complete", false)
+}
 
 // OriginalReadable reports whether caller may receive the record's
 // original (Go twin of OriginalReadableSQL).
 func OriginalReadable(f Facts, caller int64, now time.Time) bool {
-	return allowed(f, caller, now, true)
+	return allowed(f, caller, now, "complete", true)
 }
 
-func allowed(f Facts, caller int64, now time.Time, original bool) bool {
-	if caller <= 0 || f.State != "complete" || f.Sensitivity != "public" || !f.PeerEnabled || f.PeerStatus != "connected" {
+// WithdrawnVisible reports whether caller may see the record's withdrawal
+// notice (Go twin of WithdrawnVisibleSQL).
+func WithdrawnVisible(f Facts, caller int64, now time.Time) bool {
+	return allowed(f, caller, now, "withdrawn", false)
+}
+
+func allowed(f Facts, caller int64, now time.Time, state string, original bool) bool {
+	if caller <= 0 || f.State != state || f.Sensitivity != "public" || !f.PeerEnabled || f.PeerStatus != "connected" {
 		return false
 	}
 	for _, g := range f.Grants {
@@ -96,18 +110,25 @@ func allowed(f Facts, caller int64, now time.Time, original bool) bool {
 // ViewableSQL is the viewing rule as a boolean SQL expression over the
 // federation_received_assets alias r, for the caller user ref bound at
 // callerArg (for example "$1").
-func ViewableSQL(r, callerArg string) string { return ruleSQL(r, callerArg, false) }
+func ViewableSQL(r, callerArg string) string { return ruleSQL(r, callerArg, "complete", false) }
 
 // OriginalReadableSQL is the original-file rule, the same expression with
 // the grant also carrying allow_original.
-func OriginalReadableSQL(r, callerArg string) string { return ruleSQL(r, callerArg, true) }
+func OriginalReadableSQL(r, callerArg string) string { return ruleSQL(r, callerArg, "complete", true) }
 
-func ruleSQL(r, callerArg string, original bool) string {
+// WithdrawnVisibleSQL is the withdrawal-notice rule: the viewing rule for a
+// withdrawn record.
+func WithdrawnVisibleSQL(r, callerArg string) string {
+	return ruleSQL(r, callerArg, "withdrawn", false)
+}
+
+// ruleSQL is the rule for a record in state (a constant, never input).
+func ruleSQL(r, callerArg, state string, original bool) string {
 	orig := ""
 	if original {
 		orig = " AND g.allow_original"
 	}
-	return `(` + callerArg + `::bigint > 0 AND ` + r + `.state = 'complete' AND ` + r + `.sensitivity = 'public'
+	return `(` + callerArg + `::bigint > 0 AND ` + r + `.state = '` + state + `' AND ` + r + `.sensitivity = 'public'
 	  AND EXISTS (SELECT 1 FROM federation_peers rp
 	               WHERE rp.id = ` + r + `.peer_id AND rp.enabled AND rp.status = 'connected')
 	  AND EXISTS (SELECT 1 FROM federation_inbound_grants g

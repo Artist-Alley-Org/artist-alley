@@ -512,6 +512,16 @@ type FeaturedItem struct {
 	BandID pgtype.UUID `json:"band_id"`
 }
 
+// What each aa:AssetVersion delivery told its peer (#1575): the version number and the sealed files (wire role and sha256) of the aa:asset member, written by the sender as it builds the member, under a share lock of the live asset row, before the request. An asset's withdrawal names the highest of these whose announcement was delivered. No foreign key to the asset: kept after a purge, removed with the activity or the peer.
+type FederationAssetAnnouncementClaim struct {
+	ActivityID    pgtype.UUID        `json:"activity_id"`
+	PeerID        pgtype.UUID        `json:"peer_id"`
+	AssetID       pgtype.UUID        `json:"asset_id"`
+	VersionNumber int64              `json:"version_number"`
+	Files         []byte             `json:"files"`
+	RecordedAt    pgtype.Timestamptz `json:"recorded_at"`
+}
+
 // One in-progress original-file download per (peer, origin asset, hash, signer) across all workers (#72). Never keyed by hash alone. Taken in a short transaction, renewed by heartbeat, released on commit or failure, taken over after expires_at.
 type FederationCasFetchLease struct {
 	PeerID     pgtype.UUID        `json:"peer_id"`
@@ -723,6 +733,7 @@ type FederationReceivedAsset struct {
 	CreatedXid         pgtype.Uint64      `json:"created_xid"`
 	// When a pending record may be started (#1574): now() when bound, a lease ahead while an attempt runs, a capped backoff ahead after a transient failure. assetingest.Worker claims due pending records with FOR UPDATE SKIP LOCKED.
 	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	WithdrawnAt   pgtype.Timestamptz `json:"withdrawn_at"`
 }
 
 // The file set of a received asset record (#1574, spec v1 §17.2.2). Originals are fetched and verified (state verified only on a complete record); preservation and access entries are declared claims (not_transferred, #1597). declared_* are untrusted sender claims, never a path.
@@ -741,6 +752,20 @@ type FederationReceivedAssetFile struct {
 	DetectedMediaType *string `json:"detected_media_type"`
 	// The tool that produced detected_media_type (#1574).
 	DetectedBy *string `json:"detected_by"`
+}
+
+// The aa:tombstone an origin sent for an asset (#1575, spec v1 §17.3), kept once per (peer, asset), also before any announcement of it. Its presence withdraws every record of that asset from that peer and refuses later announcements.
+type FederationReceivedTombstone struct {
+	ID             pgtype.UUID        `json:"id"`
+	PeerID         pgtype.UUID        `json:"peer_id"`
+	OriginAssetUri string             `json:"origin_asset_uri"`
+	ActivityUri    string             `json:"activity_uri"`
+	ActorUri       string             `json:"actor_uri"`
+	Tombstone      []byte             `json:"tombstone"`
+	Deleted        string             `json:"deleted"`
+	Reason         *string            `json:"reason"`
+	LastVersion    string             `json:"last_version"`
+	ReceivedAt     pgtype.Timestamptz `json:"received_at"`
 }
 
 // Display cache for remote actors surfaced in UI. The inbound dispatch handler upserts on every activity from a remote actor; display fields refresh naturally on each interaction. Keyed on actor_uri (globally unique per spec §8.3).

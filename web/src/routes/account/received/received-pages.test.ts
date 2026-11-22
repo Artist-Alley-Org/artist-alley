@@ -8,7 +8,9 @@
 // original's size and SHA-256 read as verified here, every other file's
 // as declared; the download link is offered only when the server says
 // the original is available, at the API's original URL; a refused record
-// (404) renders "not available", never a partial page; and when the id
+// (404) renders "not available", never a partial page; a withdrawn one
+// (410, #1575) renders the withdrawal notice and nothing of the record;
+// and when the id
 // changes under a mounted view (a client navigation between two received
 // assets), the previous record and its link disappear at once and a late
 // answer for the old id never overwrites the new one.
@@ -151,6 +153,49 @@ describe('/account/received/[id] (rendered)', () => {
     await waitFor(() => expect(screen.getByTestId('received-missing')).toBeTruthy());
     expect(container.querySelector('[data-testid="received-title"]')).toBeNull();
     expect(container.querySelector('[data-testid="received-download"]')).toBeNull();
+  });
+
+  // #1575: a record the sending studio withdrew answers 410 with the
+  // notice; the page shows the notice and nothing of the record.
+  it('shows the withdrawal notice for a withdrawn record, and nothing of the record', async () => {
+    state.detail.set(ID, {
+      data: undefined,
+      error: {
+        id: ID,
+        origin_asset_uri: `https://studio-a.example/assets/${ID}`,
+        withdrawn_at: '2026-11-21T09:00:05Z',
+        deleted: '2026-11-21T09:00:00Z',
+        reason: 'Withdrawn at the artist\'s request',
+        last_version: `https://studio-a.example/assets/${ID}/versions/1`,
+      },
+      response: { status: 410 },
+    });
+    const { container } = render(DetailPage);
+    await waitFor(() => expect(screen.getByTestId('received-withdrawn')).toBeTruthy());
+    expect(container.textContent).toContain('account.received.withdrawn_title');
+    expect(screen.getByTestId('received-withdrawn-reason').textContent).toBe("Withdrawn at the artist's request");
+    expect(container.textContent).toContain(`https://studio-a.example/assets/${ID}/versions/1`);
+    for (const id of ['received-title', 'received-download', 'received-files', 'received-missing']) {
+      expect(container.querySelector(`[data-testid="${id}"]`)).toBeNull();
+    }
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('shows no reason row when the sending studio gave none', async () => {
+    state.detail.set(ID, {
+      data: undefined,
+      error: {
+        id: ID,
+        origin_asset_uri: `https://studio-a.example/assets/${ID}`,
+        withdrawn_at: '2026-11-21T09:00:05Z',
+        deleted: '2026-11-21T09:00:00Z',
+        last_version: `https://studio-a.example/assets/${ID}/versions/1`,
+      },
+      response: { status: 410 },
+    });
+    const { container } = render(DetailPage);
+    await waitFor(() => expect(screen.getByTestId('received-withdrawn')).toBeTruthy());
+    expect(container.querySelector('[data-testid="received-withdrawn-reason"]')).toBeNull();
   });
 
   it("shows a verified original's size and SHA-256 as verified, a not-transferred file's as declared", async () => {
