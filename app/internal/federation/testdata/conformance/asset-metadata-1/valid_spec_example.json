@@ -1,0 +1,31 @@
+{
+  "description": "The \u00a718.2 example, with JSON whitespace inside the object.",
+  "spec": "v1.md \u00a718.2",
+  "stage": "member",
+  "member": "{\n  \"title\": \"Harbour at dusk\",\n  \"description\": null,\n  \"rights\": \"https://creativecommons.org/licenses/by/4.0/\",\n  \"requiredStatement\": {\n    \"label\": {\n      \"en\": [\n        \"Attribution\"\n      ]\n    },\n    \"value\": {\n      \"none\": [\n        \"Studio A\"\n      ]\n    }\n  }\n}",
+  "expected": {
+    "outcome": "accept",
+    "reason": "",
+    "snapshot": {
+      "title": "Harbour at dusk",
+      "description": null,
+      "rights": "https://creativecommons.org/licenses/by/4.0/",
+      "requiredStatement": {
+        "label": {
+          "en": [
+            "Attribution"
+          ]
+        },
+        "value": {
+          "none": [
+            "Studio A"
+          ]
+        }
+      }
+    }
+  },
+  "enforcement": {
+    "now": "federation.ParseAssetMetadata",
+    "pending": "#1577: the receiver revision and projection, the sender and the UI apply this; the running inbox still refuses aa:metadata as unknown_field (v1.md Implementation status S3)"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "description": "Four claims; markup is literal text and is kept exactly.",
+  "spec": "v1.md \u00a718.2",
+  "stage": "member",
+  "member": "{\"title\":\"<b>Harbour</b> & dusk\",\"description\":\"Oil on board.\\nSigned lower left.\",\"rights\":\"https://creativecommons.org/licenses/by/4.0/\",\"requiredStatement\":{\"label\":{\"en\":[\"Attribution\"]},\"value\":{\"none\":[\"Studio A\"]}}}",
+  "expected": {
+    "outcome": "accept",
+    "reason": "",
+    "snapshot": {
+      "title": "<b>Harbour</b> & dusk",
+      "description": "Oil on board.\nSigned lower left.",
+      "rights": "https://creativecommons.org/licenses/by/4.0/",
+      "requiredStatement": {
+        "label": {
+          "en": [
+            "Attribution"
+          ]
+        },
+        "value": {
+          "none": [
+            "Studio A"
+          ]
+        }
+      }
+    }
+  },
+  "enforcement": {
+    "now": "federation.ParseAssetMetadata",
+    "pending": "#1577: the receiver revision and projection, the sender and the UI apply this; the running inbox still refuses aa:metadata as unknown_field (v1.md Implementation status S3)"
+  }
+}
