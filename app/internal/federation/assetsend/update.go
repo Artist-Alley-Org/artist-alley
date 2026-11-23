@@ -258,5 +258,7 @@ func (s Source) FlagUpdateMember(ctx context.Context, _ uuid.UUID, peerID uuid.U
 	if p.AIProvenance != nil {
 		aiProvenance = *p.AIProvenance
 	}
-	return versionMember(objectURI, *p.VersionNumber, created, predecessor, basename, sealedFiles, p.Sensitivity, *p.Mature, aiProvenance)
+	// No descriptive member: §17.2.8 keeps an Update to mature and
+	// aiProvenance (#1577 does not change that).
+	return versionMember(objectURI, *p.VersionNumber, created, predecessor, basename, sealedFiles, p.Sensitivity, *p.Mature, aiProvenance, nil)
 }

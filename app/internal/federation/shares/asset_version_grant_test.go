@@ -90,8 +90,13 @@ func TestAdminGrant_OriginalAssetShareAnnouncesTheCurrentVersion(t *testing.T) {
 	// delivery of the announcement carries the same flags.
 	want := map[string]any{"share_id": created.Id.String(), "share_activity_id": shareActivity.String(),
 		"asset_id": asset.String(), "version_id": version.String(), "mature": false, "ai_provenance": ""}
-	if len(a.payload) != len(want) {
-		t.Fatalf("payload %v, want exactly %v", a.payload, want)
+	// #1577: plus the descriptive snapshot recorded with it (its
+	// contents are tested in assetsend/descriptive_test.go).
+	if d, ok := a.payload["descriptive"].(map[string]any); !ok || d["v"] != float64(1) {
+		t.Fatalf("payload %v carries no descriptive snapshot", a.payload)
+	}
+	if len(a.payload) != len(want)+1 {
+		t.Fatalf("payload %v, want exactly %v and the descriptive snapshot", a.payload, want)
 	}
 	for k, v := range want {
 		if a.payload[k] != v {

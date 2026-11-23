@@ -141,6 +141,38 @@ describe('/account/received/[id] (rendered)', () => {
     expect(screen.getByTestId('received-source').textContent).toBe(`https://studio-a.example/assets/${ID}`);
   });
 
+  // #1577 S1: the baseline claims a peer sends are untrusted text. Markup
+  // in them is never an element, and a URI-looking value is never a link.
+  it('renders sent markup and URIs in the claims as plain text, never as elements or links', async () => {
+    const title = '<img src=x onerror="window.__pwned=1"> Harbour';
+    const statement = '<a href="javascript:alert(3)">Studio A</a>';
+    state.detail.set(
+      ID,
+      ok(detailOf(ID, 'harbour.jpg', {
+        declared: {
+          rights: 'https://creativecommons.org/licenses/by/4.0/',
+          description: { title, description: '<script>window.__pwned=2</script> javascript:alert(1)' },
+          requiredStatement: { label: { en: ['Attribution'] }, value: { none: [statement] } },
+        },
+      })),
+    );
+    const { container } = render(DetailPage);
+    await waitFor(() => expect(screen.getByTestId('received-claims')).toBeTruthy());
+    const claims = screen.getByTestId('received-claims');
+    expect(claims.querySelector('img, script, a, iframe, [onerror]')).toBeNull();
+    expect(claims.querySelectorAll('*').length).toBe(claims.querySelectorAll('dt, dd').length);
+    expect(claims.textContent).toContain('<img src=x onerror=');
+    expect(claims.textContent).toContain('<script>window.__pwned=2</script>');
+    expect(claims.textContent).toContain('javascript:alert(3)');
+    expect(claims.textContent).toContain('https://creativecommons.org/licenses/by/4.0/');
+    expect(container.querySelector('a[href^="javascript:"], a[href*="creativecommons.org"]')).toBeNull();
+    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
+    // Labelled as the sender's declaration, with the sending studio and version shown.
+    expect(container.textContent).toContain('account.received.declared_label');
+    expect(container.textContent).toContain('Studio A');
+    expect(container.textContent).toContain(`https://studio-a.example/assets/${ID}/versions/1`);
+  });
+
   it('offers no download when the share does not include the original', async () => {
     state.detail.set(ID, ok(detailOf(ID, 'harbour.jpg', { original_available: false })));
     const { container } = render(DetailPage);

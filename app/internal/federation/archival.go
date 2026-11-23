@@ -83,6 +83,31 @@ var (
 	ErrFixityMismatch = errors.New("federation: received bytes do not match the listed fixity")
 )
 
+// ArchivalMaxTitleBytes bounds description.title (§17.2.6).
+const ArchivalMaxTitleBytes = ArchivalMaxShortText * 4
+
+// ArchivalRightsURIValid reports whether s is a rights value §17.2.5
+// accepts: a Creative Commons licence URI or a RightsStatements.org rights
+// statement URI, exactly as ParseArchivalAsset checks it.
+func ArchivalRightsURIValid(s string) bool {
+	return ccRightsPattern.MatchString(s) || rsRightsPattern.MatchString(s)
+}
+
+// ValidateArchivalDescription checks a description member (§17.2.6)
+// with the same rules ParseArchivalAsset applies.
+func ValidateArchivalDescription(d ArchivalDescription) error {
+	return d.validate("aa:asset.description")
+}
+
+// ValidateArchivalRequiredStatement checks a requiredStatement member
+// (§17.2.5) with the same rules ParseArchivalAsset applies.
+func ValidateArchivalRequiredStatement(lv ArchivalLabelValue) error {
+	if err := checkLanguageMap("aa:asset.requiredStatement.label", lv.Label); err != nil {
+		return err
+	}
+	return checkLanguageMap("aa:asset.requiredStatement.value", lv.Value)
+}
+
 func invalid(path, format string, args ...any) error {
 	return fmt.Errorf("%w: %s: %s", ErrArchivalInvalid, path, fmt.Sprintf(format, args...))
 }
@@ -601,7 +626,7 @@ func (t ArchivalTool) validate(p string) error {
 }
 
 func (d ArchivalDescription) validate(p string) error {
-	if err := checkText(p+".title", d.Title, ArchivalMaxShortText*4, false); err != nil {
+	if err := checkText(p+".title", d.Title, ArchivalMaxTitleBytes, false); err != nil {
 		return err
 	}
 	if err := checkText(p+".description", d.Description, ArchivalMaxLongText, false); err != nil {

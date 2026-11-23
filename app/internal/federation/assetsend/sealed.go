@@ -170,6 +170,12 @@ func announce(ctx context.Context, tx pgx.Tx, w *activities.Writer, actor emit.A
 		Scan(&flags.Mature, &flags.AIProvenance); err != nil {
 		return nil, fmt.Errorf("assetsend: read the asset's flags: %w", err)
 	}
+	// The descriptive members every announcement recorded now carries
+	// (#1577, descriptive.go), read under the same lock.
+	descriptive, err := captureDescriptive(ctx, tx, assetID)
+	if err != nil {
+		return nil, err
+	}
 	usable, err := usableVersions(ctx, tx, assetID, to.peerID)
 	if err != nil {
 		return nil, err
@@ -229,7 +235,7 @@ func announce(ctx context.Context, tx pgx.Tx, w *activities.Writer, actor emit.A
 	ids := make([]uuid.UUID, 0, len(versions))
 	for _, v := range versions {
 		em := emit.AssetVersion(actor, emit.AssetVersionRef{AssetID: assetID, VersionID: v, ShareID: to.shareID,
-			ShareActivityID: to.shareActivityID, PeerURL: to.peerURL, Flags: &flags})
+			ShareActivityID: to.shareActivityID, PeerURL: to.peerURL, Flags: &flags, Descriptive: descriptive})
 		row, err := w.RecordActivity(ctx, tx, em.Activity)
 		if err != nil {
 			return nil, fmt.Errorf("assetsend: record aa:AssetVersion: %w", err)

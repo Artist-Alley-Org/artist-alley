@@ -786,3 +786,35 @@ pages, and a maintained standalone browser spec
 
 #1576 stays open until the full local and hosted test suites pass. The backend API, provenance,
 the two-instance gate, the operator pages and the receipt history are done.
+
+## Amendment 2026-11-23: the rights baseline is sent (#1577, first slice)
+
+The 2026-11-17 amendment above says a rights URI and a required statement are two field
+definitions in the `rights` display group. Migration 00097 seeds them: `rights_uri` and
+`required_statement`, plain text, ungated, active, for every asset type, with the participation
+defaults every shipped field has, each with a fixed id. An
+install that already has a field with either code, or a row with either id, keeps it untouched and
+gets no seeded row. No write validation is added to either field.
+
+An `aa:AssetVersion` (spec §17.2) now carries, from those two rows and the asset's own columns:
+- `description.title` and `description.description`, from `assets.title` and
+  `assets.description`;
+- `rights`, from `rights_uri`, only when it is a Creative Commons or RightsStatements.org URI;
+- `requiredStatement`, from `required_statement`, labelled `Attribution`.
+
+The peer is not a local identity and inherits nobody's capabilities, so a member is sent only from
+a source no capability gates:
+- a column only when no field definition mirroring it carries a `read_capability`;
+- a field value only from the row with the seeded id and code, while it is active, plain text,
+  applicable to the asset, not a mirror and ungated.
+
+A value the wire rules refuse, or that is too long, is left out with a reason code, never
+truncated. No other field is ever used in a seeded field's place, and `credit` and `copyright` are
+not mapped. The members are captured when the announcement is recorded, so a redelivery sends the
+same bytes. They are re-checked against current privacy on every delivery: if a recorded source
+became gated, retired or inapplicable, the whole announcement is refused. A receiver keeps them as
+untrusted declared claims and imports nothing into its own schema.
+
+Not in this slice: descriptive changes in an `Update` (§17.2.8 still excludes them), custom field
+values (they need a new profile), the other DCMI terms, identifiers, local IIIF rights, and
+preservation events.
