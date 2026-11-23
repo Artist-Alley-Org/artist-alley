@@ -101,19 +101,144 @@ func (s *Service) validateMetadata(an *announced) (*metadataUpdate, error) {
 	if err != nil {
 		return nil, &Error{Reason: ReasonMetadataInvalid, Err: errors.New("the snapshot cannot be kept")}
 	}
+	return withProvenance(an, b, "a metadata Update")
+}
+
+// withProvenance is snapshot with the provenance kept beside it: the
+// envelope's signed published to the nanosecond, its declared origin
+// signature (the actor's #main-key, a 64-byte Ed25519 value; the caller
+// verified it), and the local recipient identity. what names the activity
+// in a refusal.
+func withProvenance(an *announced, snapshot []byte, what string) (*metadataUpdate, error) {
 	sig := an.env.Signature
 	if sig == nil || sig.Type != federation.SignatureAlgEd25519 || sig.PublicKey != an.env.Actor+"#main-key" {
-		return nil, &Error{Reason: casfetch.ReasonInvalidRequest, Err: errors.New("a metadata Update needs its actor's Ed25519 signature")}
+		return nil, &Error{Reason: casfetch.ReasonInvalidRequest, Err: errors.New(what + " needs its actor's Ed25519 signature")}
 	}
 	if v, err := base64.RawURLEncoding.DecodeString(sig.Value); err != nil || len(v) != ed25519.SignatureSize {
 		return nil, &Error{Reason: casfetch.ReasonInvalidRequest, Err: errors.New("the signature value is not 64 base64url bytes")}
 	}
 	p := an.env.Published
+	if p.IsZero() {
+		return nil, &Error{Reason: casfetch.ReasonInvalidRequest, Err: errors.New(what + " needs its published time")}
+	}
 	return &metadataUpdate{
-		snapshot: b, seconds: p.Unix(), nanos: int32(p.Nanosecond()), published: p.UTC().Format(time.RFC3339Nano),
+		snapshot: snapshot, seconds: p.Unix(), nanos: int32(p.Nanosecond()), published: p.UTC().Format(time.RFC3339Nano),
 		originKeyID: sig.PublicKey, originAlgorithm: string(sig.Type), originValue: sig.Value,
 		recipientKeyID: an.signer.KeyID,
 	}, nil
+}
+
+// initialCapture is an aa:AssetVersion's initial snapshot (spec v1 §18.4),
+// prepared from the original delivery before the binding transaction: the
+// snapshot and its provenance, or why none can be kept. It is used only if
+// that transaction writes a new revision for the activity; a delivery of an
+// activity already kept (and Process, which rebuilds the envelope without
+// its signature or published) never captures one.
+type initialCapture struct {
+	meta *metadataUpdate
+	err  error
+}
+
+// initialCandidate prepares the initial snapshot of an announcement whose
+// peer negotiated asset-metadata-1 with archival-1 and original-transfer-1,
+// or returns nil (a legacy announcement, unchanged).
+//
+// The snapshot is derived from the aa:asset member archival-1 already
+// validated: title and description from description, rights,
+// requiredStatement; an absent or empty claim is null, and nothing else is
+// copied. It is not an aa:metadata member, so §18.2's member bounds (the
+// raw 32,768 bytes, the 2,048-byte rights URI) do not apply: a claim
+// archival-1 accepted is kept as accepted, never dropped or trimmed.
+func initialCandidate(an *announced) *initialCapture {
+	for _, token := range []string{federation.ProfileAssetMetadata1, federation.ProfileArchival1, federation.ProfileOriginalTransfer1} {
+		if !slices.Contains(an.peer.Capabilities, token) {
+			return nil
+		}
+	}
+	var snap federation.AssetMetadataSnapshot
+	if d := an.asset.Description; d != nil {
+		if d.Title != "" {
+			snap.Title = &d.Title
+		}
+		if d.Description != "" {
+			snap.Description = &d.Description
+		}
+	}
+	if an.asset.Rights != "" {
+		snap.Rights = &an.asset.Rights
+	}
+	snap.RequiredStatement = an.asset.RequiredStatement
+	b, err := json.Marshal(snap) // a copy: later changes to the member cannot reach it
+	if err != nil {
+		return &initialCapture{err: &Error{Reason: ReasonArchivalInvalid, Err: errors.New("the baseline cannot be kept")}}
+	}
+	m, err := withProvenance(an, b, "an announcement under asset-metadata-1")
+	return &initialCapture{meta: m, err: err}
+}
+
+// keepRevision keeps an announcement's revision (recordRevision) and,
+// when init is set, its initial snapshot on the revision this INSERT
+// wrote. bind clears init for an activity whose revision is already kept
+// (a historical delivery, never given a snapshot), so with init set an
+// INSERT that wrote no row is refused: the admission and its record roll
+// back rather than be kept without their snapshot.
+func keepRevision(ctx context.Context, tx pgx.Tx, an *announced, init *initialCapture) error {
+	inserted, err := recordRevision(ctx, tx, an)
+	if err != nil || init == nil {
+		return err
+	}
+	if !inserted {
+		return &Error{Reason: ReasonActivityConflict, Err: errors.New("the revision for the activity was not written by this delivery")}
+	}
+	return keepInitial(ctx, tx, an, init)
+}
+
+// keptAnnouncementRevision reports whether an aa:AssetVersion revision is
+// kept for an's activity. When it carries an initial snapshot, the
+// delivery must be the same activity: actor, object, version, file set,
+// every aa:asset claim and the published time to the nanosecond
+// (activity_conflict otherwise), for the same local recipient
+// (foreign_signer). A revision kept without one is left as it is.
+func keptAnnouncementRevision(ctx context.Context, tx pgx.Tx, an *announced) (bool, error) {
+	var same, hasSnapshot bool
+	var recipient string
+	p := an.env.Published
+	err := tx.QueryRow(ctx, `SELECT (r.actor_uri = $3 AND r.origin_asset_uri = $4 AND r.version_uri = $5
+		        AND r.file_set_sha256 = $6 AND r.record = $7::jsonb
+		        AND COALESCE(m.published_seconds = $8 AND m.published_nanos = $9, TRUE)),
+		        m.revision_id IS NOT NULL, COALESCE(m.recipient_signer_key_id, '')
+		  FROM federation_received_asset_revisions r
+		  LEFT JOIN federation_received_asset_metadata m ON m.revision_id = r.id
+		 WHERE r.peer_id = $1 AND r.activity_uri = $2 AND r.activity_type = 'aa:AssetVersion'`,
+		an.peer.ID, an.env.ID, an.env.Actor, an.env.Object, an.asset.Version.ID, an.digest, []byte(an.raw),
+		p.Unix(), int32(p.Nanosecond())).Scan(&same, &hasSnapshot, &recipient)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, err
+	case !hasSnapshot:
+		return true, nil
+	case !same:
+		return true, &Error{Reason: ReasonActivityConflict, Err: errors.New("the activity id was recorded with another payload")}
+	case recipient != an.signer.KeyID:
+		return true, &Error{Reason: casfetch.ReasonForeignSigner, Err: errors.New("the activity was recorded for another signer")}
+	}
+	return true, nil
+}
+
+// keepInitial keeps a new revision's initial snapshot, inside the binding
+// transaction, after the caller re-read the peer under the locks.
+func keepInitial(ctx context.Context, tx pgx.Tx, an *announced, c *initialCapture) error {
+	if c.err != nil {
+		return c.err
+	}
+	var id uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM federation_received_asset_revisions WHERE peer_id = $1 AND activity_uri = $2`,
+		an.peer.ID, an.env.ID).Scan(&id); err != nil {
+		return err
+	}
+	return insertMetadata(ctx, tx, id, c.meta)
 }
 
 // metadataReason maps a pure-validator error to this package's reason.

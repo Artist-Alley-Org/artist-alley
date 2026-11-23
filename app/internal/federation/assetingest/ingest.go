@@ -413,7 +413,7 @@ func (s *Service) Schedule(ctx context.Context, a Announcement) (Outcome, error)
 		s.audit(ctx, audit.EventFederationAssetIngestRejected, meta)
 		return Outcome{State: StateRejected, Reason: ReasonOf(err)}, err
 	}
-	rec, dup, err := s.bind(ctx, an)
+	rec, dup, err := s.bind(ctx, an, initialCandidate(an))
 	if err != nil {
 		if !Retryable(err) {
 			s.auditRecord(ctx, audit.EventFederationAssetIngestRejected, an.ref(), uuid.Nil, ReasonOf(err), map[string]any{"error": err.Error()})
@@ -563,8 +563,10 @@ func scanRecord(row pgx.Row, extra ...any) (record, error) {
 
 // bind returns the record this announcement is decided by, writing a
 // pending or rejected one when none exists. dup is true when the record
-// was already there.
-func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error) {
+// was already there. init, when the peer negotiated asset-metadata-1, is
+// the initial snapshot a new revision of this activity keeps (#1577,
+// metadata.go).
+func (s *Service) bind(ctx context.Context, an *announced, init *initialCapture) (record, bool, error) {
 	var rec record
 	var dup bool
 	err := pgx.BeginFunc(ctx, s.d.Pool, func(tx pgx.Tx) error {
@@ -602,6 +604,11 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 			if storedSigner != an.signer.KeyID {
 				return &Error{Reason: casfetch.ReasonForeignSigner, Err: errors.New("the activity was recorded for another signer")}
 			}
+			// #1577: a kept initial snapshot also fixes the published time,
+			// to the nanosecond.
+			if _, err := keptAnnouncementRevision(ctx, tx, an); err != nil {
+				return err
+			}
 			rec, dup = r, true
 			return nil
 		}
@@ -617,6 +624,19 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 		}
 		if asUpdate {
 			return &Error{Reason: ReasonActivityConflict, Err: errors.New("the activity id was recorded as an Update")}
+		}
+		// #1577: a reannouncement of a held version keeps a revision but no
+		// record, so its repeated delivery is found here. One kept with an
+		// initial snapshot must be the same activity; one kept without is
+		// never given a snapshot later.
+		kept, err := keptAnnouncementRevision(ctx, tx, an)
+		if err != nil {
+			return err
+		}
+		if kept {
+			// A historical delivery: decided as before, and given no
+			// snapshot (nor refused for a signature it never needed).
+			init = nil
 		}
 		// #1575: the origin withdrew this asset (§17.3), before or after
 		// an earlier announcement. A new announcement of it, delayed or
@@ -639,8 +659,27 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 			// A version held here, announced again under a new activity:
 			// the same version, and its flags as of that activity (#1575).
 			rec, dup = *pl.duplicate, true
-			_, err := recordRevision(ctx, tx, an)
-			return err
+			// #1577: a new activity's snapshot of a held version would be
+			// current at once, so under asset-metadata-1 it needs a live
+			// original grant now (a historical duplicate does not).
+			if init != nil {
+				if init.err != nil {
+					return init.err
+				}
+				if err := inboundgrants.LockPeerTx(ctx, tx, an.peer.ID); err != nil {
+					return err
+				}
+				if err := recheckMetadataPeer(ctx, tx, an); err != nil {
+					return err
+				}
+				if _, err := s.d.Grants.AllowsTx(ctx, tx, s.grantQuery(an)); err != nil {
+					if errors.Is(err, inboundgrants.ErrNoGrant) {
+						return &Error{Reason: casfetch.ReasonNoInboundGrant, Err: err}
+					}
+					return err
+				}
+			}
+			return keepRevision(ctx, tx, an, init)
 		case pl.refusal != "":
 			rec, err = s.insert(ctx, tx, an, StateRejected, pl.refusal)
 			return err
@@ -659,6 +698,13 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 		// here or wakes the record it finds waiting.
 		if err := inboundgrants.LockPeerTx(ctx, tx, an.peer.ID); err != nil {
 			return err
+		}
+		// #1577: an announcement that keeps an initial snapshot is decided
+		// with the peer as it is now: no silent downgrade to legacy.
+		if init != nil {
+			if err := recheckMetadataPeer(ctx, tx, an); err != nil {
+				return err
+			}
 		}
 		if _, err := s.d.Grants.AllowsTx(ctx, tx, s.grantQuery(an)); err != nil {
 			if !errors.Is(err, inboundgrants.ErrNoGrant) {
@@ -686,8 +732,7 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 					WHERE id = $1`, rec.id, s.cfg.GrantWait.Seconds()); err != nil {
 					return err
 				}
-				_, err = recordRevision(ctx, tx, an)
-				return err
+				return keepRevision(ctx, tx, an, init)
 			}
 			rec, err = s.insert(ctx, tx, an, StateRejected, casfetch.ReasonNoInboundGrant)
 			return err
@@ -701,14 +746,12 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 				WHERE id = $1`, rec.id, s.cfg.PredecessorWait.Seconds()); err != nil {
 				return err
 			}
-			_, err = recordRevision(ctx, tx, an)
-			return err
+			return keepRevision(ctx, tx, an, init)
 		}
 		if rec, err = s.insert(ctx, tx, an, StatePending, ""); err != nil {
 			return err
 		}
-		_, err = recordRevision(ctx, tx, an)
-		return err
+		return keepRevision(ctx, tx, an, init)
 	})
 	if err != nil {
 		var e *Error

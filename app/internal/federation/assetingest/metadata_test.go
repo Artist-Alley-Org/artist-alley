@@ -81,6 +81,21 @@ func (f *fx) metaUpdate(a *asset, n int, files []map[string]any, member json.Raw
 	return e
 }
 
+// mdAnnounceBase is when the signed announcements here are published:
+// before every Update these tests send, so an announcement's initial
+// snapshot (#1577) is older than the Updates that follow it.
+var mdAnnounceBase = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// signedV is announceV as a peer that negotiated asset-metadata-1 sends
+// it: published at mdAnnounceBase + n seconds and signed by its actor, so
+// its initial snapshot can be kept.
+func (f *fx) signedV(a *asset, n int, files []map[string]any) *federation.Envelope {
+	e := f.announceV(a, n, files)
+	e.Published = mdAnnounceBase.Add(time.Duration(n) * time.Second)
+	mdSign(e)
+	return e
+}
+
 func (f *fx) snapshots(a *asset) int {
 	return f.count(`SELECT count(*) FROM federation_received_asset_metadata m
 		JOIN federation_received_asset_revisions r ON r.id = m.revision_id
@@ -113,7 +128,7 @@ func (f *fx) completeV1() *asset {
 	f.t.Helper()
 	a := f.newAsset(1)
 	f.grant(f.peerID, a.uri, nil)
-	if v1, err := f.receive(f.announceV(a, 1, a.files)); err != nil || v1.State != assetingest.StateComplete {
+	if v1, err := f.receive(f.signedV(a, 1, a.files)); err != nil || v1.State != assetingest.StateComplete {
 		f.t.Fatalf("version 1: %+v %v", v1, err)
 	}
 	return a
@@ -147,8 +162,9 @@ func TestMetadataUpdate_KeptWithItsRevision(t *testing.T) {
 	if err != nil || got.RevisionID == uuid.Nil || got.Duplicate {
 		t.Fatalf("a metadata Update: %+v %v", got, err)
 	}
-	if f.revisions(a) != 2 || f.snapshots(a) != 1 {
-		t.Fatalf("%d revisions and %d snapshots, want 2 and 1", f.revisions(a), f.snapshots(a))
+	// Version 1's announcement kept its initial snapshot; the Update adds one.
+	if f.revisions(a) != 2 || f.snapshots(a) != 2 {
+		t.Fatalf("%d revisions and %d snapshots, want 2 and 2", f.revisions(a), f.snapshots(a))
 	}
 	var snap []byte
 	var secs int64
@@ -202,7 +218,7 @@ func TestMetadataUpdate_KeptWithItsRevision(t *testing.T) {
 	if m := f.currentMeta(a); m == nil || m.ActivityURI != clear.ID {
 		t.Fatalf("a flags-only Update changed the current snapshot: %+v", m)
 	}
-	if f.snapshots(a) != 2 || f.revisions(a) != 4 {
+	if f.snapshots(a) != 3 || f.revisions(a) != 4 {
 		t.Fatalf("%d snapshots and %d revisions", f.snapshots(a), f.revisions(a))
 	}
 	// Nothing local changed: no record, file, pin, field, value or asset,
@@ -237,7 +253,7 @@ func TestMetadataUpdate_RefusalsKeepNothing(t *testing.T) {
 	}
 	withdrawn := f.newAsset(1)
 	f.grant(f.peerID, withdrawn.uri, nil)
-	if v, err := f.receive(f.announceV(withdrawn, 1, withdrawn.files)); err != nil || v.State != assetingest.StateComplete {
+	if v, err := f.receive(f.signedV(withdrawn, 1, withdrawn.files)); err != nil || v.State != assetingest.StateComplete {
 		t.Fatalf("%+v %v", v, err)
 	}
 	if _, err := f.withdraw(f.deleteOf(withdrawn, f.tombstone(withdrawn, ""))); err != nil {
@@ -450,7 +466,7 @@ func TestMetadataUpdate_ReplayAndConflicts(t *testing.T) {
 		WHERE revision_id = $1`, first.RevisionID).Scan(&sig, &recipient); err != nil || sig != firstSig || recipient != f.signer.KeyID {
 		t.Fatalf("the first provenance was replaced: %q %q (%v)", sig, recipient, err)
 	}
-	if f.snapshots(a) != 1 || f.revisions(a) != 2 {
+	if f.snapshots(a) != 2 || f.revisions(a) != 2 {
 		t.Fatalf("duplicates kept rows: %d snapshots, %d revisions", f.snapshots(a), f.revisions(a))
 	}
 
@@ -500,7 +516,7 @@ func TestMetadataUpdate_ReplayAndConflicts(t *testing.T) {
 			revsA, revsB := f.revisions(a), f.revisions(b)
 			_, err := f.applyUpdate(e)
 			wantReason(t, err, assetingest.ReasonActivityConflict)
-			if f.revisions(a) != revsA || f.revisions(b) != revsB || f.snapshots(a) != 1 {
+			if f.revisions(a) != revsA || f.revisions(b) != revsB || f.snapshots(a) != 2 {
 				t.Fatal("a conflicting Update was kept")
 			}
 		})
@@ -530,7 +546,7 @@ func TestMetadataUpdate_ReplayAndConflicts(t *testing.T) {
 			}
 			target := f.newAsset(1)
 			f.grant(f.peerID, target.uri, nil)
-			e := f.announceV(target, 1, target.files)
+			e := f.signedV(target, 1, target.files)
 			e.ID = id
 			_, err := f.receive(e)
 			wantReason(t, err, assetingest.ReasonActivityConflict)
@@ -572,8 +588,8 @@ func TestMetadataUpdate_ConcurrentDeliveriesKeepOne(t *testing.T) {
 			fresh++
 		}
 	}
-	if fresh != 1 || f.snapshots(a) != 1 || f.revisions(a) != 2 {
-		t.Fatalf("%d admissions, %d snapshots, %d revisions; want 1, 1, 2", fresh, f.snapshots(a), f.revisions(a))
+	if fresh != 1 || f.snapshots(a) != 2 || f.revisions(a) != 2 {
+		t.Fatalf("%d admissions, %d snapshots, %d revisions; want 1, 2, 2", fresh, f.snapshots(a), f.revisions(a))
 	}
 }
 
@@ -648,9 +664,9 @@ func TestMetadataUpdate_CurrentOnlyWithAVerifiedVersion(t *testing.T) {
 		}
 		var kept []byte
 		_ = f.pool.QueryRow(context.Background(), `SELECT to_jsonb(m)::text FROM federation_received_asset_metadata m
-			JOIN federation_received_asset_revisions r ON r.id = m.revision_id WHERE r.origin_asset_uri = $1`, a.uri).Scan(&kept)
+			JOIN federation_received_asset_revisions r ON r.id = m.revision_id WHERE r.origin_asset_uri = $1 AND r.activity_type = 'Update'`, a.uri).Scan(&kept)
 		// The version announced and pending (not fetched yet): still not current.
-		sched, err := f.schedule(f.announceV(a, 1, a.files))
+		sched, err := f.schedule(f.signedV(a, 1, a.files))
 		if err != nil || sched.State != assetingest.StatePending {
 			t.Fatalf("version 1 scheduled: %+v %v", sched, err)
 		}
@@ -665,7 +681,7 @@ func TestMetadataUpdate_CurrentOnlyWithAVerifiedVersion(t *testing.T) {
 		}
 		var now []byte
 		_ = f.pool.QueryRow(context.Background(), `SELECT to_jsonb(m)::text FROM federation_received_asset_metadata m
-			JOIN federation_received_asset_revisions r ON r.id = m.revision_id WHERE r.origin_asset_uri = $1`, a.uri).Scan(&now)
+			JOIN federation_received_asset_revisions r ON r.id = m.revision_id WHERE r.origin_asset_uri = $1 AND r.activity_type = 'Update'`, a.uri).Scan(&now)
 		if string(kept) != string(now) {
 			t.Fatal("activation rewrote the kept snapshot")
 		}
@@ -677,7 +693,7 @@ func TestMetadataUpdate_CurrentOnlyWithAVerifiedVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.origin.setMode(a.hash[0], "tamper")
-		out, _ := f.receive(f.announceV(a, 1, a.files))
+		out, _ := f.receive(f.signedV(a, 1, a.files))
 		if out.State != assetingest.StateRejected {
 			t.Fatalf("the tampered version: %+v", out)
 		}
@@ -691,14 +707,15 @@ func TestMetadataUpdate_CurrentOnlyWithAVerifiedVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 		files2, _ := f.originals(1)
-		if v2, err := f.receive(f.announceV(a, 2, files2)); err != nil || v2.State != assetingest.StateComplete {
+		if v2, err := f.receive(f.signedV(a, 2, files2)); err != nil || v2.State != assetingest.StateComplete {
 			t.Fatalf("version 2: %+v %v", v2, err)
 		}
 		if f.chain(a) != "1:superseded 2:complete" {
 			t.Fatalf("chain %s", f.chain(a))
 		}
-		// Version 2 carried no snapshot: nothing is cleared, and the files
-		// served stay version 2's.
+		// Version 2's own initial snapshot (four nulls) is older than the
+		// version 1 Update, so it clears nothing; the files served stay
+		// version 2's.
 		if got := f.currentTitle(a); got != "v1" {
 			t.Fatalf("after version 2: %q", got)
 		}
@@ -727,7 +744,7 @@ func TestMetadataUpdate_CurrentOnlyWithAVerifiedVersion(t *testing.T) {
 		if _, err := f.withdraw(f.deleteOf(a, f.tombstone(a, ""))); err != nil {
 			t.Fatal(err)
 		}
-		if got := f.currentTitle(a); got != "<none>" || f.snapshots(a) != 1 {
+		if got := f.currentTitle(a); got != "<none>" || f.snapshots(a) != 2 {
 			t.Fatalf("after the withdrawal: %q, %d snapshots", got, f.snapshots(a))
 		}
 	})
@@ -747,19 +764,19 @@ func TestMetadataUpdate_SnapshotAndRevisionAreOneAdmission(t *testing.T) {
 		_, _ = f.pool.Exec(context.Background(), `DROP TRIGGER IF EXISTS `+fn+` ON federation_received_asset_metadata`)
 		_, _ = f.pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS `+fn+`()`)
 	})
-	revs := f.revisions(a)
+	revs, snapsBefore := f.revisions(a), f.snapshots(a)
 	_, err := f.applyUpdate(f.metaUpdate(a, 1, a.files, mdMember(mdQ(marker), `null`, `null`, `null`), time.Now().UTC().Add(time.Second)))
 	if err == nil || !assetingest.Retryable(err) {
 		t.Fatalf("a failed snapshot insert: %v", err)
 	}
-	if f.revisions(a) != revs || f.snapshots(a) != 0 {
+	if f.revisions(a) != revs || f.snapshots(a) != snapsBefore {
 		t.Fatalf("a revision without its snapshot was kept: %d -> %d revisions", revs, f.revisions(a))
 	}
 	// The same trigger lets another snapshot through: the refusal was this one.
 	if _, err := f.applyUpdate(f.metaUpdate(a, 1, a.files, mdMember(mdQ("fine"), `null`, `null`, `null`), time.Now().UTC().Add(2*time.Second))); err != nil {
 		t.Fatal(err)
 	}
-	if f.snapshots(a) != 1 || f.revisions(a) != revs+1 {
+	if f.snapshots(a) != snapsBefore+1 || f.revisions(a) != revs+1 {
 		t.Fatal("the control Update was not kept")
 	}
 }
@@ -873,7 +890,7 @@ func TestMetadataUpdate_AfterRevocation(t *testing.T) {
 	ctx := context.Background()
 	a := f.newAsset(1)
 	share := f.grant(f.peerID, a.uri, nil)
-	if v1, err := f.receive(f.announceV(a, 1, a.files)); err != nil || v1.State != assetingest.StateComplete {
+	if v1, err := f.receive(f.signedV(a, 1, a.files)); err != nil || v1.State != assetingest.StateComplete {
 		t.Fatalf("version 1: %+v %v", v1, err)
 	}
 	u := f.metaUpdate(a, 1, a.files, mdMember(mdQ("before"), `null`, `null`, `null`), time.Now().UTC().Add(time.Second))

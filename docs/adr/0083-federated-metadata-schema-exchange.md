@@ -881,3 +881,22 @@ advertises it yet.
   3. the sender hooks and fan-out;
   4. the UI and the two-direction gates of §18.6.
 - Advertising the token is a separate final step after those gates.
+
+### Addendum 2026-11-23: the initial snapshot of an announcement (#1577)
+
+The receiver now keeps, with every new aa:AssetVersion revision from a peer that negotiated all three
+profiles, the initial snapshot §18.4 describes. It is taken from the original delivery only, with its
+signed published time and declared signature, and it becomes current only once that version's files are
+verified here. Three decisions, recorded in spec §18.4:
+
+- The snapshot is derived from an aa:asset member archival-1 already accepted, so it keeps that member's
+  rules. The §18.2 bounds (32,768 raw bytes for the member, 2,048 bytes for rights) belong to an
+  aa:metadata Update member and are unchanged for it; a legacy-accepted claim is not dropped or trimmed to
+  fit them, and such a snapshot is never sent as a member.
+- No backfill: an activity already kept, with or without a snapshot, gains none, whatever is negotiated
+  later.
+- A new activity announcing a version already held would make its snapshot current at once, so under the
+  profile it needs a live original grant at that moment. Without the profile, a reannouncement behaves as
+  before.
+
+Production admission of aa:metadata, the sender, API and UI exposure, and advertisement are still open.
