@@ -377,6 +377,23 @@ func validateDisplayConditionConfig(
 	proposed []string,
 	graph map[string]conditionGraphNode,
 ) string {
+	return validateDisplayConditionConfigMode(dependent, proposed, graph, false)
+}
+
+// validateDisplayConditionConfigMode is the one refusal list, with one
+// switch. Ordinary configuration (PATCH) passes allowMissing=false and a
+// term naming a field this server lacks is refused, exactly as before.
+// An imported condition (#1576, ADR 0099 §10) passes allowMissing=true:
+// such a term is kept verbatim and skipped, which defers only its
+// applicability and contradiction contribution; every resolved term
+// still passes every rule, and the cycle walk ignores the missing node
+// by construction.
+func validateDisplayConditionConfigMode(
+	dependent conditionGraphNode,
+	proposed []string,
+	graph map[string]conditionGraphNode,
+	allowMissing bool,
+) string {
 	if len(proposed) == 0 {
 		return ""
 	}
@@ -421,6 +438,12 @@ func validateDisplayConditionConfig(
 
 	for _, t := range terms {
 		ctrl, found := graph[t.Code]
+		if !found && allowMissing {
+			if t.Code == dependent.Code {
+				return fmt.Sprintf("field %q cannot depend on itself", dependent.Code)
+			}
+			continue
+		}
 		if !found {
 			return fmt.Sprintf(
 				"display condition names field %q, which this server does not have", t.Code)

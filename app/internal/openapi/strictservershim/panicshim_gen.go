@@ -1310,6 +1310,26 @@ func (*PanicShim) ExportFieldSchema(context.Context, openapi.ExportFieldSchemaRe
 	panic("PanicShim: ExportFieldSchema called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ApplyFieldSchemaImport panics by default; test shims override.
+func (*PanicShim) ApplyFieldSchemaImport(context.Context, openapi.ApplyFieldSchemaImportRequestObject) (openapi.ApplyFieldSchemaImportResponseObject, error) {
+	panic("PanicShim: ApplyFieldSchemaImport called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// PreviewFieldSchemaImport panics by default; test shims override.
+func (*PanicShim) PreviewFieldSchemaImport(context.Context, openapi.PreviewFieldSchemaImportRequestObject) (openapi.PreviewFieldSchemaImportResponseObject, error) {
+	panic("PanicShim: PreviewFieldSchemaImport called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListFieldSchemaImportReceipts panics by default; test shims override.
+func (*PanicShim) ListFieldSchemaImportReceipts(context.Context, openapi.ListFieldSchemaImportReceiptsRequestObject) (openapi.ListFieldSchemaImportReceiptsResponseObject, error) {
+	panic("PanicShim: ListFieldSchemaImportReceipts called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetFieldSchemaImportReceipt panics by default; test shims override.
+func (*PanicShim) GetFieldSchemaImportReceipt(context.Context, openapi.GetFieldSchemaImportReceiptRequestObject) (openapi.GetFieldSchemaImportReceiptResponseObject, error) {
+	panic("PanicShim: GetFieldSchemaImportReceipt called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ArchiveField panics by default; test shims override.
 func (*PanicShim) ArchiveField(context.Context, openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
 	panic("PanicShim: ArchiveField called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

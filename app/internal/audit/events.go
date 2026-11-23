@@ -124,6 +124,9 @@ const (
 	// operator can search — the per-value history rows say WHAT changed
 	// on each record, and this says why they all changed at once.
 	EventVocabularyMerged = "metadata.vocabulary.merged"
+	// EventFieldSchemaImported records an applied field-schema import
+	// (#1576): the receipt id, preview id, document digest and counts.
+	EventFieldSchemaImported = "metadata.field_schema.imported"
 
 	// #709 — the browse-layout allowlist. Its own event because
 	// disabling a layout is the kind of change users notice and report
@@ -1537,6 +1540,12 @@ func (r *Recorder) VocabularyMerged(ctx context.Context, actor *int64, m Vocabul
 		"asset_values_rewritten":      m.AssetValuesRewritten,
 		"collection_values_rewritten": m.CollectionValuesRewritten,
 	})
+}
+
+// FieldSchemaImported records an applied field-schema import (#1576),
+// after its transaction committed. actor is the operator who applied it.
+func (r *Recorder) FieldSchemaImported(ctx context.Context, actor *int64, meta map[string]any) {
+	r.write(ctx, EventFieldSchemaImported, nil, actor, reqContext{}, meta)
 }
 
 // FederationAssetIngest records one #1574 received-asset outcome

@@ -94,6 +94,31 @@ func (q *Queries) ArchiveFieldDefinition(ctx context.Context, arg ArchiveFieldDe
 	return err
 }
 
+const compactExpiredFieldSchemaImportPreviews = `-- name: CompactExpiredFieldSchemaImportPreviews :execrows
+UPDATE field_schema_import_preview
+   SET state = 'expired', document = NULL, allowed = NULL, bound_state = NULL,
+       source_label = NULL, source_uri = NULL,
+       tombstone_until = expires_at + interval '24 hours'
+ WHERE id IN (
+       SELECT id FROM field_schema_import_preview
+        WHERE state = 'live' AND expires_at <= clock_timestamp()
+        ORDER BY expires_at
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED)
+`
+
+// Erases the payload and the source claims of up to @batch_size expired
+// live previews and keeps a compact tombstone for 24 hours: id, actor,
+// times and the document digest. SKIP LOCKED: a row another transaction
+// holds is left for the next run. Takes no other lock.
+func (q *Queries) CompactExpiredFieldSchemaImportPreviews(ctx context.Context, batchSize int32) (int64, error) {
+	result, err := q.db.Exec(ctx, compactExpiredFieldSchemaImportPreviews, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const consumeBatchPreview = `-- name: ConsumeBatchPreview :one
 UPDATE metadata_batch_preview
    SET consumed_at = NOW()
@@ -169,6 +194,27 @@ func (q *Queries) CountBatchExpandedTargets(ctx context.Context, arg CountBatchE
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countFieldSchemaImportPayloads = `-- name: CountFieldSchemaImportPayloads :one
+SELECT count(*) FILTER (WHERE actor_ref = $1)::bigint AS actor_count,
+       count(*)::bigint AS total_count
+  FROM field_schema_import_preview
+ WHERE document IS NOT NULL
+`
+
+type CountFieldSchemaImportPayloadsRow struct {
+	ActorCount int64
+	TotalCount int64
+}
+
+// Every row still holding a payload counts, expired or not: a late
+// cleanup must not let retained documents grow past the caps.
+func (q *Queries) CountFieldSchemaImportPayloads(ctx context.Context, actorRef int64) (CountFieldSchemaImportPayloadsRow, error) {
+	row := q.db.QueryRow(ctx, countFieldSchemaImportPayloads, actorRef)
+	var i CountFieldSchemaImportPayloadsRow
+	err := row.Scan(&i.ActorCount, &i.TotalCount)
+	return i, err
 }
 
 const createFieldDefinition = `-- name: CreateFieldDefinition :one
@@ -367,6 +413,25 @@ func (q *Queries) DeleteCollectionFieldValueIfUnchanged(ctx context.Context, arg
 	return i, err
 }
 
+const deleteExpiredFieldSchemaImportTombstones = `-- name: DeleteExpiredFieldSchemaImportTombstones :execrows
+DELETE FROM field_schema_import_preview
+ WHERE id IN (
+       SELECT id FROM field_schema_import_preview
+        WHERE state = 'expired' AND tombstone_until <= clock_timestamp()
+        ORDER BY tombstone_until
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED)
+`
+
+// Deletes up to @batch_size tombstones past their retention.
+func (q *Queries) DeleteExpiredFieldSchemaImportTombstones(ctx context.Context, batchSize int32) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredFieldSchemaImportTombstones, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteFieldDefaultOverride = `-- name: DeleteFieldDefaultOverride :execrows
 DELETE FROM field_default_override WHERE field_id = $1 AND team_id = $2
 `
@@ -382,6 +447,15 @@ func (q *Queries) DeleteFieldDefaultOverride(ctx context.Context, arg DeleteFiel
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteFieldSchemaImportPreview = `-- name: DeleteFieldSchemaImportPreview :exec
+DELETE FROM field_schema_import_preview WHERE id = $1
+`
+
+func (q *Queries) DeleteFieldSchemaImportPreview(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteFieldSchemaImportPreview, id)
+	return err
 }
 
 const expandPostsToAssets = `-- name: ExpandPostsToAssets :many
@@ -438,6 +512,25 @@ func (q *Queries) ExpandPostsToAssets(ctx context.Context, arg ExpandPostsToAsse
 		return nil, err
 	}
 	return items, nil
+}
+
+const fieldSchemaImportPreviewDeadline = `-- name: FieldSchemaImportPreviewDeadline :one
+SELECT clock_timestamp() >= $1::timestamptz AS expired,
+       clock_timestamp() >= $1::timestamptz + interval '24 hours' AS beyond_retention
+`
+
+type FieldSchemaImportPreviewDeadlineRow struct {
+	Expired         bool
+	BeyondRetention bool
+}
+
+// The database clock now, against a preview's expiry: expired, and past
+// the 24-hour horizon after which an expired preview answers 404.
+func (q *Queries) FieldSchemaImportPreviewDeadline(ctx context.Context, expiresAt pgtype.Timestamptz) (FieldSchemaImportPreviewDeadlineRow, error) {
+	row := q.db.QueryRow(ctx, fieldSchemaImportPreviewDeadline, expiresAt)
+	var i FieldSchemaImportPreviewDeadlineRow
+	err := row.Scan(&i.Expired, &i.BeyondRetention)
+	return i, err
 }
 
 const getAssetFieldValue = `-- name: GetAssetFieldValue :one
@@ -775,6 +868,90 @@ func (q *Queries) GetFieldMirrorColumn(ctx context.Context, id pgtype.UUID) (*st
 	return mirrors_column, err
 }
 
+const getFieldSchemaImportPreview = `-- name: GetFieldSchemaImportPreview :one
+SELECT id, actor_ref, created_at, expires_at, state, document, document_digest,
+       source_label, source_uri, allowed, bound_state, tombstone_until
+  FROM field_schema_import_preview
+ WHERE id = $1
+`
+
+func (q *Queries) GetFieldSchemaImportPreview(ctx context.Context, id pgtype.UUID) (FieldSchemaImportPreview, error) {
+	row := q.db.QueryRow(ctx, getFieldSchemaImportPreview, id)
+	var i FieldSchemaImportPreview
+	err := row.Scan(
+		&i.ID,
+		&i.ActorRef,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.State,
+		&i.Document,
+		&i.DocumentDigest,
+		&i.SourceLabel,
+		&i.SourceUri,
+		&i.Allowed,
+		&i.BoundState,
+		&i.TombstoneUntil,
+	)
+	return i, err
+}
+
+const getFieldSchemaImportReceipt = `-- name: GetFieldSchemaImportReceipt :one
+SELECT id, preview_id, actor_ref, applied_at, format, document_digest, decisions_digest,
+       decisions, source_label, source_uri, changed
+  FROM field_schema_import_receipt
+ WHERE id = $1
+`
+
+func (q *Queries) GetFieldSchemaImportReceipt(ctx context.Context, id pgtype.UUID) (FieldSchemaImportReceipt, error) {
+	row := q.db.QueryRow(ctx, getFieldSchemaImportReceipt, id)
+	var i FieldSchemaImportReceipt
+	err := row.Scan(
+		&i.ID,
+		&i.PreviewID,
+		&i.ActorRef,
+		&i.AppliedAt,
+		&i.Format,
+		&i.DocumentDigest,
+		&i.DecisionsDigest,
+		&i.Decisions,
+		&i.SourceLabel,
+		&i.SourceUri,
+		&i.Changed,
+	)
+	return i, err
+}
+
+const getFieldSchemaImportReceiptByPreview = `-- name: GetFieldSchemaImportReceiptByPreview :one
+
+SELECT id, preview_id, actor_ref, applied_at, format, document_digest, decisions_digest,
+       decisions, source_label, source_uri, changed
+  FROM field_schema_import_receipt
+ WHERE preview_id = $1
+`
+
+// ---------------------------------------------------------------------------
+// Schema import apply (#1576 S2)
+// ---------------------------------------------------------------------------
+// The replay key. Read before any expiry or staleness check.
+func (q *Queries) GetFieldSchemaImportReceiptByPreview(ctx context.Context, previewID pgtype.UUID) (FieldSchemaImportReceipt, error) {
+	row := q.db.QueryRow(ctx, getFieldSchemaImportReceiptByPreview, previewID)
+	var i FieldSchemaImportReceipt
+	err := row.Scan(
+		&i.ID,
+		&i.PreviewID,
+		&i.ActorRef,
+		&i.AppliedAt,
+		&i.Format,
+		&i.DocumentDigest,
+		&i.DecisionsDigest,
+		&i.Decisions,
+		&i.SourceLabel,
+		&i.SourceUri,
+		&i.Changed,
+	)
+	return i, err
+}
+
 const getReferencedAsset = `-- name: GetReferencedAsset :one
 SELECT a.id, a.title
 FROM assets a
@@ -1044,6 +1221,198 @@ func (q *Queries) InsertCollectionFieldValueWhenAbsent(ctx context.Context, arg 
 		&i.SetByUserRef,
 	)
 	return i, err
+}
+
+const insertFieldSchemaImportPreview = `-- name: InsertFieldSchemaImportPreview :one
+INSERT INTO field_schema_import_preview (
+    actor_ref, created_at, expires_at, state, document, document_digest,
+    source_label, source_uri, allowed, bound_state
+)
+SELECT $1, t.now, t.now + make_interval(secs => $2::double precision),
+       'live', $3, $4,
+       $5, $6, $7, $8
+  FROM (SELECT clock_timestamp() AS now) t
+RETURNING id, created_at, expires_at
+`
+
+type InsertFieldSchemaImportPreviewParams struct {
+	ActorRef       int64
+	TtlSeconds     float64
+	Document       []byte
+	DocumentDigest string
+	SourceLabel    *string
+	SourceUri      *string
+	Allowed        []byte
+	BoundState     []byte
+}
+
+type InsertFieldSchemaImportPreviewRow struct {
+	ID        pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
+// The time comes from clock_timestamp(), read ONCE, not from the
+// transaction start, which can precede a wait on the admission lock.
+func (q *Queries) InsertFieldSchemaImportPreview(ctx context.Context, arg InsertFieldSchemaImportPreviewParams) (InsertFieldSchemaImportPreviewRow, error) {
+	row := q.db.QueryRow(ctx, insertFieldSchemaImportPreview,
+		arg.ActorRef,
+		arg.TtlSeconds,
+		arg.Document,
+		arg.DocumentDigest,
+		arg.SourceLabel,
+		arg.SourceUri,
+		arg.Allowed,
+		arg.BoundState,
+	)
+	var i InsertFieldSchemaImportPreviewRow
+	err := row.Scan(&i.ID, &i.CreatedAt, &i.ExpiresAt)
+	return i, err
+}
+
+const insertFieldSchemaImportReceipt = `-- name: InsertFieldSchemaImportReceipt :one
+INSERT INTO field_schema_import_receipt (
+    preview_id, actor_ref, applied_at, format, document_digest, decisions_digest,
+    decisions, source_label, source_uri, changed
+) VALUES (
+    $1, $2, clock_timestamp(), $3, $4, $5,
+    $6, $7, $8, $9
+)
+RETURNING id, applied_at
+`
+
+type InsertFieldSchemaImportReceiptParams struct {
+	PreviewID       pgtype.UUID
+	ActorRef        *int64
+	Format          string
+	DocumentDigest  string
+	DecisionsDigest string
+	Decisions       []byte
+	SourceLabel     *string
+	SourceUri       *string
+	Changed         int32
+}
+
+type InsertFieldSchemaImportReceiptRow struct {
+	ID        pgtype.UUID
+	AppliedAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertFieldSchemaImportReceipt(ctx context.Context, arg InsertFieldSchemaImportReceiptParams) (InsertFieldSchemaImportReceiptRow, error) {
+	row := q.db.QueryRow(ctx, insertFieldSchemaImportReceipt,
+		arg.PreviewID,
+		arg.ActorRef,
+		arg.Format,
+		arg.DocumentDigest,
+		arg.DecisionsDigest,
+		arg.Decisions,
+		arg.SourceLabel,
+		arg.SourceUri,
+		arg.Changed,
+	)
+	var i InsertFieldSchemaImportReceiptRow
+	err := row.Scan(&i.ID, &i.AppliedAt)
+	return i, err
+}
+
+const insertFieldSchemaImportReceiptItem = `-- name: InsertFieldSchemaImportReceiptItem :exec
+INSERT INTO field_schema_import_receipt_item (
+    receipt_id, ordinal, code, decision, outcome, field_id, incoming_field_digest
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7
+)
+`
+
+type InsertFieldSchemaImportReceiptItemParams struct {
+	ReceiptID           pgtype.UUID
+	Ordinal             int16
+	Code                string
+	Decision            string
+	Outcome             string
+	FieldID             pgtype.UUID
+	IncomingFieldDigest string
+}
+
+func (q *Queries) InsertFieldSchemaImportReceiptItem(ctx context.Context, arg InsertFieldSchemaImportReceiptItemParams) error {
+	_, err := q.db.Exec(ctx, insertFieldSchemaImportReceiptItem,
+		arg.ReceiptID,
+		arg.Ordinal,
+		arg.Code,
+		arg.Decision,
+		arg.Outcome,
+		arg.FieldID,
+		arg.IncomingFieldDigest,
+	)
+	return err
+}
+
+const insertImportedFieldDefinition = `-- name: InsertImportedFieldDefinition :one
+INSERT INTO field_definition (
+    code, label, description, type, options, required, searchable,
+    applies_to, read_capability, write_capability,
+    display_order, display_group, status, subject_kind,
+    extraction_source, extraction_mode, default_value, open_vocabulary,
+    show_on_card, show_in_advanced_search, show_on_upload, edit_tab,
+    read_only, regexp_filter, display_condition, created_by_user_ref
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7,
+    '{}', NULL, NULL,
+    $8, $9, 'active', $10,
+    '', 'skip_if_set', NULL, $11,
+    $12, $13, $14, $15,
+    false, $16, $17, $18
+)
+RETURNING id
+`
+
+type InsertImportedFieldDefinitionParams struct {
+	Code                 string
+	Label                string
+	Description          string
+	Type                 string
+	Options              []byte
+	Required             bool
+	Searchable           bool
+	DisplayOrder         int32
+	DisplayGroup         string
+	SubjectKind          string
+	OpenVocabulary       bool
+	ShowOnCard           bool
+	ShowInAdvancedSearch bool
+	ShowOnUpload         bool
+	EditTab              *string
+	RegexpFilter         *string
+	DisplayCondition     []byte
+	CreatedByUserRef     *int64
+}
+
+// Every portable member exactly as imported; every receiver-owned
+// setting at its local default: active, applies_to empty, no
+// capabilities, read_only false, no extraction, no default, no mirror.
+func (q *Queries) InsertImportedFieldDefinition(ctx context.Context, arg InsertImportedFieldDefinitionParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, insertImportedFieldDefinition,
+		arg.Code,
+		arg.Label,
+		arg.Description,
+		arg.Type,
+		arg.Options,
+		arg.Required,
+		arg.Searchable,
+		arg.DisplayOrder,
+		arg.DisplayGroup,
+		arg.SubjectKind,
+		arg.OpenVocabulary,
+		arg.ShowOnCard,
+		arg.ShowInAdvancedSearch,
+		arg.ShowOnUpload,
+		arg.EditTab,
+		arg.RegexpFilter,
+		arg.DisplayCondition,
+		arg.CreatedByUserRef,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const listAssetDefaultCandidates = `-- name: ListAssetDefaultCandidates :many
@@ -2235,6 +2604,186 @@ func (q *Queries) ListFieldDefinitionsForConditionGraph(ctx context.Context) ([]
 	return items, nil
 }
 
+const listFieldDefinitionsForImportPreview = `-- name: ListFieldDefinitionsForImportPreview :many
+SELECT field_definition.id, field_definition.code, field_definition.label, field_definition.description, field_definition.type, field_definition.options, field_definition.required, field_definition.searchable, field_definition.applies_to, field_definition.read_capability, field_definition.write_capability, field_definition.display_order, field_definition.display_group, field_definition.status, field_definition.deprecated_replacement_id, field_definition.origin_server_id, field_definition.created_at, field_definition.updated_at, field_definition.created_by_user_ref, field_definition.updated_by_user_ref, field_definition.subject_kind, field_definition.extraction_source, field_definition.extraction_mode, field_definition.default_value, field_definition.open_vocabulary, field_definition.mirrors_column, field_definition.show_on_card, field_definition.show_in_advanced_search, field_definition.show_on_upload, field_definition.edit_tab, field_definition.read_only, field_definition.regexp_filter, field_definition.display_condition,
+       encode(sha256(convert_to(to_jsonb(field_definition)::text, 'UTF8')), 'hex')::text AS row_digest
+  FROM field_definition
+ WHERE field_definition.code = ANY($1::text[])
+ ORDER BY field_definition.code
+`
+
+type ListFieldDefinitionsForImportPreviewRow struct {
+	FieldDefinition FieldDefinition
+	RowDigest       string
+}
+
+// The local rows a preview shows and binds, and a digest of each whole
+// row, from ONE statement so both come from the same snapshot. A code
+// with no row is absent; absence is read from the same statement.
+func (q *Queries) ListFieldDefinitionsForImportPreview(ctx context.Context, codes []string) ([]ListFieldDefinitionsForImportPreviewRow, error) {
+	rows, err := q.db.Query(ctx, listFieldDefinitionsForImportPreview, codes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFieldDefinitionsForImportPreviewRow
+	for rows.Next() {
+		var i ListFieldDefinitionsForImportPreviewRow
+		if err := rows.Scan(
+			&i.FieldDefinition.ID,
+			&i.FieldDefinition.Code,
+			&i.FieldDefinition.Label,
+			&i.FieldDefinition.Description,
+			&i.FieldDefinition.Type,
+			&i.FieldDefinition.Options,
+			&i.FieldDefinition.Required,
+			&i.FieldDefinition.Searchable,
+			&i.FieldDefinition.AppliesTo,
+			&i.FieldDefinition.ReadCapability,
+			&i.FieldDefinition.WriteCapability,
+			&i.FieldDefinition.DisplayOrder,
+			&i.FieldDefinition.DisplayGroup,
+			&i.FieldDefinition.Status,
+			&i.FieldDefinition.DeprecatedReplacementID,
+			&i.FieldDefinition.OriginServerID,
+			&i.FieldDefinition.CreatedAt,
+			&i.FieldDefinition.UpdatedAt,
+			&i.FieldDefinition.CreatedByUserRef,
+			&i.FieldDefinition.UpdatedByUserRef,
+			&i.FieldDefinition.SubjectKind,
+			&i.FieldDefinition.ExtractionSource,
+			&i.FieldDefinition.ExtractionMode,
+			&i.FieldDefinition.DefaultValue,
+			&i.FieldDefinition.OpenVocabulary,
+			&i.FieldDefinition.MirrorsColumn,
+			&i.FieldDefinition.ShowOnCard,
+			&i.FieldDefinition.ShowInAdvancedSearch,
+			&i.FieldDefinition.ShowOnUpload,
+			&i.FieldDefinition.EditTab,
+			&i.FieldDefinition.ReadOnly,
+			&i.FieldDefinition.RegexpFilter,
+			&i.FieldDefinition.DisplayCondition,
+			&i.RowDigest,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFieldSchemaImportReceiptItems = `-- name: ListFieldSchemaImportReceiptItems :many
+SELECT code, decision, outcome, field_id, incoming_field_digest
+  FROM field_schema_import_receipt_item
+ WHERE receipt_id = $1
+ ORDER BY ordinal
+`
+
+type ListFieldSchemaImportReceiptItemsRow struct {
+	Code                string
+	Decision            string
+	Outcome             string
+	FieldID             pgtype.UUID
+	IncomingFieldDigest string
+}
+
+func (q *Queries) ListFieldSchemaImportReceiptItems(ctx context.Context, receiptID pgtype.UUID) ([]ListFieldSchemaImportReceiptItemsRow, error) {
+	rows, err := q.db.Query(ctx, listFieldSchemaImportReceiptItems, receiptID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFieldSchemaImportReceiptItemsRow
+	for rows.Next() {
+		var i ListFieldSchemaImportReceiptItemsRow
+		if err := rows.Scan(
+			&i.Code,
+			&i.Decision,
+			&i.Outcome,
+			&i.FieldID,
+			&i.IncomingFieldDigest,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFieldSchemaImportReceipts = `-- name: ListFieldSchemaImportReceipts :many
+
+SELECT r.id, r.applied_at, r.actor_ref, r.format, r.document_digest, r.decisions_digest,
+       r.source_label, r.source_uri, r.changed,
+       (SELECT count(*) FROM field_schema_import_receipt_item i WHERE i.receipt_id = r.id)::int AS field_count
+  FROM field_schema_import_receipt r
+ WHERE ($1::timestamptz IS NULL
+        OR (r.applied_at, r.id) < ($1::timestamptz, $2::uuid))
+ ORDER BY r.applied_at DESC, r.id DESC
+ LIMIT $3
+`
+
+type ListFieldSchemaImportReceiptsParams struct {
+	AfterAt pgtype.Timestamptz
+	AfterID pgtype.UUID
+	Lim     int32
+}
+
+type ListFieldSchemaImportReceiptsRow struct {
+	ID              pgtype.UUID
+	AppliedAt       pgtype.Timestamptz
+	ActorRef        *int64
+	Format          string
+	DocumentDigest  string
+	DecisionsDigest string
+	SourceLabel     *string
+	SourceUri       *string
+	Changed         int32
+	FieldCount      int32
+}
+
+// ---------------------------------------------------------------------------
+// Schema import history, read-only (#1576 S4)
+// ---------------------------------------------------------------------------
+// Newest first, keyset on (applied_at, id): rows strictly after the
+// cursor position in that order. No OFFSET, so a receipt inserted
+// between pages can neither repeat nor hide an older row.
+func (q *Queries) ListFieldSchemaImportReceipts(ctx context.Context, arg ListFieldSchemaImportReceiptsParams) ([]ListFieldSchemaImportReceiptsRow, error) {
+	rows, err := q.db.Query(ctx, listFieldSchemaImportReceipts, arg.AfterAt, arg.AfterID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFieldSchemaImportReceiptsRow
+	for rows.Next() {
+		var i ListFieldSchemaImportReceiptsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppliedAt,
+			&i.ActorRef,
+			&i.Format,
+			&i.DocumentDigest,
+			&i.DecisionsDigest,
+			&i.SourceLabel,
+			&i.SourceUri,
+			&i.Changed,
+			&i.FieldCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPostsContainingAssets = `-- name: ListPostsContainingAssets :many
 SELECT DISTINCT post_id
   FROM post_assets
@@ -2564,6 +3113,79 @@ func (q *Queries) LockFieldDefinitionVocabulary(ctx context.Context, id pgtype.U
 	return i, err
 }
 
+const lockFieldDefinitionsForImport = `-- name: LockFieldDefinitionsForImport :many
+SELECT field_definition.id, field_definition.code, field_definition.label, field_definition.description, field_definition.type, field_definition.options, field_definition.required, field_definition.searchable, field_definition.applies_to, field_definition.read_capability, field_definition.write_capability, field_definition.display_order, field_definition.display_group, field_definition.status, field_definition.deprecated_replacement_id, field_definition.origin_server_id, field_definition.created_at, field_definition.updated_at, field_definition.created_by_user_ref, field_definition.updated_by_user_ref, field_definition.subject_kind, field_definition.extraction_source, field_definition.extraction_mode, field_definition.default_value, field_definition.open_vocabulary, field_definition.mirrors_column, field_definition.show_on_card, field_definition.show_in_advanced_search, field_definition.show_on_upload, field_definition.edit_tab, field_definition.read_only, field_definition.regexp_filter, field_definition.display_condition,
+       encode(sha256(convert_to(to_jsonb(field_definition)::text, 'UTF8')), 'hex')::text AS row_digest
+  FROM field_definition
+ WHERE field_definition.code = ANY($1::text[])
+ ORDER BY field_definition.code
+   FOR UPDATE
+`
+
+type LockFieldDefinitionsForImportRow struct {
+	FieldDefinition FieldDefinition
+	RowDigest       string
+}
+
+// The rows an apply or an ordinary create validates against, locked in
+// one deterministic code order, with the same whole-row digest the
+// preview recorded. Under READ COMMITTED a locked row is the latest
+// committed version, and its digest is computed from that version.
+func (q *Queries) LockFieldDefinitionsForImport(ctx context.Context, codes []string) ([]LockFieldDefinitionsForImportRow, error) {
+	rows, err := q.db.Query(ctx, lockFieldDefinitionsForImport, codes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockFieldDefinitionsForImportRow
+	for rows.Next() {
+		var i LockFieldDefinitionsForImportRow
+		if err := rows.Scan(
+			&i.FieldDefinition.ID,
+			&i.FieldDefinition.Code,
+			&i.FieldDefinition.Label,
+			&i.FieldDefinition.Description,
+			&i.FieldDefinition.Type,
+			&i.FieldDefinition.Options,
+			&i.FieldDefinition.Required,
+			&i.FieldDefinition.Searchable,
+			&i.FieldDefinition.AppliesTo,
+			&i.FieldDefinition.ReadCapability,
+			&i.FieldDefinition.WriteCapability,
+			&i.FieldDefinition.DisplayOrder,
+			&i.FieldDefinition.DisplayGroup,
+			&i.FieldDefinition.Status,
+			&i.FieldDefinition.DeprecatedReplacementID,
+			&i.FieldDefinition.OriginServerID,
+			&i.FieldDefinition.CreatedAt,
+			&i.FieldDefinition.UpdatedAt,
+			&i.FieldDefinition.CreatedByUserRef,
+			&i.FieldDefinition.UpdatedByUserRef,
+			&i.FieldDefinition.SubjectKind,
+			&i.FieldDefinition.ExtractionSource,
+			&i.FieldDefinition.ExtractionMode,
+			&i.FieldDefinition.DefaultValue,
+			&i.FieldDefinition.OpenVocabulary,
+			&i.FieldDefinition.MirrorsColumn,
+			&i.FieldDefinition.ShowOnCard,
+			&i.FieldDefinition.ShowInAdvancedSearch,
+			&i.FieldDefinition.ShowOnUpload,
+			&i.FieldDefinition.EditTab,
+			&i.FieldDefinition.ReadOnly,
+			&i.FieldDefinition.RegexpFilter,
+			&i.FieldDefinition.DisplayCondition,
+			&i.RowDigest,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockFieldDisplayConditionGraph = `-- name: LockFieldDisplayConditionGraph :exec
 SELECT pg_advisory_xact_lock($1::INT, $2::INT)
 `
@@ -2605,6 +3227,67 @@ type LockFieldDisplayConditionGraphParams struct {
 func (q *Queries) LockFieldDisplayConditionGraph(ctx context.Context, arg LockFieldDisplayConditionGraphParams) error {
 	_, err := q.db.Exec(ctx, lockFieldDisplayConditionGraph, arg.LockSpace, arg.SubjectKey)
 	return err
+}
+
+const lockFieldSchemaImportAdmission = `-- name: LockFieldSchemaImportAdmission :exec
+
+SELECT pg_advisory_xact_lock(1576, 1)
+`
+
+// ---------------------------------------------------------------------------
+// Schema import preview (#1576, ADR 0083 2026-11-22 amendments)
+// ---------------------------------------------------------------------------
+// Serialises preview admission so the per-actor and global payload caps
+// cannot be overrun by concurrent previews. Its own lock space (1576):
+// no graph writer takes it, and admission takes no graph lock. Run in a
+// READ COMMITTED transaction so the counts that follow read a snapshot
+// taken AFTER the lock is held.
+func (q *Queries) LockFieldSchemaImportAdmission(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockFieldSchemaImportAdmission)
+	return err
+}
+
+const lockFieldSchemaImportPreviewForApply = `-- name: LockFieldSchemaImportPreviewForApply :one
+SELECT id, actor_ref, state, document, document_digest, source_label, source_uri,
+       allowed, bound_state, expires_at
+  FROM field_schema_import_preview
+ WHERE id = $1
+   FOR UPDATE
+`
+
+type LockFieldSchemaImportPreviewForApplyRow struct {
+	ID             pgtype.UUID
+	ActorRef       int64
+	State          string
+	Document       []byte
+	DocumentDigest string
+	SourceLabel    *string
+	SourceUri      *string
+	Allowed        []byte
+	BoundState     []byte
+	ExpiresAt      pgtype.Timestamptz
+}
+
+// Taken AFTER both display-condition graph locks. Returns expires_at
+// only; the deadline is judged by FieldSchemaImportPreviewDeadline, a
+// separate statement, because an expression in this target list can be
+// evaluated before the row-lock wait ends.
+func (q *Queries) LockFieldSchemaImportPreviewForApply(ctx context.Context, id pgtype.UUID) (LockFieldSchemaImportPreviewForApplyRow, error) {
+	row := q.db.QueryRow(ctx, lockFieldSchemaImportPreviewForApply, id)
+	var i LockFieldSchemaImportPreviewForApplyRow
+	err := row.Scan(
+		&i.ID,
+		&i.ActorRef,
+		&i.State,
+		&i.Document,
+		&i.DocumentDigest,
+		&i.SourceLabel,
+		&i.SourceUri,
+		&i.Allowed,
+		&i.BoundState,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const purgeExpiredBatchPreviews = `-- name: PurgeExpiredBatchPreviews :exec

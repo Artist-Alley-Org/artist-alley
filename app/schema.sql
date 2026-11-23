@@ -4557,6 +4557,69 @@ COMMENT ON TABLE public.field_default_override IS 'Per-team override of field_de
 
 
 --
+-- Name: field_schema_import_receipt; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.field_schema_import_receipt (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    preview_id uuid NOT NULL,
+    actor_ref bigint,
+    applied_at timestamp with time zone NOT NULL,
+    format text NOT NULL,
+    document_digest text NOT NULL,
+    decisions_digest text NOT NULL,
+    decisions jsonb NOT NULL,
+    source_label text,
+    source_uri text,
+    changed integer NOT NULL,
+    CONSTRAINT field_schema_import_receipt_changed_check CHECK ((changed >= 0))
+);
+
+
+--
+-- Name: field_schema_import_receipt_item; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.field_schema_import_receipt_item (
+    receipt_id uuid NOT NULL,
+    ordinal smallint NOT NULL,
+    code text NOT NULL,
+    decision text NOT NULL,
+    outcome text NOT NULL,
+    field_id uuid,
+    incoming_field_digest text NOT NULL,
+    CONSTRAINT field_schema_import_receipt_item_ordinal_check CHECK (((ordinal >= 0) AND (ordinal <= 99))),
+    CONSTRAINT field_schema_import_receipt_item_decision_check CHECK ((decision = ANY (ARRAY['create'::text, 'use_existing'::text, 'keep_local'::text, 'skip'::text]))),
+    CONSTRAINT field_schema_import_receipt_item_outcome_check CHECK ((outcome = ANY (ARRAY['created'::text, 'matched'::text, 'kept_local'::text, 'skipped'::text])))
+);
+
+
+--
+-- Name: field_schema_import_preview; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.field_schema_import_preview (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    actor_ref bigint NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    state text NOT NULL,
+    document bytea,
+    document_digest text NOT NULL,
+    source_label text,
+    source_uri text,
+    allowed jsonb,
+    bound_state jsonb,
+    tombstone_until timestamp with time zone,
+    CONSTRAINT field_schema_import_preview_state_check CHECK ((state = ANY (ARRAY['live'::text, 'expired'::text]))),
+    CONSTRAINT field_schema_import_preview_expiry_check CHECK ((expires_at > created_at)),
+    CONSTRAINT field_schema_import_preview_payload_check CHECK ((((state = 'live'::text) AND (document IS NOT NULL) AND (allowed IS NOT NULL) AND (bound_state IS NOT NULL) AND (tombstone_until IS NULL)) OR ((state = 'expired'::text) AND (document IS NULL) AND (allowed IS NULL) AND (bound_state IS NULL) AND (tombstone_until IS NOT NULL)))),
+    CONSTRAINT field_schema_import_preview_label_check CHECK (((source_label IS NULL) OR ((char_length(source_label) >= 1) AND (char_length(source_label) <= 200)))),
+    CONSTRAINT field_schema_import_preview_uri_check CHECK (((source_uri IS NULL) OR ((octet_length(source_uri) >= 1) AND (octet_length(source_uri) <= 2048))))
+);
+
+
+--
 -- Name: field_definition; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7541,6 +7604,13 @@ CREATE INDEX field_definition_deprecated_replacement_idx ON public.field_definit
 --
 
 CREATE INDEX field_definition_group_idx ON public.field_definition USING btree (display_group, display_order);
+
+
+--
+-- Name: field_schema_import_receipt_applied_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX field_schema_import_receipt_applied_idx ON public.field_schema_import_receipt USING btree (applied_at DESC, id DESC);
 
 
 --

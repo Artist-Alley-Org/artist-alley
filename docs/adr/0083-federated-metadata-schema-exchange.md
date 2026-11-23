@@ -338,3 +338,451 @@ classified here.
   vocabulary is ever truncated to fit.
 - The endpoint is read-only: one `SELECT` by code. It writes no definition, option, default,
   permission or asset.
+
+## Amendment 2026-11-22 (later): preview and import contract (#1576)
+
+**Status: backend built; operator UI and two-instance adoption not yet.** These are built, and
+the sections "Built: the preview step" and "Built: the apply step" below record what exists:
+- the preview step (`POST /fields/import/preview`);
+- the apply step (`POST /fields/import/apply`), with receipts and provenance;
+- the serialized ordinary `POST /fields`;
+- the shared `aa-field-schema/1` limits and the export's `format_limit_exceeded` refusal.
+
+Not built yet: an operator UI, a receipt history surface and the ordinary-`PATCH` controller-row
+locking described below as "the G8 fix". The two-instance adoption gate has run; see
+"Verified: two-instance adoption (S3)". The export contract
+above is otherwise unchanged. Exchange stays operator-initiated: an operator brings an `aa-field-schema/1` document to
+this server. There is no `field_set_id`, no automatic federation propagation, and import never
+brings field values.
+
+### Flow
+
+1. `POST /api/v1/fields/import/preview` (`previewFieldSchemaImport`) takes the document and an
+   optional, untrusted source label and URI. It writes nothing except a short-lived preview record.
+   For each incoming code it returns:
+   - the incoming portable definition;
+   - the local state;
+   - the per-property and per-term differences;
+   - the decisions allowed for that code.
+
+   It also lists the incoming condition terms that do not resolve here.
+2. `POST /api/v1/fields/import/apply` (`applyFieldSchemaImport`) takes the preview id, the
+   document digest the preview returned, and **one explicit decision for every incoming code**,
+   identical matches included. It applies all of them in one transaction or none of them.
+
+The preview's answers are a review aid, not a promise. Apply re-validates the final configuration
+under its locks, and it can refuse with 422 `graph_refused` when an unrelated part of the condition
+graph changed after the preview.
+
+### Decisions per incoming code (first version)
+
+Rows are checked top to bottom, and the first that matches decides.
+
+| local state for the code | allowed decisions | outcome recorded |
+|---|---|---|
+| deprecated or archived (a retired mirrored field included) | `skip` | `skipped` |
+| active and mirrored (`mirrors_column` set) | `keep_local`, `skip` | `kept_local` / `skipped` |
+| absent | `create`, `skip` | `created` / `skipped` |
+| active, but its stored data does not decode, so it cannot be projected | `keep_local`, `skip` | `kept_local` / `skipped` |
+| active, portable projection identical to the incoming field | `use_existing`, `skip` | `matched` / `skipped` |
+| active, anything different (type, subject kind, any property, any term) | `keep_local`, `skip` | `kept_local` / `skipped` |
+
+- **"Identical" means equal portable projections.** That is the local row projected exactly as the
+  exporter projects it, compared with the incoming field. Nothing else counts.
+- **Only `created` and `matched` say this server holds the incoming shape.** `kept_local` and
+  `skipped` never do. An apply whose decisions are all `skip` or `keep_local` returns an honest
+  receipt that changed nothing.
+- **Nothing existing is changed by the first version:**
+  - no property is overwritten, `display_condition` included;
+  - no vocabulary term is added, edited or removed;
+  - no code is renamed, no condition term is rewritten, and nothing retired is revived.
+
+  Differences are reported with the local and incoming values, so an operator who wants a change
+  can make it with the ordinary field API, under the ordinary rules.
+
+**Future, not part of the first version: adding incoming vocabulary terms to an existing
+definition.** If it is built, it needs its own review. Its receipt must record the exact terms
+added and every difference that remains, as a `partial` outcome, never as `matched`. Until then,
+no preview offers it.
+
+### What the receiver owns
+
+A `create` takes only the portable properties, exactly as sent: no trimming, relabelling or
+reordering. Everything local starts at the receiver's own defaults, which are those of
+`POST /fields`:
+- `applies_to` empty;
+- no read or write capability;
+- `read_only` false;
+- no extraction source, with `skip_if_set`;
+- no default and no team overrides;
+- `status` active;
+- no `mirrors_column`.
+
+The document's options become local option entries `{value, label}` with children, all active, and
+with no aliases or `replaced_by`. A `null` label becomes an unlabelled entry.
+
+### The document: shared v1 limits and strict decoding
+
+`aa-field-schema/1` has these limits, and both the exporter and the importer use them:
+- **Fields:** 1 to 100 per document, sorted strictly ascending by `code` with no duplicates. The
+  exporter already emits this.
+- **Options:** for `select`, `multi_select` and `tree` an array, possibly empty; for every other
+  type `null`.
+- **Option tree:** at most 64 levels deep, and at most 100,000 option nodes per document.
+  - **Built:** the exporter refuses a selection that breaks either bound, with 422
+    `format_limit_exceeded`. It names the fields too deep, or no codes when the total is too large.
+    It measures the exported ACTIVE projection, because retired terms do not travel. Nothing is
+    cut to fit.
+  - **The size limit does not imply the depth limit.** A 65-level chain of one-letter terms is a
+    few kilobytes, so the depth bound is enforced on its own on both paths. The node bound is in
+    practice reached by the 2 MiB size first (a minimal term encodes to about 41 bytes), and is
+    still checked first and reported as its own problem.
+- **Option members:** `value` is a non-empty string. `label` is a non-empty string or `null`, never
+  `""`. `children` is always an array.
+- **Optional properties:** `regexp_filter`, `display_condition` and `edit_tab` are `null` when
+  absent. `display_condition` is otherwise a non-empty array of non-empty strings. `description`
+  is a string, possibly empty.
+- **Per-field rules:** each field must also satisfy the rules `POST /fields` and `PATCH` apply to
+  the same values:
+  - the code pattern, and a non-empty label;
+  - a known type and subject kind;
+  - tree-wide unique option slugs;
+  - a valid `regexp_filter`;
+  - a non-blank `edit_tab`;
+  - well-formed condition terms, none naming the field itself.
+
+  A document breaking any of these is refused with the JSON path of every problem; it is never
+  repaired. A valid export can therefore still be refused when its source row violates today's
+  create rules, for example a label stored with surrounding spaces by a direct database write. The
+  refusal is explicit.
+
+**The whole request is decoded strictly, from the raw bytes.** The generated decoder matches keys
+without regard to case and lets a duplicate win, which loses exactly what has to be refused. Both
+operations are therefore served by raw route handlers in front of the generated ones, in the way
+the peer handshake already is. Their OpenAPI request and response schemas stay real and complete.
+The strict decoder refuses, at the envelope, `source`, document, field, option and decision-map
+levels:
+- unknown members, case-variant keys and duplicate keys;
+- a missing required member, a `false` boolean included;
+- wrong types, and `null` where the contract has no null;
+- trailing bytes or a second JSON value after the request;
+- any sender-local property, such as `id`, `applies_to`, a capability, `read_only`, extraction,
+  defaults, `status` or `mirrors_column`, because each is an unknown member;
+- a `format` other than `aa-field-schema/1`.
+
+### Authorization and bounds
+
+- **Authorization comes first.** It is checked before the body is read. 401 for no identity and 403
+  without `fields.admin` or `system.admin`, with bodies that do not depend on the request.
+- **Then the body is read, under a cap:**
+  - Preview is capped at **2,162,688 bytes** (2 MiB plus 64 KiB for the envelope), with 413 above
+    it.
+  - Apply is capped at **2,162,688 bytes** too, with 413 above it. A tighter apply cap would make
+    some valid previews impossible to apply, because the decision map repeats up to 100 codes of
+    any length the document allowed.
+- **Then the request is decoded.**
+  - An envelope that is not JSON or breaks the envelope rules gets 400 with paths.
+  - A document problem gets 422 `document_invalid` with paths, or 422 `unsupported_format`.
+- **Canonical form.** The document is re-encoded exactly the way the exporter encodes it, with
+  generated member order and a trailing newline. It must be at most 2,097,152 bytes, or the answer
+  is 422 `document_too_large`. Its SHA-256 is the document digest, which for an unmodified export
+  equals the SHA-256 of the export response body.
+- **Largest export.** Because the wrapper allowance covers the envelope, the largest valid export
+  always fits.
+
+### Previews, expiry, replay and provenance
+
+- **Previews are server-side and bounded.** A preview lasts 15 minutes. At most 3 previews per
+  actor and 20 overall may hold a payload, and an EXPIRED preview counts until the cleanup erases
+  it. So a late cleanup cannot let retained documents grow, and a slot can stay taken for a few
+  minutes after expiry (429). The counts are taken under a dedicated advisory lock in a READ
+  COMMITTED transaction, so a preview that waited for the lock counts the rows committed before it
+  got it.
+- **What a preview records:**
+  - the actor;
+  - the canonical document and its digest;
+  - the untrusted source claims;
+  - the allowed decisions;
+  - a digest of every local row it read for the incoming codes and the codes their conditions name.
+  Every local row the preview shows and binds, with its digest, comes from ONE statement, so
+  what is shown and what is bound are the same row version. Codes with no row are recorded as
+  absent, so a later appearance is detectable. The set holds every incoming code and every code an
+  incoming condition names, as many as the document holds, and no separate count limits it.
+- **What happens when it ends:**
+  - On a successful apply, the preview's document and row digests are erased in the same
+    transaction. What remains is the durable receipt: actor, preview id, document digest, a digest
+    of the decision map, and the per-code items.
+  - An expired preview is reduced to a small tombstone (id, actor, times and document digest; the
+    document, decisions, bound state and source claims are erased) by a scheduled cleanup.
+    The tombstone answers 410 for 24 hours and is then deleted. After that the id answers 404, the
+    same as an id that never existed.
+- **Replay is answered from the receipt.** A repeated apply first looks for a receipt for that
+  preview, before any expiry or staleness check.
+  - Same actor, still authorized, same document digest and same decision map: the stored receipt
+    comes back, marked as a replay, and nothing is written again.
+  - A different decision map gets 409 `preview_consumed`.
+  - Replay works for as long as the receipt is kept. Receipts are provenance, and they are kept
+    until an operator removes them.
+- **Other refusals, all writing nothing:**
+  - another actor's preview or an unknown id: 404;
+  - a different document digest: 409 `digest_mismatch`;
+  - a changed row for any incoming code or any directly referenced code: 409 `preview_stale` with
+    the codes.
+
+  Any other change in the graph does not make a preview stale. It is caught instead by apply's own
+  validation, as 422 `graph_refused`.
+- **Provenance is receiver-recorded history,** written in the same transaction as the definitions.
+  One receipt per apply holds:
+  - the actor, time, document digest and format;
+  - the source label and URI, as claims the operator typed, never as peer identity or
+    authorization;
+  - one item per incoming code, with its decision, outcome and the local definition id.
+
+  It never travels in the portable document. An updated remote schema always needs a new preview.
+
+### Atomic apply, ordinary creation and the final graph
+
+- **Who can change what the validation reads:**
+  - A field's `display_condition` changes only under the subject-kind advisory locks of ADR 0099
+    §8.
+  - With this amendment, every ordinary `POST /fields` also takes them.
+  - `status` and `applies_to` can still change through row-locking writers that take no advisory
+    lock: `PATCH` without a condition, and archive.
+  - `code`, `type`, `subject_kind` and `mirrors_column` cannot change through the API.
+- **Apply and ordinary `POST /fields` run the same sequence,** in one transaction:
+  1. Take both advisory locks, asset then collection. That freezes every condition edge and every
+     code.
+  2. Lock the preview row (apply only).
+  3. Read the edges. Then compute the rows whose attributes the validation consults: every created
+     field, every stored dependent that names a created code, and every controller those fields
+     name.
+  4. Lock those rows `FOR UPDATE` in code order.
+  5. Recheck freshness and the decisions from the locked rows.
+  6. Validate, write, and record.
+- **Why this is enough.** A concurrent archive or `applies_to` edit that would invalidate the
+  configuration being committed waits for the commit, and is then ordinary later drift (ADR 0099
+  §7).
+- **Ordering.** No writer takes an advisory lock after a row lock, and every writer that takes both
+  advisory locks takes them in the same order.
+- **The final proposed graph is validated, not a sequence of steps.** It holds the current edges,
+  the locked attributes and every created field, and it does not depend on document order.
+  - Every resolvable edge passes the ordinary ADR 0099 §6 refusal list.
+  - A stored dependent whose term now resolves to a created field is validated with it.
+  - Terms naming a code that exists in neither are kept verbatim. Only their cycle participation
+    and applicability contribution are deferred.
+  - The existing cycle walk runs over that complete graph from every created dependent and every
+    newly resolved dependent. Any new cycle must contain one of their edges.
+  - Any refusal rolls back the whole apply, receipt and preview consumption included.
+- **Deferred edges are confronted when they resolve.** A later import revalidates them through the
+  same final graph. An ordinary `POST /fields` of a named code validates every dependent that names
+  it under the same locks, and is refused with 409 `display_condition_conflict` naming the
+  dependents if any would be invalid. This ships in the same release as the first apply, never
+  after it.
+- **Ordinary `PATCH` keeps refusing a newly submitted condition that names a missing field.** An
+  imported condition with unresolved terms survives unrelated edits, because only a request that
+  touches `display_condition` validates it. Editing that condition requires resolving or removing
+  its missing terms.
+- **After commit,** the changed field caches, the extraction configuration and any search or
+  composition caches that read definitions are invalidated, and one audit event records the
+  receipt.
+
+### Built: the preview step (S1)
+
+`POST /api/v1/fields/import/preview` exists as described in "Flow", "The document" and
+"Authorization and bounds".
+- **Routing:** a raw route registered in front of the generated adapter. The OpenAPI operation is
+  fully described; the generated method is never reached.
+- **Before the body:** identity, then `fields.admin` or `system.admin`, before any byte is read.
+- **Reading:** under a 2,162,688-byte cap, regardless of Content-Length.
+- **Decoding:** strict, from the raw bytes. Invalid UTF-8 and escapes of unpaired surrogates are
+  refused, never replaced.
+- **Storage:** one preview row (migration 00095), holding the canonical document bytes, its
+  digest, the untrusted source claims, the allowed decisions and the bound state. The bound state
+  is a digest per present row and the list of absent codes.
+- **Local states and decisions:** follow the table above, with `retired` checked first.
+- **Unresolved terms:** listed, never refused for being absent.
+- **No writes elsewhere:** a preview changes no definition, option, value, default, permission or
+  role.
+- **Cleanup:** a five-minute cleanup compacts expired previews to tombstones (keeping id, actor,
+  times and document digest; erasing the document, decisions, bound state and source claims) and
+  deletes tombstones after 24 hours. It works in batches that skip rows another transaction holds, and
+  takes no other lock.
+
+The apply step, receipts, provenance and the serialized ordinary create were added in S2,
+recorded in the next section.
+
+### Built: the apply step and serialized creation (S2)
+
+`POST /api/v1/fields/import/apply` (`applyFieldSchemaImport`) is a raw route over the generated
+adapter, like the preview.
+- **Before the body:** identity (401), then `fields.admin` or `system.admin` (403).
+- **Reading:** under a 2,162,688-byte cap (413).
+- **Envelope `{preview_id, document_digest, decisions}`:** decoded strictly from the raw bytes.
+  `preview_id` must be a lower-case UUID, and `document_digest` `sha256:` and 64 lower-case hex.
+  Every envelope fault is 400 `request_invalid`.
+- **Parser context:** structural. Only the value of the top-level member named exactly
+  `document` is the document, so envelope keys such as `document.x` or `document[0]` stay 400.
+- **Checks, by branch:**
+  1. **A receipt for the preview** (checked first, before any expiry or staleness check; a receipt
+     can be replayed for as long as it is kept):
+     - another operator's gives 404 `preview_not_found`;
+     - a different digest gives 409 `digest_mismatch`;
+     - different decisions give 409 `preview_consumed`;
+     - otherwise the original receipt, `replayed: true`, with nothing written.
+  2. **Otherwise, one READ COMMITTED transaction:**
+     - both graph locks (1173: asset, then collection);
+     - the receipt again (a concurrent winner answers as a replay);
+     - the preview row `FOR UPDATE`; then the database clock, in a separate statement, against its
+       expiry. Missing, another operator's, or more than 24 hours past expiry (whether or not the
+       cleanup has deleted it) gives 404. A tombstone, or a live preview past expiry, gives 410;
+     - digest gives 409 `digest_mismatch`;
+     - the strict condition graph;
+     - the read set `FOR UPDATE` in code order: the incoming and directly referenced rows, the
+       stored dependents a creation resolves, and their controllers;
+     - bound-row digests and absences gives 409 `preview_stale`;
+     - the exact decision key set and allowed decisions, recomputed from the locked rows, gives
+       422 `decision_invalid`;
+     - the complete final graph, validated for every created dependent and every stored dependent
+       it resolves, gives 422 `graph_refused`;
+     - inserts (every portable member, receiver defaults for every local setting), the receipt
+       with its items, and deletion of the preview row;
+     - **the database clock again, immediately before commit.** A preview that expired while the
+       apply waited on any lock gives 410, and everything written above rolls back. A projected
+       expiry in the locking SELECT is not used for the deadline, because it can be evaluated
+       before the lock wait ends.
+  3. **Any failure rolls back everything.** A value the database cannot store, such as a code too
+     long to index, gives 422 `unstorable_value`.
+- **After commit:** the field-by-id cache is invalidated for each created definition, exactly as
+  ordinary `POST /fields` does. No further cache needs it:
+  - the extraction cache lists only fields with an extraction source, and created fields have
+    none;
+  - IIIF manifests and search results are built from field values, and a new field has none;
+  - field lists and composition are read from the database.
+
+  One `metadata.field_schema.imported` audit event is written for every newly committed receipt,
+  `changed` 0 included, and none for a replay, refusal or rollback.
+- **Receipts:** migration 00096.
+  - `preview_id` is UNIQUE.
+  - Items are keyed by `(receipt_id, ordinal)`, the sorted position 0 to 99, and the code is plain
+    unindexed text. So a receipt adds no code-length limit, and a code too long to index can
+    still be recorded as `skipped`.
+  - `field_id` has no foreign key, so later changes never rewrite a receipt.
+  - Receipts are not swept.
+- **Ordinary `POST /fields`:** now one transaction that takes both graph locks before looking for
+  stored dependents. It validates the dependents the new code resolves, with the new field's real
+  type, subject kind and `applies_to`, and refuses with 409 `display_condition_conflict` naming
+  them. Otherwise it creates as before.
+- **Ordinary `PATCH`:** unchanged. It still refuses a newly submitted missing reference, and an
+  imported unresolved condition survives unrelated edits.
+- **The G8 fix is not built, and stays a follow-up.** That is the controller-row locking for
+  `PATCH`: today `PATCH` validates a submitted condition without row-locking its controllers, and
+  a `PATCH` that changes `applies_to` and the condition together validates against the stored row.
+  Both pre-date import and are unchanged here. Apply and the ordinary create lock their own read
+  sets: the dependents a creation resolves and their controllers. A concurrent archive or
+  `applies_to` change on those rows waits for their commit.
+
+### Verified: two-instance adoption (S3)
+
+`TestTwoStack_FieldSchemaExchange` (app/internal/federation/twostack) runs the operator chain
+between two current-code servers. Each server is the real production router over TLS, on its
+own migrated database, storage root and site identity. The test does not use a published
+release binary.
+
+The chain: A exports a selection; B previews A's exact response bytes, so the preview digest
+equals the SHA-256 of A's body; B applies explicit decisions; B exports. Along the way it shows:
+- **The four outcomes:** `matched` for an identical field whose local capability, read-only,
+  `applies_to`, default, team override, extraction, alias and retired-term settings all stay
+  B's own; `created` for a nested vocabulary and for a text field with a pattern, a tab and a
+  condition naming a controller B lacks; `kept_local` for a type conflict; `skipped` for an
+  option conflict.
+- **Byte-identical exports:** the adopted subset exports from A and from B byte for byte.
+- **Preservation:** every other B definition row, every existing value row (compared whole, on
+  an owned asset with values on the matched and conflicting fields, including an archived local
+  term), the default overrides and the permission tables are unchanged, and so is A. That holds
+  through the preview, the refused and successful applies, the replay, the stale refusal and the
+  later reviews; the only exception is the one intended local label edit. A control that
+  rewrites a value during an otherwise successful apply is caught.
+- **Provenance:** receipt and audit event on B; a replay changes nothing.
+- **Refusals:** all refused, with nothing written:
+  - anonymous and cross-instance credentials on preview and apply;
+  - a member on preview and on apply, with the same body for valid and malformed requests;
+  - a sender-local member, a malformed document and an oversized body;
+  - incomplete decisions, another operator's preview, and a stale preview.
+- **Updates and later resolution:** an updated source schema leaves B alone until a new
+  preview, where it is kept local on request. The omitted controller, adopted later through the
+  same chain, resolves the term B kept verbatim.
+- **The reverse direction:** a compact B to A adoption works the same way.
+
+Not shown by this gate: an operator UI or receipt history (not built), the full local and hosted
+test suites, any federation profile, and a cross-version or release gate.
+
+### Built: the operator pages and the receipt history (S4)
+
+The sections above stay as they were written; this one records what S4 added.
+
+**History API.** `GET /fields/import/receipts` and `GET /fields/import/receipts/{receipt_id}`
+are read-only. Both are raw routes, like preview and apply, so authorization comes before the
+query or the path is read: 401 anonymous, 403 without `fields.admin` or `system.admin`, then 400
+for a malformed request and 404 for an unknown id. Any field administrator reads every local
+receipt. That grants nothing on apply, where a preview stays bound to the operator who made it.
+- The list is newest first by `(applied_at, id)`, 25 by default and 1 to 100 per page. Paging
+  is by keyset over a matching index (migration 00096), never by offset. The cursor is opaque,
+  versioned, at most 512 bytes, and accepted only in the exact canonical spelling the server
+  writes for a position (no padding, newline or alternative trailing bits). A query that does
+  not parse (a bad escape, a semicolon separator) or a cursor that is not canonical is a 400,
+  never a silent restart at the first page. The cursor is a position, not a credential: it is
+  not signed, and a well-formed cursor for any position is accepted as that position.
+- A summary carries the digests, the unverified source note, `changed` and the field count.
+  The detail adds the preview id and, in recorded order, each code's decision, outcome,
+  incoming digest and the field id as it was then, which may name a field since deleted. There
+  is no replay flag. A removed account reads as a null actor.
+- Reading writes nothing: no audit entry, no preview touched. A failed query is a 500, never an
+  empty page.
+
+**Pages.** `/admin/fields/schema-exchange` and `/admin/fields/import-history`, linked from the
+fields index. The fields admin tile now names `fields.admin`, so a delegated field
+administrator can find them.
+- Export sends a deliberate selection of 1 to 100 active, non-mirrored fields and saves the
+  response bytes as they arrived.
+- Import sends the document text as read or pasted, embedded unparsed in the preview envelope;
+  the page parses it only to prove it is one JSON value. Before that, a file is refused unread
+  when it cannot fit the server's 2,162,688-byte preview body, its bytes must be valid UTF-8
+  (refused, never repaired), pasted text with an unpaired surrogate is refused, and the exact
+  request is measured against the same bound. The 2 MiB canonical document limit stays the
+  server's to judge. The source note is optional and sent as typed, checked as the server
+  checks it (label at most 200 characters, URI at most 2,048 bytes, absolute http or https).
+- Every incoming field shows all 17 portable members before a decision, open by default for a
+  field this server lacks, and each decision is labelled with its effect. No decision is
+  pre-selected, and Apply appears only when every code has an allowed one, beside a summary
+  and a reminder that local settings and values stay local.
+- The apply request is built once and frozen. A failure with an unknown outcome keeps that
+  exact request and LOCKS the page on it: the document, file, source note, decisions and
+  Preview are disabled until a retry of the same request resolves it, and the page links to
+  the history. The server applies a request at most once and answers a repeat with the
+  recorded receipt, even after the preview's clock expiry. Discarding the request needs an
+  explicit acknowledgment that it may already have applied. (This supersedes the first S4 text,
+  under which any edit or new preview discarded the frozen request.) Otherwise an edit or new
+  preview discards the preview, its decisions, the frozen request and the previous result, and
+  a late answer for an older preview is ignored.
+- Stale, expired, consumed and missing previews end the preview; a 422 lets the decisions
+  change; 401, 403 and 429 keep the request and leave an unknown outcome unknown.
+- Each page belongs to one signed-in operator. A change of account, a loss or degradation of
+  rights, or a sign-out clears the page and ignores answers still in flight; an apply still in
+  flight or with an unknown outcome is never retried under another account and is reported as
+  possibly applied by the operator who sent it. A pending file read belongs to the file choice,
+  so editing the source note while it reads does not strand it.
+- Failed reads offer Retry at the same position; the history detail says it records what
+  happened at apply time, not the fields as they are now. Visible text is in the en, es and fr
+  catalogues; codes, property names, decisions and digests stay as data. Operator-typed and
+  document text renders as text only.
+
+Verified by real-router tests for the history endpoints, rendered component tests for both
+pages, and a maintained standalone browser spec
+(`scripts/dogfood/ui/tests/standalone/field-schema-exchange-1576.spec.ts`).
+
+### Still not decided by this amendment
+
+- Adding vocabulary terms to existing definitions.
+
+#1576 stays open until the full local and hosted test suites pass. The backend API, provenance,
+the two-instance gate, the operator pages and the receipt history are done.

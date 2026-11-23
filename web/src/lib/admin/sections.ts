@@ -108,7 +108,12 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // cap makes the delegation discoverable and keeps the invariant —
       // a visible tile never 403s on click — true in both directions.
       { key: 'asset_types', status: 'live',   href: '/admin/asset-types', cap: 'system.asset_types.admin' },
-      { key: 'fields',         status: 'live',   href: '/admin/fields' },
+      // Gated on `fields.admin` (#1576 S4): every write under
+      // /admin/fields, and the schema exchange and import history pages
+      // it links to, require it (or `system.admin`). Without a cap the
+      // tile meant superuser-only, and a delegated field admin could
+      // not find the pages their capability opens.
+      { key: 'fields',         status: 'live',   href: '/admin/fields', cap: 'fields.admin' },
       { key: 'metadata_extraction', status: 'live', href: '/admin/metadata-extraction/failures', cap: 'system.metadata_extraction.read' },
       { key: 'field_options',  status: 'future' },
       // `field_sets` removed 2026-07-31 (#738). The tile promised

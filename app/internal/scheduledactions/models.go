@@ -989,6 +989,45 @@ type FieldDefinition struct {
 	DisplayCondition []byte `json:"display_condition"`
 }
 
+type FieldSchemaImportPreview struct {
+	ID             pgtype.UUID        `json:"id"`
+	ActorRef       int64              `json:"actor_ref"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	State          string             `json:"state"`
+	Document       []byte             `json:"document"`
+	DocumentDigest string             `json:"document_digest"`
+	SourceLabel    *string            `json:"source_label"`
+	SourceUri      *string            `json:"source_uri"`
+	Allowed        []byte             `json:"allowed"`
+	BoundState     []byte             `json:"bound_state"`
+	TombstoneUntil pgtype.Timestamptz `json:"tombstone_until"`
+}
+
+type FieldSchemaImportReceipt struct {
+	ID              pgtype.UUID        `json:"id"`
+	PreviewID       pgtype.UUID        `json:"preview_id"`
+	ActorRef        *int64             `json:"actor_ref"`
+	AppliedAt       pgtype.Timestamptz `json:"applied_at"`
+	Format          string             `json:"format"`
+	DocumentDigest  string             `json:"document_digest"`
+	DecisionsDigest string             `json:"decisions_digest"`
+	Decisions       []byte             `json:"decisions"`
+	SourceLabel     *string            `json:"source_label"`
+	SourceUri       *string            `json:"source_uri"`
+	Changed         int32              `json:"changed"`
+}
+
+type FieldSchemaImportReceiptItem struct {
+	ReceiptID           pgtype.UUID `json:"receipt_id"`
+	Ordinal             int16       `json:"ordinal"`
+	Code                string      `json:"code"`
+	Decision            string      `json:"decision"`
+	Outcome             string      `json:"outcome"`
+	FieldID             pgtype.UUID `json:"field_id"`
+	IncomingFieldDigest string      `json:"incoming_field_digest"`
+}
+
 type GooseDbVersion struct {
 	ID        int32            `json:"id"`
 	VersionID int64            `json:"version_id"`
