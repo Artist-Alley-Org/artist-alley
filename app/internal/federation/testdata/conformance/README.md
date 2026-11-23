@@ -57,9 +57,32 @@ deployed implementation.
   v1.md *Implementation status* S1). Fixity vectors carry the received
   bytes inline (`received.bytes_b64`); keep them small.
 
+- `asset-metadata-1/`: Profile asset-metadata-1 vectors (v1.md §18;
+  #1577), run by `TestConformance_AssetMetadata1` in
+  `asset_metadata_conformance_test.go`. Each fixture has a `stage`:
+  - `member`: the raw `aa:metadata` bytes, as a JSON string (`member`)
+    or, when they are not valid UTF-8, as base64 (`member_b64`), so a
+    repeated name or an escape reaches the parser exactly as written;
+  - `round-trip`: an accepted member whose parsed snapshot marshals
+    with all four keys and parses back unchanged;
+  - `profile`: an otherwise valid v1 envelope plus the `negotiated`
+    tokens, for the placement check.
+
+  `expected` holds `outcome`, `reason` (`metadata_invalid`, or the
+  existing reason the profile keeps: `profile_not_negotiated`,
+  `archival_invalid`, `invalid_member`, `unknown_field`) and, for an
+  accepted member, the `snapshot`. `enforcement.now` names the pure
+  function the vector runs (`federation.ParseAssetMetadata` or
+  `federation.ValidateAssetMetadataMembers`); `enforcement.pending` is
+  #1577, which applies the rules in a running receiver. A passing
+  vector proves the rule is executable, not that anything admits the
+  member: the running inbox still refuses `aa:metadata` as
+  `unknown_field`, and the harness checks that for every accepted
+  profile vector (v1.md *Implementation status* S3).
+
 ## Adding a new fixture
 
-1. The fixture lives under one of the five categories above.
+1. The fixture lives under one of the categories above.
 2. If the fixture introduces new wire-format behaviour, the
    spec doc gets a §-cross-reference comment in the fixture's
    JSON `description` field.

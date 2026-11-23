@@ -1,0 +1,46 @@
+{
+  "description": "A malformed companion keeps the archival-1 reason.",
+  "spec": "v1.md \u00a718.5, \u00a717.2",
+  "stage": "profile",
+  "negotiated": [
+    "asset-metadata-1",
+    "archival-1",
+    "original-transfer-1"
+  ],
+  "envelope": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "Update",
+    "id": "https://studio-a.example/activities/metadata-1",
+    "actor": "https://studio-a.example/users/alice",
+    "published": "2026-11-23T10:00:00Z",
+    "object": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c",
+    "aa:asset": {
+      "id": "https://studio-a.example/assets/7d6f1c2a-3b4e-4f5a-8b9c-0d1e2f3a4b5c"
+    },
+    "aa:metadata": {
+      "title": "Harbour at dusk",
+      "description": null,
+      "rights": "https://creativecommons.org/licenses/by/4.0/",
+      "requiredStatement": {
+        "label": {
+          "en": [
+            "Attribution"
+          ]
+        },
+        "value": {
+          "none": [
+            "Studio A"
+          ]
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "reject",
+    "reason": "archival_invalid"
+  },
+  "enforcement": {
+    "now": "federation.ValidateAssetMetadataMembers",
+    "pending": "#1577: the receiver revision and projection, the sender and the UI apply this; the running inbox still refuses aa:metadata as unknown_field (v1.md Implementation status S3)"
+  }
+}

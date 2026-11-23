@@ -1,0 +1,20 @@
+{
+  "description": "Four nulls are a valid clear-all snapshot.",
+  "spec": "v1.md \u00a718.2",
+  "stage": "member",
+  "member": "{\"title\":null,\"description\":null,\"rights\":null,\"requiredStatement\":null}",
+  "expected": {
+    "outcome": "accept",
+    "reason": "",
+    "snapshot": {
+      "title": null,
+      "description": null,
+      "rights": null,
+      "requiredStatement": null
+    }
+  },
+  "enforcement": {
+    "now": "federation.ParseAssetMetadata",
+    "pending": "#1577: the receiver revision and projection, the sender and the UI apply this; the running inbox still refuses aa:metadata as unknown_field (v1.md Implementation status S3)"
+  }
+}
