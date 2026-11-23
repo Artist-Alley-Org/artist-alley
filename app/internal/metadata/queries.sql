@@ -1426,3 +1426,188 @@ SELECT count(*)
            AND p.deleted_at IS NULL
            AND a.deleted_at IS NULL
        ) AS expanded;
+
+-- ---------------------------------------------------------------------------
+-- Schema import preview (#1576, ADR 0083 2026-11-22 amendments)
+-- ---------------------------------------------------------------------------
+
+-- name: LockFieldSchemaImportAdmission :exec
+-- Serialises preview admission so the per-actor and global payload caps
+-- cannot be overrun by concurrent previews. Its own lock space (1576):
+-- no graph writer takes it, and admission takes no graph lock. Run in a
+-- READ COMMITTED transaction so the counts that follow read a snapshot
+-- taken AFTER the lock is held.
+SELECT pg_advisory_xact_lock(1576, 1);
+
+-- name: CountFieldSchemaImportPayloads :one
+-- Every row still holding a payload counts, expired or not: a late
+-- cleanup must not let retained documents grow past the caps.
+SELECT count(*) FILTER (WHERE actor_ref = @actor_ref)::bigint AS actor_count,
+       count(*)::bigint AS total_count
+  FROM field_schema_import_preview
+ WHERE document IS NOT NULL;
+
+-- name: ListFieldDefinitionsForImportPreview :many
+-- The local rows a preview shows and binds, and a digest of each whole
+-- row, from ONE statement so both come from the same snapshot. A code
+-- with no row is absent; absence is read from the same statement.
+SELECT sqlc.embed(field_definition),
+       encode(sha256(convert_to(to_jsonb(field_definition)::text, 'UTF8')), 'hex')::text AS row_digest
+  FROM field_definition
+ WHERE field_definition.code = ANY(@codes::text[])
+ ORDER BY field_definition.code;
+
+-- name: InsertFieldSchemaImportPreview :one
+-- The time comes from clock_timestamp(), read ONCE, not from the
+-- transaction start, which can precede a wait on the admission lock.
+INSERT INTO field_schema_import_preview (
+    actor_ref, created_at, expires_at, state, document, document_digest,
+    source_label, source_uri, allowed, bound_state
+)
+SELECT @actor_ref, t.now, t.now + make_interval(secs => @ttl_seconds::double precision),
+       'live', @document, @document_digest,
+       sqlc.narg('source_label'), sqlc.narg('source_uri'), @allowed, @bound_state
+  FROM (SELECT clock_timestamp() AS now) t
+RETURNING id, created_at, expires_at;
+
+-- name: GetFieldSchemaImportPreview :one
+SELECT id, actor_ref, created_at, expires_at, state, document, document_digest,
+       source_label, source_uri, allowed, bound_state, tombstone_until
+  FROM field_schema_import_preview
+ WHERE id = $1;
+
+-- name: CompactExpiredFieldSchemaImportPreviews :execrows
+-- Erases the payload and the source claims of up to @batch_size expired
+-- live previews and keeps a compact tombstone for 24 hours: id, actor,
+-- times and the document digest. SKIP LOCKED: a row another transaction
+-- holds is left for the next run. Takes no other lock.
+UPDATE field_schema_import_preview
+   SET state = 'expired', document = NULL, allowed = NULL, bound_state = NULL,
+       source_label = NULL, source_uri = NULL,
+       tombstone_until = expires_at + interval '24 hours'
+ WHERE id IN (
+       SELECT id FROM field_schema_import_preview
+        WHERE state = 'live' AND expires_at <= clock_timestamp()
+        ORDER BY expires_at
+        LIMIT @batch_size
+        FOR UPDATE SKIP LOCKED);
+
+-- name: DeleteExpiredFieldSchemaImportTombstones :execrows
+-- Deletes up to @batch_size tombstones past their retention.
+DELETE FROM field_schema_import_preview
+ WHERE id IN (
+       SELECT id FROM field_schema_import_preview
+        WHERE state = 'expired' AND tombstone_until <= clock_timestamp()
+        ORDER BY tombstone_until
+        LIMIT @batch_size
+        FOR UPDATE SKIP LOCKED);
+
+-- ---------------------------------------------------------------------------
+-- Schema import apply (#1576 S2)
+-- ---------------------------------------------------------------------------
+
+-- name: GetFieldSchemaImportReceiptByPreview :one
+-- The replay key. Read before any expiry or staleness check.
+SELECT id, preview_id, actor_ref, applied_at, format, document_digest, decisions_digest,
+       decisions, source_label, source_uri, changed
+  FROM field_schema_import_receipt
+ WHERE preview_id = $1;
+
+-- name: ListFieldSchemaImportReceiptItems :many
+SELECT code, decision, outcome, field_id, incoming_field_digest
+  FROM field_schema_import_receipt_item
+ WHERE receipt_id = $1
+ ORDER BY ordinal;
+
+-- name: LockFieldSchemaImportPreviewForApply :one
+-- Taken AFTER both display-condition graph locks. Returns expires_at
+-- only; the deadline is judged by FieldSchemaImportPreviewDeadline, a
+-- separate statement, because an expression in this target list can be
+-- evaluated before the row-lock wait ends.
+SELECT id, actor_ref, state, document, document_digest, source_label, source_uri,
+       allowed, bound_state, expires_at
+  FROM field_schema_import_preview
+ WHERE id = $1
+   FOR UPDATE;
+
+-- name: FieldSchemaImportPreviewDeadline :one
+-- The database clock now, against a preview's expiry: expired, and past
+-- the 24-hour horizon after which an expired preview answers 404.
+SELECT clock_timestamp() >= sqlc.arg(expires_at)::timestamptz AS expired,
+       clock_timestamp() >= sqlc.arg(expires_at)::timestamptz + interval '24 hours' AS beyond_retention;
+
+-- name: DeleteFieldSchemaImportPreview :exec
+DELETE FROM field_schema_import_preview WHERE id = $1;
+
+-- name: LockFieldDefinitionsForImport :many
+-- The rows an apply or an ordinary create validates against, locked in
+-- one deterministic code order, with the same whole-row digest the
+-- preview recorded. Under READ COMMITTED a locked row is the latest
+-- committed version, and its digest is computed from that version.
+SELECT sqlc.embed(field_definition),
+       encode(sha256(convert_to(to_jsonb(field_definition)::text, 'UTF8')), 'hex')::text AS row_digest
+  FROM field_definition
+ WHERE field_definition.code = ANY(@codes::text[])
+ ORDER BY field_definition.code
+   FOR UPDATE;
+
+-- name: InsertImportedFieldDefinition :one
+-- Every portable member exactly as imported; every receiver-owned
+-- setting at its local default: active, applies_to empty, no
+-- capabilities, read_only false, no extraction, no default, no mirror.
+INSERT INTO field_definition (
+    code, label, description, type, options, required, searchable,
+    applies_to, read_capability, write_capability,
+    display_order, display_group, status, subject_kind,
+    extraction_source, extraction_mode, default_value, open_vocabulary,
+    show_on_card, show_in_advanced_search, show_on_upload, edit_tab,
+    read_only, regexp_filter, display_condition, created_by_user_ref
+) VALUES (
+    @code, @label, @description, @type, @options, @required, @searchable,
+    '{}', NULL, NULL,
+    @display_order, @display_group, 'active', @subject_kind,
+    '', 'skip_if_set', NULL, @open_vocabulary,
+    @show_on_card, @show_in_advanced_search, @show_on_upload, sqlc.narg('edit_tab'),
+    false, sqlc.narg('regexp_filter'), sqlc.narg('display_condition'), @created_by_user_ref
+)
+RETURNING id;
+
+-- name: InsertFieldSchemaImportReceipt :one
+INSERT INTO field_schema_import_receipt (
+    preview_id, actor_ref, applied_at, format, document_digest, decisions_digest,
+    decisions, source_label, source_uri, changed
+) VALUES (
+    @preview_id, @actor_ref, clock_timestamp(), @format, @document_digest, @decisions_digest,
+    @decisions, sqlc.narg('source_label'), sqlc.narg('source_uri'), @changed
+)
+RETURNING id, applied_at;
+
+-- name: InsertFieldSchemaImportReceiptItem :exec
+INSERT INTO field_schema_import_receipt_item (
+    receipt_id, ordinal, code, decision, outcome, field_id, incoming_field_digest
+) VALUES (
+    @receipt_id, @ordinal, @code, @decision, @outcome, sqlc.narg('field_id'), @incoming_field_digest
+);
+
+-- ---------------------------------------------------------------------------
+-- Schema import history, read-only (#1576 S4)
+-- ---------------------------------------------------------------------------
+
+-- name: ListFieldSchemaImportReceipts :many
+-- Newest first, keyset on (applied_at, id): rows strictly after the
+-- cursor position in that order. No OFFSET, so a receipt inserted
+-- between pages can neither repeat nor hide an older row.
+SELECT r.id, r.applied_at, r.actor_ref, r.format, r.document_digest, r.decisions_digest,
+       r.source_label, r.source_uri, r.changed,
+       (SELECT count(*) FROM field_schema_import_receipt_item i WHERE i.receipt_id = r.id)::int AS field_count
+  FROM field_schema_import_receipt r
+ WHERE (sqlc.narg('after_at')::timestamptz IS NULL
+        OR (r.applied_at, r.id) < (sqlc.narg('after_at')::timestamptz, sqlc.narg('after_id')::uuid))
+ ORDER BY r.applied_at DESC, r.id DESC
+ LIMIT @lim;
+
+-- name: GetFieldSchemaImportReceipt :one
+SELECT id, preview_id, actor_ref, applied_at, format, document_digest, decisions_digest,
+       decisions, source_label, source_uri, changed
+  FROM field_schema_import_receipt
+ WHERE id = $1;

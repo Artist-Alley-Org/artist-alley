@@ -374,8 +374,10 @@ func (h *Handler) CreateField(
 		}
 	}
 
-	q := New(h.Pool)
-	row, err := q.CreateFieldDefinition(ctx, CreateFieldDefinitionParams{
+	// One transaction under both display-condition graph locks: stored
+	// imported conditions that name this code are validated against the
+	// field being created before it is inserted (#1576, ADR 0099 §10).
+	row, conflict, err := h.createFieldSerialized(ctx, CreateFieldDefinitionParams{
 		Code:             code,
 		Label:            label,
 		Description:      strOr(in.Description, ""),
@@ -394,6 +396,9 @@ func (h *Handler) CreateField(
 		DefaultValue:     defaultJSON,
 		OpenVocabulary:   boolOr(in.OpenVocabulary, false),
 	})
+	if conflict != nil {
+		return openapi.CreateField409JSONResponse(*conflict), nil
+	}
 	if err != nil {
 		// Most likely a duplicate code violating the UNIQUE
 		// constraint. Surface that as a friendly 400.

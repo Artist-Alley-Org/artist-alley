@@ -989,6 +989,45 @@ type FieldDefinition struct {
 	DisplayCondition []byte
 }
 
+type FieldSchemaImportPreview struct {
+	ID             pgtype.UUID
+	ActorRef       int64
+	CreatedAt      pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
+	State          string
+	Document       []byte
+	DocumentDigest string
+	SourceLabel    *string
+	SourceUri      *string
+	Allowed        []byte
+	BoundState     []byte
+	TombstoneUntil pgtype.Timestamptz
+}
+
+type FieldSchemaImportReceipt struct {
+	ID              pgtype.UUID
+	PreviewID       pgtype.UUID
+	ActorRef        *int64
+	AppliedAt       pgtype.Timestamptz
+	Format          string
+	DocumentDigest  string
+	DecisionsDigest string
+	Decisions       []byte
+	SourceLabel     *string
+	SourceUri       *string
+	Changed         int32
+}
+
+type FieldSchemaImportReceiptItem struct {
+	ReceiptID           pgtype.UUID
+	Ordinal             int16
+	Code                string
+	Decision            string
+	Outcome             string
+	FieldID             pgtype.UUID
+	IncomingFieldDigest string
+}
+
 type GooseDbVersion struct {
 	ID        int32
 	VersionID int64

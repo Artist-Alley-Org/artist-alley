@@ -19,6 +19,7 @@
   import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
+  import { auth } from '$stores/auth.svelte';
 
   interface Field {
     id: string;
@@ -105,6 +106,13 @@
 
 <div class="mb-4 flex items-center justify-between gap-4">
   <h2 class="text-xl font-semibold">{t('admin.fields.title')}</h2>
+  {#if auth.can('fields.admin')}
+    <!-- #1576 S4: the portable schema exchange and its read-only history. -->
+    <nav class="ml-auto flex items-center gap-3 text-sm" data-testid="admin-fields-exchange-links">
+      <a href="/admin/fields/schema-exchange" class="text-accent hover:underline" data-testid="admin-fields-link-exchange">{t('admin.fields.link_schema_exchange')}</a>
+      <a href="/admin/fields/import-history" class="text-accent hover:underline" data-testid="admin-fields-link-history">{t('admin.fields.link_import_history')}</a>
+    </nav>
+  {/if}
   <button
     type="button"
     onclick={() => (showCreate = !showCreate)}

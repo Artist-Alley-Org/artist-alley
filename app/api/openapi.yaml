@@ -5842,6 +5842,14 @@ paths:
       security:
         - cookieAuth: []
         - bearerAuth: []
+      description: |
+        Creates a field definition. If imported display conditions on
+        this server name the new field's code, they start to apply to
+        it, so they are checked first, under the same locks an import
+        takes, against the field being created: its type, subject kind
+        and `applies_to`. If any would break an ordinary condition rule,
+        nothing is created and the answer is 409
+        `display_condition_conflict`, naming each such field and why.
       requestBody:
         required: true
         content:
@@ -5859,6 +5867,11 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Stored display conditions naming this code would become invalid
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DisplayConditionConflict" }
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -5898,6 +5911,11 @@ paths:
           document or `display_condition`) refuses the request with
           422 `malformed_definition`. It is never exported as a partial
           object.
+        - The document follows the `aa-field-schema/1` limits: an
+          option tree at most 64 levels deep, counting a top-level term
+          as level 1, and at most 100,000 option terms in the whole
+          document. A selection beyond either refuses with 422
+          `format_limit_exceeded`. Nothing is cut to fit.
         - The request body is capped at 64 KiB (413) and the export at
           2 MiB, measured as the response body bytes (422
           `export_too_large`). Nothing is truncated to fit.
@@ -5942,6 +5960,327 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/FieldSchemaExportRefusal" }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /fields/import/preview:
+    post:
+      operationId: previewFieldSchemaImport
+      summary: Preview importing a portable field schema (admin)
+      description: |
+        Reviews an `aa-field-schema/1` document, as produced by
+        `POST /fields/export`, against this server's field definitions
+        (ADR 0083, 2026-11-22 amendments, #1576). It changes no
+        definition, option, value, default or permission. It records a
+        short-lived preview that `POST /fields/import/apply` applies.
+
+        For every incoming field the answer shows the local state, the
+        per-property and per-term differences, and the decisions a later
+        import will accept:
+        - `retired`: a local `deprecated` or `archived` definition has
+          the code. Only `skip`.
+        - `mirrored`: an active local definition that mirrors an asset
+          column has the code. `keep_local` or `skip`.
+        - `absent`: no local definition has the code. `create` or `skip`.
+        - `unreadable`: the local definition has stored data that does
+          not decode, so it cannot be compared. `keep_local` or `skip`.
+        - `identical`: the local definition, projected exactly as the
+          export projects it, equals the incoming field. `use_existing`
+          or `skip`.
+        - `different`: anything else, a different type or subject kind
+          included. `keep_local` or `skip`. Nothing existing is ever
+          overwritten.
+
+        Condition terms naming a field that is neither in the document
+        nor on this server are listed in `unresolved_terms`. They are
+        kept as written, not refused. A preview is a review aid: the
+        import step re-validates the final configuration and can refuse
+        it if the condition graph changed after the preview.
+
+        The request is read and checked strictly, after authorization:
+        - Requires `fields.admin` or `system.admin`. Without them the
+          answer is 401 or 403 and the body is not read.
+        - The body is at most 2,162,688 bytes (413). That is the largest
+          export plus 64 KiB for the envelope.
+        - A body that is not valid UTF-8 JSON, or an envelope with an
+          unknown, repeated or differently cased member, a missing
+          `document`, or trailing content, is refused with 400.
+        - A document that breaks the `aa-field-schema/1` contract is
+          refused with 422 and the JSON path of every problem. That
+          covers a missing member, a `false` included, an unknown,
+          repeated or differently cased member at any level, a wrong
+          type, fields that are not 1 to 100 and strictly ascending by
+          code, an option tree deeper than 64 levels, more than 100,000
+          option terms, and any value the ordinary field rules refuse.
+          Nothing is trimmed, reordered or repaired.
+        - The document is re-encoded exactly as the export encodes it.
+          If that is larger than 2,097,152 bytes, the answer is 422
+          `document_too_large`. `document_digest` is the SHA-256 of
+          those bytes, equal to the SHA-256 of an unchanged export body.
+
+        A preview lasts 15 minutes. Each operator can hold at most 3
+        previews, and the server at most 20. A preview counts until the
+        periodic cleanup erases it, which can be a few minutes after it
+        expires, so a slot can stay taken briefly. Over either limit the
+        answer is 429.
+
+        `source` is optional, and is recorded only as what the operator
+        typed. The URI is never fetched and proves nothing about who
+        published the document.
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldSchemaImportPreviewRequest" }
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportPreview" }
+        "400":
+          description: The request is not valid JSON or its envelope breaks the contract
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportRefusal" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          description: The request body is larger than 2,162,688 bytes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: The document breaks the `aa-field-schema/1` contract
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportRefusal" }
+        "429":
+          description: Too many previews are held
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportRefusal" }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /fields/import/apply:
+    post:
+      operationId: applyFieldSchemaImport
+      summary: Apply a reviewed field-schema import (admin)
+      description: |
+        Applies a preview from `POST /fields/import/preview`, with one
+        explicit decision for every incoming code (ADR 0083, 2026-11-22
+        amendments, #1576). Everything is applied in one transaction or
+        nothing is: no definition, no record of the import, and the
+        preview is not used up.
+
+        Decisions, as the preview offered them: `create`,
+        `use_existing`, `keep_local` or `skip`. Every incoming code
+        needs one, identical matches included, and no other key is
+        accepted. Nothing existing is changed: `use_existing` and
+        `keep_local` leave the local definition as it is. `create`
+        makes a new definition with exactly the incoming portable
+        properties and this server's own defaults for everything local:
+        active, no `applies_to`, no read or write capability, not read
+        only, no extraction, no default.
+
+        Before anything is written, the server takes the locks every
+        condition writer takes and checks, against the current data:
+        - the preview exists, belongs to the caller and is unexpired;
+        - `document_digest` is the reviewed document's;
+        - no local definition the preview showed, or that an incoming
+          condition names, changed, appeared or disappeared since;
+        - the decisions are exactly the allowed ones;
+        - the final configuration, with every created field present,
+          passes the ordinary display-condition rules. Terms naming a
+          field this server does not have are kept as written.
+
+        A repeated apply of an applied preview, by the same operator
+        with the same document digest and decisions, returns the
+        original receipt with `replayed: true` and changes nothing. It
+        is checked first, so it works after the preview expired and
+        after local definitions changed.
+
+        Checks, by branch:
+        - 401 or 403: before the body is read. 413: the body is larger
+          than 2,162,688 bytes. 400 `request_invalid`: not valid JSON, or
+          an unknown, repeated, differently cased or missing member, a
+          wrong type, a `preview_id` that is not a lower-case UUID, or a
+          `document_digest` that is not `sha256:` and 64 lower-case hex.
+        - If the preview was already applied: another operator's gives
+          404 `preview_not_found`; a different digest gives 409
+          `digest_mismatch`; different decisions give 409
+          `preview_consumed`; otherwise the original receipt, with
+          `replayed: true`. This branch is checked first and works for
+          as long as the receipt is kept.
+        - Otherwise:
+          - 404 `preview_not_found`: no such preview, another
+            operator's, or more than 24 hours past its expiry.
+          - 410 `preview_expired`: expired less than 24 hours ago.
+          - 409 `digest_mismatch`: the digest is not the preview's.
+          - 409 `preview_stale`: a local definition the preview bound
+            changed; `problems` names the codes. Preview again.
+          - 422 `decision_invalid`: a code without a decision, a decision
+            for a code not in the preview, or a decision that code does
+            not allow.
+          - 422 `graph_refused`: the final configuration breaks a
+            display-condition rule; `problems` names the field and rule.
+          - 422 `unstorable_value`: an incoming value this server's
+            storage cannot hold, such as a code too long to index.
+          - 410 `preview_expired`: the preview expired while the apply
+            waited on a lock. Expiry is checked again just before the
+            changes are committed, and nothing is changed.
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldSchemaImportApplyRequest" }
+      responses:
+        "200":
+          description: The receipt of the applied import
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportReceipt" }
+        "400":
+          description: The request is not valid JSON or breaks the contract
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportRefusal" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such preview for this operator
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportRefusal" }
+        "409":
+          description: Digest mismatch, a preview applied with other decisions, or stale local state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportRefusal" }
+        "410":
+          description: The preview expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportRefusal" }
+        "413":
+          description: The request body is larger than 2,162,688 bytes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Invalid decisions, a refused final configuration, or an unstorable value
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportRefusal" }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /fields/import/receipts:
+    get:
+      operationId: listFieldSchemaImportReceipts
+      summary: List this server's field-schema import receipts (admin)
+      description: |
+        The history of field-schema imports applied on this server,
+        newest first: one entry per applied preview (ADR 0083, #1576).
+        Read-only. Reading it changes nothing, writes no audit entry and
+        uses up no preview.
+
+        Requires `fields.admin` or `system.admin`, checked before the
+        query is read. Any such operator reads every local receipt,
+        another operator's included. That does not let them apply or
+        replay another operator's preview.
+
+        Pages are keyset pages over `(applied_at, id)`. A receipt
+        applied while an operator pages cannot repeat or hide an older
+        one. `limit` is 1 to 100, default 25. `cursor` is the
+        `next_cursor` of the previous page, passed back unchanged. A
+        malformed or oversized `cursor` or `limit`, or any other query
+        parameter, is refused with 400, never treated as a first page.
+
+        `source_label` and `source_uri` are what the operator typed when
+        previewing: unverified notes, never fetched and never proof of
+        who published the document.
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string, maxLength: 512 }
+      responses:
+        "200":
+          description: A page of receipts, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportReceiptPage" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /fields/import/receipts/{receipt_id}:
+    get:
+      operationId: getFieldSchemaImportReceipt
+      summary: Read one field-schema import receipt (admin)
+      description: |
+        One applied import as this server recorded it: the decision and
+        outcome for every incoming code, in recorded order, with the
+        local definition id at that moment and the digest of the
+        incoming field. Only `created` and `matched` mean this server
+        took the incoming shape; `kept_local` and `skipped` mean it did
+        not. A recorded id may no longer name a definition, and a
+        current definition may differ from what was imported.
+
+        `actor_ref` is `null` when the operator's account was removed.
+        Read-only. Requires `fields.admin` or `system.admin`, checked
+        before the id is read. An id that is not a lower-case UUID is
+        400, and an unknown one 404.
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: receipt_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The receipt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldSchemaImportReceiptRecord" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -17264,7 +17603,7 @@ components:
         error: { type: string }
         reason:
           type: string
-          enum: [unknown_codes, retired_codes, malformed_definition, export_too_large]
+          enum: [unknown_codes, retired_codes, malformed_definition, format_limit_exceeded, export_too_large]
           description: |
             Checked in this order, and the first that applies is
             reported:
@@ -17274,12 +17613,303 @@ components:
             - `malformed_definition`: these definitions hold a stored
               options document or `display_condition` that does not
               decode, so no faithful export exists.
+            - `format_limit_exceeded`: the exported vocabulary breaks an
+              `aa-field-schema/1` limit. `codes` names the fields whose
+              option tree is deeper than 64 levels; it is empty when
+              the selection as a whole holds more than 100,000 option
+              terms. Only active terms count, as only they are exported.
             - `export_too_large`: the response body would exceed 2 MiB. `codes`
               is empty. Select fewer fields.
         codes:
           type: array
           description: The offending codes, sorted.
           items: { type: string }
+    FieldSchemaImportPreviewRequest:
+      type: object
+      description: |
+        A document to preview, with an optional record of where the
+        operator says it came from. No other member is accepted.
+      required: [document]
+      properties:
+        document: { $ref: "#/components/schemas/FieldSchemaExport" }
+        source: { $ref: "#/components/schemas/FieldSchemaImportSource" }
+    FieldSchemaImportSource:
+      type: object
+      description: |
+        What the operator says about the document's origin. Untrusted:
+        recorded as typed, never fetched, never treated as identity.
+        Each member is optional, and non-empty when present.
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: At most 200 characters.
+        uri:
+          type: string
+          minLength: 1
+          description: An absolute `http` or `https` URI of at most 2,048 bytes.
+    FieldSchemaImportPreview:
+      type: object
+      required: [preview_id, created_at, expires_at, document_digest, source, fields, unresolved_terms, advisory]
+      properties:
+        preview_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at:
+          type: string
+          format: date-time
+          description: 15 minutes after `created_at`.
+        document_digest:
+          type: string
+          description: "`sha256:` and the hex SHA-256 of the canonical document."
+        source: { $ref: "#/components/schemas/FieldSchemaImportSource" }
+        fields:
+          type: array
+          description: One entry per incoming field, in document order.
+          items: { $ref: "#/components/schemas/FieldSchemaImportPreviewField" }
+        unresolved_terms:
+          type: array
+          description: Condition terms naming a field that is neither in the document nor on this server.
+          items: { $ref: "#/components/schemas/FieldSchemaImportUnresolvedTerm" }
+        advisory:
+          type: string
+          description: A reminder that the import step re-validates the final configuration.
+    FieldSchemaImportPreviewField:
+      type: object
+      required: [code, local, local_id, local_status, problem, incoming, differences, decisions]
+      properties:
+        code: { type: string }
+        local:
+          type: string
+          description: |
+            One of `retired`, `mirrored`, `absent`, `unreadable`,
+            `identical` or `different`, checked in that order.
+        local_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The local definition's id, `null` when absent.
+        local_status:
+          type: string
+          nullable: true
+          description: The local definition's status, `null` when absent.
+        problem:
+          type: string
+          nullable: true
+          description: Why an `unreadable` local definition cannot be compared; otherwise `null`.
+        incoming: { $ref: "#/components/schemas/FieldSchemaExportField" }
+        differences:
+          type: array
+          description: |
+            For `different` only, otherwise empty. One entry per
+            differing property, sorted by property name.
+          items: { $ref: "#/components/schemas/FieldSchemaImportDifference" }
+        decisions:
+          type: array
+          description: |
+            What the import step will accept for this code: some of
+            `create`, `use_existing`, `keep_local` and `skip`.
+          items: { type: string }
+    FieldSchemaImportDifference:
+      type: object
+      required: [property, local, incoming]
+      properties:
+        property: { type: string }
+        local:
+          description: The local value, as the export would write it.
+          nullable: true
+        incoming:
+          description: The incoming value.
+          nullable: true
+        terms_only_incoming:
+          type: array
+          description: "`options` only: incoming term slugs with no local term."
+          items: { type: string }
+        terms_only_local:
+          type: array
+          description: "`options` only: local active term slugs the document lacks."
+          items: { type: string }
+        terms_changed:
+          type: array
+          description: "`options` only: slugs present on both sides with a different label, parent or position."
+          items: { type: string }
+    FieldSchemaImportUnresolvedTerm:
+      type: object
+      required: [field, term]
+      properties:
+        field: { type: string }
+        term: { type: string }
+    FieldSchemaImportRefusal:
+      type: object
+      description: Why a preview or apply request was refused. Nothing was recorded or changed.
+      required: [error, reason, problems]
+      properties:
+        error: { type: string }
+        reason:
+          type: string
+          description: |
+            Preview: `request_invalid` (400), `document_invalid`,
+            `unsupported_format`, `document_too_large` (422) or
+            `preview_limit` (429). Apply: `request_invalid` (400),
+            `preview_not_found` (404), `digest_mismatch`,
+            `preview_consumed`, `preview_stale` (409),
+            `preview_expired` (410), `decision_invalid`,
+            `graph_refused` or `unstorable_value` (422).
+        problems:
+          type: array
+          description: Every problem found, with its JSON path. At most 100.
+          items: { $ref: "#/components/schemas/FieldSchemaImportProblem" }
+    FieldSchemaImportApplyRequest:
+      type: object
+      description: No other member is accepted.
+      required: [preview_id, document_digest, decisions]
+      properties:
+        preview_id:
+          type: string
+          format: uuid
+          description: The preview's id, as the preview returned it (lower case).
+        document_digest:
+          type: string
+          description: "`sha256:` and 64 lower-case hex digits: the preview's `document_digest`."
+        decisions:
+          type: object
+          description: |
+            One decision per incoming code, exactly the preview's codes:
+            `create`, `use_existing`, `keep_local` or `skip`.
+          additionalProperties: { type: string }
+    FieldSchemaImportReceipt:
+      type: object
+      description: |
+        What an apply did, as this server recorded it. Only `created`
+        and `matched` mean this server holds the incoming shape.
+      required: [receipt_id, preview_id, applied_at, document_digest, decisions_digest, replayed, changed, fields]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        preview_id: { type: string, format: uuid }
+        applied_at: { type: string, format: date-time }
+        document_digest: { type: string }
+        decisions_digest:
+          type: string
+          description: "`sha256:` of the decisions, encoded with sorted keys."
+        replayed:
+          type: boolean
+          description: "`true` when this answers a repeat of an applied preview; nothing was changed by it."
+        changed:
+          type: integer
+          description: How many definitions the apply created.
+        fields:
+          type: array
+          description: One entry per incoming code, sorted by code.
+          items: { $ref: "#/components/schemas/FieldSchemaImportReceiptItem" }
+    FieldSchemaImportReceiptItem:
+      type: object
+      required: [code, decision, outcome, field_id]
+      properties:
+        code: { type: string }
+        decision: { type: string }
+        outcome:
+          type: string
+          description: One of `created`, `matched`, `kept_local` or `skipped`.
+        field_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The local definition's id when the apply ran, `null` when there was none.
+    FieldSchemaImportReceiptSummary:
+      type: object
+      required: [receipt_id, applied_at, actor_ref, format, document_digest, decisions_digest, source_label, source_uri, changed, field_count]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        applied_at: { type: string, format: date-time }
+        actor_ref:
+          type: integer
+          format: int64
+          nullable: true
+          description: The local operator who applied it; `null` when that account was removed.
+        format: { type: string }
+        document_digest: { type: string }
+        decisions_digest: { type: string }
+        source_label:
+          type: string
+          nullable: true
+          description: Unverified note the operator typed.
+        source_uri:
+          type: string
+          nullable: true
+          description: Unverified note the operator typed; never fetched.
+        changed:
+          type: integer
+          description: How many definitions the apply created.
+        field_count:
+          type: integer
+          description: How many incoming codes the receipt records.
+    FieldSchemaImportReceiptPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FieldSchemaImportReceiptSummary" }
+        next_cursor:
+          type: string
+          nullable: true
+          description: Pass back as `cursor` for older receipts; `null` on the last page.
+    FieldSchemaImportReceiptRecord:
+      type: object
+      required: [receipt_id, preview_id, applied_at, actor_ref, format, document_digest, decisions_digest, source_label, source_uri, changed, fields]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        preview_id: { type: string, format: uuid }
+        applied_at: { type: string, format: date-time }
+        actor_ref: { type: integer, format: int64, nullable: true }
+        format: { type: string }
+        document_digest: { type: string }
+        decisions_digest: { type: string }
+        source_label: { type: string, nullable: true }
+        source_uri: { type: string, nullable: true }
+        changed: { type: integer }
+        fields:
+          type: array
+          description: Every incoming code, in recorded order.
+          items: { $ref: "#/components/schemas/FieldSchemaImportReceiptRecordItem" }
+    FieldSchemaImportReceiptRecordItem:
+      type: object
+      required: [code, decision, outcome, field_id, incoming_field_digest]
+      properties:
+        code: { type: string }
+        decision: { type: string }
+        outcome:
+          type: string
+          description: One of `created`, `matched`, `kept_local` or `skipped`.
+        field_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The local definition id when the apply ran, as recorded.
+        incoming_field_digest: { type: string }
+    FieldSchemaImportProblem:
+      type: object
+      required: [path, problem]
+      properties:
+        path: { type: string }
+        problem: { type: string }
+    DisplayConditionConflict:
+      type: object
+      description: Why a field was not created. Nothing was created.
+      required: [error, reason, dependents]
+      properties:
+        error: { type: string }
+        reason:
+          type: string
+          description: "`display_condition_conflict`."
+        dependents:
+          type: array
+          items:
+            type: object
+            required: [field, problem]
+            properties:
+              field: { type: string }
+              problem: { type: string }
     FieldValueUnprocessable:
       type: object
       description: |

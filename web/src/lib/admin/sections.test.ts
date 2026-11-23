@@ -165,6 +165,44 @@ describe('asset_types tile (#961)', () => {
   });
 });
 
+describe('fields tile (#1576 S4)', () => {
+  const tile = () => {
+    const t = liveTiles('content').find((x) => x.key === 'fields');
+    if (!t) throw new Error('fields tile missing from the content section');
+    return t;
+  };
+
+  it('names the capability the schema exchange and history endpoints enforce', () => {
+    expect(tile().cap).toBe('fields.admin');
+    expect(tile().href).toBe('/admin/fields');
+  });
+
+  it('is hidden from an Auditor and a Base account, who hold no fields.admin', () => {
+    for (const caps of [AUDITOR_CAPS, BASE_CAPS]) {
+      auth.caps = caps;
+      auth.capsStatus = 'resolved';
+      expect(auth.canSeeTile(tile())).toBe(false);
+    }
+  });
+
+  it('is visible to a delegated field admin, who can also enter the shell', () => {
+    auth.caps = ['fields.admin'];
+    auth.capsStatus = 'resolved';
+    expect(auth.canSeeTile(tile())).toBe(true);
+    expect(auth.canSeeAdmin).toBe(true);
+    expect(ADMIN_ENTRY_CAPS).toContain('fields.admin');
+  });
+
+  it('stays visible to system.admin and refuses when capabilities are unknown', () => {
+    auth.caps = ['system.admin'];
+    auth.capsStatus = 'resolved';
+    expect(auth.canSeeTile(tile())).toBe(true);
+    auth.caps = ['fields.admin'];
+    auth.capsStatus = 'unavailable';
+    expect(auth.canSeeTile(tile())).toBe(false);
+  });
+});
+
 // #962 — admin ENTRY is narrower than tile visibility.
 //
 // The failure this encodes: `canSeeAdmin` used to be "holds any cap

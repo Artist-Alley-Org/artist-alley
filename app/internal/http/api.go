@@ -168,65 +168,67 @@ type apiServer struct {
 	// #600 — GET /account/activity. Reads audit_events scoped to the
 	// caller. Separate from `audit` because that one is admin-gated;
 	// see audit/activity.go for why they are two structs.
-	activity           *audit.AccountHandler
-	scheduledActions   *scheduledactions.HTTPHandler
-	licensing          *licensing.Handler
-	userprefs          *userprefs.Handler
-	aiAdmin            *aiadmin.Handler      // Phase 1.14.A inference subsystem admin surface
-	aiBridge           ai.Bridge             // Phase 1.14.A-bridge — read/write seam for AI handlers
-	aiRouter           *ai.Router            // Phase 1.14.B — typed inference dispatch w/ registered providers
-	mcpRegistry        *mcpregistry.Registry // Phase 1.53.A — MCP server registration CRUD + cache
-	mcpDispatch        *mcpdispatch.Dispatcher
-	mcpHealth          *mcpdispatch.HealthChecker
-	mcpProviders       *mcpProviderTable
-	mcpAdmin           *mcpadmin.Handler
-	notifications      *notifications.Handler
-	messages           *messages.Handler
-	activities         *activities.Writer
-	activitiesAdmin    *activities.AdminHandler
-	peers              *peer.Registry
-	peersAdmin         *peer.AdminHandler
-	peersHandshake     *peer.AdminHandshakeHandler
-	peersPublic        *peer.PublicHandler
-	fedIdentity        *identity.Manager
-	fedEngine          *peer.Engine
-	directories        *directory.Registry
-	directoriesAdmin   *directory.AdminHandler
-	directoryPoller    *directory.Poller
-	p2pRegistry        *p2p.Registry
-	p2pAdmin           *p2p.AdminHandler
-	sharesRegistry     *shares.Registry
-	sharesAdmin        *shares.AdminHandler
-	sharesSweeper      *shares.Sweeper
-	inboxHandler       *inbox.Handler
-	actorDocument      *actorDocumentHandler
-	casHandler         *cas.Handler            // #72 origin: serves originals to paired peers
-	casFetch           *casfetch.Client        // #72 receiver; authorised by inboundGrants (#1571)
-	assetIngest        *assetingest.Worker     // #1574 receiver: aa:AssetVersion from the inbox, imports in the background
-	receivedAssets     *receivedassets.Handler // #1574 view: received records, grant-gated, never local assets
-	inboundGrants      *inboundgrants.Store    // #1571 receiver grant record
-	inboxDispatcher    *inbox.Dispatcher
-	outboxDispatcher   *outbox.Dispatcher
-	outboxDelivery     *outbox.Worker
-	outboxAdmin        *outbox.AdminHandler
-	userKeysSweeper    *userkeys.Sweeper
-	userKeysAdmin      *userkeys.AdminHandler
-	capabilitySweeper  *auth.CapabilitySweeper
-	requests           *requests.Handler
-	requestsHTTP       *requests.HTTPHandler
-	featuredHTTP       *featured.HTTPHandler
-	featuredDomain     *featured.Handler
-	sitetextHTTP       *sitetext.HTTPHandler
-	emailTemplatesHTTP *email.HTTPHandler
-	subtitles          *subtitles.Handler
-	subtitlesHTTP      *subtitles.HTTPHandler
-	aieditHTTP         *aiedit.HTTPHandler
-	metaCounter        *assetmetadata.Counter
-	metaAdmin          *assetmetadata.AdminHandler
-	jobsSvc            *jobs.Service
-	jobsAdmin          *jobs.AdminHandler
-	storageAdmin       *storage.AdminHandler
-	sysCfg             *sysconfig.Store
+	activity          *audit.AccountHandler
+	scheduledActions  *scheduledactions.HTTPHandler
+	licensing         *licensing.Handler
+	userprefs         *userprefs.Handler
+	aiAdmin           *aiadmin.Handler      // Phase 1.14.A inference subsystem admin surface
+	aiBridge          ai.Bridge             // Phase 1.14.A-bridge — read/write seam for AI handlers
+	aiRouter          *ai.Router            // Phase 1.14.B — typed inference dispatch w/ registered providers
+	mcpRegistry       *mcpregistry.Registry // Phase 1.53.A — MCP server registration CRUD + cache
+	mcpDispatch       *mcpdispatch.Dispatcher
+	mcpHealth         *mcpdispatch.HealthChecker
+	mcpProviders      *mcpProviderTable
+	mcpAdmin          *mcpadmin.Handler
+	notifications     *notifications.Handler
+	messages          *messages.Handler
+	activities        *activities.Writer
+	activitiesAdmin   *activities.AdminHandler
+	peers             *peer.Registry
+	peersAdmin        *peer.AdminHandler
+	peersHandshake    *peer.AdminHandshakeHandler
+	peersPublic       *peer.PublicHandler
+	fedIdentity       *identity.Manager
+	fedEngine         *peer.Engine
+	directories       *directory.Registry
+	directoriesAdmin  *directory.AdminHandler
+	directoryPoller   *directory.Poller
+	p2pRegistry       *p2p.Registry
+	p2pAdmin          *p2p.AdminHandler
+	sharesRegistry    *shares.Registry
+	sharesAdmin       *shares.AdminHandler
+	sharesSweeper     *shares.Sweeper
+	inboxHandler      *inbox.Handler
+	actorDocument     *actorDocumentHandler
+	casHandler        *cas.Handler            // #72 origin: serves originals to paired peers
+	casFetch          *casfetch.Client        // #72 receiver; authorised by inboundGrants (#1571)
+	assetIngest       *assetingest.Worker     // #1574 receiver: aa:AssetVersion from the inbox, imports in the background
+	receivedAssets    *receivedassets.Handler // #1574 view: received records, grant-gated, never local assets
+	inboundGrants     *inboundgrants.Store    // #1571 receiver grant record
+	inboxDispatcher   *inbox.Dispatcher
+	outboxDispatcher  *outbox.Dispatcher
+	outboxDelivery    *outbox.Worker
+	outboxAdmin       *outbox.AdminHandler
+	userKeysSweeper   *userkeys.Sweeper
+	userKeysAdmin     *userkeys.AdminHandler
+	capabilitySweeper *auth.CapabilitySweeper
+	// schemaImportSweeper erases expired schema-import previews (#1576).
+	schemaImportSweeper *metadata.SchemaImportPreviewSweeper
+	requests            *requests.Handler
+	requestsHTTP        *requests.HTTPHandler
+	featuredHTTP        *featured.HTTPHandler
+	featuredDomain      *featured.Handler
+	sitetextHTTP        *sitetext.HTTPHandler
+	emailTemplatesHTTP  *email.HTTPHandler
+	subtitles           *subtitles.Handler
+	subtitlesHTTP       *subtitles.HTTPHandler
+	aieditHTTP          *aiedit.HTTPHandler
+	metaCounter         *assetmetadata.Counter
+	metaAdmin           *assetmetadata.AdminHandler
+	jobsSvc             *jobs.Service
+	jobsAdmin           *jobs.AdminHandler
+	storageAdmin        *storage.AdminHandler
+	sysCfg              *sysconfig.Store
 	// matureResolver is the request-scoped mature-content lookup
 	// (#1116). Held here so server.go can mount it as middleware beside
 	// ResolveIdentity; nothing else should read it.
@@ -1424,6 +1426,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.userKeysSweeper = userkeys.NewSweeper(
 		pool, logger, auditRec.FederationUserKeyRetainedExpired, 0,
 	)
+
+	// #1576 schema-import preview cleanup: compacts expired previews to
+	// tombstones and deletes old tombstones, every five minutes.
+	s.schemaImportSweeper = metadata.NewSchemaImportPreviewSweeper(s.metadata, 0, 0)
 
 	// Phase 1.17.C capability-expiry sweeper. Mirrors userkeys
 	// (same tick cadence; same boot/shutdown lifecycle). Reaps
@@ -3583,6 +3589,32 @@ func (s *apiServer) CreateField(ctx context.Context, req openapi.CreateFieldRequ
 }
 func (s *apiServer) ExportFieldSchema(ctx context.Context, req openapi.ExportFieldSchemaRequestObject) (openapi.ExportFieldSchemaResponseObject, error) {
 	return s.metadata.ExportFieldSchema(ctx, req)
+}
+
+// PreviewFieldSchemaImport is never reached: server.go registers the
+// raw metadata.Handler.ServeImportPreview over this route, because the
+// generated adapter would decode the body before authorization and
+// lose what the strict decoder must refuse. Kept only to satisfy the
+// generated interface; it refuses rather than decoding.
+func (s *apiServer) PreviewFieldSchemaImport(ctx context.Context, _ openapi.PreviewFieldSchemaImportRequestObject) (openapi.PreviewFieldSchemaImportResponseObject, error) {
+	return nil, errors.New("previewFieldSchemaImport is served by the raw route")
+}
+
+// ListFieldSchemaImportReceipts and GetFieldSchemaImportReceipt are
+// never reached: server.go registers the raw history handlers, which
+// authorize before reading the query or path.
+func (s *apiServer) ListFieldSchemaImportReceipts(ctx context.Context, _ openapi.ListFieldSchemaImportReceiptsRequestObject) (openapi.ListFieldSchemaImportReceiptsResponseObject, error) {
+	return nil, errors.New("listFieldSchemaImportReceipts is served by the raw route")
+}
+
+func (s *apiServer) GetFieldSchemaImportReceipt(ctx context.Context, _ openapi.GetFieldSchemaImportReceiptRequestObject) (openapi.GetFieldSchemaImportReceiptResponseObject, error) {
+	return nil, errors.New("getFieldSchemaImportReceipt is served by the raw route")
+}
+
+// ApplyFieldSchemaImport is never reached either: server.go registers
+// metadata.Handler.ServeImportApply over this route for the same reasons.
+func (s *apiServer) ApplyFieldSchemaImport(ctx context.Context, _ openapi.ApplyFieldSchemaImportRequestObject) (openapi.ApplyFieldSchemaImportResponseObject, error) {
+	return nil, errors.New("applyFieldSchemaImport is served by the raw route")
 }
 func (s *apiServer) GetField(ctx context.Context, req openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error) {
 	return s.metadata.GetField(ctx, req)

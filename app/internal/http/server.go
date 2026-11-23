@@ -536,6 +536,18 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.With(middleware.CapRequestBody(metadata.FieldSchemaExportMaxRequestBytes)).
 			Post("/fields/export", exportRoute.ExportFieldSchema)
 
+		// The schema-import preview (#1576), served raw over the
+		// generated route: it authorizes before reading the body, caps
+		// the read itself, and decodes the whole request strictly.
+		r.Post("/fields/import/preview", impl.metadata.ServeImportPreview)
+		r.Post("/fields/import/apply", impl.metadata.ServeImportApply)
+		// Read-only import history (#1576 S4), raw for the same reason:
+		// authorization before the query or path is read.
+		r.Get("/fields/import/receipts", impl.metadata.ServeImportReceipts)
+		r.Get("/fields/import/receipts/{receipt_id}", func(w http.ResponseWriter, req *http.Request) {
+			impl.metadata.ServeImportReceipt(w, req, chi.URLParam(req, "receipt_id"))
+		})
+
 		// Phase 1.18.A-2 follow-up B (commit 2) — generic
 		// /admin/{subsystem}/health pattern. First user:
 		// metadata-extraction. Future subsystems (email in
@@ -1072,6 +1084,10 @@ func (s *Server) Run(ctx context.Context) error {
 	// starts here, runs until ctx cancels, log a start event so
 	// boot observability is consistent across both background
 	// reapers.
+	if s.api != nil && s.api.schemaImportSweeper != nil {
+		go s.api.schemaImportSweeper.Run(runCtx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "metadata.import_preview_sweeper.start")
+	}
 	if s.api != nil && s.api.capabilitySweeper != nil {
 		go s.api.capabilitySweeper.Run(runCtx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "auth.capability_sweeper.start")

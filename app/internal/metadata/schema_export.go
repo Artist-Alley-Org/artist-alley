@@ -169,6 +169,31 @@ func buildFieldSchemaExport(codes []string, rows []FieldDefinition) (openapi.Fie
 			"these definitions hold stored data that does not decode, so no faithful export exists"), nil
 	}
 
+	// The format limits, on the ACTIVE projection: retired terms do not
+	// travel, so they do not count. Refused, never cut to fit.
+	tooDeep := []string{}
+	totalNodes := 0
+	for _, f := range fields {
+		if f.Options == nil {
+			continue
+		}
+		depth, nodes := portableOptionStats(*f.Options)
+		totalNodes += nodes
+		if depth > FieldSchemaMaxOptionDepth {
+			tooDeep = append(tooDeep, f.Code)
+		}
+	}
+	if len(tooDeep) > 0 {
+		return openapi.FieldSchemaExport{}, exportRefusal(openapi.FormatLimitExceeded, tooDeep,
+			fmt.Sprintf("these fields have option trees deeper than %d levels, the aa-field-schema/1 limit",
+				FieldSchemaMaxOptionDepth)), nil
+	}
+	if totalNodes > FieldSchemaMaxOptionNodes {
+		return openapi.FieldSchemaExport{}, exportRefusal(openapi.FormatLimitExceeded, []string{},
+			fmt.Sprintf("the selection holds %d option terms, over the aa-field-schema/1 limit of %d; select fewer fields",
+				totalNodes, FieldSchemaMaxOptionNodes)), nil
+	}
+
 	doc := openapi.FieldSchemaExport{Format: FieldSchemaExportFormat, Fields: fields}
 	// Measure the bytes the response will actually carry. The generated
 	// 200 response writes with json.Encoder, which appends a newline that
