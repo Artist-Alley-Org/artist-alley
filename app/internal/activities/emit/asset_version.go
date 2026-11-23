@@ -38,6 +38,9 @@ type AssetVersionRef struct {
 	// so every delivery of the activity sends the same claims. Nil leaves
 	// them out of the record (the member then reads the live ones).
 	Flags *AssetFlags
+	// Descriptive is the announcement's descriptive snapshot (#1577),
+	// recorded as the payload's "descriptive" member; nil records none.
+	Descriptive any
 }
 
 // AssetFlags are an asset's mature and aiProvenance claims (§17.2).
@@ -70,6 +73,9 @@ func AssetVersion(actor ActorContext, ref AssetVersionRef) Emission {
 		"version_id":        ref.VersionID.String(),
 	}
 	ref.Flags.put(payload)
+	if ref.Descriptive != nil {
+		payload["descriptive"] = ref.Descriptive
+	}
 	return Emission{
 		Activity: activities.Input{
 			Type:         federation.ActivityAAAssetVersion,

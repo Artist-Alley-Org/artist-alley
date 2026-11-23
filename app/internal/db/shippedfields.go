@@ -11,7 +11,7 @@
 // "these codes are ours, everything else in field_definition belongs to
 // whoever put it there". Nothing here duplicates a definition's label,
 // type, group or extraction wiring — that would be a second source of
-// truth for the same nine rows, and the one that drifts.
+// truth for the same rows, and the one that drifts.
 //
 // One consumer needs the classification and cannot derive it:
 // seed.Reset. `aa seed --reset` used to name field_definition in its
@@ -86,6 +86,10 @@ var shippedFields = []ShippedField{
 	{"pixel_width", "computed image dimension; migration 00017. IIIF info.json and the masonry " +
 		"tile shape resolve it by code (pixeldims.SelectColumnsSQL, iiif/http.go)"},
 	{"pixel_height", "computed image dimension; migration 00017. Same two consumers as pixel_width"},
+	{"rights_uri", "rights field; migration 00097 (#1577). The archival-1 sender maps its value onto the " +
+		"aa:asset rights member, from this seeded row only (assetsend/descriptive.go)"},
+	{"required_statement", "rights field; migration 00097 (#1577). The archival-1 sender maps its value onto " +
+		"the aa:asset requiredStatement member, from this seeded row only (assetsend/descriptive.go)"},
 }
 
 // ShippedFieldCodes returns the registered codes, sorted, as a fresh

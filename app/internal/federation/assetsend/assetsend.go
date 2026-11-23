@@ -32,10 +32,13 @@
 // access copies, migrations 00084 and 00085): the identity of the asset,
 // its version (number, creation time, predecessor), each file's role,
 // SHA-256 and size, the declared media type and the original's base name,
-// and the asset's tier, mature flag and AI provenance. Nothing a caller
-// supplies, and no descriptive text, becomes a claim. A sealed file set
-// never changes, so every retry of the same activity sends the same
-// version and file set.
+// and the asset's tier, mature flag and AI provenance. Since #1577 it also
+// carries the baseline descriptive members captured when the announcement
+// was recorded, under the peer emission policy in descriptive.go, and
+// re-checked against current privacy on every delivery. Nothing a caller
+// supplies becomes a claim. A sealed file set never changes, so every
+// retry of the same activity sends the same version, file set and
+// descriptive bytes.
 //
 // The predecessor is the asset's previous SEALED version (the greatest
 // sealed number below this one), not the version it was created over: a
@@ -164,6 +167,9 @@ type payload struct {
 	// record from before then.
 	Mature       *bool   `json:"mature"`
 	AIProvenance *string `json:"ai_provenance"`
+	// The descriptive snapshot (#1577, descriptive.go); absent on a record
+	// from before then, which then sends no descriptive member.
+	Descriptive json.RawMessage `json:"descriptive"`
 }
 
 // refused is a final refusal: the outbox marks the delivery not
@@ -251,7 +257,13 @@ func (s Source) Member(ctx context.Context, activityID, peerID uuid.UUID, object
 	if err != nil {
 		return nil, err
 	}
-	raw, err := versionMember(objectURI, number, created, predecessor, basename, sealedFiles, sensitivity, mature, aiProvenance)
+	// The recorded descriptive members, re-checked against current
+	// privacy (#1577): a member no longer shareable refuses the activity.
+	descriptive, err := s.materializeDescriptive(ctx, p.AssetID, p.Descriptive)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := versionMember(objectURI, number, created, predecessor, basename, sealedFiles, sensitivity, mature, aiProvenance, descriptive)
 	if err != nil {
 		return nil, err
 	}
@@ -296,10 +308,12 @@ func (s Source) shareDelivered(ctx context.Context, shareID, assetID, peerID, sh
 
 // versionMember builds and checks the aa:asset member of one sealed
 // version: its identity and predecessor, its sealed files (the original
-// with its base name, dropped when §17.2.2 refuses it), and the tier and
-// flags given.
+// with its base name, dropped when §17.2.2 refuses it), the tier and flags
+// given, and, for an aa:AssetVersion only, its recorded descriptive
+// members (#1577). An Update (FlagUpdateMember) passes nil: §17.2.8 keeps
+// it to mature and aiProvenance.
 func versionMember(objectURI string, number int64, created time.Time, predecessor *int64, basename string,
-	sealedFiles []versionFile, sensitivity string, mature bool, aiProvenance string) (json.RawMessage, error) {
+	sealedFiles []versionFile, sensitivity string, mature bool, aiProvenance string, descriptive *descriptiveMembers) (json.RawMessage, error) {
 	type file struct {
 		Role       string              `json:"role"`
 		ContentURI string              `json:"contentUri"`
@@ -332,6 +346,7 @@ func versionMember(objectURI string, number int64, created time.Time, predecesso
 	if aiProvenance != "" {
 		member["aiProvenance"] = aiProvenance
 	}
+	descriptive.put(member)
 	raw, err := validMember(member)
 	if err != nil && basename != "" {
 		// The stored base name is a claim the profile may not accept

@@ -151,6 +151,11 @@ func TestShippedFieldCatalogue_FreshInstallContents(t *testing.T) {
 		// extraction_source here would re-open that defect.
 		"pixel_width":  "number|asset|technical|",
 		"pixel_height": "number|asset|technical|",
+
+		// Seeded by 00097 (#1577): plain text, never extracted. Their
+		// values feed only the archival-1 rights members.
+		"rights_uri":         "text|asset|rights|",
+		"required_statement": "text|asset|rights|",
 	}
 
 	rows, err := sqlDB.QueryContext(t.Context(),
