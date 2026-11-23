@@ -1305,6 +1305,11 @@ func (*PanicShim) CreateField(context.Context, openapi.CreateFieldRequestObject)
 	panic("PanicShim: CreateField called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ExportFieldSchema panics by default; test shims override.
+func (*PanicShim) ExportFieldSchema(context.Context, openapi.ExportFieldSchemaRequestObject) (openapi.ExportFieldSchemaResponseObject, error) {
+	panic("PanicShim: ExportFieldSchema called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ArchiveField panics by default; test shims override.
 func (*PanicShim) ArchiveField(context.Context, openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
 	panic("PanicShim: ArchiveField called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

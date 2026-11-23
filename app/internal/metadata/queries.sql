@@ -93,6 +93,24 @@ SELECT id, code, label, description, type, options, required, searchable,
        read_only, regexp_filter, display_condition
 FROM field_definition WHERE code = $1;
 
+-- name: ListFieldDefinitionsByCodes :many
+-- The portable schema export's selection (#1576, ADR 0083 §1): every
+-- definition whose code is in the caller's list, whatever its status,
+-- so the handler can name a retired selection rather than mistake it
+-- for an unknown one. Read-only, ordered by code for a deterministic
+-- export.
+SELECT id, code, label, description, type, options, required, searchable,
+       applies_to, read_capability, write_capability,
+       display_order, display_group, status,
+       deprecated_replacement_id, origin_server_id,
+       created_at, updated_at, created_by_user_ref, updated_by_user_ref,
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter, display_condition
+FROM field_definition WHERE code = ANY(@codes::text[])
+ORDER BY code;
+
 -- name: CreateFieldDefinition :one
 INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,

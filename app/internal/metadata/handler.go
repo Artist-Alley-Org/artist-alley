@@ -1921,6 +1921,7 @@ func (h *Handler) GetAssetFieldValueHistory(
 
 var _ interface {
 	ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error)
+	ExportFieldSchema(context.Context, openapi.ExportFieldSchemaRequestObject) (openapi.ExportFieldSchemaResponseObject, error)
 	CreateField(context.Context, openapi.CreateFieldRequestObject) (openapi.CreateFieldResponseObject, error)
 	GetField(context.Context, openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error)
 	UpdateField(context.Context, openapi.UpdateFieldRequestObject) (openapi.UpdateFieldResponseObject, error)
