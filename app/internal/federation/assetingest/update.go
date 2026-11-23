@@ -42,6 +42,12 @@
 //     - otherwise the revision is kept, also before the version it names
 //     arrives (the flags are the asset's; the version arriving later
 //     finds them).
+//
+// An Update that also carries aa:metadata (asset-metadata-1, #1577,
+// spec v1 §18) is admitted by the same steps, with the member validated
+// first, the peer row re-read under the locks, and its snapshot kept with
+// the revision in the same transaction (metadata.go). An Update without
+// it is the flags-only Update above, unchanged.
 package assetingest
 
 import (
@@ -59,7 +65,8 @@ import (
 
 // FlagUpdate is what ApplyFlagUpdate decided for one Update.
 type FlagUpdate struct {
-	// RevisionID is the revision the Update is kept as.
+	// RevisionID is the revision the Update is kept as (with its snapshot,
+	// when it carried aa:metadata).
 	RevisionID uuid.UUID
 	// Duplicate: the Update was already kept.
 	Duplicate bool
@@ -67,20 +74,25 @@ type FlagUpdate struct {
 
 // recordRevision keeps an's revision, inside the binding transaction tx
 // (file header). A redelivery of the same activity keeps nothing more.
-func recordRevision(ctx context.Context, tx pgx.Tx, an *announced) error {
+// inserted reports whether this INSERT wrote the row (its command tag),
+// not whether a row for the activity exists afterwards.
+func recordRevision(ctx context.Context, tx pgx.Tx, an *announced) (inserted bool, err error) {
 	mature := an.asset.Mature != nil && *an.asset.Mature
 	var ai *string
 	if an.asset.AIProvenance != "" {
 		ai = &an.asset.AIProvenance
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO federation_received_asset_revisions
+	tag, err := tx.Exec(ctx, `INSERT INTO federation_received_asset_revisions
 		(peer_id, origin_asset_uri, activity_uri, activity_type, actor_uri, published, version_uri, file_set_sha256,
 		 mature, ai_provenance, record)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
 		ON CONFLICT (peer_id, activity_uri) DO NOTHING`,
 		an.peer.ID, an.env.Object, an.env.ID, string(an.env.Type), an.env.Actor, an.env.Published,
 		an.asset.Version.ID, an.digest, mature, ai, []byte(an.raw))
-	return err
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // ApplyFlagUpdate admits one Update of an asset's flags (file header).
@@ -95,6 +107,17 @@ func (s *Service) ApplyFlagUpdate(ctx context.Context, a Announcement) (FlagUpda
 	if an.asset.Sensitivity != "public" && an.asset.Sensitivity != "team" {
 		return FlagUpdate{}, s.refuseUpdate(ctx, a, &Error{Reason: casfetch.ReasonSensitivity, Err: errors.New("the asset is " + an.asset.Sensitivity)})
 	}
+	// #1577: an aa:metadata member is validated before anything is kept.
+	meta, err := s.validateMetadata(an)
+	if err != nil {
+		return FlagUpdate{}, s.refuseUpdate(ctx, a, err)
+	}
+	var metaSnapshot []byte
+	var metaSeconds int64
+	var metaNanos int32
+	if meta != nil {
+		metaSnapshot, metaSeconds, metaNanos = meta.snapshot, meta.seconds, meta.nanos
+	}
 	var out FlagUpdate
 	err = pgx.BeginFunc(ctx, s.d.Pool, func(tx pgx.Tx) error {
 		for _, key := range []string{"activity " + an.peer.ID.String() + " " + an.env.ID,
@@ -103,13 +126,24 @@ func (s *Service) ApplyFlagUpdate(ctx context.Context, a Announcement) (FlagUpda
 				return err
 			}
 		}
-		var same bool
+		// The same activity is a duplicate only with the same aa:asset and,
+		// when either delivery carries aa:metadata, the same snapshot and
+		// published to the nanosecond (#1577). Its first revision, snapshot
+		// and signature stay as kept.
+		var same, hasMeta, sameMeta bool
 		var id uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT id, (activity_type = $3 AND actor_uri = $4 AND origin_asset_uri = $5
-		        AND published = $6 AND record = $7::jsonb)
-		  FROM federation_received_asset_revisions WHERE peer_id = $1 AND activity_uri = $2`,
+		err := tx.QueryRow(ctx, `SELECT r.id, (r.activity_type = $3 AND r.actor_uri = $4 AND r.origin_asset_uri = $5
+		        AND r.published = $6 AND r.record = $7::jsonb),
+		        m.revision_id IS NOT NULL,
+		        COALESCE(m.snapshot = $8::jsonb AND m.published_seconds = $9 AND m.published_nanos = $10, FALSE)
+		  FROM federation_received_asset_revisions r
+		  LEFT JOIN federation_received_asset_metadata m ON m.revision_id = r.id
+		 WHERE r.peer_id = $1 AND r.activity_uri = $2`,
 			an.peer.ID, an.env.ID, string(federation.ActivityUpdate), an.env.Actor, an.env.Object, an.env.Published,
-			[]byte(an.raw)).Scan(&id, &same)
+			[]byte(an.raw), metaSnapshot, metaSeconds, metaNanos).Scan(&id, &same, &hasMeta, &sameMeta)
+		if err == nil {
+			same = same && hasMeta == (meta != nil) && (meta == nil || sameMeta)
+		}
 		switch {
 		case err == nil && same:
 			out = FlagUpdate{RevisionID: id, Duplicate: true}
@@ -135,6 +169,11 @@ func (s *Service) ApplyFlagUpdate(ctx context.Context, a Announcement) (FlagUpda
 		if err := inboundgrants.LockPeerTx(ctx, tx, an.peer.ID); err != nil {
 			return err
 		}
+		if meta != nil {
+			if err := recheckMetadataPeer(ctx, tx, an); err != nil {
+				return err
+			}
+		}
 		if _, err := s.d.Grants.AllowsTx(ctx, tx, s.grantQuery(an)); err != nil {
 			if errors.Is(err, inboundgrants.ErrNoGrant) {
 				return &Error{Reason: casfetch.ReasonNoInboundGrant, Err: err}
@@ -151,11 +190,24 @@ func (s *Service) ApplyFlagUpdate(ctx context.Context, a Announcement) (FlagUpda
 		case err != nil && !errors.Is(err, pgx.ErrNoRows):
 			return err
 		}
-		if err := recordRevision(ctx, tx, an); err != nil {
+		inserted, err := recordRevision(ctx, tx, an)
+		if err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `SELECT id FROM federation_received_asset_revisions WHERE peer_id = $1 AND activity_uri = $2`,
-			an.peer.ID, an.env.ID).Scan(&out.RevisionID)
+		// The revision and its snapshot are one admission: a snapshot is
+		// attached only to the revision this INSERT wrote, and a failed
+		// snapshot insert rolls both back.
+		if meta != nil && !inserted {
+			return &Error{Reason: ReasonActivityConflict, Err: errors.New("the revision for the activity was not written by this delivery")}
+		}
+		if err := tx.QueryRow(ctx, `SELECT id FROM federation_received_asset_revisions WHERE peer_id = $1 AND activity_uri = $2`,
+			an.peer.ID, an.env.ID).Scan(&out.RevisionID); err != nil {
+			return err
+		}
+		if meta == nil {
+			return nil
+		}
+		return insertMetadata(ctx, tx, out.RevisionID, meta)
 	})
 	if err != nil {
 		var e *Error
