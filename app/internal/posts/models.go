@@ -760,6 +760,21 @@ type FederationReceivedAssetFile struct {
 	DetectedBy *string
 }
 
+// The complete descriptive snapshot of an asset-metadata-1 Update as this instance received it (#1577, spec v1 §18.4): one immutable row per accepted aa:metadata member, linked to its revision, with the signed published to the nanosecond, the first accepted origin signature as declared, and this instance's recipient identity. Which snapshot is current is derived when read; nothing that decides access reads it.
+type FederationReceivedAssetMetadatum struct {
+	RevisionID               pgtype.UUID
+	ProfileToken             string
+	Snapshot                 []byte
+	PublishedSeconds         int64
+	PublishedNanos           int32
+	PublishedText            string
+	OriginSignerKeyID        string
+	OriginSignatureAlgorithm string
+	OriginSignatureValue     string
+	RecipientSignerKeyID     string
+	ReceivedAt               pgtype.Timestamptz
+}
+
 // An origin's mature and aiProvenance flags of an asset as this instance received them (#1575, spec v1 §17.2.8): one immutable row per accepted aa:AssetVersion or flag Update, ordered by the activity's signed published, then its URI. The flags shown are the greatest row's. Read by nothing that decides access.
 type FederationReceivedAssetRevision struct {
 	ID             pgtype.UUID

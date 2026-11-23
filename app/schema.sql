@@ -1776,6 +1776,20 @@ $$;
 
 
 --
+-- Name: federation_received_asset_metadata_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_received_asset_metadata_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'received asset metadata %: a snapshot is immutable (#1577)', OLD.revision_id
+        USING ERRCODE = 'integrity_constraint_violation';
+END;
+$$;
+
+
+--
 -- Name: federation_received_asset_revisions_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3985,6 +3999,36 @@ COMMENT ON COLUMN public.federation_received_asset_files.detected_media_type IS 
 --
 
 COMMENT ON COLUMN public.federation_received_asset_files.detected_by IS 'The tool that produced detected_media_type (#1574).';
+
+
+--
+-- Name: federation_received_asset_metadata; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_received_asset_metadata (
+    revision_id uuid NOT NULL,
+    profile_token text NOT NULL,
+    snapshot jsonb NOT NULL,
+    published_seconds bigint NOT NULL,
+    published_nanos integer NOT NULL,
+    published_text text NOT NULL,
+    origin_signer_key_id text NOT NULL,
+    origin_signature_algorithm text NOT NULL,
+    origin_signature_value text NOT NULL,
+    recipient_signer_key_id text NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT federation_received_asset_metadata_nanos_check CHECK (((published_nanos >= 0) AND (published_nanos <= 999999999))),
+    CONSTRAINT federation_received_asset_metadata_profile_check CHECK ((profile_token = 'asset-metadata-1'::text)),
+    CONSTRAINT federation_received_asset_metadata_signers_check CHECK (((origin_signer_key_id <> ''::text) AND (origin_signature_algorithm <> ''::text) AND (origin_signature_value <> ''::text) AND (recipient_signer_key_id <> ''::text))),
+    CONSTRAINT federation_received_asset_metadata_snapshot_check CHECK (((jsonb_typeof(snapshot) = 'object'::text) AND (snapshot ?& ARRAY['title'::text, 'description'::text, 'rights'::text, 'requiredStatement'::text]) AND ((snapshot - ARRAY['title'::text, 'description'::text, 'rights'::text, 'requiredStatement'::text]) = '{}'::jsonb) AND (jsonb_typeof((snapshot -> 'title'::text)) = ANY (ARRAY['string'::text, 'null'::text])) AND (jsonb_typeof((snapshot -> 'description'::text)) = ANY (ARRAY['string'::text, 'null'::text])) AND (jsonb_typeof((snapshot -> 'rights'::text)) = ANY (ARRAY['string'::text, 'null'::text])) AND (jsonb_typeof((snapshot -> 'requiredStatement'::text)) = ANY (ARRAY['object'::text, 'null'::text]))))
+);
+
+
+--
+-- Name: TABLE federation_received_asset_metadata; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_received_asset_metadata IS 'The complete descriptive snapshot of an asset-metadata-1 Update as this instance received it (#1577, spec v1 §18.4): one immutable row per accepted aa:metadata member, linked to its revision, with the signed published to the nanosecond, the first accepted origin signature as declared, and this instance''s recipient identity. Which snapshot is current is derived when read; nothing that decides access reads it.';
 
 
 --
@@ -6216,6 +6260,14 @@ ALTER TABLE ONLY public.federation_peers
 
 ALTER TABLE ONLY public.federation_peers
     ADD CONSTRAINT federation_peers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: federation_received_asset_metadata federation_received_asset_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_received_asset_metadata
+    ADD CONSTRAINT federation_received_asset_metadata_pkey PRIMARY KEY (revision_id);
 
 
 --
@@ -8836,6 +8888,13 @@ CREATE TRIGGER federation_received_asset_files_write_check_trg BEFORE INSERT OR 
 
 
 --
+-- Name: federation_received_asset_metadata federation_received_asset_metadata_immutable_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_received_asset_metadata_immutable_trg BEFORE UPDATE ON public.federation_received_asset_metadata FOR EACH ROW EXECUTE FUNCTION public.federation_received_asset_metadata_immutable();
+
+
+--
 -- Name: federation_received_asset_revisions federation_received_asset_revisions_immutable_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -9389,6 +9448,14 @@ ALTER TABLE ONLY public.federation_outbox
 
 ALTER TABLE ONLY public.federation_peer_suggestions
     ADD CONSTRAINT federation_peer_suggestions_source_peer_id_fkey FOREIGN KEY (source_peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: federation_received_asset_metadata federation_received_asset_metadata_revision_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_received_asset_metadata
+    ADD CONSTRAINT federation_received_asset_metadata_revision_id_fkey FOREIGN KEY (revision_id) REFERENCES public.federation_received_asset_revisions(id) ON DELETE CASCADE;
 
 
 --

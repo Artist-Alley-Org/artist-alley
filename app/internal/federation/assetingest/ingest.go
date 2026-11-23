@@ -145,6 +145,10 @@ const (
 	// received_at runs out (rejected predecessor_missing).
 	ReasonAwaitingPredecessor = "awaiting_predecessor"
 	ReasonPredecessorMissing  = "predecessor_missing"
+	// ReasonMetadataInvalid (#1577): an Update's aa:metadata member, or its
+	// placement, does not match asset-metadata-1 (spec v1 §18). A domain
+	// reason only: no running inbox status maps to it yet.
+	ReasonMetadataInvalid = "metadata_invalid"
 	// ReasonActivityConflict: an activity id already recorded arrived
 	// with another actor, object, version, file set or claim. Nothing is
 	// written; the record of the first delivery stands.
@@ -604,6 +608,16 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
+		// An activity id kept as an Update (of the flags, or with metadata,
+		// #1577) is not an announcement: refused, and no record is written.
+		var asUpdate bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM federation_received_asset_revisions
+			WHERE peer_id = $1 AND activity_uri = $2 AND activity_type = 'Update')`, an.peer.ID, an.env.ID).Scan(&asUpdate); err != nil {
+			return err
+		}
+		if asUpdate {
+			return &Error{Reason: ReasonActivityConflict, Err: errors.New("the activity id was recorded as an Update")}
+		}
 		// #1575: the origin withdrew this asset (§17.3), before or after
 		// an earlier announcement. A new announcement of it, delayed or
 		// replayed, is refused and never resurrects it; only a redelivery
@@ -625,7 +639,8 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 			// A version held here, announced again under a new activity:
 			// the same version, and its flags as of that activity (#1575).
 			rec, dup = *pl.duplicate, true
-			return recordRevision(ctx, tx, an)
+			_, err := recordRevision(ctx, tx, an)
+			return err
 		case pl.refusal != "":
 			rec, err = s.insert(ctx, tx, an, StateRejected, pl.refusal)
 			return err
@@ -671,7 +686,8 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 					WHERE id = $1`, rec.id, s.cfg.GrantWait.Seconds()); err != nil {
 					return err
 				}
-				return recordRevision(ctx, tx, an)
+				_, err = recordRevision(ctx, tx, an)
+				return err
 			}
 			rec, err = s.insert(ctx, tx, an, StateRejected, casfetch.ReasonNoInboundGrant)
 			return err
@@ -685,12 +701,14 @@ func (s *Service) bind(ctx context.Context, an *announced) (record, bool, error)
 				WHERE id = $1`, rec.id, s.cfg.PredecessorWait.Seconds()); err != nil {
 				return err
 			}
-			return recordRevision(ctx, tx, an)
+			_, err = recordRevision(ctx, tx, an)
+			return err
 		}
 		if rec, err = s.insert(ctx, tx, an, StatePending, ""); err != nil {
 			return err
 		}
-		return recordRevision(ctx, tx, an)
+		_, err = recordRevision(ctx, tx, an)
+		return err
 	})
 	if err != nil {
 		var e *Error
