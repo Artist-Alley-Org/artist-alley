@@ -37,6 +37,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/ldapauth"
 	"github.com/mscrnt/artist-alley/app/internal/licensing"
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/observability/healthhandler"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/preview"
@@ -520,6 +521,20 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// after HandlerFromMux so chi's last-write-wins routes POST
 		// here. Anonymous, like the strict operation.
 		r.Post("/federation/peers/handshake", impl.peersPublic.ServeHandshake)
+
+		// The portable field-schema export (#1576), re-registered with a
+		// body cap in front of the same generated adapter HandlerFromMux
+		// mounted. The strict adapter decodes the whole body before the
+		// operation runs, so the 64 KiB bound has to sit ahead of it.
+		// chi's last write wins for the route, as for the handshake.
+		exportRoute := openapi.ServerInterfaceWrapper{
+			Handler: strict,
+			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			},
+		}
+		r.With(middleware.CapRequestBody(metadata.FieldSchemaExportMaxRequestBytes)).
+			Post("/fields/export", exportRoute.ExportFieldSchema)
 
 		// Phase 1.18.A-2 follow-up B (commit 2) — generic
 		// /admin/{subsystem}/health pattern. First user:

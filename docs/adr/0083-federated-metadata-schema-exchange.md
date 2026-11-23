@@ -265,3 +265,76 @@ required statement are two field definitions in the existing `rights`
 display group, beside today's free-text `copyright` and `credit`. The
 mapping onto peer-visible values, with visibility and sensitivity
 filtering, is #1577. Nothing here is implemented yet.
+
+## Amendment 2026-11-22: the export half is built, and this is its wire contract (#1576)
+
+`POST /api/v1/fields/export` (operation `exportFieldSchema`) is the first implemented piece of
+this ADR. It exports; it does not import. Preview, atomic import, provenance and the two-instance
+adoption gate are separate work under #1576. Nothing here propagates over federation: the export
+is a document an operator takes from one server, as §Consequences requires.
+
+### Selection (§1, as decided)
+
+- The request is `{"codes": [...]}`: 1 to 100 entries, each matching the field-code rule
+  `^[a-z][a-z0-9_]*$`, counted as sent. Duplicates fold into one. There is no persisted set and
+  no "export everything".
+- **Only `active` definitions export.** A selected code that is unknown, `deprecated` or
+  `archived` refuses the whole request (422, `unknown_codes` first, then `retired_codes`), with
+  the sorted list of offending codes. There is no partial export. That a definition is retired
+  here is a local decision (the 2026-09-04 amendment), and exporting a retired field as a
+  schema to adopt would hand that decision to a peer.
+- Authorization comes before any stored schema is read: `fields.admin` or `system.admin`.
+  Anonymous gets 401 and a member 403, with bodies that do not depend on the selection. The
+  ordinary `GET /fields` gate (any signed-in user) is deliberately not inherited, because an
+  export is an administrative act. Two rejections come earlier and depend on the request bytes
+  alone: a body over 64 KiB (413, a route middleware in front of the generated adapter, which
+  otherwise decodes the body before the operation runs) and a body that is not JSON (400).
+
+### The document
+
+`{"format": "aa-field-schema/1", "fields": [...]}`. `format` is the only version marker: one
+string naming the contract and its version, so an importer has one thing to compare and must
+refuse any value it does not implement. Fields are sorted by `code`, vocabulary terms keep their
+stored order, and there is no time, request id, server id or origin claim, so the same selection
+over the same schema exports byte-identical JSON. An origin or provenance claim is left to the
+import design. If one is added, it is a separate untrusted claim, never a local id or an
+authorization assertion.
+
+Each field carries exactly the §2 IN list as completed by the amendments: `code`, `label`,
+`description`, `type`, `subject_kind`, `required`, `searchable`, `display_group`,
+`display_order`, `options`, `regexp_filter`, `display_condition`, `show_on_card`,
+`show_in_advanced_search`, `show_on_upload`, `edit_tab`, `open_vocabulary`. **Every member is
+always present**: an optional property with no value is `null` (`regexp_filter`,
+`display_condition`, `edit_tab`), and `description` is `""` when empty. The projection is built
+member by member from the stored columns into a DTO with no other members. It does not reuse the
+`FieldDefinition` API shape, so a column added later reaches the export only when it is
+classified here.
+
+- **`options`** is an array (possibly empty) for `select`, `multi_select` and `tree`, and `null`
+  for every other type. Each term is `{value, label, children}`. `label` is `null` when the term
+  has no label of its own, and `children` is `[]` for a leaf. Only active terms travel. A
+  `deprecated` or `archived` term is left out **with its subtree**, because a child exported
+  without its retired parent would claim a place in a tree that does not exist. Per-option
+  `status`, `replaced_by` and aliases never travel (§2: lifecycle and match keys are local), and
+  neither do other keys of the stored options document.
+- **`display_condition`** terms travel verbatim by code, including terms whose referent is not
+  in the export or not on this server (the 2026-09-03 amendment's preservation rule).
+- **Never exported**: ids, `applies_to`, `read_capability`, `write_capability`, `read_only`,
+  extraction source and mode, `default_value` and team overrides, `status`,
+  `deprecated_replacement_id`, `origin_server_id`, timestamps and audit refs, `mirrors_column`.
+  No field values or asset content are part of a schema.
+
+### Integrity and bounds
+
+- A stored definition that does not decode faithfully refuses the request (422
+  `malformed_definition`, the sorted codes). That covers an options document that is not an
+  object, `values` that is not an array, a blank or duplicate slug anywhere in the tree, an
+  unknown option status, a `replaced_by` naming nothing, a `display_condition` that is not an
+  array of non-blank strings, and a type or subject kind outside the schema's sets. This is
+  stricter than `GET /fields`, which leaves an undecodable condition out to keep forms working.
+  An export that silently dropped a member would look complete and be wrong.
+- The response body is capped at exactly 2 MiB, counted as the bytes the server writes
+  (the JSON and its trailing newline) (422 `export_too_large`). Neither a field nor a
+  vocabulary is ever truncated to fit.
+- The endpoint is read-only: one `SELECT` by code. It writes no definition, option, default,
+  permission or asset.

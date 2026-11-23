@@ -3581,6 +3581,9 @@ func (s *apiServer) ListFields(ctx context.Context, req openapi.ListFieldsReques
 func (s *apiServer) CreateField(ctx context.Context, req openapi.CreateFieldRequestObject) (openapi.CreateFieldResponseObject, error) {
 	return s.metadata.CreateField(ctx, req)
 }
+func (s *apiServer) ExportFieldSchema(ctx context.Context, req openapi.ExportFieldSchemaRequestObject) (openapi.ExportFieldSchemaResponseObject, error) {
+	return s.metadata.ExportFieldSchema(ctx, req)
+}
 func (s *apiServer) GetField(ctx context.Context, req openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error) {
 	return s.metadata.GetField(ctx, req)
 }

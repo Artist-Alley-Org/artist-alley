@@ -1936,6 +1936,79 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 	return items, nil
 }
 
+const listFieldDefinitionsByCodes = `-- name: ListFieldDefinitionsByCodes :many
+SELECT id, code, label, description, type, options, required, searchable,
+       applies_to, read_capability, write_capability,
+       display_order, display_group, status,
+       deprecated_replacement_id, origin_server_id,
+       created_at, updated_at, created_by_user_ref, updated_by_user_ref,
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary, mirrors_column, show_on_card,
+       show_in_advanced_search, show_on_upload, edit_tab,
+       read_only, regexp_filter, display_condition
+FROM field_definition WHERE code = ANY($1::text[])
+ORDER BY code
+`
+
+// The portable schema export's selection (#1576, ADR 0083 §1): every
+// definition whose code is in the caller's list, whatever its status,
+// so the handler can name a retired selection rather than mistake it
+// for an unknown one. Read-only, ordered by code for a deterministic
+// export.
+func (q *Queries) ListFieldDefinitionsByCodes(ctx context.Context, codes []string) ([]FieldDefinition, error) {
+	rows, err := q.db.Query(ctx, listFieldDefinitionsByCodes, codes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FieldDefinition
+	for rows.Next() {
+		var i FieldDefinition
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Label,
+			&i.Description,
+			&i.Type,
+			&i.Options,
+			&i.Required,
+			&i.Searchable,
+			&i.AppliesTo,
+			&i.ReadCapability,
+			&i.WriteCapability,
+			&i.DisplayOrder,
+			&i.DisplayGroup,
+			&i.Status,
+			&i.DeprecatedReplacementID,
+			&i.OriginServerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CreatedByUserRef,
+			&i.UpdatedByUserRef,
+			&i.SubjectKind,
+			&i.ExtractionSource,
+			&i.ExtractionMode,
+			&i.DefaultValue,
+			&i.OpenVocabulary,
+			&i.MirrorsColumn,
+			&i.ShowOnCard,
+			&i.ShowInAdvancedSearch,
+			&i.ShowOnUpload,
+			&i.EditTab,
+			&i.ReadOnly,
+			&i.RegexpFilter,
+			&i.DisplayCondition,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFieldDefinitionsForAssetType = `-- name: ListFieldDefinitionsForAssetType :many
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, read_capability, write_capability,
