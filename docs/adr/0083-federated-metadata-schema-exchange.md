@@ -818,3 +818,66 @@ untrusted declared claims and imports nothing into its own schema.
 Not in this slice: descriptive changes in an `Update` (§17.2.8 still excludes them), custom field
 values (they need a new profile), the other DCMI terms, identifiers, local IIIF rights, and
 preservation events.
+
+## Amendment 2026-11-23 (later): descriptive updates are a separate profile (#1577, S2 contract)
+
+The slice above sends the baseline only on an `aa:AssetVersion`. A later change to the title,
+description, rights URI or required statement reaches a peer only with a new announcement, because
+§17.2.8 limits an asset `Update` to `mature` and `aiProvenance` and §16.1 freezes a published
+profile. Carrying descriptive changes inside `archival-1` would quietly change a frozen profile, so
+they get their own token. Spec §18 specifies it. It is a contract only: nothing implements or
+advertises it yet.
+
+### The decision
+
+- **A new token, `asset-metadata-1`**, negotiated separately and in effect only together with
+  `archival-1` and `original-transfer-1`. Neither existing profile changes, and neither does
+  §17.2.8.
+- **One new member, `aa:metadata`, only on an origin-owned asset `Update`.** The Update keeps its
+  `aa:asset` member for the existing flags, the immutable version and its file set. That companion
+  `aa:asset` carries none of the descriptive members, so one activity never has two sources of
+  descriptive truth.
+- **A complete snapshot.** Exactly four REQUIRED keys, `title`, `description`, `rights` and
+  `requiredStatement`, each a valid claim or `null`. A missing key, a whole-member `null`, an
+  unknown or differently cased key, a repeated key or an over-limit value is invalid
+  (`metadata_invalid`), and nothing is trimmed or coerced. `null` clears the current claim, it does
+  not mean unchanged. No other DCMI term and no custom field is added; those need further tokens.
+
+### Privacy and capture
+
+- The peer is not a local identity, exactly as in the first slice: the same explicit source policy
+  decides which of the four claims are offered, and nothing is inherited from the sharer,
+  administrators or teams.
+- Each change to the shareable projection records a new immutable snapshot under a new activity
+  identity, captured with the policy that allowed it.
+  - Definition, privacy and batch changes need durable, bounded fan-out.
+  - A recipient counts once a sealed announcement is sent or durably queued to it, so an edit
+    between enqueue and first delivery is not lost.
+- A later restriction refuses delivery of an old snapshot that still names the restricted value.
+  A separately recorded clear (nulls) may then be delivered under a live grant. That removes the
+  current claim on the peer, but it cannot erase copies or history the peer already holds.
+
+### Provenance on the receiver
+
+- The original received record and its claims stay immutable.
+- The latest accepted snapshot, ordered by signed `published` then activity URI, is shown as the
+  current claims and labelled as such, never as the original record.
+- A flags-only Update contributes no snapshot. Activities accepted without the token are not
+  backfilled from live data.
+- Nothing is imported into the receiver's fields, values or permissions.
+- This is still not schema exchange. Exchanging field definitions remains the explicit, previewed
+  import of the 2026-11-22 amendments; a snapshot never creates or changes a definition.
+
+### Ownership and later gates
+
+- #1577 owns the mapping and this profile.
+- #1575 owns asset lifecycle and ordering. Its mechanisms are reused where they fit: published-then-id
+  ordering, the before-version hold, tombstones, and the version and activity conflicts. They are not
+  redefined.
+- Both issues stay open.
+- Implementation comes in later reviewed slices:
+  1. the strict validator, profile gate and conformance tests;
+  2. the receiver revision and projection;
+  3. the sender hooks and fan-out;
+  4. the UI and the two-direction gates of §18.6.
+- Advertising the token is a separate final step after those gates.

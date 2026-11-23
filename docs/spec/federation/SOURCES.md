@@ -104,6 +104,7 @@ For each section of v1.md, the citations resolve as:
 - §17.4 preservation events → `PREMIS-3`, `LoC-PreservationEvents`; ADR 0101
 - §17.5 annotations → `W3C-WebAnno`, `W3C-MediaFrags`, `IIIF-P3`
 - §17.7 BagIt mapping → `RFC-8493`
+- §18 profile `asset-metadata-1` → ADR 0043 (amendment 2026-11-17, #1513) and ADR 0083 (amendments 2026-11-23) for the negotiation, placement, snapshot, privacy and provenance rules, which are first-party protocol decisions; `W3C-AS2-Vocab` (`Update`); `DCMI-Terms` for `title` and `description`; `IIIF-P3`, `RightsStatements` and `CC-Licenses` for `rights` and `requiredStatement`; `RFC-5646` for the language-map tags
 
 ## How to add a new source
 
