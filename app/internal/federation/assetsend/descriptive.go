@@ -166,6 +166,23 @@ type sources struct {
 	rightsValue, statementValue *string
 }
 
+// shareable reports whether member's source is eligible now under the
+// peer emission policy (file header). Every re-check of a recorded member
+// (an announcement's and an aa:metadata capture's) asks this.
+func (s sources) shareable(member string) bool {
+	switch member {
+	case memberTitle:
+		return !s.titleGated
+	case memberDescription:
+		return !s.descriptionGated
+	case memberRights:
+		return s.rights.eligible() == ""
+	case memberRequiredStatement:
+		return s.statement.eligible() == ""
+	}
+	return false
+}
+
 // sourceSQL reads, in one statement, the asset's type and columns, every
 // mirror binding's gate, and the two seeded definitions with this asset's
 // values of them. $1 is the asset, $2 / $3 the seeded rights id / code,
@@ -328,10 +345,10 @@ func (s Source) materializeDescriptive(ctx context.Context, assetID uuid.UUID, r
 		recorded bool
 		ok       bool
 	}{
-		{memberTitle, snap.Title != nil, !src.titleGated},
-		{memberDescription, snap.Description != nil, !src.descriptionGated},
-		{memberRights, snap.Rights != nil, src.rights.eligible() == ""},
-		{memberRequiredStatement, snap.RequiredStatement != nil, src.statement.eligible() == ""},
+		{memberTitle, snap.Title != nil, src.shareable(memberTitle)},
+		{memberDescription, snap.Description != nil, src.shareable(memberDescription)},
+		{memberRights, snap.Rights != nil, src.shareable(memberRights)},
+		{memberRequiredStatement, snap.RequiredStatement != nil, src.shareable(memberRequiredStatement)},
 	}
 	for _, c := range checks {
 		if c.recorded {
