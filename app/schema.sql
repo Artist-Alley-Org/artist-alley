@@ -3670,6 +3670,29 @@ COMMENT ON COLUMN public.federation_inbox.decrypted_with_key_version IS 'Phase 1
 
 
 --
+-- Name: federation_metadata_work; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_metadata_work (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    kind text NOT NULL,
+    asset_id uuid,
+    asset_cursor uuid,
+    peer_cursor uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT federation_metadata_work_kind_check CHECK ((kind = ANY (ARRAY['asset'::text, 'all'::text]))),
+    CONSTRAINT federation_metadata_work_shape_check CHECK ((((kind = 'asset'::text) AND (asset_id IS NOT NULL) AND (asset_cursor IS NULL)) OR ((kind = 'all'::text) AND (asset_id IS NULL) AND (peer_cursor IS NULL))))
+);
+
+
+--
+-- Name: TABLE federation_metadata_work; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_metadata_work IS 'Durable local obligations to send asset metadata Updates (#1577, spec v1 §18.3): ''asset'' rows (send asset_id''s current metadata to its peers, from peer_cursor on) and ''all'' rows (add an ''asset'' row for every local asset, from asset_cursor on). UUID references and cursors only, no metadata values. A new row per change; deleted when its last page commits. No foreign keys, on purpose.';
+
+
+--
 -- Name: federation_outbox; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6223,6 +6246,14 @@ ALTER TABLE ONLY public.federation_inbox
 
 
 --
+-- Name: federation_metadata_work federation_metadata_work_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_metadata_work
+    ADD CONSTRAINT federation_metadata_work_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: federation_outbox federation_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7453,6 +7484,13 @@ CREATE INDEX federation_inbox_correlation_activity_id_idx ON public.federation_i
 --
 
 CREATE INDEX federation_inbox_pending_idx ON public.federation_inbox USING btree (received_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: federation_metadata_work_oldest_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_metadata_work_oldest_idx ON public.federation_metadata_work USING btree (created_at, id);
 
 
 --

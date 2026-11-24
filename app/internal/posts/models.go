@@ -655,6 +655,16 @@ type FederationInbox struct {
 	DecryptedWithKeyVersion *int32
 }
 
+// Durable local obligations to send asset metadata Updates (#1577, spec v1 §18.3): 'asset' rows (send asset_id's current metadata to its peers, from peer_cursor on) and 'all' rows (add an 'asset' row for every local asset, from asset_cursor on). UUID references and cursors only, no metadata values. A new row per change; deleted when its last page commits. No foreign keys, on purpose.
+type FederationMetadataWork struct {
+	ID          pgtype.UUID
+	Kind        string
+	AssetID     pgtype.UUID
+	AssetCursor pgtype.UUID
+	PeerCursor  pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+}
+
 // Per-recipient outbound queue. Derived from activities ledger via the dispatcher (Phase 1.22.D-b). Idempotent on (activity_id, peer_id, target_user_url) so the dispatcher is re-runnable. Sender-side emission refusal for restricted/embargo content (until 1.22.I ships X25519) is enforced at the dispatcher; refused activities never get an outbox row, they emit federation.emission.skipped audit instead.
 type FederationOutbox struct {
 	ID                 pgtype.UUID
