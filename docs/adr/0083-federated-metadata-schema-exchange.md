@@ -900,3 +900,19 @@ verified here. Three decisions, recorded in spec §18.4:
   before.
 
 Production admission of aa:metadata, the sender, API and UI exposure, and advertisement are still open.
+
+### Addendum 2026-11-23 (later): the inbox admits the member (#1577)
+
+The reference receiver's inbox now admits aa:metadata on an asset Update, at receipt (singleton and
+batch) and again at dispatch after any decryption, only when the peer's stored intersection holds all
+three profiles and the member passes the pure profile checks. The same asset worker then keeps the flags
+revision and the snapshot together. The tokens stay unadvertised, so no production peer reaches it.
+
+Spec §18.5 now states the stage order: metadata_invalid and profile_not_negotiated describe failures at
+the stage that checks the member. The checks before it keep their reasons and their order, so a repeated
+name inside the member is still the envelope parser's invalid_member, a broken actor signature is still
+its signature reason, and a stored activity id is still answered from what is stored. Nothing is loosened
+to reach a later reason, and archival-1's rules are unchanged.
+
+The sender, the API and UI projection of current claims, the two-direction gates and advertisement
+remain open.

@@ -9,10 +9,11 @@
 // The domain half of a metadata Update: ApplyFlagUpdate (update.go)
 // admits an Update carrying aa:metadata and keeps its flags revision and
 // its snapshot together, in one transaction; CurrentMetadata derives the
-// asset's current snapshot from what is kept. No production path reaches
-// it yet: the inbox's member check (federation.ValidateMembers) still
-// refuses aa:metadata as unknown_field, the profile is not advertised,
-// and no API or page reads a snapshot. Its caller must already have
+// asset's current snapshot from what is kept. The inbox admits
+// aa:metadata (federation.ValidateMembers) and routes the Update here
+// through Worker.UpdateAssetFlags; the profile is not advertised, so no
+// production peer reaches it, and no API or page reads a snapshot. Its
+// caller must already have
 // verified the envelope's signature by its actor (the inbox does that
 // before any handler); nothing here fetches or checks a key.
 //

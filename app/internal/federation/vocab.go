@@ -615,6 +615,7 @@ const (
 	InboxStatusUnsupportedActivity    InboxStatus = "unsupported_activity"     // #1569: §7 type this receiver does not apply; recorded, never applied (inbox.Applies)
 	InboxStatusProfileNotNegotiated   InboxStatus = "profile_not_negotiated"   // #1513 §16.3: a profile member (e.g. archival-1) from a peer whose negotiated capabilities lack that profile. Specified; enforced from #1580
 	InboxStatusArchivalInvalid        InboxStatus = "archival_invalid"         // #1513 §17: an archival-1 member does not match the profile. Enforced by the inbox since #1580
+	InboxStatusMetadataInvalid        InboxStatus = "metadata_invalid"         // #1577 §18: an asset-metadata-1 member, or its placement, does not match the profile, once the member stage is reached (§18.5)
 	InboxStatusFixityMismatch         InboxStatus = "fixity_mismatch"          // #1513 §17.6: received bytes differ from the listed size or checksum. Specified; enforced from #72 / #1574
 	InboxStatusStaleRequest           InboxStatus = "stale_request"            // HTTP-Sig date out of window
 	InboxStatusReplay                 InboxStatus = "replay"                   // activity id already seen
@@ -655,6 +656,7 @@ var KnownInboxStatuses = map[InboxStatus]struct{}{
 	InboxStatusError:                  {},
 	InboxStatusProfileNotNegotiated:   {},
 	InboxStatusArchivalInvalid:        {},
+	InboxStatusMetadataInvalid:        {},
 	InboxStatusFixityMismatch:         {},
 }
 

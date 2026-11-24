@@ -9,6 +9,7 @@ package federation_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -711,24 +712,147 @@ func TestValidateAssetMetadataMembers_DoesNotChangeTheEnvelope(t *testing.T) {
 
 // --- the running receiver and sender are unchanged -------------------------
 
-func TestAssetMetadata_RunningReceiverStillRefusesTheMember(t *testing.T) {
-	env := amUpdate(t, amValid())
-	if err := federation.ValidateAssetMetadataMembers(env, amAllProfiles); err != nil {
-		t.Fatalf("precondition: the pure check accepts it: %v", err)
+// TestAssetMetadata_RunningReceiverAdmitsTheMember: the inbox's member check
+// admits aa:metadata on an applied asset Update under all three stored
+// profiles, through the same pure checks, and keeps every other rule.
+func TestAssetMetadata_RunningReceiverAdmitsTheMember(t *testing.T) {
+	if err := federation.ValidateMembers(amUpdate(t, amValid()), amAllProfiles); err != nil {
+		t.Fatalf("a valid metadata Update: %v", err)
 	}
-	// The inbox's member check, with every profile negotiated and Update
-	// applied, still refuses the member: nothing admits it yet.
-	err := federation.ValidateMembers(env, amAllProfiles)
-	if !errors.Is(err, federation.ErrUnknownField) || errors.Is(err, federation.ErrMetadataInvalid) {
-		t.Fatalf("ValidateMembers: got %v, want unknown_field", err)
+	if err := federation.ValidateMembers(amUpdate(t, amMember(`null`, `null`, `null`, `null`)), amAllProfiles); err != nil {
+		t.Fatalf("a clear-all metadata Update: %v", err)
 	}
-	// The same activity without the member is the unchanged flags-only Update.
-	if err := federation.ValidateMembers(amUpdate(t, nil), amAllProfiles); err != nil {
+	tokens := []string{federation.ProfileAssetMetadata1, federation.ProfileArchival1, federation.ProfileOriginalTransfer1}
+	for _, missing := range tokens {
+		mc := federation.MemberContext{
+			Negotiated: func(tok string) bool { return tok != missing && slices.Contains(tokens, tok) },
+			Applied:    func(federation.ActivityType) bool { return true },
+		}
+		if err := federation.ValidateMembers(amUpdate(t, amValid()), mc); !errors.Is(err, federation.ErrProfileNotNegotiated) {
+			t.Errorf("without %s: %v", missing, err)
+		}
+	}
+	// The profiles come first, before any companion is parsed: a malformed
+	// aa:asset beside aa:metadata is profile_not_negotiated while a
+	// prerequisite is missing, and archival_invalid only with all three.
+	malformed := func() *federation.Envelope {
+		e := amUpdate(t, amValid())
+		e.Extra[federation.MemberArchivalAsset] = json.RawMessage(`{"id":"` + avAsset + `"}`)
+		return e
+	}
+	for _, missing := range tokens {
+		mc := federation.MemberContext{
+			Negotiated: func(tok string) bool { return tok != missing && slices.Contains(tokens, tok) },
+			Applied:    func(federation.ActivityType) bool { return true },
+		}
+		env := malformed()
+		before := amDeepCopy(env)
+		if err := federation.ValidateMembers(env, mc); !errors.Is(err, federation.ErrProfileNotNegotiated) {
+			t.Errorf("without %s, a malformed companion: %v", missing, err)
+		}
+		if !reflect.DeepEqual(before, *env) {
+			t.Errorf("without %s: the envelope was changed", missing)
+		}
+	}
+	if err := federation.ValidateMembers(malformed(), amAllProfiles); !errors.Is(err, federation.ErrArchivalInvalid) {
+		t.Errorf("all three profiles, a malformed companion: %v", err)
+	}
+	// A forbidden descriptive companion member is refused by its raw
+	// presence, whatever its value, before archival-1 parses it.
+	for _, v := range []string{`null`, `42`} {
+		e := amUpdate(t, amValid())
+		e.Extra[federation.MemberArchivalAsset] = amCompanion(t, "rights", v)
+		if err := federation.ValidateMembers(e, amAllProfiles); !errors.Is(err, federation.ErrMetadataInvalid) {
+			t.Errorf("a companion rights:%s: %v", v, err)
+		}
+	}
+	// Without aa:metadata the same malformed companion is the old refusal.
+	legacy := malformed()
+	delete(legacy.Extra, federation.MemberAssetMetadata)
+	if err := federation.ValidateMembers(legacy, amAllProfiles); !errors.Is(err, federation.ErrArchivalInvalid) {
+		t.Errorf("a flags-only Update with a malformed companion: %v", err)
+	}
+	// A type the receiver does not apply stays unsupported, before the member,
+	// the profiles and the companion.
+	unapplied := federation.MemberContext{Negotiated: amAllProfiles.Negotiated, Applied: func(federation.ActivityType) bool { return false }}
+	if err := federation.ValidateMembers(amUpdate(t, amValid()), unapplied); !errors.Is(err, federation.ErrUnsupportedActivity) {
+		t.Errorf("an unapplied Update: %v", err)
+	}
+	unappliedMissing := federation.MemberContext{
+		Negotiated: func(tok string) bool {
+			return tok == federation.ProfileArchival1 || tok == federation.ProfileOriginalTransfer1
+		},
+		Applied: func(federation.ActivityType) bool { return false },
+	}
+	if err := federation.ValidateMembers(malformed(), unappliedMissing); !errors.Is(err, federation.ErrUnsupportedActivity) {
+		t.Errorf("an unapplied Update without asset-metadata-1 and a malformed companion: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		env  func() *federation.Envelope
+		want error
+	}{
+		"a malformed member":  {func() *federation.Envelope { return amUpdate(t, amMember(`""`, `null`, `null`, `null`)) }, federation.ErrMetadataInvalid},
+		"a whole-member null": {func() *federation.Envelope { return amUpdate(t, json.RawMessage(`null`)) }, federation.ErrMetadataInvalid},
+		"a descriptive companion member": {func() *federation.Envelope {
+			e := amUpdate(t, amValid())
+			e.Extra[federation.MemberArchivalAsset] = amCompanion(t, "rights", `null`)
+			return e
+		}, federation.ErrMetadataInvalid},
+		"a malformed companion": {func() *federation.Envelope {
+			e := amUpdate(t, amValid())
+			e.Extra[federation.MemberArchivalAsset] = json.RawMessage(`{"id":"` + avAsset + `"}`)
+			return e
+		}, federation.ErrArchivalInvalid},
+		"an unrelated member": {func() *federation.Envelope {
+			e := amUpdate(t, amValid())
+			e.Extra["aa:unrelated"] = json.RawMessage(`1`)
+			return e
+		}, federation.ErrUnknownField},
+		"a case-variant member name": {func() *federation.Envelope {
+			e := amUpdate(t, nil)
+			e.Extra["aa:Metadata"] = amValid()
+			return e
+		}, federation.ErrUnknownField},
+		"an invalid encryption key beside it": {func() *federation.Envelope {
+			e := amUpdate(t, amValid())
+			e.Extra[federation.PropEncryptionPublicKey] = json.RawMessage(`{"type":"aa:X25519PublicKey","publicKeyBase64":"short","version":1}`)
+			return e
+		}, federation.ErrInvalidMember},
+		"on an aa:AssetVersion": {func() *federation.Envelope {
+			e := amUpdate(t, amValid())
+			e.Type = federation.ActivityAAAssetVersion
+			return e
+		}, federation.ErrMetadataInvalid},
+	} {
+		env := tc.env()
+		before, _ := json.Marshal(env.Extra)
+		err := federation.ValidateMembers(env, amAllProfiles)
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: got %v, want %v", name, err, tc.want)
+		}
+		if after, _ := json.Marshal(env.Extra); string(after) != string(before) {
+			t.Errorf("%s: the envelope was changed", name)
+		}
+	}
+	// A valid encryption key beside the members is still admitted.
+	withKey := amUpdate(t, amValid())
+	withKey.Extra[federation.PropEncryptionPublicKey] = json.RawMessage(`{"type":"aa:X25519PublicKey","publicKeyBase64":"` +
+		base64.StdEncoding.EncodeToString(make([]byte, 32)) + `","version":1}`)
+	if err := federation.ValidateMembers(withKey, amAllProfiles); err != nil {
+		t.Errorf("with a valid encryption key: %v", err)
+	}
+	// The flags-only Update is unchanged and needs no new token.
+	archivalOnly := federation.MemberContext{
+		Negotiated: func(tok string) bool { return tok == federation.ProfileArchival1 },
+		Applied:    func(federation.ActivityType) bool { return true },
+	}
+	if err := federation.ValidateMembers(amUpdate(t, nil), archivalOnly); err != nil {
 		t.Fatalf("a flags-only Update: %v", err)
 	}
-	// No running reason is metadata_invalid.
-	if _, ok := federation.KnownInboxStatuses[federation.InboxStatus("metadata_invalid")]; ok {
-		t.Fatal("metadata_invalid became a running inbox status; this foundation must not add one")
+	// metadata_invalid is a running inbox rejection status.
+	st := federation.InboxStatus("metadata_invalid")
+	if _, ok := federation.KnownInboxStatuses[st]; !ok || st != federation.InboxStatusMetadataInvalid || !st.IsReject() {
+		t.Fatal("metadata_invalid is not a known rejection status")
 	}
 }
 

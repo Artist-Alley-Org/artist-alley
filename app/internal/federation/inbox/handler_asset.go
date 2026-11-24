@@ -185,6 +185,8 @@ func AssetRejectStatus(reason string) federation.InboxStatus {
 		return federation.InboxStatusProfileNotNegotiated
 	case string(federation.InboxStatusArchivalInvalid):
 		return federation.InboxStatusArchivalInvalid
+	case string(federation.InboxStatusMetadataInvalid):
+		return federation.InboxStatusMetadataInvalid
 	case string(federation.InboxStatusUnsupportedActivity):
 		return federation.InboxStatusUnsupportedActivity
 	case "foreign_origin":

@@ -265,6 +265,7 @@ func TestInboxStatusValid_AllSentinelsRegistered(t *testing.T) {
 		federation.InboxStatusStaleRequest,
 		federation.InboxStatusReplay, federation.InboxStatusError,
 		federation.InboxStatusProfileNotNegotiated, federation.InboxStatusArchivalInvalid,
+		federation.InboxStatusMetadataInvalid,
 		federation.InboxStatusFixityMismatch,
 		federation.InboxStatusInvalidMember,
 	}
