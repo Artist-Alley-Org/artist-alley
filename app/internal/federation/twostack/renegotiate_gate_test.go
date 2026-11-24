@@ -237,8 +237,11 @@ func TestTwoStack_RenegotiatePeer(t *testing.T) {
 			t.Errorf("%d renegotiated audit rows, want 1", n)
 		}
 		var prevJSON, curJSON string
-		_ = c.b.pool.QueryRow(ctx, `SELECT metadata->>'previous_capabilities', metadata->>'capabilities' FROM audit_events
-			WHERE event_type = $1 AND metadata->>'outcome' = 'renegotiated'`, audit.EventFederationPeerRenegotiated).Scan(&prevJSON, &curJSON)
+		if err := c.b.pool.QueryRow(ctx, `SELECT metadata->>'previous_capabilities', metadata->>'capabilities' FROM audit_events
+			WHERE event_type = $1 AND metadata->>'peer_id' = $2 AND metadata->>'outcome' = 'renegotiated'`,
+			audit.EventFederationPeerRenegotiated, rowB.id).Scan(&prevJSON, &curJSON); err != nil {
+			t.Fatalf("read the renegotiated audit row of %s: %v", rowB.id, err)
+		}
 		var prev, cur []string
 		_ = json.Unmarshal([]byte(prevJSON), &prev)
 		_ = json.Unmarshal([]byte(curJSON), &cur)
