@@ -220,6 +220,34 @@ export const testIds = {
     errorBoundary:    'page-error-boundary',
     notFound:         'page-not-found',
   },
+
+  // Received asset detail (#1574, #1575) and its latest received
+  // metadata (#1577). A claim row is the `metadataClaim` element whose
+  // `data-claim` is title | description | rights | requiredStatement; a
+  // provenance row is `metadataField` with its `data-field`.
+  received: {
+    title:               'received-title',
+    loading:             'received-loading',
+    missing:             'received-missing',
+    withdrawn:           'received-withdrawn',
+    files:               'received-files',
+    file:                'received-file',
+    download:            'received-download',
+    downloadUnavailable: 'received-download-unavailable',
+    claims:              'received-claims',
+    claimsTitle:         'received-claims-title',
+    originalActivity:    'received-original-activity',
+    originalActor:       'received-original-actor',
+    metadata:            'received-metadata',
+    metadataPeer:        'received-metadata-peer',
+    metadataClaim:       'received-metadata-claim',
+    metadataValue:       'received-metadata-value',
+    metadataEmpty:       'received-metadata-empty',
+    metadataText:        'received-metadata-text',
+    metadataPublished:   'received-metadata-published',
+    metadataProvenance:  'received-metadata-provenance',
+    metadataField:       'received-metadata-field',
+  },
 } as const;
 
 /**

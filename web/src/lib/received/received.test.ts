@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { declaredEntries, formatBytes, originalUrl, verifiedHere } from './received';
+import { declaredEntries, formatBytes, languageEntries, originalUrl, verifiedHere } from './received';
 
 describe('received asset helpers (#1574)', () => {
   it('formats byte sizes', () => {
@@ -31,5 +31,24 @@ describe('received asset helpers (#1574)', () => {
 
   it('builds the original URL under the API base, escaping the id', () => {
     expect(originalUrl('a/b')).toBe('/api/v1/federation/received-assets/a%2Fb/original');
+  });
+});
+
+describe('languageEntries (#1577)', () => {
+  it('lists every tag in a stable order with every text in order, without changing the map', () => {
+    const map = { none: ['Studio A', 'Second'], fr: ['Crédit'], en: ['Credit'] };
+    const before = JSON.stringify(map);
+    expect(languageEntries(map)).toEqual([
+      ['en', ['Credit']],
+      ['fr', ['Crédit']],
+      ['none', ['Studio A', 'Second']],
+    ]);
+    expect(JSON.stringify(map)).toBe(before);
+    expect(Object.keys(map)).toEqual(['none', 'fr', 'en']);
+  });
+
+  it('has no entries for a missing map', () => {
+    expect(languageEntries(undefined)).toEqual([]);
+    expect(languageEntries(null)).toEqual([]);
   });
 });

@@ -13,8 +13,9 @@
 // aa:metadata (federation.ValidateMembers) and routes the Update here
 // through Worker.UpdateAssetFlags; the profile is not advertised, so no
 // production peer reaches it. The received-asset detail API
-// (receivedassets) shows the current snapshot under its own rules; no
-// page reads one yet. Its caller must already have
+// (receivedassets) shows the current snapshot under its own rules, and
+// the account page renders what that API returns. Its caller must
+// already have
 // verified the envelope's signature by its actor (the inbox does that
 // before any handler); nothing here fetches or checks a key.
 //
