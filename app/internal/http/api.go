@@ -208,6 +208,7 @@ type apiServer struct {
 	inboxDispatcher   *inbox.Dispatcher
 	outboxDispatcher  *outbox.Dispatcher
 	outboxDelivery    *outbox.Worker
+	metadataWork      *assetsend.MetadataWorkRunner // #1577: processes queued metadata work under Server.Run
 	outboxAdmin       *outbox.AdminHandler
 	userKeysSweeper   *userkeys.Sweeper
 	userKeysAdmin     *userkeys.AdminHandler
@@ -1594,6 +1595,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// was recorded. Nothing records one in production yet, and the
 	// profile is not advertised.
 	s.outboxDelivery.SetAssetMetadataUpdateMembers(assetsend.Source{Pool: pool}.MetadataUpdateMembers)
+	// #1577: the local processor of the work migration 00100's triggers
+	// queue. It records metadata Updates only toward eligible peers; the
+	// profile is not advertised. The owner's username is read in each
+	// page's transaction, and the origin before each page.
+	s.metadataWork = &assetsend.MetadataWorkRunner{
+		Work:   assetsend.MetadataWork{Pool: pool, Writer: s.activities},
+		Origin: baseURLFn,
+		Logger: logger,
+	}
 	actorKeys := remote.NewSigningKeyResolver(pool, signer, logger)
 	s.inboxHandler.SetActorKeyResolver(actorKeys)
 	// #72 origin: serves originals only under the #1573 decision, with

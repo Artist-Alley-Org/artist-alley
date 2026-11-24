@@ -6,11 +6,14 @@
 // that requires them and processed later in bounded pages
 // (federation_metadata_work, migration 00099).
 //
-// # Unwired
+// # Producers and runtime
 //
-// Nothing in production enqueues work or runs MetadataWork yet: the
-// producers (asset, field value, mirror, batch, import and definition
-// changes) and the local runtime that calls RunOnce are later #1577 work.
+// Migration 00100's triggers enqueue work in the transaction of every
+// relevant storage change (assets, the seeded field values, relevant
+// field definitions, peers becoming eligible, asset shares), and
+// MetadataWorkRunner (metadata_work_runner.go) calls RunOnce under the
+// server's lifecycle. The profile is still not advertised, so no
+// production peer is eligible yet.
 //
 // # Enqueue
 //
@@ -100,6 +103,8 @@ type MetadataWork struct {
 	Writer  *activities.Writer
 	BaseURL string
 	// Username resolves an owner's username, as for RecordMetadataUpdate.
+	// When nil, the owner's username is read in the page's transaction,
+	// under the asset row lock; a failed read fails the page.
 	Username func(ctx context.Context, userRef int64) string
 }
 
@@ -113,8 +118,8 @@ func (m MetadataWork) RunOnce(ctx context.Context, limit int) (worked bool, err 
 	if limit < 0 || limit > MaxMetadataWorkPage {
 		return false, ErrMetadataWorkPage
 	}
-	if m.Pool == nil || m.Writer == nil || m.Username == nil {
-		return false, errors.New("assetsend: metadata work needs a pool, a writer and a username resolver")
+	if m.Pool == nil || m.Writer == nil {
+		return false, errors.New("assetsend: metadata work needs a pool and a writer")
 	}
 	err = pgx.BeginFunc(ctx, m.Pool, func(tx pgx.Tx) error {
 		var (
@@ -184,13 +189,41 @@ func (m MetadataWork) peers(ctx context.Context, tx pgx.Tx, id, assetID uuid.UUI
 	if err != nil {
 		return fmt.Errorf("assetsend: read the peers for metadata work: %w", err)
 	}
+	username := m.Username
+	if username == nil && len(page) > 0 {
+		if username, err = ownerUsername(ctx, tx, assetID); err != nil {
+			return err
+		}
+	}
 	for _, peer := range page {
 		if _, err := RecordMetadataUpdate(ctx, tx, m.Writer, MetadataChange{AssetID: assetID, PeerID: peer, BaseURL: m.BaseURL,
-			Username: m.Username}); err != nil {
+			Username: username}); err != nil {
 			return err
 		}
 	}
 	return advance(ctx, tx, id, "peer_cursor", page, limit)
+}
+
+// ownerUsername reads, in tx (which holds the asset row), the asset's owner
+// and that owner's username, and returns a resolver answering only for
+// that owner. No owner, or a user with no username, resolves to "", which
+// the recorder treats as ineligible; a failed read is an error.
+func ownerUsername(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) (func(context.Context, int64) string, error) {
+	var (
+		owner *int64
+		name  *string
+	)
+	err := tx.QueryRow(ctx, `SELECT a.owner_user_ref, u.username FROM assets a
+		LEFT JOIN "user" u ON u.ref = a.owner_user_ref WHERE a.id = $1`, assetID).Scan(&owner, &name)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("assetsend: read the owner for metadata work: %w", err)
+	}
+	return func(_ context.Context, userRef int64) string {
+		if owner == nil || name == nil || *owner != userRef {
+			return ""
+		}
+		return *name
+	}, nil
 }
 
 // uuidPage reads at most limit UUIDs, closing the rows before returning.

@@ -1069,6 +1069,13 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "outbox.delivery.start")
 	}
 
+	// Federation metadata work (#1577): records the metadata Updates the
+	// migration 00100 triggers queued, a bounded page at a time.
+	if s.api != nil && s.api.metadataWork != nil {
+		go s.api.metadataWork.Run(runCtx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "metadata_work.start")
+	}
+
 	// Federation user-keys retained-row sweeper (Phase 1.22.I-h).
 	// Reaps federation_user_keys rows whose retained_until grace
 	// window has elapsed. Boot-time first sweep covers
