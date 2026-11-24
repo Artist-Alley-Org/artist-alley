@@ -916,3 +916,26 @@ to reach a later reason, and archival-1's rules are unchanged.
 
 The sender, the API and UI projection of current claims, the two-direction gates and advertisement
 remain open.
+
+### Addendum 2026-11-23 (later): the detail API shows the current snapshot (#1577)
+
+The received-asset detail API (`GET /federation/received-assets/{id}`) now returns the asset's current
+snapshot as `current_metadata`, beside the original record's claims, which it never replaces. It carries
+all four keys exactly as kept (four nulls are a present clear, not an absence) and the revision's
+provenance: the activity, actor, bound version and file set, the signed published time to the nanosecond,
+the first accepted origin signature and this instance's recipient identity. No page shows it yet.
+
+Two checks decide whether it is shown, recorded in spec §18.4:
+
+- The record must be viewable first, and is checked again for the same caller after the snapshot is
+  chosen, with no tombstone kept for the asset. A record that is no longer viewable answers the same 404.
+- The version the chosen snapshot names must be held as public and verified. A public current version
+  does not authorize claims kept with a team version. The newest snapshot is chosen first, so when its
+  version is not public nothing is shown, and an older snapshot or the original claims are not promoted
+  to current in its place.
+
+A view grant suffices. Dropping the profile on renegotiation does not hide an accepted snapshot, and kept
+snapshots never make a record visible. An initial snapshot kept under archival-1's rules is shown whole,
+without the aa:metadata member's bounds.
+
+The sender, the UI, the two-direction gates and advertisement remain open.

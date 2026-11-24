@@ -12,8 +12,9 @@
 // asset's current snapshot from what is kept. The inbox admits
 // aa:metadata (federation.ValidateMembers) and routes the Update here
 // through Worker.UpdateAssetFlags; the profile is not advertised, so no
-// production peer reaches it, and no API or page reads a snapshot. Its
-// caller must already have
+// production peer reaches it. The received-asset detail API
+// (receivedassets) shows the current snapshot under its own rules; no
+// page reads one yet. Its caller must already have
 // verified the envelope's signature by its actor (the inbox does that
 // before any handler); nothing here fetches or checks a key.
 //
@@ -328,8 +329,8 @@ type MetadataRevision struct {
 // It is a storage primitive, not a permission: it says nothing about who
 // may read the snapshot, and it returns kept history whatever the peer's
 // or the grant's state now. A caller that shows it applies the record's,
-// the peer's and the grant's rules first. Nothing calls it in production
-// yet.
+// the peer's and the grant's rules first, as the received-asset detail
+// does (receivedassets, #1577).
 func (s *Service) CurrentMetadata(ctx context.Context, peerID uuid.UUID, assetURI string) (*MetadataRevision, error) {
 	var m MetadataRevision
 	var snap []byte

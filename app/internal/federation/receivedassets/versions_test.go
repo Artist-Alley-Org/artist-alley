@@ -22,10 +22,10 @@ import (
 )
 
 // supersede replaces r, a complete version 1, with a complete version 2
-// of the same asset, as the receiver's completion does (#1575): in one
-// transaction r becomes superseded (keeping its pin and verified
-// original) and the new record complete, linked to it.
-func (f *fx) supersede(r record) record {
+// of the same asset in tier sensitivity, as the receiver's completion
+// does (#1575): in one transaction r becomes superseded (keeping its pin
+// and verified original) and the new record complete, linked to it.
+func (f *fx) supersede(r record, sensitivity string) record {
 	f.t.Helper()
 	ctx := context.Background()
 	body := make([]byte, 4096)
@@ -52,8 +52,8 @@ func (f *fx) supersede(r record) record {
 			  (id, peer_id, activity_uri, actor_uri, origin_asset_uri, origin_asset_id, version_uri, version_number,
 			   file_set_sha256, record, sensitivity, signer_key_id, predecessor_version_uri)
 			  SELECT $1, peer_id, $2, actor_uri, origin_asset_uri, origin_asset_id, origin_asset_uri || '/versions/2', 2,
-			   $3, record, sensitivity, 'k', version_uri FROM federation_received_assets WHERE id = $4`,
-				[]any{next.id, r.peer.url + "/activities/" + uuid.NewString(), strings.Repeat("1", 64), r.id}},
+			   $3, record, $5, 'k', version_uri FROM federation_received_assets WHERE id = $4`,
+				[]any{next.id, r.peer.url + "/activities/" + uuid.NewString(), strings.Repeat("1", 64), r.id, sensitivity}},
 			{`INSERT INTO federation_received_asset_files
 			  (received_asset_id, position, role, object_hash, size_bytes, checksums, declared_media_type, declared_original_filename)
 			  VALUES ($1, 0, 'original', $2, $3, '[]'::jsonb, 'image/png', 'harbour-2.png')`, []any{next.id, next.hash, len(body)}},
@@ -90,7 +90,7 @@ func TestAPI_OnlyTheCurrentVersionIsShown(t *testing.T) {
 	v1 := f.complete(f.peerA, "public")
 	f.grant(v1, true, "", "")
 	f.want("version 1 before version 2", f.u1, v1, everything)
-	v2 := f.supersede(v1)
+	v2 := f.supersede(v1, "public")
 	f.want("version 2", f.u1, v2, everything)
 	f.want("version 1 after version 2 replaced it", f.u1, v1, nothing)
 	if _, ok := mustGet(t, f, f.u1, v1.id).(openapi.GetReceivedAsset404JSONResponse); !ok {
