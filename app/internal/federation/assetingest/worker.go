@@ -118,8 +118,9 @@ func (w *Worker) ScheduleAsset(ctx context.Context, peerID uuid.UUID, env *feder
 }
 
 // UpdateAssetFlags is the inbox's receiver of an asset Update (#1575): it
-// keeps an origin's mature and aiProvenance flags (Service.ApplyFlagUpdate).
-// Nothing is fetched.
+// keeps an origin's mature and aiProvenance flags and, when the Update
+// carries aa:metadata (#1577), its snapshot with them
+// (Service.ApplyFlagUpdate). Nothing is fetched.
 func (w *Worker) UpdateAssetFlags(ctx context.Context, peerID uuid.UUID, env *federation.Envelope) (inbox.AssetScheduled, error) {
 	signer := w.signer()
 	if signer.KeyID == "" {

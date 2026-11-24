@@ -132,7 +132,13 @@ type MemberContext struct {
 //     so is a Create that is not a comment, an Undo that is not of a
 //     Like, and a Delete or an Update that is not of a comment or (with
 //     its archival-1 member) of an asset.
-//  4. Every member must be defined for the type (ErrUnknownField) and
+//  4. An aa:metadata member (asset-metadata-1, #1577), on a plaintext
+//     envelope of an applied type, must pass ValidateAssetMetadataMembers
+//     before step 2 parses any companion: all three profiles negotiated
+//     (ErrProfileNotNegotiated), only on an asset Update with its
+//     aa:asset and no descriptive member in it, and a complete valid
+//     snapshot (ErrMetadataInvalid). Steps 2, 3 and 5 still apply after.
+//  5. Every member must be defined for the type (ErrUnknownField) and
 //     well formed (ErrInvalidMember).
 func ValidateMembers(env *Envelope, mc MemberContext) error {
 	negotiated := mc.Negotiated != nil && mc.Negotiated(ProfileArchival1)
@@ -158,6 +164,18 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 		return nil
 	}
 
+	// #1577 (§18.1, §18.5): with aa:metadata, the applied type and then the
+	// profile's own checks come first, so its profiles are decided before
+	// any companion is parsed; the checks below still apply after them.
+	_, hasMetadata := env.Extra[MemberAssetMetadata]
+	if hasMetadata {
+		if !applied(env.Type) {
+			return fmt.Errorf("%w: %s", ErrUnsupportedActivity, env.Type)
+		}
+		if err := ValidateAssetMetadataMembers(env, mc); err != nil {
+			return err
+		}
+	}
 	if err := ValidateArchivalMembers(env, negotiated); err != nil {
 		return err
 	}
@@ -166,6 +184,9 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 	}
 
 	allowed := map[string]bool{PropEncryptionPublicKey: true}
+	if hasMetadata {
+		allowed[MemberAssetMetadata] = true
+	}
 	switch env.Type {
 	case ActivityLike:
 		if env.Object == "" {
@@ -200,9 +221,10 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 	case ActivityUpdate:
 		if _, ok := env.Extra[MemberArchivalAsset]; ok {
 			// #1575, §17.2.8: an origin's Update of its own asset's
-			// flags. ValidateArchivalMembers above required archival-1
-			// and checked aa:asset names the envelope object; the object
-			// is an asset URI on the actor's own origin.
+			// flags (and, under asset-metadata-1, its aa:metadata,
+			// checked above). ValidateArchivalMembers above required
+			// archival-1 and checked aa:asset names the envelope object;
+			// the object is an asset URI on the actor's own origin.
 			if err := checkPriorActivityObject(env); err != nil {
 				return err
 			}

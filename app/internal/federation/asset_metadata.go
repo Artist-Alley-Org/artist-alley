@@ -8,13 +8,11 @@
 // executable form of §18.1, §18.2 and §18.5, tested by
 // testdata/conformance/asset-metadata-1/.
 //
-// Nothing in the running receiver or sender calls them yet. The inbox's
-// ValidateMembers still refuses aa:metadata as unknown_field, even with
-// every profile negotiated, because the asset Update handler applies
-// only flags: admitting the member there would accept an activity and
-// drop its metadata. The receiver revision and projection, the sender,
-// the UI and the profile's advertisement are later #1577 work (§18.6),
-// and the token is absent from peer.KnownCapabilities.
+// The inbox's ValidateMembers calls ValidateAssetMetadataMembers for an
+// aa:metadata member (at receipt and at dispatch), and the asset worker
+// (assetingest) stores what it admits. No sender emits the member, no API
+// or page shows it, and the token is absent from peer.KnownCapabilities
+// (§18.6 is later #1577 work).
 //
 // A nil error from these functions is a statement about the bytes and
 // the stored profile intersection only. It is not a signature check, a

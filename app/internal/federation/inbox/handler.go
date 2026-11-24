@@ -897,6 +897,8 @@ func MemberReason(err error) (federation.InboxStatus, int) {
 		return federation.InboxStatusProfileNotNegotiated, http.StatusUnprocessableEntity
 	case errors.Is(err, federation.ErrArchivalInvalid):
 		return federation.InboxStatusArchivalInvalid, http.StatusBadRequest
+	case errors.Is(err, federation.ErrMetadataInvalid):
+		return federation.InboxStatusMetadataInvalid, http.StatusBadRequest
 	case errors.Is(err, federation.ErrUnsupportedActivity):
 		return federation.InboxStatusUnsupportedActivity, http.StatusUnprocessableEntity
 	case errors.Is(err, federation.ErrUnknownField):

@@ -5,10 +5,10 @@
 //
 // Each vector under testdata/conformance/asset-metadata-1/ names the pure
 // check it runs NOW (enforcement.now) and the open issue that applies the
-// rule in a running receiver (enforcement.pending). A passing vector
-// proves the contract's rule is executable, not that a receiver admits or
-// applies the member: the running inbox still refuses aa:metadata as
-// unknown_field, and every accepted profile vector below checks that too.
+// rule in a running receiver (enforcement.pending). Every profile vector
+// carrying aa:metadata is also run through the inbox's own member check
+// (federation.ValidateMembers), which must reach the same outcome: the
+// running receiver admits the member under all three profiles (#1577).
 
 package federation_test
 
@@ -204,10 +204,10 @@ func TestConformance_AssetMetadata1(t *testing.T) {
 					Applied:    func(federation.ActivityType) bool { return true },
 				}
 				got = assetMetadataReason(federation.ValidateAssetMetadataMembers(env, mc))
-				// The running receiver admits none of it yet.
-				if _, has := env.Extra[federation.MemberAssetMetadata]; has && got == "" {
-					if err := federation.ValidateMembers(env, mc); !errors.Is(err, federation.ErrUnknownField) {
-						t.Fatalf("the running ValidateMembers did not refuse aa:metadata as unknown_field: %v", err)
+				// The running member check reaches the same outcome.
+				if _, has := env.Extra[federation.MemberAssetMetadata]; has {
+					if running := assetMetadataReason(federation.ValidateMembers(env, mc)); running != got {
+						t.Fatalf("the running ValidateMembers gives %q, the profile check %q", running, got)
 					}
 				}
 			default:
