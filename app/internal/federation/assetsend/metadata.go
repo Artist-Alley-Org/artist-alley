@@ -4,14 +4,15 @@
 // The sender's asset-metadata-1 snapshot (#1577, spec v1 §18.2, §18.3):
 // capture and re-check of an asset's aa:metadata member.
 //
-// # Intentionally unwired
+// # Source privacy only
 //
-// Nothing calls these yet. No activity is recorded, nothing is queued and
-// nothing is sent: this file is the source-privacy primitive a later
-// metadata Update driver uses. It proves only that a member's sources are
-// shareable with a peer under the peer emission policy of descriptive.go.
-// It does not check a profile, a grant, the owner, the tier, a sealed
-// version or an activity's identity and order; that driver must.
+// This file is the source-privacy primitive the metadata Update driver
+// (metadata_update.go) uses: RecordMetadataUpdate captures with it and
+// Source.MetadataUpdateMembers re-checks with it. It proves only that a
+// member's sources are shareable with a peer under the peer emission
+// policy of descriptive.go. It does not check a profile, a grant, the
+// owner, the tier, a sealed version or an activity's identity and order;
+// the driver does.
 //
 // # Capture
 //

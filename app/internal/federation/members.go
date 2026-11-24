@@ -845,6 +845,18 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 			return nil, fmt.Errorf("%w: payload is not an object: %v", ErrNotFederated, err)
 		}
 	}
+	// #1577: a local record never holds a wire aa:metadata, and only an
+	// asset Update carries a metadata capture or its built member.
+	if _, ok := local[MemberAssetMetadata]; ok {
+		return nil, fmt.Errorf("%w: %s: a local record holds a wire %s", ErrNotFederated, t, MemberAssetMetadata)
+	}
+	if !(t == ActivityUpdate && objectKind == "asset") {
+		for _, k := range []string{MetadataCaptureKey, AssetMetadataMemberKey} {
+			if _, ok := local[k]; ok {
+				return nil, fmt.Errorf("%w: %s of %q carries a metadata capture", ErrNotFederated, t, objectKind)
+			}
+		}
+	}
 	out := map[string]json.RawMessage{}
 	copyAs := func(from, to string, required bool) error {
 		raw, ok := local[from]
@@ -888,6 +900,23 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 			// (AssetVersionMemberKey); the asset is the envelope object.
 			if err := copyAs(AssetVersionMemberKey, MemberArchivalAsset, true); err != nil {
 				return nil, err
+			}
+			// #1577: a metadata Update also carries its aa:metadata, built
+			// by the delivery worker (AssetMetadataMemberKey) from the
+			// capture its local record holds (MetadataCaptureKey). The two
+			// keys come together or the activity is refused: a record with
+			// a capture is never sent as a flags-only Update.
+			_, captured := local[MetadataCaptureKey]
+			built, hasBuilt := local[AssetMetadataMemberKey]
+			if captured != hasBuilt {
+				return nil, fmt.Errorf("%w: %s: a metadata Update without both its capture and its built %s", ErrNotFederated, t, MemberAssetMetadata)
+			}
+			if captured {
+				if !has(ProfileAssetMetadata1) {
+					return nil, fmt.Errorf("%w: %w: %s is sent only with %s, %s and %s", ErrNotFederated, ErrProfileNotNegotiated,
+						MemberAssetMetadata, ProfileAssetMetadata1, ProfileArchival1, ProfileOriginalTransfer1)
+				}
+				out[MemberAssetMetadata] = built
 			}
 			break
 		}
@@ -959,6 +988,9 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 	case ActivityUpdate:
 		if objectKind == "asset" {
 			_, err = ParseArchivalAsset(out[MemberArchivalAsset])
+			if metadata, ok := out[MemberAssetMetadata]; ok && err == nil {
+				err = checkMetadataUpdateMembers(out[MemberArchivalAsset], metadata)
+			}
 		} else {
 			err = checkCommentContent(out)
 		}
@@ -994,3 +1026,37 @@ const AssetVersionMemberKey = "asset"
 // asset Delete's built aa:tombstone member under before WireMembers
 // projects it (#1575). The stored local record never holds it.
 const AssetTombstoneMemberKey = "tombstone"
+
+// MetadataCaptureKey is the local record key of a metadata Update's
+// captured snapshot (#1577, assetsend.RecordMetadataUpdate): the capture's
+// JSON as one string. It is local only and never projected; its presence
+// marks the record as a metadata Update.
+const MetadataCaptureKey = "metadata_capture"
+
+// AssetMetadataMemberKey is the payload key the delivery worker puts a
+// metadata Update's built aa:metadata member under before WireMembers
+// projects it (#1577). The stored local record never holds it.
+const AssetMetadataMemberKey = "asset_metadata"
+
+// checkMetadataUpdateMembers checks a metadata Update's projected members
+// as §18.2 has a receiver check them: a complete, valid aa:metadata, and
+// an aa:asset companion with no descriptive member, not even null or in
+// another case. ValidateAssetMetadataMembers, which also needs the
+// envelope's actor and object, runs again on the built envelope.
+func checkMetadataUpdateMembers(asset, metadata json.RawMessage) error {
+	if _, err := ParseAssetMetadata(metadata); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(asset, &keys); err != nil {
+		return fmt.Errorf("%w: %s is not an object", ErrArchivalInvalid, MemberArchivalAsset)
+	}
+	for name := range keys {
+		for _, forbidden := range metadataForbiddenCompanion {
+			if strings.EqualFold(name, forbidden) {
+				return metadataInvalid(MemberArchivalAsset, "must not carry a descriptive member beside "+MemberAssetMetadata)
+			}
+		}
+	}
+	return nil
+}

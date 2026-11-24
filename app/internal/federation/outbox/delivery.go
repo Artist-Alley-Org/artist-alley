@@ -176,6 +176,11 @@ type Worker struct {
 	// assetWithdrawalMember builds an asset Delete's aa:tombstone member
 	// at send time (#1575).
 	assetWithdrawalMember AssetVersionMemberFunc
+	// assetMetadataUpdateMembers builds a metadata Update's aa:asset and
+	// aa:metadata at send time (#1577,
+	// assetsend.Source.MetadataUpdateMembers). Unwired, no metadata
+	// Update is sent.
+	assetMetadataUpdateMembers AssetMetadataUpdateMembersFunc
 
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_outbox_pending notification. Buffered=1 so the
@@ -245,6 +250,18 @@ func (w *Worker) SetAssetWithdrawalMember(f AssetVersionMemberFunc) { w.assetWit
 // member (#1575), with the same contract as the aa:asset source. Boot
 // wires assetsend.Source.FlagUpdateMember.
 func (w *Worker) SetAssetFlagUpdateMember(f AssetVersionMemberFunc) { w.assetFlagUpdateMember = f }
+
+// AssetMetadataUpdateMembersFunc returns the aa:asset and aa:metadata
+// members of one metadata Update delivery (#1577), with the same inputs
+// and error contract as AssetVersionMemberFunc. Boot wires
+// assetsend.Source.MetadataUpdateMembers.
+type AssetMetadataUpdateMembersFunc func(ctx context.Context, activityID, peerID uuid.UUID, objectURI string, payload []byte) (asset, metadata json.RawMessage, err error)
+
+// SetAssetMetadataUpdateMembers wires the source of a metadata Update's
+// members (#1577).
+func (w *Worker) SetAssetMetadataUpdateMembers(f AssetMetadataUpdateMembersFunc) {
+	w.assetMetadataUpdateMembers = f
+}
 
 // SetAudit wires the audit recorder for federation.emission.encrypted
 // + federation.emission.skipped(reason=recipient_key_unfetchable).
@@ -1049,6 +1066,40 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	isAssetVersion := federation.ActivityType(activityType) == federation.ActivityAAAssetVersion
 	isAssetWithdrawal := federation.ActivityType(activityType) == federation.ActivityDelete && kind == "asset"
 	isAssetFlagUpdate := federation.ActivityType(activityType) == federation.ActivityUpdate && kind == "asset"
+	// #1577: a local record holding a metadata capture (any value, even
+	// null or malformed) is a metadata Update. It is built by its own
+	// source or refused; it never falls back to a flags-only Update.
+	isMetadataUpdate := false
+	if isAssetFlagUpdate {
+		local := map[string]json.RawMessage{}
+		if len(payload) > 0 {
+			if err := json.Unmarshal(payload, &local); err != nil {
+				return nil, fmt.Errorf("%w: asset Update payload: %v", federation.ErrNotFederated, err)
+			}
+		}
+		_, isMetadataUpdate = local[federation.MetadataCaptureKey]
+		for _, k := range []string{federation.AssetVersionMemberKey, federation.AssetMetadataMemberKey,
+			federation.MemberArchivalAsset, federation.MemberAssetMetadata} {
+			if _, ok := local[k]; ok && isMetadataUpdate {
+				return nil, fmt.Errorf("%w: metadata Update: the local record holds a built or wire member (%s)", federation.ErrNotFederated, k)
+			}
+		}
+		if isMetadataUpdate {
+			if w.assetMetadataUpdateMembers == nil {
+				return nil, fmt.Errorf("%w: metadata Update: no member source wired", federation.ErrNotFederated)
+			}
+			asset, metadata, err := w.assetMetadataUpdateMembers(ctx, activityID, peerID, env.Object, payload)
+			if err != nil {
+				return nil, err
+			}
+			local[federation.AssetVersionMemberKey] = asset
+			local[federation.AssetMetadataMemberKey] = metadata
+			if payload, err = json.Marshal(local); err != nil {
+				return nil, err
+			}
+			isAssetFlagUpdate = false
+		}
+	}
 	if isAssetVersion || isAssetWithdrawal || isAssetFlagUpdate {
 		// #1574: the aa:asset member is built now, from the version's
 		// sealed rows, never stored with the activity; the source also
@@ -1092,10 +1143,20 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	if len(wire) > 0 {
 		env.Extra = wire
 	}
-	if isAssetVersion || isAssetWithdrawal || isAssetFlagUpdate {
+	if isAssetVersion || isAssetWithdrawal || isAssetFlagUpdate || isMetadataUpdate {
 		// The member names the envelope object and matches §17.2 (or
 		// §17.3), as the receiver will check (§17.1).
 		if err := federation.ValidateArchivalMembers(env, true); err != nil {
+			return nil, fmt.Errorf("%w: %w", federation.ErrNotFederated, err)
+		}
+	}
+	if isMetadataUpdate {
+		// #1577: the placement a receiver checks (§18.1, §18.2), on the
+		// plaintext envelope with its real actor and object, under the
+		// peer's stored profiles, before anything is sealed or signed.
+		if err := federation.ValidateAssetMetadataMembers(env, federation.MemberContext{
+			Negotiated: func(token string) bool { return slices.Contains(peerCaps, token) },
+		}); err != nil {
 			return nil, fmt.Errorf("%w: %w", federation.ErrNotFederated, err)
 		}
 	}
