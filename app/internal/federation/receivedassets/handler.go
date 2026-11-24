@@ -231,6 +231,15 @@ func (h *Handler) GetReceivedAsset(ctx context.Context, req openapi.GetReceivedA
 	if err := h.overlayFlags(ctx, uuid.UUID(a.PeerId), a.OriginAssetUri, d.Declared); err != nil {
 		return nil, err
 	}
+	// The asset's current snapshot (#1577), beside the claims above.
+	current, visible, err := h.currentMetadata(ctx, caller, uuid.UUID(req.Id), uuid.UUID(a.PeerId), a.OriginAssetUri)
+	if err != nil {
+		return nil, err
+	}
+	if !visible {
+		return openapi.GetReceivedAsset404JSONResponse{NotFoundJSONResponse: notFound()}, nil
+	}
+	d.CurrentMetadata = current
 	return openapi.GetReceivedAsset200JSONResponse{Body: d,
 		Headers: openapi.GetReceivedAsset200ResponseHeaders{CacheControl: noStore()}}, nil
 }

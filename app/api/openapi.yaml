@@ -949,7 +949,11 @@ paths:
         this instance's own identification of the verified bytes.
         `original_available` says whether the caller may receive the
         original now: that needs the same live grant to carry the
-        original-file permission (`aa:originalTransfer`, §16.6). Every
+        original-file permission (`aa:originalTransfer`, §16.6).
+        `current_metadata` is the asset's current `asset-metadata-1`
+        snapshot (#1577), read only after the record itself is allowed
+        and rechecked against the same rule before it is shown; a view
+        grant suffices. Every
         refusal is the same 404, whether the record does not exist, is
         pending or rejected, is an earlier version a later one replaced
         (#1575), is a `team` record, or is not granted to the caller.
@@ -23067,6 +23071,86 @@ components:
         original_available:
           type: boolean
           description: Whether the caller may receive the original now.
+        current_metadata:
+          $ref: "#/components/schemas/ReceivedAssetCurrentMetadata"
+    ReceivedAssetCurrentMetadata:
+      type: object
+      additionalProperties: false
+      description: |
+        The asset's current `asset-metadata-1` snapshot (spec v1 §18.4),
+        separate from the claims of the original record (`declared`), which
+        it never replaces. Omitted when there is none this caller may read:
+        no snapshot was kept, none names a version held here and verified,
+        or the newest one names a version that is not held here as
+        `public`, in which case no older snapshot is shown instead. A
+        snapshot of four nulls is present and clears every current claim.
+        It is asset-level: `version_uri` and `file_set_sha256` name the
+        version it was bound to, which may be an earlier version than the
+        record's; the record's files are never chosen by it. The
+        provenance fields record what was received. They are not a trust
+        mark, and the descriptive values are not verified here.
+      required: [profile, snapshot, revision_id, peer_id, origin_asset_uri, activity_uri, actor_uri, version_uri,
+        file_set_sha256, published, published_seconds, published_nanos, origin_signer_key_id,
+        origin_signature_algorithm, origin_signature_value, recipient_signer_key_id, received_at]
+      properties:
+        profile: { type: string, enum: [asset-metadata-1] }
+        snapshot: { $ref: "#/components/schemas/ReceivedAssetMetadataSnapshot" }
+        revision_id: { type: string, format: uuid, description: "The kept revision that carried the snapshot." }
+        peer_id: { type: string, format: uuid }
+        origin_asset_uri: { type: string }
+        activity_uri: { type: string, description: "The activity that carried the snapshot (an Update, or the aa:AssetVersion of an initial snapshot)." }
+        actor_uri: { type: string, description: "That activity's actor on the origin." }
+        version_uri: { type: string, description: "The version the snapshot was bound to." }
+        file_set_sha256: { type: string, description: "That version's file set." }
+        published:
+          type: string
+          format: date-time
+          description: The activity's signed `published`, to the nanosecond.
+        published_seconds:
+          type: integer
+          format: int64
+          description: "`published` as Unix seconds; with `published_nanos`, the exact order key."
+        published_nanos:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 999999999
+        origin_signer_key_id: { type: string, description: "The first accepted origin signature's key, as declared on the envelope." }
+        origin_signature_algorithm: { type: string }
+        origin_signature_value: { type: string }
+        recipient_signer_key_id: { type: string, description: "This instance's identity the grant named when the snapshot was kept; not the origin's." }
+        received_at: { type: string, format: date-time }
+    ReceivedAssetMetadataSnapshot:
+      type: object
+      additionalProperties: false
+      description: |
+        The complete snapshot as kept: all four keys, each a claim or
+        `null` (cleared). Values are untrusted text exactly as received,
+        never trimmed, linked or fetched, including markup and URI-looking
+        strings. No length bound applies here: an initial snapshot kept
+        from an announcement follows that record's rules, not the
+        `aa:metadata` member's (§18.4).
+      required: [title, description, rights, requiredStatement]
+      properties:
+        title: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        rights: { type: string, nullable: true, description: "A rights URI, as text. It is never fetched and grants no access." }
+        requiredStatement:
+          nullable: true
+          allOf: [ { $ref: "#/components/schemas/ReceivedAssetMetadataLabelValue" } ]
+    ReceivedAssetMetadataLabelValue:
+      type: object
+      additionalProperties: false
+      required: [label, value]
+      properties:
+        label: { $ref: "#/components/schemas/ReceivedAssetMetadataLanguageMap" }
+        value: { $ref: "#/components/schemas/ReceivedAssetMetadataLanguageMap" }
+    ReceivedAssetMetadataLanguageMap:
+      type: object
+      description: "A language map: BCP 47 tags (or `none`) to lists of text, in order."
+      additionalProperties:
+        type: array
+        items: { type: string }
     ReceivedAssetList:
       type: object
       required: [items]

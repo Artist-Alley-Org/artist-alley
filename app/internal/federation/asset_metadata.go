@@ -10,9 +10,10 @@
 //
 // The inbox's ValidateMembers calls ValidateAssetMetadataMembers for an
 // aa:metadata member (at receipt and at dispatch), and the asset worker
-// (assetingest) stores what it admits. No sender emits the member, no API
-// or page shows it, and the token is absent from peer.KnownCapabilities
-// (§18.6 is later #1577 work).
+// (assetingest) stores what it admits; the received-asset detail API
+// shows the current snapshot. No sender emits the member, no page shows
+// it, and the token is absent from peer.KnownCapabilities (§18.6 is
+// later #1577 work).
 //
 // A nil error from these functions is a statement about the bytes and
 // the stored profile intersection only. It is not a signature check, a
