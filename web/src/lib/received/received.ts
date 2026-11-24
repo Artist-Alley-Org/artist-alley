@@ -19,6 +19,27 @@ export type ReceivedAssetDetail = components['schemas']['ReceivedAssetDetail'];
 export type ReceivedAssetFile = components['schemas']['ReceivedAssetFile'];
 /** The notice a withdrawn record answers (410) to a caller who could view it (#1575). */
 export type ReceivedAssetWithdrawal = components['schemas']['ReceivedAssetWithdrawal'];
+/**
+ * The asset's latest received metadata (#1577, `current_metadata`): the
+ * sending studio's newest snapshot and its provenance. Present only when
+ * the server shows one to this caller. Its title, description and rights
+ * are plain text or null; only the required statement's label and value
+ * are language maps.
+ */
+export type ReceivedAssetCurrentMetadata = components['schemas']['ReceivedAssetCurrentMetadata'];
+export type ReceivedAssetMetadataLanguageMap = components['schemas']['ReceivedAssetMetadataLanguageMap'];
+
+/**
+ * A language map's entries in a stable order (tags sorted by code unit),
+ * each with every text in the order received. Nothing is dropped, merged
+ * or changed, and the map is not modified.
+ */
+export function languageEntries(map: ReceivedAssetMetadataLanguageMap | null | undefined): [string, string[]][] {
+  if (!map) return [];
+  return Object.keys(map)
+    .sort()
+    .map((tag): [string, string[]] => [tag, map[tag] ?? []]);
+}
 
 /** Human byte size, base 1024. */
 export function formatBytes(n: number): string {

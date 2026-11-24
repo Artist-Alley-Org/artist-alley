@@ -939,3 +939,23 @@ snapshots never make a record visible. An initial snapshot kept under archival-1
 without the aa:metadata member's bounds.
 
 The sender, the UI, the two-direction gates and advertisement remain open.
+
+### Addendum 2026-11-23 (later): the account page shows the latest received metadata (#1577)
+
+The received-asset account page now renders `current_metadata` as "Latest received metadata", before the
+original record's declared claims, which it then labels "Original declared details" with that record's own
+activity and actor. The decisions:
+
+- The four claims are always listed. An explicit null reads "Not supplied in this snapshot" and never falls
+  back to the original record's value. Without `current_metadata` there is no panel and the page is as before.
+- Every value, the required statement's languages and texts included, is shown as escaped text in its
+  received order, without trimming, links, markup, images or fetches. The published time is the API's exact
+  string, nanoseconds included.
+- The provenance (revision, activity, actor, bound version, file set, the origin's key and signature and this
+  instance's recipient identity) sits in a collapsed details block, as what was received. It is not presented
+  as a verification of the claims. A snapshot bound to an older version never changes the files or the
+  download shown.
+- The panel belongs to the loaded record, so a refusal, withdrawal, error or navigation to another record
+  removes it at once, and a late answer for an earlier record cannot bring it back.
+
+The sender, the two-direction gates and advertisement remain open.

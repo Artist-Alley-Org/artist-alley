@@ -24,9 +24,16 @@
   // change clears the previous record AT ONCE, so neither it nor its
   // download link is shown for the new id, and only the newest request
   // may write: a late answer for an earlier id is dropped.
+  //
+  // When the server shows the asset's latest received metadata (#1577,
+  // `current_metadata`), ReceivedMetadata renders it before the original
+  // declared details, which are then labelled as the original record's,
+  // with that record's own activity and actor. It is part of `detail`, so
+  // it disappears with the record, and it never selects files.
   import { untrack } from 'svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
+  import ReceivedMetadata from '$lib/received/ReceivedMetadata.svelte';
   import {
     declaredEntries,
     formatBytes,
@@ -101,6 +108,7 @@
 
   const original = $derived(detail?.asset.original);
   const claims = $derived(declaredEntries(detail?.declared as Record<string, unknown> | undefined));
+  const current = $derived(detail?.current_metadata);
 </script>
 
 {#if loading}
@@ -210,8 +218,20 @@
     </tbody>
   </table>
 
-  <h3 class="mb-1 text-lg font-semibold">{t('account.received.declared_claims')}</h3>
+  {#if current}
+    <ReceivedMetadata metadata={current} peerName={detail.asset.peer_name ?? detail.asset.peer_url} />
+  {/if}
+
+  <h3 class="mb-1 text-lg font-semibold" data-testid="received-claims-title">{current ? t('account.received.metadata.original_title') : t('account.received.declared_claims')}</h3>
   <p class="mb-2 text-xs text-fg-muted">{t('account.received.declared_label')}</p>
+  {#if current}
+    <dl class="mb-2 grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-xs" data-testid="received-original-provenance">
+      <dt class="text-fg-muted">{t('account.received.metadata.original_activity')}</dt>
+      <dd class="break-all" data-testid="received-original-activity">{detail.activity_uri}</dd>
+      <dt class="text-fg-muted">{t('account.received.metadata.original_actor')}</dt>
+      <dd class="break-all" data-testid="received-original-actor">{detail.actor_uri}</dd>
+    </dl>
+  {/if}
   {#if claims.length === 0}
     <p class="text-sm text-fg-muted">{t('account.received.no_claims')}</p>
   {:else}

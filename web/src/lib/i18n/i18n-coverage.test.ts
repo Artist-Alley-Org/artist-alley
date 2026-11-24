@@ -163,6 +163,11 @@ const TRACKED_FILES = [
   //   the acknowledgement of the same act. —
   'src/lib/components/ConfirmDeleteDialog.svelte',
   'src/lib/components/ToastHost.svelte',
+  // #1577 the received asset view and its latest received metadata. The
+  // panel's copy is the only place the app says the sending studio's
+  // description is theirs and not verified here.
+  'src/lib/received/ReceivedAssetView.svelte',
+  'src/lib/received/ReceivedMetadata.svelte',
   // Deferred to the SHOULD/NICE follow-up (still carry non-MUST
   // hardcoded strings — do NOT add until their arc lands):
   //   src/lib/components/AssetPlaylist.svelte  (viewer hotkey rail)
