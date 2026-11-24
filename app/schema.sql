@@ -1473,6 +1473,166 @@ $$;
 
 
 --
+-- Name: federation_metadata_asset_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_metadata_asset_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO public.federation_metadata_work (kind, asset_id) VALUES ('asset', NEW.id);
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: federation_metadata_definition_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_metadata_definition_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    seeded CONSTANT uuid[] := ARRAY['56d71791-189d-429c-b7e4-e837baf91ddb', '6c3e25be-83ed-4762-b636-a1e37cdbb74c']::uuid[];
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF NOT (OLD.id = ANY (seeded) OR OLD.mirrors_column IS NOT NULL
+                OR NEW.id = ANY (seeded) OR NEW.mirrors_column IS NOT NULL) THEN
+            RETURN NULL;
+        END IF;
+        IF OLD.id IS NOT DISTINCT FROM NEW.id AND OLD.code IS NOT DISTINCT FROM NEW.code
+           AND OLD.status IS NOT DISTINCT FROM NEW.status AND OLD.type IS NOT DISTINCT FROM NEW.type
+           AND OLD.subject_kind IS NOT DISTINCT FROM NEW.subject_kind
+           AND OLD.mirrors_column IS NOT DISTINCT FROM NEW.mirrors_column
+           AND OLD.read_capability IS NOT DISTINCT FROM NEW.read_capability
+           AND OLD.applies_to IS NOT DISTINCT FROM NEW.applies_to THEN
+            RETURN NULL;
+        END IF;
+    ELSIF TG_OP = 'INSERT' THEN
+        IF NOT (NEW.id = ANY (seeded) OR NEW.mirrors_column IS NOT NULL) THEN
+            RETURN NULL;
+        END IF;
+    ELSIF NOT (OLD.id = ANY (seeded) OR OLD.mirrors_column IS NOT NULL) THEN
+        RETURN NULL;
+    END IF;
+    INSERT INTO public.federation_metadata_work (kind) VALUES ('all');
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: federation_metadata_peer_eligible(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_metadata_peer_eligible() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    -- asset-metadata-1, archival-1 and original-transfer-1, as stored.
+    now_eligible boolean := NEW.enabled AND NEW.status = 'connected'
+        AND NEW.capabilities ? 'asset-metadata-1' AND NEW.capabilities ? 'archival-1'
+        AND NEW.capabilities ? 'original-transfer-1';
+BEGIN
+    IF NOT now_eligible THEN
+        RETURN NULL;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.enabled AND OLD.status = 'connected'
+           AND OLD.capabilities ? 'asset-metadata-1' AND OLD.capabilities ? 'archival-1'
+           AND OLD.capabilities ? 'original-transfer-1' THEN
+            RETURN NULL;
+        END IF;
+    END IF;
+    INSERT INTO public.federation_metadata_work (kind) VALUES ('all');
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: federation_metadata_share_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_metadata_share_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.object_kind = 'asset' THEN
+            INSERT INTO public.federation_metadata_work (kind, asset_id) VALUES ('asset', NEW.object_id);
+        END IF;
+        RETURN NULL;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.object_kind = 'asset' THEN
+            INSERT INTO public.federation_metadata_work (kind, asset_id) VALUES ('asset', OLD.object_id);
+        END IF;
+        RETURN NULL;
+    END IF;
+    IF OLD.object_kind IS NOT DISTINCT FROM NEW.object_kind
+       AND OLD.object_id IS NOT DISTINCT FROM NEW.object_id
+       AND OLD.peer_id IS NOT DISTINCT FROM NEW.peer_id AND OLD.target_user_url IS NOT DISTINCT FROM NEW.target_user_url
+       AND OLD.scope IS NOT DISTINCT FROM NEW.scope AND OLD.allow_original IS NOT DISTINCT FROM NEW.allow_original
+       AND OLD.revoked_at IS NOT DISTINCT FROM NEW.revoked_at AND OLD.expires_at IS NOT DISTINCT FROM NEW.expires_at
+       AND OLD.granted_activity_id IS NOT DISTINCT FROM NEW.granted_activity_id THEN
+        RETURN NULL;
+    END IF;
+    IF OLD.object_kind = 'asset' THEN
+        INSERT INTO public.federation_metadata_work (kind, asset_id) VALUES ('asset', OLD.object_id);
+    END IF;
+    IF NEW.object_kind = 'asset' AND NOT (OLD.object_kind = 'asset' AND OLD.object_id = NEW.object_id) THEN
+        INSERT INTO public.federation_metadata_work (kind, asset_id) VALUES ('asset', NEW.object_id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: federation_metadata_value_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_metadata_value_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    -- The seeded rights_uri and required_statement fields (migration 00097).
+    seeded CONSTANT uuid[] := ARRAY['56d71791-189d-429c-b7e4-e837baf91ddb', '6c3e25be-83ed-4762-b636-a1e37cdbb74c']::uuid[];
+    old_seeded boolean := FALSE;
+    new_seeded boolean := FALSE;
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        old_seeded := OLD.field_id = ANY (seeded);
+    END IF;
+    IF TG_OP <> 'DELETE' THEN
+        new_seeded := NEW.field_id = ANY (seeded);
+    END IF;
+    IF TG_OP = 'UPDATE' AND OLD.asset_id = NEW.asset_id AND OLD.field_id = NEW.field_id
+       AND OLD.value_text IS NOT DISTINCT FROM NEW.value_text THEN
+        RETURN NULL;
+    END IF;
+    IF old_seeded THEN
+        -- A value deleted with its definition: the definition queues one
+        -- 'all' row in this transaction, so the cascade adds none per value.
+        IF TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM public.field_definition WHERE id = OLD.field_id) THEN
+            RETURN NULL;
+        END IF;
+        INSERT INTO public.federation_metadata_work (kind, asset_id) VALUES ('asset', OLD.asset_id);
+        IF TG_OP = 'UPDATE' AND OLD.asset_id = NEW.asset_id THEN
+            RETURN NULL;
+        END IF;
+    END IF;
+    IF new_seeded THEN
+        INSERT INTO public.federation_metadata_work (kind, asset_id) VALUES ('asset', NEW.asset_id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: federation_outbox_dispatch_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8884,6 +9044,41 @@ CREATE TRIGGER federation_dispatch_notify_trg AFTER INSERT ON public.activities 
 --
 
 CREATE TRIGGER federation_inbox_dispatch_notify_trg AFTER INSERT ON public.federation_inbox FOR EACH ROW EXECUTE FUNCTION public.federation_inbox_dispatch_notify();
+
+
+--
+-- Name: assets federation_metadata_asset_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_metadata_asset_changed AFTER UPDATE ON public.assets FOR EACH ROW WHEN ((((old.origin_server_id IS NULL) OR (new.origin_server_id IS NULL)) AND ((old.title IS DISTINCT FROM new.title) OR (old.description IS DISTINCT FROM new.description) OR (old.origin_server_id IS DISTINCT FROM new.origin_server_id) OR (old.deleted_at IS DISTINCT FROM new.deleted_at) OR (old.sensitivity IS DISTINCT FROM new.sensitivity) OR (old.owner_user_ref IS DISTINCT FROM new.owner_user_ref) OR (old.asset_type IS DISTINCT FROM new.asset_type)))) EXECUTE FUNCTION public.federation_metadata_asset_changed();
+
+
+--
+-- Name: field_definition federation_metadata_definition_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_metadata_definition_changed AFTER INSERT OR DELETE OR UPDATE ON public.field_definition FOR EACH ROW EXECUTE FUNCTION public.federation_metadata_definition_changed();
+
+
+--
+-- Name: federation_peers federation_metadata_peer_eligible; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_metadata_peer_eligible AFTER INSERT OR UPDATE ON public.federation_peers FOR EACH ROW EXECUTE FUNCTION public.federation_metadata_peer_eligible();
+
+
+--
+-- Name: federation_shares federation_metadata_share_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_metadata_share_changed AFTER INSERT OR DELETE OR UPDATE ON public.federation_shares FOR EACH ROW EXECUTE FUNCTION public.federation_metadata_share_changed();
+
+
+--
+-- Name: asset_field_value federation_metadata_value_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_metadata_value_changed AFTER INSERT OR DELETE OR UPDATE ON public.asset_field_value FOR EACH ROW EXECUTE FUNCTION public.federation_metadata_value_changed();
 
 
 --

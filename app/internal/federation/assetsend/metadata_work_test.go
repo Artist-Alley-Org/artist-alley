@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/federation"
@@ -40,6 +41,15 @@ func (f *fx) clearWork(t *testing.T) {
 	t.Helper()
 	f.exec(`DELETE FROM federation_metadata_work`)
 	t.Cleanup(func() { _, _ = f.pool.Exec(context.Background(), `DELETE FROM federation_metadata_work`) })
+}
+
+// dropFixtureWork deletes the work migration 00100's producers queued
+// while the test built its fixtures (an asset's description, its seeded
+// values, its grants, a peer's profiles), so the test sees only the work
+// it asserts on.
+func (f *fx) dropFixtureWork() {
+	f.t.Helper()
+	f.exec(`DELETE FROM federation_metadata_work`)
 }
 
 func (f *fx) ledger() []workRow {
@@ -154,6 +164,7 @@ func TestMetadataWork_PagesThroughThePeersOnce(t *testing.T) {
 	f.clearWork(t)
 	a, _ := f.eligible("Title", "", "", "")
 	peers := f.sharedWith(a, 4) // 5 peers
+	f.dropFixtureWork()
 	f.enqueue(a)
 
 	wantCursor := []*uuid.UUID{&peers[1], &peers[3]}
@@ -204,6 +215,9 @@ func TestMetadataWork_EnqueueGoesWithTheChange(t *testing.T) {
 	ctx := context.Background()
 	f.clearWork(t)
 	a := f.newAsset("public", true)
+	f.dropFixtureWork()
+	// The title change queues its own obligation (migration 00100) and
+	// the helper adds another, separate one: both commit with the change.
 	if err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `UPDATE assets SET title = 'Committed' WHERE id = $1`, a.id); err != nil {
 			return err
@@ -213,7 +227,9 @@ func TestMetadataWork_EnqueueGoesWithTheChange(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if l := f.ledger(); len(l) != 1 || l[0].kind != "asset" || *l[0].asset != a.id || l[0].peerCursor != nil {
+	if l := f.ledger(); len(l) != 2 || l[0].id == l[1].id ||
+		l[0].kind != "asset" || *l[0].asset != a.id || l[0].peerCursor != nil ||
+		l[1].kind != "asset" || *l[1].asset != a.id || l[1].peerCursor != nil {
 		t.Fatalf("ledger %+v", l)
 	}
 	rollback := errors.New("roll back")
@@ -233,7 +249,7 @@ func TestMetadataWork_EnqueueGoesWithTheChange(t *testing.T) {
 	}
 	var title string
 	_ = f.pool.QueryRow(ctx, `SELECT title FROM assets WHERE id = $1`, a.id).Scan(&title)
-	if l := f.ledger(); len(l) != 1 || title != "Committed" {
+	if l := f.ledger(); len(l) != 2 || title != "Committed" {
 		t.Fatalf("after a rollback: %d rows, title %q", len(l), title)
 	}
 	if err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
@@ -253,7 +269,7 @@ func TestMetadataWork_EnqueueGoesWithTheChange(t *testing.T) {
 			t.Fatalf("limit %d: %v %v", limit, worked, err)
 		}
 	}
-	if l := f.ledger(); len(l) != 1 {
+	if l := f.ledger(); len(l) != 2 {
 		t.Fatalf("a refused page size consumed work: %+v", l)
 	}
 	if _, err := (assetsend.MetadataWork{Pool: f.pool}).RunOnce(ctx, 2); err == nil {
@@ -269,6 +285,7 @@ func TestMetadataWork_ACancelledPageKeepsNothing(t *testing.T) {
 	f.clearWork(t)
 	a, _ := f.eligible("Title", "", "", "")
 	peers := f.sharedWith(a, 2)
+	f.dropFixtureWork()
 	f.enqueue(a)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -312,6 +329,7 @@ func TestMetadataWork_ALockedRowIsNotSpentTwice(t *testing.T) {
 	f.clearWork(t)
 	a, _ := f.eligible("Title", "", "", "")
 	f.sharedWith(a, 1)
+	f.dropFixtureWork()
 	f.enqueue(a)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -387,6 +405,7 @@ func TestMetadataWork_ALaterChangeStartsFromTheFirstPeer(t *testing.T) {
 	f.clearWork(t)
 	a, _ := f.eligible("Public title", "", "", "")
 	peers := f.sharedWith(a, 2) // 3 peers
+	f.dropFixtureWork()
 	f.enqueue(a)
 	if !f.runWork(2) {
 		t.Fatal("no work")
@@ -396,19 +415,19 @@ func TestMetadataWork_ALaterChangeStartsFromTheFirstPeer(t *testing.T) {
 		t.Fatalf("first page %+v", first)
 	}
 
+	// Making the title mirror private queues, in its transaction, one
+	// obligation for every asset (migration 00100), separate from the one
+	// in progress.
 	id := f.mirrorOf("title")
 	f.restoreDefinition(t, id)
 	if err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `UPDATE field_definition SET read_capability = 'system.admin' WHERE id = $1`, id); err != nil {
-			return err
-		}
-		_, err := assetsend.EnqueueAssetMetadataWork(ctx, tx, a.id)
+		_, err := tx.Exec(ctx, `UPDATE field_definition SET read_capability = 'system.admin' WHERE id = $1`, id)
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
 	l := f.ledger()
-	if len(l) != 2 || l[1].peerCursor != nil || l[0].peerCursor == nil {
+	if len(l) != 2 || l[0].kind != "asset" || l[0].peerCursor == nil || l[1].kind != "all" || l[1].assetCursor != nil {
 		t.Fatalf("ledger %+v", l)
 	}
 	for f.runWork(2) {
@@ -453,6 +472,7 @@ func TestMetadataWork_EveryAssetIsAddedAPageAtATime(t *testing.T) {
 	shared, _ := f.eligible("Shared", "", "", "")
 	others := []asset{f.newAsset("public", true), f.newAsset("team", true)}
 	ours := map[uuid.UUID]bool{shared.id: true, others[0].id: true, others[1].id: true}
+	f.dropFixtureWork()
 
 	enqueueAll := func() {
 		t.Helper()
@@ -573,13 +593,25 @@ func (c *insertCanceller) TraceQueryEnd(_ context.Context, _ *pgx.Conn, d pgx.Tr
 // poolTracedBy is a pool of its own, on the test database, traced by tr.
 func (f *fx) poolTracedBy(tr pgx.QueryTracer) *pgxpool.Pool {
 	f.t.Helper()
+	return f.poolWith(tr, nil)
+}
+
+// poolWith is a pool of its own, on the test database, traced by tr (if
+// any) with the session parameters given.
+func (f *fx) poolWith(tr pgx.QueryTracer, params map[string]string) *pgxpool.Pool {
+	f.t.Helper()
 	cfg, err := pgxpool.ParseConfig(fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable pool_max_conns=2",
 		env("AA_DB_HOST", "postgres"), env("AA_DB_PORT", "5432"), env("AA_DB_USER", "artist_alley"),
 		os.Getenv("AA_DB_PASSWORD"), env("AA_DB_NAME", "artist_alley")))
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	cfg.ConnConfig.Tracer = tr
+	if tr != nil {
+		cfg.ConnConfig.Tracer = tr
+	}
+	for k, v := range params {
+		cfg.ConnConfig.RuntimeParams[k] = v
+	}
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		f.t.Fatal(err)
@@ -598,6 +630,7 @@ func TestMetadataWork_ACancelledExpansionKeepsNothing(t *testing.T) {
 	for range 3 { // a full page of 2, whatever else the database holds
 		f.newAsset("public", true)
 	}
+	f.dropFixtureWork()
 	if err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
 		_, err := assetsend.EnqueueAllMetadataWork(ctx, tx)
 		return err
@@ -687,6 +720,7 @@ func TestMetadataWork_IneligibleWorkDrains(t *testing.T) {
 	p := f.addPeer() // archival-1 and original-transfer-1 only
 	f.grantPeer(noProfile, p, true)
 
+	f.dropFixtureWork()
 	for _, a := range []asset{{id: uuid.New()}, deleted, remote, ungranted, noProfile} {
 		f.enqueue(a)
 	}
@@ -704,5 +738,172 @@ func TestMetadataWork_IneligibleWorkDrains(t *testing.T) {
 		if n != 0 {
 			t.Fatalf("asset %s: %d Updates", a.id, n)
 		}
+	}
+}
+
+// defaultProcessor is the production form of the processor: no username
+// resolver, so the owner is read in the page's transaction.
+func (f *fx) defaultProcessor(pool *pgxpool.Pool) assetsend.MetadataWork {
+	return assetsend.MetadataWork{Pool: pool, Writer: f.writer, BaseURL: base}
+}
+
+// actorOf is the actor URI of activity id.
+func (f *fx) actorOf(id uuid.UUID) string {
+	f.t.Helper()
+	var actor string
+	if err := f.pool.QueryRow(context.Background(), `SELECT actor_uri FROM activities WHERE id = $1`, id).Scan(&actor); err != nil {
+		f.t.Fatal(err)
+	}
+	return actor
+}
+
+// Without a resolver the processor reads the owner's username in its own
+// transaction: the Update names the owner's actor. An owner with no
+// username, like one that is gone, is ineligible: the work drains and
+// nothing is recorded.
+func TestMetadataWork_TheDefaultActorIsTheOwner(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	f.withMetadataProfile(t)
+	f.clearWork(t)
+	a, _ := f.eligible("Title", "", "", "")
+	var username string
+	if err := f.pool.QueryRow(ctx, `SELECT username FROM "user" WHERE ref = $1`, f.owner).Scan(&username); err != nil {
+		t.Fatal(err)
+	}
+	nameless, _ := f.eligible("Nameless", "", "", "")
+	var other int64
+	if err := f.pool.QueryRow(ctx, `INSERT INTO "user" (username, fullname, approved) VALUES (NULL, 'No name', 1) RETURNING ref`).Scan(&other); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE assets SET owner_user_ref = $2 WHERE id = $1`, nameless.id, other)
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = f.pool.Exec(c, `UPDATE assets SET owner_user_ref = $2 WHERE id = $1`, nameless.id, f.owner)
+		_, _ = f.pool.Exec(c, `DELETE FROM "user" WHERE ref = $1`, other)
+	})
+	f.dropFixtureWork()
+	f.enqueue(a)
+	f.enqueue(nameless)
+	for i := 0; ; i++ {
+		worked, err := f.defaultProcessor(f.pool).RunOnce(ctx, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !worked {
+			break
+		}
+		if i > 10 {
+			t.Fatal("the ledger does not drain")
+		}
+	}
+	got := f.metadataUpdates(a)
+	if len(got) != 1 {
+		t.Fatalf("%d Updates", len(got))
+	}
+	if actor := f.actorOf(got[0].id); actor != base+"/users/"+username {
+		t.Fatalf("actor %q, want the owner %q", actor, username)
+	}
+	if got := f.metadataUpdates(nameless); len(got) != 0 {
+		t.Fatalf("an owner with no username got %+v", got)
+	}
+	if l := f.ledger(); len(l) != 0 {
+		t.Fatalf("ledger %+v", l)
+	}
+}
+
+// sqlCanceller cancels, while on, when a statement containing marker is
+// about to run, recording that it was reached.
+type sqlCanceller struct {
+	mu      sync.Mutex
+	on      bool
+	marker  string
+	reached int
+	cancel  context.CancelFunc
+}
+
+func (c *sqlCanceller) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.on && strings.Contains(d.SQL, c.marker) {
+		c.reached++
+		c.cancel()
+	}
+	return ctx
+}
+
+func (c *sqlCanceller) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+// A failed owner read, a database error or a cancellation, fails the
+// whole page: no Update, the cursor unmoved. A fresh processor then
+// records it.
+func TestMetadataWork_AFailedOwnerReadKeepsNothing(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	f.withMetadataProfile(t)
+	f.clearWork(t)
+	a, _ := f.eligible("Title", "", "", "")
+	f.dropFixtureWork()
+	f.enqueue(a)
+	unchanged := func(what string) {
+		t.Helper()
+		if got := f.metadataUpdates(a); len(got) != 0 {
+			t.Fatalf("%s: %d Updates survived", what, len(got))
+		}
+		if l := f.ledger(); len(l) != 1 || l[0].peerCursor != nil {
+			t.Fatalf("%s: ledger %+v", what, l)
+		}
+	}
+
+	// A database error: the user table is held, and the processor's
+	// session gives up waiting for it.
+	short := f.poolWith(nil, map[string]string{"lock_timeout": "200ms"})
+	hold, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold.Rollback(ctx) //nolint:errcheck // a no-op once released
+	if _, err := hold.Exec(ctx, `LOCK TABLE "user" IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancelRun := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelRun()
+	worked, err := f.defaultProcessor(short).RunOnce(runCtx, 2)
+	var pgErr *pgconn.PgError
+	if err == nil || worked || !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+		t.Fatalf("the owner read under a held lock: worked %v, %v", worked, err)
+	}
+	if err := hold.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	short.Close()
+	unchanged("after the failed read")
+
+	// A cancellation at the owner read.
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	tr := &sqlCanceller{marker: `LEFT JOIN "user"`, cancel: cancel}
+	traced := f.poolTracedBy(tr)
+	tr.mu.Lock()
+	tr.on = true
+	tr.mu.Unlock()
+	worked, err = f.defaultProcessor(traced).RunOnce(cctx, 2)
+	tr.mu.Lock()
+	tr.on = false
+	reached := tr.reached
+	tr.mu.Unlock()
+	traced.Close()
+	if reached != 1 || err == nil || !errors.Is(err, context.Canceled) || worked {
+		t.Fatalf("the cancelled owner read: reached %d, worked %v, %v", reached, worked, err)
+	}
+	unchanged("after the cancellation")
+
+	// A fresh processor records the Update.
+	worked, err = f.defaultProcessor(f.pool).RunOnce(ctx, 2)
+	if err != nil || !worked {
+		t.Fatalf("the fresh processor: worked %v, %v", worked, err)
+	}
+	if got := f.metadataUpdates(a); len(got) != 1 {
+		t.Fatalf("%d Updates after the fresh run", len(got))
 	}
 }

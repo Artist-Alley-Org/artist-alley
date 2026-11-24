@@ -1042,3 +1042,32 @@ local runtime remain open.
   privacy restriction refuses the earlier one at delivery, and the later obligation records a clear.
 
 The producers, the runtime, the two-direction gates and advertisement remain open.
+
+### Addendum 2026-11-24: the metadata work producers and local runtime (#1577)
+
+The durable ledger of the previous addendum is now fed and run. The profile is still not advertised, so no
+production peer is eligible yet.
+
+- Migration 00100 adds five row triggers that insert at most two UUID-only rows in the source transaction:
+  - an asset's title, description, or an eligibility column (origin, deletion, sensitivity, owner, asset type)
+    actually changing;
+  - a value of the two seeded fields, by id;
+  - a seeded or title / description mirroring definition changing an attribute the capture reads (one 'all' row);
+  - a peer becoming enabled, connected and holding all three profiles (one 'all' row);
+  - an asset share's grant attributes changing, an INSERT (a regrant) included.
+
+  Flags, tags and timestamps alone queue nothing. A failed insert fails the change.
+- No trigger reads grants, profiles or values to decide whether anyone would receive the change: a change that
+  saw no eligible peer could race a grant whose refresh read the old value. The recorder decides when the work
+  runs.
+- Deleting a definition with many values queues one 'all' row, not one row per value: a value deleted because its
+  definition is gone queues nothing. Up queues one bootstrap 'all' row so metadata already held is refreshed.
+  Down removes only the triggers; pending work stays, and 00099's Down still refuses to discard it.
+- `assetsend.MetadataWorkRunner` runs under `Server.Run`: it tries at once on start, then works in bursts of
+  eight pages, yields, waits when idle, and backs off from one second on an error. It has no LISTEN connection
+  and no settings. The origin is read before every page, and an unusable origin leaves the work pending. Only
+  constant events are logged, never an error's text.
+- In production, the processor reads the owner's username in the page's own transaction, and a failed read fails
+  the page. It does not use the shared, best-effort user resolver.
+
+The two-direction gates of §18.6, advertisement, optional custom values, IIIF and preservation events remain open.

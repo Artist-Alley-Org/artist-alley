@@ -9,8 +9,9 @@
 // One explicitly named peer per call. Nothing here decides that an
 // asset's metadata changed, iterates peers or versions, or reacts to a
 // local edit. The durable metadata work processor (metadata_work.go)
-// calls it once per peer of a page; nothing in production enqueues that
-// work or runs the processor yet, and the profile is not advertised. The
+// calls it once per peer of a page; migration 00100's triggers enqueue
+// that work and MetadataWorkRunner runs it under the server, but the
+// profile is not advertised, so no production peer is eligible yet. The
 // delivery side (MetadataUpdateMembers) is wired into the outbox worker,
 // so a recorded Update is delivered under the checks below.
 //
