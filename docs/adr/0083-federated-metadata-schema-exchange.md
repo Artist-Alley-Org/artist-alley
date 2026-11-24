@@ -959,3 +959,34 @@ activity and actor. The decisions:
   removes it at once, and a late answer for an earlier record cannot bring it back.
 
 The sender, the two-direction gates and advertisement remain open.
+
+### Addendum 2026-11-23 (later): the sender's capture and re-check, unwired (#1577)
+
+The sending side has its first primitive, and nothing calls it yet: `assetsend.CaptureMetadata` captures an
+asset's aa:metadata snapshot inside the caller's transaction, which holds the asset row, and
+`assetsend.Source.MetadataMember` re-checks a recorded capture before it may be sent. No activity is recorded,
+queued or sent, and no profile is advertised.
+
+- One policy. The capture reads its sources through the same single statement, peer identity and value
+  checks as an announcement's descriptive claims (no capability, the seeded definitions by id and code, every
+  mirror binding's gate). A withheld or refused claim is null with a bounded local reason; reasons and the
+  capture's version are never sent.
+- The member budget. Values valid one by one can exceed the 32,768-byte member once the standard JSON encoding
+  escapes `<`, `>` and `&`. The candidate is encoded exactly as a later envelope will encode it and checked
+  with the receiver's own parser. When it is over the budget, every claim it held is cleared at once
+  (`member_over_limit`) and the four-null snapshot is captured. No value is shortened, no claim is dropped in an
+  arbitrary order and no unusual encoding is used. This is a conservative local choice for a member that cannot
+  be sent whole; the wire contract is unchanged.
+- Frozen bytes, current privacy. A re-check sends exactly the recorded snapshot, so a later value edit, even to
+  an invalid value, changes nothing and a recorded null stays null. The source of every non-null recorded claim
+  must still be shareable; one that is not refuses the whole member, naming the claim and never a value.
+  Anything but a valid capture of the known version is refused, and a read error is an error.
+- Scope. This is source privacy only. The metadata Update driver still has to decide which peers are eligible
+  (including a sealed announcement queued but not built yet, which the flags path deliberately leaves out), the
+  activity's identity and strictly later published time, the live original grant, all three profiles, the
+  owner, the tier and the immutable files, and the durable privacy fan-out for every metadata writer. A
+  four-null capture names no source, so its re-check reads nothing; the driver checks those conditions for a
+  clear as for any other Update. A recorded capture is one strict JSON value with exactly its own keys, and its
+  snapshot is measured as recorded.
+
+The sender driver, fan-out, the two-direction gates and advertisement remain open.
