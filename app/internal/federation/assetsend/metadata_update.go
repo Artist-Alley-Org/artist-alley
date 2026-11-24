@@ -8,10 +8,11 @@
 //
 // One explicitly named peer per call. Nothing here decides that an
 // asset's metadata changed, iterates peers or versions, or reacts to a
-// local edit: no production code calls RecordMetadataUpdate yet, and the
-// profile is not advertised. The delivery side (MetadataUpdateMembers) is
-// wired into the outbox worker, so a recorded Update is delivered under
-// the checks below.
+// local edit. The durable metadata work processor (metadata_work.go)
+// calls it once per peer of a page; nothing in production enqueues that
+// work or runs the processor yet, and the profile is not advertised. The
+// delivery side (MetadataUpdateMembers) is wired into the outbox worker,
+// so a recorded Update is delivered under the checks below.
 //
 // # When (RecordMetadataUpdate)
 //

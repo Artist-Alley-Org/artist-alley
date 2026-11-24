@@ -1017,3 +1017,28 @@ privacy fan-out remain open, and the profile is not advertised. The delivery sid
   signed. A record with a capture is never sent as a flags-only Update.
 
 The edit hooks, fan-out, the two-direction gates and advertisement remain open.
+
+### Addendum 2026-11-23 (later): a durable metadata work ledger, unwired (#1577)
+
+Sending an asset's metadata to every peer it is shared with is now durable, bounded work. Nothing produces it
+yet and nothing runs it: the producers (asset, field value, mirror, batch, import and definition changes) and the
+local runtime remain open.
+
+- Migration 00099 adds `federation_metadata_work`: 'asset' rows (send one asset's current metadata to its peers,
+  from a peer cursor on) and 'all' rows (add an 'asset' row for every local asset, from an asset cursor on). A
+  row holds UUID references, its kind, its cursor and its creation time, never a value, claim or payload. It has
+  no foreign key: a deleted asset's work completes as a no-op, and an 'all' row's completion keeps its 'asset'
+  rows. Down refuses while work is pending.
+- `assetsend.EnqueueAssetMetadataWork` and `EnqueueAllMetadataWork` add ONE new row in the caller's transaction,
+  so the obligation commits or rolls back with the change. A row is never merged into one in progress: a change
+  made after a page passed a peer starts again from the first peer. Redundant work is preferred over a lost
+  clear.
+- `assetsend.MetadataWork.RunOnce` handles one page of one row (default 16, at most 64) in one transaction: it
+  claims the oldest unclaimed row (`FOR UPDATE SKIP LOCKED`); an 'all' row adds a page of 'asset' rows; an
+  'asset' row locks that asset and calls the existing one-peer recorder for a page of distinct peers holding a
+  live peer-wide original grant. The recorder alone decides eligibility, version, capture and order. Activities,
+  added rows, the cursor and completion commit together; an error rolls the page back, to be repeated.
+- The capture is taken when the recorder runs, as §18.3 permits. A recorded Update never changes; a later
+  privacy restriction refuses the earlier one at delivery, and the later obligation records a clear.
+
+The producers, the runtime, the two-direction gates and advertisement remain open.

@@ -452,6 +452,11 @@ var nonReferenceKindColumns = map[string]string{
 	// resets, removed only by the retention sweep.
 	"federation_transfer_events.event_type":          "ledger event type (transfer / fixity-check / ingestion)",
 	"federation_transfer_events.declared_media_type": "declared MIME type snapshot (sender claim)",
+	// #1577: the shape of a metadata work row ('asset' or 'all'), not a
+	// reference. asset_id always names an asset and has no foreign key by
+	// design (migration 00099); a row whose asset is gone completes as a
+	// no-op, so a content reset orphans nothing that matters.
+	"federation_metadata_work.kind": "work row shape (asset / all); asset_id is always an asset, unenforced by design",
 }
 
 // sweepStmt is one orphan-delete: the SQL plus the kind value it is
