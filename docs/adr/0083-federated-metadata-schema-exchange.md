@@ -990,3 +990,30 @@ queued or sent, and no profile is advertised.
   snapshot is measured as recorded.
 
 The sender driver, fan-out, the two-direction gates and advertisement remain open.
+
+### Addendum 2026-11-23 (later): a one-peer metadata Update driver (#1577)
+
+`assetsend.RecordMetadataUpdate` records a metadata Update to ONE named peer, inside the caller's transaction,
+which holds the asset row. No local edit calls it yet and nothing iterates peers: the edit hooks and the durable
+privacy fan-out remain open, and the profile is not advertised. The delivery side is wired into the outbox worker.
+
+- Eligibility at record time: the asset local, live, public or team, with an owner; the peer enabled, connected
+  and holding asset-metadata-1, archival-1 and original-transfer-1; a live, peer-wide original-file share; and
+  the highest sealed version THIS peer was told or will durably be told, chosen by one statement returning at
+  most one row: an announcement whose peer-wide outbox row was sent counts whatever its share's state now; a
+  queued one, or one not dispatched yet after the dispatch cursor, counts only while its share is live, peer-wide
+  and carries the original; a failed or refused one, one before the cursor with no row, a draft and another
+  peer's announcement do not. The new Update rides on the current live share, not on an older announcement's.
+- The capture is taken in the same transaction and kept in the local record as one JSON string, so its bytes,
+  the member-budget boundary included, come back exactly as captured. The Update reuses the flags Update's
+  record and ordering (`nextAssetPublished`) and adds the sealed version's id.
+- Delivery rebuilds aa:asset from that sealed version only and takes aa:metadata from the capture, after
+  checking again, a four-null clear included, that the activity, owner, tier, peer, profiles, share and version
+  still hold; a failure refuses the whole activity. It may reach the peer before the version's announcement,
+  which a receiver keeps pending (§18.4).
+- The projection now carries a metadata Update's aa:metadata (it used to drop it) only under all three profiles,
+  refuses a descriptive companion, a malformed or missing member and any wire member in a local record, and the
+  built envelope passes `ValidateAssetMetadataMembers` with its real actor and object before it is sealed or
+  signed. A record with a capture is never sent as a flags-only Update.
+
+The edit hooks, fan-out, the two-direction gates and advertisement remain open.

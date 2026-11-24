@@ -1590,6 +1590,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.outboxDelivery.SetAssetWithdrawalMember(assetsend.Source{Pool: pool}.Tombstone)
 	// #1575: an asset Update's aa:asset, built from what was recorded.
 	s.outboxDelivery.SetAssetFlagUpdateMember(assetsend.Source{Pool: pool}.FlagUpdateMember)
+	// #1577: a metadata Update's aa:asset and aa:metadata, built from what
+	// was recorded. Nothing records one in production yet, and the
+	// profile is not advertised.
+	s.outboxDelivery.SetAssetMetadataUpdateMembers(assetsend.Source{Pool: pool}.MetadataUpdateMembers)
 	actorKeys := remote.NewSigningKeyResolver(pool, signer, logger)
 	s.inboxHandler.SetActorKeyResolver(actorKeys)
 	// #72 origin: serves originals only under the #1573 decision, with
