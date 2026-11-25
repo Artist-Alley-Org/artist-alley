@@ -11,7 +11,7 @@
 
   import { onMount } from 'svelte';
   import { site } from '$stores/site.svelte';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import PasswordInput from '$components/PasswordInput.svelte';
@@ -22,7 +22,7 @@
   type MCPServerToolGrant = components['schemas']['MCPServerToolGrant'];
   type MCPServerToolGrantUpsert = components['schemas']['MCPServerToolGrantUpsert'];
 
-  let id = $derived($page.params.id ?? '');
+  let id = $derived(page.params.id ?? '');
 
   let server = $state<MCPServer | null>(null);
   let grants = $state<MCPServerToolGrant[]>([]);

@@ -154,7 +154,7 @@
       // empty, which reads as "this instance has no teams".
       api.GET('/teams', { params: { query: { limit: 500 } } }),
     ]);
-    overrides = ((o.data ?? []) as Override[]) ?? [];
+    overrides = (o.data ?? []) as Override[];
     teams = ((m.data as { items?: Team[] } | undefined)?.items ?? []) as Team[];
   }
 

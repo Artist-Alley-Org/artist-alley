@@ -105,7 +105,7 @@
     inputError = '';
     input = id;
     assetId = id;
-    void goto(`?asset=${id}`, { replaceState: true, keepFocus: true, noScroll: true });
+    void goto(`?asset=${id}`, { replace: true, reset: false });
     await load(id, null, () => trail.reset(), true);
   }
 

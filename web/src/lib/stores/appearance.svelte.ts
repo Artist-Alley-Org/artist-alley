@@ -17,7 +17,7 @@
 // when none of these vars are set, so the page renders fine before
 // the store has booted.
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { api } from '$api/client';
 import { site } from '$stores/site.svelte';
 import {

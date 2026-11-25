@@ -13,7 +13,7 @@
 // Site (/admin/system/site), never here — this store is read-only from
 // the frontend's perspective.
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 
 /** Product name, two words, no hyphen. Mirrors the Go-side
  *  sysconfig.DefaultSiteName fallback. */

@@ -49,9 +49,9 @@
   // opened from. That is #994's close-to-origin family, obtained rather
   // than re-implemented per surface.
   //
-  // `keepFocus` keeps the browser from dropping focus on <body> during
+  // `reset: false` keeps the browser from dropping focus on <body> during
   // the navigation; `restoreFocus` below is what puts it back on the
-  // CARD, which is the part `keepFocus` cannot do because the element
+  // CARD, which is the part `reset: false` cannot do because the element
   // that had focus is inside the dialog being torn down.
 
   import { tick } from 'svelte';
@@ -95,11 +95,11 @@
   });
 
   async function close(): Promise<void> {
-    const target = new URL(page.url);
+    const target = new URL(page.url.href);
     target.searchParams.delete('post');
     const restore = opener;
     opener = null;
-    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+    await goto(target.pathname + target.search, { reset: false });
     // After the navigation AND after Svelte has torn the dialog down —
     // focusing an element while a <dialog> is still up is a no-op, and
     // the reader silently loses their place in the grid.
@@ -121,9 +121,9 @@
       onEndReached?.(dir);
       return;
     }
-    const target = new URL(page.url);
+    const target = new URL(page.url.href);
     target.searchParams.set('post', ids[next]);
-    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+    await goto(target.pathname + target.search, { reset: false });
   }
 </script>
 

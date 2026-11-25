@@ -111,7 +111,7 @@
    *  existence is worth hiding. */
   const activeTag = $derived(page.url.searchParams.get('tag'));
 
-  /** Apply or clear the team filter. `noScroll` + `keepFocus` because
+  /** Apply or clear the team filter. `reset: false` because
    *  this is a filter, not a navigation: the reader stays where they
    *  are and the feed changes underneath the rail they just clicked.
    *
@@ -121,20 +121,20 @@
    *  that only set its own would leave the other pressed chip live in
    *  the URL with nothing on screen saying so. */
   async function selectTeam(id: string | null) {
-    const target = new URL(page.url);
+    const target = new URL(page.url.href);
     target.searchParams.delete('tag');
     if (id) target.searchParams.set('team', id);
     else target.searchParams.delete('team');
-    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+    await goto(target.pathname + target.search, { reset: false });
   }
 
   /** Apply or clear the tag filter. Mirror of `selectTeam`. */
   async function selectTag(tag: string | null) {
-    const target = new URL(page.url);
+    const target = new URL(page.url.href);
     target.searchParams.delete('team');
     if (tag) target.searchParams.set('tag', tag);
     else target.searchParams.delete('tag');
-    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+    await goto(target.pathname + target.search, { reset: false });
   }
 
   /** The footer's asset-type filter (#1166), read straight off the URL
@@ -158,10 +158,10 @@
    *  rather than writing `kind=`, so "all types" leaves no trace in a
    *  URL somebody is about to share. */
   async function selectKinds(next: string[]) {
-    const target = new URL(page.url);
+    const target = new URL(page.url.href);
     if (next.length > 0) target.searchParams.set('kind', next.join(','));
     else target.searchParams.delete('kind');
-    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+    await goto(target.pathname + target.search, { reset: false });
   }
 
   // #891 shipped a one-line note here — "items you don't have access to

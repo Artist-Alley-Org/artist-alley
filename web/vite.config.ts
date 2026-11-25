@@ -1,6 +1,8 @@
 import { fileURLToPath } from 'node:url';
 
+import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
@@ -10,7 +12,65 @@ import { defineConfig } from 'vite';
 const adapterOutput = `${fileURLToPath(new URL('./build', import.meta.url))}/**`;
 
 export default defineConfig({
-  plugins: [tailwindcss(), sveltekit()],
+  plugins: [
+    tailwindcss(),
+    // SvelteKit 3 reads its configuration from this plugin call;
+    // `svelte.config.js` is no longer supported (it is an error if
+    // present). Options that are not SvelteKit's own, like
+    // `preprocess`, pass through to vite-plugin-svelte.
+    sveltekit({
+      preprocess: vitePreprocess(),
+
+      // adapter-static — every route is prerendered to a static asset at
+      // build time. The Go binary picks up `web/build/` via //go:embed
+      // and serves it from /. Dynamic per-user data is fetched client-side
+      // after hydration; the prerendered shell + theme + chrome paint
+      // instantly. See ADR 0014.
+      adapter: adapter({
+        pages: 'build',
+        assets: 'build',
+        // SPA fallback — every unknown path hits index.html and the
+        // client router takes over. Makes deep links work without a
+        // server-side route table.
+        fallback: 'index.html',
+        precompress: false,
+        strict: true,
+      }),
+
+      // Authenticated data is fetched client-side after hydration; no
+      // route renders user-specific HTML at build time, so prerendering
+      // everything is fine. Pages that need to opt out can set
+      // `export const prerender = false` in their +page.ts.
+      prerender: {
+        handleHttpError: 'warn',
+        // Dynamic routes (/posts/[id], /admin/[section], /account/[stub],
+        // /collections/[id]) can't be crawled at build time because the
+        // shell can't enumerate ids without auth. Skip them — the SPA
+        // fallback serves index.html at runtime and the client router
+        // resolves the dynamic segment.
+        handleUnseenRoutes: 'ignore',
+      },
+
+      // SvelteKit 3 no longer generates `$lib`; it is declared here with
+      // the project's other aliases so existing imports keep resolving.
+      // `alias` is deprecated in favour of package.json subpath imports
+      // (`#lib`), and SvelteKit prints a deprecation warning for it.
+      alias: {
+        $lib: 'src/lib',
+        $api: 'src/lib/api',
+        $components: 'src/lib/components',
+        $stores: 'src/lib/stores',
+      },
+
+      // SvelteKit 3 polls `_app/version.json` hourly by default; SvelteKit
+      // 2 did not poll (its default was 0). Keep the old behaviour. Kit 3
+      // still checks for a new version when the tab regains focus or
+      // becomes visible; that is not configurable.
+      version: {
+        pollInterval: 0,
+      },
+    }),
+  ],
   server: {
     port: 5173,
     strictPort: true,

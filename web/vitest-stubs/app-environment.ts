@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// Test stub for SvelteKit's `$app/environment`.
+// Test stub for SvelteKit's `$app/env` (named `$app/environment` before
+// SvelteKit 3).
 //
 // vitest.config.ts deliberately loads only the Svelte plugin, not the
 // full SvelteKit plugin, so the runner stays fast — which means the

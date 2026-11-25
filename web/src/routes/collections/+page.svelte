@@ -61,12 +61,12 @@
   });
 
   function syncUrl() {
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     if (tab === 'mine') url.searchParams.delete('tab');
     else url.searchParams.set('tab', tab);
     if (q.trim()) url.searchParams.set('q', q.trim());
     else url.searchParams.delete('q');
-    void goto(url.pathname + url.search, { replaceState: true, keepFocus: true, noScroll: true });
+    void goto(url.pathname + url.search, { replace: true, reset: false });
   }
 
   async function load() {

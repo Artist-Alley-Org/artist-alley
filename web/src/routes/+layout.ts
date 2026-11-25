@@ -22,7 +22,7 @@
 import { redirect } from '@sveltejs/kit';
 import { api } from '$api/client';
 import { auth } from '$stores/auth.svelte';
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 
 // Always reachable without a session, in BOTH public-mode states.
 // These are the routes an operator needs before they can possibly

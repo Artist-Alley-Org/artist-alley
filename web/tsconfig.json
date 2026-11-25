@@ -1,5 +1,7 @@
 {
-  "extends": "./.svelte-kit/tsconfig.json",
+  // SvelteKit 3 generates its base config at node_modules/$app/tsconfig.json
+  // (it no longer writes .svelte-kit/tsconfig.json).
+  "extends": "$app/tsconfig",
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,
@@ -10,11 +12,37 @@
     "sourceMap": true,
     "strict": true,
     "moduleResolution": "bundler",
-    // Inherit svelte-kit's "node" via the spread-like merge that TS
-    // does for `types` — we replace, not extend, so re-declare it.
-    // vitest/globals adds describe / it / expect ambient types for
-    // .test.ts files; @testing-library/jest-dom layers the DOM
-    // matchers (`toBeInTheDocument`, etc.) onto expect.
-    "types": ["node", "vitest/globals", "@testing-library/jest-dom"]
-  }
+    // `types` replaces the inherited list rather than extending it, so
+    // re-declare SvelteKit's own "$app/types" (its generated ambient
+    // and route types) alongside ours. vitest/globals adds describe /
+    // it / expect ambient types for .test.ts files;
+    // @testing-library/jest-dom layers the DOM matchers
+    // (`toBeInTheDocument`, etc.) onto expect.
+    "types": ["$app/types", "node", "vitest/globals", "@testing-library/jest-dom"]
+  },
+  // The generated base config no longer lists files, so the project
+  // declares them. These are the source globs SvelteKit 2's generated
+  // config used, so svelte-check covers the same files as before.
+  "include": [
+    "vite.config.js",
+    "vite.config.ts",
+    "src/**/*.js",
+    "src/**/*.ts",
+    "src/**/*.svelte",
+    "test/**/*.js",
+    "test/**/*.ts",
+    "test/**/*.svelte",
+    "tests/**/*.js",
+    "tests/**/*.ts",
+    "tests/**/*.svelte"
+  ],
+  "exclude": [
+    "node_modules/**",
+    "src/service-worker.js",
+    "src/service-worker/**/*.js",
+    "src/service-worker.ts",
+    "src/service-worker/**/*.ts",
+    "src/service-worker.d.ts",
+    "src/service-worker/**/*.d.ts"
+  ]
 }

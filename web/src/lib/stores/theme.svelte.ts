@@ -49,7 +49,7 @@
 // re-read, while adopting the wrong theme repaints the whole page
 // after it is already on screen.
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { api } from '$api/client';
 import { auth } from '$stores/auth.svelte';
 

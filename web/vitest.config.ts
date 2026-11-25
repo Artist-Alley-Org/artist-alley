@@ -13,12 +13,16 @@
 // needs (pure stores + brush/sprite/archive parsers + a handful of
 // component smokes), the lean setup is the right baseline.
 
-import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelte, vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
-  plugins: [svelte()],
+  // `preprocess` is passed explicitly: the plugin used to read it from
+  // svelte.config.js, which SvelteKit 3 no longer supports. The app
+  // build sets the same preprocessor through sveltekit() in
+  // vite.config.ts.
+  plugins: [svelte({ preprocess: vitePreprocess() })],
   resolve: {
     // Svelte 5 ships separate server + browser exports; Testing
     // Library needs the browser entry (mount / lifecycle hooks live
@@ -28,11 +32,11 @@ export default defineConfig({
     // entry re-exports the same helpers pure-logic imports use.
     conditions: ['browser'],
     alias: {
-      // Mirror svelte.config.js + svelte-kit's generated aliases so
-      // imports like `$lib/...` in tests resolve the same way they do
-      // in app code. svelte-kit normally writes these into
-      // .svelte-kit/tsconfig.json; we re-declare them here so vitest
-      // resolves them without booting svelte-kit.
+      // Mirror the `alias` map passed to sveltekit() in vite.config.ts
+      // so imports like `$lib/...` in tests resolve the same way they
+      // do in app code. svelte-kit writes these into its generated
+      // tsconfig; we re-declare them here so vitest resolves them
+      // without booting svelte-kit.
       $lib: fileURLToPath(new URL('./src/lib', import.meta.url)),
       $api: fileURLToPath(new URL('./src/lib/api', import.meta.url)),
       $components: fileURLToPath(new URL('./src/lib/components', import.meta.url)),
@@ -44,7 +48,7 @@ export default defineConfig({
       // land — one alias per module actually needed, not a blanket
       // shim, so an unexpected `$app/*` dependency still surfaces as a
       // resolve error instead of silently getting a fake.
-      '$app/environment': fileURLToPath(
+      '$app/env': fileURLToPath(
         new URL('./vitest-stubs/app-environment.ts', import.meta.url),
       ),
       // PostCard reaches both of these — `page.url` to build its modal

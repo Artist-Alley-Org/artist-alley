@@ -29,7 +29,7 @@
 // `srcsetFor()` return null and every card render exactly as it does
 // today. Degraded, never broken.
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { api } from '$api/client';
 
 /** One rung of the install's configured ladder. */

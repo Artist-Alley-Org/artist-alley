@@ -135,10 +135,10 @@
   }
 
   function select(id: string | null) {
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     if (id) url.searchParams.set('receipt', id);
     else url.searchParams.delete('receipt');
-    void goto(url, { keepFocus: true, noScroll: true, replaceState: false });
+    void goto(url, { reset: false, replace: false });
   }
 
   function resetForIdentity() {

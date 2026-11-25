@@ -860,12 +860,9 @@
       return;
     }
     e.preventDefault();
-    const target = new URL(page.url);
+    const target = new URL(page.url.href);
     target.searchParams.set('post', post.id);
-    await goto(target.pathname + target.search, {
-      keepFocus: true,
-      noScroll: true,
-    });
+    await goto(target.pathname + target.search, { reset: false });
   }
 </script>
 
