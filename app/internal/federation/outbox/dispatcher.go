@@ -14,24 +14,29 @@
 //
 // # Per signal/tick
 //
-//   1. SELECT activities WHERE (created_at, id) > cursor
-//      ORDER BY (created_at, id) LIMIT BatchSize.
-//   2. For each activity row:
+//   1. In ONE transaction, claim up to BatchSize pending
+//      federation_dispatch_work rows (#1577, migration 00101), oldest
+//      activity first, FOR UPDATE SKIP LOCKED. A trigger writes one such
+//      row per local activity in the activity's own transaction, so a
+//      late-committing activity is pending whatever its created_at.
+//   2. For each claimed activity:
 //      - Resolve recipients via outbox.Resolver.
-//      - If Skipped: emit federation.emission.skipped audit;
-//        advance cursor past the activity; continue.
+//      - If Skipped: emit federation.emission.skipped audit
+//        (pool-bound, outside the transaction); continue.
 //      - If Recipients: INSERT one federation_outbox row per
 //        recipient via ON CONFLICT DO NOTHING (refinement 4).
-//   3. Advance cursor to the LAST processed activity's id
-//      atomically with the outbox INSERTs in ONE transaction
-//      (refinement 2 — worker crashes mid-batch resume cleanly).
+//   3. Acknowledge (delete) every claimed work row, move the progress
+//      cursor forward only, and commit: the outbox INSERTs, the
+//      acknowledgements and the cursor commit together, so a failure
+//      leaves the batch pending and a crash mid-batch resumes cleanly
+//      (refinement 2).
 //
 // # LISTEN/NOTIFY shape
 //
 // The Postgres trigger from migration 00001 fires
 // pg_notify('federation_dispatch_pending', NEW.id::text) on
 // every activities INSERT. The dispatcher's LISTEN goroutine
-// just wakes the main loop; the main loop reads from the cursor
+// just wakes the main loop; the main loop claims pending work
 // (not the notification payload) so missed/duplicate signals
 // don't matter for correctness — they only affect latency.
 
@@ -209,34 +214,13 @@ func (d *Dispatcher) Run(ctx context.Context) {
 // RunOnce processes a single batch. Exported so tests can drive
 // deterministically.
 func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued int) {
-	state, err := d.q.GetDispatchState(ctx)
-	if err != nil {
-		d.logErr(ctx, "outbox.dispatcher.state_read.error", err)
-		return 0, 0, 0
-	}
-
-	var cursorID pgtype.UUID
-	if state.LastDispatchedActivityID.Valid {
-		cursorID = state.LastDispatchedActivityID
-	}
-
-	rows, err := d.q.ListUndispatchedActivities(ctx, ListUndispatchedActivitiesParams{
-		CursorID: cursorID,
-		Limit:    d.cfg.BatchSize,
-	})
-	if err != nil {
-		d.logErr(ctx, "outbox.dispatcher.list.error", err)
-		return 0, 0, 0
-	}
-	if len(rows) == 0 {
-		return 0, 0, 0
-	}
-
-	// Process all rows in a SINGLE transaction so the cursor
-	// advance commits atomically with the outbox INSERTs +
-	// skipped-audit decisions. If anything in the batch fails
-	// we roll the WHOLE batch back; next scan retries from the
-	// same cursor.
+	// One transaction claims the batch, writes its outbox rows,
+	// acknowledges its work and moves the progress cursor (#1577). What is
+	// pending is the federation_dispatch_work rows (migration 00101), not a
+	// position: a local activity that committed late is claimed however its
+	// created_at sorts. If anything in the batch fails the WHOLE batch rolls
+	// back and its work stays pending for the next scan; the outbox INSERT
+	// is idempotent, so the retry writes each row once.
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		d.logErr(ctx, "outbox.dispatcher.tx_begin.error", err)
@@ -245,7 +229,20 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 	defer tx.Rollback(ctx)
 	qtx := d.q.WithTx(tx)
 
+	rows, err := qtx.ClaimDispatchWork(ctx, d.cfg.BatchSize)
+	if err != nil {
+		d.logErr(ctx, "outbox.dispatcher.claim.error", err)
+		return 0, 0, 0
+	}
+	if len(rows) == 0 {
+		return 0, 0, 0
+	}
+
 	var lastID pgtype.UUID
+	ids := make([]pgtype.UUID, 0, len(rows))
+	for i := range rows {
+		ids = append(ids, rows[i].ID)
+	}
 	for i := range rows {
 		row := rows[i]
 		lastID = row.ID
@@ -465,9 +462,26 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 		}
 	}
 
-	// Atomic cursor advance — fires in the same tx as the
-	// inserts so a crash here leaves the cursor unchanged + the
-	// batch retries cleanly.
+	// Every claimed activity has been handled: its outbox rows are
+	// written, or its skip decided (and audited, outside this
+	// transaction). Acknowledge all of them in the same transaction, so a
+	// skip is decided once and a crash before the commit leaves the whole
+	// batch pending. The rows are locked by this transaction, so each must
+	// still be there.
+	acked, err := qtx.AckDispatchWork(ctx, ids)
+	if err != nil {
+		d.logErr(ctx, "outbox.dispatcher.ack.error", err)
+		return 0, 0, 0
+	}
+	if acked != int64(len(ids)) {
+		d.logErr(ctx, "outbox.dispatcher.ack.error",
+			fmt.Errorf("acknowledged %d of %d claimed work rows", acked, len(ids)))
+		return 0, 0, 0
+	}
+
+	// Progress only: the cursor moves forward to the batch's newest
+	// activity (rows come oldest first) in the same transaction, and never
+	// back (AdvanceDispatchCursor guards it).
 	if err := qtx.AdvanceDispatchCursor(ctx, lastID); err != nil {
 		d.logErr(ctx, "outbox.dispatcher.cursor_advance.error", err)
 		return 0, 0, 0

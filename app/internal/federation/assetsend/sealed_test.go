@@ -354,8 +354,13 @@ func TestRecordSealed_WhatCountsAsAnnounced(t *testing.T) {
 			t.Fatalf("Record returned the announcement of %v, want the current version 3", n)
 		}
 	})
-	t.Run("not dispatched yet counts; dispatched without a row does not", func(t *testing.T) {
-		ctx := context.Background()
+	// Pending is the announcement's durable dispatch work (migration
+	// 00101), never the progress cursor (rev796). Each case runs in a
+	// transaction that is rolled back, so its fixture writes (a cursor move,
+	// a work row deleted) never reach other tests. The actual dispatcher
+	// schedule is tested in pending_dispatch_test.go.
+	pendingV2 := func(t *testing.T, f *fx) (asset, grant, uuid.UUID) {
+		t.Helper()
 		a := f.newAsset("public", true)
 		g := f.grantAndRecord(a, nil)
 		f.dispatched([]uuid.UUID{g.announcement}, f.peer, "sent")
@@ -363,26 +368,48 @@ func TestRecordSealed_WhatCountsAsAnnounced(t *testing.T) {
 		if err != nil || len(ids) != 1 {
 			t.Fatalf("version 2: %v %v", ids, err)
 		}
-		// Both cases in one transaction that is rolled back: the
-		// dispatcher's cursor is shared, and is moved only here.
-		tx, err := f.pool.Begin(ctx)
+		return a, g, ids[0]
+	}
+	begin := func(t *testing.T, f *fx) pgx.Tx {
+		t.Helper()
+		tx, err := f.pool.Begin(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer tx.Rollback(ctx) //nolint:errcheck
-		// The cursor before version 2's announcement: not dispatched yet,
-		// so it counts, and a repeated reconcile adds nothing.
-		if _, err := tx.Exec(ctx, `UPDATE federation_dispatch_state SET last_dispatched_activity_id = $1 WHERE id = 1`, g.announcement); err != nil {
-			t.Fatal(err)
+		t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+		return tx
+	}
+	t.Run("a durably pending announcement counts wherever the cursor is", func(t *testing.T) {
+		ctx := context.Background()
+		f := f.sub(t)
+		a, g, v2 := pendingV2(t, f)
+		tx := begin(t, f)
+		var work int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM federation_dispatch_work WHERE activity_id = $1`, v2).Scan(&work); err != nil || work != 1 {
+			t.Fatalf("version 2's announcement has %d dispatch work rows (%v), want 1", work, err)
 		}
-		if again, err := assetsend.RecordSealed(ctx, tx, f.writer, sealedInput(a.id)); err != nil || len(again) != 0 {
-			t.Fatalf("not dispatched yet: announced %v (%v)", again, err)
+		// Fixture cursor positions: before version 2's announcement, then
+		// at it. Neither decides; a repeated reconcile adds nothing.
+		for _, at := range []uuid.UUID{g.announcement, v2} {
+			if _, err := tx.Exec(ctx, `INSERT INTO federation_dispatch_state (id, last_dispatched_activity_id) VALUES (1, $1)
+				ON CONFLICT (id) DO UPDATE SET last_dispatched_activity_id = EXCLUDED.last_dispatched_activity_id`, at); err != nil {
+				t.Fatal(err)
+			}
+			if again, err := assetsend.RecordSealed(ctx, tx, f.writer, sealedInput(a.id)); err != nil || len(again) != 0 {
+				t.Fatalf("pending, cursor at %s: announced %v (%v)", at, again, err)
+			}
 		}
-		// The cursor at it, with no row for the peer (skipped at
-		// dispatch): it never reaches the peer, so version 2 is announced
-		// again.
-		if _, err := tx.Exec(ctx, `UPDATE federation_dispatch_state SET last_dispatched_activity_id = $1 WHERE id = 1`, ids[0]); err != nil {
-			t.Fatal(err)
+	})
+	t.Run("an acknowledged announcement with no row for the peer does not count", func(t *testing.T) {
+		ctx := context.Background()
+		f := f.sub(t)
+		a, _, v2 := pendingV2(t, f)
+		tx := begin(t, f)
+		// Fixture: deleting exactly that work row models the dispatcher
+		// acknowledging it with no row for the peer (skipped at dispatch). It
+		// never reaches the peer, so version 2 is announced again.
+		if tag, err := tx.Exec(ctx, `DELETE FROM federation_dispatch_work WHERE activity_id = $1`, v2); err != nil || tag.RowsAffected() != 1 {
+			t.Fatalf("acknowledge: %v (%v rows)", err, tag.RowsAffected())
 		}
 		again, err := assetsend.RecordSealed(ctx, tx, f.writer, sealedInput(a.id))
 		if nums, _ := f.announcedTx(tx, again); err != nil || !equal(nums, 2) {

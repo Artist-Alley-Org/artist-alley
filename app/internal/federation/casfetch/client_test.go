@@ -727,25 +727,304 @@ func TestFetch_PeerDriftFailsClosed(t *testing.T) {
 		})
 		t.Run(name+" while another worker holds the lease", func(t *testing.T) {
 			f := newFx(t)
-			if _, err := f.pool.Exec(context.Background(),
-				`INSERT INTO federation_cas_fetch_leases (peer_id, asset_id, object_hash, signer, lease_id, owner, expires_at)
-				 VALUES ($1, $2, $3, $4, $5, 'stalled', now() + interval '1 second')`,
-				f.peer.ID, f.asset, f.hash, f.signer.KeyID, uuid.New()); err != nil {
-				t.Fatal(err)
+			o := f.heldLeaseSchedule(func() { f.setPeer(tc.sql) })
+			o.wantHeldPhase(t)
+			wantReason(t, o.err, tc.want[0])
+			if o.gets != 0 || o.objects != 0 || o.pins != 0 || o.ingestPins != 0 || o.intents != 0 || o.temps != 0 {
+				t.Fatalf("recorded after drift: GETs=%d objects=%d pins=%d ingest pins=%d intents=%d temp files=%d",
+					o.gets, o.objects, o.pins, o.ingestPins, o.intents, o.temps)
 			}
-			go func() { time.Sleep(200 * time.Millisecond); f.setPeer(tc.sql) }()
-			_, err := f.client.Fetch(context.Background(), f.req())
-			wantReason(t, err, tc.want[0])
-			if f.origin.gets.Load() != 0 {
-				t.Fatal("downloaded after drift")
-			}
-			// The stalled worker's own (expired) lease row stays; nothing
-			// else may exist.
-			if n := f.count(`SELECT count(*) FROM storage_objects WHERE hash = $1`); n != 0 || f.ingestPins() != 0 {
-				t.Fatalf("recorded after drift: objects=%d pins=%d", n, f.ingestPins())
+			// The other holder's own (now expired) lease row stays; no
+			// other lease exists for the key.
+			if o.leaseRows != 1 || o.leaseOwner != "stalled" || o.leaseLive {
+				t.Fatalf("lease after the refusal: rows=%d owner=%q live=%v", o.leaseRows, o.leaseOwner, o.leaseLive)
 			}
 		})
 	}
+	// Positive control for the schedule above: with no drift, the caller
+	// waits without a GET while the other holder's lease is live, then
+	// downloads exactly once after it ends. The barrier itself refuses
+	// nothing.
+	t.Run("unchanged while another worker holds the lease (control)", func(t *testing.T) {
+		f := newFx(t)
+		o := f.heldLeaseSchedule(func() {})
+		o.wantHeldPhase(t)
+		if o.err != nil || o.res == nil || o.res.IngestID == uuid.Nil || o.res.Hash != f.hash {
+			t.Fatalf("unchanged peer: result %+v, error %v (reason %q)", o.res, o.err, casfetch.ReasonOf(o.err))
+		}
+		if o.gets != 1 || o.objects != 1 || o.ingestPins != 1 || o.intents != 0 || o.temps != 0 {
+			t.Fatalf("unchanged peer: GETs=%d objects=%d ingest pins=%d intents=%d temp files=%d",
+				o.gets, o.objects, o.ingestPins, o.intents, o.temps)
+		}
+		if o.leaseRows != 0 {
+			t.Fatalf("unchanged peer: %d lease rows left", o.leaseRows)
+		}
+	})
+}
+
+// heldLeaseKeyArgs reports whether a lease statement's first four
+// arguments are exactly the fixture's full key (peer, asset, hash, signer).
+func (f *fx) heldLeaseKeyArgs(args []any) bool {
+	if len(args) < 4 {
+		return false
+	}
+	want := []string{f.peer.ID.String(), f.asset.String(), f.hash, f.signer.KeyID}
+	for i, w := range want {
+		if fmt.Sprint(args[i]) != w {
+			return false
+		}
+	}
+	return true
+}
+
+// leaseWaitGate is a test-only pgx.QueryTracer on the client's own pool.
+// It observes the client's real lease statements for one full key: the
+// acquire that another holder's live lease refuses (no row returned),
+// then the first held query after it, whose completion it holds (the
+// statement has run; its result is not yet returned to the client) until
+// released or the query's context ends. Nothing is mocked: the client's
+// SQL runs unchanged against the database.
+type leaseWaitGate struct {
+	match    func(args []any) bool
+	reached  chan struct{}
+	release  chan struct{}
+	once     sync.Once
+	rel      sync.Once
+	mu       sync.Mutex
+	denied   int    // acquires for the key that returned no row
+	acquired int    // acquires for the key that returned the lease
+	heldTag  string // command tag of the gated held query
+	heldErr  error
+	other    []string // anything unexpected, reported by the test
+}
+
+type leaseTraceKey struct{}
+
+const (
+	acquireSQLMark = "INSERT INTO federation_cas_fetch_leases"
+	acquireSQLTail = "ON CONFLICT (peer_id, asset_id, object_hash, signer) DO UPDATE"
+	heldSQLMark    = "SELECT expires_at > now() FROM federation_cas_fetch_leases"
+)
+
+func (g *leaseWaitGate) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	return context.WithValue(ctx, leaseTraceKey{}, data)
+}
+
+func (g *leaseWaitGate) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+	start, ok := ctx.Value(leaseTraceKey{}).(pgx.TraceQueryStartData)
+	if !ok || !g.match(start.Args) {
+		return
+	}
+	switch {
+	case strings.Contains(start.SQL, acquireSQLMark) && strings.Contains(start.SQL, acquireSQLTail):
+		g.mu.Lock()
+		switch {
+		case data.Err != nil:
+			g.other = append(g.other, "acquire error: "+data.Err.Error())
+		case data.CommandTag.RowsAffected() == 0:
+			g.denied++
+		default:
+			g.acquired++
+		}
+		g.mu.Unlock()
+	case strings.Contains(start.SQL, heldSQLMark):
+		g.mu.Lock()
+		armed := g.denied > 0
+		g.mu.Unlock()
+		if !armed {
+			return
+		}
+		g.once.Do(func() {
+			g.mu.Lock()
+			g.heldTag, g.heldErr = data.CommandTag.String(), data.Err
+			g.mu.Unlock()
+			close(g.reached)
+			select {
+			case <-g.release:
+			case <-ctx.Done():
+			}
+		})
+	}
+}
+
+func (g *leaseWaitGate) open() { g.rel.Do(func() { close(g.release) }) }
+
+// heldLeaseOutcome is everything observed in one heldLeaseSchedule,
+// collected before any assertion.
+type heldLeaseOutcome struct {
+	reached                                  bool
+	denied, acquired                         int
+	heldTag                                  string
+	heldErr                                  error
+	other                                    []string
+	atGateRows                               int
+	atGateOwner                              string
+	atGateLeaseID                            uuid.UUID
+	atGateLive                               bool
+	atGateGets, atGateObjects, atGatePins    int
+	seeded                                   uuid.UUID
+	expired                                  int64
+	res                                      *casfetch.Result
+	err                                      error
+	gets, objects, pins, ingestPins, intents int
+	temps, leaseRows                         int
+	leaseOwner                               string
+	leaseLive                                bool
+	setupErr                                 string
+}
+
+// wantHeldPhase asserts the wait was actually observed: the client's real
+// acquire was refused by the other holder's live lease, its real held
+// query completed while that exact lease was live, and nothing had been
+// downloaded or recorded by then; the fixture then ended exactly that
+// lease.
+func (o heldLeaseOutcome) wantHeldPhase(t *testing.T) {
+	t.Helper()
+	t.Logf("held-lease schedule: reached=%v denied=%d acquired=%d held tag=%q held err=%v other=%v | at gate: rows=%d owner=%q lease=%v (seeded %v) live=%v GETs=%d objects=%d pins=%d | expired rows=%d | result err=%v reason=%q | after: GETs=%d objects=%d pins=%d ingest pins=%d intents=%d temp files=%d lease rows=%d owner=%q live=%v | setup=%q",
+		o.reached, o.denied, o.acquired, o.heldTag, o.heldErr, o.other, o.atGateRows, o.atGateOwner, o.atGateLeaseID, o.seeded,
+		o.atGateLive, o.atGateGets, o.atGateObjects, o.atGatePins, o.expired, o.err, casfetch.ReasonOf(o.err), o.gets, o.objects,
+		o.pins, o.ingestPins, o.intents, o.temps, o.leaseRows, o.leaseOwner, o.leaseLive, o.setupErr)
+	if o.setupErr != "" {
+		t.Fatalf("schedule: %s", o.setupErr)
+	}
+	if !o.reached || o.denied < 1 || o.heldErr != nil || o.heldTag != "SELECT 1" || len(o.other) != 0 {
+		t.Fatalf("the wait was not observed: reached=%v denied=%d held tag=%q err=%v other=%v", o.reached, o.denied, o.heldTag, o.heldErr, o.other)
+	}
+	if o.atGateRows != 1 || o.atGateOwner != "stalled" || o.atGateLeaseID != o.seeded || !o.atGateLive {
+		t.Fatalf("at the gate the lease was rows=%d owner=%q id=%v live=%v, want the seeded live one", o.atGateRows, o.atGateOwner, o.atGateLeaseID, o.atGateLive)
+	}
+	if o.atGateGets != 0 || o.atGateObjects != 0 || o.atGatePins != 0 {
+		t.Fatalf("before the other holder's lease ended: GETs=%d objects=%d pins=%d", o.atGateGets, o.atGateObjects, o.atGatePins)
+	}
+	if o.expired != 1 {
+		t.Fatalf("the fixture ended %d leases, want exactly the seeded one", o.expired)
+	}
+}
+
+// heldLeaseSchedule seeds another holder's live lease on the full key
+// (unique lease id, owner "stalled", a long fixture expiry that time
+// cannot end), starts the real Fetch on the real client with the normal
+// configuration over a traced clone of the fixture pool, and waits for
+// the client's real held query to complete while that lease is live.
+// Then, in this goroutine and on the fixture pool (never the traced
+// one), it runs change (a peer drift, or nothing), ends exactly the
+// seeded lease with a controlled fixture UPDATE to a past database time
+// (it models the other holder releasing; it is not a natural expiry),
+// releases the held query and waits for Fetch to end. The Fetch is
+// always released, cancelled and joined before the pools close.
+func (f *fx) heldLeaseSchedule(change func()) (o heldLeaseOutcome) {
+	f.t.Helper()
+	t := f.t
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	g := &leaseWaitGate{match: f.heldLeaseKeyArgs, reached: make(chan struct{}), release: make(chan struct{})}
+	cfg := f.pool.Config()
+	cfg.ConnConfig.Tracer = g
+	traced, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(traced.Close)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	client := casfetch.New(casfetch.Deps{
+		Pool: traced, Storage: f.svc, Peers: peers{pool: f.pool}, Grants: f.grants,
+		Audit: audit.NewRecorder(f.pool, logger), Logger: logger, Config: f.cfg,
+	})
+	o.seeded = uuid.New()
+	if _, err := f.pool.Exec(ctx, `INSERT INTO federation_cas_fetch_leases (peer_id, asset_id, object_hash, signer, lease_id, owner, expires_at)
+		VALUES ($1, $2, $3, $4, $5, 'stalled', now() + interval '1 hour')`, f.peer.ID, f.asset, f.hash, f.signer.KeyID, o.seeded); err != nil {
+		t.Fatal(err)
+	}
+	fetchCtx, cancelFetch := context.WithCancel(ctx)
+	type result struct {
+		res *casfetch.Result
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		res, err := client.Fetch(fetchCtx, f.req())
+		done <- result{res, err}
+	}()
+	var joined bool
+	var final result
+	join := func() {
+		if !joined {
+			joined = true
+			g.open()
+			cancelFetch()
+			final = <-done
+		}
+	}
+	// Registered after traced.Close, so it runs first: never close a pool
+	// under a running Fetch, even when an assertion below fails.
+	t.Cleanup(join)
+
+	q := func(sql string, args ...any) int {
+		var n int
+		if err := f.pool.QueryRow(ctx, sql, args...).Scan(&n); err != nil {
+			o.setupErr = fmt.Sprintf("observe: %v", err)
+		}
+		return n
+	}
+	select {
+	case <-g.reached:
+		o.reached = true
+	case r := <-done:
+		joined, final = true, r
+		o.setupErr = "Fetch ended before its held query was observed"
+	case <-ctx.Done():
+		o.setupErr = "the held query was not observed in time"
+	}
+	if o.reached {
+		var expires time.Time
+		o.atGateRows = q(`SELECT count(*) FROM federation_cas_fetch_leases WHERE peer_id = $1 AND asset_id = $2 AND object_hash = $3 AND signer = $4`,
+			f.peer.ID, f.asset, f.hash, f.signer.KeyID)
+		if err := f.pool.QueryRow(ctx, `SELECT lease_id, owner, expires_at, expires_at > now() FROM federation_cas_fetch_leases
+			WHERE peer_id = $1 AND asset_id = $2 AND object_hash = $3 AND signer = $4`, f.peer.ID, f.asset, f.hash, f.signer.KeyID).
+			Scan(&o.atGateLeaseID, &o.atGateOwner, &expires, &o.atGateLive); err != nil {
+			o.setupErr = fmt.Sprintf("read the lease at the gate: %v", err)
+		}
+		o.atGateGets = int(f.origin.gets.Load())
+		o.atGateObjects = q(`SELECT count(*) FROM storage_objects WHERE hash = $1`, f.hash)
+		o.atGatePins = q(`SELECT count(*) FROM storage_pins WHERE object_hash = $1`, f.hash)
+		change()
+		tag, err := f.pool.Exec(ctx, `UPDATE federation_cas_fetch_leases SET expires_at = now() - interval '1 second'
+			WHERE peer_id = $1 AND asset_id = $2 AND object_hash = $3 AND signer = $4 AND lease_id = $5 AND owner = 'stalled'`,
+			f.peer.ID, f.asset, f.hash, f.signer.KeyID, o.seeded)
+		if err != nil {
+			o.setupErr = fmt.Sprintf("end the seeded lease: %v", err)
+		}
+		o.expired = tag.RowsAffected()
+		g.open()
+		select {
+		case final = <-done:
+			joined = true
+		case <-ctx.Done():
+			o.setupErr = "Fetch did not end in time after the release"
+		}
+	}
+	join()
+	o.res, o.err = final.res, final.err
+	g.mu.Lock()
+	o.denied, o.acquired, o.heldTag, o.heldErr, o.other = g.denied, g.acquired, g.heldTag, g.heldErr, append([]string(nil), g.other...)
+	g.mu.Unlock()
+	o.gets = int(f.origin.gets.Load())
+	o.objects = q(`SELECT count(*) FROM storage_objects WHERE hash = $1`, f.hash)
+	o.pins = q(`SELECT count(*) FROM storage_pins WHERE object_hash = $1`, f.hash)
+	o.ingestPins = q(`SELECT count(*) FROM storage_pins WHERE object_hash = $1 AND pin_subject_type = 'federation_ingest'`, f.hash)
+	o.intents = q(`SELECT count(*) FROM storage_import_intents WHERE object_hash = $1`, f.hash)
+	o.leaseRows = q(`SELECT count(*) FROM federation_cas_fetch_leases WHERE peer_id = $1 AND asset_id = $2 AND object_hash = $3 AND signer = $4`,
+		f.peer.ID, f.asset, f.hash, f.signer.KeyID)
+	if o.leaseRows == 1 {
+		if err := f.pool.QueryRow(ctx, `SELECT owner, expires_at > now() FROM federation_cas_fetch_leases
+			WHERE peer_id = $1 AND asset_id = $2 AND object_hash = $3 AND signer = $4`, f.peer.ID, f.asset, f.hash, f.signer.KeyID).
+			Scan(&o.leaseOwner, &o.leaseLive); err != nil {
+			o.setupErr = fmt.Sprintf("read the lease after: %v", err)
+		}
+	}
+	entries, _ := os.ReadDir(f.tmp)
+	o.temps = len(entries)
+	return o
 }
 
 // The lease stays this worker's through a Put longer than LeaseTTL: a
@@ -900,25 +1179,51 @@ func TestFetch_ExpiredLeaseTakenOver(t *testing.T) {
 	f.noLeftovers()
 }
 
-// A live lease held by a stalled worker: the waiter waits for expiry,
-// takes over and fetches.
+// A live lease held by a stalled worker: the waiter waits while it is
+// live, then takes it over and fetches.
+//
+// The wait is observed, not timed (rev803): heldLeaseSchedule seeds the
+// stalled worker's lease on the full key with an expiry time cannot reach,
+// sees the client's real acquire refused and its real held query complete
+// while that exact lease is live, with nothing downloaded or recorded, and
+// then ENDS the lease with a controlled fixture update. That models the
+// other holder releasing; it is not a natural expiry, and this test does
+// not measure how long a lease lasts. (It used to seed a one-second lease
+// in database time and require 700ms of elapsed wall time, a bound across
+// two clocks that is not the ownership contract.) The takeover is then
+// proved by state: the client acquires the lease once, downloads once,
+// stores the exact bytes, pins them once for this ingest and leaves no
+// intent, temp file or lease behind.
 func TestFetch_WaitsForLiveLeaseThenTakesOver(t *testing.T) {
 	f := newFx(t)
-	if _, err := f.pool.Exec(context.Background(),
-		`INSERT INTO federation_cas_fetch_leases (peer_id, asset_id, object_hash, signer, lease_id, owner, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, 'stalled', now() + interval '1 second')`,
-		f.peer.ID, f.asset, f.hash, f.signer.KeyID, uuid.New()); err != nil {
-		t.Fatal(err)
+	o := f.heldLeaseSchedule(func() {})
+	o.wantHeldPhase(t)
+	if o.acquired != 1 {
+		t.Fatalf("acquires that took the lease = %d, want 1", o.acquired)
 	}
-	start := time.Now()
-	if _, err := f.client.Fetch(context.Background(), f.req()); err != nil {
-		t.Fatal(err)
+	if o.err != nil || o.res == nil {
+		t.Fatalf("takeover: result %+v, error %v (reason %q)", o.res, o.err, casfetch.ReasonOf(o.err))
 	}
-	if time.Since(start) < 700*time.Millisecond {
-		t.Fatal("did not wait for the live lease")
+	if o.res.Deduped || o.res.Hash != f.hash || o.res.IngestID == uuid.Nil || o.res.Pin.SubjectType != casfetch.IngestPinType {
+		t.Fatalf("result %+v", o.res)
 	}
-	if f.origin.gets.Load() != 1 {
-		t.Fatalf("GETs = %d", f.origin.gets.Load())
+	if o.gets != 1 || o.objects != 1 || o.pins != 1 || o.ingestPins != 1 || o.intents != 0 || o.temps != 0 || o.leaseRows != 0 {
+		t.Fatalf("after the takeover: GETs=%d objects=%d pins=%d ingest pins=%d intents=%d temp files=%d lease rows=%d",
+			o.gets, o.objects, o.pins, o.ingestPins, o.intents, o.temps, o.leaseRows)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	rc, _, err := f.svc.Download(ctx, f.hash, storage.VariantOriginal)
+	if err != nil {
+		t.Fatalf("open the stored bytes: %v", err)
+	}
+	got, readErr := io.ReadAll(rc)
+	closeErr := rc.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read the stored bytes: %v, close: %v", readErr, closeErr)
+	}
+	if !bytes.Equal(got, f.body) {
+		t.Fatalf("stored bytes differ: %d bytes, want %d", len(got), len(f.body))
 	}
 }
 

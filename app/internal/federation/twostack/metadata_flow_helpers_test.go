@@ -537,18 +537,32 @@ func (g *flowGate) settle(o original, held ...uuid.UUID) {
 	if held == nil {
 		held = []uuid.UUID{}
 	}
-	g.waitFor("the asset's work settled", 120*time.Second, func() bool {
-		work := g.countOnSrc(`SELECT count(*) FROM federation_metadata_work WHERE asset_id = $1 OR kind = 'all'`, o.asset)
-		unrouted := g.countOnSrc(`SELECT count(*) FROM activities a WHERE a.object_local_id = $1
+	// The same poll as waitFor (condition first, then the deadline, then
+	// 50ms), kept local so a timeout can record the last observed counts
+	// and a read-only failure snapshot (metadata_stall_diagnostics_test.go)
+	// before the Fatal. Success does no extra work.
+	var work, unrouted, queued, pending int
+	cond := func() bool {
+		work = g.countOnSrc(`SELECT count(*) FROM federation_metadata_work WHERE asset_id = $1 OR kind = 'all'`, o.asset)
+		unrouted = g.countOnSrc(`SELECT count(*) FROM activities a WHERE a.object_local_id = $1
 			AND (a.activity_type = 'aa:AssetVersion' OR (a.activity_type = 'Update' AND a.payload ? 'metadata_capture'))
 			AND NOT EXISTS (SELECT 1 FROM federation_outbox ob WHERE ob.activity_id = a.id AND ob.peer_id = $2)`, o.asset.String(), g.peerBonA)
-		queued := g.countOnSrc(`SELECT count(*) FROM federation_outbox ob JOIN activities a ON a.id = ob.activity_id
+		queued = g.countOnSrc(`SELECT count(*) FROM federation_outbox ob JOIN activities a ON a.id = ob.activity_id
 			WHERE ob.peer_id = $1 AND ob.status = 'queued' AND a.object_local_id = $2 AND NOT (ob.activity_id = ANY ($3))`,
 			g.peerBonA, o.asset.String(), held)
-		pending := g.countOnB(`SELECT count(*) FROM federation_inbox WHERE peer_id = $1 AND status = 'pending' AND envelope_json->>'object' = $2`,
+		pending = g.countOnB(`SELECT count(*) FROM federation_inbox WHERE peer_id = $1 AND status = 'pending' AND envelope_json->>'object' = $2`,
 			g.peerAonB, g.assetURI(o))
 		return work == 0 && unrouted == 0 && queued == 0 && pending == 0
-	})
+	}
+	const what, within = "the asset's work settled", 120 * time.Second
+	deadline := time.Now().Add(within)
+	for !cond() {
+		if time.Now().After(deadline) {
+			g.t.Fatalf("%s: %s did not happen within %v; %s", g.dir, what, within,
+				settleDiagnostics(g, o, held, [4]int{work, unrouted, queued, pending}))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func sameJSON(a, b []byte) bool {

@@ -719,10 +719,13 @@ func TestMetadataUpdate_TheBindingRules(t *testing.T) {
 			t.Fatalf("recorded %s %v", id, err)
 		}
 	})
-	t.Run("an undispatched announcement before the dispatch cursor", func(t *testing.T) {
-		f := f.sub(t)
-		a, _ := f.eligible("Title", "", "", "")
-		// The cursor moves past the announcement, which has no outbox row.
+	// Pending is the announcement's durable dispatch work (migration
+	// 00101), never the progress cursor (rev796). The cursor is moved past
+	// the announcement as a fixture (restored after the test): only to show
+	// that it no longer decides. The actual dispatcher schedule is tested in
+	// pending_dispatch_test.go.
+	cursorPast := func(t *testing.T, f *fx) {
+		t.Helper()
 		var later uuid.UUID
 		if err := f.pool.QueryRow(ctx, `INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref, payload)
 			VALUES ($1, 'Like', $2, $3, '{}'::jsonb) RETURNING id`, base+"/activities/"+uuid.NewString(), base+"/users/owner", f.owner).Scan(&later); err != nil {
@@ -730,7 +733,10 @@ func TestMetadataUpdate_TheBindingRules(t *testing.T) {
 		}
 		var prev *uuid.UUID
 		var had bool
-		_ = f.pool.QueryRow(ctx, `SELECT TRUE, last_dispatched_activity_id FROM federation_dispatch_state WHERE id = 1`).Scan(&had, &prev)
+		if err := f.pool.QueryRow(ctx, `SELECT TRUE, last_dispatched_activity_id FROM federation_dispatch_state WHERE id = 1`).Scan(&had, &prev); err != nil &&
+			!errors.Is(err, pgx.ErrNoRows) {
+			t.Fatal(err)
+		}
 		t.Cleanup(func() {
 			c := context.Background()
 			if had {
@@ -741,10 +747,53 @@ func TestMetadataUpdate_TheBindingRules(t *testing.T) {
 		})
 		f.exec(`INSERT INTO federation_dispatch_state (id, last_dispatched_activity_id) VALUES (1, $1)
 			ON CONFLICT (id) DO UPDATE SET last_dispatched_activity_id = EXCLUDED.last_dispatched_activity_id`, later)
-		if id, err := f.recordMetadataTo(a, f.peer, "owner", nil); err != nil || id != uuid.Nil {
-			t.Fatalf("recorded %s %v", id, err)
+	}
+	pendingWork := func(t *testing.T, f *fx, id uuid.UUID) int {
+		t.Helper()
+		var n int
+		if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM federation_dispatch_work WHERE activity_id = $1`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	t.Run("a pending announcement behind the dispatch cursor", func(t *testing.T) {
+		f := f.sub(t)
+		a, g := f.eligible("Title", "", "", "")
+		cursorPast(t, f)
+		if n := pendingWork(t, f, g.announcement); n != 1 {
+			t.Fatalf("the announcement has %d dispatch work rows, want 1", n)
+		}
+		id, err := f.recordMetadataTo(a, f.peer, "owner", nil)
+		if err != nil || id == uuid.Nil {
+			t.Fatalf("not recorded: %s %v", id, err)
+		}
+		if u := f.metaUpdate(id); u.payload["version_id"] != a.version.String() || u.payload["version_number"] != float64(1) ||
+			u.payload["share_id"] != g.share.String() {
+			t.Fatalf("named %v (%v) on %v", u.payload["version_id"], u.payload["version_number"], u.payload["share_id"])
 		}
 	})
+	// The fixture DELETE of exactly the announcement's work row models the
+	// dispatcher acknowledging it with no row for the peer (a skip).
+	for _, behind := range []bool{true, false} {
+		name := "an acknowledged announcement with no outbox row, the cursor not moved by the test"
+		if behind {
+			name = "an acknowledged announcement with no outbox row, behind the cursor"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := f.sub(t)
+			a, g := f.eligible("Title", "", "", "")
+			if behind {
+				cursorPast(t, f)
+			}
+			f.exec(`DELETE FROM federation_dispatch_work WHERE activity_id = $1`, g.announcement)
+			if n := pendingWork(t, f, g.announcement); n != 0 {
+				t.Fatalf("the announcement still has %d dispatch work rows", n)
+			}
+			if id, err := f.recordMetadataTo(a, f.peer, "owner", nil); err != nil || id != uuid.Nil {
+				t.Fatalf("recorded %s %v", id, err)
+			}
+		})
+	}
 	t.Run("a queued announcement whose share became targeted, with a fresh grant", func(t *testing.T) {
 		f := f.sub(t)
 		a, g := f.eligible("Title", "", "", "")
