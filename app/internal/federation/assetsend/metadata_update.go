@@ -28,12 +28,12 @@
 //     peer exists (the oldest such one is used, as for a flags Update);
 //   - a sealed version of the asset is bound for the peer: told it (its
 //     announcement's peer-wide outbox row sent), or durably on its way
-//     (queued, or recorded and not dispatched yet, under a share that is
-//     still live, peer-wide and carries the original). The highest such
+//     (queued, or recorded and still pending dispatch, under a share that
+//     is still live, peer-wide and carries the original). The highest such
 //     version for THIS peer is named, by one statement returning at most
 //     one row (versionToNameSQL). A version only announced to another
-//     peer, failed, refused, before the dispatch cursor with no row, a
-//     draft or a later version not yet bound is not.
+//     peer, failed, refused, acknowledged at dispatch with no row, a draft
+//     or a later version not yet bound is not.
 //
 // Otherwise nothing is recorded. The snapshot is captured in the same
 // transaction (CaptureMetadata) and kept in the local record as one JSON
@@ -183,18 +183,19 @@ func RecordMetadataUpdate(ctx context.Context, tx pgx.Tx, w *activities.Writer, 
 // whole (no target user) is
 //
 //   - sent: told, whatever the share's state now; or
-//   - queued, or absent with the announcement after the dispatch cursor
-//     (or no cursor): on its way, and only while its share is live,
-//     unexpired, peer-wide and carries the original file.
+//   - queued, or absent with the announcement still pending dispatch (its
+//     federation_dispatch_work row, migration 00101, is there): on its
+//     way, and only while its share is live, unexpired, peer-wide and
+//     carries the original file.
 //
-// A failed or refused row, an announcement before the cursor with no
-// row, a draft and another peer's announcement never qualify. The new
-// Update itself rides on the current live share the recorder selected.
+// Pending is the durable dispatch work, never the progress cursor: an
+// announcement that committed late, or whose work row a dispatcher skipped
+// while it was held, is still pending after the cursor has moved past it.
+// A failed or refused row, an announcement with no row whose dispatch work
+// was acknowledged (dispatched to no one, or skipped), a draft and another
+// peer's announcement never qualify. The new Update itself rides on the
+// current live share the recorder selected.
 const versionToNameSQL = `
-	WITH cursor AS (
-	    SELECT a.created_at, a.id FROM federation_dispatch_state d
-	      JOIN activities a ON a.id = d.last_dispatched_activity_id
-	     WHERE d.id = 1)
 	SELECT v.id, v.number
 	  FROM asset_versions v
 	 WHERE v.asset_id = $1 AND v.sealed_at IS NOT NULL
@@ -212,8 +213,7 @@ const versionToNameSQL = `
 	                   AND (EXISTS (SELECT 1 FROM federation_outbox o
 	                                 WHERE o.activity_id = act.id AND o.peer_id = $2 AND o.target_user_url IS NULL AND o.status = 'queued')
 	                        OR (NOT EXISTS (SELECT 1 FROM federation_outbox o WHERE o.activity_id = act.id AND o.peer_id = $2)
-	                            AND (NOT EXISTS (SELECT 1 FROM cursor)
-	                                 OR (act.created_at, act.id) > (SELECT created_at, id FROM cursor)))))))
+	                            AND EXISTS (SELECT 1 FROM federation_dispatch_work w WHERE w.activity_id = act.id))))))
 	 ORDER BY v.number DESC
 	 LIMIT 1`
 

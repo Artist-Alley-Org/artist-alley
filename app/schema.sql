@@ -1459,6 +1459,20 @@ $$;
 
 
 --
+-- Name: federation_dispatch_work_schedule(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_dispatch_work_schedule() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO public.federation_dispatch_work (activity_id, activity_created_at) VALUES (NEW.id, NEW.created_at);
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: federation_inbox_dispatch_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3682,6 +3696,23 @@ CREATE TABLE public.federation_dispatch_state (
 --
 
 COMMENT ON TABLE public.federation_dispatch_state IS 'Single-row cursor for the outbox dispatcher. Atomically advanced with the outbox INSERTs in one transaction; restart picks up at the cursor without duplicates.';
+
+
+--
+-- Name: federation_dispatch_work; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_dispatch_work (
+    activity_id uuid NOT NULL,
+    activity_created_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE federation_dispatch_work; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_dispatch_work IS 'Local activities still to be dispatched to the federation outbox (#1577): one row per local activity, written by a trigger in the activity''s own transaction and deleted by the dispatcher in the transaction that writes its outbox rows (or records its skip). activity_created_at only orders pending rows; membership alone decides what is pending. Holds UUID references and that time only.';
 
 
 --
@@ -6390,6 +6421,14 @@ ALTER TABLE ONLY public.federation_dispatch_state
 
 
 --
+-- Name: federation_dispatch_work federation_dispatch_work_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_dispatch_work
+    ADD CONSTRAINT federation_dispatch_work_pkey PRIMARY KEY (activity_id);
+
+
+--
 -- Name: federation_inbox federation_inbox_activity_uri_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7595,6 +7634,13 @@ CREATE INDEX federation_directory_entries_by_dir_idx ON public.federation_direct
 --
 
 CREATE INDEX federation_directory_entries_by_url_idx ON public.federation_directory_entries USING btree (instance_url);
+
+
+--
+-- Name: federation_dispatch_work_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_dispatch_work_order_idx ON public.federation_dispatch_work USING btree (activity_created_at, activity_id);
 
 
 --
@@ -9040,6 +9086,13 @@ CREATE TRIGGER federation_dispatch_notify_trg AFTER INSERT ON public.activities 
 
 
 --
+-- Name: activities federation_dispatch_work_schedule_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_dispatch_work_schedule_trg AFTER INSERT ON public.activities FOR EACH ROW WHEN ((new.source = 'local'::text)) EXECUTE FUNCTION public.federation_dispatch_work_schedule();
+
+
+--
 -- Name: federation_inbox federation_inbox_dispatch_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -9641,6 +9694,14 @@ ALTER TABLE ONLY public.featured_items
 
 ALTER TABLE ONLY public.federation_directory_entries
     ADD CONSTRAINT federation_directory_entries_directory_id_fkey FOREIGN KEY (directory_id) REFERENCES public.federation_directories(id) ON DELETE CASCADE;
+
+
+--
+-- Name: federation_dispatch_work federation_dispatch_work_activity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_dispatch_work
+    ADD CONSTRAINT federation_dispatch_work_activity_id_fkey FOREIGN KEY (activity_id) REFERENCES public.activities(id) ON DELETE CASCADE;
 
 
 --

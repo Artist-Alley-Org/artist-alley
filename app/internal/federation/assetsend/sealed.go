@@ -29,9 +29,11 @@
 //
 // A version of the asset is usable for a peer when an aa:AssetVersion of
 // it, under a share to that peer, was sent to the peer, or is still on its
-// way (not dispatched yet, or queued) under a share that is still live.
+// way (still pending dispatch, by its durable dispatch work row and never
+// by the progress cursor, or queued) under a share that is still live.
 // An announcement that failed, was refused or cancelled, was skipped at
-// dispatch, or waits under a revoked or expired share (which refuses it
+// dispatch (its work acknowledged with no row for the peer), or waits
+// under a revoked or expired share (which refuses it
 // for good) never reaches the peer, so it does not make its version
 // usable. A delivered one counts whatever happened to its share since.
 //
@@ -249,10 +251,6 @@ func announce(ctx context.Context, tx pgx.Tx, w *activities.Writer, actor emit.A
 // for peerID (file header).
 func usableVersions(ctx context.Context, tx pgx.Tx, assetID, peerID uuid.UUID) (map[int64]bool, error) {
 	rows, err := tx.Query(ctx, `
-		WITH cursor AS (
-		    SELECT a.created_at, a.id FROM federation_dispatch_state d
-		      JOIN activities a ON a.id = d.last_dispatched_activity_id
-		     WHERE d.id = 1)
 		SELECT DISTINCT v.number
 		  FROM activities act
 		  JOIN federation_shares s ON s.id::text = act.payload->>'share_id' AND s.peer_id = $2
@@ -264,10 +262,11 @@ func usableVersions(ctx context.Context, tx pgx.Tx, assetID, peerID uuid.UUID) (
 		        OR (s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > now())
 		            AND (EXISTS (SELECT 1 FROM federation_outbox o
 		                          WHERE o.activity_id = act.id AND o.peer_id = $2 AND o.status = 'queued')
-		                 -- Not dispatched yet: no row for the peer, after the cursor.
+		                 -- Not dispatched yet: no row for the peer, its dispatch
+		                 -- work still pending (migration 00101), wherever the
+		                 -- progress cursor is.
 		                 OR (NOT EXISTS (SELECT 1 FROM federation_outbox o WHERE o.activity_id = act.id AND o.peer_id = $2)
-		                     AND (NOT EXISTS (SELECT 1 FROM cursor)
-		                          OR (act.created_at, act.id) > (SELECT created_at, id FROM cursor))))))`,
+		                     AND EXISTS (SELECT 1 FROM federation_dispatch_work w WHERE w.activity_id = act.id)))))`,
 		assetID, peerID)
 	if err != nil {
 		return nil, fmt.Errorf("assetsend: read what the peer was announced: %w", err)

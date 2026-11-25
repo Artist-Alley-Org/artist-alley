@@ -19,12 +19,18 @@
 //     named, queued source outbox row (flowGate.schedule).
 //   - Inbox fronts on the destination that hold (503) or count requests
 //     and forward everything else unmodified.
+//   - BeforeVersion only: a TEST-ONLY SOURCE CAS FRONT answering 503 to
+//     the GET of version 2's original, and TEST-ONLY RECEIVER RETRY
+//     SCHEDULING of only that pending record's next_attempt_at
+//     (metadata_failed_fetch_helpers_test.go).
 //
 // Nothing here records, captures, builds, signs, dispatches or ingests an
 // activity itself. This is not the complete §18.6 gate (see the evidence
 // matrix): no wrong peer/actor/origin/profile, grant/tier, malformed or
-// oversized wire, replay/conflict/tie, rejected-fetch, queued-withdrawal
-// or live-UI case is proven here, and the profile stays unadvertised.
+// oversized wire, replay/conflict/tie, rejected (fixity-failed) fetch,
+// queued-withdrawal or live-UI case is proven here (BeforeVersion proves a
+// transient failed fetch and its retry), and the profile stays
+// unadvertised.
 
 package twostack_test
 
@@ -428,11 +434,19 @@ func TestTwoStack_MetadataFlow_PrivacyRefusesCapturedSnapshot(t *testing.T) {
 }
 
 // 4. A metadata Update naming a version the destination does not hold
-// yet is kept pending, and projects once that version arrives.
+// yet is kept pending, and projects once that version arrives. Version
+// 2's first fetch fails (the source answers its GET 503: TEST-ONLY
+// SOURCE CAS FRONT); the record stays pending, nothing of version 2 is
+// published and the pending Update stays hidden. After the front is
+// removed, the same record's retry (made due by TEST-ONLY RECEIVER RETRY
+// SCHEDULING, metadata_failed_fetch_helpers_test.go) is claimed by the
+// running worker, completes, and activates that same pending revision.
 func TestTwoStack_MetadataFlow_BeforeVersion(t *testing.T) {
 	flowDirections(t, func(t *testing.T, g *flowGate) {
 		ctx := context.Background()
 		g.srcRun, g.dstRun = g.start(g.src), g.start(g.dst)
+		g.localFixture()
+		local0 := localDigest(t, g.dst)
 		rights := "https://creativecommons.org/licenses/by/4.0/"
 		o, ann1, id1 := g.importOne("Version one title", "", rights, "")
 		g.waitCurrent(id1, want(sp("Version one title"), nil, sp(rights), nil), nil)
@@ -507,11 +521,140 @@ func TestTwoStack_MetadataFlow_BeforeVersion(t *testing.T) {
 			t.Fatalf("the pending Update fetched (%d GETs, %d HEADs)", g2-gets, h2-heads)
 		}
 
-		g.dst.setInboxFront(nil)
+		// Baselines before version 2's announcement is released. view
+		// only reads (it starts nothing).
+		view := &senderGate{flowGate: g, o: o, ann: ann1, recordID: id1}
+		held1, stable1, claims1 := view.heldRows(), g.recordStable(ann1), g.recordRow(ann1)
+		// The complete kept history and version 1's complete current
+		// projection, taken after the settle above (the held announcement
+		// aside), both nonempty and naming the current and pending Updates.
+		history0, current1 := g.fullHistory(o), view.currentJSON()
+		if history0[cur0.ActivityURI] == "" || history0[update] == "" {
+			t.Fatalf("the history before the release lacks the current %s or the pending %s", cur0.ActivityURI, update)
+		}
+		auth0, peers0 := view.authorityRows(), view.peerState()
+		pendingRow, updateRow, updateEnv := g.revisionRow(pendingRev), view.activityRow(update), g.inboxEnvelope(update)
+		if st, _, _ := g.outboxRow(g.activityID(update)); st != "sent" {
+			t.Fatalf("the Update naming version 2 is %q at the source, not sent", st)
+		}
+		if hash2 == o.hash || g.countOnB(`SELECT count(*) FROM storage_objects WHERE hash = $1`, hash2) != 0 ||
+			g.countOnB(`SELECT count(*) FROM storage_pins WHERE object_hash = $1`, hash2) != 0 {
+			t.Fatalf("version 2's original %s is not new to the destination", hash2)
+		}
+		if local0 != localDigest(t, g.dst) {
+			t.Fatal("the destination's own rows changed before the release")
+		}
+
+		// The release, with version 2's GET failing (TEST-ONLY SOURCE CAS
+		// FRONT) and a counter for any redelivery of the pending Update.
+		casFront := &casFailFront{hash: hash2}
+		g.src.setFront(casFront.serve)
+		t.Cleanup(func() { g.src.setFront(nil) })
+		redelivered := newCountFront([]string{update})
+		g.dst.setInboxFront(redelivered.serve)
 		g.schedule(annV2ID, "now()")
+		fa := g.waitFailedFetch(casFront, annV2, v2, hash2)
+		if fa.attempts != 1 {
+			t.Fatalf("version 2's first failure is attempt %d", fa.attempts)
+		}
+		parked := g.parkRetry(fa, g.assetURI(o), v2)
+		if _, heads := casFront.seen(); !slices.Contains(heads, http.StatusOK) {
+			t.Fatalf("the source's signed HEAD of version 2 did not succeed: %v", heads)
+		}
+		g.waitFor("version 2's announcement sent", 60*time.Second, func() bool { st, _, _ := g.outboxRow(annV2ID); return st == "sent" })
+		v2ID := fa.id.String()
+
+		// After the failed fetch: version 1 stays current and served;
+		// nothing of version 2 is published or held; the pending Update is
+		// kept as it was and stays hidden.
+		if view.heldRows() != held1 || g.recordStable(ann1) != stable1 || g.recordRow(ann1) != claims1 {
+			t.Fatal("the failed fetch changed version 1's record, files, pins or storage")
+		}
+		if _, d := g.detailOnDst(id1); d.CurrentMetadata == nil || d.CurrentMetadata.ActivityURI != cur0.ActivityURI ||
+			d.CurrentMetadata.RevisionID != cur0.RevisionID {
+			t.Fatalf("version 1's current snapshot changed after the failed fetch: %+v", d.CurrentMetadata)
+		}
+		view.servedOriginal("after the failed fetch")
+		view.anonymousHidden("after the failed fetch")
+		for _, p := range []string{"/federation/received-assets/" + v2ID, "/federation/received-assets/" + v2ID + "/original"} {
+			if st, _ := g.getOnB(g.member, p); st != http.StatusNotFound {
+				t.Fatalf("member %s while version 2 is pending: %d", p, st)
+			}
+		}
+		if n := g.countOnB(`SELECT count(*) FROM federation_received_asset_files WHERE received_asset_id = $1`, fa.id); n == 0 {
+			t.Fatal("version 2's record names no file")
+		}
+		if n := g.countOnB(`SELECT count(*) FROM federation_received_asset_files WHERE received_asset_id = $1
+			AND (state = 'verified' OR verified_at IS NOT NULL)`, fa.id); n != 0 {
+			t.Fatalf("%d of version 2's files verified after the failed fetch", n)
+		}
+		if g.countOnB(`SELECT count(*) FROM storage_objects WHERE hash = $1`, hash2) != 0 ||
+			g.countOnB(`SELECT count(*) FROM storage_pins WHERE object_hash = $1`, hash2) != 0 {
+			t.Fatal("the failed fetch left version 2's bytes or a pin behind")
+		}
+		if n := g.countOnB(`SELECT count(*) FROM federation_transfer_events WHERE received_asset_id = $1 AND outcome = 'success'`, fa.id); n != 0 {
+			t.Fatalf("%d success events for version 2 after the failed fetch", n)
+		}
+		if g.revisionRow(pendingRev) != pendingRow || view.activityRow(update) != updateRow || g.inboxEnvelope(update) != updateEnv {
+			t.Fatal("the failed fetch changed the pending Update's revision, source activity or stored envelope")
+		}
+		if view.authorityRows() != auth0 || view.peerState() != peers0 || localDigest(t, g.dst) != local0 {
+			t.Fatal("the failed fetch changed the shares, grants, peers or the destination's own rows")
+		}
+		// The whole kept history at the failure: every earlier revision
+		// still there with an identical row, and only version 2's own
+		// announcement revision added (kept when it was bound, before its
+		// fetch); version 1's complete current projection unchanged.
+		g.settle(o)
+		history1 := g.fullHistory(o)
+		if history1[annV2] == "" {
+			t.Fatalf("version 2's announcement revision %s was not kept before its fetch", annV2)
+		}
+		before := map[string]string{}
+		for uri, row := range history1 {
+			if uri != annV2 {
+				before[uri] = row
+			}
+		}
+		g.sameHistory("at the failed fetch", history0, before)
+		if view.currentJSON() != current1 {
+			t.Fatal("version 1's current projection changed at the failed fetch")
+		}
+
+		// Recovery: the real handler serves again; the same record, made
+		// due, is claimed and completed by the running worker.
+		g.src.setFront(nil)
+		getsBefore, headsBefore := g.casCounts()
+		g.dueRetry(fa, g.assetURI(o), v2, parked)
 		g.recordStateOnB(annV2, "complete")
 		g.recordStateOnB(ann1, "superseded")
 		idV2 := g.receivedOnB(annV2)
+		if idV2 != v2ID {
+			t.Fatalf("version 2 completed as %s, not the record that failed (%s)", idV2, v2ID)
+		}
+		var attempts int32
+		if err := g.dst.pool.QueryRow(ctx, `SELECT attempts FROM federation_received_assets WHERE id = $1 AND completed_at IS NOT NULL`,
+			fa.id).Scan(&attempts); err != nil || attempts <= fa.attempts {
+			t.Fatalf("version 2 completed after %d attempts (failed at %d): %v", attempts, fa.attempts, err)
+		}
+		if g2, h2 := g.casCounts(); g2 <= getsBefore || h2 <= headsBefore {
+			t.Fatalf("the retry made no real GET or HEAD (%d, %d more)", g2-getsBefore, h2-headsBefore)
+		}
+		if g.countOnB(`SELECT count(*) FROM federation_transfer_events WHERE received_asset_id = $1 AND event_type = 'transfer'
+			AND outcome = 'warning' AND reason = 'http_status' AND record_state_after = 'pending' AND attempt = $2`, fa.id, fa.attempts) != 1 {
+			t.Fatal("version 2's failed attempt is no longer in the ledger")
+		}
+		if g.countOnB(`SELECT count(*) FROM federation_transfer_events WHERE received_asset_id = $1 AND event_type = 'fixity-check'
+			AND outcome = 'success' AND object_hash = $2 AND attempt = $3 AND record_state_after = 'complete'`, fa.id, hash2, attempts) < 1 ||
+			g.countOnB(`SELECT count(*) FROM federation_transfer_events WHERE received_asset_id = $1 AND event_type = 'ingestion'
+			AND outcome = 'success' AND attempt = $2 AND record_state_after = 'complete'`, fa.id, attempts) != 1 {
+			t.Fatalf("version 2's successful attempt %d is not in the ledger", attempts)
+		}
+		if g.countOnB(`SELECT count(*) FROM storage_pins WHERE object_hash = $1 AND pin_subject_type = 'federation_received_asset'
+			AND pin_subject_id = $2`, hash2, v2ID) != 1 ||
+			g.countOnB(`SELECT count(*) FROM storage_pins WHERE object_hash = $1`, hash2) != 1 {
+			t.Fatal("version 2's original is not held by exactly its record's pin")
+		}
 		cur := g.waitCurrent(idV2, want(sp("Named version two"), nil, sp(rights), nil), func(c current) bool { return c.ActivityURI == update })
 		g.checkUpdate(o, cur, 2)
 		if cur.RevisionID != pendingRev.String() || cur.FileSetSHA256 != pendingFileSet || cur.VersionURI != pendingVersion {
@@ -523,7 +666,32 @@ func TestTwoStack_MetadataFlow_BeforeVersion(t *testing.T) {
 		if _, _, errs := front.snapshot(); len(errs) != 0 {
 			t.Fatalf("the front could not read requests: %v", errs)
 		}
-		t.Logf("%s: pending Update %s (revision %s) projected over %s", g.dir, update, pendingRev, cur.VersionURI)
+
+		// The retry activated the Update the destination already held: no
+		// redelivery; the whole kept history exactly as at the failure (no
+		// revision added, removed or rewritten); nothing the Update was
+		// built from rewritten; version 1's claims, files and pins kept.
+		g.settle(o)
+		if hits, errs := redelivered.result(); hits != 0 || len(errs) != 0 {
+			t.Fatalf("%d requests redelivered the pending Update (errors %v)", hits, errs)
+		}
+		g.sameHistory("across the retry", history1, g.fullHistory(o))
+		if g.revisionRow(pendingRev) != pendingRow || view.activityRow(update) != updateRow || g.inboxEnvelope(update) != updateEnv {
+			t.Fatal("the retry changed the pending Update's revision, source activity or stored envelope")
+		}
+		if g.recordStable(ann1) != stable1 || g.recordRow(ann1) != claims1 {
+			t.Fatal("version 1's claims, files or pins changed beyond its supersession")
+		}
+		if view.authorityRows() != auth0 || view.peerState() != peers0 || localDigest(t, g.dst) != local0 {
+			t.Fatal("the retry changed the shares, grants, peers or the destination's own rows")
+		}
+		if n := g.countOnB(`SELECT count(*) FROM federation_received_assets WHERE peer_id = $1 AND origin_asset_uri = $2 AND state = 'pending'`,
+			g.peerAonB, g.assetURI(o)); n != 0 {
+			t.Fatalf("%d records of the asset still pending", n)
+		}
+		g.dst.setInboxFront(nil)
+		t.Logf("%s: pending Update %s (revision %s) projected over %s after record %s failed at attempt %d and completed at %d",
+			g.dir, update, pendingRev, cur.VersionURI, v2ID, fa.attempts, attempts)
 	})
 }
 

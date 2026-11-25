@@ -173,6 +173,9 @@ step "Go tests (app/...)"
 # AA_E2E_ISOLATED opts the federation latency-contract e2e test
 # (TestFederation_EndToEnd_ProductionDefaults_SubSecond) in — the
 # dedicated test DB gives it the committed-state isolation it needs.
+# It must reach the TEST container (the `-e AA_E2E_ISOLATED` on the go
+# test command below): exported here alone it stayed on the host, and the
+# test skipped on every run.
 export AA_E2E_ISOLATED=1
 
 # When --with-s3, bring MinIO up in the same compose stack and
@@ -343,6 +346,7 @@ if ! docker run --rm \
     -v "${ROOT}/docs/spec/federation/v1.md:/src/docs/spec/federation/v1.md:ro" \
     -w /src/app \
     -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_NAME_A -e AA_DB_NAME_B -e AA_DB_USER -e AA_DB_PASSWORD \
+    -e AA_E2E_ISOLATED \
     -e GOFLAGS -e GOMAXPROCS \
     "${s3_env[@]}" \
     golang:1.26 \

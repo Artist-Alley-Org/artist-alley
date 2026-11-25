@@ -589,6 +589,12 @@ type FederationDispatchState struct {
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 }
 
+// Local activities still to be dispatched to the federation outbox (#1577): one row per local activity, written by a trigger in the activity's own transaction and deleted by the dispatcher in the transaction that writes its outbox rows (or records its skip). activity_created_at only orders pending rows; membership alone decides what is pending. Holds UUID references and that time only.
+type FederationDispatchWork struct {
+	ActivityID        pgtype.UUID        `json:"activity_id"`
+	ActivityCreatedAt pgtype.Timestamptz `json:"activity_created_at"`
+}
+
 // Grants a paired peer gave this instance (#1571), one row per applied aa:Share under share-lifecycle-1. Live or ended; ordered only by the signed aa:supersedes / aa:revokes references. Tuple (peer, grantor, object, recipient) has at most one live grant. Read on every authorisation (no positive cache), with expiry by this database clock and the peer enabled and connected. Ending a grant stops new access; it recalls nothing already delivered.
 type FederationInboundGrant struct {
 	ID               pgtype.UUID `json:"id"`

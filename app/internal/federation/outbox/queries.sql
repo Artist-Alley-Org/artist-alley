@@ -180,43 +180,56 @@ LIMIT sqlc.arg('limit_n')::int;
 -- --- dispatch_state ---------------------------------------------------
 
 -- name: GetDispatchState :one
--- The single cursor row. NULL last_dispatched_activity_id means
--- "no activities dispatched yet" — first tick processes
--- everything from the beginning.
+-- The single progress row. NULL last_dispatched_activity_id means no
+-- activity has been dispatched yet. It does not decide what is pending
+-- (federation_dispatch_work does, #1577).
 SELECT id, last_dispatched_activity_id, last_dispatched_at, updated_at
 FROM federation_dispatch_state
 WHERE id = 1;
 
 -- name: AdvanceDispatchCursor :exec
--- Cursor advance happens in the SAME transaction as the
--- outbox INSERTs from the same batch (per design §3.7).
-UPDATE federation_dispatch_state
-   SET last_dispatched_activity_id = $1,
+-- Progress only (#1577): what is still to dispatch is the
+-- federation_dispatch_work rows, never a position. The cursor moves in the
+-- SAME transaction as the batch's outbox INSERTs and work acknowledgements,
+-- and only FORWARD by the activity's (created_at, id): a late-committed
+-- activity handled after a newer one, or a concurrent dispatcher's smaller
+-- batch, leaves it where it is. A NULL cursor, or one naming an activity
+-- that no longer exists, is replaced.
+UPDATE federation_dispatch_state s
+   SET last_dispatched_activity_id = sqlc.arg('activity_id')::uuid,
        last_dispatched_at          = NOW(),
        updated_at                  = NOW()
- WHERE id = 1;
+ WHERE s.id = 1
+   AND (s.last_dispatched_activity_id IS NULL
+        OR NOT EXISTS (SELECT 1 FROM activities c WHERE c.id = s.last_dispatched_activity_id)
+        OR EXISTS (SELECT 1 FROM activities n, activities c
+                    WHERE n.id = sqlc.arg('activity_id')::uuid AND c.id = s.last_dispatched_activity_id
+                      AND (n.created_at, n.id) > (c.created_at, c.id)));
 
--- name: ListUndispatchedActivities :many
--- Activities published after the cursor. The cursor itself is
--- compared via (created_at, id) so multi-row-same-timestamp
--- orderings stay correct. When the cursor's last_id is NULL
--- (first run) we return EVERYTHING ordered by (created_at, id).
-SELECT id, activity_uri, activity_type, actor_uri, actor_user_ref,
-       object_uri, object_kind, object_local_id, target_uri,
-       to_uris, cc_uris, bto_uris, bcc_uris, audience_uris,
-       payload, signature_value, signature_pubkey, source,
-       published_at, created_at
-FROM activities
-WHERE source = 'local'
-  AND (
-    sqlc.narg('cursor_id')::uuid IS NULL
-    OR (created_at, id) > (
-      (SELECT created_at FROM activities WHERE id = sqlc.narg('cursor_id')::uuid),
-      sqlc.narg('cursor_id')::uuid
-    )
-  )
-ORDER BY created_at, id
-LIMIT $1;
+-- name: ClaimDispatchWork :many
+-- The pending local activities (#1577, migration 00101): a bounded page of
+-- federation_dispatch_work rows, oldest activity first, each joined to its
+-- activity and locked FOR UPDATE SKIP LOCKED inside the dispatcher's
+-- transaction, so two dispatchers never handle the same row. Membership
+-- alone decides what is pending: a row that committed late is claimed
+-- whatever its created_at. The lock lasts until the batch commits (the row
+-- is then acknowledged) or rolls back (the row is pending again).
+SELECT a.id, a.activity_uri, a.activity_type, a.actor_uri, a.actor_user_ref,
+       a.object_uri, a.object_kind, a.object_local_id, a.target_uri,
+       a.to_uris, a.cc_uris, a.bto_uris, a.bcc_uris, a.audience_uris,
+       a.payload, a.signature_value, a.signature_pubkey, a.source,
+       a.published_at, a.created_at
+FROM federation_dispatch_work w
+JOIN activities a ON a.id = w.activity_id
+ORDER BY w.activity_created_at, w.activity_id
+LIMIT $1
+FOR UPDATE OF w SKIP LOCKED;
+
+-- name: AckDispatchWork :execrows
+-- Acknowledges the claimed rows once their activities are handled (outbox
+-- rows written, or the skip decided), in the same transaction.
+DELETE FROM federation_dispatch_work
+ WHERE activity_id = ANY (sqlc.arg('activity_ids')::uuid[]);
 
 -- name: MarkOutboxEncrypted :exec
 -- Phase 1.22.I-e — flips the row's was_encrypted observability

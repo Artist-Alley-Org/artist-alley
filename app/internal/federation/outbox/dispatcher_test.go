@@ -466,8 +466,10 @@ var _ = io.Discard // import live
 // to be sent to S, which refuses a Like of an object it does not hold
 // (unknown_object). U is a second enabled + connected peer with no
 // share of anything: public must never broadcast to it. The cursor is
-// parked on a marker activity first, so this batch holds exactly these
-// three rows whatever the database already contains.
+// parked on a marker activity first and the work pending up to it is
+// discarded (#1577: pending work, not the cursor, decides a batch), so
+// this batch holds exactly these three rows whatever the database already
+// contains.
 func TestDispatcher_PublicPostWithoutShare_SkipsAndTheBatchAdvances(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
@@ -557,6 +559,14 @@ func TestDispatcher_PublicPostWithoutShare_SkipsAndTheBatchAdvances(t *testing.T
 		`UPDATE federation_dispatch_state SET last_dispatched_activity_id = $1 WHERE id = 1`, markerID,
 	); err != nil {
 		t.Fatalf("park cursor: %v", err)
+	}
+	// Since #1577 (migration 00101) the cursor is progress only: what a
+	// batch holds is the pending federation_dispatch_work. Discard what is
+	// pending up to the marker (the grant, the marker and anything the
+	// database already held), as parking the cursor used to skip it, so
+	// the batch is exactly the three Likes below.
+	if _, err := pool.Exec(ctx, `DELETE FROM federation_dispatch_work`); err != nil {
+		t.Fatalf("discard pending work before the batch: %v", err)
 	}
 	like := func(n int, post uuid.UUID) uuid.UUID {
 		var id uuid.UUID

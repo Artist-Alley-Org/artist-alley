@@ -132,6 +132,10 @@ func (g *likeGate) revokeOnA(shareID, postURI, target string) {
 func (g *likeGate) waitGrantOnB(objectURI, target, state string) {
 	g.t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
+	var (
+		lastState string
+		lastErr   error
+	)
 	for time.Now().Before(deadline) {
 		var got string
 		err := g.b.pool.QueryRow(context.Background(), `SELECT state FROM federation_inbound_grants
@@ -140,9 +144,14 @@ func (g *likeGate) waitGrantOnB(objectURI, target, state string) {
 		if err == nil && got == state {
 			return
 		}
+		lastState, lastErr = got, err
 		time.Sleep(50 * time.Millisecond)
 	}
-	g.t.Fatalf("B never held the grant for %s (%q) %s; %s", objectURI, target, state, g.shareTrail(objectURI))
+	// The read-only failure snapshot correlates this object's own share
+	// activities (metadata_stall_diagnostics_test.go). shareTrail's
+	// peer-wide history is not object-scoped and is not repeated here.
+	g.t.Fatalf("B never held the grant for %s (%q) %s; %s", objectURI, target, state,
+		grantDiagnostics(g, objectURI, target, state, lastGrant(lastState, lastErr)))
 }
 
 // shareTrail is where A's share activities for objectURI went: A's
