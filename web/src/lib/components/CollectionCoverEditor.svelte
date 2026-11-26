@@ -375,7 +375,7 @@
           },
         },
       });
-      pick.results = ((data?.items ?? []) as unknown as MineResult[]) ?? [];
+      pick.results = (data?.items ?? []) as unknown as MineResult[];
     } catch {
       // A search that failed must not take the dialog down with it —
       // the member grid and the marquee are still usable.

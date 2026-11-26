@@ -284,9 +284,9 @@
   }
 
   async function openPost(id: string) {
-    const target = new URL(page.url);
+    const target = new URL(page.url.href);
     target.searchParams.set('post', id);
-    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+    await goto(target.pathname + target.search, { reset: false });
   }
 
   // ── Selection (#1127) ──────────────────────────────────────────────

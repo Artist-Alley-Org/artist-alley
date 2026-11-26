@@ -411,7 +411,7 @@
   }
 
   async function gotoTag(tag: string) {
-    const target = new URL(page.url);
+    const target = new URL(page.url.href);
     target.pathname = '/';
     target.searchParams.delete('post');
     target.searchParams.set('tag', tag);

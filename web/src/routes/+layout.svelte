@@ -170,9 +170,11 @@
    *  browse and should scroll to the top, while picking one on browse
    *  should not. */
   async function handleSearch(q: string, term?: CommitTerm) {
-    const target = commitTarget(page.url, q, term);
-    const inPlace = commitIsInPlace(page.url, target);
-    await goto(target.pathname + target.search, { keepFocus: inPlace, noScroll: inPlace });
+    // `page.url` is a read-only URL in SvelteKit 3; the helpers take a URL.
+    const current = new URL(page.url.href);
+    const target = commitTarget(current, q, term);
+    const inPlace = commitIsInPlace(current, target);
+    await goto(target.pathname + target.search, { reset: !inPlace });
   }
 
   // Sign-out + theme cycling moved into UserMenu.

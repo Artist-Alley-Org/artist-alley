@@ -26,7 +26,7 @@
 // moved here and both consumers read from it. A `main` scroll fires
 // this handler once, not once per component.
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 
 /** Past this much scroll, back-to-top is worth offering. Unchanged
  *  from the value the footer used when it owned this listener. */

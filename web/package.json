@@ -7,9 +7,11 @@
   "description": "artist-alley frontend (SvelteKit + Tailwind, embedded into the Go binary at build time).",
   "packageManager": "npm@11.19.0",
   "overrides": {
-    "js-yaml": "^4.3.1",
-    "cookie": "^0.7.0",
-    "brace-expansion": "^2.1.4"
+    "js-yaml": "^4.3.2",
+    "brace-expansion": "^2.1.7",
+    "openapi-typescript@7.13.0": {
+      "typescript": "$typescript"
+    }
   },
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 5173",
@@ -24,21 +26,21 @@
     "postinstall": "svelte-kit sync && (test -f ${AA_OPENAPI_SPEC:-../app/api/openapi.yaml} && npm run generate:api || echo 'openapi.yaml not found yet; skipping API codegen')"
   },
   "devDependencies": {
-    "@sveltejs/adapter-static": "^3.0.10",
-    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/adapter-static": "^4.0.1",
+    "@sveltejs/kit": "^3.4.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tailwindcss/vite": "^4.3.5",
-    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/jest-dom": "^8.0.0",
     "@testing-library/svelte": "^5.4.2",
     "@types/node": "^26.6.6",
     "@types/three": "^0.187.0",
     "@vitest/coverage-v8": "^5.1.0",
-    "happy-dom": "^20.14.6",
-    "openapi-typescript": "^7.13.0",
+    "happy-dom": "^21.0.4",
+    "openapi-typescript": "7.13.0",
     "svelte": "^5.57.3",
     "svelte-check": "^4.7.8",
     "tailwindcss": "^4.3.0",
-    "typescript": "~5.9.0",
+    "typescript": "~6.0.0",
     "vite": "^8.3.8",
     "vitest": "^5.0.3"
   },

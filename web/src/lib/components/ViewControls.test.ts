@@ -58,10 +58,10 @@ function pointerMove(clientY: number, pointerType = 'mouse') {
  *  which branch the component takes for each answer. */
 function withFocusVisible(visible: boolean, fn: () => void) {
   const real = Element.prototype.matches;
-  Element.prototype.matches = function (sel: string) {
+  Element.prototype.matches = function (this: Element, sel: string) {
     if (sel === ':focus-visible') return visible;
     return real.call(this, sel);
-  };
+  } as typeof real;
   try {
     fn();
   } finally {

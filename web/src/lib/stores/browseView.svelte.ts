@@ -34,7 +34,7 @@
 // yields exactly 1 column at 390px and 5 at 1920px — the counts the old
 // mapping produced at those widths — without either being written down.
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { api } from '$api/client';
 import { auth, SYSTEM_ADMIN, type AccountViewDefaults } from '$stores/auth.svelte';
 

@@ -36,7 +36,7 @@
 // the page. Hovering pauses the clock — see ToastHost — so a toast
 // being read is not a toast being taken away.
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 
 export interface ToastAction {
   label: string;

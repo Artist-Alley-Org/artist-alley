@@ -592,7 +592,7 @@
    *  in the address is now a no-op rather than a refetch. The address
    *  did not change, so neither did what it describes. */
   function pushQueryToURL(query: string, dsl: boolean) {
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.delete('q');
     url.searchParams.delete('dsl');
     // An empty text term is ABSENT from the address rather than present
@@ -606,7 +606,7 @@
     url.searchParams.delete('filter');
     for (const f of filters) url.searchParams.append('filter', f);
     url.searchParams.delete('advanced');
-    void goto(url.pathname + url.search, { replaceState: false, noScroll: true });
+    void goto(url.pathname + url.search, { replace: false, reset: false });
   }
 
   // The chips and buckets below still set their own state before
@@ -783,7 +783,7 @@
   let pendingQuery = false;
 
   $effect(() => {
-    const sig = querySignature(page.url);
+    const sig = querySignature(new URL(page.url.href));
     if (sig === appliedSignature) return;
     appliedSignature = sig;
     // untrack: adoptURL writes — and runSearch reads — half the state on
@@ -806,7 +806,7 @@
       // — could not tell a genuine URL change from a back-navigation,
       // because after #1053 both are later adoptions (#1060).
       const restorable = navigating.type === 'popstate';
-      adoptURL(page.url);
+      adoptURL(new URL(page.url.href));
       if (restorable) pendingQuery = true;
       else void runSearch(q);
     });
@@ -868,14 +868,14 @@
       // is left to run — which is why refusing also declines the scroll
       // offset: the offset was measured against hits that are not coming
       // back, and the list about to arrive is a first page (#1060).
-      if (saved.sig !== querySignature(page.url)) return false;
+      if (saved.sig !== querySignature(new URL(page.url.href))) return false;
       // A search that was already in flight when Back was pressed must
       // not land on top of this.
       searchGen++;
       // Both halves of the adoption are now satisfied: the page state
       // matches this address, so the watcher must not re-run it, and the
       // fetch it was holding back is no longer needed.
-      appliedSignature = querySignature(page.url);
+      appliedSignature = querySignature(new URL(page.url.href));
       pendingQuery = false;
       q = saved.q;
       dslMode = saved.dsl;

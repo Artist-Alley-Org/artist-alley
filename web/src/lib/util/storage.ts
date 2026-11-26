@@ -33,7 +33,7 @@
 //
 // # Why there is no `browser` guard here
 //
-// `$app/environment`'s `browser` would short-circuit the SSR case one
+// `$app/env`'s `browser` would short-circuit the SSR case one
 // step earlier, and it is not needed: the `ReferenceError` an absent
 // global raises lands in the same `catch` as a `SecurityError` and
 // produces the same fallback. Leaving it out keeps this module free of
