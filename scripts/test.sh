@@ -259,10 +259,14 @@ done
 # wall-clock is queue time, not minute-budget — cheap. Real fix is
 # per-package schema isolation; serialise is the precursor.
 #
-# -timeout 20m is the single explicit per-package bound (#622). The
-# two-instance federation race suite (internal/federation/twostack) now
-# takes about 16m, so Go's default 10m cannot run all its coverage. It
-# is the ONLY timeout: the tests
+# -timeout 25m is the single explicit per-package bound (#622). The
+# two-instance federation race suite (internal/federation/twostack) is
+# the package that sets it: Go's default 10m cannot run all its
+# coverage. Measured on GitHub-hosted runners it took 1139s before
+# #1597 and 1185-1191s after it, and the dev push of #1666 hit the old
+# 20m (1200s) bound and failed. 25m (1500s) restores about 5 minutes
+# of headroom without dropping any coverage. It is still one bound for
+# every package, and it is the ONLY timeout: the tests
 # themselves use t.Context() rather than hardcoded context deadlines,
 # because an inner N-second cap under -race -p 1 contention is an
 # arbitrary second bound that fires on loaded runners and replaces the
@@ -350,7 +354,7 @@ if ! docker run --rm \
     -e GOFLAGS -e GOMAXPROCS \
     "${s3_env[@]}" \
     golang:1.26 \
-    go test -race -count=1 -p 1 -timeout 20m ./...; then
+    go test -race -count=1 -p 1 -timeout 25m ./...; then
     failed=$((failed + 1))
 fi
 
