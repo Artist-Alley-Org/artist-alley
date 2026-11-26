@@ -565,10 +565,14 @@ jobs:
     # written out over codegen-drift above. Since #1514 every job in
     # this file, this one included, is hosted.
     runs-on: ubuntu-24.04
-    # 45 for the hosted rehearsal (was 30 on the self-hosted pool), so a
-    # slow first hosted run reports its real duration instead of being
-    # killed at 30. The target is still comfortably under 30.
-    timeout-minutes: 45
+    # 55 since #1597 (was 45 for the hosted rehearsal, 30 on the
+    # self-hosted pool). The dev push of #1666 ran 43m31s against 45,
+    # with the Go two-instance package at the old 20m per-package bound.
+    # scripts/test.sh now allows that package 25m, so the job cap moves
+    # by more than those 5 minutes to keep the same margin around it.
+    # The per-package bound in scripts/test.sh is still the one
+    # explicit Go deadline; this is only the job's wall-clock cap.
+    timeout-minutes: 55
     # No compose-stack concurrency group any more (#331). Each run gets
     # its own COMPOSE_PROJECT_NAME (isolated containers/network/volumes)
     # and the resources override drops every host port, so two runs on
