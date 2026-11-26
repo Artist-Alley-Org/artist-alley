@@ -790,6 +790,89 @@ class CIHelperReleaseFormat(unittest.TestCase):
                 self.assertFalse(self.fetch_log.exists(), "the fetcher ran despite a malformed pin")
 
 
+STUB_SUDO = r"""#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_SUDO_LOG"
+exit 99
+"""
+
+
+class CIHelperRelease(unittest.TestCase):
+    """scripts/ci/public-datasets.sh release. A root under a writable parent is removed without privilege,
+    hidden and nested entries included, and a second release is a no-op; a path that does not end in
+    /aa-ci-datasets is refused untouched. A stub sudo on PATH records any privileged call. The root-owned
+    /mnt branch cannot be exercised here without touching the host's /mnt, so its shape is checked in the
+    source: privilege is used only for `rmdir` of the fixed, emptied root (#1664 post-merge run 45760951205)."""
+
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp(prefix="aa-helper-release-"))
+        self.addCleanup(subprocess.run, ["rm", "-rf", "--", str(self.t)])
+        self.bin = self.t / "bin"
+        self.bin.mkdir()
+        (self.bin / "sudo").write_text(STUB_SUDO, encoding="utf-8")
+        os.chmod(self.bin / "sudo", 0o755)
+        self.sudo_log = self.t / "sudo.log"
+
+    def release(self, root):
+        env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": str(self.t), "STUB_SUDO_LOG": str(self.sudo_log)}
+        if root is not None:
+            env["AA_CI_DATASET_ROOT"] = str(root)
+        return subprocess.run(["bash", str(HELPER), "release"], env=env, capture_output=True, text=True, timeout=60)
+
+    def test_writable_parent_root_is_removed_without_privilege_then_release_is_a_no_op(self):
+        root = self.t / "parent" / "aa-ci-datasets"
+        for rel in ("meta/site_a/.git/HEAD", "sites/site_a_sm/assets/x/y.bin", "dl/.partial", ".hidden"):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_bytes(b"x")
+        (root / "sites" / "link").symlink_to(self.t / "outside")
+        (self.t / "outside").mkdir()
+        (self.t / "outside" / "keep").write_bytes(b"k")
+        sibling = self.t / "parent" / "sibling"
+        sibling.write_bytes(b"s")
+
+        r = self.release(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"released {root}", r.stdout)
+        self.assertFalse(root.exists() or root.is_symlink())
+        self.assertEqual(sibling.read_bytes(), b"s")
+        self.assertEqual((self.t / "outside" / "keep").read_bytes(), b"k", "release followed a symlink")
+
+        r = self.release(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"{root} already released", r.stdout)
+        self.assertFalse(self.sudo_log.exists(), "release used sudo for a root under a writable parent")
+
+    def test_unset_root_is_a_no_op(self):
+        r = self.release(None)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("no dataset root to release", r.stdout)
+        self.assertFalse(self.sudo_log.exists())
+
+    def test_a_root_with_another_name_is_refused_untouched(self):
+        for name in ("aa-ci-datasets-old", "data", "aa-ci-datasets/meta"):
+            with self.subTest(name=name):
+                target = self.t / "parent" / name
+                target.mkdir(parents=True, exist_ok=True)
+                (target / "f").write_bytes(b"f")
+                r = self.release(target)
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("refusing to delete", r.stderr)
+                self.assertEqual((target / "f").read_bytes(), b"f")
+        self.assertFalse(self.sudo_log.exists())
+
+    def test_privilege_is_only_rmdir_of_the_fixed_emptied_mnt_root(self):
+        src = code_lines(HELPER)
+        release = src[src.index("cmd_release() {"):src.index("case \"${1:-}\" in")]
+        self.assertIn('if [ "$AA_CI_DATASET_ROOT" = "/mnt/aa-ci-datasets" ] && [ ! -w /mnt ]; then', release)
+        sudo_lines = [ln.strip() for ln in release.splitlines() if "sudo" in ln.split("#")[0]]
+        self.assertEqual(sudo_lines, ['sudo -n rmdir -- /mnt/aa-ci-datasets || die "sudo -n rmdir of the empty ${root} failed"'])
+        body = release[release.index("release_mnt_root() {"):]
+        order = ['[ -d "$root" ] && [ ! -L "$root" ]', 'stat -c %u -- "$root"',
+                 'find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',
+                 'find "$root" -mindepth 1 -maxdepth 1 -print -quit', "sudo -n rmdir -- /mnt/aa-ci-datasets"]
+        positions = [body.index(s) for s in order]
+        self.assertEqual(positions, sorted(positions), "the /mnt release steps are out of order")
+
+
 class CICapacityModel(unittest.TestCase):
     """The disk phase model the hosted UI workflows gate on (#1514). rev134 summed every phase and
     could never pass on the advertised runner; these pin the model, its arithmetic and the order the
