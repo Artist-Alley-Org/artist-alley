@@ -12,15 +12,51 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/federation/cas"
 )
 
 // leaseKey is the full fetch identity. A lease, and therefore a result,
 // is never shared across peers, origin assets, hashes or signers.
+//
+// It names the bytes, not the authority, within one class family:
+// access-copy requests of any version with these bytes share one key
+// (one downloads while the others wait), and original requests share
+// another. The two never share a key (leaseKeyFor), so an original
+// import never waits behind an access transfer of the same bytes, nor
+// the reverse; both may then fetch, and the import of whichever commits
+// second finds the bytes stored. A lease is never authority. A waiter
+// starts over (Client.fetch) and is authorised for its own class and
+// version, re-verifies the held bytes against its own checksums and pins
+// them with its own pin; the import transaction re-checks the
+// downloader's own class and version too.
 type leaseKey struct {
 	PeerID  uuid.UUID
 	AssetID uuid.UUID
 	Hash    string
 	Signer  string
+}
+
+// accessLeaseNamespace prefixes the Signer field of an access-copy
+// fetch's lease key: a storage-only namespace, never a key id. It is
+// disjoint from every signer an original can be fetched as: validate
+// accepts only a key id that parses as a URL on this instance's origin
+// (http or https), which cannot begin with this prefix ('|' is not a URL
+// scheme character), and refuses any key id that does begin with it. It
+// is used only for the in-process claim and the database lease row
+// (acquire, held, heartbeat, the in-commit check, release, and the
+// expired-lease sweep, which reads no key); signatures and grants use
+// Request.Signer, unchanged.
+const accessLeaseNamespace = "access-class|"
+
+// leaseKeyFor is the lease key of req: the original key, unchanged, for
+// an original; the access namespace for an access copy.
+func leaseKeyFor(req Request) leaseKey {
+	signer := req.Signer.KeyID
+	if req.Class == cas.ClassAccess {
+		signer = accessLeaseNamespace + signer
+	}
+	return leaseKey{PeerID: req.PeerID, AssetID: req.AssetID, Hash: req.SHA256, Signer: signer}
 }
 
 func (k leaseKey) String() string {

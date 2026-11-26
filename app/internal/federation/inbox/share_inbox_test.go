@@ -252,3 +252,175 @@ func TestDispatch_ShareAppliesAndUnshareEnds_ProfileRecheckedAtDispatch(t *testi
 		t.Fatal("the grant still authorises after its Unshare")
 	}
 }
+
+// #1597 §16.7: aa:accessTransfer through the real inbox and dispatcher.
+// At receipt and again at dispatch it is checked against the STORED
+// intersection (the peer lookup's capability set), never against anything
+// the envelope claims; the store records it independently of
+// aa:originalTransfer, a successor without it records false, and the
+// access class authorises only while the peer's stored capabilities hold
+// every derived-transfer-1 profile.
+func TestDispatch_ShareAccessTransfer_FromTheStoredIntersection(t *testing.T) {
+	fx := newFixture(t)
+	all := append([]string(nil), federation.DerivedTransferProfiles...)
+	t.Cleanup(func() {
+		_, _ = fx.pool.Exec(context.Background(), `DELETE FROM federation_inbound_grants WHERE peer_id = $1`, fx.peerID)
+		_, _ = fx.pool.Exec(context.Background(), `DELETE FROM federation_inbound_tombstones WHERE peer_id = $1`, fx.peerID)
+	})
+	setStoredCaps := func(caps []string) {
+		raw, _ := json.Marshal(caps)
+		if _, err := fx.pool.Exec(context.Background(), `UPDATE federation_peers SET capabilities = $2::jsonb WHERE id = $1`,
+			fx.peerID, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setStoredCaps(all)
+	store := inboundgrants.New(fx.pool, func(context.Context) string { return shareLocal }, nil, nil)
+	caps := all
+	dispatch := func(id string) (inbox.DispatchOutcome, inbox.FederationInbox) {
+		t.Helper()
+		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		d := inbox.NewDispatcher(inbox.DispatcherConfig{Interval: time.Hour, BatchSize: 100, MaxAttempts: 5}, fx.q,
+			func(_ context.Context, pid uuid.UUID) (inbox.PeerInfo, error) {
+				return inbox.PeerInfo{ID: pid, InstanceURL: fx.peerURL, Enabled: true, Connected: true, Capabilities: caps}, nil
+			}, nil, logger)
+		d.SetRegistry(inbox.BuildRegistry(d, logger))
+		d.SetInboundGrants(store)
+		d.SetLocalBaseURL(func(context.Context) string { return shareLocal })
+		row, ok := fx.storedRow(id)
+		if !ok {
+			t.Fatalf("no stored row for %s", id)
+		}
+		out := d.DispatchRow(context.Background(), row)
+		row, _ = fx.storedRow(id)
+		return out, row
+	}
+	flags := func(id string) (original, access bool) {
+		t.Helper()
+		if err := fx.pool.QueryRow(context.Background(),
+			`SELECT allow_original, allow_access_copies FROM federation_inbound_grants WHERE peer_id = $1 AND grant_activity_uri = $2`,
+			fx.peerID, id).Scan(&original, &access); err != nil {
+			t.Fatalf("read grant %s: %v", id, err)
+		}
+		return original, access
+	}
+	allows := func(asset, class string) error {
+		_, err := store.Allows(context.Background(), inboundgrants.Query{PeerID: fx.peerID, ObjectURI: asset, Class: class})
+		return err
+	}
+
+	// Receipt without the four profiles in the stored intersection: refused
+	// as profile_not_negotiated, nothing stored. Without share-lifecycle-1
+	// an aa:Share is not applied at all: 422 unsupported_activity, recorded
+	// as rejected (§7.6), as for every share from such a peer.
+	for _, missing := range all {
+		var rest []string
+		for _, p := range all {
+			if p != missing {
+				rest = append(rest, p)
+			}
+		}
+		fx.withProfiles(rest...)
+		env := fx.shareEnvelope(federation.ActivityAAShare, "", "", grantMembers(map[string]any{"aa:accessTransfer": true}))
+		rr := fx.postSingle(env)
+		if missing == federation.ProfileShareLifecycle1 {
+			row, ok := fx.storedRow(activityIDOf(t, env))
+			if rr.Code != http.StatusUnprocessableEntity || !ok || row.RejectReason == nil ||
+				*row.RejectReason != string(federation.InboxStatusUnsupportedActivity) {
+				t.Fatalf("without %s: %d, stored %v, reason %v; want 422 unsupported_activity, recorded rejected", missing, rr.Code, ok, row.RejectReason)
+			}
+			continue
+		}
+		if rr.Code != http.StatusUnprocessableEntity || fx.countRows(activityIDOf(t, env)) != 0 {
+			t.Fatalf("without %s: %d, rows %d; want 422 and nothing stored", missing, rr.Code, fx.countRows(activityIDOf(t, env)))
+		}
+		if last := fx.rejects.last(); last == nil || last.reason != federation.InboxStatusProfileNotNegotiated {
+			t.Fatalf("without %s: reject audited %+v", missing, last)
+		}
+	}
+
+	// With all four: the access grant is recorded, alone.
+	fx.withProfiles(all...)
+	asset := fx.peerURL + "/assets/" + uuid.NewString()
+	g1 := fx.peerURL + "/activities/" + uuid.NewString()
+	if rr := fx.postSingle(fx.shareEnvelope(federation.ActivityAAShare, g1, asset, grantMembers(map[string]any{"aa:accessTransfer": true}))); rr.Code != http.StatusAccepted {
+		t.Fatalf("share: %d %s", rr.Code, rr.Body.String())
+	}
+	if out, row := dispatch(g1); out != inbox.OutcomeProcessed {
+		t.Fatalf("dispatch share: %v (%s)", out, row.LastError)
+	}
+	if original, access := flags(g1); original || !access {
+		t.Fatalf("recorded allow_original=%v allow_access_copies=%v, want false / true", original, access)
+	}
+	if err := allows(asset, inboundgrants.ClassAccess); err != nil {
+		t.Fatalf("the access grant does not authorise an access copy: %v", err)
+	}
+	if err := allows(asset, inboundgrants.ClassOriginal); err == nil {
+		t.Fatal("the access grant authorises the original")
+	}
+	if err := allows(asset, ""); err != nil {
+		t.Fatalf("the access grant does not authorise a non-byte use: %v", err)
+	}
+
+	// A successor without the member records false: nothing is inherited.
+	g2 := fx.peerURL + "/activities/" + uuid.NewString()
+	if rr := fx.postSingle(fx.shareEnvelope(federation.ActivityAAShare, g2, asset,
+		grantMembers(map[string]any{"aa:supersedes": g1, "aa:originalTransfer": true}))); rr.Code != http.StatusAccepted {
+		t.Fatalf("successor: %d %s", rr.Code, rr.Body.String())
+	}
+	if out, row := dispatch(g2); out != inbox.OutcomeProcessed {
+		t.Fatalf("dispatch successor: %v (%s)", out, row.LastError)
+	}
+	if original, access := flags(g2); !original || access {
+		t.Fatalf("successor recorded allow_original=%v allow_access_copies=%v, want true / false", original, access)
+	}
+	if err := allows(asset, inboundgrants.ClassAccess); err == nil {
+		t.Fatal("the superseded access grant still authorises")
+	}
+	if err := allows(asset, inboundgrants.ClassOriginal); err != nil {
+		t.Fatalf("the successor's original grant does not authorise: %v", err)
+	}
+
+	// Accepted at receipt, but the stored intersection lost a profile by
+	// dispatch time: refused at dispatch, nothing recorded.
+	g3 := fx.peerURL + "/activities/" + uuid.NewString()
+	asset3 := fx.peerURL + "/assets/" + uuid.NewString()
+	if rr := fx.postSingle(fx.shareEnvelope(federation.ActivityAAShare, g3, asset3, grantMembers(map[string]any{"aa:accessTransfer": true}))); rr.Code != http.StatusAccepted {
+		t.Fatalf("share 3: %d", rr.Code)
+	}
+	caps = all[:3]
+	if out, row := dispatch(g3); out != inbox.OutcomeRejected || row.RejectReason == nil ||
+		*row.RejectReason != string(federation.InboxStatusProfileNotNegotiated) {
+		t.Fatalf("dispatch without derived-transfer-1: %v reason %v", out, row.RejectReason)
+	}
+	var n int
+	_ = fx.pool.QueryRow(context.Background(), `SELECT count(*) FROM federation_inbound_grants WHERE grant_activity_uri = $1`, g3).Scan(&n)
+	if n != 0 {
+		t.Fatalf("a refused share recorded %d grant row(s)", n)
+	}
+	caps = all
+
+	// An ordinary revoke ends the access grant.
+	g4 := fx.peerURL + "/activities/" + uuid.NewString()
+	asset4 := fx.peerURL + "/assets/" + uuid.NewString()
+	if rr := fx.postSingle(fx.shareEnvelope(federation.ActivityAAShare, g4, asset4, grantMembers(map[string]any{"aa:accessTransfer": true}))); rr.Code != http.StatusAccepted {
+		t.Fatalf("share 4: %d", rr.Code)
+	}
+	if out, _ := dispatch(g4); out != inbox.OutcomeProcessed {
+		t.Fatalf("dispatch share 4: %v", out)
+	}
+	if err := allows(asset4, inboundgrants.ClassAccess); err != nil {
+		t.Fatalf("share 4 does not authorise: %v", err)
+	}
+	u4 := fx.peerURL + "/activities/" + uuid.NewString()
+	if rr := fx.postSingle(fx.shareEnvelope(federation.ActivityAAUnshare, u4, asset4,
+		map[string]any{"object_kind": "asset", "target_peer": shareLocal, "aa:revokes": g4})); rr.Code != http.StatusAccepted {
+		t.Fatalf("unshare 4: %d", rr.Code)
+	}
+	if out, _ := dispatch(u4); out != inbox.OutcomeProcessed {
+		t.Fatalf("dispatch unshare 4: %v", out)
+	}
+	if err := allows(asset4, inboundgrants.ClassAccess); err == nil {
+		t.Fatal("the revoked access grant still authorises")
+	}
+}

@@ -182,5 +182,6 @@ func (r *Registry) unrevokedForTuple(ctx context.Context, in InsertInput) (*Shar
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
 		AllowOriginal:     row.AllowOriginal,
+		AllowAccessCopies: row.AllowAccessCopies,
 	}), row.Expired, nil
 }

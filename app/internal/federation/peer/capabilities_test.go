@@ -280,3 +280,24 @@ func TestCapOriginalTransfer1_NotAdvertised(t *testing.T) {
 		t.Error("original-transfer-1 has a dispatch purpose; it must stay undispatched until implemented")
 	}
 }
+
+// TestCapDerivedTransfer1_NotAdvertised pins #1597's rule: the
+// derived-transfer-1 profile is reserved but not advertised until the
+// access-copy route, the share member and the receiver all exist, so a
+// handshake never offers it and a negotiated intersection never contains
+// it, even when the other side claims it.
+func TestCapDerivedTransfer1_NotAdvertised(t *testing.T) {
+	if CapDerivedTransfer1 != "derived-transfer-1" {
+		t.Fatalf("token drifted: %q", CapDerivedTransfer1)
+	}
+	if KnownCapabilities.Has(CapDerivedTransfer1) {
+		t.Fatal("derived-transfer-1 is in KnownCapabilities before the access-copy route, member and receiver exist (#1597)")
+	}
+	theirs := append(CapabilitySet{CapDerivedTransfer1}, KnownCapabilities...)
+	if Intersect(KnownCapabilities, theirs).Has(CapDerivedTransfer1) {
+		t.Fatal("derived-transfer-1 reached a negotiated intersection")
+	}
+	if purposeOf(CapDerivedTransfer1) != "" {
+		t.Error("derived-transfer-1 has a dispatch purpose; it must stay undispatched until implemented")
+	}
+}

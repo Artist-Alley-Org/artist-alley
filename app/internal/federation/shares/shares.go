@@ -78,6 +78,11 @@ var (
 	// asset shares and collection shares (whose member assets are each
 	// checked at fetch time) can carry the original-byte grant.
 	ErrOriginalKindInvalid = errors.New("shares: allow_original is only available on asset and collection shares")
+
+	// ErrAccessCopyKindInvalid is returned when allow_access_copies is
+	// set on a share whose object kind reaches no stored bytes (#1597).
+	// The same kinds as the original-byte grant can carry it.
+	ErrAccessCopyKindInvalid = errors.New("shares: allow_access_copies is only available on asset and collection shares")
 )
 
 // Share is the in-memory representation of one federation_shares
@@ -105,6 +110,12 @@ type Share struct {
 	// original bytes (#1573). Independent of Scope: no scope implies
 	// it. See CanPeerFetchOriginal for everything else a fetch needs.
 	AllowOriginal bool
+
+	// AllowAccessCopies is the explicit, default-off grant to receive the
+	// access copies of the asset's sealed versions (#1597). Independent of
+	// Scope and of AllowOriginal: neither implies the other. See
+	// CanPeerFetchAccessCopy for everything else a fetch needs.
+	AllowAccessCopies bool
 }
 
 // Active reports whether the share is currently in effect:
@@ -141,6 +152,12 @@ type InsertInput struct {
 	// sensitivity cap is checked by the grant handler, which can
 	// resolve the object's tier.
 	AllowOriginal bool
+	// AllowAccessCopies: the explicit access-copy grant (#1597). Default
+	// false, independent of Scope and of AllowOriginal: neither implies
+	// the other. Only asset and collection shares may set it; the
+	// sensitivity cap is checked by the grant handler for a direct
+	// asset, and per member asset at every fetch decision.
+	AllowAccessCopies bool
 }
 
 // OriginalKindAllowed reports whether a share of this object kind can
@@ -172,6 +189,9 @@ func (in InsertInput) Validate() error {
 	}
 	if in.AllowOriginal && !OriginalKindAllowed(in.ObjectKind) {
 		return ErrOriginalKindInvalid
+	}
+	if in.AllowAccessCopies && !OriginalKindAllowed(in.ObjectKind) {
+		return ErrAccessCopyKindInvalid
 	}
 	return nil
 }
@@ -236,6 +256,7 @@ func (r *Registry) Insert(ctx context.Context, in InsertInput) (*Share, error) {
 		Notes:             in.Notes,
 		GrantedActivityID: pgtype.UUID{Bytes: in.GrantedActivityID, Valid: true},
 		AllowOriginal:     in.AllowOriginal,
+		AllowAccessCopies: in.AllowAccessCopies,
 	})
 	if err != nil {
 		return nil, err
@@ -439,6 +460,7 @@ func rowToShare(r FederationShare) *Share {
 		CreatedAt:         r.CreatedAt,
 		UpdatedAt:         r.UpdatedAt,
 		AllowOriginal:     r.AllowOriginal,
+		AllowAccessCopies: r.AllowAccessCopies,
 	}
 	if r.RevokedActivityID.Valid {
 		id := uuid.UUID(r.RevokedActivityID.Bytes)

@@ -45,8 +45,11 @@
 // A grant authorises only while live, unexpired by THIS database's clock,
 // on an enabled and connected peer, for the asking recipient (a
 // user-specific grant only that user; an instance-signed request only a
-// peer-wide grant), at or above the asked scope, and for the original
-// class only with allow_original. The object is matched exactly, or,
+// peer-wide grant), at or above the asked scope, for the original class
+// only with allow_original, and for the access class (#1597) only with
+// allow_access_copies and only while the peer's stored capabilities hold
+// every derived-transfer-1 profile. Neither flag stands in for the other.
+// The object is matched exactly, or,
 // for a collection grant, through a membership the origin announced and
 // #1574 recorded; with no membership recorded a container grant
 // authorises no file. Overlapping grants are independent: ending one
@@ -61,6 +64,7 @@ package inboundgrants
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -119,8 +123,11 @@ type Share struct {
 	TargetUserURI   string // "" = any user of this instance
 	Scope           federation.ShareScope
 	AllowOriginal   bool
-	ExpiresAt       *time.Time
-	Supersedes      string // "" on a tuple's first grant
+	// AllowAccessCopies is the validated aa:accessTransfer (#1597, §16.7):
+	// independent of AllowOriginal and only on an asset or collection grant.
+	AllowAccessCopies bool
+	ExpiresAt         *time.Time
+	Supersedes        string // "" on a tuple's first grant
 }
 
 // Unshare is an authenticated, member-validated aa:Unshare or
@@ -138,6 +145,11 @@ type Unshare struct {
 // ClassOriginal is the original-file class (§7.5.7).
 const ClassOriginal = "original"
 
+// ClassAccess is the access-copy class (§7.5.7 "Access copies", #1597): a
+// grant covers it only with allow_access_copies, and only for a peer whose
+// stored intersection holds every derived-transfer-1 profile.
+const ClassAccess = "access"
+
 // Query asks whether a peer's grant covers a use.
 type Query struct {
 	PeerID uuid.UUID
@@ -146,7 +158,8 @@ type Query struct {
 	// grant covers.
 	ActorURI  string
 	ObjectURI string
-	// Class is ClassOriginal for the original file; "" for any other use.
+	// Class is ClassOriginal for the original file, ClassAccess for an
+	// access copy, "" for any other use.
 	Class string
 	// MinScope is the least scope the use needs; "" means view.
 	MinScope federation.ShareScope
@@ -267,6 +280,9 @@ func tombstone(ctx context.Context, tx pgx.Tx, peerID uuid.UUID, grantURI, kind,
 func (s *Store) ApplyShare(ctx context.Context, sh Share) (Result, error) {
 	if !sh.Scope.Valid() || !sh.ObjectKind.Valid() || sh.ActivityURI == "" || sh.ObjectURI == "" || sh.GrantorActorURI == "" {
 		return Result{}, fmt.Errorf("%w: incomplete aa:Share", ErrInvalid)
+	}
+	if sh.AllowAccessCopies && sh.ObjectKind != federation.ShareObjectKindAsset && sh.ObjectKind != federation.ShareObjectKindCollection {
+		return Result{}, fmt.Errorf("%w: an access-copy grant is only on an asset or collection", ErrInvalid)
 	}
 	var recipientName string
 	if sh.TargetUserURI != "" {
@@ -397,13 +413,13 @@ func (s *Store) ApplyShare(ctx context.Context, sh Share) (Result, error) {
 		if err := tx.QueryRow(ctx, `INSERT INTO federation_inbound_grants
 			(peer_id, grant_activity_uri, grantor_actor_uri, object_kind, object_uri, target_user_uri,
 			 recipient_user_ref, scope, allow_original, expires_at, supersedes_activity_uri,
-			 state, end_reason, ended_by_activity_uri, ended_at)
+			 state, end_reason, ended_by_activity_uri, ended_at, allow_access_copies)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-			        CASE WHEN $12 = 'ended' THEN now() END)
+			        CASE WHEN $12 = 'ended' THEN now() END, $15)
 			RETURNING id`,
 			sh.PeerID, sh.ActivityURI, sh.GrantorActorURI, string(sh.ObjectKind), sh.ObjectURI, target,
 			recipientRef, string(sh.Scope), sh.AllowOriginal, sh.ExpiresAt, supersedes,
-			state, reasonPtr, endedByPtr).Scan(&id); err != nil {
+			state, reasonPtr, endedByPtr, sh.AllowAccessCopies).Scan(&id); err != nil {
 			return err
 		}
 		if reason == "" {
@@ -412,15 +428,16 @@ func (s *Store) ApplyShare(ctx context.Context, sh Share) (Result, error) {
 			res = Result{Outcome: OutcomeEnded, Reason: reason, GrantID: id}
 		}
 		s.writeAudit(ctx, tx, audit.EventFederationInboundGrantApplied, map[string]any{
-			"peer_id":            sh.PeerID.String(),
-			"grant_id":           id.String(),
-			"grant_activity_uri": sh.ActivityURI,
-			"object_kind":        string(sh.ObjectKind),
-			"object_uri":         sh.ObjectURI,
-			"scope":              string(sh.Scope),
-			"allow_original":     sh.AllowOriginal,
-			"outcome":            string(res.Outcome),
-			"reason":             reason,
+			"peer_id":             sh.PeerID.String(),
+			"grant_id":            id.String(),
+			"grant_activity_uri":  sh.ActivityURI,
+			"object_kind":         string(sh.ObjectKind),
+			"object_uri":          sh.ObjectURI,
+			"scope":               string(sh.Scope),
+			"allow_original":      sh.AllowOriginal,
+			"allow_access_copies": sh.AllowAccessCopies,
+			"outcome":             string(res.Outcome),
+			"reason":              reason,
 		})
 		for _, e := range ended {
 			s.writeAudit(ctx, tx, audit.EventFederationInboundGrantEnded, map[string]any{
@@ -531,7 +548,7 @@ func (s *Store) allows(ctx context.Context, db queryer, q Query, lock bool) (uui
 	if minScope == "" {
 		minScope = federation.ShareScopeView
 	}
-	if !minScope.Valid() || q.ObjectURI == "" || q.PeerID == (uuid.UUID{}) || (q.Class != "" && q.Class != ClassOriginal) {
+	if !minScope.Valid() || q.ObjectURI == "" || q.PeerID == (uuid.UUID{}) || (q.Class != "" && q.Class != ClassOriginal && q.Class != ClassAccess) {
 		return uuid.UUID{}, fmt.Errorf("%w: incomplete query", ErrNoGrant)
 	}
 	// The asking recipient: the local user an actor URI names, or none
@@ -568,18 +585,22 @@ func (s *Store) allows(ctx context.Context, db queryer, q Query, lock bool) (uui
 	// whose URI happens to equal the asset's (a collection grant carrying
 	// allow_original, say) covers no asset's original. A collection grant
 	// still covers its members' originals through the membership branch.
-	// Other classes are unchanged.
+	// An access copy (#1597) follows the same object rule and needs only
+	// allow_access_copies (never allow_original), and only from a peer whose
+	// stored capabilities hold every derived-transfer-1 profile ($7). The
+	// empty class is unchanged.
 	sql := `SELECT g.id, g.expires_at FROM federation_inbound_grants g
 		JOIN federation_peers p ON p.id = g.peer_id
 		WHERE g.peer_id = $1 AND g.state = 'live'
 		  AND p.enabled AND p.status = 'connected'
 		  AND (g.recipient_user_ref IS NULL AND g.target_user_uri IS NULL
 		       OR g.recipient_user_ref = $2)
-		  AND ((g.object_uri = $3 AND (NOT $4::boolean OR g.object_kind = 'asset'))
+		  AND ((g.object_uri = $3 AND (NOT ($4::boolean OR $6::boolean) OR g.object_kind = 'asset'))
 		       OR (g.object_kind = 'collection' AND EXISTS (
 		             SELECT 1 FROM federation_inbound_memberships m
 		              WHERE m.peer_id = g.peer_id AND m.container_uri = g.object_uri AND m.member_uri = $3)))
 		  AND (NOT $4::boolean OR g.allow_original)
+		  AND (NOT $6::boolean OR (g.allow_access_copies AND p.capabilities @> $7::jsonb))
 		  AND array_position(ARRAY['view','comment','annotate','remix'], g.scope)
 		      >= array_position(ARRAY['view','comment','annotate','remix'], $5::text)
 		ORDER BY g.expires_at DESC NULLS FIRST, g.id
@@ -587,7 +608,8 @@ func (s *Store) allows(ctx context.Context, db queryer, q Query, lock bool) (uui
 	if lock {
 		sql += ` FOR SHARE OF g`
 	}
-	rows, err := db.Query(ctx, sql, q.PeerID, userRef, q.ObjectURI, q.Class == ClassOriginal, string(minScope))
+	rows, err := db.Query(ctx, sql, q.PeerID, userRef, q.ObjectURI, q.Class == ClassOriginal, string(minScope),
+		q.Class == ClassAccess, derivedTransferProfilesJSON)
 	if err != nil {
 		return uuid.UUID{}, fmt.Errorf("inboundgrants: allows: %w", err)
 	}
@@ -622,6 +644,17 @@ func (s *Store) allows(ctx context.Context, db queryer, q Query, lock bool) (uui
 	}
 	return uuid.UUID{}, fmt.Errorf("%w: every covering grant has expired", ErrNoGrant)
 }
+
+// derivedTransferProfilesJSON is federation.DerivedTransferProfiles as the
+// JSON array the access class requires the peer's stored capabilities to
+// contain.
+var derivedTransferProfilesJSON = func() string {
+	b, err := json.Marshal(federation.DerivedTransferProfiles)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}()
 
 // maxCandidates bounds the grants one decision reads (and, in AllowsTx,
 // locks). At most one live grant exists per tuple (peer, grantor,

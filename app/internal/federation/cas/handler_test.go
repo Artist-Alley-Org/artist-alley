@@ -537,4 +537,8 @@ func (failingPolicy) CanPeerFetchOriginal(context.Context, shares.OriginalFetchR
 	return shares.OriginalFetchDecision{}, errors.New("database unavailable")
 }
 
+func (failingPolicy) CanPeerFetchAccessCopy(context.Context, shares.AccessCopyFetchRequest) (shares.AccessCopyFetchDecision, error) {
+	return shares.AccessCopyFetchDecision{}, errors.New("database unavailable")
+}
+
 var _ = peer.CapOriginalTransfer1

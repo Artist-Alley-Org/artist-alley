@@ -94,7 +94,7 @@ func lockedShares(tx pgx.Tx) shareLoader {
 		rows, err := tx.Query(ctx, `SELECT id, grantor_user_ref, object_kind, object_id,
 		       peer_id, target_user_url, scope, expires_at, notes,
 		       granted_activity_id, granted_at, revoked_at,
-		       revoked_activity_id, created_at, updated_at, allow_original
+		       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 		  FROM federation_shares
 		 WHERE object_kind = $1 AND object_id = $2 AND revoked_at IS NULL
 		 ORDER BY id
@@ -109,7 +109,7 @@ func lockedShares(tx pgx.Tx) shareLoader {
 			if err := rows.Scan(&s.ID, &s.GrantorUserRef, &s.ObjectKind, &s.ObjectID,
 				&s.PeerID, &s.TargetUserUrl, &s.Scope, &s.ExpiresAt, &s.Notes,
 				&s.GrantedActivityID, &s.GrantedAt, &s.RevokedAt,
-				&s.RevokedActivityID, &s.CreatedAt, &s.UpdatedAt, &s.AllowOriginal); err != nil {
+				&s.RevokedActivityID, &s.CreatedAt, &s.UpdatedAt, &s.AllowOriginal, &s.AllowAccessCopies); err != nil {
 				return nil, err
 			}
 			out = append(out, s)

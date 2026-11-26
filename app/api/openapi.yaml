@@ -23178,6 +23178,7 @@ components:
         - created_at
         - updated_at
         - allow_original
+        - allow_access_copies
       properties:
         id: { type: string, format: uuid }
         grantor_user_ref: { type: integer, format: int64 }
@@ -23216,6 +23217,14 @@ components:
             Whether this share permits the peer to receive original
             files (#1573). False for every share made without it.
             Separate from `scope`.
+        allow_access_copies:
+          type: boolean
+          description: |
+            Whether this share permits the peer to receive the access
+            copies of the shared asset's sealed versions (#1597, spec v1
+            §7.5.7). Always the stored value; false for every share made
+            without it. Independent of `scope` and of `allow_original`:
+            neither implies the other.
 
     FederationShareGrantContext:
       type: object
@@ -23779,6 +23788,27 @@ components:
             transfers; files already delivered are not recalled. No
             original file is transferred between instances yet: the
             per-asset fetch that would honour this is not built (#72).
+        allow_access_copies:
+          type: boolean
+          default: false
+          description: |
+            Explicit permission for the peer to receive the ACCESS COPIES
+            of the shared asset's sealed versions, or of each asset in a
+            shared collection (#1597, spec v1 §7.5.7). Independent of
+            `scope` and of `allow_original`: no scope implies it, the
+            original-file permission does not imply it, and it does not
+            imply the original-file permission. Off unless set. Only
+            asset and collection shares may set it (400 otherwise), and
+            only for public and team assets: a restricted or embargoed
+            asset is refused with 400, and each asset in a collection is
+            checked on its own when a copy is requested. Revoking or
+            expiring the share stops new transfers; copies already
+            delivered are not recalled. Sent to a peer, as
+            `aa:accessTransfer`, only when that peer has negotiated
+            `derived-transfer-1` with its three prerequisite profiles;
+            this version does not advertise that profile, so no access
+            copy moves between production instances yet, and the
+            permission is kept locally.
 
     FederationPeer:
       type: object

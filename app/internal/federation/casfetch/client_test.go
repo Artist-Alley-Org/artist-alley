@@ -36,6 +36,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/casfetch"
+	"github.com/mscrnt/artist-alley/app/internal/federation/httpsig"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/storage/fs"
@@ -79,9 +80,38 @@ type origin struct {
 	headDeny  func(r *http.Request) bool
 	getMode   atomic.Value // string
 	getDelay  time.Duration
+	beforeGET func()
 	afterGET  func()
+	// pub, when set, is the key every signed request is verified
+	// against; the outcome is in seen.
+	pub       ed25519.PublicKey
 	mu        sync.Mutex
 	lastKeyID string
+	seen      []seenRequest
+}
+
+// seenRequest is one signed request as the origin received it.
+type seenRequest struct {
+	Method, Path, RawQuery string
+	KeyID                  string // verified key id; "" when pub is unset or verification failed
+	VerifyErr              error
+}
+
+func (o *origin) record(r *http.Request) {
+	sr := seenRequest{Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
+	if o.pub != nil {
+		pub := o.pub
+		sr.KeyID, sr.VerifyErr = httpsig.Verify(r, []byte{}, func(string) (ed25519.PublicKey, error) { return pub, nil }, time.Now())
+	}
+	o.mu.Lock()
+	o.seen = append(o.seen, sr)
+	o.mu.Unlock()
+}
+
+func (o *origin) requests() []seenRequest {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]seenRequest(nil), o.seen...)
 }
 
 func newOrigin(t *testing.T, body []byte) *origin {
@@ -111,6 +141,7 @@ func (o *origin) serve(w http.ResponseWriter, r *http.Request) {
 	o.mu.Lock()
 	o.lastKeyID = r.Header.Get("Signature")
 	o.mu.Unlock()
+	o.record(r)
 	deny := func(code int) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(code)
@@ -134,6 +165,9 @@ func (o *origin) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o.gets.Add(1)
+	if o.beforeGET != nil {
+		o.beforeGET()
+	}
 	if o.afterGET != nil {
 		defer o.afterGET()
 	}

@@ -56,6 +56,10 @@ const (
 	// aa:Share (§7.5.7, #1571): true when the origin's share carries the
 	// original-file grant. Only sent and accepted with that profile.
 	MemberOriginalTransfer = "aa:originalTransfer"
+	// MemberAccessTransfer is the derived-transfer-1 member of an aa:Share
+	// (§16.7, #1597): exactly true when the origin's share carries the
+	// access-copy grant. Only sent and accepted when DerivedTransferInEffect.
+	MemberAccessTransfer = "aa:accessTransfer"
 
 	// ProfileShareLifecycle1 is the share-lifecycle-1 profile token
 	// (§16.6, #1571). aa:Share, aa:Unshare and aa:RevokeShare are sent
@@ -65,6 +69,11 @@ const (
 	// (§7.5.7, §16.5). Reserved and not advertised; it gates the
 	// aa:originalTransfer member.
 	ProfileOriginalTransfer1 = "original-transfer-1"
+	// ProfileDerivedTransfer1 is the derived-transfer-1 profile token
+	// (§16.5, §16.7, #1597). Reserved and not advertised; it gates the
+	// aa:accessTransfer member, and only together with archival-1,
+	// original-transfer-1 and share-lifecycle-1.
+	ProfileDerivedTransfer1 = "derived-transfer-1"
 
 	// CommentObjectType is the object_type of a comment Create.
 	CommentObjectType = "Note"
@@ -100,6 +109,28 @@ var (
 	// tries again later without counting an attempt.
 	ErrWaitingForDelivery = errors.New("federation: waiting for another delivery to the peer")
 )
+
+// DerivedTransferProfiles is every profile that must be in the stored
+// intersection for derived-transfer-1 to be in effect (§16.7).
+var DerivedTransferProfiles = []string{
+	ProfileArchival1, ProfileOriginalTransfer1, ProfileShareLifecycle1, ProfileDerivedTransfer1,
+}
+
+// DerivedTransferInEffect reports whether derived-transfer-1 is in effect:
+// every DerivedTransferProfiles token is in the stored intersection that
+// negotiated reports (§16.7). The one rule for the outbound projection and
+// the inbound member check; nil reports none.
+func DerivedTransferInEffect(negotiated func(token string) bool) bool {
+	if negotiated == nil {
+		return false
+	}
+	for _, p := range DerivedTransferProfiles {
+		if !negotiated(p) {
+			return false
+		}
+	}
+	return true
+}
 
 // MemberContext is what ValidateMembers needs to know about the sender
 // and the receiver.
@@ -250,6 +281,7 @@ func ValidateMembers(env *Envelope, mc MemberContext) error {
 		if share {
 			allowed[MemberScope], allowed[MemberExpiresAt] = true, true
 			allowed[MemberSupersedes], allowed[MemberOriginalTransfer] = true, true
+			allowed[MemberAccessTransfer] = true
 		} else {
 			allowed[MemberRevokes] = true
 		}
@@ -544,6 +576,23 @@ func validateShareEnvelope(env *Envelope, mc MemberContext, share bool) error {
 			}
 			if k := ShareObjectKind(kind); b && k != ShareObjectKindAsset && k != ShareObjectKindCollection {
 				return fmt.Errorf("%w: %s is only for an asset or collection share", ErrInvalidMember, MemberOriginalTransfer)
+			}
+		}
+		// §16.7: aa:accessTransfer needs all four profiles in the stored
+		// intersection, is exactly the JSON boolean true (an absent member
+		// is the only way to say no), and is only on an asset or
+		// collection share.
+		if raw, ok := env.Extra[MemberAccessTransfer]; ok {
+			if !DerivedTransferInEffect(mc.Negotiated) {
+				return fmt.Errorf("%w: %s needs %s with %s, %s and %s", ErrProfileNotNegotiated, MemberAccessTransfer,
+					ProfileDerivedTransfer1, ProfileArchival1, ProfileOriginalTransfer1, ProfileShareLifecycle1)
+			}
+			var v any
+			if json.Unmarshal(raw, &v) != nil || v != true {
+				return fmt.Errorf("%w: %s must be true", ErrInvalidMember, MemberAccessTransfer)
+			}
+			if k := ShareObjectKind(kind); k != ShareObjectKindAsset && k != ShareObjectKindCollection {
+				return fmt.Errorf("%w: %s is only for an asset or collection share", ErrInvalidMember, MemberAccessTransfer)
 			}
 		}
 		return nil
@@ -964,6 +1013,18 @@ func WireMembers(t ActivityType, objectKind string, payload []byte, negotiated f
 			var allow bool
 			if raw, ok := local["allow_original"]; ok && json.Unmarshal(raw, &allow) == nil && allow && has(ProfileOriginalTransfer1) {
 				out[MemberOriginalTransfer] = json.RawMessage("true")
+			}
+			// The access-copy grant (#1597) travels only when
+			// derived-transfer-1 is in effect, only as true, and only on
+			// an asset or collection share. Independent of the original
+			// grant: neither member is inferred from the other.
+			var access bool
+			var kind string
+			if raw, ok := local["allow_access_copies"]; ok && json.Unmarshal(raw, &access) == nil && access &&
+				DerivedTransferInEffect(has) &&
+				json.Unmarshal(local["object_kind"], &kind) == nil &&
+				(ShareObjectKind(kind) == ShareObjectKindAsset || ShareObjectKind(kind) == ShareObjectKindCollection) {
+				out[MemberAccessTransfer] = json.RawMessage("true")
 			}
 		} else {
 			// aa:revokes is REQUIRED: an Unshare that cannot name the

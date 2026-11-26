@@ -106,6 +106,18 @@ const CapArchival1 PeerCapability = "archival-1"
 // only for its own handshake.
 const CapOriginalTransfer1 PeerCapability = "original-transfer-1"
 
+// CapDerivedTransfer1 is the derived-transfer-1 profile token
+// (docs/spec/federation/v1.md §7.5.7, §8.5.1 and §16.7; #1597, proposed
+// ADR 0103). It is in effect only together with archival-1,
+// original-transfer-1 and share-lifecycle-1, and holding all four in the
+// stored negotiated intersection is a precondition of every access-copy
+// decision (shares.CanPeerFetchAccessCopy). It grants nothing by itself.
+// It is RESERVED, NOT ADVERTISED: the origin's signed access-copy route
+// exists (federation/cas, §8.5.1), but no sender emits aa:accessTransfer
+// and no receiver fetches one yet, so it stays out of KnownCapabilities
+// and has no dispatch purpose (TestCapDerivedTransfer1_NotAdvertised).
+const CapDerivedTransfer1 PeerCapability = "derived-transfer-1"
+
 // CapShareLifecycle1 is the share-lifecycle-1 profile token
 // (docs/spec/federation/v1.md §16.6; #1571): aa:Share, aa:Unshare and
 // aa:RevokeShare are sent and applied only between peers that both

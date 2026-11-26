@@ -15,6 +15,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -39,7 +40,8 @@ import (
 const secretNote = "operator-only note SECRET-1580"
 
 // privateShareMembers must never leave the instance.
-var privateShareMembers = []string{"notes", "notes_private", "share_id", "object_id", "object_uri", "peer_url", "target_user_url"}
+var privateShareMembers = []string{"notes", "notes_private", "share_id", "object_id", "object_uri", "peer_url", "target_user_url",
+	"allow_access_copies"}
 
 // envelopeBase is the §3 member set every envelope may carry.
 var envelopeBase = map[string]bool{
@@ -545,4 +547,109 @@ func TestWireProjection_UnfederatedTypes(t *testing.T) {
 			t.Errorf("skip audit %+v, want activity_not_federated", e)
 		}
 	})
+}
+
+// #1597: a grant's access-copy flag, carried from emit.Share's typed input
+// into the local payload, reaches the existing wire projection: projected
+// as aa:accessTransfer only as true, only when derived-transfer-1 is in
+// effect with its three companions, and only on an asset or collection
+// share. Neither byte grant is inferred from the other, the local key is
+// never sent, and an older peer's output is unchanged. No database.
+func TestWireProjection_AccessTransferFromTheGrantPath(t *testing.T) {
+	actor := emit.ActorContext{UserRef: 1, Username: "grantor", BaseURL: "https://local.example"}
+	project := func(t *testing.T, kind federation.ShareObjectKind, original, access bool, tokens ...string) (map[string]json.RawMessage, error) {
+		t.Helper()
+		em := emit.Share(actor, emit.ShareRef{
+			ShareID: uuid.New(), ObjectKind: kind, ObjectID: uuid.New(), PeerURL: "https://peer.example",
+			Scope: federation.ShareScopeView, AllowOriginal: original, AllowAccessCopies: access,
+		})
+		payload, err := json.Marshal(em.Activity.Payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var local map[string]json.RawMessage
+		_ = json.Unmarshal(payload, &local)
+		if _, ok := local["allow_access_copies"]; ok != access {
+			t.Fatalf("local payload allow_access_copies present=%v, want %v", ok, access)
+		}
+		got, err := federation.WireMembers(federation.ActivityAAShare, string(kind), payload, func(tok string) bool {
+			for _, x := range tokens {
+				if x == tok {
+					return true
+				}
+			}
+			return false
+		})
+		if _, ok := got["allow_access_copies"]; ok {
+			t.Fatal("the local allow_access_copies key was sent")
+		}
+		return got, err
+	}
+	members := func(t *testing.T, kind federation.ShareObjectKind, original, access bool, tokens ...string) map[string]json.RawMessage {
+		t.Helper()
+		got, err := project(t, kind, original, access, tokens...)
+		if err != nil {
+			t.Fatalf("WireMembers: %v", err)
+		}
+		return got
+	}
+	all := federation.DerivedTransferProfiles
+
+	for _, kind := range []federation.ShareObjectKind{federation.ShareObjectKindAsset, federation.ShareObjectKindCollection} {
+		// Access only: the access member, no original member.
+		got := members(t, kind, false, true, all...)
+		if string(got[federation.MemberAccessTransfer]) != "true" {
+			t.Fatalf("%s access only: aa:accessTransfer = %s, want true", kind, got[federation.MemberAccessTransfer])
+		}
+		if _, ok := got[federation.MemberOriginalTransfer]; ok {
+			t.Fatalf("%s access only: aa:originalTransfer inferred", kind)
+		}
+		// Original only: the original member, no access member.
+		got = members(t, kind, true, false, all...)
+		if _, ok := got[federation.MemberAccessTransfer]; ok || string(got[federation.MemberOriginalTransfer]) != "true" {
+			t.Fatalf("%s original only: members %v", kind, got)
+		}
+		// Both.
+		got = members(t, kind, true, true, all...)
+		if string(got[federation.MemberAccessTransfer]) != "true" || string(got[federation.MemberOriginalTransfer]) != "true" {
+			t.Fatalf("%s both: members %v", kind, got)
+		}
+		// Any one of the four profiles missing: no access member; the
+		// original member follows its own rule. Without share-lifecycle-1
+		// the share itself is not sent (ErrNotFederated).
+		for _, missing := range all {
+			var rest []string
+			for _, p := range all {
+				if p != missing {
+					rest = append(rest, p)
+				}
+			}
+			got, err := project(t, kind, false, true, rest...)
+			if missing == federation.ProfileShareLifecycle1 {
+				if !errors.Is(err, federation.ErrNotFederated) || got != nil {
+					t.Fatalf("%s without %s: members %v, err %v; want the share refused", kind, missing, got, err)
+				}
+				continue
+			}
+			if err != nil {
+				t.Fatalf("%s without %s: %v", kind, missing, err)
+			}
+			if _, ok := got[federation.MemberAccessTransfer]; ok {
+				t.Fatalf("%s without %s: aa:accessTransfer sent", kind, missing)
+			}
+		}
+		// An older peer with share-lifecycle-1 only: exactly what it got
+		// before, with or without the access flag.
+		with := members(t, kind, true, true, federation.ProfileShareLifecycle1)
+		without := members(t, kind, true, false, federation.ProfileShareLifecycle1)
+		a, _ := json.Marshal(with)
+		b, _ := json.Marshal(without)
+		if string(a) != string(b) {
+			t.Fatalf("%s older peer: output changed by the access flag:\n%s\n%s", kind, a, b)
+		}
+	}
+	// Never on a share of a kind without bytes, even with all four.
+	if got := members(t, federation.ShareObjectKindPost, false, true, all...); got[federation.MemberAccessTransfer] != nil {
+		t.Fatal("aa:accessTransfer sent on a post share")
+	}
 }

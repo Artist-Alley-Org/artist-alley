@@ -232,6 +232,9 @@ func (h *AdminHandler) GrantFederationShare(
 	}
 	// #1573: the original-byte grant is explicit and off unless set.
 	allowOriginal := req.Body.AllowOriginal != nil && *req.Body.AllowOriginal
+	// #1597: the access-copy grant, likewise explicit and off unless set,
+	// and independent of scope and of the original-byte grant.
+	allowAccessCopies := req.Body.AllowAccessCopies != nil && *req.Body.AllowAccessCopies
 
 	// Pre-validate via InsertInput.Validate() so the catalogue
 	// errors surface BEFORE we mint the activity URI.
@@ -245,17 +248,22 @@ func (h *AdminHandler) GrantFederationShare(
 		ExpiresAt:      expiresPgtype,
 		Notes:          notes,
 		AllowOriginal:  allowOriginal,
+		// AllowAccessCopies: only what this request supplies. A regrant
+		// after expiry inserts a new row with these flags; nothing is
+		// inherited from the row it replaces.
+		AllowAccessCopies: allowAccessCopies,
 	}
 	if err := in.Validate(); err != nil {
 		return openapi.GrantFederationShare400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
 	}
-	// #1573: the sensitivity cap, at grant time. A collection's member
-	// assets are each checked when a file is requested
-	// (CanPeerFetchOriginal); an asset is checked here too, so the
-	// operator is told now rather than finding every fetch refused.
-	if allowOriginal && objectKind == federation.ShareObjectKindAsset {
+	// #1573, #1597: the sensitivity cap, at grant time, for either byte
+	// grant. A collection's member assets are each checked when a file or
+	// copy is requested (CanPeerFetchOriginal, CanPeerFetchAccessCopy); an
+	// asset is checked here too, so the operator is told now rather than
+	// finding every fetch refused. One read serves both flags.
+	if (allowOriginal || allowAccessCopies) && objectKind == federation.ShareObjectKindAsset {
 		row, err := New(h.registry.Pool).GetAssetGrantContext(ctx, pgtype.UUID{Bytes: objectID, Valid: true})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -264,9 +272,13 @@ func (h *AdminHandler) GrantFederationShare(
 			return nil, fmt.Errorf("shares: grant: asset tier: %w", err)
 		}
 		if !OriginalTierAllowed(row.Sensitivity) {
+			what := "original files"
+			if !allowOriginal {
+				what = "access copies"
+			}
 			return openapi.GrantFederationShare400JSONResponse{
 				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
-					Error: "sensitivity_refused: original files can only be shared for public and team assets; this asset is " + row.Sensitivity,
+					Error: "sensitivity_refused: " + what + " can only be shared for public and team assets; this asset is " + row.Sensitivity,
 				},
 			}, nil
 		}
@@ -404,6 +416,8 @@ func (h *AdminHandler) insertGrant(
 		Notes:                 in.Notes,
 		SupersedesActivityURI: supersedes,
 		AllowOriginal:         in.AllowOriginal,
+		// The same typed input the row below persists (#1597).
+		AllowAccessCopies: in.AllowAccessCopies,
 	})
 
 	// 1. Activity row → activity_id.
@@ -428,6 +442,7 @@ func (h *AdminHandler) insertGrant(
 		Notes:             in.Notes,
 		GrantedActivityID: pgtype.UUID{Bytes: activityID, Valid: true},
 		AllowOriginal:     in.AllowOriginal,
+		AllowAccessCopies: in.AllowAccessCopies,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -468,7 +483,9 @@ func (h *AdminHandler) insertGrant(
 		"peer_id":        in.PeerID.String(),
 		"scope":          string(in.Scope),
 		"allow_original": in.AllowOriginal,
-		"correlation_id": activityID.String(),
+		// #1597: recorded in the same transaction as the row.
+		"allow_access_copies": in.AllowAccessCopies,
+		"correlation_id":      activityID.String(),
 	}
 	if in.TargetUserURL != nil {
 		auditMeta["target_user_url"] = *in.TargetUserURL
@@ -746,6 +763,7 @@ func toShareAPI(s *Share) openapi.FederationShare {
 		Notes:             s.Notes,
 		GrantedActivityId: uuid.UUID(s.GrantedActivityID),
 		AllowOriginal:     s.AllowOriginal,
+		AllowAccessCopies: s.AllowAccessCopies,
 	}
 	if s.GrantedAt.Valid {
 		out.GrantedAt = s.GrantedAt.Time

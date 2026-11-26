@@ -42,6 +42,11 @@ type ShareRef struct {
 	// AllowOriginal is the share's original-file grant (#1573). Sent as
 	// aa:originalTransfer only to a peer with original-transfer-1.
 	AllowOriginal bool
+	// AllowAccessCopies is the share's access-copy grant (#1597), kept in
+	// the local payload as allow_access_copies (only when true). Sent as
+	// aa:accessTransfer only when derived-transfer-1 is in effect
+	// (federation.WireMembers); never inferred from AllowOriginal.
+	AllowAccessCopies bool
 }
 
 // Share emits an aa:Share activity per ADR 0043 §"Custom activity
@@ -92,6 +97,9 @@ func Share(actor ActorContext, ref ShareRef) Emission {
 	}
 	if ref.AllowOriginal {
 		payload["allow_original"] = true
+	}
+	if ref.AllowAccessCopies {
+		payload["allow_access_copies"] = true
 	}
 	if ref.Notes != "" {
 		// Notes are operator-private — DON'T emit them on the

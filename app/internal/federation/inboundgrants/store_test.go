@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -652,5 +653,160 @@ func TestAllowsTx_ExpiryJudgedAfterTheGrantLock(t *testing.T) {
 				t.Fatalf("expired while waiting: %v, want refused", got)
 			}
 		})
+	}
+}
+
+// #1597: the access class.
+
+func access(q *inboundgrants.Query) { q.Class = inboundgrants.ClassAccess }
+
+// withCaps sets the peer's STORED negotiated capabilities.
+func (f *fx) withCaps(caps ...string) {
+	f.t.Helper()
+	raw := "[]"
+	if len(caps) > 0 {
+		raw = `["` + strings.Join(caps, `","`) + `"]`
+	}
+	if _, err := f.pool.Exec(context.Background(), `UPDATE federation_peers SET capabilities = $2::jsonb WHERE id = $1`, f.peerID, raw); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *fx) storedFlags(name string) (original, access bool) {
+	f.t.Helper()
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT allow_original, allow_access_copies FROM federation_inbound_grants WHERE peer_id = $1 AND grant_activity_uri = $2`,
+		f.peerID, f.activity(name)).Scan(&original, &access); err != nil {
+		f.t.Fatalf("flags of %s: %v", name, err)
+	}
+	return original, access
+}
+
+// The flag is recorded independently of allow_original; a successor that
+// omits it records false; an ordinary revoke ends it; a kind without bytes
+// is refused at the store.
+func TestApplyShare_AccessCopiesRecordedIndependently(t *testing.T) {
+	f := newFx(t)
+	f.apply(f.share("g1", func(s *inboundgrants.Share) { s.AllowAccessCopies = true }))
+	if o, a := f.storedFlags("g1"); o || !a {
+		t.Fatalf("g1 original=%v access=%v, want false / true", o, a)
+	}
+	f.apply(f.share("g2", func(s *inboundgrants.Share) { s.Supersedes = f.activity("g1"); s.AllowOriginal = true }))
+	if o, a := f.storedFlags("g2"); !o || a {
+		t.Fatalf("successor original=%v access=%v, want true / false (nothing inherited)", o, a)
+	}
+	f.wantState("g1", "ended", "superseded")
+	f.apply(f.share("g3", func(s *inboundgrants.Share) {
+		s.ObjectKind, s.ObjectURI, s.AllowAccessCopies = federation.ShareObjectKindCollection, f.sender+"/collections/c3", true
+	}))
+	if _, a := f.storedFlags("g3"); !a {
+		t.Fatal("a collection grant lost the flag")
+	}
+	f.unshare("u3", "g3", func(u *inboundgrants.Unshare) {
+		u.ObjectKind, u.ObjectURI = federation.ShareObjectKindCollection, f.sender+"/collections/c3"
+	})
+	f.wantState("g3", "ended", "revoked")
+	for _, kind := range []federation.ShareObjectKind{federation.ShareObjectKindPost, federation.ShareObjectKindWorkspace, federation.ShareObjectKindBrandKit} {
+		_, err := f.store.ApplyShare(context.Background(), f.share("gk-"+string(kind), func(s *inboundgrants.Share) {
+			s.ObjectKind, s.ObjectURI, s.AllowAccessCopies = kind, f.sender+"/objects/"+string(kind), true
+		}))
+		if !errors.Is(err, inboundgrants.ErrInvalid) {
+			t.Errorf("%s with the access flag: %v, want ErrInvalid", kind, err)
+		}
+	}
+}
+
+// The access class needs allow_access_copies (never allow_original), every
+// derived-transfer-1 profile in the peer's STORED capabilities, the same
+// object rule as the original class, the right recipient and a live,
+// unexpired grant on an enabled, connected peer. The original and empty
+// classes are unchanged.
+func TestAllows_AccessClass(t *testing.T) {
+	f := newFx(t)
+	f.withCaps(federation.DerivedTransferProfiles...)
+	accessOnly := f.apply(f.share("ga", func(s *inboundgrants.Share) { s.ObjectURI, s.AllowAccessCopies = f.asset("a"), true }))
+	originalOnly := f.apply(f.share("go", func(s *inboundgrants.Share) { s.ObjectURI, s.AllowOriginal = f.asset("o"), true }))
+	both := f.apply(f.share("gb", func(s *inboundgrants.Share) {
+		s.ObjectURI, s.AllowOriginal, s.AllowAccessCopies = f.asset("b"), true, true
+	}))
+
+	f.wantAllowed("", f.asset("a"), accessOnly.GrantID, access)
+	f.wantRefused("", f.asset("a"), original)
+	f.wantAllowed("", f.asset("a"), accessOnly.GrantID) // the empty class: unchanged
+	f.wantAllowed("", f.asset("o"), originalOnly.GrantID, original)
+	f.wantRefused("", f.asset("o"), access)
+	f.wantAllowed("", f.asset("b"), both.GrantID, access)
+	f.wantAllowed("", f.asset("b"), both.GrantID, original)
+
+	// Every profile is required in the stored capabilities; the original
+	// class does not depend on them here.
+	for _, missing := range federation.DerivedTransferProfiles {
+		var rest []string
+		for _, p := range federation.DerivedTransferProfiles {
+			if p != missing {
+				rest = append(rest, p)
+			}
+		}
+		f.withCaps(rest...)
+		f.wantRefused("", f.asset("b"), access)
+		f.wantAllowed("", f.asset("b"), both.GrantID, original)
+	}
+	f.withCaps(federation.DerivedTransferProfiles...)
+
+	// A direct match must be an asset grant; a collection covers its
+	// member only through a recorded membership.
+	x := f.asset("x2")
+	f.apply(f.share("gwrong", func(s *inboundgrants.Share) {
+		s.ObjectKind, s.ObjectURI, s.AllowAccessCopies = federation.ShareObjectKindCollection, x, true
+	}))
+	f.wantRefused("", x, access)
+	coll := f.sender + "/collections/c9"
+	cg := f.apply(f.share("gcoll", func(s *inboundgrants.Share) {
+		s.ObjectKind, s.ObjectURI, s.AllowAccessCopies = federation.ShareObjectKindCollection, coll, true
+	}))
+	f.wantRefused("", f.asset("m1"), access)
+	if _, err := f.pool.Exec(context.Background(),
+		`INSERT INTO federation_inbound_memberships (peer_id, container_uri, member_uri) VALUES ($1, $2, $3)`,
+		f.peerID, coll, f.asset("m1")); err != nil {
+		t.Fatal(err)
+	}
+	f.wantAllowed("", f.asset("m1"), cg.GrantID, access)
+
+	// Recipient: a user-specific grant covers only that user.
+	alice, bob := f.user("alice"), f.user("bob")
+	ug := f.apply(f.share("gu", func(s *inboundgrants.Share) {
+		s.ObjectURI, s.TargetUserURI, s.AllowAccessCopies = f.asset("u"), alice, true
+	}))
+	f.wantAllowed(alice, f.asset("u"), ug.GrantID, access)
+	f.wantRefused(bob, f.asset("u"), access)
+	f.wantRefused("", f.asset("u"), access)
+
+	// Liveness: expired, revoked, and a disabled peer.
+	past := time.Now().Add(-time.Minute)
+	f.apply(f.share("gexp", func(s *inboundgrants.Share) {
+		s.ObjectURI, s.ExpiresAt, s.AllowAccessCopies = f.asset("e"), &past, true
+	}))
+	f.wantRefused("", f.asset("e"), access)
+	f.unshare("ua", "ga", func(u *inboundgrants.Unshare) { u.ObjectURI = f.asset("a") })
+	f.wantRefused("", f.asset("a"), access)
+	if _, err := f.pool.Exec(context.Background(), `UPDATE federation_peers SET enabled = FALSE WHERE id = $1`, f.peerID); err != nil {
+		t.Fatal(err)
+	}
+	f.wantRefused("", f.asset("b"), access)
+	if _, err := f.pool.Exec(context.Background(), `UPDATE federation_peers SET enabled = TRUE WHERE id = $1`, f.peerID); err != nil {
+		t.Fatal(err)
+	}
+
+	// AllowsTx takes the same decision, holding the row.
+	tx, err := f.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	if id, err := f.store.AllowsTx(context.Background(), tx, inboundgrants.Query{PeerID: f.peerID, ObjectURI: f.asset("b"), Class: inboundgrants.ClassAccess}); err != nil || id != both.GrantID {
+		t.Fatalf("AllowsTx access: %s, %v", id, err)
+	}
+	if _, err := f.store.AllowsTx(context.Background(), tx, inboundgrants.Query{PeerID: f.peerID, ObjectURI: f.asset("o"), Class: inboundgrants.ClassAccess}); !errors.Is(err, inboundgrants.ErrNoGrant) {
+		t.Fatalf("AllowsTx access on an original-only grant: %v", err)
 	}
 }

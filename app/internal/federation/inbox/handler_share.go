@@ -10,7 +10,11 @@
 // federation.ValidateMembers: the object is on the sender's own origin,
 // target_peer is this instance, any target_user is a /users/<name> actor
 // on it, the references are activity URIs on the sender's origin and
-// aa:originalTransfer appears only with original-transfer-1. The handler
+// aa:originalTransfer appears only with original-transfer-1 and
+// aa:accessTransfer (exactly true, asset or collection) only when
+// derived-transfer-1 is in effect with its three companions (§16.7). Both
+// checks ran against the STORED negotiated intersection, at receipt and
+// again at dispatch; this handler only decodes the result. The handler
 // re-checks what it relies on and hands the activity to the grant record
 // (inboundgrants.Store), which applies it in one transaction.
 //
@@ -56,7 +60,7 @@ func (d *Dispatcher) localOrigin(ctx context.Context) string {
 // share-lifecycle-1 references, decoded after validation.
 type shareMembers struct {
 	kind, targetPeer, targetUser, scope, expiresAt, supersedes, revokes string
-	originalTransfer                                                    bool
+	originalTransfer, accessTransfer                                    bool
 }
 
 func decodeShareMembers(env *federation.Envelope) (shareMembers, error) {
@@ -81,6 +85,11 @@ func decodeShareMembers(env *federation.Envelope) (shareMembers, error) {
 	if raw, ok := env.Extra[federation.MemberOriginalTransfer]; ok {
 		if err := json.Unmarshal(raw, &m.originalTransfer); err != nil {
 			return m, fmt.Errorf("%w: %s: %v", federation.ErrInvalidMember, federation.MemberOriginalTransfer, err)
+		}
+	}
+	if raw, ok := env.Extra[federation.MemberAccessTransfer]; ok {
+		if err := json.Unmarshal(raw, &m.accessTransfer); err != nil {
+			return m, fmt.Errorf("%w: %s: %v", federation.ErrInvalidMember, federation.MemberAccessTransfer, err)
 		}
 	}
 	return m, nil
@@ -136,8 +145,11 @@ func ShareHandler(d *Dispatcher) HandlerFn {
 			TargetUserURI:   m.targetUser,
 			Scope:           federation.ShareScope(m.scope),
 			AllowOriginal:   m.originalTransfer,
-			ExpiresAt:       expires,
-			Supersedes:      m.supersedes,
+			// Independent of AllowOriginal; absent means false, also on a
+			// successor (nothing is inherited from the grant it replaces).
+			AllowAccessCopies: m.accessTransfer,
+			ExpiresAt:         expires,
+			Supersedes:        m.supersedes,
 		})
 		if errors.Is(err, inboundgrants.ErrInvalid) {
 			return OutcomeRejected, federation.InboxStatusInvalidMember, uuid.UUID{}, err

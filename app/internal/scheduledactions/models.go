@@ -615,6 +615,8 @@ type FederationInboundGrant struct {
 	EndedByActivityUri    *string            `json:"ended_by_activity_uri"`
 	ReceivedAt            pgtype.Timestamptz `json:"received_at"`
 	EndedAt               pgtype.Timestamptz `json:"ended_at"`
+	// The peer's grant carries the access-copy grant (aa:accessTransfer, #1597, spec v1 §16.7): the receiver may fetch the access copies of the granted asset's sealed versions, or of each member asset of a granted collection, while the grant is live. Independent of scope and of allow_original. Default false; only asset and collection grants may carry it.
+	AllowAccessCopies bool `json:"allow_access_copies"`
 }
 
 // Origin assets a peer's container (collection) holds, as that peer announced them (#1571 schema; written only by authenticated membership ingest, #1574). Empty until then: a container grant authorises a file only through a recorded membership.
@@ -724,6 +726,21 @@ type FederationPeerSuggestion struct {
 	CachedAt             pgtype.Timestamptz `json:"cached_at"`
 }
 
+// Admitted, undecided access-copy work (#1597, spec v1 §16.7): one row per access entry being fetched, bounded in number, with its due time, attempts and claim. The file row (federation_received_asset_files) is the candidate and the outcome; this row only schedules it and is deleted when the work is decided or stale.
+type FederationReceivedAccessWork struct {
+	ReceivedAssetID pgtype.UUID        `json:"received_asset_id"`
+	Position        int32              `json:"position"`
+	Attempts        int32              `json:"attempts"`
+	NextAttemptAt   pgtype.Timestamptz `json:"next_attempt_at"`
+	// The current claim (#1597): set with claim_expires_at when a worker takes the row; every write that decides the work requires this token, unexpired.
+	ClaimToken     pgtype.UUID        `json:"claim_token"`
+	ClaimExpiresAt pgtype.Timestamptz `json:"claim_expires_at"`
+	// The last transient failure that rescheduled the row (#1597): timeout, transport_error, http_status (429/5xx) or lease_lost.
+	LastReason *string            `json:"last_reason"`
+	AdmittedAt pgtype.Timestamptz `json:"admitted_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 // An aa:asset record a paired peer announced under archival-1 (#1574, spec v1 §17.2, §17.6), one row per announcing activity. complete = every original fetched under a live inbound grant, verified here and pinned under this record in one transaction; pending and rejected hold no pin. Held, not shown: no assets row, no reader yet. record and declared_* values are the sender's untrusted claims.
 type FederationReceivedAsset struct {
 	ID                 pgtype.UUID        `json:"id"`
@@ -774,6 +791,8 @@ type FederationReceivedAssetFile struct {
 	DetectedMediaType *string `json:"detected_media_type"`
 	// The tool that produced detected_media_type (#1574).
 	DetectedBy *string `json:"detected_by"`
+	// Why the last attempt to receive this access copy failed (#1597, spec v1 §16.7): a bounded transfer reason, only on a not_transferred access row. NULL: unattempted (every row written before 00104), or not an access row.
+	AccessFailureReason *string `json:"access_failure_reason"`
 }
 
 // The complete descriptive snapshot of an asset-metadata-1 Update as this instance received it (#1577, spec v1 §18.4): one immutable row per accepted aa:metadata member, linked to its revision, with the signed published to the nanosecond, the first accepted origin signature as declared, and this instance's recipient identity. Which snapshot is current is derived when read; nothing that decides access reads it.
@@ -905,6 +924,8 @@ type FederationShare struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	// Explicit grant for the peer to receive the ORIGINAL bytes of the shared asset, or of each member asset of a shared collection (#1573). Independent of scope: no scope, remix included, implies it. Default false; only asset and collection shares may set it. Public and team assets only, checked at grant time and at every fetch decision; restricted, embargoed and unresolved tiers are refused even when this is true. Ends with the share (revoke, expiry). Does not recall bytes already delivered.
 	AllowOriginal bool `json:"allow_original"`
+	// Explicit grant for the peer to receive the ACCESS COPIES of the shared asset's sealed versions, or of each member asset of a shared collection (#1597, spec v1 §7.5.7). Independent of scope and of allow_original: neither implies the other. Default false; only asset and collection shares may set it. Public and team assets only, checked at every fetch decision. Ends with the share (revoke, expiry). Does not recall bytes already delivered.
+	AllowAccessCopies bool `json:"allow_access_copies"`
 }
 
 // The receiver's durable ledger of transfer and fixity events (#1574): snapshots with no foreign key, immutable, deleted only past the retention period (aa.federation_event_retention, default 365 days, at least 30).

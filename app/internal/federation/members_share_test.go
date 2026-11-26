@@ -254,3 +254,103 @@ func TestShareLifecycleToken_IsAdvertisedAndMatches(t *testing.T) {
 		t.Fatal("original-transfer-1 must stay unadvertised until #1574")
 	}
 }
+
+// #1597 §16.7: aa:accessTransfer is optional, exactly true, only on an
+// asset or collection aa:Share, and only when all four profiles are in the
+// stored intersection. aa:originalTransfer keeps its own rules.
+func TestValidateMembers_AccessTransfer(t *testing.T) {
+	all := shareCtx(federation.DerivedTransferProfiles...)
+	collection := func(members map[string]any) *federation.Envelope {
+		e := shareEnv(federation.ActivityAAShare, shareMembers(members))
+		e.Object = shareSender + "/collections/6f1c2b8e-2d4a-4c1e-9b7a-0c3d5e7f9a11"
+		return e
+	}
+	post := func(members map[string]any) *federation.Envelope {
+		e := shareEnv(federation.ActivityAAShare, shareMembers(members))
+		e.Object = shareSender + "/posts/6f1c2b8e-2d4a-4c1e-9b7a-0c3d5e7f9a11"
+		return e
+	}
+	cases := []struct {
+		name string
+		env  *federation.Envelope
+		mc   federation.MemberContext
+		want error
+	}{
+		{"absent, all profiles", shareEnv(federation.ActivityAAShare, shareMembers(nil)), all, nil},
+		{"absent, older peer", shareEnv(federation.ActivityAAShare, shareMembers(nil)), shareCtx(federation.ProfileShareLifecycle1), nil},
+		{"true on an asset", shareEnv(federation.ActivityAAShare, shareMembers(map[string]any{"aa:accessTransfer": true})), all, nil},
+		{"true on a collection", collection(map[string]any{"object_kind": "collection", "aa:accessTransfer": true}), all, nil},
+		{"true beside aa:originalTransfer", shareEnv(federation.ActivityAAShare, shareMembers(map[string]any{
+			"aa:accessTransfer": true, "aa:originalTransfer": true})), all, nil},
+		{"false", shareEnv(federation.ActivityAAShare, shareMembers(map[string]any{"aa:accessTransfer": false})), all, federation.ErrInvalidMember},
+		{"a string", shareEnv(federation.ActivityAAShare, shareMembers(map[string]any{"aa:accessTransfer": "true"})), all, federation.ErrInvalidMember},
+		{"a number", shareEnv(federation.ActivityAAShare, shareMembers(map[string]any{"aa:accessTransfer": 1})), all, federation.ErrInvalidMember},
+		{"an object", shareEnv(federation.ActivityAAShare, shareMembers(map[string]any{"aa:accessTransfer": map[string]any{}})), all, federation.ErrInvalidMember},
+		{"on a post", post(map[string]any{"object_kind": "post", "aa:accessTransfer": true}), all, federation.ErrInvalidMember},
+		{"on an aa:Unshare", shareEnv(federation.ActivityAAUnshare, unshareMembers(map[string]any{"aa:accessTransfer": true})), all, federation.ErrUnknownField},
+	}
+	for _, missing := range federation.DerivedTransferProfiles {
+		var rest []string
+		for _, p := range federation.DerivedTransferProfiles {
+			if p != missing {
+				rest = append(rest, p)
+			}
+		}
+		cases = append(cases, struct {
+			name string
+			env  *federation.Envelope
+			mc   federation.MemberContext
+			want error
+		}{"true without " + missing, shareEnv(federation.ActivityAAShare, shareMembers(map[string]any{"aa:accessTransfer": true})),
+			shareCtx(rest...), federation.ErrProfileNotNegotiated})
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := federation.ValidateMembers(c.env, c.mc)
+			if c.want == nil && err != nil {
+				t.Fatalf("err = %v, want accepted", err)
+			}
+			if c.want != nil && !errors.Is(err, c.want) {
+				t.Fatalf("err = %v, want %v", err, c.want)
+			}
+		})
+	}
+
+	// JSON null is not the boolean true (shareEnv drops nil values, so the
+	// raw member is set directly).
+	e := shareEnv(federation.ActivityAAShare, shareMembers(nil))
+	e.Extra[federation.MemberAccessTransfer] = json.RawMessage("null")
+	if err := federation.ValidateMembers(e, all); !errors.Is(err, federation.ErrInvalidMember) {
+		t.Fatalf("null: err = %v, want ErrInvalidMember", err)
+	}
+	// A nil context negotiates nothing.
+	if federation.DerivedTransferInEffect(nil) {
+		t.Fatal("DerivedTransferInEffect(nil) = true")
+	}
+}
+
+// What the sender projects for an access-copy grant, the receiver accepts.
+func TestWireMembers_AccessTransferRoundTripsThroughValidateMembers(t *testing.T) {
+	share := []byte(`{"share_id":"s","object_kind":"asset","object_id":"o","object_uri":"u","scope":"view",` +
+		`"peer_url":"` + shareReceiver + `","allow_access_copies":true}`)
+	negotiated := func(tok string) bool {
+		for _, p := range federation.DerivedTransferProfiles {
+			if p == tok {
+				return true
+			}
+		}
+		return false
+	}
+	got, err := federation.WireMembers(federation.ActivityAAShare, "asset", share, negotiated)
+	if err != nil || string(got[federation.MemberAccessTransfer]) != "true" {
+		t.Fatalf("members %v, err %v", got, err)
+	}
+	if _, ok := got[federation.MemberOriginalTransfer]; ok {
+		t.Fatal("aa:originalTransfer inferred from the access flag")
+	}
+	env := &federation.Envelope{Context: federation.ContextV1, Type: federation.ActivityAAShare, ID: shareSender + "/activities/g9",
+		Actor: shareSender + "/users/alice", Object: shareAsset, Extra: got}
+	if err := federation.ValidateMembers(env, shareCtx(federation.DerivedTransferProfiles...)); err != nil {
+		t.Fatalf("the receiver refused the sender's projection: %v", err)
+	}
+}

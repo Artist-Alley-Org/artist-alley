@@ -19,7 +19,8 @@ INSERT INTO federation_shares (
     expires_at,
     notes,
     granted_activity_id,
-    allow_original
+    allow_original,
+    allow_access_copies
 )
 VALUES (
     COALESCE(sqlc.narg(id)::UUID, gen_random_uuid()),
@@ -32,12 +33,13 @@ VALUES (
     sqlc.narg(expires_at),
     sqlc.arg(notes),
     sqlc.arg(granted_activity_id),
-    sqlc.arg(allow_original)
+    sqlc.arg(allow_original),
+    sqlc.arg(allow_access_copies)
 )
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
-          revoked_activity_id, created_at, updated_at, allow_original;
+          revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies;
 
 -- name: GetUnrevokedShareForTuple :one
 -- #1586: the row that holds one grant tuple's slot in
@@ -52,7 +54,7 @@ RETURNING id, grantor_user_ref, object_kind, object_id,
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original,
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies,
        (expires_at IS NOT NULL AND expires_at <= NOW())::BOOLEAN AS expired
 FROM federation_shares
 WHERE grantor_user_ref = sqlc.arg(grantor_user_ref)
@@ -66,7 +68,7 @@ WHERE grantor_user_ref = sqlc.arg(grantor_user_ref)
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE id = $1;
 
@@ -82,7 +84,7 @@ WHERE id = $1 AND revoked_at IS NULL
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
-          revoked_activity_id, created_at, updated_at, allow_original;
+          revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies;
 
 -- name: RevokeExpiredShare :one
 -- #1586: RevokeShare, but only while the row is STILL expired. The
@@ -103,7 +105,7 @@ WHERE id = $1
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
-          revoked_activity_id, created_at, updated_at, allow_original;
+          revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies;
 
 -- name: ListSharesByObject :many
 -- "Who has access to this object?" — admin per-object view.
@@ -112,7 +114,7 @@ RETURNING id, grantor_user_ref, object_kind, object_id,
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE object_kind = $1 AND object_id = $2 AND revoked_at IS NULL
 ORDER BY granted_at DESC, id DESC;
@@ -123,7 +125,7 @@ ORDER BY granted_at DESC, id DESC;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE peer_id = $1 AND revoked_at IS NULL
 ORDER BY object_kind, granted_at DESC, id DESC
@@ -141,7 +143,7 @@ WHERE peer_id = $1 AND revoked_at IS NULL;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE grantor_user_ref = $1 AND revoked_at IS NULL
 ORDER BY granted_at DESC, id DESC
@@ -157,7 +159,7 @@ LIMIT $2;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE object_kind = $1
   AND object_id   = $2
@@ -186,7 +188,7 @@ LIMIT 1;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE object_kind = $1 AND object_id = $2 AND revoked_at IS NULL
 ORDER BY id;
@@ -219,7 +221,7 @@ ORDER BY object_kind;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE revoked_at IS NULL
   AND expires_at IS NOT NULL
@@ -235,7 +237,7 @@ LIMIT $1;
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE peer_id = $1 AND revoked_at IS NULL
 ORDER BY id
@@ -262,6 +264,54 @@ SELECT a.id, a.owner_user_ref, a.file_hash, so.size_bytes AS stored_size,
 FROM assets a
 LEFT JOIN storage_objects so ON so.hash = a.file_hash
 WHERE a.id = $1;
+
+-- name: GetAssetForAccessCopyFetch :one
+-- #1597: the asset facts an access-copy decision binds to: owner (the
+-- grantor-owner rule), tier, deletion, and whether this instance is its
+-- origin. Deliberately not the asset's current file_hash: an access copy
+-- is authorised by its sealed version's own file, never by the asset's
+-- current original.
+SELECT a.id, a.owner_user_ref, a.sensitivity,
+       (a.deleted_at IS NOT NULL)::BOOLEAN AS deleted,
+       (a.origin_server_id IS NOT NULL)::BOOLEAN AS from_peer
+FROM assets a
+WHERE a.id = $1;
+
+-- name: GetAccessCopyFacts :one
+-- #1597: whether version_number of asset_id is sealed and lists an access
+-- copy with exactly object_hash and size_bytes; whether that copy is an
+-- immutable object of its own whose recorded fixity is verified NOW, at
+-- that SHA-256 and size (migration 00085 binds a sealed copy to such an
+-- object and to its original's recorded variant digest); and whether this
+-- origin recorded, before sending, an announcement of that version to
+-- peer_id that lists that file as wire role access (migration 00091). Both
+-- local derivative roles are wire role access (assetsend.versionFiles).
+-- Each answer is read from rows, never from a mutable rendition key.
+SELECT
+    EXISTS (SELECT 1 FROM asset_versions v
+             WHERE v.asset_id = sqlc.arg(asset_id) AND v.number = sqlc.arg(version_number)
+               AND v.sealed_at IS NOT NULL)::BOOLEAN AS version_sealed,
+    EXISTS (SELECT 1 FROM asset_versions v
+              JOIN asset_version_files f ON f.version_id = v.id
+             WHERE v.asset_id = sqlc.arg(asset_id) AND v.number = sqlc.arg(version_number)
+               AND v.sealed_at IS NOT NULL
+               AND f.role IN ('preview', 'access')
+               AND f.object_hash = sqlc.arg(object_hash)::TEXT AND f.size_bytes = sqlc.arg(size_bytes)::BIGINT)::BOOLEAN AS copy_listed,
+    EXISTS (SELECT 1 FROM asset_versions v
+              JOIN asset_version_files f ON f.version_id = v.id
+              JOIN storage_objects so ON so.hash = f.object_hash AND so.size_bytes = f.size_bytes
+              JOIN storage_variants sv ON sv.object_hash = so.hash AND sv.variant_key = 'original'
+             WHERE v.asset_id = sqlc.arg(asset_id) AND v.number = sqlc.arg(version_number)
+               AND v.sealed_at IS NOT NULL
+               AND f.role IN ('preview', 'access')
+               AND f.object_hash = sqlc.arg(object_hash)::TEXT AND f.size_bytes = sqlc.arg(size_bytes)::BIGINT
+               AND sv.fixity_status = 'verified'
+               AND sv.content_sha256 = sqlc.arg(object_hash)::TEXT
+               AND sv.content_size_bytes = sqlc.arg(size_bytes)::BIGINT)::BOOLEAN AS copy_verified,
+    EXISTS (SELECT 1 FROM federation_asset_announcement_claims c
+             WHERE c.peer_id = sqlc.arg(peer_id) AND c.asset_id = sqlc.arg(asset_id)
+               AND c.version_number = sqlc.arg(version_number)
+               AND c.files @> jsonb_build_array(jsonb_build_object('role', 'access', 'sha256', sqlc.arg(object_hash)::TEXT)))::BOOLEAN AS announced;
 
 -- name: GetAssetGrantContext :one
 -- #1573: what the grant form shows next to the original-download
