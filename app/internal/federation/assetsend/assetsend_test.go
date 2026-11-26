@@ -9,6 +9,7 @@
 package assetsend_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -27,6 +28,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/assetsend"
+	"github.com/mscrnt/artist-alley/app/internal/provenance"
 )
 
 const base = "https://sender.example"
@@ -89,8 +91,16 @@ type asset struct {
 }
 
 // newAsset is a local asset with 3 bytes stored and verified, owned by
-// the fixture's owner; sealed seals its version 1.
+// the fixture's owner; sealed seals its version 1. Its base name is
+// unknown.
 func (f *fx) newAsset(tier string, sealed bool) asset {
+	f.t.Helper()
+	return f.newAssetNamed(tier, sealed, nil, provenance.SourceUnknown)
+}
+
+// newAssetNamed is newAsset with the given base name pair (#1595), which
+// the version 1 trigger copies onto the version.
+func (f *fx) newAssetNamed(tier string, sealed bool, basename *string, source provenance.Source) asset {
 	f.t.Helper()
 	ctx := context.Background()
 	b := make([]byte, 32)
@@ -106,8 +116,10 @@ func (f *fx) newAsset(tier string, sealed bool) asset {
 			f.t.Fatal(err)
 		}
 	}
-	if err := f.pool.QueryRow(ctx, `INSERT INTO assets (id, title, asset_type, owner_user_ref, file_hash, file_size_bytes, sensitivity)
-		VALUES ($1, 'Sender test', 1, $2, $3, 3, $4) RETURNING current_version_id`, a.id, f.owner, a.hash, tier).Scan(&a.version); err != nil {
+	if err := f.pool.QueryRow(ctx, `INSERT INTO assets (id, title, asset_type, owner_user_ref, file_hash, file_size_bytes, sensitivity,
+		    original_basename, original_basename_source)
+		VALUES ($1, 'Sender test', 1, $2, $3, 3, $4, $5, $6) RETURNING current_version_id`, a.id, f.owner, a.hash, tier,
+		basename, string(source)).Scan(&a.version); err != nil {
 		f.t.Fatal(err)
 	}
 	f.t.Cleanup(func() {
@@ -377,5 +389,175 @@ func TestMember_DefersADraftAndRefusesWhatIsNoLongerGranted(t *testing.T) {
 		if _, err := f.member(g); !errors.Is(err, federation.ErrNotFederated) {
 			t.Errorf("a share %s: %v", name, err)
 		}
+	}
+}
+
+// The three base name provenances of #1595, with what archival-1 may
+// carry as the original's originalFilename for each: only a name the
+// upload request carried. A client_reported backfill (migration 00081)
+// and an unknown name are omitted.
+var basenameCases = []struct {
+	name     string
+	basename *string
+	source   provenance.Source
+	want     string
+}{
+	{"upload_request", ptr("harbour.png"), provenance.SourceUploadRequest, "harbour.png"},
+	{"client_reported", ptr("legacy-claim.png"), provenance.SourceClientReported, ""},
+	{"unknown", nil, provenance.SourceUnknown, ""},
+}
+
+func ptr(s string) *string { return &s }
+
+// wantOriginalFilename checks that raw is a valid archival-1 member whose
+// original names want as its originalFilename (want "" means no member at
+// all), and that no other file names one.
+func (f *fx) wantOriginalFilename(what string, raw json.RawMessage, want string) {
+	f.t.Helper()
+	m, err := federation.ParseArchivalAsset(raw)
+	if err != nil {
+		f.t.Fatalf("%s: a member §17.2 refuses: %v (%s)", what, err, raw)
+	}
+	originals := 0
+	for _, file := range m.Files {
+		switch {
+		case file.Role == "original":
+			originals++
+			if file.OriginalFilename != want {
+				f.t.Errorf("%s: the original's originalFilename is %q, want %q", what, file.OriginalFilename, want)
+			}
+		case file.OriginalFilename != "":
+			f.t.Errorf("%s: the %s file names %q", what, file.Role, file.OriginalFilename)
+		}
+	}
+	if originals != 1 {
+		f.t.Errorf("%s: %d original files", what, originals)
+	}
+	if want == "" && bytes.Contains(raw, []byte(`"originalFilename"`)) {
+		f.t.Errorf("%s: the member carries originalFilename: %s", what, raw)
+	}
+}
+
+// sealNamedSuccessor creates version n of a over fresh bytes with its
+// own base name pair, makes it current, seals it and runs RecordSealed in
+// one transaction, as sealNext does for a version with no name. It
+// returns the announcements recorded.
+func (f *fx) sealNamedSuccessor(a *asset, n int64, basename *string, source provenance.Source) []uuid.UUID {
+	f.t.Helper()
+	ctx := context.Background()
+	hash := f.storedBytes()
+	v := uuid.New()
+	var ids []uuid.UUID
+	if err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT asset_version_create($1, $2, $3, $4, 'replacement', $5, 'png', $6, $7, NULL)`,
+			a.id, v, n, a.version, hash, basename, string(source)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE assets SET current_version_id = $2, file_hash = $3 WHERE id = $1`, a.id, v, hash); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT asset_version_seal($1, '[]'::jsonb)`, v); err != nil {
+			return err
+		}
+		var err error
+		ids, err = assetsend.RecordSealed(ctx, tx, f.writer, sealedInput(a.id))
+		return err
+	}); err != nil {
+		f.t.Fatalf("version %d: %v", n, err)
+	}
+	a.version, a.hash = v, hash
+	return ids
+}
+
+// #1595: the aa:AssetVersion announcement names the original only from
+// the sealed version's own upload_request base name. A client_reported
+// backfill and an unknown name are omitted; neither the asset's live
+// metadata.original_filename nor any storage path is a source (the name
+// is exactly the stored base name or absent); and a retry builds the same
+// bytes.
+func TestMember_TheOriginalFilenameComesOnlyFromTheUploadRequest(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	for _, c := range basenameCases {
+		t.Run(c.name, func(t *testing.T) {
+			a := f.newAssetNamed("public", true, c.basename, c.source)
+			g := f.grantAndRecord(a, nil)
+			f.shareDelivered(g, "sent")
+			raw, err := f.src.Member(ctx, g.announcement, f.peer, g.objectURI, g.payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.wantOriginalFilename("the announcement", raw, c.want)
+
+			// An edit of the live metadata after ingest changes nothing.
+			if _, err := f.pool.Exec(ctx, `UPDATE assets SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb),
+				'{original_filename}', '"edited-later.png"') WHERE id = $1`, a.id); err != nil {
+				t.Fatal(err)
+			}
+			again, err := f.src.Member(ctx, g.announcement, f.peer, g.objectURI, g.payload)
+			if err != nil || string(again) != string(raw) {
+				t.Fatalf("a retry after a metadata edit: %v\n%s\nwant\n%s", err, again, raw)
+			}
+			if bytes.Contains(again, []byte("edited-later.png")) {
+				t.Fatalf("the member names the live metadata: %s", again)
+			}
+		})
+	}
+}
+
+// #1595: each version is announced with its own base name pair, not the
+// asset's current one or another version's.
+func TestMember_EachVersionKeepsItsOwnOriginalFilename(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	a := f.newAssetNamed("public", true, ptr("first.png"), provenance.SourceUploadRequest)
+	g1 := f.grantAndRecord(a, nil)
+	f.shareDelivered(g1, "sent")
+
+	ids := f.sealNamedSuccessor(&a, 2, ptr("second.png"), provenance.SourceUploadRequest)
+	if len(ids) != 1 {
+		t.Fatalf("version 2 announced %d times", len(ids))
+	}
+	g2 := grant{announcement: ids[0], shareActivity: g1.shareActivity}
+	if err := f.pool.QueryRow(ctx, `SELECT object_uri, payload FROM activities WHERE id = $1`, ids[0]).Scan(&g2.objectURI, &g2.payload); err != nil {
+		t.Fatal(err)
+	}
+	v2, err := f.src.Member(ctx, g2.announcement, f.peer, g2.objectURI, g2.payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := f.parsed(v2); m.Version.Number != 2 {
+		t.Fatalf("version %d, want 2", m.Version.Number)
+	}
+	f.wantOriginalFilename("version 2", v2, "second.png")
+
+	// Version 1's announcement, built after version 2 exists, still names
+	// version 1's file.
+	v1, err := f.src.Member(ctx, g1.announcement, f.peer, g1.objectURI, g1.payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := f.parsed(v1); m.Version.Number != 1 {
+		t.Fatalf("version %d, want 1", m.Version.Number)
+	}
+	f.wantOriginalFilename("version 1", v1, "first.png")
+
+	// A third version with no known name is announced without one, while
+	// the earlier versions keep theirs.
+	ids = f.sealNamedSuccessor(&a, 3, nil, provenance.SourceUnknown)
+	if len(ids) != 1 {
+		t.Fatalf("version 3 announced %d times", len(ids))
+	}
+	g3 := grant{announcement: ids[0]}
+	if err := f.pool.QueryRow(ctx, `SELECT object_uri, payload FROM activities WHERE id = $1`, ids[0]).Scan(&g3.objectURI, &g3.payload); err != nil {
+		t.Fatal(err)
+	}
+	v3, err := f.src.Member(ctx, g3.announcement, f.peer, g3.objectURI, g3.payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.wantOriginalFilename("version 3", v3, "")
+	if again, err := f.src.Member(ctx, g2.announcement, f.peer, g2.objectURI, g2.payload); err != nil || string(again) != string(v2) {
+		t.Fatalf("version 2 rebuilt after version 3: %v", err)
 	}
 }

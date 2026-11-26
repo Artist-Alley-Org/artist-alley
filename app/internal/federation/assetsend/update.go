@@ -216,15 +216,16 @@ func (s Source) FlagUpdateMember(ctx context.Context, _ uuid.UUID, peerID uuid.U
 		return nil, err
 	}
 	var (
-		sensitivity, basename string
-		local, sealed, told   bool
-		versionID             uuid.UUID
-		created               time.Time
-		predecessor           *int64
+		sensitivity, basenameSource string
+		basename                    *string
+		local, sealed, told         bool
+		versionID                   uuid.UUID
+		created                     time.Time
+		predecessor                 *int64
 	)
 	err := s.Pool.QueryRow(ctx, `
 		SELECT a.sensitivity, (a.origin_server_id IS NULL AND a.deleted_at IS NULL),
-		       v.id, v.created_at, v.sealed_at IS NOT NULL, COALESCE(v.original_basename, ''),
+		       v.id, v.created_at, v.sealed_at IS NOT NULL, v.original_basename, v.original_basename_source,
 		       COALESCE((SELECT max(s.number) FROM asset_versions s
 		                  WHERE s.asset_id = a.id AND s.number < v.number AND s.sealed_at IS NOT NULL), pv.number),
 		       EXISTS (SELECT 1 FROM federation_asset_announcement_claims c
@@ -233,7 +234,7 @@ func (s Source) FlagUpdateMember(ctx context.Context, _ uuid.UUID, peerID uuid.U
 		  JOIN asset_versions v ON v.asset_id = a.id AND v.number = $2
 		  LEFT JOIN asset_versions pv ON pv.id = v.predecessor_id
 		 WHERE a.id = $1`, p.AssetID, *p.VersionNumber, peerID).Scan(&sensitivity, &local,
-		&versionID, &created, &sealed, &basename, &predecessor, &told)
+		&versionID, &created, &sealed, &basename, &basenameSource, &predecessor, &told)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, refusedUpdate("the asset or its version no longer exists")
 	}
@@ -260,5 +261,5 @@ func (s Source) FlagUpdateMember(ctx context.Context, _ uuid.UUID, peerID uuid.U
 	}
 	// No descriptive member: §17.2.8 keeps an Update to mature and
 	// aiProvenance (#1577 does not change that).
-	return versionMember(objectURI, *p.VersionNumber, created, predecessor, basename, sealedFiles, p.Sensitivity, *p.Mature, aiProvenance, nil)
+	return versionMember(objectURI, *p.VersionNumber, created, predecessor, basename, basenameSource, sealedFiles, p.Sensitivity, *p.Mature, aiProvenance, nil)
 }
