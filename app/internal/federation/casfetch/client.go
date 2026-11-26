@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Kenneth Blossom
 
 // Package casfetch receives a peer's original file (#72, spec v1 §8.5,
-// §7.5.7, §17.6) for ingest (#1574).
+// §7.5.7, §17.6) for ingest (#1574), or one access copy of one sealed
+// version (#1597, spec v1 §7.5.7 "Access copies", §8.5.1) through the
+// same state machine.
 //
 // # Two authorities, checked on every use
 //
@@ -16,26 +18,35 @@
 // Identical bytes already in local storage grant nothing. The inbound
 // record is the database model of #1571 (inboundgrants.Store), asked
 // again inside every commit (state 7) with the grant row held FOR SHARE.
-// Production has no caller of Fetch until ingest (#1574), and
-// original-transfer-1 is not advertised, so no production pair fetches
-// yet.
+// Production has no caller of Fetch until ingest (#1574), and neither
+// original-transfer-1 nor derived-transfer-1 is advertised, so no
+// production pair fetches yet.
 //
 // # State machine (Fetch)
 //
 //  1. Validate the request: the signer is this instance or one of its
-//     actors; class original; the announced tier is not restricted or
+//     actors; class original (no version), or class access with a
+//     version in 1..2^53-1; the announced tier is not restricted or
 //     embargo; size within the cap.
 //  2. Authorise, as THIS caller, against CURRENT state: the receiver's
-//     peer row re-read (enabled, connected, original-transfer-1, the
-//     asset URI on its origin), the inbound grant, the origin's HEAD.
+//     peer row re-read (enabled, connected, the asset URI on its
+//     origin; original-transfer-1 for an original, all four
+//     derived-transfer-1 profiles for an access copy), the inbound grant
+//     for this class, the origin's HEAD on this class's route (the
+//     version-bound access route for an access copy).
 //  3. Local reuse: bytes of this size already held are re-verified
 //     against THIS caller's size and checksums, then pinned with THIS
 //     caller's own ingest pin. No GET.
 //  4. Otherwise claim the download: in process, one caller per key
 //     (peer, asset, hash, signer) downloads while the others wait; across
-//     workers, the database lease. A caller that waited goes back to 2:
-//     it never inherits another caller's result, it authorises itself,
-//     and finds the bytes at 3.
+//     workers, the database lease. The key names the bytes, not the
+//     authority: requests for different versions of an access copy share
+//     it, and originals share theirs, but an access copy's key is in its
+//     own namespace (leaseKeyFor), so an original never waits behind an
+//     access transfer of the same bytes. A caller that waited goes back to 2: it never
+//     inherits another caller's result, it authorises itself for its own
+//     class and version, and finds the bytes at 3, verified against its
+//     own checksums and pinned with its own pin.
 //  5. The downloader: signed GET, no redirects, connect / idle / overall
 //     deadlines, exactly 200, Content-Length (if any) equal to size,
 //     streamed to a temp file through VerifyFileFixity (reads at most
@@ -164,7 +175,9 @@ type GrantQuery struct {
 // InboundGrants is the receiver's own record of what peers granted it
 // (#1571). Allows returns nil only for a live grant from that peer, for
 // that asset (or a covering container), applicable to the signer, with
-// allow_original for the original class. AllowsTx is the same decision
+// allow_original for the original class, or allow_access_copies (and
+// the four derived-transfer-1 profiles) for the access class; GrantQuery
+// carries the class to both methods. AllowsTx is the same decision
 // inside tx, holding the grant it relies on until tx ends, so an end of
 // that grant serialises with the caller's commit.
 type InboundGrants interface {
@@ -407,7 +420,8 @@ func New(d Deps) *Client {
 	}
 }
 
-// Request names one original file to receive.
+// Request names one original file, or one access copy of one version,
+// to receive.
 type Request struct {
 	PeerID         uuid.UUID
 	OriginAssetURI string // the asset's URI on the origin
@@ -421,8 +435,12 @@ type Request struct {
 	// AnnouncedSensitivity is the tier the announcing envelope states;
 	// restricted and embargo are refused before anything is fetched.
 	AnnouncedSensitivity string
-	Class                string // "" means original
-	Signer               Signer
+	Class                string // "" means original; cas.ClassOriginal or cas.ClassAccess
+	// Version is the sealed version number an access copy belongs to,
+	// 1..federation.ArchivalMaxSafeInteger, required for class access. It
+	// is 0 for an original, whose route carries no version.
+	Version int64
+	Signer  Signer
 }
 
 // Result is what a successful Fetch holds.
@@ -444,6 +462,7 @@ func (c *Client) Fetch(ctx context.Context, req Request) (*Result, error) {
 	meta := map[string]any{
 		"peer_id": req.PeerID.String(), "asset_id": req.AssetID.String(),
 		"hash": req.SHA256, "size": req.Size, "signer": req.Signer.KeyID,
+		"class": auditClass(req.Class), "version": req.Version,
 	}
 	if err != nil {
 		var e *Error
@@ -466,6 +485,36 @@ func (c *Client) Fetch(ctx context.Context, req Request) (*Result, error) {
 	return res, nil
 }
 
+// RecheckAccess authorises req, an access-copy request, once more, as a
+// caller does after a successful Fetch and immediately before recording
+// the copy against its version (assetingest's access worker): the request
+// is validated as Fetch validates it, then the receiver's CURRENT peer
+// record (all four derived-transfer-1 profiles), its live access-class
+// inbound grant and a fresh signed HEAD of the exact version-bound
+// request at the peer's registered origin, inside the same connect and
+// idle bounds as Fetch's own HEADs. Nothing is fetched or held. A nil
+// error is the origin's and the receiver's yes for this caller now; the
+// caller records under its own transaction after it, with no wait.
+func (c *Client) RecheckAccess(ctx context.Context, req Request) error {
+	if req.Class != cas.ClassAccess {
+		return fail(ReasonClassNotAvailable, nil)
+	}
+	if err := c.validate(ctx, &req); err != nil {
+		return err
+	}
+	_, err := c.authorize(ctx, req)
+	return err
+}
+
+// auditClass is the class an audit row names: the request's, with ""
+// spelled as the original it means.
+func auditClass(class string) string {
+	if class == "" {
+		return cas.ClassOriginal
+	}
+	return class
+}
+
 func (c *Client) fetch(ctx context.Context, req Request) (*Result, error) {
 	if err := c.validate(ctx, &req); err != nil {
 		return nil, err
@@ -474,7 +523,7 @@ func (c *Client) fetch(ctx context.Context, req Request) (*Result, error) {
 	// caller's own; each phase below has its own deadline.
 	ctx, cancel := context.WithTimeout(ctx, c.total(req.Size))
 	defer cancel()
-	key := leaseKey{PeerID: req.PeerID, AssetID: req.AssetID, Hash: req.SHA256, Signer: req.Signer.KeyID}
+	key := leaseKeyFor(req)
 	poll := c.cfg.WaitPoll
 	for {
 		// 2: this caller, current state.
@@ -511,11 +560,24 @@ func (c *Client) validate(ctx context.Context, req *Request) error {
 	if req.Class == "" {
 		req.Class = cas.ClassOriginal
 	}
-	if req.Class != cas.ClassOriginal {
+	switch req.Class {
+	case cas.ClassOriginal:
+		if req.Version != 0 {
+			return fail(ReasonInvalidRequest, nil)
+		}
+	case cas.ClassAccess:
+		if req.Version < 1 || req.Version > federation.ArchivalMaxSafeInteger {
+			return fail(ReasonInvalidRequest, nil)
+		}
+	default:
 		return fail(ReasonClassNotAvailable, nil)
 	}
 	if !validHash(req.SHA256) || req.Size < 0 || req.AssetID == uuid.Nil || req.Signer.KeyID == "" || req.Signer.sign == nil {
 		return fail(ReasonInvalidRequest, nil)
+	}
+	// The access lease namespace is never a key id (leaseKeyFor).
+	if strings.HasPrefix(req.Signer.KeyID, accessLeaseNamespace) {
+		return fail(ReasonForeignSigner, nil)
 	}
 	if req.Size > c.cfg.MaxBytes {
 		return fail(ReasonTooLarge, nil)
@@ -545,12 +607,24 @@ func (c *Client) validate(ctx context.Context, req *Request) error {
 }
 
 // checkPeer validates the receiver's CURRENT record of the peer for req.
+// An access copy needs all four derived-transfer-1 profiles (§16.7) in
+// that record; an original needs original-transfer-1.
 func checkPeer(p Peer, req Request) error {
 	if !p.Enabled || !p.Connected {
 		return fail(ReasonPeerUnavailable, nil)
 	}
-	if !contains(p.Capabilities, string(peer.CapOriginalTransfer1)) {
-		return fail(ReasonProfile, nil)
+	negotiated := func(token string) bool { return contains(p.Capabilities, token) }
+	switch req.Class {
+	case cas.ClassAccess:
+		if !federation.DerivedTransferInEffect(negotiated) {
+			return fail(ReasonProfile, nil)
+		}
+	case cas.ClassOriginal:
+		if !negotiated(string(peer.CapOriginalTransfer1)) {
+			return fail(ReasonProfile, nil)
+		}
+	default:
+		return fail(ReasonClassNotAvailable, nil)
 	}
 	u, _ := url.Parse(req.OriginAssetURI)
 	if o := originOf(p.InstanceURL); o == "" || origin(u) != o {
@@ -715,11 +789,16 @@ func reauthFailure(err error) error {
 	return fail(ReasonRevokedDuringFetch, err)
 }
 
-// fileOf is the listed file this caller expects.
+// fileOf is the listed file this caller expects: role access for an
+// access copy, original otherwise.
 func (c *Client) fileOf(req Request) federation.ArchivalFile {
 	size := req.Size
+	role := "original"
+	if req.Class == cas.ClassAccess {
+		role = "access"
+	}
 	return federation.ArchivalFile{
-		Role:       "original",
+		Role:       role,
 		ContentURI: "cas://" + req.SHA256,
 		Checksums:  append([]federation.ArchivalChecksum{{Algorithm: "sha256", Value: req.SHA256}}, req.Checksums...),
 		Size:       &size,
@@ -978,10 +1057,15 @@ func (c *Client) get(ctx context.Context, req Request, p Peer, tmpPath string) e
 	return nil
 }
 
-// do sends a signed HEAD or GET for req to the peer's registered origin.
+// do sends a signed HEAD or GET for req to the peer's registered origin:
+// the version-bound access route for an access copy, the original route
+// otherwise, each with the canonical size query.
 func (c *Client) do(ctx context.Context, method string, p Peer, req Request) (*http.Response, error) {
-	target := strings.TrimRight(p.InstanceURL, "/") + cas.FilePath(req.AssetID, req.Class, req.SHA256) +
-		"?size=" + strconv.FormatInt(req.Size, 10)
+	path := cas.FilePath(req.AssetID, req.Class, req.SHA256)
+	if req.Class == cas.ClassAccess {
+		path = cas.AccessFilePath(req.AssetID, req.Version, req.SHA256)
+	}
+	target := strings.TrimRight(p.InstanceURL, "/") + path + "?size=" + strconv.FormatInt(req.Size, 10)
 	hr, err := http.NewRequestWithContext(ctx, method, target, nil)
 	if err != nil {
 		return nil, fail(ReasonInvalidRequest, err)

@@ -54,11 +54,34 @@ type WorkerConfig struct {
 	// worker at once; the scan finds retries that came due and records a
 	// stopped process left behind.
 	Interval time.Duration
+
+	// Access copies (#1597, access_worker.go) have their own loop and
+	// limits; none of them is an original import's slot.
+	//
+	// AccessConcurrency is how many access transfers this process runs at
+	// once.
+	AccessConcurrency int
+	// AccessGlobalConcurrency is how many access rows are claimed at once
+	// across every process.
+	AccessGlobalConcurrency int
+	// AccessMaxOutstanding is how many access rows are admitted and
+	// undecided at once across every process.
+	AccessMaxOutstanding int
+	// AccessDiscoveryPage is how many unattempted access entries one
+	// discovery pass examines.
+	AccessDiscoveryPage int
+	// AccessMaxAttempts is how many attempts an access entry gets before
+	// a transient failure is recorded as its outcome (at most 100).
+	AccessMaxAttempts int
+	// AccessInterval is the access loop's backstop scan.
+	AccessInterval time.Duration
 }
 
 // DefaultWorkerConfig returns production bounds.
 func DefaultWorkerConfig() WorkerConfig {
-	return WorkerConfig{Concurrency: 2, Interval: 30 * time.Second}
+	return WorkerConfig{Concurrency: 2, Interval: 30 * time.Second,
+		AccessConcurrency: 1, AccessGlobalConcurrency: 2, AccessMaxOutstanding: 64,
+		AccessDiscoveryPage: 128, AccessMaxAttempts: 3, AccessInterval: 30 * time.Second}
 }
 
 // Worker schedules announcements from the inbox and runs their imports.
@@ -70,6 +93,12 @@ type Worker struct {
 
 	mu      sync.Mutex
 	running bool
+
+	// The access loop (access_worker.go).
+	accessWake      chan struct{}
+	accessMu        sync.Mutex
+	accessCursorID  uuid.UUID // discovery keyset cursor
+	accessCursorPos int
 }
 
 var _ inbox.AssetScheduler = (*Worker)(nil)
@@ -87,7 +116,27 @@ func NewWorker(svc *Service, cfg WorkerConfig, signer func() casfetch.Signer) *W
 	if cfg.Interval <= 0 {
 		cfg.Interval = def.Interval
 	}
-	return &Worker{svc: svc, cfg: cfg, signer: signer, wake: make(chan struct{}, 1)}
+	if cfg.AccessConcurrency <= 0 {
+		cfg.AccessConcurrency = def.AccessConcurrency
+	}
+	if cfg.AccessGlobalConcurrency <= 0 {
+		cfg.AccessGlobalConcurrency = def.AccessGlobalConcurrency
+	}
+	if cfg.AccessMaxOutstanding <= 0 {
+		cfg.AccessMaxOutstanding = def.AccessMaxOutstanding
+	}
+	if cfg.AccessDiscoveryPage <= 0 {
+		cfg.AccessDiscoveryPage = def.AccessDiscoveryPage
+	}
+	if cfg.AccessMaxAttempts <= 0 {
+		cfg.AccessMaxAttempts = def.AccessMaxAttempts
+	}
+	cfg.AccessMaxAttempts = min(cfg.AccessMaxAttempts, 100)
+	if cfg.AccessInterval <= 0 {
+		cfg.AccessInterval = cfg.Interval
+	}
+	return &Worker{svc: svc, cfg: cfg, signer: signer, wake: make(chan struct{}, 1),
+		accessWake: make(chan struct{}, 1), accessCursorPos: -1}
 }
 
 // Wake asks the worker to look for due records now. Never blocks.
@@ -145,7 +194,10 @@ func (w *Worker) WithdrawAsset(ctx context.Context, peerID uuid.UUID, env *feder
 }
 
 // Run claims and runs due records until ctx ends, then waits for the
-// imports it started. Safe to call once per process.
+// imports it started. Safe to call once per process. When the Fetcher can
+// recheck access requests (production: *casfetch.Client), Run also runs
+// the access-copy loop (access_worker.go) on its own goroutine with its
+// own limits, and waits for it at the end too.
 func (w *Worker) Run(ctx context.Context) {
 	w.mu.Lock()
 	if w.running {
@@ -160,6 +212,10 @@ func (w *Worker) Run(ctx context.Context) {
 	slots := make(chan struct{}, w.cfg.Concurrency)
 	var wg sync.WaitGroup
 	defer wg.Wait()
+	if _, ok := w.accessFetcher(); ok {
+		wg.Add(1)
+		go func() { defer wg.Done(); w.runAccess(ctx) }()
+	}
 	t := time.NewTicker(w.cfg.Interval)
 	defer t.Stop()
 	for {
@@ -209,14 +265,20 @@ func (w *Worker) RunOnce(ctx context.Context) ([]Outcome, error) {
 	return out, nil
 }
 
-// claim takes up to n due pending records for a lease.
+// claim takes up to n due pending records for a lease. The bounded pick
+// is a CTE, evaluated once: under IN, the planner may re-run the locking
+// sub-select per outer row (a rescanned semi-join), and its LIMIT would
+// then not bound the claim.
 func (w *Worker) claim(ctx context.Context, n int) ([]uuid.UUID, error) {
-	rows, err := w.svc.d.Pool.Query(ctx, `UPDATE federation_received_assets
-		SET next_attempt_at = now() + make_interval(secs => $2)
-		WHERE id IN (SELECT id FROM federation_received_assets
-		              WHERE state = 'pending' AND next_attempt_at <= now()
-		              ORDER BY next_attempt_at, id LIMIT $1 FOR UPDATE SKIP LOCKED)
-		RETURNING id`, n, w.svc.cfg.Lease.Seconds())
+	rows, err := w.svc.d.Pool.Query(ctx, `WITH picked AS (
+		  SELECT id FROM federation_received_assets
+		   WHERE state = 'pending' AND next_attempt_at <= now()
+		   ORDER BY next_attempt_at, id LIMIT $1 FOR UPDATE SKIP LOCKED)
+		UPDATE federation_received_assets r
+		   SET next_attempt_at = now() + make_interval(secs => $2)
+		  FROM picked
+		 WHERE r.id = picked.id
+		RETURNING r.id`, n, w.svc.cfg.Lease.Seconds())
 	if err != nil {
 		return nil, err
 	}

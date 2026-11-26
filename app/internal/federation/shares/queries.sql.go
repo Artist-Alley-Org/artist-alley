@@ -30,7 +30,7 @@ const findActiveShare = `-- name: FindActiveShare :one
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE object_kind = $1
   AND object_id   = $2
@@ -90,6 +90,7 @@ func (q *Queries) FindActiveShare(ctx context.Context, arg FindActiveShareParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AllowOriginal,
+		&i.AllowAccessCopies,
 	)
 	return i, err
 }
@@ -122,6 +123,110 @@ func (q *Queries) FindContainingCollections(ctx context.Context, assetID pgtype.
 		return nil, err
 	}
 	return items, nil
+}
+
+const getAccessCopyFacts = `-- name: GetAccessCopyFacts :one
+SELECT
+    EXISTS (SELECT 1 FROM asset_versions v
+             WHERE v.asset_id = $1 AND v.number = $2
+               AND v.sealed_at IS NOT NULL)::BOOLEAN AS version_sealed,
+    EXISTS (SELECT 1 FROM asset_versions v
+              JOIN asset_version_files f ON f.version_id = v.id
+             WHERE v.asset_id = $1 AND v.number = $2
+               AND v.sealed_at IS NOT NULL
+               AND f.role IN ('preview', 'access')
+               AND f.object_hash = $3::TEXT AND f.size_bytes = $4::BIGINT)::BOOLEAN AS copy_listed,
+    EXISTS (SELECT 1 FROM asset_versions v
+              JOIN asset_version_files f ON f.version_id = v.id
+              JOIN storage_objects so ON so.hash = f.object_hash AND so.size_bytes = f.size_bytes
+              JOIN storage_variants sv ON sv.object_hash = so.hash AND sv.variant_key = 'original'
+             WHERE v.asset_id = $1 AND v.number = $2
+               AND v.sealed_at IS NOT NULL
+               AND f.role IN ('preview', 'access')
+               AND f.object_hash = $3::TEXT AND f.size_bytes = $4::BIGINT
+               AND sv.fixity_status = 'verified'
+               AND sv.content_sha256 = $3::TEXT
+               AND sv.content_size_bytes = $4::BIGINT)::BOOLEAN AS copy_verified,
+    EXISTS (SELECT 1 FROM federation_asset_announcement_claims c
+             WHERE c.peer_id = $5 AND c.asset_id = $1
+               AND c.version_number = $2
+               AND c.files @> jsonb_build_array(jsonb_build_object('role', 'access', 'sha256', $3::TEXT)))::BOOLEAN AS announced
+`
+
+type GetAccessCopyFactsParams struct {
+	AssetID       pgtype.UUID
+	VersionNumber int64
+	ObjectHash    string
+	SizeBytes     int64
+	PeerID        pgtype.UUID
+}
+
+type GetAccessCopyFactsRow struct {
+	VersionSealed bool
+	CopyListed    bool
+	CopyVerified  bool
+	Announced     bool
+}
+
+// #1597: whether version_number of asset_id is sealed and lists an access
+// copy with exactly object_hash and size_bytes; whether that copy is an
+// immutable object of its own whose recorded fixity is verified NOW, at
+// that SHA-256 and size (migration 00085 binds a sealed copy to such an
+// object and to its original's recorded variant digest); and whether this
+// origin recorded, before sending, an announcement of that version to
+// peer_id that lists that file as wire role access (migration 00091). Both
+// local derivative roles are wire role access (assetsend.versionFiles).
+// Each answer is read from rows, never from a mutable rendition key.
+func (q *Queries) GetAccessCopyFacts(ctx context.Context, arg GetAccessCopyFactsParams) (GetAccessCopyFactsRow, error) {
+	row := q.db.QueryRow(ctx, getAccessCopyFacts,
+		arg.AssetID,
+		arg.VersionNumber,
+		arg.ObjectHash,
+		arg.SizeBytes,
+		arg.PeerID,
+	)
+	var i GetAccessCopyFactsRow
+	err := row.Scan(
+		&i.VersionSealed,
+		&i.CopyListed,
+		&i.CopyVerified,
+		&i.Announced,
+	)
+	return i, err
+}
+
+const getAssetForAccessCopyFetch = `-- name: GetAssetForAccessCopyFetch :one
+SELECT a.id, a.owner_user_ref, a.sensitivity,
+       (a.deleted_at IS NOT NULL)::BOOLEAN AS deleted,
+       (a.origin_server_id IS NOT NULL)::BOOLEAN AS from_peer
+FROM assets a
+WHERE a.id = $1
+`
+
+type GetAssetForAccessCopyFetchRow struct {
+	ID           pgtype.UUID
+	OwnerUserRef *int64
+	Sensitivity  string
+	Deleted      bool
+	FromPeer     bool
+}
+
+// #1597: the asset facts an access-copy decision binds to: owner (the
+// grantor-owner rule), tier, deletion, and whether this instance is its
+// origin. Deliberately not the asset's current file_hash: an access copy
+// is authorised by its sealed version's own file, never by the asset's
+// current original.
+func (q *Queries) GetAssetForAccessCopyFetch(ctx context.Context, id pgtype.UUID) (GetAssetForAccessCopyFetchRow, error) {
+	row := q.db.QueryRow(ctx, getAssetForAccessCopyFetch, id)
+	var i GetAssetForAccessCopyFetchRow
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerUserRef,
+		&i.Sensitivity,
+		&i.Deleted,
+		&i.FromPeer,
+	)
+	return i, err
 }
 
 const getAssetForOriginalFetch = `-- name: GetAssetForOriginalFetch :one
@@ -219,7 +324,7 @@ const getShareByID = `-- name: GetShareByID :one
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE id = $1
 `
@@ -244,6 +349,7 @@ func (q *Queries) GetShareByID(ctx context.Context, id pgtype.UUID) (FederationS
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AllowOriginal,
+		&i.AllowAccessCopies,
 	)
 	return i, err
 }
@@ -289,7 +395,7 @@ const getUnrevokedShareForTuple = `-- name: GetUnrevokedShareForTuple :one
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original,
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies,
        (expires_at IS NOT NULL AND expires_at <= NOW())::BOOLEAN AS expired
 FROM federation_shares
 WHERE grantor_user_ref = $1
@@ -325,6 +431,7 @@ type GetUnrevokedShareForTupleRow struct {
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
 	AllowOriginal     bool
+	AllowAccessCopies bool
 	Expired           bool
 }
 
@@ -363,6 +470,7 @@ func (q *Queries) GetUnrevokedShareForTuple(ctx context.Context, arg GetUnrevoke
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AllowOriginal,
+		&i.AllowAccessCopies,
 		&i.Expired,
 	)
 	return i, err
@@ -380,7 +488,8 @@ INSERT INTO federation_shares (
     expires_at,
     notes,
     granted_activity_id,
-    allow_original
+    allow_original,
+    allow_access_copies
 )
 VALUES (
     COALESCE($1::UUID, gen_random_uuid()),
@@ -393,12 +502,13 @@ VALUES (
     $8,
     $9,
     $10,
-    $11
+    $11,
+    $12
 )
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
-          revoked_activity_id, created_at, updated_at, allow_original
+          revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 `
 
 type InsertShareParams struct {
@@ -413,6 +523,7 @@ type InsertShareParams struct {
 	Notes             string
 	GrantedActivityID pgtype.UUID
 	AllowOriginal     bool
+	AllowAccessCopies bool
 }
 
 // Grant a new share. Called inside WithEmission so the activity
@@ -437,6 +548,7 @@ func (q *Queries) InsertShare(ctx context.Context, arg InsertShareParams) (Feder
 		arg.Notes,
 		arg.GrantedActivityID,
 		arg.AllowOriginal,
+		arg.AllowAccessCopies,
 	)
 	var i FederationShare
 	err := row.Scan(
@@ -456,6 +568,7 @@ func (q *Queries) InsertShare(ctx context.Context, arg InsertShareParams) (Feder
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AllowOriginal,
+		&i.AllowAccessCopies,
 	)
 	return i, err
 }
@@ -464,7 +577,7 @@ const listActiveSharesByObject = `-- name: ListActiveSharesByObject :many
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE object_kind = $1 AND object_id = $2 AND revoked_at IS NULL
 ORDER BY id
@@ -505,6 +618,7 @@ func (q *Queries) ListActiveSharesByObject(ctx context.Context, arg ListActiveSh
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AllowOriginal,
+			&i.AllowAccessCopies,
 		); err != nil {
 			return nil, err
 		}
@@ -520,7 +634,7 @@ const listActiveSharesByPeerChunk = `-- name: ListActiveSharesByPeerChunk :many
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE peer_id = $1 AND revoked_at IS NULL
 ORDER BY id
@@ -562,6 +676,7 @@ func (q *Queries) ListActiveSharesByPeerChunk(ctx context.Context, arg ListActiv
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AllowOriginal,
+			&i.AllowAccessCopies,
 		); err != nil {
 			return nil, err
 		}
@@ -619,7 +734,7 @@ const listExpiringShares = `-- name: ListExpiringShares :many
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE revoked_at IS NULL
   AND expires_at IS NOT NULL
@@ -658,6 +773,7 @@ func (q *Queries) ListExpiringShares(ctx context.Context, limit int32) ([]Federa
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AllowOriginal,
+			&i.AllowAccessCopies,
 		); err != nil {
 			return nil, err
 		}
@@ -673,7 +789,7 @@ const listSharesByGrantor = `-- name: ListSharesByGrantor :many
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE grantor_user_ref = $1 AND revoked_at IS NULL
 ORDER BY granted_at DESC, id DESC
@@ -712,6 +828,7 @@ func (q *Queries) ListSharesByGrantor(ctx context.Context, arg ListSharesByGrant
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AllowOriginal,
+			&i.AllowAccessCopies,
 		); err != nil {
 			return nil, err
 		}
@@ -727,7 +844,7 @@ const listSharesByObject = `-- name: ListSharesByObject :many
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE object_kind = $1 AND object_id = $2 AND revoked_at IS NULL
 ORDER BY granted_at DESC, id DESC
@@ -767,6 +884,7 @@ func (q *Queries) ListSharesByObject(ctx context.Context, arg ListSharesByObject
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AllowOriginal,
+			&i.AllowAccessCopies,
 		); err != nil {
 			return nil, err
 		}
@@ -782,7 +900,7 @@ const listSharesByPeer = `-- name: ListSharesByPeer :many
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
        granted_activity_id, granted_at, revoked_at,
-       revoked_activity_id, created_at, updated_at, allow_original
+       revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 FROM federation_shares
 WHERE peer_id = $1 AND revoked_at IS NULL
 ORDER BY object_kind, granted_at DESC, id DESC
@@ -822,6 +940,7 @@ func (q *Queries) ListSharesByPeer(ctx context.Context, arg ListSharesByPeerPara
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AllowOriginal,
+			&i.AllowAccessCopies,
 		); err != nil {
 			return nil, err
 		}
@@ -845,7 +964,7 @@ WHERE id = $1
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
-          revoked_activity_id, created_at, updated_at, allow_original
+          revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 `
 
 type RevokeExpiredShareParams struct {
@@ -880,6 +999,7 @@ func (q *Queries) RevokeExpiredShare(ctx context.Context, arg RevokeExpiredShare
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AllowOriginal,
+		&i.AllowAccessCopies,
 	)
 	return i, err
 }
@@ -893,7 +1013,7 @@ WHERE id = $1 AND revoked_at IS NULL
 RETURNING id, grantor_user_ref, object_kind, object_id,
           peer_id, target_user_url, scope, expires_at, notes,
           granted_activity_id, granted_at, revoked_at,
-          revoked_activity_id, created_at, updated_at, allow_original
+          revoked_activity_id, created_at, updated_at, allow_original, allow_access_copies
 `
 
 type RevokeShareParams struct {
@@ -924,6 +1044,7 @@ func (q *Queries) RevokeShare(ctx context.Context, arg RevokeShareParams) (Feder
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AllowOriginal,
+		&i.AllowAccessCopies,
 	)
 	return i, err
 }

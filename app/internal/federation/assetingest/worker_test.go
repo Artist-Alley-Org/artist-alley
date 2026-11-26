@@ -455,3 +455,52 @@ func TestWorker_RetryAndRestart(t *testing.T) {
 		}
 	})
 }
+
+// A claim never takes more records than the worker asked for (the
+// bounded pick is evaluated once), across workers claiming at once, with
+// no record taken twice.
+func TestWorker_ClaimNeverExceedsItsSlots(t *testing.T) {
+	w := newWorkerFx(t, assetingest.Config{}, assetingest.WorkerConfig{Concurrency: 1, Interval: time.Hour})
+	other := w.newWorker(assetingest.WorkerConfig{Concurrency: 1, Interval: time.Hour})
+	var ids []uuid.UUID
+	for range 4 {
+		a := w.newAsset(1)
+		w.grant(w.peerID, a.uri, nil)
+		e := w.envelope(a, a.member(w.version(a), 1, "public"))
+		if out, _ := w.deliver(e); out != inbox.OutcomeProcessed {
+			t.Fatalf("dispatch: %v", out)
+		}
+		ids = append(ids, w.recordOf(e.ID))
+	}
+	// Two one-slot workers at once: exactly one record each, never the same.
+	outs := make([][]assetingest.Outcome, 2)
+	done := make(chan struct{}, 2)
+	for i, wk := range []*assetingest.Worker{w.worker, other} {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			o, err := wk.RunOnce(context.Background())
+			if err != nil {
+				t.Error(err)
+			}
+			outs[i] = o
+		}()
+	}
+	<-done
+	<-done
+	if len(outs[0]) != 1 || len(outs[1]) != 1 || outs[0][0].RecordID == outs[1][0].RecordID {
+		t.Fatalf("one-slot workers ran %d and %d records (%+v, %+v), want one each, distinct", len(outs[0]), len(outs[1]), outs[0], outs[1])
+	}
+	// A three-slot worker takes the two left, and then nothing.
+	three := w.newWorker(assetingest.WorkerConfig{Concurrency: 3, Interval: time.Hour})
+	if o, err := three.RunOnce(context.Background()); err != nil || len(o) != 2 {
+		t.Fatalf("three-slot worker ran %d (%v), want the 2 left", len(o), err)
+	}
+	if o, err := three.RunOnce(context.Background()); err != nil || len(o) != 0 {
+		t.Fatalf("ran %d more", len(o))
+	}
+	for _, id := range ids {
+		if st, _ := w.state(id); st != assetingest.StateComplete {
+			t.Fatalf("record %s is %s", id, st)
+		}
+	}
+}

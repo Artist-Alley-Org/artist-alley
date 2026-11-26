@@ -187,6 +187,7 @@
         grantAllowOriginal &&
         sameObject(grantContext, grantKind, id) &&
         grantContext?.original_allowed === true,
+      allow_access_copies: false,
       ...(grantRecipient.trim() ? { target_user_url: grantRecipient.trim() } : {}),
       ...(grantExpires ? { expires_at: new Date(grantExpires).toISOString() } : {}),
     };

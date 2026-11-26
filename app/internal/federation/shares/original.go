@@ -32,11 +32,10 @@
 // (peer.CapOriginalTransfer1), so no peer can negotiate it and every
 // decision here answers profile_not_negotiated in production.
 //
-// There is deliberately no derivative counterpart. Preview and access
-// derivatives have no recorded per-variant hash yet, so a derivative
-// decision bound to the ORIGINAL's hash would authorise bytes nobody
-// checked. #1597 records verified per-variant hashes and an explicit
-// derivative key allowlist first.
+// Access copies have their own decision, CanPeerFetchAccessCopy
+// (access.go, #1597), under their own grant: never this one, and never
+// against the ORIGINAL's hash. Both share one matcher, matchByteGrant,
+// which reads only the requested class's flag.
 //
 // # Rights describe, they do not permit
 //
@@ -235,7 +234,7 @@ func (r *Registry) CanPeerFetchOriginal(ctx context.Context, req OriginalFetchRe
 		// No owner to have granted anything on their behalf.
 		return deny(RejectReasonGrantorNotOwner), nil
 	}
-	share, reason, err := r.matchOriginalShare(ctx, tx, req, *asset.OwnerUserRef)
+	share, reason, err := r.matchByteGrant(ctx, tx, req.PeerID, req.ActorURL, req.AssetID, *asset.OwnerUserRef, originalGrant)
 	if err != nil {
 		return OriginalFetchDecision{}, err
 	}
@@ -245,19 +244,39 @@ func (r *Registry) CanPeerFetchOriginal(ctx context.Context, req OriginalFetchRe
 	return OriginalFetchDecision{Allowed: true, Share: share}, nil
 }
 
-// matchOriginalShare finds a current share that authorises the original
-// for this asset: direct asset shares first, then shares of every
-// collection containing it. Every candidate, direct or container, must
-// have been the grantor's to make (owner of the asset, or system.admin),
-// checked against the owner as it is NOW, so a grant made before an
-// ownership change confers nothing afterwards.
-func (r *Registry) matchOriginalShare(ctx context.Context, db DBTX, req OriginalFetchRequest, ownerRef int64) (*Share, RejectReason, error) {
+// byteGrant names the explicit byte-class grant a share must carry
+// (§7.5.7): has reads that grant's own flag, and notGranted is the reason
+// when a share passes everything but the flag. Each class reads only its
+// own flag; no flag, and no scope, stands in for another.
+type byteGrant struct {
+	has        func(Share) bool
+	notGranted RejectReason
+}
+
+var (
+	originalGrant = byteGrant{
+		has:        func(s Share) bool { return s.AllowOriginal },
+		notGranted: RejectReasonOriginalNotGranted,
+	}
+	accessCopyGrant = byteGrant{
+		has:        func(s Share) bool { return s.AllowAccessCopies },
+		notGranted: RejectReasonAccessCopyNotGranted,
+	}
+)
+
+// matchByteGrant finds a current share that authorises grant g for this
+// asset: direct asset shares first, then shares of every collection
+// containing it. Every candidate, direct or container, must have been the
+// grantor's to make (owner of the asset, or system.admin), checked against
+// the owner as it is NOW, so a grant made before an ownership change
+// confers nothing afterwards.
+func (r *Registry) matchByteGrant(ctx context.Context, db DBTX, peerID uuid.UUID, actorURL string, assetID uuid.UUID, ownerRef int64, g byteGrant) (*Share, RejectReason, error) {
 	q := New(db)
 	access := AccessRequest{
-		PeerID:        req.PeerID,
-		UserURL:       req.ActorURL,
+		PeerID:        peerID,
+		UserURL:       actorURL,
 		ObjectKind:    federation.ShareObjectKindAsset,
-		ObjectID:      req.AssetID,
+		ObjectID:      assetID,
 		RequiredScope: federation.ShareScopeView,
 	}
 	adminSeen := make(map[int64]bool, 1)
@@ -274,7 +293,7 @@ func (r *Registry) matchOriginalShare(ctx context.Context, db DBTX, req Original
 		}
 		var forPeer, granted []Share
 		for _, s := range rowsToShares(rows) {
-			if s.PeerID != req.PeerID {
+			if s.PeerID != peerID {
 				continue
 			}
 			ok, err := r.grantorAuthority(ctx, db, s.GrantorUserRef, ownerRef, adminSeen)
@@ -286,7 +305,7 @@ func (r *Registry) matchOriginalShare(ctx context.Context, db DBTX, req Original
 				continue
 			}
 			forPeer = append(forPeer, s)
-			if s.AllowOriginal {
+			if g.has(s) {
 				granted = append(granted, s)
 			}
 		}
@@ -319,14 +338,14 @@ func (r *Registry) matchOriginalShare(ctx context.Context, db DBTX, req Original
 		return nil, nil
 	}
 
-	hit, err := consider(federation.ShareObjectKindAsset, req.AssetID)
+	hit, err := consider(federation.ShareObjectKindAsset, assetID)
 	if err != nil {
 		return nil, "", err
 	}
 	if hit != nil {
 		return hit, "", nil
 	}
-	containers, err := q.FindContainingCollections(ctx, pgtype.UUID{Bytes: req.AssetID, Valid: true})
+	containers, err := q.FindContainingCollections(ctx, pgtype.UUID{Bytes: assetID, Valid: true})
 	if err != nil {
 		return nil, "", err
 	}
@@ -340,7 +359,7 @@ func (r *Registry) matchOriginalShare(ctx context.Context, db DBTX, req Original
 		}
 	}
 	if sawWithoutFlag {
-		return nil, RejectReasonOriginalNotGranted, nil
+		return nil, g.notGranted, nil
 	}
 	return nil, best, nil
 }

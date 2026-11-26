@@ -22,9 +22,13 @@
 //     that peer (every version held or being received, #1575) becomes
 //     withdrawn: its own pins are released
 //     (federation_received_asset_release_pins: no other pin owner is
-//     touched), its originals are marked withdrawn, and one ledger event
-//     (deaccession, success) is written. A rejected record holds nothing
-//     and stays as it is.
+//     touched; an access copy's pin is the record's too, #1597), its
+//     originals and its verified access copies are marked withdrawn
+//     (keeping when they were verified), and one ledger event
+//     (deaccession, success) is written. An access entry never received
+//     (unattempted, or with a failure reason) stays a not_transferred
+//     claim, and preservation entries are untouched. A rejected record
+//     holds nothing and stays as it is.
 //
 // A tombstone that arrives before any announcement of the asset is kept
 // the same way, with no record to change; bind refuses every later
@@ -160,9 +164,11 @@ func (s *Service) Withdraw(ctx context.Context, peerID uuid.UUID, env *federatio
 				WHERE id = $1`, r.id); err != nil {
 				return err
 			}
-			// After the record: an original is withdrawn only with its record.
+			// After the record: an original, or a verified access copy
+			// (#1597), is withdrawn only with its record.
 			if _, err := tx.Exec(ctx, `UPDATE federation_received_asset_files SET state = 'withdrawn'
-				WHERE received_asset_id = $1 AND role = 'original' AND state IN ('pending', 'verified')`, r.id); err != nil {
+				WHERE received_asset_id = $1
+				  AND ((role = 'original' AND state IN ('pending', 'verified')) OR (role = 'access' AND state = 'verified'))`, r.id); err != nil {
 				return err
 			}
 			if err := s.writeEvents(ctx, tx, r.id, r.attempts, StateWithdrawn,

@@ -1764,6 +1764,17 @@ BEGIN
             RAISE EXCEPTION 'received asset %: % with an original that was not identified (#1574)', r.id, r.state
                 USING ERRCODE = 'integrity_constraint_violation';
         END IF;
+        IF EXISTS (
+            SELECT 1 FROM public.federation_received_asset_files f
+             WHERE f.received_asset_id = r.id AND f.role = 'access' AND f.state = 'verified'
+               AND NOT EXISTS (
+                    SELECT 1 FROM public.storage_pins p
+                      JOIN public.storage_objects o ON o.hash = p.object_hash
+                     WHERE p.pin_subject_type = 'federation_received_asset' AND p.pin_subject_id = r.id::text
+                       AND p.object_hash = f.object_hash AND o.size_bytes = f.size_bytes)) THEN
+            RAISE EXCEPTION 'received asset %: % with a verified access copy that is not pinned (#1597)', r.id, r.state
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
         IF r.state = 'superseded' AND NOT EXISTS (
             SELECT 1 FROM public.federation_received_assets s
              WHERE s.predecessor_id = r.id AND s.state = ANY (ARRAY['complete'::text, 'superseded'::text, 'withdrawn'::text])) THEN
@@ -1938,6 +1949,10 @@ BEGIN
             RAISE EXCEPTION 'received asset file %/%: the file set is written only by the transaction that created its record (#1574)', NEW.received_asset_id, NEW."position"
                 USING ERRCODE = 'integrity_constraint_violation';
         END IF;
+        IF NEW.role = 'access' AND (NEW.state <> 'not_transferred' OR NEW.access_failure_reason IS NOT NULL OR NEW.verified_at IS NOT NULL) THEN
+            RAISE EXCEPTION 'received asset file %/%: an access copy is written as an unattempted claim (#1597)', NEW.received_asset_id, NEW."position"
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
         RETURN NEW;
     END IF;
     IF EXISTS (SELECT 1 FROM public.federation_received_assets WHERE id = OLD.received_asset_id) THEN
@@ -1978,6 +1993,20 @@ $$;
 
 
 --
+-- Name: federation_received_asset_files_commit_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_received_asset_files_commit_check() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM public.federation_received_asset_require_consistent(NEW.received_asset_id);
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: federation_received_asset_files_update_check(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2012,7 +2041,17 @@ BEGIN
         END IF;
         RETURN NEW;
     END IF;
-    RAISE EXCEPTION 'received asset file %/%: only a pending original is updated, to verified, or an original withdrawn with its record (#1574, #1575)', OLD.received_asset_id, OLD."position"
+    IF OLD.role = 'access' AND OLD.state = 'not_transferred'
+       AND NEW.detected_media_type IS NULL AND NEW.detected_by IS NULL
+       AND ((NEW.state = 'not_transferred' AND NEW.access_failure_reason IS NOT NULL AND NEW.verified_at IS NULL)
+            OR (NEW.state = 'verified' AND NEW.access_failure_reason IS NULL AND NEW.verified_at IS NOT NULL)) THEN
+        IF NOT EXISTS (SELECT 1 FROM public.federation_received_assets WHERE id = OLD.received_asset_id AND state = 'complete') THEN
+            RAISE EXCEPTION 'received asset file %/%: an access copy is recorded only for the current complete version (#1597)', OLD.received_asset_id, OLD."position"
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'received asset file %/%: only a pending original is updated, to verified, an original or verified access copy withdrawn with its record, or an unverified access copy of the current version recorded (#1574, #1575, #1597)', OLD.received_asset_id, OLD."position"
         USING ERRCODE = 'integrity_constraint_violation';
 END;
 $$;
@@ -3737,12 +3776,14 @@ CREATE TABLE public.federation_inbound_grants (
     ended_by_activity_uri text,
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     ended_at timestamp with time zone,
+    allow_access_copies boolean DEFAULT false NOT NULL,
     CONSTRAINT federation_inbound_grants_pkey PRIMARY KEY (id),
     CONSTRAINT federation_inbound_grants_activity_key UNIQUE (peer_id, grant_activity_uri),
     CONSTRAINT federation_inbound_grants_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE,
     CONSTRAINT federation_inbound_grants_recipient_user_ref_fkey FOREIGN KEY (recipient_user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE,
     CONSTRAINT federation_inbound_grants_object_kind_check CHECK ((object_kind = ANY (ARRAY['asset'::text, 'post'::text, 'collection'::text, 'workspace'::text, 'brand_kit'::text, 'user'::text]))),
     CONSTRAINT federation_inbound_grants_scope_check CHECK ((scope = ANY (ARRAY['view'::text, 'comment'::text, 'annotate'::text, 'remix'::text]))),
+    CONSTRAINT federation_inbound_grants_allow_access_copies_kind_check CHECK (((NOT allow_access_copies) OR (object_kind = ANY (ARRAY['asset'::text, 'collection'::text])))),
     CONSTRAINT federation_inbound_grants_allow_original_kind_check CHECK (((NOT allow_original) OR (object_kind = ANY (ARRAY['asset'::text, 'collection'::text])))),
     CONSTRAINT federation_inbound_grants_state_check CHECK ((state = ANY (ARRAY['live'::text, 'ended'::text]))),
     CONSTRAINT federation_inbound_grants_end_reason_check CHECK ((end_reason = ANY (ARRAY['revoked'::text, 'superseded'::text, 'ambiguous_supersede'::text, 'recipient_unbound'::text, 'tombstoned_on_arrival'::text, 'expired_on_arrival'::text]))),
@@ -3763,6 +3804,13 @@ COMMENT ON TABLE public.federation_inbound_grants IS 'Grants a paired peer gave 
 --
 
 COMMENT ON COLUMN public.federation_inbound_grants.recipient_user_ref IS 'The local user the grant is for, bound once at apply time from target_user_uri to the immutable user ref. NULL with target_user_uri NULL: any local user (peer-wide). NULL with target_user_uri set: the name did not resolve, so the grant is ended (recipient_unbound) and never activates.';
+
+
+--
+-- Name: COLUMN federation_inbound_grants.allow_access_copies; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_inbound_grants.allow_access_copies IS 'The peer''s grant carries the access-copy grant (aa:accessTransfer, #1597, spec v1 §16.7): the receiver may fetch the access copies of the granted asset''s sealed versions, or of each member asset of a granted collection, while the grant is live. Independent of scope and of allow_original. Default false; only asset and collection grants may carry it.';
 
 
 --
@@ -4168,6 +4216,7 @@ CREATE TABLE public.federation_received_asset_files (
     verified_at timestamp with time zone,
     detected_media_type text,
     detected_by text,
+    access_failure_reason text,
     CONSTRAINT federation_received_asset_files_pkey PRIMARY KEY (received_asset_id, "position"),
     CONSTRAINT federation_received_asset_files_received_asset_id_fkey FOREIGN KEY (received_asset_id) REFERENCES public.federation_received_assets(id) ON DELETE CASCADE,
     CONSTRAINT federation_received_asset_files_position_check CHECK ("position" >= 0 AND "position" < 256),
@@ -4183,9 +4232,12 @@ CREATE TABLE public.federation_received_asset_files (
         AND declared_original_filename !~ '[\x01-\x1f\x7f]'::text)),
     CONSTRAINT federation_received_asset_files_state_check CHECK (state = ANY (ARRAY['pending'::text, 'verified'::text, 'not_transferred'::text, 'withdrawn'::text])),
     -- Originals are fetched and verified (and withdrawn with their record,
-    -- 00091); other roles are claims only.
+    -- 00091); an access copy is a claim until received and verified, and
+    -- withdrawn with its record (00104); preservation entries are claims
+    -- only.
     CONSTRAINT federation_received_asset_files_role_state_check CHECK (CASE role
         WHEN 'original' THEN state = ANY (ARRAY['pending'::text, 'verified'::text, 'withdrawn'::text])
+        WHEN 'access' THEN state = ANY (ARRAY['not_transferred'::text, 'verified'::text, 'withdrawn'::text])
         ELSE state = 'not_transferred'::text
     END),
     CONSTRAINT federation_received_asset_files_verified_check CHECK (CASE state
@@ -4197,7 +4249,17 @@ CREATE TABLE public.federation_received_asset_files (
         ((detected_media_type IS NULL) = (detected_by IS NULL))
         AND (detected_media_type IS NULL OR (role = 'original'::text AND state = ANY (ARRAY['verified'::text, 'withdrawn'::text])
              AND octet_length(detected_media_type) >= 3 AND octet_length(detected_media_type) <= 255
-             AND octet_length(detected_by) >= 1 AND octet_length(detected_by) <= 128)))
+             AND octet_length(detected_by) >= 1 AND octet_length(detected_by) <= 128))),
+    CONSTRAINT federation_received_asset_files_access_reason_check CHECK (
+        access_failure_reason IS NULL OR (role = 'access'::text AND state = 'not_transferred'::text AND access_failure_reason = ANY (ARRAY[
+        'invalid_request'::text, 'peer_unavailable'::text, 'profile_not_negotiated'::text, 'foreign_origin'::text,
+        'foreign_signer'::text, 'class_not_available'::text, 'sensitivity_refused'::text, 'too_large'::text,
+        'no_inbound_grant'::text, 'origin_refused'::text, 'redirect_refused'::text, 'http_status'::text,
+        'length_mismatch'::text, 'fixity_mismatch'::text, 'timeout'::text, 'transport_error'::text,
+        'revoked_during_fetch'::text, 'lease_lost'::text, 'storage_error'::text]))),
+    -- A withdrawn access row was verified, and keeps when.
+    CONSTRAINT federation_received_asset_files_access_withdrawn_check CHECK (
+        role <> 'access'::text OR state <> 'withdrawn'::text OR verified_at IS NOT NULL)
 );
 
 
@@ -4213,6 +4275,93 @@ COMMENT ON COLUMN public.federation_received_asset_files.detected_media_type IS 
 --
 
 COMMENT ON COLUMN public.federation_received_asset_files.detected_by IS 'The tool that produced detected_media_type (#1574).';
+
+
+--
+-- Name: COLUMN federation_received_asset_files.access_failure_reason; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_received_asset_files.access_failure_reason IS 'Why the last attempt to receive this access copy failed (#1597, spec v1 §16.7): a bounded transfer reason, only on a not_transferred access row. NULL: unattempted (every row written before 00104), or not an access row.';
+
+
+--
+-- Name: federation_received_access_work; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_received_access_work (
+    received_asset_id uuid NOT NULL,
+    "position" integer NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    claim_token uuid,
+    claim_expires_at timestamp with time zone,
+    last_reason text,
+    admitted_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT federation_received_access_work_attempts_check CHECK (((attempts >= 0) AND (attempts <= 100))),
+    CONSTRAINT federation_received_access_work_claim_check CHECK (((claim_token IS NULL) = (claim_expires_at IS NULL))),
+    CONSTRAINT federation_received_access_work_last_reason_check CHECK (((last_reason IS NULL) OR (last_reason = ANY (ARRAY['timeout'::text, 'transport_error'::text, 'http_status'::text, 'lease_lost'::text]))))
+);
+
+
+--
+-- Name: TABLE federation_received_access_work; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_received_access_work IS 'Admitted, undecided access-copy work (#1597, spec v1 §16.7): one row per access entry being fetched, bounded in number, with its due time, attempts and claim. The file row (federation_received_asset_files) is the candidate and the outcome; this row only schedules it and is deleted when the work is decided or stale.';
+
+
+--
+-- Name: COLUMN federation_received_access_work.claim_token; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_received_access_work.claim_token IS 'The current claim (#1597): set with claim_expires_at when a worker takes the row; every write that decides the work requires this token, unexpired.';
+
+
+--
+-- Name: COLUMN federation_received_access_work.last_reason; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_received_access_work.last_reason IS 'The last transient failure that rescheduled the row (#1597): timeout, transport_error, http_status (429/5xx) or lease_lost.';
+
+
+--
+
+
+--
+-- Name: federation_received_access_work federation_received_access_work_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_received_access_work
+    ADD CONSTRAINT federation_received_access_work_pkey PRIMARY KEY (received_asset_id, "position");
+
+
+--
+
+
+--
+-- Name: federation_received_access_work_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_received_access_work_due_idx ON public.federation_received_access_work USING btree (next_attempt_at, received_asset_id, "position");
+
+
+--
+-- Name: federation_received_asset_files_access_unattempted_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_received_asset_files_access_unattempted_idx ON public.federation_received_asset_files USING btree (received_asset_id, "position") WHERE ((role = 'access'::text) AND (state = 'not_transferred'::text) AND (access_failure_reason IS NULL));
+
+
+--
+
+
+--
+-- Name: federation_received_access_work federation_received_access_work_file_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_received_access_work
+    ADD CONSTRAINT federation_received_access_work_file_fkey FOREIGN KEY (received_asset_id, "position") REFERENCES public.federation_received_asset_files(received_asset_id, "position") ON DELETE CASCADE;
 
 
 --
@@ -4716,6 +4865,8 @@ CREATE TABLE public.federation_shares (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     allow_original boolean DEFAULT false NOT NULL,
+    allow_access_copies boolean DEFAULT false NOT NULL,
+    CONSTRAINT federation_shares_allow_access_copies_kind_check CHECK (((NOT allow_access_copies) OR (object_kind = ANY (ARRAY['asset'::text, 'collection'::text])))),
     CONSTRAINT federation_shares_allow_original_kind_check CHECK (((NOT allow_original) OR (object_kind = ANY (ARRAY['asset'::text, 'collection'::text])))),
     CONSTRAINT federation_shares_object_kind_check CHECK ((object_kind = ANY (ARRAY['asset'::text, 'post'::text, 'collection'::text, 'workspace'::text, 'brand_kit'::text, 'user'::text]))),
     CONSTRAINT federation_shares_scope_check CHECK ((scope = ANY (ARRAY['view'::text, 'comment'::text, 'annotate'::text, 'remix'::text])))
@@ -4727,6 +4878,13 @@ CREATE TABLE public.federation_shares (
 --
 
 COMMENT ON COLUMN public.federation_shares.allow_original IS 'Explicit grant for the peer to receive the ORIGINAL bytes of the shared asset, or of each member asset of a shared collection (#1573). Independent of scope: no scope, remix included, implies it. Default false; only asset and collection shares may set it. Public and team assets only, checked at grant time and at every fetch decision; restricted, embargoed and unresolved tiers are refused even when this is true. Ends with the share (revoke, expiry). Does not recall bytes already delivered.';
+
+
+--
+-- Name: COLUMN federation_shares.allow_access_copies; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_shares.allow_access_copies IS 'Explicit grant for the peer to receive the ACCESS COPIES of the shared asset''s sealed versions, or of each member asset of a shared collection (#1597, spec v1 §7.5.7). Independent of scope and of allow_original: neither implies the other. Default false; only asset and collection shares may set it. Public and team assets only, checked at every fetch decision. Ends with the share (revoke, expiry). Does not recall bytes already delivered.';
 
 
 --
@@ -9155,6 +9313,13 @@ CREATE TRIGGER federation_received_assets_chain_check_trg BEFORE INSERT OR UPDAT
 
 CREATE TRIGGER federation_received_assets_update_check_trg BEFORE UPDATE ON public.federation_received_assets
     FOR EACH ROW EXECUTE FUNCTION public.federation_received_assets_update_check();
+
+
+--
+-- Name: federation_received_asset_files federation_received_asset_files_commit_check_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER federation_received_asset_files_commit_check_trg AFTER UPDATE ON public.federation_received_asset_files DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (((new.role = 'access'::text) AND (old.state <> 'verified'::text) AND (new.state = 'verified'::text))) EXECUTE FUNCTION public.federation_received_asset_files_commit_check();
 
 
 --

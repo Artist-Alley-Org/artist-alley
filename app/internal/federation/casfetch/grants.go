@@ -14,7 +14,11 @@ import (
 
 // DatabaseGrants is the production InboundGrants: the receiver's
 // inbound grant record (#1571), read on every call. A fetch of the
-// original class needs a live grant with allow_original; the signer's
+// original class needs a live grant with allow_original; one of the
+// access class needs a live grant with allow_access_copies from a peer
+// with all four derived-transfer-1 profiles (inboundgrants.Store), and
+// allow_original does not stand in for it. The class is passed through
+// unchanged to Allows and AllowsTx alike. The signer's
 // actor (or, for an instance-signed fetch, only a peer-wide grant) is
 // the recipient asking.
 type DatabaseGrants struct{ Store *inboundgrants.Store }

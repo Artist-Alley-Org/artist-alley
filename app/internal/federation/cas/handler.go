@@ -2,10 +2,17 @@
 // Copyright (C) 2026 Kenneth Blossom
 
 // Package cas serves an asset's original file to a paired peer (#72,
-// spec v1 §8.5, §7.5.7).
+// spec v1 §8.5, §7.5.7), and, on its own version-bound route, one access
+// copy of a sealed version (#1597, spec v1 §8.5.1; access.go).
 //
 //	GET  /federation/assets/{asset_id}/files/original/{sha256}?size={bytes}
 //	HEAD (same path)
+//	GET  /federation/assets/{asset_id}/versions/{n}/files/access/{sha256}?size={bytes}
+//	HEAD (same path)
+//
+// What follows describes the original-file route; access.go describes the
+// access-copy route, which shares the signature, the per-peer limit and the
+// whole-object serving below.
 //
 // Mounted at the root, outside /api/v1, like /federation/inbox and the
 // actor document: it is authenticated by HTTP signature, not by a
@@ -23,8 +30,9 @@
 //     Failure: 401 unauthenticated.
 //  2. The per-peer rate limit. Failure: 429.
 //  3. The byte class: only `original`. `access` and `preview` are
-//     refused with class_not_available until variant hashes exist
-//     (#1597); anything else is a bad request.
+//     refused here with class_not_available, also when an access copy
+//     may be fetched: that is only through the version-bound route
+//     (§8.5.1, access.go). Anything else is a bad request.
 //  4. original-transfer-1 in the stored intersection: 403
 //     profile_not_negotiated.
 //  5. shares.CanPeerFetchOriginal (#1573), read from this instance's
@@ -54,6 +62,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -105,9 +114,12 @@ const (
 	ReasonUnavailable          = "temporarily_unavailable"
 )
 
-// Policy is the #1573 decision (shares.Registry).
+// Policy is the origin's byte decisions (shares.Registry): the #1573
+// original-file decision and the #1597 access-copy decision. Each route
+// asks only its own.
 type Policy interface {
 	CanPeerFetchOriginal(ctx context.Context, req shares.OriginalFetchRequest) (shares.OriginalFetchDecision, error)
+	CanPeerFetchAccessCopy(ctx context.Context, req shares.AccessCopyFetchRequest) (shares.AccessCopyFetchDecision, error)
 }
 
 // ByteSource opens stored bytes (storage.Service).
@@ -147,10 +159,14 @@ func NewHandler(d Deps) *Handler {
 	return &Handler{d: d}
 }
 
-// Mount registers GET and HEAD.
+// Mount registers GET and HEAD for the original-file route and, as its own
+// handler, the version-bound access-copy route (access.go). The route
+// decides the mode; nothing in a request does.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get(RoutePattern, h.ServeHTTP)
 	r.Head(RoutePattern, h.ServeHTTP)
+	r.Get(AccessRoutePattern, h.serveAccess)
+	r.Head(AccessRoutePattern, h.serveAccess)
 }
 
 var hashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -249,12 +265,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	meta["share_id"] = dec.Share.ID.String()
 
-	// Serve.
+	h.serveObject(ctx, w, r, "original file not served", hash, size, false, meta)
+}
+
+// preflightBytes bounds serveObject's read before the status is committed.
+const preflightBytes = 32 << 10
+
+// serveObject sends the whole stored object hash (its canonical
+// VariantOriginal key) after a decision allowed it: the stored length must
+// equal size, GET streams the bytes and HEAD sends the headers only, with no
+// Range. A failure before headers are written is a retryable 503
+// temporarily_unavailable (internal bytes_unavailable) without the object's
+// length or digest. With preflight, a GET of a non-empty object first reads
+// up to preflightBytes, so a reader that fails or ends early is still
+// answered 503; those bytes are then sent and the rest streamed. Once the 200
+// is written the status cannot change: a short copy, including one that ends
+// in a bare EOF, is recorded in the served audit with the bytes actually sent
+// and a copy_error. Shared by the original route (no preflight) and the
+// access-copy route (preflight); message is the route's fixed error text.
+func (h *Handler) serveObject(ctx context.Context, w http.ResponseWriter, r *http.Request, message, hash string, size int64, preflight bool, meta map[string]any) {
+	unavailable := func() {
+		w.Header().Del("Content-Length")
+		w.Header().Del("Repr-Digest")
+		h.refuseWith(ctx, w, message, http.StatusServiceUnavailable, ReasonUnavailable, "bytes_unavailable", meta)
+	}
 	info, err := h.d.Bytes.Stat(ctx, hash, storage.VariantOriginal)
 	if err != nil || info == nil || info.Size != size {
 		// The row says the bytes exist; the backend disagrees. An
 		// operator problem, not the peer's: retryable, audited.
-		h.refuse(ctx, w, http.StatusServiceUnavailable, ReasonUnavailable, "bytes_unavailable", meta)
+		unavailable()
 		return
 	}
 	digest, _ := hex.DecodeString(hash)
@@ -269,17 +308,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rc, _, err := h.d.Bytes.Download(ctx, hash, storage.VariantOriginal)
 	if err != nil {
-		w.Header().Del("Content-Length")
-		w.Header().Del("Repr-Digest")
-		h.refuse(ctx, w, http.StatusServiceUnavailable, ReasonUnavailable, "bytes_unavailable", meta)
+		unavailable()
 		return
 	}
 	defer rc.Close()
+	var head []byte
+	if preflight && size > 0 {
+		head = make([]byte, min(size, preflightBytes))
+		if _, err := io.ReadFull(rc, head); err != nil {
+			meta["read_error"] = err.Error()
+			unavailable()
+			return
+		}
+	}
 	w.WriteHeader(http.StatusOK)
-	n, copyErr := io.Copy(w, io.LimitReader(rc, size))
-	meta["bytes_sent"] = n
-	if copyErr != nil {
+	var sent int64
+	var copyErr error
+	if len(head) > 0 {
+		n, err := w.Write(head)
+		sent, copyErr = int64(n), err
+	}
+	if copyErr == nil {
+		n, err := io.Copy(w, io.LimitReader(rc, size-sent))
+		sent, copyErr = sent+n, err
+	}
+	meta["bytes_sent"] = sent
+	switch {
+	case copyErr != nil:
 		meta["copy_error"] = copyErr.Error()
+	case sent < size:
+		meta["copy_error"] = fmt.Sprintf("short copy: %d of %d bytes", sent, size)
 	}
 	h.audit(ctx, audit.EventFederationCASServed, meta)
 }
@@ -402,13 +460,19 @@ func hasCapability(caps []string, token string) bool {
 }
 
 func (h *Handler) refuse(ctx context.Context, w http.ResponseWriter, status int, reason, internal string, meta map[string]any) {
+	h.refuseWith(ctx, w, "original file not served", status, reason, internal, meta)
+}
+
+// refuseWith audits the precise internal reason and answers the external
+// one as {"error", "reason"}; message is the route's fixed error text.
+func (h *Handler) refuseWith(ctx context.Context, w http.ResponseWriter, message string, status int, reason, internal string, meta map[string]any) {
 	meta["status"] = status
 	meta["reason"] = internal
 	h.audit(ctx, audit.EventFederationCASRefused, meta)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": "original file not served", "reason": reason})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message, "reason": reason})
 }
 
 func (h *Handler) audit(ctx context.Context, event string, meta map[string]any) {
