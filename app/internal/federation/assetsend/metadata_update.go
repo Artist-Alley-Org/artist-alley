@@ -301,18 +301,19 @@ func (s Source) MetadataUpdateMembers(ctx context.Context, activityID, peerID uu
 		return nil, nil, err
 	}
 	var (
-		basename    string
-		created     time.Time
-		predecessor *int64
+		basename       *string
+		basenameSource string
+		created        time.Time
+		predecessor    *int64
 	)
 	err = s.Pool.QueryRow(ctx, `
-		SELECT v.created_at, COALESCE(v.original_basename, ''),
+		SELECT v.created_at, v.original_basename, v.original_basename_source,
 		       COALESCE((SELECT max(s.number) FROM asset_versions s
 		                  WHERE s.asset_id = v.asset_id AND s.number < v.number AND s.sealed_at IS NOT NULL), pv.number)
 		  FROM asset_versions v
 		  LEFT JOIN asset_versions pv ON pv.id = v.predecessor_id
 		 WHERE v.id = $1 AND v.asset_id = $2 AND v.number = $3 AND v.sealed_at IS NOT NULL`,
-		p.VersionID, p.AssetID, *p.VersionNumber).Scan(&created, &basename, &predecessor)
+		p.VersionID, p.AssetID, *p.VersionNumber).Scan(&created, &basename, &basenameSource, &predecessor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, refusedMetadataUpdate("version %d is not the recorded sealed version of the asset", *p.VersionNumber)
 	}
@@ -329,7 +330,7 @@ func (s Source) MetadataUpdateMembers(ctx context.Context, activityID, peerID uu
 	}
 	// No descriptive member in the aa:asset: aa:metadata carries them
 	// (§18.2).
-	asset, err = versionMember(objectURI, *p.VersionNumber, created, predecessor, basename, sealedFiles, p.Sensitivity, *p.Mature, aiProvenance, nil)
+	asset, err = versionMember(objectURI, *p.VersionNumber, created, predecessor, basename, basenameSource, sealedFiles, p.Sensitivity, *p.Mature, aiProvenance, nil)
 	if err != nil {
 		return nil, nil, err
 	}

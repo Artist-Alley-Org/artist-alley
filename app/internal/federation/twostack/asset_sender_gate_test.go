@@ -159,6 +159,20 @@ func TestTwoStack_AssetSender(t *testing.T) {
 		if n := g.onB(o, `SELECT count(*) FROM federation_received_asset_files WHERE object_hash = $1 AND role = 'original' AND state = 'verified'`); n != 1 {
 			t.Fatalf("%d verified originals on B", n)
 		}
+		// #1595: A's version has no known base name (the asset was not
+		// made from an upload request), so A declares none and B records
+		// none.
+		var source string
+		if err := g.a.pool.QueryRow(ctx, `SELECT original_basename_source FROM asset_versions WHERE id = $1`, version).Scan(&source); err != nil ||
+			source != "unknown" {
+			t.Fatalf("A's version 1 base name source %q (%v), want unknown", source, err)
+		}
+		var declared *string
+		if err := g.b.pool.QueryRow(ctx, `SELECT f.declared_original_filename FROM federation_received_asset_files f
+			JOIN federation_received_assets r ON r.id = f.received_asset_id
+			WHERE r.peer_id = $1 AND r.activity_uri = $2 AND f.role = 'original'`, g.peerAonB, ann[0]).Scan(&declared); err != nil || declared != nil {
+			t.Fatalf("B's original declares %v (%v), want no name", declared, err)
+		}
 		if n := g.onB(o, `SELECT count(*) FROM assets WHERE file_hash = $1`); n != 0 {
 			t.Fatal("B created an assets row for a received record")
 		}

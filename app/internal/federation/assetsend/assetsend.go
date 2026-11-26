@@ -83,6 +83,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/provenance"
 )
 
 // Grant is the share a Record call announces for.
@@ -211,23 +212,24 @@ func (s Source) Member(ctx context.Context, activityID, peerID uuid.UUID, object
 
 	// The version, as sealed.
 	var (
-		sensitivity, aiProvenance, basename string
-		mature, local, sealed               bool
-		number                              int64
-		created                             time.Time
-		predecessor                         *int64
+		sensitivity, aiProvenance, basenameSource string
+		basename                                  *string
+		mature, local, sealed                     bool
+		number                                    int64
+		created                                   time.Time
+		predecessor                               *int64
 	)
 	err := s.Pool.QueryRow(ctx, `
 		SELECT a.sensitivity, a.mature, COALESCE(a.ai_provenance, ''),
 		       (a.origin_server_id IS NULL AND a.deleted_at IS NULL),
-		       v.number, v.created_at, v.sealed_at IS NOT NULL, COALESCE(v.original_basename, ''),
+		       v.number, v.created_at, v.sealed_at IS NOT NULL, v.original_basename, v.original_basename_source,
 		       COALESCE((SELECT max(s.number) FROM asset_versions s
 		                  WHERE s.asset_id = a.id AND s.number < v.number AND s.sealed_at IS NOT NULL), pv.number)
 		  FROM assets a
 		  JOIN asset_versions v ON v.asset_id = a.id AND v.id = $2
 		  LEFT JOIN asset_versions pv ON pv.id = v.predecessor_id
 		 WHERE a.id = $1`, p.AssetID, p.VersionID).Scan(&sensitivity, &mature, &aiProvenance, &local,
-		&number, &created, &sealed, &basename, &predecessor)
+		&number, &created, &sealed, &basename, &basenameSource, &predecessor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, refused("the asset or its version no longer exists")
 	}
@@ -263,7 +265,7 @@ func (s Source) Member(ctx context.Context, activityID, peerID uuid.UUID, object
 	if err != nil {
 		return nil, err
 	}
-	raw, err := versionMember(objectURI, number, created, predecessor, basename, sealedFiles, sensitivity, mature, aiProvenance, descriptive)
+	raw, err := versionMember(objectURI, number, created, predecessor, basename, basenameSource, sealedFiles, sensitivity, mature, aiProvenance, descriptive)
 	if err != nil {
 		return nil, err
 	}
@@ -307,13 +309,21 @@ func (s Source) shareDelivered(ctx context.Context, shareID, assetID, peerID, sh
 }
 
 // versionMember builds and checks the aa:asset member of one sealed
-// version: its identity and predecessor, its sealed files (the original
-// with its base name, dropped when §17.2.2 refuses it), the tier and flags
-// given, and, for an aa:AssetVersion only, its recorded descriptive
+// version: its identity and predecessor, its sealed files, the tier and
+// flags given, and, for an aa:AssetVersion only, its recorded descriptive
 // members (#1577). An Update (FlagUpdateMember) passes nil: §17.2.8 keeps
 // it to mature and aiProvenance.
-func versionMember(objectURI string, number int64, created time.Time, predecessor *int64, basename string,
+//
+// basename and basenameSource are the version's own immutable pair
+// (asset_versions.original_basename and original_basename_source, #1595).
+// The original file carries originalFilename only when that pair says the
+// name came with the upload request (provenance.ArchivalOriginalFilename):
+// a client_reported backfill and an unknown name are omitted, and neither
+// live asset metadata nor a storage path is ever a source. The name is
+// still dropped when §17.2.2 refuses it.
+func versionMember(objectURI string, number int64, created time.Time, predecessor *int64, basename *string, basenameSource string,
 	sealedFiles []versionFile, sensitivity string, mature bool, aiProvenance string, descriptive *descriptiveMembers) (json.RawMessage, error) {
+	filename := provenance.ArchivalOriginalFilename(basename, provenance.Source(basenameSource))
 	type file struct {
 		Role       string              `json:"role"`
 		ContentURI string              `json:"contentUri"`
@@ -327,7 +337,7 @@ func versionMember(objectURI string, number int64, created time.Time, predecesso
 		f := file{Role: vf.role, ContentURI: "cas://" + vf.hash,
 			Checksums: []map[string]string{{"algorithm": "sha256", "value": vf.hash}}, Size: vf.size, MediaType: vf.mediaType}
 		if vf.role == "original" {
-			f.Filename = basename
+			f.Filename = filename
 		}
 		files = append(files, f)
 	}
@@ -348,7 +358,7 @@ func versionMember(objectURI string, number int64, created time.Time, predecesso
 	}
 	descriptive.put(member)
 	raw, err := validMember(member)
-	if err != nil && basename != "" {
+	if err != nil && filename != "" {
 		// The stored base name is a claim the profile may not accept
 		// (§17.2.2); the file is announced without it rather than not at all.
 		for i := range files {

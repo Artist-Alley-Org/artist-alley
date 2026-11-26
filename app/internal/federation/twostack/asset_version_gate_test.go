@@ -21,6 +21,8 @@ package twostack_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -190,12 +192,21 @@ func TestTwoStack_ANewVersionIsAnnouncedWithoutARegrant(t *testing.T) {
 
 	o, share, ann1, id1 := g.importedOnB()
 	body2 := pngBytes(t)
-	hash2, receipt := g.uploadOnA(body2)
+	// #1595: version 2's upload request carries its own base name, so the
+	// real upload API and its receipt record it as version 2's.
+	hash2, receipt := g.uploadOnANamed(body2, "harbour-v2.png")
 	if st := g.api(g.a, http.MethodPost, "/assets/"+o.asset.String()+"/versions", map[string]any{
 		"file_hash": hash2, "upload_receipt": receipt, "expected_version": 1, "file_extension": "png"}, nil); st != http.StatusCreated {
 		t.Fatalf("version 2 on A: %d", st)
 	}
 	g.sealedOnA(o)
+	for n, want := range map[int]string{1: "harbour.png", 2: "harbour-v2.png"} {
+		var name, source string
+		if err := g.a.pool.QueryRow(ctx, `SELECT COALESCE(original_basename, ''), original_basename_source FROM asset_versions
+			WHERE asset_id = $1 AND number = $2`, o.asset, n).Scan(&name, &source); err != nil || name != want || source != "upload_request" {
+			t.Fatalf("A's version %d base name %q (%s, %v), want %q from the upload request", n, name, source, err, want)
+		}
+	}
 	var ann2 string
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
@@ -219,6 +230,14 @@ func TestTwoStack_ANewVersionIsAnnouncedWithoutARegrant(t *testing.T) {
 	id2 := g.receivedOnB(ann2)
 	if st, got := g.getOnB(member, "/federation/received-assets/"+id2+"/original"); st != http.StatusOK || !bytes.Equal(got, body2) {
 		t.Fatalf("version 2's original on B: %d", st)
+	}
+	// #1595: each received version declares its own version's name.
+	for id, want := range map[string]string{id1: "harbour.png", id2: "harbour-v2.png"} {
+		var declared *string
+		if err := g.b.pool.QueryRow(ctx, `SELECT declared_original_filename FROM federation_received_asset_files
+			WHERE received_asset_id = $1::uuid AND role = 'original'`, id).Scan(&declared); err != nil || declared == nil || *declared != want {
+			t.Fatalf("B's record %s declares %v (%v), want %q", id, declared, err, want)
+		}
 	}
 	if st, _ := g.getOnB(member, "/federation/received-assets/"+id1); st != http.StatusNotFound {
 		t.Fatalf("version 1 after it was replaced: %d", st)
@@ -450,4 +469,36 @@ func TestTwoStack_AnAssetsFlagsFollowItsOrigin(t *testing.T) {
 	if st, _ := g.getOnB(member, "/federation/received-assets/"+id2); st != http.StatusGone {
 		t.Fatalf("version 2 after the withdrawal: %d", st)
 	}
+}
+
+// uploadOnANamed is uploadOnA with the upload request's
+// X-Original-Filename set to name (#1595): it uploads body through A's
+// real upload API as A's admin and returns its hash and upload receipt.
+// uploadOnA always sends "harbour.png"; folding the two together belongs
+// with a change to its file.
+func (g *casGate) uploadOnANamed(body []byte, name string) (hash, receipt string) {
+	g.t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, g.a.url+"/api/v1/storage/objects", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+g.a.token)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Content-Type", "image/png")
+	req.Header.Set("X-Original-Filename", name)
+	resp, err := (&http.Client{Transport: g.tr, Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		g.t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var up struct {
+		Hash    string `json:"hash"`
+		Receipt string `json:"upload_receipt"`
+	}
+	if resp.StatusCode != http.StatusCreated || json.Unmarshal(raw, &up) != nil || up.Receipt == "" {
+		g.t.Fatalf("upload: %d %s", resp.StatusCode, raw)
+	}
+	sum := sha256.Sum256(body)
+	if up.Hash != hex.EncodeToString(sum[:]) {
+		g.t.Fatalf("A stored %s for bytes hashing to %x", up.Hash, sum)
+	}
+	return up.Hash, up.Receipt
 }

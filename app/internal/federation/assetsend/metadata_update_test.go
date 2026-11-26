@@ -899,3 +899,34 @@ func TestMetadataUpdate_AMissingProfileKeepsItsReason(t *testing.T) {
 		}
 	})
 }
+
+// #1595: a metadata Update's aa:asset names the original only from the
+// recorded sealed version's upload_request base name; a client_reported
+// backfill and an unknown name are omitted, and a retry builds the same
+// bytes.
+func TestMetadataUpdate_TheOriginalFilenameComesOnlyFromTheUploadRequest(t *testing.T) {
+	f := newFx(t)
+	f.withMetadataProfile(t)
+	for _, c := range basenameCases {
+		t.Run(c.name, func(t *testing.T) {
+			a := f.newAssetNamed("public", true, c.basename, c.source)
+			f.describe(a, "Harbour at dawn", "Body", goodRights, "Studio A")
+			g := f.grantAndRecord(a, nil)
+			f.shareDelivered(g, "sent")
+			id := f.recordMetadata(a)
+			if id == uuid.Nil {
+				t.Fatal("nothing recorded")
+			}
+			u := f.metaUpdate(id)
+			asset, metadata, err := f.metaMembers(u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.wantOriginalFilename("the metadata Update", asset, c.want)
+			again, againMeta, err := f.metaMembers(u)
+			if err != nil || !bytes.Equal(again, asset) || !bytes.Equal(againMeta, metadata) {
+				t.Fatalf("a retry: %v", err)
+			}
+		})
+	}
+}

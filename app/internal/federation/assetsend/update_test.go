@@ -285,3 +285,33 @@ func TestFlagUpdateMember_FixedWhenRecordedAndRefusedOnDrift(t *testing.T) {
 		refused("a record without its flags", u, raw)
 	}
 }
+
+// #1595: a flags Update re-announces the version the peer was told with
+// that version's own upload_request base name only; a client_reported
+// backfill and an unknown name are omitted, and a retry builds the same
+// bytes.
+func TestFlagUpdateMember_TheOriginalFilenameComesOnlyFromTheUploadRequest(t *testing.T) {
+	f := newFx(t)
+	for _, c := range basenameCases {
+		t.Run(c.name, func(t *testing.T) {
+			a := f.newAssetNamed("public", true, c.basename, c.source)
+			f.announceTo(a, f.peer, "sent")
+			ids, err := f.changeFlags(a, true, "generated", nil)
+			if err != nil || len(ids) != 1 {
+				t.Fatalf("the change: %v %v", ids, err)
+			}
+			u := f.withdrawalOf(ids[0])
+			raw, err := f.flagMember(u, f.peer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m := f.parsed(raw); m.Mature == nil || !*m.Mature || m.AIProvenance != "generated" {
+				t.Fatalf("the member: %s", raw)
+			}
+			f.wantOriginalFilename("the Update", raw, c.want)
+			if again, err := f.flagMember(u, f.peer); err != nil || string(again) != string(raw) {
+				t.Fatalf("a retry: %v\n%s\nwant\n%s", err, again, raw)
+			}
+		})
+	}
+}
