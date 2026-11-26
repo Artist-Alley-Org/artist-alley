@@ -197,12 +197,30 @@ cmd_fetch() {
 cmd_release() {
     [ -n "${AA_CI_DATASET_ROOT:-}" ] || { note "no dataset root to release"; return 0; }
     case "$AA_CI_DATASET_ROOT" in */"${ROOT_NAME}") ;; *) die "refusing to delete ${AA_CI_DATASET_ROOT}" ;; esac
-    if [ -e "$AA_CI_DATASET_ROOT" ]; then
+    if [ "$AA_CI_DATASET_ROOT" = "/mnt/aa-ci-datasets" ] && [ ! -w /mnt ]; then
+        release_mnt_root
+    elif [ -e "$AA_CI_DATASET_ROOT" ]; then
         rm -rf -- "$AA_CI_DATASET_ROOT"
         note "released ${AA_CI_DATASET_ROOT}"
     else
         note "${AA_CI_DATASET_ROOT} already released"
     fi
+}
+
+# The root `prepare` created with sudo on a root-owned /mnt (#1664 post-merge run 45760951205). The
+# runner owns the root and can empty it, but unlinking it needs write on /mnt, so plain `rm -rf` fails.
+# Everything inside is removed as the runner; privilege is used for one thing only: `rmdir` of this
+# fixed path once it is empty. Anything unexpected fails rather than being skipped.
+release_mnt_root() {
+    local root="/mnt/aa-ci-datasets"
+    if [ ! -e "$root" ] && [ ! -L "$root" ]; then note "${root} already released"; return 0; fi
+    [ -d "$root" ] && [ ! -L "$root" ] || die "${root} is not a real directory; refusing to release it"
+    [ "$(stat -c %u -- "$root")" = "$(id -u)" ] || die "${root} is not owned by the runner (uid $(id -u)); refusing to release it"
+    find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || die "could not remove the contents of ${root}"
+    [ -z "$(find "$root" -mindepth 1 -maxdepth 1 -print -quit)" ] || die "${root} is not empty after removing its contents"
+    sudo -n rmdir -- /mnt/aa-ci-datasets || die "sudo -n rmdir of the empty ${root} failed"
+    [ ! -e "$root" ] && [ ! -L "$root" ] || die "${root} still exists after rmdir"
+    note "released ${root}"
 }
 
 case "${1:-}" in
